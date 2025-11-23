@@ -51,7 +51,8 @@ class SACPolicy(
         self.config = config
 
         # Determine action dimension and initialize all components
-        continuous_action_dim = config.output_features[ACTION].shape[0]
+        #continuous_action_dim = config.output_features[ACTION].shape[0]
+        continuous_action_dim = 6
         self._init_encoders()
         self._init_critics(continuous_action_dim)
         self._init_actor(continuous_action_dim)
@@ -83,13 +84,12 @@ class SACPolicy(
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select action for inference/evaluation"""
-
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
             observations_features = self.actor.encoder.get_cached_image_features(batch)
-
         actions, _, _ = self.actor(batch, observations_features)
-
+        # actions = batch['observation.state'] + torch.randn_like(batch['observation.state']) * 2
+        
         if self.config.num_discrete_actions is not None:
             discrete_action_value = self.discrete_critic(batch, observations_features)
             discrete_action = torch.argmax(discrete_action_value, dim=-1, keepdim=True)
@@ -525,6 +525,7 @@ class SACObservationEncoder(nn.Module):
             )
         if self.has_state:
             dim = self.config.input_features[OBS_STATE].shape[0]
+            # dim = 6
             self.state_encoder = nn.Sequential(
                 nn.Linear(dim, self.config.latent_dim),
                 nn.LayerNorm(self.config.latent_dim),
@@ -738,11 +739,10 @@ class CriticEnsemble(nn.Module):
         device = get_device_from_parameters(self)
         # Move each tensor in observations to device
         observations = {k: v.to(device) for k, v in observations.items()}
-
+            
         obs_enc = self.encoder(observations, cache=observation_features)
 
         inputs = torch.cat([obs_enc, actions], dim=-1)
-
         # Loop through critics and collect outputs
         q_values = []
         for critic in self.critics:
@@ -791,6 +791,9 @@ class DiscreteCritic(nn.Module):
     ) -> torch.Tensor:
         device = get_device_from_parameters(self)
         observations = {k: v.to(device) for k, v in observations.items()}
+    
+        # observations['observation.state'] = observations['observation.state'][:, 0:6]
+
         obs_enc = self.encoder(observations, cache=observation_features)
         return self.output_layer(self.net(obs_enc))
 

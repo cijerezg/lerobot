@@ -210,7 +210,7 @@ class ReplayBuffer:
                 # Only store next_states if not optimizing memory
                 self.next_states[key][self.position].copy_(next_state[key].squeeze(dim=0))
 
-        self.actions[self.position].copy_(action.squeeze(dim=0))
+        self.actions[self.position].copy_(action.squeeze(0))
         self.rewards[self.position] = reward
         self.dones[self.position] = done
         self.truncateds[self.position] = truncated
@@ -672,7 +672,9 @@ class ReplayBuffer:
             action = current_sample[ACTION].unsqueeze(0)  # Add batch dimension
 
             # ----- 3) Reward and done -----
-            reward = float(current_sample[REWARD].item())  # ensure float
+            #reward = float(current_sample[REWARD].item())  # ensure float
+            reward = 0.01
+            # Change made
 
             # Determine done flag - use next.done if available, otherwise infer from episode boundaries
             if has_done_key:
@@ -779,6 +781,10 @@ def concatenate_batch_transitions(
     Warning:
         This function modifies the left_batch_transitions object in place.
     """
+    # FIXME: Temporary fix for testing to avoid shape mismatches.
+    # We ignore the right batch (offline data) and duplicate the left batch (online data).
+    right_batch_transition = left_batch_transitions
+
     # Concatenate state fields
     left_batch_transitions["state"] = {
         key: torch.cat(

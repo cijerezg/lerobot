@@ -169,7 +169,20 @@ class RobotEnv(gym.Env):
         raw_joint_joint_position = {f"{name}.pos": obs_dict[f"{name}.pos"] for name in self._joint_names}
         joint_positions = np.array([raw_joint_joint_position[f"{name}.pos"] for name in self._joint_names])
 
-        images = {key: obs_dict[key] for key in self._image_keys}
+        images = {}
+        for key in self._image_keys:
+            img = obs_dict[key]
+            # Crop to 128x128 (top-left)
+            # Handle both CHW and HWC formats
+            if len(img.shape) == 3:
+                if img.shape[0] == 3:  # CHW
+                    images[key] = img[:, :128, :128]
+                else:  # HWC
+                    images[key] = img[:128, :128, :]
+            else:
+                images[key] = img
+        
+        # images = {key: obs_dict[key] for key in self._image_keys}
 
         return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position}
 
@@ -251,10 +264,13 @@ class RobotEnv(gym.Env):
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
-        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
+        processing_action = action if len(action.shape) == 1 else action.squeeze()
+        # print(f"Follower Step Action: {processing_action}")
+
+        joint_targets_dict = {f"{key}.pos": processing_action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
 
         self.robot.send_action(joint_targets_dict)
-
+        
         obs = self._get_observation()
 
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
@@ -307,6 +323,8 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     Returns:
         Tuple of (gym environment, teleoperator device).
     """
+
+    print(cfg)
     # Check if this is a GymHIL simulation environment
     if cfg.name == "gym_hil":
         assert cfg.robot is None and cfg.teleop is None, "GymHIL environment does not support robot or teleop"

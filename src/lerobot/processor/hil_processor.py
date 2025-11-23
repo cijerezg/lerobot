@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -41,6 +42,8 @@ from .pipeline import (
 GRIPPER_KEY = "gripper"
 DISCRETE_PENALTY_KEY = "discrete_penalty"
 TELEOP_ACTION_KEY = "teleop_action"
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -438,20 +441,35 @@ class InterventionActionProcessorStep(ProcessorStep):
         # Override action if intervention is active
         if is_intervention and teleop_action is not None:
             if isinstance(teleop_action, dict):
-                # Convert teleop_action dict to tensor format
-                action_list = [
-                    teleop_action.get("delta_x", 0.0),
-                    teleop_action.get("delta_y", 0.0),
-                    teleop_action.get("delta_z", 0.0),
-                ]
-                if self.use_gripper:
-                    action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                # Check if it's end-effector control (delta_x, etc.) or joint control
+                if "delta_x" in teleop_action:
+                    # Convert teleop_action dict to tensor format for EE control
+                    action_list = [
+                        teleop_action.get("delta_x", 0.0),
+                        teleop_action.get("delta_y", 0.0),
+                        teleop_action.get("delta_z", 0.0),
+                    ]
+                    if self.use_gripper:
+                        action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                else:
+                    # Assume joint control: extract values in order
+                    # Note: This assumes the dict keys are in the correct order matching the action space
+                    # A safer way would be to use the action names from the config if available,
+                    # but for now we rely on the dict values order or specific keys if known.
+                    # Since we don't have the action names here easily, we take values.
+                    # However, dict order is preserved in Python 3.7+.
+                    # We filter for keys ending in .pos if present, or just take all values.
+                    action_list = [v for k, v in teleop_action.items() if k.endswith(".pos")]
+                    if not action_list:
+                         action_list = list(teleop_action.values())
             elif isinstance(teleop_action, np.ndarray):
                 action_list = teleop_action.tolist()
             else:
                 action_list = teleop_action
 
             teleop_action_tensor = torch.tensor(action_list, dtype=action.dtype, device=action.device)
+            # print(f"DEBUG: teleop_action keys: {teleop_action.keys() if isinstance(teleop_action, dict) else 'not dict'}")
+            # print(f"DEBUG: action_list size: {len(action_list)}, content: {action_list}")
             new_transition[TransitionKey.ACTION] = teleop_action_tensor
 
         # Handle episode termination
@@ -459,6 +477,11 @@ class InterventionActionProcessorStep(ProcessorStep):
             self.terminate_on_success and success
         )
         new_transition[TransitionKey.REWARD] = float(success)
+
+        if success:
+            logger.info(f"Manual success triggered! Reward set to {new_transition[TransitionKey.REWARD]}")
+        elif terminate_episode:
+            logger.info(f"Manual termination triggered! Reward set to {new_transition[TransitionKey.REWARD]}")
 
         # Update info with intervention metadata
         info = new_transition.get(TransitionKey.INFO, {})

@@ -603,6 +603,10 @@ def add_actor_information_and_train(
                 fps=fps,
             )
 
+        if optimization_step >= online_steps:
+            logging.info("[LEARNER] Reached maximum online steps. Stopping training.")
+            break
+
 
 def start_learner(
     parameters_queue: Queue,

@@ -153,7 +153,7 @@ class RTCDemoConfig(HubMixin):
     fps: float = 10.0  # Action execution frequency (Hz)
 
     # Compute device
-    device: str | None = None  # Device to run on (cuda, cpu, auto)
+    device: str | None = 'cuda'  # Device to run on (cuda, cpu, auto)
 
     # Get new actions horizon. The amount of executed steps after which will be requested new actions.
     # It should be higher than inference delay + execution horizon.

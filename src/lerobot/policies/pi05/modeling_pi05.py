@@ -898,6 +898,53 @@ class PI05Policy(PreTrainedPolicy):
 
         self.reset()
 
+
+    @staticmethod
+    def _tie_or_copy_language_embeddings(paligemma) -> bool:
+        """
+        Ties the language model's input embeddings to the lm_head output embeddings.
+        
+        This is needed because the PI05 checkpoint only stores lm_head.weight and expects
+        consumers to tie it to embed_tokens.weight locally.
+        
+        Args:
+            paligemma: The paligemma model instance
+            
+        Returns:
+            bool: True if tying succeeded and weights share memory, False otherwise
+        """
+        if paligemma is None:
+            return False
+        
+        language_model = getattr(getattr(paligemma, "model", None), "language_model", None)
+        lm_head = getattr(paligemma, "lm_head", None)
+        
+        if language_model is None or lm_head is None:
+            return False
+        
+        embed_tokens = getattr(language_model, "embed_tokens", None)
+        lm_head_weight = getattr(lm_head, "weight", None)
+        
+        if embed_tokens is None or lm_head_weight is None:
+            return False
+        
+        embed_weight = getattr(embed_tokens, "weight", None)
+        if embed_weight is None or embed_weight.shape != lm_head_weight.shape:
+            return False
+        
+        # Copy the lm_head weights to embed_tokens
+        with torch.no_grad():
+            embed_weight.copy_(lm_head_weight)
+        
+        # Call tie_weights if available to establish memory sharing
+        if hasattr(paligemma, "tie_weights"):
+            paligemma.tie_weights()
+        
+        # Verify that the weights now share the same memory
+        tied_embed = getattr(language_model.embed_tokens, "weight", None)
+        return tied_embed is not None and tied_embed.data_ptr() == lm_head_weight.data_ptr()
+
+
     @classmethod
     def from_pretrained(
         cls: builtins.type[T],
@@ -990,7 +1037,28 @@ class PI05Policy(PreTrainedPolicy):
                 print(f"Remapped {remap_count} state dict keys")
 
             # Load the remapped state dict into the model
-            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+            missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=False)
+            #missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
+
+            # ADDED: Handle weight tying for embed_tokens
+            tie_key = "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+            if tie_key in missing_keys:
+                paligemma = model.model.paligemma_with_expert.paligemma
+                if cls._tie_or_copy_language_embeddings(paligemma):
+                    print("✓ Tied language embeddings to lm_head weight")
+                    missing_keys = [key for key in missing_keys if key != tie_key]
+                else:
+                    print("⚠ Warning: Failed to tie language embeddings")
+
+            # ADDED: Re-enforce strictness if requested by caller
+            if strict and (missing_keys or unexpected_keys):
+                error_msg = f"Error loading state dict with strict={strict}\n"
+                if missing_keys:
+                    error_msg += f"Missing keys: {missing_keys}\n"
+                if unexpected_keys:
+                    error_msg += f"Unexpected keys: {unexpected_keys}\n"
+                raise RuntimeError(error_msg)
+
 
             if missing_keys:
                 print(f"Missing keys when loading state dict: {len(missing_keys)} keys")
