@@ -864,6 +864,9 @@ class Policy(nn.Module):
         else:
             std = self.fixed_std.expand_as(means)
 
+        # Store original dtype for casting back after distribution operations
+        original_dtype = means.dtype
+        
         # Build transformed distribution
         dist = TanhMultivariateNormalDiag(loc=means, scale_diag=std)
 
@@ -872,6 +875,11 @@ class Policy(nn.Module):
 
         # Compute log_probs
         log_probs = dist.log_prob(actions)
+
+        # Cast back to original dtype if we upcast to float32 for Cholesky
+        if original_dtype == torch.bfloat16:
+            actions = actions.to(original_dtype)
+            log_probs = log_probs.to(original_dtype)
 
         return actions, log_probs, means
 
@@ -1032,6 +1040,14 @@ class RescaleFromTanh(Transform):
 
 class TanhMultivariateNormalDiag(TransformedDistribution):
     def __init__(self, loc, scale_diag, low=None, high=None):
+        # Cast to float32 to avoid "cholesky_cusolver not implemented for BFloat16" error
+        # This is a workaround for PyTorch's Cholesky decomposition not supporting bfloat16
+        # The rest of the model can stay in bfloat16 for memory/speed benefits
+        original_dtype = loc.dtype
+        if original_dtype == torch.bfloat16:
+            loc = loc.float()
+            scale_diag = scale_diag.float()
+        
         base_dist = MultivariateNormal(loc, torch.diag_embed(scale_diag))
 
         transforms = [TanhTransform(cache_size=1)]

@@ -311,6 +311,11 @@ def add_actor_information_and_train(
         env_cfg=cfg.env,
     )
 
+    if cfg.policy.dtype == "bfloat16":
+        policy.to(dtype=torch.bfloat16)
+    elif cfg.policy.dtype == "float16":
+        policy.to(dtype=torch.float16)
+
     assert isinstance(policy, nn.Module)
 
     policy.train()
@@ -390,6 +395,18 @@ def add_actor_information_and_train(
                 batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
             )
 
+        # Helper function to cast tensors in a structure
+        def cast_to_bf16(item):
+            if isinstance(item, torch.Tensor):
+                if item.dtype == torch.float32:
+                    return item.to(dtype=torch.bfloat16)
+                return item
+            elif isinstance(item, dict):
+                return {k: cast_to_bf16(v) for k, v in item.items()}
+            elif isinstance(item, list):
+                return [cast_to_bf16(v) for v in item]
+            return item
+
         time_for_one_optimization_step = time.time()
         for _ in range(utd_ratio - 1):
             # Sample from the iterators
@@ -400,6 +417,21 @@ def add_actor_information_and_train(
                 batch = concatenate_batch_transitions(
                     left_batch_transitions=batch, right_batch_transition=batch_offline
                 )
+
+            # Move batch to device
+            batch = move_transition_to_device(batch, device)
+
+            if cfg.policy.dtype == "bfloat16":
+                # Manual casting for now
+                if isinstance(batch, dict):
+                    batch = {k: cast_to_bf16(v) for k, v in batch.items()}
+                else:
+                    new_batch_data = {}
+                    for field in batch._fields:
+                        val = getattr(batch, field)
+                        new_batch_data[field] = cast_to_bf16(val)
+                    
+                    batch = type(batch)(**new_batch_data)
 
             actions = batch[ACTION]
             rewards = batch["reward"]
@@ -458,6 +490,21 @@ def add_actor_information_and_train(
             batch = concatenate_batch_transitions(
                 left_batch_transitions=batch, right_batch_transition=batch_offline
             )
+
+        # Move batch to device
+        batch = move_transition_to_device(batch, device)
+
+        if cfg.policy.dtype == "bfloat16":
+            # Manual casting for now
+            if isinstance(batch, dict):
+                batch = {k: cast_to_bf16(v) for k, v in batch.items()}
+            else:
+                new_batch_data = {}
+                for field in batch._fields:
+                    val = getattr(batch, field)
+                    new_batch_data[field] = cast_to_bf16(val)
+                
+                batch = type(batch)(**new_batch_data)
 
         actions = batch[ACTION]
         rewards = batch["reward"]
