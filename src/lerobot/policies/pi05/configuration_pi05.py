@@ -71,20 +71,6 @@ class PI05Config(PreTrainedConfig):
     compile_mode: str = "max-autotune"  # Torch compile mode
     device: str | None = None  # Device to use for the model (None = auto-detect)
 
-    # Optimizer settings: see openpi `AdamW`
-    optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
-    optimizer_betas: tuple[float, float] = (0.9, 0.95)
-    optimizer_eps: float = 1e-8
-    optimizer_weight_decay: float = 0.01
-    optimizer_grad_clip_norm: float = 1.0
-
-    # Scheduler settings: see openpi `CosineDecaySchedule`
-    # Note: These will auto-scale if --steps < scheduler_decay_steps
-    # For example, --steps=3000 will scale warmup to 100 and decay to 3000
-    scheduler_warmup_steps: int = 1_000
-    scheduler_decay_steps: int = 30_000
-    scheduler_decay_lr: float = 2.5e-6
-
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
     def __post_init__(self):

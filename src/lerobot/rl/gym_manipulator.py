@@ -269,7 +269,7 @@ class RobotEnv(gym.Env):
 
         joint_targets_dict = {f"{key}.pos": processing_action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
 
-        self.robot.send_action(joint_targets_dict)
+        #self.robot.send_action(joint_targets_dict)
         
         obs = self._get_observation()
 

@@ -395,17 +395,19 @@ def add_actor_information_and_train(
                 batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
             )
 
-        # Helper function to cast tensors in a structure
-        def cast_to_bf16(item):
-            if isinstance(item, torch.Tensor):
-                if item.dtype == torch.float32:
-                    return item.to(dtype=torch.bfloat16)
+        print(f'Replay buffer size: {len(replay_buffer)}')
+        if cfg.policy.dtype == "bfloat16":
+            # Helper function to cast tensors in a structure
+            def cast_to_bf16(item):
+                if isinstance(item, torch.Tensor):
+                    if item.dtype == torch.float32:
+                        return item.to(dtype=torch.bfloat16)
+                    return item
+                elif isinstance(item, dict):
+                    return {k: cast_to_bf16(v) for k, v in item.items()}
+                elif isinstance(item, list):
+                    return [cast_to_bf16(v) for v in item]
                 return item
-            elif isinstance(item, dict):
-                return {k: cast_to_bf16(v) for k, v in item.items()}
-            elif isinstance(item, list):
-                return [cast_to_bf16(v) for v in item]
-            return item
 
         time_for_one_optimization_step = time.time()
         for _ in range(utd_ratio - 1):

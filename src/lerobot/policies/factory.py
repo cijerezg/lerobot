@@ -91,6 +91,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
+    elif name == "pi05_rl":
+        from lerobot.rl.rl_pi05 import PI05RLPolicy
+
+        return PI05RLPolicy
     elif name == "sac":
         from lerobot.policies.sac.modeling_sac import SACPolicy
 

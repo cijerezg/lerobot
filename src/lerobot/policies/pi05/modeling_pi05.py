@@ -1294,7 +1294,7 @@ class PI05Policy(PreTrainedPolicy):
 
         loss_dict = {
             "loss": loss.item(),
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
+            "loss_per_dim": losses.mean(dim=[0, 1]).detach().to(dtype=torch.float32).cpu().numpy().tolist(),
         }
 
         return loss, loss_dict
