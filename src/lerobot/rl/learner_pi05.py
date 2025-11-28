@@ -37,6 +37,7 @@ from torch import nn
 from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
+import torch.nn.functional as F
 import lerobot.rl.rl_pi05  # Register PI05RLConfig
 
 from lerobot.cameras import opencv  # noqa: F401
@@ -354,6 +355,27 @@ def add_actor_information_and_train(
     dataset_repo_id = None
     if cfg.dataset is not None:
         dataset_repo_id = cfg.dataset.repo_id
+    
+
+    # Create preprocessor and postprocessor for the policy
+    # Using stats=None means identity normalization (no normalization)
+    # This matches the real recording case where stats are computed on-the-fly
+    from lerobot.policies.factory import make_pre_post_processors
+    # Create preprocessor and postprocessor
+    # Try to get stats from offline buffer if available
+    dataset_stats = None
+    if offline_replay_buffer is not None:
+        dataset_stats = offline_replay_buffer.dataset.meta.stats
+    elif cfg.policy.dataset_stats is not None:
+        dataset_stats = cfg.policy.dataset_stats
+    
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        dataset_stats=dataset_stats,
+    )
+    # Store preprocessors on the policy for actor to access
+    policy.preprocessor = preprocessor
+    policy.postprocessor = postprocessor
 
     # Initialize iterators
     online_iterator = None
@@ -367,7 +389,7 @@ def add_actor_information_and_train(
             break
 
         # Process all available transitions to the replay buffer, send by the actor server
-        process_transitions(
+        process_transitions_pi05(
             transition_queue=transition_queue,
             replay_buffer=replay_buffer,
             offline_replay_buffer=offline_replay_buffer,
@@ -422,6 +444,10 @@ def add_actor_information_and_train(
             # Sample from the iterators
             batch = next(online_iterator)
 
+            # Ensure online batch actions are 6-dim (if buffer is 32-dim)
+            if batch[ACTION].shape[-1] > 6:
+                 batch[ACTION] = batch[ACTION][..., :6]
+
             if dataset_repo_id is not None:
                 batch_offline = next(offline_iterator)
                 # Slice offline actions to match online actions (6 dims)
@@ -466,7 +492,46 @@ def add_actor_information_and_train(
                 "observation_feature": observation_features,
                 "next_observation_feature": next_observation_features,
             }
+
+            # --- Preprocessing for Pi05 (Tokenization) ---
+            # We need to generate language tokens for the policy
+            # The preprocessor expects a dict with observation keys and "task"
             
+            # Use observations (batch["state"]) as base
+            batch_for_proc = {k: v for k, v in observations.items()}
+            
+            # Add task
+            current_batch_size = actions.shape[0]
+            batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
+            
+            # Add actions for normalization
+            batch_for_proc[ACTION] = actions
+            
+            # Run preprocessor
+            # Note: This might normalize images/state if stats are loaded. 
+            # We only extract tokens to avoid double-normalization issues if policy.forward handles normalization.
+            with torch.no_grad():
+                processed_batch = policy.preprocessor(batch_for_proc)
+            
+            from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
+            
+            # Inject tokens into forward_batch["state"] so they are available to the policy
+            # The policy expects them in batch["state"] or batch directly depending on how it's called
+            # PI05RLPolicy.forward(model="actor") uses:
+            # actor_batch = batch.copy(); actor_batch.update(batch["state"])
+            # tokens = actor_batch[OBS_LANGUAGE_TOKENS]
+            
+            # So we should add them to forward_batch["state"]
+            forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
+            forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+            
+            # Also add to forward_batch directly just in case
+            forward_batch[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
+            forward_batch[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+
+            # Update forward_batch with normalized actions
+            forward_batch[ACTION] = processed_batch[ACTION]
+
             # --- Pi05 RL Update Logic ---
             
             # 1. Critic Update (Value Function)
@@ -487,6 +552,10 @@ def add_actor_information_and_train(
 
         # Sample for the last update in the UTD ratio
         batch = next(online_iterator)
+
+        # Ensure online batch actions are 6-dim (if buffer is 32-dim)
+        if batch[ACTION].shape[-1] > 6:
+                batch[ACTION] = batch[ACTION][..., :6]
 
         if dataset_repo_id is not None:
             batch_offline = next(offline_iterator)
@@ -534,7 +603,39 @@ def add_actor_information_and_train(
             "next_observation_feature": next_observation_features,
         }
 
+        # --- Preprocessing for Pi05 (Tokenization) ---
+        # We need to generate language tokens for the policy
+        # The preprocessor expects a dict with observation keys and "task"
+        
+        # Use observations (batch["state"]) as base
+        batch_for_proc = {k: v for k, v in observations.items()}
+        
+        # Add task
+        current_batch_size = actions.shape[0]
+        batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
+        
+        # Add actions for normalization
+        batch_for_proc[ACTION] = actions
+        
+        # Run preprocessor
+        with torch.no_grad():
+            processed_batch = policy.preprocessor(batch_for_proc)
+        
+        from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
+        
+        # Inject tokens into forward_batch["state"] so they are available to the policy
+        forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
+        forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+        
+        # Also add to forward_batch directly just in case
+        forward_batch[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
+        forward_batch[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+
+        # Update forward_batch with normalized actions
+        forward_batch[ACTION] = processed_batch[ACTION]
+
         # --- Pi05 RL Update Logic (Last Step) ---
+
         
         # 1. Critic Update
         critic_output = policy.forward(forward_batch, model="critic")
@@ -597,8 +698,7 @@ def add_actor_information_and_train(
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
 
-        logging.info(f"[LEARNER] Optimization frequency loop [Hz]: {frequency_for_one_optimization_step}")
-
+        
         # Log optimization frequency
         if wandb_logger:
             wandb_logger.log_dict(
@@ -632,6 +732,81 @@ def add_actor_information_and_train(
         if optimization_step >= online_steps:
             logging.info("[LEARNER] Reached maximum online steps. Stopping training.")
             break
+
+def process_transitions_pi05(
+    transition_queue: Queue,
+    replay_buffer: ReplayBuffer,
+    offline_replay_buffer: ReplayBuffer,
+    device: str,
+    dataset_repo_id: str | None,
+    shutdown_event: any,
+):
+    """Process all available transitions from the queue with action dimension handling."""
+    while not transition_queue.empty() and not shutdown_event.is_set():
+        transition_list = transition_queue.get()
+        transition_list = bytes_to_transitions(buffer=transition_list)
+
+        for transition in transition_list:
+            transition = move_transition_to_device(transition=transition, device=device)
+
+            # Skip transitions with NaN values
+            if check_nan_in_transition(
+                observations=transition["state"],
+                actions=transition[ACTION],
+                next_state=transition["next_state"],
+            ):
+                logging.warning("[LEARNER] NaN detected in transition, skipping")
+                continue
+
+            # --- Fix for Action Dimension Mismatch ---
+            # Check if buffer is initialized and has a mismatch
+            if replay_buffer.initialized:
+                buffer_action_dim = replay_buffer.actions.shape[-1]
+                incoming_action = transition[ACTION]
+                incoming_dim = incoming_action.shape[-1]
+                
+                if incoming_dim != buffer_action_dim:
+                    # logging.warning(f"Action dim mismatch: Buffer {buffer_action_dim}, Incoming {incoming_dim}. Adjusting...")
+                    if incoming_dim < buffer_action_dim:
+                        # Pad with zeros
+                        padding = torch.zeros(
+                            (*incoming_action.shape[:-1], buffer_action_dim - incoming_dim),
+                            dtype=incoming_action.dtype,
+                            device=incoming_action.device
+                        )
+                        transition[ACTION] = torch.cat([incoming_action, padding], dim=-1)
+                    else:
+                        # Slice
+                        transition[ACTION] = incoming_action[..., :buffer_action_dim]
+            # -----------------------------------------
+
+            replay_buffer.add(**transition)
+
+            # Add to offline buffer if it's an intervention
+            if dataset_repo_id is not None and transition.get("complementary_info", {}).get(
+                TeleopEvents.IS_INTERVENTION
+            ):
+                # Apply same fix for offline buffer if needed
+                if offline_replay_buffer.initialized:
+                    buffer_action_dim = offline_replay_buffer.actions.shape[-1]
+                    incoming_action = transition[ACTION]
+                    incoming_dim = incoming_action.shape[-1]
+                    
+                    if incoming_dim != buffer_action_dim:
+                        if incoming_dim < buffer_action_dim:
+                            # Pad with zeros
+                            padding = torch.zeros(
+                                (*incoming_action.shape[:-1], buffer_action_dim - incoming_dim),
+                                dtype=incoming_action.dtype,
+                                device=incoming_action.device
+                            )
+                            transition[ACTION] = torch.cat([incoming_action, padding], dim=-1)
+                        else:
+                            # Slice
+                            transition[ACTION] = incoming_action[..., :buffer_action_dim]
+                            
+                offline_replay_buffer.add(**transition)
+
 
 if __name__ == "__main__":
     train_cli()

@@ -200,6 +200,7 @@ class ReplayBuffer:
     ):
         """Saves a transition, ensuring tensors are stored on the designated storage device."""
         # Initialize storage if this is the first transition
+
         if not self.initialized:
             self._initialize_storage(state=state, action=action, complementary_info=complementary_info)
 
@@ -255,7 +256,7 @@ class ReplayBuffer:
                 # Check if any done flags are True in the chunk window for each index
                 # We look at the window [t, t+1, ..., t+chunk_size-2]
                 # If done is True at t+k, then the transition to t+k+1 crosses a boundary.
-                chunk_indices = (idx.unsqueeze(1) + torch.arange(action_chunk_size - 1, device=self.storage_device)) % self.capacity
+                chunk_indices = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
                 
                 # Get done flags for the chunk window
                 chunk_dones = self.dones[chunk_indices]  # Shape: (batch_size, chunk_size-1)
@@ -289,11 +290,11 @@ class ReplayBuffer:
                 batch_next_state[key] = self.next_states[key][idx].to(self.device)
             else:
                 # Memory-optimized approach - get next_state from the next index
-                next_idx = (idx + 1) % self.capacity
+                next_idx = (idx + action_chunk_size) % self.capacity
                 batch_next_state[key] = self.states[key][next_idx].to(self.device)
 
         # Apply image augmentation in a batched way if needed
-        if self.use_drq and image_keys:
+        if self.use_drq and image_keys and False:
             # Concatenate all images from state and next_state
             all_images = []
             for key in image_keys:
@@ -338,6 +339,7 @@ class ReplayBuffer:
             for key in self.complementary_info_keys:
                 batch_complementary_info[key] = self.complementary_info[key][idx].to(self.device)
 
+        
         return BatchTransition(
             state=batch_state,
             action=batch_actions,
@@ -516,8 +518,21 @@ class ReplayBuffer:
         first_transition = next(transition_generator, None)
 
         
+        
         if first_transition is not None:
-            first_state = {k: v.to(device) for k, v in first_transition["state"].items()}
+            # Resize images in first transition BEFORE initializing storage
+            # This ensures buffer allocates correct size (224x224) not original size (640x480)
+            import torchvision.transforms.functional as F_vision  # noqa: N812
+            expected_height, expected_width = 224, 224
+            
+            first_state = {}
+            for k, v in first_transition["state"].items():
+                tensor = v.to(device)
+                if "images" in k and tensor.shape[-2:] != (expected_height, expected_width):
+                    tensor = F_vision.resize(tensor, (expected_height, expected_width))
+                    tensor = tensor.clamp(0.0, 1.0)
+                first_state[k] = tensor
+                
             first_action = first_transition[ACTION].to(device)
 
             # Get complementary info if available
@@ -541,6 +556,12 @@ class ReplayBuffer:
                     for key, tensor in v.items():
                         # Convert images to uint8, other state data to bfloat16
                         if "images" in key:
+                            # Resize images to 224x224 before storing (offline dataset may have different size)
+                            import torchvision.transforms.functional as F_vision  # noqa: N812
+                            expected_height, expected_width = 224, 224
+                            if tensor.shape[-2:] != (expected_height, expected_width):
+                                tensor = F_vision.resize(tensor, (expected_height, expected_width))
+                                tensor = tensor.clamp(0.0, 1.0)
                             v[key] = tensor.to(dtype=torch.uint8, device=storage_device)
                         else:
                             v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
@@ -565,6 +586,12 @@ class ReplayBuffer:
                     for key, tensor in v.items():
                         # Convert images to uint8, other state data to bfloat16
                         if "images" in key:
+                            # Resize images to 224x224 before storing (offline dataset may have different size)
+                            import torchvision.transforms.functional as F_vision  # noqa: N812
+                            expected_height, expected_width = 224, 224
+                            if tensor.shape[-2:] != (expected_height, expected_width):
+                                tensor = F_vision.resize(tensor, (expected_height, expected_width))
+                                tensor = tensor.clamp(0.0, 1.0)
                             v[key] = tensor.to(dtype=torch.uint8, device=storage_device)
                         else:
                             v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
@@ -851,7 +878,7 @@ def concatenate_batch_transitions(
 
     # Concatenate basic fields
     left_batch_transitions[ACTION] = torch.cat(
-        [left_batch_transitions[ACTION], right_batch_transition[ACTION]], dim=0
+        [left_batch_transitions[ACTION][:, :, :6], right_batch_transition[ACTION]], dim=0
     )
     left_batch_transitions["reward"] = torch.cat(
         [left_batch_transitions["reward"], right_batch_transition["reward"]], dim=0

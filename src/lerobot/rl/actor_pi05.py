@@ -35,7 +35,8 @@ from torch.multiprocessing import Event, Queue
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.policies.factory import make_policy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.datasets.utils import load_stats
 from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
@@ -239,6 +240,32 @@ def act_with_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
+
+    # Initialize preprocessor and postprocessor
+    # Try to load stats from dataset if available, or use config stats
+    dataset_stats = None
+    if cfg.dataset is not None:
+        try:
+            # We only need stats, so we can use load_stats utility
+            # Construct root path similar to LeRobotDataset
+            from lerobot.utils.constants import HF_LEROBOT_HOME
+            from pathlib import Path
+            root = Path(cfg.dataset.root) if cfg.dataset.root else HF_LEROBOT_HOME / cfg.dataset.repo_id
+            dataset_stats = load_stats(root)
+            logging.info(f"Loaded dataset stats from {root}")
+        except Exception as e:
+            logging.warning(f"Failed to load dataset stats: {e}")
+            
+    if dataset_stats is None and cfg.policy.dataset_stats is not None:
+        dataset_stats = cfg.policy.dataset_stats
+        
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=cfg.policy,
+        dataset_stats=dataset_stats,
+    )
+    policy.preprocessor = preprocessor
+    policy.postprocessor = postprocessor
+
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
@@ -249,7 +276,7 @@ def act_with_policy(
     # Process initial observation
     transition = create_transition(observation=obs, info=info)
     transition = env_processor(transition)
-
+    
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
     list_transition_to_send_to_learner = []
@@ -266,18 +293,30 @@ def act_with_policy(
             logging.info("[ACTOR] Shutting down act_with_policy")
             return
 
-        observation = {
-            k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
-        }
+        # Build batch for preprocessor (needs all observation keys + task)
+        batch_for_preprocessor = {}
+        for k, v in transition[TransitionKey.OBSERVATION].items():
+            if k in cfg.policy.input_features:
+                batch_for_preprocessor[k] = v
+
+        # Add task for tokenization
+        batch_for_preprocessor["task"] = cfg.policy.task
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
-            # Extract observation from transition for policy
             with torch.no_grad():
+                # Apply preprocessor if available (handles normalization, tokenization, state padding)
+                if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
+                    processed_batch = policy.preprocessor(batch_for_preprocessor)
+                else:
+                    processed_batch = batch_for_preprocessor
+                
                 # PI05RLPolicy.select_action handles advantage injection internally (default 1.0)
-                # If we want to dynamically change advantage (e.g. based on intervention), we can do it here.
-                # For now, rely on default behavior.
-                action = policy.select_action(observation)
+                action = policy.select_action(processed_batch)
+
+                # Apply postprocessor if available (handles unnormalization)
+                if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
+                    action = policy.postprocessor(action)
 
         policy_fps = policy_timer.fps_last
 
@@ -293,11 +332,7 @@ def act_with_policy(
         )
 
         # Extract values from processed transition
-        next_observation = {
-            k: v
-            for k, v in new_transition[TransitionKey.OBSERVATION].items()
-            if k in cfg.policy.input_features
-        }
+        # (Conversion to policy format happens later when creating the transition)
 
         # Teleop action is the action that was executed in the environment
         # It is either the action from the teleop device or the action from the policy
@@ -336,7 +371,78 @@ def act_with_policy(
                 [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
             ),
         }
-        # Create transition for learner (convert to old format)
+
+        # Convert environment observations to policy-expected format
+        def convert_env_obs_to_policy_format(env_obs: dict) -> dict:
+            """Convert environment observation format to policy-expected format.
+            
+            Handles two cases:
+            1. Observations already in policy format (observation.images.xxx, observation.state)
+            2. Raw environment format (pixels dict or individual image keys, individual .pos keys)
+            """
+            policy_obs = {}
+            
+            # Check if observations are already in the correct format
+            # Relaxed check: if we have images OR state in policy format, we try to preserve them
+            has_policy_format = (
+                'observation.state' in env_obs or
+                any(k.startswith('observation.images.') for k in env_obs.keys())
+            )
+            
+            if has_policy_format:
+                # Observations are already in policy format (partial or full), just filter the relevant keys
+                for key in env_obs.keys():
+                    if key == 'observation.state' or key.startswith('observation.images.'):
+                        policy_obs[key] = env_obs[key]
+            
+            # If we are missing state or images, try to find them in raw format
+            # Images
+            camera_mapping = {
+                'wrist': 'observation.images.wrist',
+                'top': 'observation.images.top',
+                'side': 'observation.images.side',
+            }
+            
+            pixels_dict = env_obs.get('pixels', env_obs)
+            
+            for env_key, policy_key in camera_mapping.items():
+                if policy_key not in policy_obs: # Only look if not already found
+                    if env_key in pixels_dict:
+                        policy_obs[policy_key] = pixels_dict[env_key]
+            
+            # State
+            if 'observation.state' not in policy_obs:
+                 # Collect joint positions in the correct order (matching SO101 motor order)
+                joint_order = [
+                    'shoulder_pan.pos',
+                    'shoulder_lift.pos',
+                    'elbow_flex.pos',
+                    'wrist_flex.pos',
+                    'wrist_roll.pos',
+                    'gripper.pos',
+                ]
+                
+                joint_values = []
+                for joint_key in joint_order:
+                    if joint_key in env_obs:
+                        val = env_obs[joint_key]
+                        # Convert to tensor if not already
+                        if not isinstance(val, torch.Tensor):
+                            val = torch.tensor([val], dtype=torch.float32)
+                        elif val.dim() == 0:
+                            val = val.unsqueeze(0)
+                        joint_values.append(val)
+                
+                # Concatenate all joint positions into a single state tensor
+                if joint_values:
+                    policy_obs['observation.state'] = torch.cat(joint_values, dim=0)
+            
+            return policy_obs
+        
+        # Create transition for learner (convert to policy format)
+        observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
+        next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
+        
         list_transition_to_send_to_learner.append(
             Transition(
                 state=observation,

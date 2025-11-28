@@ -100,25 +100,25 @@ class SO101Leader(Teleoperator):
 
     def _on_press(self, key):
         try:
-            if key == keyboard.Key.space:
-                self.is_intervening = not self.is_intervening
-                logger.info(f"Intervention state toggled: {self.is_intervening}")
+            if hasattr(key, 'char'):
+                if key.char == '5':
+                    self.is_intervening = not self.is_intervening
+                    logger.info(f"Intervention state toggled: {self.is_intervening}")
+                    
+                    with self.bus_lock:
+                        if self.is_intervening:
+                            # User is controlling: disable torque to allow movement
+                            self.bus.disable_torque()
+                            logger.info("Torque disabled for manual control.")
+                        else:
+                            # Leader follows follower: enable torque
+                            self.bus.enable_torque()
+                            logger.info("Torque enabled for feedback following.")
                 
-                with self.bus_lock:
-                    if self.is_intervening:
-                        # User is controlling: disable torque to allow movement
-                        self.bus.disable_torque()
-                        logger.info("Torque disabled for manual control.")
-                    else:
-                        # Leader follows follower: enable torque
-                        self.bus.enable_torque()
-                        logger.info("Torque enabled for feedback following.")
-            
-            elif hasattr(key, 'char'):
-                if key.char == 's':
+                elif key.char == '1':
                     self.is_success = True
                     logger.info("Success triggered manually.")
-                elif key.char == 'f':
+                elif key.char == '0':
                     self.terminate_episode = True
                     logger.info("Failure/Termination triggered manually.")
 

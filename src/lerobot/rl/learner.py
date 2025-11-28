@@ -1064,6 +1064,7 @@ def initialize_offline_replay_buffer(
         optimize_memory=True,
         capacity=cfg.policy.offline_buffer_capacity,
     )
+    offline_replay_buffer.dataset = offline_dataset
     return offline_replay_buffer
 
 

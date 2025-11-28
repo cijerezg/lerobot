@@ -298,7 +298,7 @@ def act_with_policy(
             if "action" in policy.config.normalization_mapping:st
         policy_fps = policy_timer.fps_last
 
-        log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
+        #log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
         # Use the new step function
         new_transition = step_env_and_process_transition(
@@ -747,7 +747,7 @@ def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
 def log_policy_frequency_issue(policy_fps: float, cfg: TrainRLServerPipelineConfig, interaction_step: int):
     if policy_fps < cfg.env.fps:
         logging.warning(
-            f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.env.fps} at step {interaction_step}"
+           f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.env.fps} at step {interaction_step}"
         )
 
 

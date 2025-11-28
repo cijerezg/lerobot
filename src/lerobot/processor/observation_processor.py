@@ -95,7 +95,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
         """
         Processes both image and state observations.
         """
-
+        
         processed_obs = observation.copy()
 
         if "pixels" in processed_obs:
@@ -108,6 +108,7 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
 
             for imgkey, img in imgs.items():
                 processed_obs[imgkey] = self._process_single_image(img)
+
 
         if "environment_state" in processed_obs:
             env_state_np = processed_obs.pop("environment_state")

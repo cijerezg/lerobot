@@ -77,6 +77,8 @@ from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, REWARD
 from lerobot.utils.robot_utils import busy_wait
 from lerobot.utils.utils import log_say
 
+import copy
+
 logging.basicConfig(level=logging.INFO)
 
 
@@ -169,20 +171,7 @@ class RobotEnv(gym.Env):
         raw_joint_joint_position = {f"{name}.pos": obs_dict[f"{name}.pos"] for name in self._joint_names}
         joint_positions = np.array([raw_joint_joint_position[f"{name}.pos"] for name in self._joint_names])
 
-        images = {}
-        for key in self._image_keys:
-            img = obs_dict[key]
-            # Crop to 128x128 (top-left)
-            # Handle both CHW and HWC formats
-            if len(img.shape) == 3:
-                if img.shape[0] == 3:  # CHW
-                    images[key] = img[:, :128, :128]
-                else:  # HWC
-                    images[key] = img[:128, :128, :]
-            else:
-                images[key] = img
-        
-        # images = {key: obs_dict[key] for key in self._image_keys}
+        images = {key: obs_dict[key] for key in self._image_keys}
 
         return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position}
 
@@ -269,7 +258,7 @@ class RobotEnv(gym.Env):
 
         joint_targets_dict = {f"{key}.pos": processing_action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
 
-        #self.robot.send_action(joint_targets_dict)
+        self.robot.send_action(joint_targets_dict)
         
         obs = self._get_observation()
 
@@ -545,11 +534,13 @@ def step_env_and_process_transition(
     """
 
     # Create action transition
-    transition[TransitionKey.ACTION] = action
-    transition[TransitionKey.OBSERVATION] = (
+    aux_transition = copy.deepcopy(transition)
+    aux_transition[TransitionKey.ACTION] = action
+    aux_transition[TransitionKey.OBSERVATION] = (
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
     )
-    processed_action_transition = action_processor(transition)
+
+    processed_action_transition = action_processor(aux_transition)
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
     obs, reward, terminated, truncated, info = env.step(processed_action)

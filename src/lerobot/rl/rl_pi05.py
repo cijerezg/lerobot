@@ -162,12 +162,11 @@ class Pi05Critic(nn.Module):
         
     def forward(self, batch: dict[str, Tensor]) -> Tensor:
         # Process images
-        # Assuming single camera for simplicity or stacking first camera
-        images = []
         # Find first available image key
         img_key = None
         for key in batch.keys():
-            if "image" in key and "mask" not in key:
+            # Look for "images" (plural) in the key name, matching "observation.images.xxx"
+            if "images" in key and "mask" not in key:
                 img_key = key
                 break
         
@@ -185,13 +184,18 @@ class Pi05Critic(nn.Module):
                 
             img_emb = self.vision_encoder(img)
         else:
-            # Fallback if no images (should not happen in this setup)
-            # Use dummy tensor on correct device
-            device = batch["observation.state"].device
-            bs = batch["observation.state"].shape[0]
+            # No images found - use observation.state to get device and batch size
+            if "observation.state" not in batch:
+                raise ValueError(
+                    f"Critic received batch without images and without 'observation.state'. "
+                    f"Available keys: {list(batch.keys())}"
+                )
+            state = batch["observation.state"]
+            device = state.device
+            bs = state.shape[0]
             img_emb = torch.zeros(bs, 256, device=device, dtype=self.dtype)
 
-        # Process State
+        # Process State  
         state = batch["observation.state"]
         if state.dtype != self.dtype:
             state = state.to(self.dtype)
@@ -199,6 +203,7 @@ class Pi05Critic(nn.Module):
         state_emb = self.state_encoder(state)
         
         # Combine
+        import pdb; pdb.set_trace()
         combined = torch.cat([img_emb, state_emb], dim=-1)
         value = self.v_net(combined)
         
@@ -433,15 +438,6 @@ class PI05RLPolicy(PI05Policy):
                 param.requires_grad = False
 
         self.reset()
-        
-        # Initialize processor steps for tokenization
-        self.prepare_step = Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim)
-        self.tokenizer_step = TokenizerProcessorStep(
-            tokenizer_name="google/paligemma-3b-pt-224",
-            max_length=config.tokenizer_max_length,
-            padding_side="right",
-            padding="max_length",
-        )
 
     def get_optim_params(self) -> dict:
         params = {
@@ -475,46 +471,11 @@ class PI05RLPolicy(PI05Policy):
             # Let's use inference_advantage to be consistent.
             advantage = torch.full((batch["action"].shape[0], 1), self.config.inference_advantage, device=self.config.device)
             
-            # We need to call our model's forward with advantage
+            # Preprocessor has already normalized and tokenized the inputs
             images, img_masks = self._preprocess_images(batch)
-            
-            # --- Tokenization using Processor Steps ---
-            # Create a dummy transition for the processor steps
-            # We need 'observation.state' and 'task'
-            # Note: batch["observation.state"] is [B, D]
-            # Processor steps work on single EnvTransition usually, but let's check if they handle batch?
-            # Pi05PrepareStateTokenizerProcessorStep:
-            #   state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
-            #   tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
-            #   It expects state to be a Tensor (it calls .cpu().numpy())
-            #   It expects tasks to be a list of strings (it iterates)
-            
-            # Construct the transition-like structure
-            bs = batch["observation.state"].shape[0]
-            tasks = [self.config.task] * bs
-            
-            # We need to be careful about device. Processor steps might expect CPU or specific device.
-            # Pi05PrepareStateTokenizerProcessorStep calls .cpu().numpy() on state, so it handles device.
-            
-            transition = EnvTransition()
-            transition[TransitionKey.OBSERVATION] = {OBS_STATE: batch["observation.state"]}
-            transition[TransitionKey.COMPLEMENTARY_DATA] = {"task": tasks}
-            
-            # Run steps
-            transition = self.prepare_step(transition)
-            transition = self.tokenizer_step(transition)
-            
-            # Extract tokens and masks
-            # TokenizerProcessorStep puts them in TransitionKey.OBSERVATION with keys OBS_LANGUAGE_TOKENS and OBS_LANGUAGE_ATTENTION_MASK
             from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ACTION
-            
-            tokens = transition[TransitionKey.OBSERVATION][OBS_LANGUAGE_TOKENS]
-            masks = transition[TransitionKey.OBSERVATION][OBS_LANGUAGE_ATTENTION_MASK]
-            
-            # Move to device
-            tokens = tokens.to(self.config.device)
-            masks = masks.to(self.config.device)
-            # ------------------------------------------
+            tokens = batch[OBS_LANGUAGE_TOKENS]
+            masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
             
             actions = self.prepare_action(batch)
             
@@ -569,43 +530,9 @@ class PI05RLPolicy(PI05Policy):
             actor_batch = batch.copy()
             actor_batch.update(batch["state"])
             
-            # Ensure tokens and masks are present and consistent
-            should_tokenize = False
-            if OBS_LANGUAGE_TOKENS not in actor_batch or OBS_LANGUAGE_ATTENTION_MASK not in actor_batch:
-                should_tokenize = True
-            else:
-                tokens = actor_batch[OBS_LANGUAGE_TOKENS]
-                masks = actor_batch[OBS_LANGUAGE_ATTENTION_MASK]
-                if tokens.shape[1] != masks.shape[1]:
-                    should_tokenize = True
-
-            if should_tokenize:
-                # Detect device from existing tensors in the batch
-                target_device = None
-                for v in actor_batch.values():
-                    if isinstance(v, torch.Tensor):
-                        target_device = v.device
-                        break
-                
-                # Fallback to config device if no tensors found
-                if target_device is None:
-                    target_device = self.config.device
-                
-                bs = next(iter(actor_batch.values())).shape[0]
-                tasks = [self.config.task] * bs
-                
-                transition = EnvTransition()
-                transition[TransitionKey.OBSERVATION] = {OBS_STATE: actor_batch["observation.state"]}
-                transition[TransitionKey.COMPLEMENTARY_DATA] = {"task": tasks}
-                
-                transition = self.prepare_step(transition)
-                transition = self.tokenizer_step(transition)
-                
-                tokens = transition[TransitionKey.OBSERVATION][OBS_LANGUAGE_TOKENS].to(target_device)
-                masks = transition[TransitionKey.OBSERVATION][OBS_LANGUAGE_ATTENTION_MASK].to(target_device)
-            else:
-                tokens = actor_batch[OBS_LANGUAGE_TOKENS]
-                masks = actor_batch[OBS_LANGUAGE_ATTENTION_MASK]
+            # Preprocessor has already tokenized the inputs
+            tokens = actor_batch[OBS_LANGUAGE_TOKENS]
+            masks = actor_batch[OBS_LANGUAGE_ATTENTION_MASK]
 
             images, img_masks = self._preprocess_images(actor_batch)
             actions = self.prepare_action(actor_batch)
@@ -627,7 +554,7 @@ class PI05RLPolicy(PI05Policy):
             # Value Critic Loss
             # Target: r + gamma * V_target(s')
             # Current: V(s)
-            
+
             with torch.no_grad():
                 next_v = self.critic_target(batch["next_state"])
                 reward = batch["reward"]
@@ -677,34 +604,11 @@ class PI05RLPolicy(PI05Policy):
 
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict action chunk with advantage conditioning."""
+        # Preprocessor has already normalized and tokenized the inputs
         images, img_masks = self._preprocess_images(batch)
-        
-        # --- Tokenization using Processor Steps ---
-        bs = images[0].shape[0]
-        tasks = [self.config.task] * bs
-        
-        # We need state for tokenization (it's part of the prompt in Pi05)
-        # Assuming batch has "observation.state"
-        if "observation.state" not in batch:
-             # Fallback or error? For inference, state should be there.
-             # If not, we might need to fetch it or use zeros if it's purely visual policy (unlikely for Pi05)
-             pass 
-
-        from lerobot.utils.constants import OBS_STATE, OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
-        
-        transition = EnvTransition()
-        transition[TransitionKey.OBSERVATION] = {OBS_STATE: batch["observation.state"]}
-        transition[TransitionKey.COMPLEMENTARY_DATA] = {"task": tasks}
-        
-        transition = self.prepare_step(transition)
-        transition = self.tokenizer_step(transition)
-        
-        tokens = transition[TransitionKey.OBSERVATION][OBS_LANGUAGE_TOKENS]
-        masks = transition[TransitionKey.OBSERVATION][OBS_LANGUAGE_ATTENTION_MASK]
-        
-        tokens = tokens.to(self.config.device)
-        masks = masks.to(self.config.device)
-        # ------------------------------------------
+        from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
+        tokens = batch[OBS_LANGUAGE_TOKENS]
+        masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         
         bs = images[0].shape[0]
         advantage = torch.full((bs, 1), self.config.inference_advantage, device=self.config.device)
