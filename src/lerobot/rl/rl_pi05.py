@@ -17,6 +17,10 @@ from lerobot.processor import TokenizerProcessorStep
 from lerobot.processor.core import EnvTransition, TransitionKey
 from lerobot.utils.constants import OBS_STATE
 
+from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks
+        
+
+
 @dataclass
 class ActorLearnerConfig:
     learner_host: str = "127.0.0.1"
@@ -311,6 +315,40 @@ class PI05RLPytorch(PI05Pytorch):
 
         return F.mse_loss(u_t, v_t, reduction="none")
     
+    def denoise_step(self, prefix_pad_masks, past_key_values, x_t, timestep, advantage):
+        """Apply one denoising step with advantage conditioning."""
+        # Embed suffix with advantage
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep, advantage)
+
+        suffix_len = suffix_pad_masks.shape[1]
+        batch_size = prefix_pad_masks.shape[0]
+        prefix_len = prefix_pad_masks.shape[1]
+
+        prefix_pad_2d_masks = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+        
+        suffix_att_2d_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        full_att_2d_masks = torch.cat([prefix_pad_2d_masks, suffix_att_2d_masks], dim=2)
+
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"
+
+        outputs_embeds, _ = self.paligemma_with_expert.forward(
+            attention_mask=full_att_2d_masks_4d,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=[None, suffix_embs],
+            use_cache=False,
+            adarms_cond=[None, adarms_cond],
+        )
+
+        suffix_out = outputs_embeds[1]
+        suffix_out = suffix_out[:, -self.config.chunk_size :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        return self.action_out_proj(suffix_out)
+
     def sample_actions(self, images, img_masks, tokens, masks, advantage) -> Tensor:
         """Sample actions with advantage conditioning."""
         # Embed prefix
@@ -329,49 +367,41 @@ class PI05RLPytorch(PI05Pytorch):
         # Start from noise
         x_t = self.sample_noise((bs, self.config.chunk_size, self.config.max_action_dim), device)
         
+        # Precompute Prefix KV Cache
+        prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
+        prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"
+
+        _, past_key_values = self.paligemma_with_expert.forward(
+            attention_mask=prefix_att_2d_masks_4d,
+            position_ids=prefix_position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, None],
+            use_cache=True,
+        )
+
         # Euler integration
         steps = self.config.num_inference_steps
-        dt = 1.0 / steps
+        dt = -1.0 / steps
         
-        for i in range(steps):
-            t = i / steps
+        t = 1.0
+        
+        for _ in range(steps):
             time = torch.full((bs,), t, device=device, dtype=torch.float32)
             
-            # Embed suffix with advantage
-            suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time, advantage)
-            
-            if prefix_embs.dtype == torch.bfloat16:
-                suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
-                
-            pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
-            att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
-            
-            from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks
-            att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-            position_ids = torch.cumsum(pad_masks, dim=1) - 1
-            att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
-            
-            def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
-                (_, suffix_out), _ = self.paligemma_with_expert.forward(
-                    attention_mask=att_2d_masks_4d,
-                    position_ids=position_ids,
-                    past_key_values=None,
-                    inputs_embeds=[prefix_embs, suffix_embs],
-                    use_cache=False,
-                    adarms_cond=[None, adarms_cond],
-                )
-                return suffix_out
-
-            suffix_out = self._apply_checkpoint(
-                forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
+            v_t = self.denoise_step(
+                prefix_pad_masks,
+                past_key_values,
+                x_t,
+                time,
+                advantage
             )
             
-            suffix_out = suffix_out[:, -self.config.chunk_size :]
-            suffix_out = suffix_out.to(dtype=torch.float32)
-            v_t = self.action_out_proj(suffix_out)
-            
             # Euler step
-            x_t = x_t - v_t * dt
+            x_t = x_t + v_t * dt
+            t += dt
             
         return x_t
 
@@ -392,6 +422,35 @@ class PI05RLPolicy(PI05Policy):
         self.init_rtc_processor()
         # Use our subclassed model
         self.model = PI05RLPytorch(config, rtc_processor=self.rtc_processor)
+
+        # Load pretrained weights if pi05_checkpoint is specified
+        if config.pi05_checkpoint:
+            print(f"Loading pretrained Pi05 weights from {config.pi05_checkpoint}")
+            # Load a vanilla PI05Policy to get the pretrained weights
+            temp_policy = PI05Policy.from_pretrained(
+                config.pi05_checkpoint, 
+                config=config,
+                strict=False
+            )
+            # Copy weights to our RL model (strict=False allows RL-specific layers to keep their init)
+            missing_keys, unexpected_keys = self.model.load_state_dict(
+                temp_policy.model.state_dict(), 
+                strict=False
+            )
+            
+            # Filter out expected missing keys (RL-specific layers)
+            expected_missing = [
+                "advantage_mlp_in", "advantage_mlp_out", "fusion_mlp"
+            ]
+            actual_missing = [k for k in missing_keys if not any(exp in k for exp in expected_missing)]
+            
+            if actual_missing:
+                print(f"⚠ Missing keys: {actual_missing[:5]}")
+            if unexpected_keys:
+                print(f"⚠ Unexpected keys: {unexpected_keys[:5]}")
+            
+            print("✓ Pretrained Pi05 weights loaded successfully")
+            del temp_policy  # Free memory
 
         if config.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
@@ -547,7 +606,18 @@ class PI05RLPolicy(PI05Policy):
             losses = losses[:, :, :original_action_dim]
             loss = losses.mean()
             
-            return {"loss_actor": loss}
+            # Collect metrics for wandb logging
+            return {
+                "loss_actor": loss,
+                "advantage_mean": advantage.mean().item(),
+                "advantage_std": advantage.std().item(),
+                "advantage_values": advantage.detach().cpu().flatten(),
+                "critic_value_mean": current_v.mean().item(),
+                "critic_value_std": current_v.std().item(),
+                "critic_values": current_v.detach().cpu().flatten(),
+                "target_value_mean": target_v.mean().item(),
+                "reward_mean": reward.mean().item(),
+            }
             
         elif model == "critic":
             # Value Critic Loss
@@ -558,7 +628,6 @@ class PI05RLPolicy(PI05Policy):
                 next_v = self.critic_target(batch["next_state"])
                 reward = batch["reward"]
                 done = batch["done"]
-                import pdb; pdb.set_trace()
                 # Ensure reward and done have shape [B, 1]
                 # Handle both 1D [B] and potentially wrong 2D shapes like [B, 2]
                 batch_size = next_v.shape[0]
@@ -570,16 +639,22 @@ class PI05RLPolicy(PI05Policy):
                     reward = reward[:, :1]
                 if done.shape[1] > 1:
                     done = done[:, :1]
-                    
                 target = reward + (1 - done) * self.config.discount * next_v
-            print(f'target: {target.mean()}')
             
             current_v = self.critic(batch["state"]) # Learner passes 'state' dict
-            
-
-            print(f'current_v: {current_v.mean()}')
             loss_critic = F.mse_loss(current_v, target)
-            return {"loss_critic": loss_critic}
+            
+            # Collect metrics for wandb logging
+            td_error = target - current_v
+            return {
+                "loss_critic": loss_critic,
+                "critic_value_mean": current_v.mean().item(),
+                "critic_value_std": current_v.std().item(),
+                "target_value_mean": target.mean().item(),
+                "target_value_std": target.std().item(),
+                "td_error_mean": td_error.mean().item(),
+                "td_error_std": td_error.std().item(),
+            }
             
         elif model == "temperature":
             return {"loss_temperature": torch.tensor(0.0, device=self.config.device, requires_grad=True)}
@@ -615,8 +690,13 @@ class PI05RLPolicy(PI05Policy):
         bs = images[0].shape[0]
         advantage = torch.full((bs, 1), self.config.inference_advantage, device=self.config.device)
         
-        # We need to update sample_actions in PI05RLPytorch to accept advantage
+        # Sample actions with advantage conditioning
         actions = self.model.sample_actions(images, img_masks, tokens, masks, advantage)
+        
+        # Unpad actions to actual action dimension
+        from lerobot.utils.constants import ACTION
+        original_action_dim = self.config.output_features[ACTION].shape[0]
+        actions = actions[:, :, :original_action_dim]
         
         return actions
 

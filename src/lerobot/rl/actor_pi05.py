@@ -312,9 +312,6 @@ def act_with_policy(
                 # Apply preprocessor if available (handles tokenization, state padding, etc.)
                 # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
                 # env_processor has already converted observations to proper tensor format.
-                if interaction_step > 8:
-                    import pdb; pdb.set_trace()
-                
                 if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
                     processed_batch = policy.preprocessor(batch_for_preprocessor)
                 else:
@@ -471,6 +468,9 @@ def act_with_policy(
                 complementary_info=complementary_info,
             )
         )
+        
+        if reward > 0:
+            logging.info(f"[ACTOR] Sending transition with reward: {reward}")
 
         # Update transition for next iteration
         transition = new_transition

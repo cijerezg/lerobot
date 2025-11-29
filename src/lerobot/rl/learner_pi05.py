@@ -98,6 +98,9 @@ from lerobot.rl.learner import (
     save_training_checkpoint,
 )
 
+import wandb
+                
+
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):
     if not use_threads(cfg):
@@ -584,6 +587,9 @@ def add_actor_information_and_train(
         observations = batch["state"]
         next_observations = batch["next_state"]
         done = batch["done"]
+        
+        if rewards.max() > 0:
+             logging.info(f"[LEARNER] Sampled batch with max reward: {rewards.max().item()}, mean: {rewards.mean().item()}")
 
         check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
 
@@ -655,8 +661,14 @@ def add_actor_information_and_train(
 
         # Initialize training info dictionary
         training_infos = {
-            "loss_critic": loss_critic.item(),
+            "loss_critic": critic_output["loss_critic"].item(),
             "critic_grad_norm": critic_grad_norm,
+            "td_error_mean": critic_output["td_error_mean"],
+            "td_error_std": critic_output["td_error_std"],
+            "critic_value_mean": critic_output["critic_value_mean"],
+            "critic_value_std": critic_output["critic_value_std"],
+            "target_value_mean_critic": critic_output["target_value_mean"],
+            "target_value_std": critic_output["target_value_std"],
         }
 
         # 2. Actor Update (Flow Matching with Advantage)
@@ -673,8 +685,20 @@ def add_actor_information_and_train(
                 optimizers["actor"].step()
 
                 # Add actor info to training info
-                training_infos["loss_actor"] = loss_actor.item()
+                training_infos["loss_actor"] = actor_output["loss_actor"].item()
                 training_infos["actor_grad_norm"] = actor_grad_norm
+                
+                # Add advantage and value metrics
+                training_infos["advantage_mean"] = actor_output["advantage_mean"]
+                training_infos["advantage_std"] = actor_output["advantage_std"]
+                training_infos["target_value_mean"] = actor_output["target_value_mean"]
+                training_infos["reward_mean"] = actor_output["reward_mean"]
+                training_infos["critic_value_mean_actor"] = actor_output["critic_value_mean"]
+                training_infos["critic_value_std_actor"] = actor_output["critic_value_std"]
+                
+                # Store histograms for wandb (will be logged separately)
+                training_infos["advantage_histogram"] = actor_output["advantage_values"]
+                training_infos["critic_histogram"] = actor_output["critic_values"]
                 
                 # No Temperature Update for Pi05 RL (Entropy not used)
 
@@ -697,7 +721,25 @@ def add_actor_information_and_train(
 
             # Log training metrics
             if wandb_logger:
+                print(f"Logging to WandB at step {optimization_step}")
+                # Extract histograms if they exist
+                advantage_hist = training_infos.pop("advantage_histogram", None)
+                critic_hist = training_infos.pop("critic_histogram", None)
+                
+                # Log scalar metrics
                 wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
+                
+                # Log histograms separately using wandb.Histogram
+                if advantage_hist is not None:
+                    wandb_logger._wandb.log({
+                        "train/advantage_histogram": wandb.Histogram(advantage_hist.float().numpy()),
+                        "Optimization step": optimization_step
+                    })
+                if critic_hist is not None:
+                    wandb_logger._wandb.log({
+                        "train/critic_value_histogram": wandb.Histogram(critic_hist.float().numpy()),
+                        "Optimization step": optimization_step
+                    })
 
         # Calculate and log optimization frequency
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
@@ -762,6 +804,9 @@ def process_transitions_pi05(
             ):
                 logging.warning("[LEARNER] NaN detected in transition, skipping")
                 continue
+            
+            if transition["reward"] > 0:
+                logging.info(f"[LEARNER] Received transition with reward: {transition['reward']}")
 
             # --- Fix for Action Dimension Mismatch ---
             # Check if buffer is initialized and has a mismatch
