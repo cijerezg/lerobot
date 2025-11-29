@@ -143,7 +143,7 @@ class ReplayBuffer:
         # Pre-allocate tensors for storage
         self.states = {
             key: torch.empty(
-                (self.capacity, *shape), dtype=torch.uint8 if "images" in key else torch.bfloat16, device=self.storage_device)
+                (self.capacity, *shape), dtype=torch.bfloat16, device=self.storage_device)
             for key, shape in state_shapes.items()
         }
         self.actions = torch.empty((self.capacity, *action_shape), dtype=torch.bfloat16, device=self.storage_device)
@@ -152,7 +152,7 @@ class ReplayBuffer:
         if not self.optimize_memory:
             # Standard approach: store states and next_states separately
             self.next_states = {
-                key: torch.empty((self.capacity, *shape), dtype=torch.uint8 if "images" in key else torch.bfloat16, device=self.storage_device)
+                key: torch.empty((self.capacity, *shape), dtype=torch.bfloat16, device=self.storage_device)
                 for key, shape in state_shapes.items()
             }
         else:
@@ -206,10 +206,7 @@ class ReplayBuffer:
 
         # Store the transition in pre-allocated tensors
         for key in self.states:
-            aux_arr = state[key].squeeze(dim=0)
-            if "images" in key:
-                aux_arr = aux_arr.to(torch.uint8)
-            self.states[key][self.position].copy_(aux_arr)
+            self.states[key][self.position].copy_(state[key].squeeze(dim=0))
 
             if not self.optimize_memory:
                 # Only store next_states if not optimizing memory
@@ -240,7 +237,15 @@ class ReplayBuffer:
             raise RuntimeError("Cannot sample from an empty buffer. Add transitions first.")
 
         batch_size = min(batch_size, self.size)
-        high = max(0, self.size - 1) if self.optimize_memory and self.size < self.capacity else self.size
+        if self.optimize_memory and self.size < self.capacity:
+            high = self.size - action_chunk_size
+            if high <= 0:
+                raise RuntimeError(
+                    f"Buffer size ({self.size}) is too small for action_chunk_size ({action_chunk_size}) "
+                    "when optimize_memory=True. Wait for more data."
+                )
+        else:
+            high = self.size
 
         # Loop until we get at least one valid sample
         while True:
@@ -554,7 +559,7 @@ class ReplayBuffer:
             for k, v in data.items():
                 if isinstance(v, dict):
                     for key, tensor in v.items():
-                        # Convert images to uint8, other state data to bfloat16
+                        # Convert images and other state data to bfloat16
                         if "images" in key:
                             # Resize images to 224x224 before storing (offline dataset may have different size)
                             import torchvision.transforms.functional as F_vision  # noqa: N812
@@ -562,7 +567,7 @@ class ReplayBuffer:
                             if tensor.shape[-2:] != (expected_height, expected_width):
                                 tensor = F_vision.resize(tensor, (expected_height, expected_width))
                                 tensor = tensor.clamp(0.0, 1.0)
-                            v[key] = tensor.to(dtype=torch.uint8, device=storage_device)
+                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
                         else:
                             v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
                 elif isinstance(v, torch.Tensor):
@@ -584,7 +589,7 @@ class ReplayBuffer:
             for k, v in data.items():
                 if isinstance(v, dict):
                     for key, tensor in v.items():
-                        # Convert images to uint8, other state data to bfloat16
+                        # Convert images and other state data to bfloat16
                         if "images" in key:
                             # Resize images to 224x224 before storing (offline dataset may have different size)
                             import torchvision.transforms.functional as F_vision  # noqa: N812
@@ -592,7 +597,7 @@ class ReplayBuffer:
                             if tensor.shape[-2:] != (expected_height, expected_width):
                                 tensor = F_vision.resize(tensor, (expected_height, expected_width))
                                 tensor = tensor.clamp(0.0, 1.0)
-                            v[key] = tensor.to(dtype=torch.uint8, device=storage_device)
+                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
                         else:
                             v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
                 elif isinstance(v, torch.Tensor):

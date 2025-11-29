@@ -310,21 +310,22 @@ def add_actor_information_and_train(
 
     last_time_policy_pushed = time.time()
 
-    # Freeze parameters except Action Expert and Advantage/Fusion MLPs
-    logging.info("Freezing parameters...")
+    # Freeze ALL parameters except the LAST layer of gemma_expert (for minimal testing)
+    # gemma_expert has layers 0-17, so layer 17 is the last one
+    logging.info("Freezing ALL parameters except last gemma_expert layer (minimal mode)...")
     for name, param in policy.named_parameters():
+        # Only train layer 17 of gemma_expert (the last layer)
         param.requires_grad = (
-            "gemma_expert" in name or 
-            "advantage_mlp" in name or
-            "fusion_mlp" in name or
+            "gemma_expert" in name and 
+            ("layers.17" in name) or
             "critic" in name or
             "log_alpha" in name
         )
     
     # Log trainable parameters
     trainable_params = [n for n, p in policy.named_parameters() if p.requires_grad]
-    logging.info(f"Trainable parameters: {len(trainable_params)}")
-    # logging.info(f"Trainable parameter names: {trainable_params}") # Uncomment for debug
+    logging.info(f"MINIMAL MODE: Trainable parameters: {len(trainable_params)}")
+    logging.info(f"Trainable parameter names: {trainable_params}")  # Show what's being trainedebug
 
     optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg=cfg, policy=policy)
 
@@ -493,43 +494,41 @@ def add_actor_information_and_train(
                 "next_observation_feature": next_observation_features,
             }
 
-            # --- Preprocessing for Pi05 (Tokenization) ---
-            # We need to generate language tokens for the policy
-            # The preprocessor expects a dict with observation keys and "task"
-            
-            # Use observations (batch["state"]) as base
+            # --- Preprocessing for Pi05 (Tokenization and Normalization) ---
+            # Preprocess current observations
             batch_for_proc = {k: v for k, v in observations.items()}
-            
-            # Add task
             current_batch_size = actions.shape[0]
             batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
-            
-            # Add actions for normalization
             batch_for_proc[ACTION] = actions
             
-            # Run preprocessor
-            # Note: This might normalize images/state if stats are loaded. 
-            # We only extract tokens to avoid double-normalization issues if policy.forward handles normalization.
             with torch.no_grad():
                 processed_batch = policy.preprocessor(batch_for_proc)
             
+            # Preprocess next observations (for critic)
+            next_batch_for_proc = {k: v for k, v in next_observations.items()}
+            next_batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
+            next_batch_for_proc[ACTION] = actions  # Not used, but required by preprocessor
+            
+            with torch.no_grad():
+                processed_next_batch = policy.preprocessor(next_batch_for_proc)
+            
             from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
             
-            # Inject tokens into forward_batch["state"] so they are available to the policy
-            # The policy expects them in batch["state"] or batch directly depending on how it's called
-            # PI05RLPolicy.forward(model="actor") uses:
-            # actor_batch = batch.copy(); actor_batch.update(batch["state"])
-            # tokens = actor_batch[OBS_LANGUAGE_TOKENS]
+            # Update forward_batch with normalized observations for critic
+            # Replace unnormalized images/state with normalized versions
+            for key in processed_batch.keys():
+                if key.startswith("observation."):
+                    forward_batch["state"][key] = processed_batch[key]
             
-            # So we should add them to forward_batch["state"]
+            for key in processed_next_batch.keys():
+                if key.startswith("observation."):
+                    forward_batch["next_state"][key] = processed_next_batch[key]
+            
+            # Add tokens and normalized actions
             forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
             forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
-            
-            # Also add to forward_batch directly just in case
             forward_batch[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
             forward_batch[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
-
-            # Update forward_batch with normalized actions
             forward_batch[ACTION] = processed_batch[ACTION]
 
             # --- Pi05 RL Update Logic ---
@@ -603,35 +602,41 @@ def add_actor_information_and_train(
             "next_observation_feature": next_observation_features,
         }
 
-        # --- Preprocessing for Pi05 (Tokenization) ---
-        # We need to generate language tokens for the policy
-        # The preprocessor expects a dict with observation keys and "task"
-        
-        # Use observations (batch["state"]) as base
+        # --- Preprocessing for Pi05 (Tokenization and Normalization) ---
+        # Preprocess current observations
         batch_for_proc = {k: v for k, v in observations.items()}
-        
-        # Add task
         current_batch_size = actions.shape[0]
         batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
-        
-        # Add actions for normalization
         batch_for_proc[ACTION] = actions
         
-        # Run preprocessor
         with torch.no_grad():
             processed_batch = policy.preprocessor(batch_for_proc)
         
+        # Preprocess next observations (for critic)
+        next_batch_for_proc = {k: v for k, v in next_observations.items()}
+        next_batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
+        next_batch_for_proc[ACTION] = actions  # Not used, but required by preprocessor
+        
+        with torch.no_grad():
+            processed_next_batch = policy.preprocessor(next_batch_for_proc)
+        
         from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
         
-        # Inject tokens into forward_batch["state"] so they are available to the policy
+        # Update forward_batch with normalized observations for critic
+        # Replace unnormalized images/state with normalized versions
+        for key in processed_batch.keys():
+            if key.startswith("observation."):
+                forward_batch["state"][key] = processed_batch[key]
+        
+        for key in processed_next_batch.keys():
+            if key.startswith("observation."):
+                forward_batch["next_state"][key] = processed_next_batch[key]
+        
+        # Add tokens and normalized actions
         forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
         forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
-        
-        # Also add to forward_batch directly just in case
         forward_batch[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
         forward_batch[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
-
-        # Update forward_batch with normalized actions
         forward_batch[ACTION] = processed_batch[ACTION]
 
         # --- Pi05 RL Update Logic (Last Step) ---

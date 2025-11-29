@@ -203,7 +203,6 @@ class Pi05Critic(nn.Module):
         state_emb = self.state_encoder(state)
         
         # Combine
-        import pdb; pdb.set_trace()
         combined = torch.cat([img_emb, state_emb], dim=-1)
         value = self.v_net(combined)
         
@@ -559,7 +558,7 @@ class PI05RLPolicy(PI05Policy):
                 next_v = self.critic_target(batch["next_state"])
                 reward = batch["reward"]
                 done = batch["done"]
-                
+                import pdb; pdb.set_trace()
                 # Ensure reward and done have shape [B, 1]
                 # Handle both 1D [B] and potentially wrong 2D shapes like [B, 2]
                 batch_size = next_v.shape[0]
@@ -573,9 +572,12 @@ class PI05RLPolicy(PI05Policy):
                     done = done[:, :1]
                     
                 target = reward + (1 - done) * self.config.discount * next_v
+            print(f'target: {target.mean()}')
             
             current_v = self.critic(batch["state"]) # Learner passes 'state' dict
             
+
+            print(f'current_v: {current_v.mean()}')
             loss_critic = F.mse_loss(current_v, target)
             return {"loss_critic": loss_critic}
             

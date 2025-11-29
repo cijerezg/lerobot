@@ -85,6 +85,8 @@ from lerobot.rl.actor import (
     push_transitions_to_transport_queue,
 )
 
+import math
+
 # Main entry point
 
 
@@ -298,14 +300,21 @@ def act_with_policy(
         for k, v in transition[TransitionKey.OBSERVATION].items():
             if k in cfg.policy.input_features:
                 batch_for_preprocessor[k] = v
-
-        # Add task for tokenization
+        
+        # Add task and robot_type - observations are already processed tensors from env_processor
+        # (already normalized [0,1], in CHW format, with batch dimension, on device)
         batch_for_preprocessor["task"] = cfg.policy.task
+        batch_for_preprocessor["robot_type"] = online_env.robot.robot_type if hasattr(online_env, 'robot') else ""
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
             with torch.no_grad():
-                # Apply preprocessor if available (handles normalization, tokenization, state padding)
+                # Apply preprocessor if available (handles tokenization, state padding, etc.)
+                # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
+                # env_processor has already converted observations to proper tensor format.
+                if interaction_step > 8:
+                    import pdb; pdb.set_trace()
+                
                 if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
                     processed_batch = policy.preprocessor(batch_for_preprocessor)
                 else:
@@ -316,6 +325,14 @@ def act_with_policy(
 
                 # Apply postprocessor if available (handles unnormalization)
                 if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
+                    # Slice action to 6 dimensions as requested
+                    if action.shape[-1] > 6:
+                        action = action[..., :6]
+                    
+                    # Clamp to [-1, 1] to ensure safety and prevent violent movements
+                    #clamp_val = 0.1 + 1.9 / (1 + math.exp(-0.001 * (interaction_step - 5000)))
+                    #action = torch.clamp(action, lamp_val, clamp_val)
+
                     action = policy.postprocessor(action)
 
         policy_fps = policy_timer.fps_last
