@@ -217,6 +217,7 @@ class ReplayBuffer:
         self.dones[self.position] = done
         self.truncateds[self.position] = truncated
 
+
         # Handle complementary_info if provided and storage is initialized
         if complementary_info is not None and self.has_complementary_info:
             # Store the complementary_info
@@ -237,15 +238,7 @@ class ReplayBuffer:
             raise RuntimeError("Cannot sample from an empty buffer. Add transitions first.")
 
         batch_size = min(batch_size, self.size)
-        if self.optimize_memory and self.size < self.capacity:
-            high = self.size - action_chunk_size
-            if high <= 0:
-                raise RuntimeError(
-                    f"Buffer size ({self.size}) is too small for action_chunk_size ({action_chunk_size}) "
-                    "when optimize_memory=True. Wait for more data."
-                )
-        else:
-            high = self.size
+        high = max(0, self.size - 1) if self.optimize_memory and self.size < self.capacity else self.size
 
         # Loop until we get at least one valid sample
         while True:
@@ -333,8 +326,22 @@ class ReplayBuffer:
             chunk_indices = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
             batch_actions = self.actions[chunk_indices].to(self.device)
 
-        batch_rewards = self.rewards[idx].to(self.device)
-        batch_dones = self.dones[idx].to(self.device).float()
+        
+        # Handle rewards and dones with lookahead awareness
+        if len(self.actions.shape) == 2 and action_chunk_size > 1:
+            # Create lookahead window including current position [idx, idx+1, ..., idx+chunk_size-1]
+            lookahead_window = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
+            lookahead_window = lookahead_window + action_chunk_size
+            lookahead_window = torch.clamp(lookahead_window, max=self.size - 1)
+            
+            # Get max reward and any done in the lookahead window
+            batch_rewards = self.rewards[lookahead_window].max(dim=1)[0].to(self.device)
+            batch_dones = self.dones[lookahead_window].any(dim=1).float().to(self.device)
+        else:
+            # No chunking - use standard logic
+            batch_rewards = self.rewards[idx].to(self.device)
+            batch_dones = self.dones[idx].to(self.device).float()
+        
         batch_truncateds = self.truncateds[idx].to(self.device).float()
 
         # Sample complementary_info if available
@@ -765,7 +772,16 @@ class ReplayBuffer:
                 current_state[key] = val.unsqueeze(0)  # Add batch dimension
 
             # ----- 2) Action -----
-            action = current_sample[ACTION].unsqueeze(0)  # Add batch dimension
+            action = current_sample[ACTION]
+            
+            # CRITICAL FIX: Handle pre-chunked actions from dataset
+            # If the dataset was loaded with delta_indices (e.g., [0, 1, ..., 49]),
+            # actions will be shape [50, 6] instead of [6]
+            # We only want the FIRST action to keep buffer storage simple and consistent
+            if action.ndim == 2:  # Shape is [chunk_size, action_dim]
+                action = action[0]  # Extract first timestep only  → shape [action_dim]
+            
+            action = action.unsqueeze(0)  # Add batch dimension → shape [1, action_dim]
 
             # ----- 3) Determine done flag -----
             if has_done_key:

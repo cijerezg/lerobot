@@ -203,7 +203,7 @@ class RobotEnv(gym.Env):
         self.observation_space = gym.spaces.Dict(observation_spaces)
 
         # Define the action space for joint positions along with setting an intervention flag.
-        action_dim = 3
+        action_dim = len(self._joint_names)
         bounds = {}
         bounds["min"] = -np.ones(action_dim)
         bounds["max"] = np.ones(action_dim)

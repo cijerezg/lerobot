@@ -36,7 +36,6 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.datasets.utils import load_stats
 from lerobot.processor import TransitionKey
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.queue import get_last_item_from_queue
@@ -244,26 +243,11 @@ def act_with_policy(
     )
 
     # Initialize preprocessor and postprocessor
-    # Try to load stats from dataset if available, or use config stats
-    dataset_stats = None
-    if cfg.dataset is not None:
-        try:
-            # We only need stats, so we can use load_stats utility
-            # Construct root path similar to LeRobotDataset
-            from lerobot.utils.constants import HF_LEROBOT_HOME
-            from pathlib import Path
-            root = Path(cfg.dataset.root) if cfg.dataset.root else HF_LEROBOT_HOME / cfg.dataset.repo_id
-            dataset_stats = load_stats(root)
-            logging.info(f"Loaded dataset stats from {root}")
-        except Exception as e:
-            logging.warning(f"Failed to load dataset stats: {e}")
-            
-    if dataset_stats is None and cfg.policy.dataset_stats is not None:
-        dataset_stats = cfg.policy.dataset_stats
-        
+    # Load stats directly from the pretrained checkpoint
+    # This ensures we use the exact same stats the policy was trained with
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
-        dataset_stats=dataset_stats,
+        pretrained_path=cfg.policy.pi05_checkpoint,
     )
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
@@ -353,6 +337,10 @@ def act_with_policy(
         executed_action = new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"]
 
         reward = new_transition[TransitionKey.REWARD]
+
+        if reward > 0:
+            logging.info(f"[ACTOR] Received transition with reward: {reward}")
+
         done = new_transition.get(TransitionKey.DONE, False)
         truncated = new_transition.get(TransitionKey.TRUNCATED, False)
 
@@ -469,9 +457,6 @@ def act_with_policy(
             )
         )
         
-        if reward > 0:
-            logging.info(f"[ACTOR] Sending transition with reward: {reward}")
-
         # Update transition for next iteration
         transition = new_transition
 

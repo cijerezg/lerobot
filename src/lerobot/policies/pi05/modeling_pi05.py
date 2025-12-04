@@ -671,7 +671,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
         action_time_emb = action_emb
         adarms_cond = time_emb
-
+        
         embs.append(action_time_emb)
         bsize, action_time_dim = action_time_emb.shape[:2]
         action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=timestep.device)
@@ -754,6 +754,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         **kwargs: Unpack[ActionSelectKwargs],
     ) -> Tensor:
         """Do a full inference forward and compute the action."""
+
         if num_steps is None:
             num_steps = self.config.num_inference_steps
 
@@ -767,12 +768,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 self.config.chunk_size,
                 self.config.max_action_dim,
             )  # Use config max_action_dim for internal processing
-            noise = self.sample_noise(actions_shape, device)
+            noise = self.sample_noise(actions_shape, device) * 0
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
+        
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
@@ -784,6 +786,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=True,
         )
 
+        
         dt = -1.0 / num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 

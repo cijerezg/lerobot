@@ -342,11 +342,32 @@ def add_actor_information_and_train(
     offline_replay_buffer = None
 
     if cfg.dataset is not None:
-        offline_replay_buffer = initialize_offline_replay_buffer(
-            cfg=cfg,
+        # Inline initialize_offline_replay_buffer to allow modifying dataset before buffer creation
+        if not cfg.resume:
+            logging.info("make_dataset offline buffer")
+            offline_dataset = make_dataset(cfg)
+        else:
+            logging.info("load offline dataset")
+            dataset_offline_path = os.path.join(cfg.output_dir, "dataset_offline")
+            offline_dataset = LeRobotDataset(
+                repo_id=cfg.dataset.repo_id,
+                root=dataset_offline_path,
+            )
+
+        # Disable delta_timestamps to avoid chunking (we want single frames for the buffer)
+        offline_dataset.delta_timestamps = None
+        offline_dataset.delta_indices = None
+
+        logging.info("Convert to a offline replay buffer")
+        offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
+            offline_dataset,
             device=device,
-            storage_device=storage_device
+            state_keys=cfg.policy.input_features.keys(),
+            storage_device=storage_device,
+            optimize_memory=True,
+            capacity=cfg.policy.offline_buffer_capacity,
         )
+        offline_replay_buffer.dataset = offline_dataset
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
     # import pdb; pdb.set_trace()
@@ -362,20 +383,13 @@ def add_actor_information_and_train(
     
 
     # Create preprocessor and postprocessor for the policy
-    # Using stats=None means identity normalization (no normalization)
-    # This matches the real recording case where stats are computed on-the-fly
+    # Load stats directly from the pretrained checkpoint
+    # This ensures we use the exact same stats the policy was trained with
     from lerobot.policies.factory import make_pre_post_processors
-    # Create preprocessor and postprocessor
-    # Try to get stats from offline buffer if available
-    dataset_stats = None
-    if offline_replay_buffer is not None:
-        dataset_stats = offline_replay_buffer.dataset.meta.stats
-    elif cfg.policy.dataset_stats is not None:
-        dataset_stats = cfg.policy.dataset_stats
     
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
-        dataset_stats=dataset_stats,
+        pretrained_path=cfg.policy.pi05_checkpoint,
     )
     # Store preprocessors on the policy for actor to access
     policy.preprocessor = preprocessor
@@ -587,9 +601,6 @@ def add_actor_information_and_train(
         observations = batch["state"]
         next_observations = batch["next_state"]
         done = batch["done"]
-        
-        if rewards.max() > 0:
-             logging.info(f"[LEARNER] Sampled batch with max reward: {rewards.max().item()}, mean: {rewards.mean().item()}")
 
         check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
 
@@ -804,9 +815,6 @@ def process_transitions_pi05(
             ):
                 logging.warning("[LEARNER] NaN detected in transition, skipping")
                 continue
-            
-            if transition["reward"] > 0:
-                logging.info(f"[LEARNER] Received transition with reward: {transition['reward']}")
 
             # --- Fix for Action Dimension Mismatch ---
             # Check if buffer is initialized and has a mismatch

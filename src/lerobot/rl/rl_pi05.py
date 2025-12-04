@@ -351,9 +351,9 @@ class PI05RLPytorch(PI05Pytorch):
 
     def sample_actions(self, images, img_masks, tokens, masks, advantage) -> Tensor:
         """Sample actions with advantage conditioning."""
-        # Embed prefix
+        # Embed prefix        
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
-
+ 
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
@@ -365,7 +365,7 @@ class PI05RLPytorch(PI05Pytorch):
         device = images[0].device
         
         # Start from noise
-        x_t = self.sample_noise((bs, self.config.chunk_size, self.config.max_action_dim), device)
+        x_t = self.sample_noise((bs, self.config.chunk_size, self.config.max_action_dim), device) * 0
         
         # Precompute Prefix KV Cache
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
@@ -402,6 +402,7 @@ class PI05RLPytorch(PI05Pytorch):
             # Euler step
             x_t = x_t + v_t * dt
             t += dt
+
             
         return x_t
 
