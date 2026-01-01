@@ -217,10 +217,7 @@ def act_with_policy(
         init_logging(log_file=log_file, display_pid=True)
         logging.info("Actor policy process logging initialized")
 
-    logging.info("make_env online")
 
-    online_env, teleop_device = make_robot_env(cfg=cfg.env)
-    env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
     
     set_seed(cfg.seed)
     
@@ -254,6 +251,11 @@ def act_with_policy(
 
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
+
+    logging.info("make_env online")
+
+    online_env, teleop_device = make_robot_env(cfg=cfg.env)
+    env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
     obs, info = online_env.reset()
     env_processor.reset()
@@ -292,6 +294,7 @@ def act_with_policy(
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
+
             with torch.no_grad():
                 # Apply preprocessor if available (handles tokenization, state padding, etc.)
                 # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
@@ -315,6 +318,8 @@ def act_with_policy(
                     #action = torch.clamp(action, lamp_val, clamp_val)
 
                     action = policy.postprocessor(action)
+                    
+                    
 
         policy_fps = policy_timer.fps_last
 

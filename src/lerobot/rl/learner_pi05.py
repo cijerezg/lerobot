@@ -266,6 +266,7 @@ def add_actor_information_and_train(
     device = get_safe_torch_device(try_device=device_name, log=True)
     storage_device = get_safe_torch_device(try_device=cfg.policy.storage_device)
     clip_grad_norm_value = cfg.policy.grad_clip_norm
+    gradient_accumulation_steps = getattr(cfg.policy, "gradient_accumulation_steps", 1)
     online_step_before_learning = cfg.policy.online_step_before_learning
     utd_ratio = cfg.policy.utd_ratio
     fps = cfg.env.fps
@@ -275,7 +276,9 @@ def add_actor_information_and_train(
     policy_parameters_push_frequency = cfg.policy.actor_learner_config.policy_parameters_push_frequency
     saving_checkpoint = cfg.save_checkpoint
     online_steps = cfg.policy.online_steps
+    online_steps = cfg.policy.online_steps
     async_prefetch = cfg.policy.async_prefetch
+    online_buffer_save_freq = getattr(cfg, "online_buffer_save_freq", None)
 
     # Initialize logging for multiprocessing
     if not use_threads(cfg):
@@ -459,104 +462,107 @@ def add_actor_information_and_train(
 
         time_for_one_optimization_step = time.time()
         for _ in range(utd_ratio - 1):
-            # Sample from the iterators
-            batch = next(online_iterator)
+            # Gradient accumulation for critic
+            optimizers["critic"].zero_grad()
+            for accum_step in range(gradient_accumulation_steps):
+                # Sample from the iterators
+                batch = next(online_iterator)
 
-            # Ensure online batch actions are 6-dim (if buffer is 32-dim)
-            if batch[ACTION].shape[-1] > 6:
-                 batch[ACTION] = batch[ACTION][..., :6]
+                # Ensure online batch actions are 6-dim (if buffer is 32-dim)
+                if batch[ACTION].shape[-1] > 6:
+                     batch[ACTION] = batch[ACTION][..., :6]
 
-            if dataset_repo_id is not None:
-                batch_offline = next(offline_iterator)
-                # Slice offline actions to match online actions (6 dims)
-                batch_offline[ACTION] = batch_offline[ACTION][..., :6]
-                batch = concatenate_batch_transitions(
-                    left_batch_transitions=batch, right_batch_transition=batch_offline
+                if dataset_repo_id is not None:
+                    batch_offline = next(offline_iterator)
+                    # Slice offline actions to match online actions (6 dims)
+                    batch_offline[ACTION] = batch_offline[ACTION][..., :6]
+                    batch = concatenate_batch_transitions(
+                        left_batch_transitions=batch, right_batch_transition=batch_offline
+                    )
+
+                # Move batch to device
+                batch = move_transition_to_device(batch, device)
+
+                if cfg.policy.dtype == "bfloat16":
+                    # Manual casting for now
+                    if isinstance(batch, dict):
+                        batch = {k: cast_to_bf16(v) for k, v in batch.items()}
+                    else:
+                        new_batch_data = {}
+                        for field in batch._fields:
+                            val = getattr(batch, field)
+                            new_batch_data[field] = cast_to_bf16(val)
+                        
+                        batch = type(batch)(**new_batch_data)
+
+                actions = batch[ACTION]
+                rewards = batch["reward"]
+                observations = batch["state"]
+                next_observations = batch["next_state"]
+                done = batch["done"]
+                check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
+
+                observation_features, next_observation_features = get_observation_features(
+                    policy=policy, observations=observations, next_observations=next_observations
                 )
 
-            # Move batch to device
-            batch = move_transition_to_device(batch, device)
+                # Create a batch dictionary with all required elements for the forward method
+                forward_batch = {
+                    ACTION: actions,
+                    "reward": rewards,
+                    "state": observations,
+                    "next_state": next_observations,
+                    "done": done,
+                    "observation_feature": observation_features,
+                    "next_observation_feature": next_observation_features,
+                }
 
-            if cfg.policy.dtype == "bfloat16":
-                # Manual casting for now
-                if isinstance(batch, dict):
-                    batch = {k: cast_to_bf16(v) for k, v in batch.items()}
-                else:
-                    new_batch_data = {}
-                    for field in batch._fields:
-                        val = getattr(batch, field)
-                        new_batch_data[field] = cast_to_bf16(val)
-                    
-                    batch = type(batch)(**new_batch_data)
+                # --- Preprocessing for Pi05 (Tokenization and Normalization) ---
+                # Preprocess current observations
+                batch_for_proc = {k: v for k, v in observations.items()}
+                current_batch_size = actions.shape[0]
+                batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
+                batch_for_proc[ACTION] = actions
+                
+                with torch.no_grad():
+                    processed_batch = policy.preprocessor(batch_for_proc)
+                
+                # Preprocess next observations (for critic)
+                next_batch_for_proc = {k: v for k, v in next_observations.items()}
+                next_batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
+                next_batch_for_proc[ACTION] = actions  # Not used, but required by preprocessor
+                
+                with torch.no_grad():
+                    processed_next_batch = policy.preprocessor(next_batch_for_proc)
+                
+                from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
+                
+                # Update forward_batch with normalized observations for critic
+                # Replace unnormalized images/state with normalized versions
+                for key in processed_batch.keys():
+                    if key.startswith("observation."):
+                        forward_batch["state"][key] = processed_batch[key]
+                
+                for key in processed_next_batch.keys():
+                    if key.startswith("observation."):
+                        forward_batch["next_state"][key] = processed_next_batch[key]
+                
+                # Add tokens and normalized actions
+                forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
+                forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+                forward_batch[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
+                forward_batch[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+                forward_batch[ACTION] = processed_batch[ACTION]
 
-            actions = batch[ACTION]
-            rewards = batch["reward"]
-            observations = batch["state"]
-            next_observations = batch["next_state"]
-            done = batch["done"]
-            check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
-
-            observation_features, next_observation_features = get_observation_features(
-                policy=policy, observations=observations, next_observations=next_observations
-            )
-
-            # Create a batch dictionary with all required elements for the forward method
-            forward_batch = {
-                ACTION: actions,
-                "reward": rewards,
-                "state": observations,
-                "next_state": next_observations,
-                "done": done,
-                "observation_feature": observation_features,
-                "next_observation_feature": next_observation_features,
-            }
-
-            # --- Preprocessing for Pi05 (Tokenization and Normalization) ---
-            # Preprocess current observations
-            batch_for_proc = {k: v for k, v in observations.items()}
-            current_batch_size = actions.shape[0]
-            batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
-            batch_for_proc[ACTION] = actions
+                # --- Pi05 RL Update Logic ---
+                
+                # 1. Critic Update (Value Function) with scaled loss
+                critic_output = policy.forward(forward_batch, model="critic")
+                loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
+                loss_critic.backward()
             
-            with torch.no_grad():
-                processed_batch = policy.preprocessor(batch_for_proc)
-            
-            # Preprocess next observations (for critic)
-            next_batch_for_proc = {k: v for k, v in next_observations.items()}
-            next_batch_for_proc["task"] = [cfg.policy.task] * current_batch_size
-            next_batch_for_proc[ACTION] = actions  # Not used, but required by preprocessor
-            
-            with torch.no_grad():
-                processed_next_batch = policy.preprocessor(next_batch_for_proc)
-            
-            from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
-            
-            # Update forward_batch with normalized observations for critic
-            # Replace unnormalized images/state with normalized versions
-            for key in processed_batch.keys():
-                if key.startswith("observation."):
-                    forward_batch["state"][key] = processed_batch[key]
-            
-            for key in processed_next_batch.keys():
-                if key.startswith("observation."):
-                    forward_batch["next_state"][key] = processed_next_batch[key]
-            
-            # Add tokens and normalized actions
-            forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
-            forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
-            forward_batch[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
-            forward_batch[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
-            forward_batch[ACTION] = processed_batch[ACTION]
-
-            # --- Pi05 RL Update Logic ---
-            
-            # 1. Critic Update (Value Function)
-            critic_output = policy.forward(forward_batch, model="critic")
-            loss_critic = critic_output["loss_critic"]
-            
-            optimizers["critic"].zero_grad()
-            loss_critic.backward()
-            critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+            # Clip and step after accumulation
+            torch.nn.utils.clip_grad_norm_(
                 parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
             )
             optimizers["critic"].step()
@@ -567,7 +573,10 @@ def add_actor_information_and_train(
             # ----------------------------
 
         # Sample for the last update in the UTD ratio
-        batch = next(online_iterator)
+        # Gradient accumulation for critic
+        optimizers["critic"].zero_grad()
+        for accum_step in range(gradient_accumulation_steps):
+            batch = next(online_iterator)
 
         # Ensure online batch actions are 6-dim (if buffer is 32-dim)
         if batch[ACTION].shape[-1] > 6:
@@ -657,59 +666,107 @@ def add_actor_information_and_train(
         forward_batch[ACTION] = processed_batch[ACTION]
 
         # --- Pi05 RL Update Logic (Last Step) ---
-
         
-        # 1. Critic Update
+        # Initialize metric accumulators for critic
+        accum_loss_critic = 0.0
+        accum_td_error_mean = 0.0
+        accum_td_error_std = 0.0
+        accum_critic_value_mean = 0.0
+        accum_critic_value_std = 0.0
+        accum_target_value_mean = 0.0
+        accum_target_value_std = 0.0
+        critic_values_list = []  # For histogram logging
+        
+        # Critic Update with scaled loss and metric accumulation
         critic_output = policy.forward(forward_batch, model="critic")
-        loss_critic = critic_output["loss_critic"]
-        
-        optimizers["critic"].zero_grad()
+        loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
         loss_critic.backward()
+        
+        # Accumulate metrics
+        accum_loss_critic += critic_output["loss_critic"].item()
+        accum_td_error_mean += critic_output["td_error_mean"]
+        accum_td_error_std += critic_output["td_error_std"]
+        accum_critic_value_mean += critic_output["critic_value_mean"]
+        accum_critic_value_std += critic_output["critic_value_std"]
+        accum_target_value_mean += critic_output["target_value_mean"]
+        accum_target_value_std += critic_output["target_value_std"]
+        critic_values_list.append(critic_output["critic_values"])  # Collect for histogram
+        
+        # Clip and step after accumulation
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(
             parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
         ).item()
         optimizers["critic"].step()
 
-        # Initialize training info dictionary
+        # Initialize training info dictionary (averaged across accumulation steps)
         training_infos = {
-            "loss_critic": critic_output["loss_critic"].item(),
+            "loss_critic": accum_loss_critic / gradient_accumulation_steps,
             "critic_grad_norm": critic_grad_norm,
-            "td_error_mean": critic_output["td_error_mean"],
-            "td_error_std": critic_output["td_error_std"],
-            "critic_value_mean": critic_output["critic_value_mean"],
-            "critic_value_std": critic_output["critic_value_std"],
-            "target_value_mean_critic": critic_output["target_value_mean"],
-            "target_value_std": critic_output["target_value_std"],
+            "td_error_mean": accum_td_error_mean / gradient_accumulation_steps,
+            "td_error_std": accum_td_error_std / gradient_accumulation_steps,
+            "critic_value_mean": accum_critic_value_mean / gradient_accumulation_steps,
+            "critic_value_std": accum_critic_value_std / gradient_accumulation_steps,
+            "target_value_mean_critic": accum_target_value_mean / gradient_accumulation_steps,
+            "target_value_std": accum_target_value_std / gradient_accumulation_steps,
         }
+        
+        # Store critic histogram from critic update
+        training_infos["critic_histogram_from_critic"] = torch.cat(critic_values_list, dim=0)
 
         # 2. Actor Update (Flow Matching with Advantage)
         if optimization_step % policy_update_freq == 0:
             for _ in range(policy_update_freq):
-                actor_output = policy.forward(forward_batch, model="actor")
-                loss_actor = actor_output["loss_actor"]
-                
+                # Gradient accumulation for actor with metric accumulation
                 optimizers["actor"].zero_grad()
-                loss_actor.backward()
+                
+                # Initialize metric accumulators for actor
+                accum_loss_actor = 0.0
+                accum_advantage_mean = 0.0
+                accum_advantage_std = 0.0
+                accum_target_value_mean = 0.0
+                accum_reward_mean = 0.0
+                accum_critic_value_mean_actor = 0.0
+                accum_critic_value_std_actor = 0.0
+                advantage_values_list = []
+                critic_values_list = []
+                
+                for accum_step in range(gradient_accumulation_steps):
+                    actor_output = policy.forward(forward_batch, model="actor")
+                    loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
+                    loss_actor.backward()
+                    
+                    # Accumulate metrics
+                    accum_loss_actor += actor_output["loss_actor"].item()
+                    accum_advantage_mean += actor_output["advantage_mean"]
+                    accum_advantage_std += actor_output["advantage_std"]
+                    accum_target_value_mean += actor_output["target_value_mean"]
+                    accum_reward_mean += actor_output["reward_mean"]
+                    accum_critic_value_mean_actor += actor_output["critic_value_mean"]
+                    accum_critic_value_std_actor += actor_output["critic_value_std"]
+                    advantage_values_list.append(actor_output["advantage_values"])
+                    critic_values_list.append(actor_output["critic_values"])
+                
+                # Clip and step after accumulation
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(
                     parameters=policy.actor.parameters(), max_norm=clip_grad_norm_value
                 ).item()
                 optimizers["actor"].step()
 
-                # Add actor info to training info
-                training_infos["loss_actor"] = actor_output["loss_actor"].item()
+                # Add actor info to training info (averaged across accumulation steps)
+                training_infos["loss_actor"] = accum_loss_actor / gradient_accumulation_steps
                 training_infos["actor_grad_norm"] = actor_grad_norm
                 
-                # Add advantage and value metrics
-                training_infos["advantage_mean"] = actor_output["advantage_mean"]
-                training_infos["advantage_std"] = actor_output["advantage_std"]
-                training_infos["target_value_mean"] = actor_output["target_value_mean"]
-                training_infos["reward_mean"] = actor_output["reward_mean"]
-                training_infos["critic_value_mean_actor"] = actor_output["critic_value_mean"]
-                training_infos["critic_value_std_actor"] = actor_output["critic_value_std"]
+                # Add advantage and value metrics (averaged across accumulation steps)
+                training_infos["advantage_mean"] = accum_advantage_mean / gradient_accumulation_steps
+                training_infos["advantage_std"] = accum_advantage_std / gradient_accumulation_steps
+                training_infos["target_value_mean"] = accum_target_value_mean / gradient_accumulation_steps
+                training_infos["reward_mean"] = accum_reward_mean / gradient_accumulation_steps
+                training_infos["critic_value_mean_actor"] = accum_critic_value_mean_actor / gradient_accumulation_steps
+                training_infos["critic_value_std_actor"] = accum_critic_value_std_actor / gradient_accumulation_steps
                 
-                # Store histograms for wandb (will be logged separately)
-                training_infos["advantage_histogram"] = actor_output["advantage_values"]
-                training_infos["critic_histogram"] = actor_output["critic_values"]
+                # Store concatenated histograms for wandb (will be logged separately)
+                training_infos["advantage_histogram"] = torch.cat(advantage_values_list, dim=0)
+                training_infos["critic_histogram"] = torch.cat(critic_values_list, dim=0)
                 
                 # No Temperature Update for Pi05 RL (Entropy not used)
 
@@ -786,6 +843,24 @@ def add_actor_information_and_train(
                 dataset_repo_id=dataset_repo_id,
                 fps=fps,
             )
+
+        # Save online buffer at specified intervals
+        if online_buffer_save_freq is not None and optimization_step % online_buffer_save_freq == 0:
+            logging.info(f"[LEARNER] Saving online buffer at step {optimization_step}")
+            online_buffer_dir = os.path.join(cfg.output_dir, "online_buffer")
+            
+            # Remove existing buffer directory to overwrite
+            if os.path.exists(online_buffer_dir) and os.path.isdir(online_buffer_dir):
+                shutil.rmtree(online_buffer_dir)
+            
+            # Save buffer as dataset
+            replay_buffer.to_lerobot_dataset(
+                repo_id="online_buffer",
+                fps=fps,
+                root=online_buffer_dir,
+                task_name=cfg.policy.task,
+            )
+            logging.info(f"[LEARNER] Online buffer saved to {online_buffer_dir}")
 
         if optimization_step >= online_steps:
             logging.info("[LEARNER] Reached maximum online steps. Stopping training.")

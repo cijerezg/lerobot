@@ -1102,8 +1102,10 @@ class MotorsBus(abc.ABC):
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> tuple[dict[int, int], int]:
+
         self._setup_sync_reader(motor_ids, addr, length)
         for n_try in range(1 + num_retry):
+            self.port_handler.clearPort()
             comm = self.sync_reader.txRxPacket()
             if self._is_comm_success(comm):
                 break

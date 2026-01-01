@@ -53,6 +53,7 @@ class PI05RLConfig(PI05Config):
     online_step_before_learning: int = 100
     policy_update_freq: int = 1
     grad_clip_norm: float = 40.0
+    gradient_accumulation_steps: int = 1
     
     # Learning rates
     critic_lr: float = 3e-4
@@ -118,97 +119,121 @@ class PI05RLConfig(PI05Config):
     def get_scheduler_preset(self) -> None:
         return None
 
-class Pi05Critic(nn.Module):
-    """Value Function Critic for Pi05 RL integration.
+from transformers import CONFIG_MAPPING
+from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer, GemmaRMSNorm, GemmaRotaryEmbedding
+from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE
+
+class Pi05TransformerCritic(nn.Module):
+    """Transformer-based Value Critic using Gemma architecture.
     
-    Estimates V(s).
-    Uses a lightweight CNN for images and MLP for state.
+    Takes prefix_embs from the actor and applies additional Gemma layers
+    to process the sequence before predicting the value.
     """
     def __init__(self, config: PI05RLConfig):
         super().__init__()
         self.config = config
-        
-        # Get the dtype from config
         self.dtype = getattr(torch, config.dtype) if hasattr(torch, config.dtype) else torch.float32
         
-        # Simple CNN for 224x224 images
-        # Input: [B, 3, 224, 224]
-        self.vision_encoder = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=8, stride=4), # -> [32, 55, 55]
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2), # -> [64, 26, 26]
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1), # -> [64, 24, 24]
-            nn.ReLU(),
-            nn.Flatten(),
-            nn.Linear(64 * 24 * 24, 256),
-            nn.LayerNorm(256),
-            nn.Tanh()
+        # Get Gemma config to match actor architecture
+        paligemma_config = get_gemma_config(config.paligemma_variant)
+        hidden_dim = paligemma_config.width
+        
+        # Configurable dimensions (hardcoded for now as per user request)
+        # 5 layers, hidden=2048, mlp=4096
+        num_layers = 5
+        mlp_dim = 4096
+        
+        critic_gemma_config = CONFIG_MAPPING["gemma"](
+            head_dim=256,
+            hidden_size=hidden_dim,
+            intermediate_size=mlp_dim,
+            num_attention_heads=8,
+            num_hidden_layers=num_layers,
+            num_key_value_heads=1,
+            vocab_size=1,  # Not used
+            hidden_activation="gelu_pytorch_tanh",
+            torch_dtype=self.dtype,
+            use_adarms=False,
         )
         
-        # State encoder - use actual state dimension from input features, not padded max_state_dim
-        state_dim = config.input_features["observation.state"].shape[0]
+        # Learned query token for value prediction
+        self.value_query = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+        # Force contiguous gradients to avoid DDP warnings and implicit copies
+        self.value_query.register_hook(lambda grad: grad.contiguous())
         
-        self.state_encoder = nn.Sequential(
-            nn.Linear(state_dim, 256),
-            nn.LayerNorm(256),
-            nn.Tanh()
+        # Rotary Embeddings
+        self.rotary_emb = GemmaRotaryEmbedding(critic_gemma_config)
+        
+        # Transformer layers
+        self.layers = nn.ModuleList([
+            GemmaDecoderLayer(critic_gemma_config, layer_idx=i)
+            for i in range(num_layers)
+        ])
+        
+        # Final normalization
+        self.norm = GemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
+        
+        # Value head
+        self.value_head = nn.Sequential(
+            nn.Linear(hidden_dim, 512),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(512, 1)
         )
         
-        # Value Network
-        self.v_net = nn.Sequential(
-            nn.Linear(256 + 256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1)
-        )
+    def forward(self, prefix_embs: Tensor, prefix_pad_masks: Tensor) -> Tensor:
+        """
+        Args:
+            prefix_embs: [B, seq_len, hidden_dim]
+            prefix_pad_masks: [B, seq_len]
+        Returns:
+            value: [B, 1]
+        """
+        batch_size, seq_len, _ = prefix_embs.shape
         
-    def forward(self, batch: dict[str, Tensor]) -> Tensor:
-        # Process images
-        # Find first available image key
-        img_key = None
-        for key in batch.keys():
-            # Look for "images" (plural) in the key name, matching "observation.images.xxx"
-            if "images" in key and "mask" not in key:
-                img_key = key
-                break
+        # Add value query token at the beginning
+        # Use .repeat() to avoid DDP grad stride warnings (expand creates a view which can cause issues with DDP buckets)
+        value_query = self.value_query.repeat(batch_size, 1, 1)
+        hidden_states = torch.cat([value_query, prefix_embs], dim=1)
         
-        if img_key:
-            img = batch[img_key]
-            # Convert to correct dtype and ensure correct shape [B, C, H, W]
-            if img.dtype != self.dtype:
-                img = img.to(self.dtype)
-            if img.shape[1] != 3: # If channels last
-                img = img.permute(0, 3, 1, 2)
-            
-            # Resize if needed (simple resize)
-            if img.shape[-2:] != (224, 224):
-                img = F.interpolate(img, size=(224, 224), mode='bilinear')
-                
-            img_emb = self.vision_encoder(img)
-        else:
-            # No images found - use observation.state to get device and batch size
-            if "observation.state" not in batch:
-                raise ValueError(
-                    f"Critic received batch without images and without 'observation.state'. "
-                    f"Available keys: {list(batch.keys())}"
-                )
-            state = batch["observation.state"]
-            device = state.device
-            bs = state.shape[0]
-            img_emb = torch.zeros(bs, 256, device=device, dtype=self.dtype)
-
-        # Process State  
-        state = batch["observation.state"]
-        if state.dtype != self.dtype:
-            state = state.to(self.dtype)
-            
-        state_emb = self.state_encoder(state)
+        # Update padding mask to include query token
+        query_mask = torch.ones(batch_size, 1, dtype=torch.bool, device=prefix_pad_masks.device)
+        pad_mask = torch.cat([query_mask, prefix_pad_masks], dim=1)
         
-        # Combine
-        combined = torch.cat([img_emb, state_emb], dim=-1)
-        value = self.v_net(combined)
+        # Create attention mask
+        full_seq_len = seq_len + 1
+        attention_mask = pad_mask[:, None, None, :].expand(batch_size, 1, full_seq_len, full_seq_len)
+        attention_mask = torch.where(attention_mask, 0.0, OPENPI_ATTENTION_MASK_VALUE)
+        
+        # Create position IDs
+        position_ids = torch.arange(full_seq_len, device=hidden_states.device).unsqueeze(0).expand(batch_size, -1)
+        
+        # Compute Rotary Embeddings
+        cos, sin = self.rotary_emb(hidden_states, position_ids)
+        position_embeddings = (cos, sin)
+        
+        # Apply transformer layers
+        for layer in self.layers:
+            layer_outputs = layer(
+                hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                position_embeddings=position_embeddings,
+            )
+            hidden_states = layer_outputs[0]
+        
+        # Final normalization
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+        hidden_states = self.norm(hidden_states)
+        if isinstance(hidden_states, tuple):
+            hidden_states = hidden_states[0]
+        
+        # Extract query token output
+        query_output = hidden_states[:, 0, :]
+        
+        # Predict value
+        value = self.value_head(query_output.to(self.dtype))
         
         return value
 
@@ -252,8 +277,25 @@ class PI05RLPytorch(PI05Pytorch):
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, images, img_masks, tokens, masks, actions, advantage, noise=None, time=None) -> Tensor:
+    def forward(
+        self,
+        images,
+        img_masks,
+        tokens,
+        masks,
+        actions,
+        advantage,
+        noise=None,
+        time=None,
+        prefix_embs=None,
+        prefix_pad_masks=None,
+        prefix_att_masks=None,
+    ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
+        # Embed prefix (images + text)
+        if prefix_embs is None:
+            prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -263,8 +305,6 @@ class PI05RLPytorch(PI05Pytorch):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
         
         # Pass advantage to embed_suffix
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time, advantage)
@@ -424,48 +464,14 @@ class PI05RLPolicy(PI05Policy):
         # Use our subclassed model
         self.model = PI05RLPytorch(config, rtc_processor=self.rtc_processor)
 
-        # Load pretrained weights if pi05_checkpoint is specified
-        if config.pi05_checkpoint:
-            print(f"Loading pretrained Pi05 weights from {config.pi05_checkpoint}")
-            # Load a vanilla PI05Policy to get the pretrained weights
-            temp_policy = PI05Policy.from_pretrained(
-                config.pi05_checkpoint, 
-                config=config,
-                strict=False
-            )
-            # Copy weights to our RL model (strict=False allows RL-specific layers to keep their init)
-            missing_keys, unexpected_keys = self.model.load_state_dict(
-                temp_policy.model.state_dict(), 
-                strict=False
-            )
-            
-            # Filter out expected missing keys (RL-specific layers)
-            expected_missing = [
-                "advantage_mlp_in", "advantage_mlp_out", "fusion_mlp"
-            ]
-            actual_missing = [k for k in missing_keys if not any(exp in k for exp in expected_missing)]
-            
-            if actual_missing:
-                print(f"⚠ Missing keys: {actual_missing[:5]}")
-            if unexpected_keys:
-                print(f"⚠ Unexpected keys: {unexpected_keys[:5]}")
-            
-            print("✓ Pretrained Pi05 weights loaded successfully")
-            del temp_policy  # Free memory
-
-        if config.gradient_checkpointing:
-            self.model.gradient_checkpointing_enable()
-
-        # Note: Device placement is handled by the caller (e.g., learner, actor)
-        # Do not call self.model.to(device) here
-        
         # --- RL Integration ---
         # Initialize Value Critic
         if config.use_separate_critic:
-            self.critic = Pi05Critic(config)
-            self.critic_target = Pi05Critic(config)
+            self.critic = Pi05TransformerCritic(config)
+            self.critic_target = Pi05TransformerCritic(config)
             self.critic_target.load_state_dict(self.critic.state_dict())
-            
+            self.critic_target.requires_grad_(False)
+            self.critic_target.eval()
             # Convert critic networks to match the policy's dtype
             # This is important because the batch data will be cast to bfloat16 in the learner
             if config.dtype == "bfloat16":
@@ -486,6 +492,129 @@ class PI05RLPolicy(PI05Policy):
         self.target_entropy = config.target_entropy
         
         self.actor = self.model
+
+        # Load pretrained weights if pi05_checkpoint is specified
+        if config.pi05_checkpoint:
+            print(f"Loading pretrained Pi05 weights from {config.pi05_checkpoint}")
+            
+            # Check if it's an RL checkpoint (has critic or advantage_mlp)
+            # We peek at the state dict first
+            from safetensors.torch import load_file
+            import os
+            
+            checkpoint_path = config.pi05_checkpoint
+            if os.path.isdir(checkpoint_path):
+                # Try to find model.safetensors or pytorch_model.bin
+                if os.path.exists(os.path.join(checkpoint_path, "model.safetensors")):
+                    checkpoint_file = os.path.join(checkpoint_path, "model.safetensors")
+                    state_dict = load_file(checkpoint_file)
+                elif os.path.exists(os.path.join(checkpoint_path, "pytorch_model.bin")):
+                    checkpoint_file = os.path.join(checkpoint_path, "pytorch_model.bin")
+                    state_dict = torch.load(checkpoint_file, map_location="cpu")
+                else:
+                    # Fallback to vanilla loading if no weight file found directly
+                    print("No weight file found directly, falling back to vanilla loading")
+                    state_dict = None
+            else:
+                 # It's a file
+                if checkpoint_path.endswith(".safetensors"):
+                    state_dict = load_file(checkpoint_path)
+                else:
+                    state_dict = torch.load(checkpoint_path, map_location="cpu")
+
+            is_rl_checkpoint = False
+            if state_dict is not None:
+                # Check for RL-specific keys
+                if any("critic" in k for k in state_dict.keys()) or any("advantage_mlp" in k for k in state_dict.keys()):
+                    is_rl_checkpoint = True
+                    print("Detected RL checkpoint (contains critic/advantage layers)")
+            
+            if is_rl_checkpoint:
+                # Load components separately to avoid aliasing issues (critic vs critic_ensemble)
+                print("Loading actor and critic components separately...")
+                
+                actor_state_dict = {}
+                critic_state_dict = {}
+                
+                for k, v in state_dict.items():
+                    if k.startswith("actor."):
+                        # Strip 'actor.' prefix for loading into self.model
+                        new_key = k[6:] # len("actor.") == 6
+                        actor_state_dict[new_key] = v
+                    elif k.startswith("critic."):
+                        # Strip 'critic.' prefix for loading into self.critic
+                        new_key = k[7:] # len("critic.") == 7
+                        critic_state_dict[new_key] = v
+                
+                # Handle tied weights for actor
+                # Check for missing embed_tokens and populate from lm_head
+                embed_key_suffix = "paligemma.model.language_model.embed_tokens.weight"
+                lm_head_suffix = "paligemma.lm_head.weight"
+                
+                keys_to_add = {}
+                for k, v in actor_state_dict.items():
+                    if k.endswith(lm_head_suffix):
+                        prefix = k[:-len(lm_head_suffix)]
+                        embed_key = prefix + embed_key_suffix
+                        if embed_key not in actor_state_dict:
+                             print(f"Populating missing {embed_key} from {k} (tied weights)")
+                             keys_to_add[embed_key] = v
+                actor_state_dict.update(keys_to_add)
+
+                # Load actor
+                missing_actor, unexpected_actor = self.model.load_state_dict(actor_state_dict, strict=False)
+                print(f"Actor loaded. Missing: {len(missing_actor)}, Unexpected: {len(unexpected_actor)}")
+                if missing_actor:
+                    print(f"Sample missing actor: {missing_actor[:5]}")
+                
+                # Load critic
+                missing_critic, unexpected_critic = self.critic.load_state_dict(critic_state_dict, strict=False)
+                print(f"Critic loaded. Missing: {len(missing_critic)}, Unexpected: {len(unexpected_critic)}")
+                if missing_critic:
+                    print(f"Sample missing critic: {missing_critic[:5]}")
+
+                # Sync critic_target
+                print("Syncing critic_target with loaded critic...")
+                self.critic_target.load_state_dict(self.critic.state_dict())
+
+                # NOTE: PI05 uses external preprocessors for normalization instead of internal modules.
+                # The preprocessor is loaded separately via make_pre_post_processors() in the runner scripts.
+                # So we don't expect to find 'normalize_inputs' in the state_dict here.
+                print("✓ RL components loaded (Normalization is handled by external preprocessor)")
+                    
+            else:
+                # Vanilla checkpoint loading (original logic)
+                print("Loading as vanilla Pi05 checkpoint")
+                # Load a vanilla PI05Policy to get the pretrained weights
+                temp_policy = PI05Policy.from_pretrained(
+                    config.pi05_checkpoint, 
+                    config=config,
+                    strict=False
+                )
+                # Copy weights to our RL model (strict=False allows RL-specific layers to keep their init)
+                missing_keys, unexpected_keys = self.model.load_state_dict(
+                    temp_policy.model.state_dict(), 
+                    strict=False
+                )
+                
+                # NOTE: PI05 uses external preprocessor for normalization instead of internal modules.
+                # The preprocessor is loaded separately via make_pre_post_processors() with the checkpoint path.
+                # So there's no normalize_inputs/normalize_outputs to copy here - that's expected behavior.
+                
+                # Filter out expected missing keys (RL-specific layers)
+                expected_missing = [
+                    "advantage_mlp_in", "advantage_mlp_out", "fusion_mlp"
+                ]
+                actual_missing = [k for k in missing_keys if not any(exp in k for exp in expected_missing)]
+                
+                if actual_missing:
+                    print(f"⚠ Missing keys: {actual_missing[:5]}")
+                if unexpected_keys:
+                    print(f"⚠ Unexpected keys: {unexpected_keys[:5]}")
+                
+                print("✓ Pretrained Pi05 weights loaded successfully")
+                print("  (Normalization is handled by external preprocessor, not policy)")
+                del temp_policy  # Free memory
 
         # Freeze parameters if requested
         if config.freeze_vision_tower:
@@ -522,23 +651,65 @@ class PI05RLPolicy(PI05Policy):
     ) -> tuple[Tensor, dict] | dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training."""
         
-        if model is None:
-            # BC Mode - Use inference advantage or 0?
-            # For BC, we might want to condition on "High Advantage" to clone expert behavior?
-            # Or just 0 if expert data is assumed to be optimal?
-            # Let's use 0 for pure BC compatibility or inference_advantage.
-            # Let's use inference_advantage to be consistent.
-            advantage = torch.full((batch["action"].shape[0], 1), self.config.inference_advantage, device=self.config.device)
+        if model == "temperature":
+            return {"loss_temperature": torch.tensor(0.0, device=self.config.device, requires_grad=True)}
+
+        # --- Shared Computation: Embeddings ---
+        # We always need current state embeddings
+        # For 'actor' and None (BC), we need gradients.
+        # For 'critic', we don't need gradients for the encoder (it's detached).
+        use_grad = (model != "critic")
+        
+        with torch.set_grad_enabled(use_grad):
+            # Preprocess current observation
+            # Flatten batch["state"] into a new dict so _preprocess_images can find image keys
+            current_batch = batch.copy()
+            if "state" in batch:
+                current_batch.update(batch["state"])
             
-            # Preprocessor has already normalized and tokenized the inputs
-            images, img_masks = self._preprocess_images(batch)
+            images, img_masks = self._preprocess_images(current_batch)
             from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ACTION
-            tokens = batch[OBS_LANGUAGE_TOKENS]
-            masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
+            tokens = current_batch[OBS_LANGUAGE_TOKENS]
+            masks = current_batch[OBS_LANGUAGE_ATTENTION_MASK]
             
+            # Compute current state embeddings
+            prefix_embs, prefix_pad_masks, prefix_att_masks = self.model.embed_prefix(images, img_masks, tokens, masks)
+
+        # For RL modes (actor/critic), we also need next state embeddings for Target Value
+        next_prefix_embs = None
+        next_prefix_pad_masks = None
+        
+        if model in ["actor", "critic"]:
+            with torch.no_grad():
+                if "next_state" in batch:
+                    next_batch = batch["next_state"].copy() # next_state is already a dict of features
+                    # Ensure next_batch has all keys needed by _preprocess_images
+                    
+                    next_images, next_img_masks = self._preprocess_images(next_batch)
+                    next_tokens = next_batch[OBS_LANGUAGE_TOKENS]
+                    next_masks = next_batch[OBS_LANGUAGE_ATTENTION_MASK]
+                    
+                    next_prefix_embs, next_prefix_pad_masks, _ = self.model.embed_prefix(
+                        next_images, next_img_masks, next_tokens, next_masks
+                    )
+                else:
+                    # Fallback or error if next_state is missing in RL mode?
+                    # Assuming it's present for RL
+                    pass
+
+        # --- Branching Logic ---
+        
+        if model is None:
+            # BC Mode
+            advantage = torch.full((batch["action"].shape[0], 1), self.config.inference_advantage, device=self.config.device)
             actions = self.prepare_action(batch)
             
-            losses = self.model.forward(images, img_masks, tokens, masks, actions, advantage)
+            losses = self.model.forward(
+                images, img_masks, tokens, masks, actions, advantage,
+                prefix_embs=prefix_embs,
+                prefix_pad_masks=prefix_pad_masks,
+                prefix_att_masks=prefix_att_masks
+            )
             
             original_action_dim = self.config.output_features[ACTION].shape[0]
             losses = losses[:, :, :original_action_dim]
@@ -551,98 +722,94 @@ class PI05RLPolicy(PI05Policy):
             return loss, loss_dict
 
         elif model == "actor":
-            # RL Actor Mode
-            # 1. Compute Advantage
+            # --- Actor Update ---
+            # 1. Compute Advantage: A(s, a) = r + gamma * V(s') - V(s)
+            
             with torch.no_grad():
-                # V(s) - batch["state"] contains observation.state, observation.images.xxx, etc.
-                current_v = self.critic(batch["state"])
+                # Compute V(s) using current critic (detached input)
+                current_v = self.critic(prefix_embs.detach(), prefix_pad_masks)
                 
-                # V_target(s')
-                next_v = self.critic_target(batch["next_state"])
+                # Compute V(s') using target critic
+                next_v = self.critic_target(next_prefix_embs.detach(), next_prefix_pad_masks)
                 
                 reward = batch["reward"]
-                done = batch["done"]
+                if reward.ndim == 1:
+                    reward = reward.unsqueeze(-1)
+                    
+                not_done = 1.0
+                if "next.done" in batch:
+                    not_done = 1.0 - batch["next.done"].float()
+                    if not_done.ndim == 1:
+                        not_done = not_done.unsqueeze(-1)
                 
-                # Ensure reward and done have shape [B, 1]
-                # Handle both 1D [B] and potentially wrong 2D shapes like [B, 2]
-                batch_size = current_v.shape[0]
-                reward = reward.reshape(batch_size, -1)
-                done = done.reshape(batch_size, -1)
-                
-                # Take only first column if multiple columns exist
-                if reward.shape[1] > 1:
-                    reward = reward[:, :1]
-                if done.shape[1] > 1:
-                    done = done[:, :1]
-                
-                # A = (r + gamma * V(s')) - V(s)
-                target_v = reward + (1 - done) * self.config.discount * next_v
+                target_v = reward + self.config.discount * next_v * not_done
                 advantage = target_v - current_v
-                
-                # Scale advantage
-                advantage = advantage * self.config.advantage_scaling
             
-            # 2. Train Actor with Advantage Conditioning
-            from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ACTION
-            
-            # Flatten batch["state"] into a new dict so _preprocess_images can find image keys
-            actor_batch = batch.copy()
-            actor_batch.update(batch["state"])
-            
-            # Preprocessor has already tokenized the inputs
-            tokens = actor_batch[OBS_LANGUAGE_TOKENS]
-            masks = actor_batch[OBS_LANGUAGE_ATTENTION_MASK]
-
-            images, img_masks = self._preprocess_images(actor_batch)
-            actions = self.prepare_action(actor_batch)
-            
-            # Ensure actions and advantage are in float32 as expected by modeling_pi05.py
-            # The model converts embeddings to bfloat16 internally when needed
+            # 2. Train Actor
+            # Pass pre-computed embeddings
+            # We need actions for the actor loss
+            # In RL, actions come from the batch (behavior cloning / offline RL) 
+            # or sampled? 
+            # For offline RL (IQL/etc), we use batch actions.
+            # For online, we use batch actions (on-policy or off-policy replay).
+            actions = self.prepare_action(batch)
             actions = actions.to(dtype=torch.float32)
             advantage = advantage.to(dtype=torch.float32)
             
-            losses = self.model.forward(images, img_masks, tokens, masks, actions, advantage)
             
-            original_action_dim = self.config.output_features[ACTION].shape[0]
-            losses = losses[:, :, :original_action_dim]
-            loss = losses.mean()
+            loss_tensor = self.model.forward(
+                images, 
+                img_masks, 
+                tokens, 
+                masks, 
+                actions, 
+                advantage, 
+                prefix_embs=prefix_embs,
+                prefix_pad_masks=prefix_pad_masks,
+                prefix_att_masks=prefix_att_masks
+            )
             
-            # Collect metrics for wandb logging
+            # Compute mean loss
+            loss = loss_tensor.mean()
+            
+            # Create return dictionary with all expected metrics (matching learner expectations at lines 477-488)
             return {
                 "loss_actor": loss,
                 "advantage_mean": advantage.mean().item(),
-                "advantage_std": advantage.std().item(),
-                "advantage_values": advantage.detach().cpu().flatten(),
-                "critic_value_mean": current_v.mean().item(),
-                "critic_value_std": current_v.std().item(),
-                "critic_values": current_v.detach().cpu().flatten(),
+                "advantage_std": advantage.std(unbiased=False).item(),
                 "target_value_mean": target_v.mean().item(),
-                "reward_mean": reward.mean().item(),
+                "reward_mean": batch["reward"].mean().item(),
+                "critic_value_mean": current_v.mean().item(),
+                "critic_value_std": current_v.std(unbiased=False).item(),
+                "q_values": current_v.mean().item(),  # Legacy compatibility
+                "q_targets": target_v.mean().item(),  # Legacy compatibility
+                "advantage_values": advantage.detach().cpu().flatten(),
+                "critic_values": current_v.detach().cpu().flatten(),
             }
-            
-        elif model == "critic":
-            # Value Critic Loss
-            # Target: r + gamma * V_target(s')
-            # Current: V(s)
 
-            with torch.no_grad():
-                next_v = self.critic_target(batch["next_state"])
-                reward = batch["reward"]
-                done = batch["done"]
-                # Ensure reward and done have shape [B, 1]
-                # Handle both 1D [B] and potentially wrong 2D shapes like [B, 2]
-                batch_size = next_v.shape[0]
-                reward = reward.reshape(batch_size, -1)
-                done = done.reshape(batch_size, -1)
-                
-                # Take only first column if multiple columns exist
-                if reward.shape[1] > 1:
-                    reward = reward[:, :1]
-                if done.shape[1] > 1:
-                    done = done[:, :1]
-                target = reward + (1 - done) * self.config.discount * next_v
+        elif model == "critic":
+            # --- Critic Update ---
+            # Minimize MSE(V(s), r + gamma * V(s')_target)
             
-            current_v = self.critic(batch["state"]) # Learner passes 'state' dict
+            # Compute V(s)
+            current_v = self.critic(prefix_embs.detach(), prefix_pad_masks)
+            
+            # Compute Target
+            with torch.no_grad():
+                next_v = self.critic_target(next_prefix_embs.detach(), next_prefix_pad_masks)
+                
+                reward = batch["reward"]
+                if reward.ndim == 1:
+                    reward = reward.unsqueeze(-1)
+                
+                not_done = 1.0
+                if "next.done" in batch:
+                    not_done = 1.0 - batch["next.done"].float()
+                    if not_done.ndim == 1:
+                        not_done = not_done.unsqueeze(-1)
+                        
+                target = reward + self.config.discount * next_v * not_done
+            
             loss_critic = F.mse_loss(current_v, target)
             
             # Collect metrics for wandb logging
@@ -650,15 +817,13 @@ class PI05RLPolicy(PI05Policy):
             return {
                 "loss_critic": loss_critic,
                 "critic_value_mean": current_v.mean().item(),
-                "critic_value_std": current_v.std().item(),
+                "critic_value_std": current_v.std(unbiased=False).item(),
                 "target_value_mean": target.mean().item(),
-                "target_value_std": target.std().item(),
+                "target_value_std": target.std(unbiased=False).item(),
                 "td_error_mean": td_error.mean().item(),
-                "td_error_std": td_error.std().item(),
+                "td_error_std": td_error.std(unbiased=False).item(),
+                "critic_values": current_v.detach().cpu().flatten(),  # For histogram logging
             }
-            
-        elif model == "temperature":
-            return {"loss_temperature": torch.tensor(0.0, device=self.config.device, requires_grad=True)}
             
         else:
             raise ValueError(f"Unknown model: {model}")

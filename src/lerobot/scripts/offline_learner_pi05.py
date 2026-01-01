@@ -199,6 +199,7 @@ def run_offline_training(
     storage_device = get_safe_torch_device(try_device=cfg.policy.storage_device)
     
     clip_grad_norm_value = cfg.policy.grad_clip_norm
+    gradient_accumulation_steps = getattr(cfg.policy, "gradient_accumulation_steps", 1)
     utd_ratio = cfg.policy.utd_ratio
     fps = cfg.env.fps
     log_freq = cfg.log_freq
@@ -235,13 +236,23 @@ def run_offline_training(
     # Freeze parameters based on config (same as online learner)
     if is_main_process:
         logging.info("Freezing ALL parameters except last gemma_expert layer (minimal mode)...")
+    
+    
     for name, param in policy.named_parameters():
-        # Only train layer 17 of gemma_expert (the last layer)
         param.requires_grad = (
-            "gemma_expert" in name and 
-            ("layers.17" in name) or
+            #"gemma_expert" in name or 
+            #"vision_tower" in name or 
+            #"multi_modal_project" in name or
+            "action_in_proj" in name or
+            "action_out_proj" in name or 
+            "time_mlp_in" in name or
+            "time_mlp_out" in name or
             "critic" in name or
-            "log_alpha" in name
+            "log_alpha" in name or
+            "advantage_mlp" in name or
+            "fusion_mlp" in name
+            #("language_model" in name and any(f".{i}." in name for i in [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or
+            #"language_model.norm" in name
         )
     
     # Log trainable parameters
@@ -346,18 +357,86 @@ def run_offline_training(
             break
         
         time_for_one_optimization_step = time.time()
-        
+        print(f'optimization_step: {optimization_step}')
+
         # UTD ratio - 1 updates (critic only)
         for _ in range(utd_ratio - 1):
+            # Gradient accumulation for critic
+            optimizers["critic"].zero_grad()
+            for accum_step in range(gradient_accumulation_steps):
+                batch = next(offline_iterator)
+                
+                # Slice offline actions to match expected dimension (6 dims)
+                batch[ACTION] = batch[ACTION][..., :6]
+                
+                # Move batch to device
+                batch = move_transition_to_device(batch, device)
+                
+                # Cast to bfloat16 if needed
+                if cast_to_bf16 is not None:
+                    if isinstance(batch, dict):
+                        batch = {k: cast_to_bf16(v) for k, v in batch.items()}
+                    else:
+                        new_batch_data = {}
+                        for field in batch._fields:
+                            val = getattr(batch, field)
+                            new_batch_data[field] = cast_to_bf16(val)
+                        batch = type(batch)(**new_batch_data)
+                
+                actions = batch[ACTION]
+                rewards = batch["reward"]
+                observations = batch["state"]
+                next_observations = batch["next_state"]
+                done = batch["done"]
+                
+                # Preprocess observations
+                forward_batch = preprocess_batch_for_pi05(
+                    policy=policy,
+                    observations=observations,
+                    next_observations=next_observations,
+                    actions=actions,
+                    rewards=rewards,
+                    done=done,
+                    task=cfg.policy.task,
+                )
+                
+                # Critic update with scaled loss
+                critic_output = policy.forward(forward_batch, model="critic")
+                loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
+                loss_critic.backward()
+            
+            # Clip and step after accumulation
+            torch.nn.utils.clip_grad_norm_(
+                parameters=accelerator.unwrap_model(policy).critic_ensemble.parameters(), 
+                max_norm=clip_grad_norm_value
+            )
+            optimizers["critic"].step()
+            
+            # Update target networks
+            if hasattr(policy, "module"):
+                policy.module.update_target_networks()
+            else:
+                policy.update_target_networks()
+        
+        # Last update in UTD ratio (critic + actor)
+        # Gradient accumulation for critic with metric accumulation
+        optimizers["critic"].zero_grad()
+        
+        # Initialize metric accumulators
+        accum_loss_critic = 0.0
+        accum_td_error_mean = 0.0
+        accum_td_error_std = 0.0
+        accum_critic_value_mean = 0.0
+        accum_critic_value_std = 0.0
+        accum_target_value_mean = 0.0
+        accum_target_value_std = 0.0
+        critic_values_list = []  # For histogram logging
+        
+        for accum_step in range(gradient_accumulation_steps):
             batch = next(offline_iterator)
-            
-            # Slice offline actions to match expected dimension (6 dims)
             batch[ACTION] = batch[ACTION][..., :6]
-            
-            # Move batch to device
             batch = move_transition_to_device(batch, device)
             
-            # Cast to bfloat16 if needed
             if cast_to_bf16 is not None:
                 if isinstance(batch, dict):
                     batch = {k: cast_to_bf16(v) for k, v in batch.items()}
@@ -385,109 +464,97 @@ def run_offline_training(
                 task=cfg.policy.task,
             )
             
-            # Critic update
+            # Critic update with scaled loss
             critic_output = policy.forward(forward_batch, model="critic")
-            loss_critic = critic_output["loss_critic"]
-            
-            optimizers["critic"].zero_grad()
+            loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
             loss_critic.backward()
-            torch.nn.utils.clip_grad_norm_(
-                parameters=accelerator.unwrap_model(policy).critic_ensemble.parameters(), 
-                max_norm=clip_grad_norm_value
-            )
-            optimizers["critic"].step()
             
-            # Update target networks
-            if hasattr(policy, "module"):
-                policy.module.update_target_networks()
-            else:
-                policy.update_target_networks()
+            # Accumulate metrics
+            accum_loss_critic += critic_output["loss_critic"].item()
+            accum_td_error_mean += critic_output["td_error_mean"]
+            accum_td_error_std += critic_output["td_error_std"]
+            accum_critic_value_mean += critic_output["critic_value_mean"]
+            accum_critic_value_std += critic_output["critic_value_std"]
+            accum_target_value_mean += critic_output["target_value_mean"]
+            accum_target_value_std += critic_output["target_value_std"]
+            critic_values_list.append(critic_output["critic_values"])  # Collect for histogram
         
-        # Last update in UTD ratio (critic + actor)
-        batch = next(offline_iterator)
-        batch[ACTION] = batch[ACTION][..., :6]
-        batch = move_transition_to_device(batch, device)
-        
-        if cast_to_bf16 is not None:
-            if isinstance(batch, dict):
-                batch = {k: cast_to_bf16(v) for k, v in batch.items()}
-            else:
-                new_batch_data = {}
-                for field in batch._fields:
-                    val = getattr(batch, field)
-                    new_batch_data[field] = cast_to_bf16(val)
-                batch = type(batch)(**new_batch_data)
-        
-        actions = batch[ACTION]
-        rewards = batch["reward"]
-        observations = batch["state"]
-        next_observations = batch["next_state"]
-        done = batch["done"]
-        
-        # Preprocess observations
-        forward_batch = preprocess_batch_for_pi05(
-            policy=policy,
-            observations=observations,
-            next_observations=next_observations,
-            actions=actions,
-            rewards=rewards,
-            done=done,
-            task=cfg.policy.task,
-        )
-        
-        # Critic update
-        critic_output = policy.forward(forward_batch, model="critic")
-        loss_critic = critic_output["loss_critic"]
-        
-        optimizers["critic"].zero_grad()
-        loss_critic.backward()
+        # Clip and step after accumulation
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(
             parameters=accelerator.unwrap_model(policy).critic_ensemble.parameters(),
             max_norm=clip_grad_norm_value
         ).item()
         optimizers["critic"].step()
         
-        # Initialize training info
+        # Initialize training info (averaged across accumulation steps)
         training_infos = {
-            "loss_critic": critic_output["loss_critic"].item(),
+            "loss_critic": accum_loss_critic / gradient_accumulation_steps,
             "critic_grad_norm": critic_grad_norm,
-            "td_error_mean": critic_output["td_error_mean"],
-            "td_error_std": critic_output["td_error_std"],
-            "critic_value_mean": critic_output["critic_value_mean"],
-            "critic_value_std": critic_output["critic_value_std"],
-            "target_value_mean_critic": critic_output["target_value_mean"],
-            "target_value_std": critic_output["target_value_std"],
+            "td_error_mean": accum_td_error_mean / gradient_accumulation_steps,
+            "td_error_std": accum_td_error_std / gradient_accumulation_steps,
+            "critic_value_mean": accum_critic_value_mean / gradient_accumulation_steps,
+            "critic_value_std": accum_critic_value_std / gradient_accumulation_steps,
+            "target_value_mean_critic": accum_target_value_mean / gradient_accumulation_steps,
+            "target_value_std": accum_target_value_std / gradient_accumulation_steps,
         }
+        
+        # Store critic histogram from critic update
+        training_infos["critic_histogram_from_critic"] = torch.cat(critic_values_list, dim=0)
         
         # Actor update (at specified frequency)
         if optimization_step % policy_update_freq == 0:
             for _ in range(policy_update_freq):
-                actor_output = policy.forward(forward_batch, model="actor")
-                loss_actor = actor_output["loss_actor"]
-                
+                # Gradient accumulation for actor with metric accumulation
                 optimizers["actor"].zero_grad()
-                loss_actor.backward()
+                
+                # Initialize metric accumulators for actor
+                accum_loss_actor = 0.0
+                accum_advantage_mean = 0.0
+                accum_advantage_std = 0.0
+                accum_target_value_mean = 0.0
+                accum_reward_mean = 0.0
+                accum_critic_value_mean_actor = 0.0
+                accum_critic_value_std_actor = 0.0
+                advantage_values_list = []
+                critic_values_list = []
+                
+                for accum_step in range(gradient_accumulation_steps):
+                    actor_output = policy.forward(forward_batch, model="actor")
+                    loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
+                    loss_actor.backward()
+                    
+                    # Accumulate metrics
+                    accum_loss_actor += actor_output["loss_actor"].item()
+                    accum_advantage_mean += actor_output["advantage_mean"]
+                    accum_advantage_std += actor_output["advantage_std"]
+                    accum_target_value_mean += actor_output["target_value_mean"]
+                    accum_reward_mean += actor_output["reward_mean"]
+                    accum_critic_value_mean_actor += actor_output["critic_value_mean"]
+                    accum_critic_value_std_actor += actor_output["critic_value_std"]
+                    advantage_values_list.append(actor_output["advantage_values"])
+                    critic_values_list.append(actor_output["critic_values"])
+                
+                # Clip and step after accumulation
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(
                     parameters=accelerator.unwrap_model(policy).actor.parameters(),
                     max_norm=clip_grad_norm_value
                 ).item()
                 optimizers["actor"].step()
                 
-                # Add actor info
-                training_infos["loss_actor"] = actor_output["loss_actor"].item()
+                # Add actor info (averaged across accumulation steps)
+                training_infos["loss_actor"] = accum_loss_actor / gradient_accumulation_steps
                 training_infos["actor_grad_norm"] = actor_grad_norm
-                training_infos["advantage_mean"] = actor_output["advantage_mean"]
-                training_infos["advantage_std"] = actor_output["advantage_std"]
-                training_infos["target_value_mean"] = actor_output["target_value_mean"]
-                training_infos["reward_mean"] = actor_output["reward_mean"]
-                training_infos["critic_value_mean_actor"] = actor_output["critic_value_mean"]
-                training_infos["critic_value_std_actor"] = actor_output["critic_value_std"]
+                training_infos["advantage_mean"] = accum_advantage_mean / gradient_accumulation_steps
+                training_infos["advantage_std"] = accum_advantage_std / gradient_accumulation_steps
+                training_infos["target_value_mean"] = accum_target_value_mean / gradient_accumulation_steps
+                training_infos["reward_mean"] = accum_reward_mean / gradient_accumulation_steps
+                training_infos["critic_value_mean_actor"] = accum_critic_value_mean_actor / gradient_accumulation_steps
+                training_infos["critic_value_std_actor"] = accum_critic_value_std_actor / gradient_accumulation_steps
                 
-                # Store histograms
-                training_infos["advantage_histogram"] = actor_output["advantage_values"]
-                training_infos["critic_histogram"] = actor_output["critic_values"]
+                # Store concatenated histograms
+                training_infos["advantage_histogram"] = torch.cat(advantage_values_list, dim=0)
+                training_infos["critic_histogram"] = torch.cat(critic_values_list, dim=0)
         
-        # Update target networks
         # Update target networks
         if hasattr(policy, "module"):
             policy.module.update_target_networks()
@@ -653,8 +720,10 @@ def save_offline_checkpoint(
     """
     logging.info(f"[OFFLINE LEARNER] Saving checkpoint at step {optimization_step}")
     
-    # Create checkpoint directory
-    checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, offline_steps, optimization_step)
+    # Create checkpoint directory (convert output_dir to Path if it's a string)
+    from pathlib import Path
+    output_dir_path = Path(cfg.output_dir) if isinstance(cfg.output_dir, str) else cfg.output_dir
+    checkpoint_dir = get_step_checkpoint_dir(output_dir_path, offline_steps, optimization_step)
     
     # Save checkpoint with preprocessor and postprocessor
     save_checkpoint(
