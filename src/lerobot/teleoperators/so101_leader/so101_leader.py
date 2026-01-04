@@ -62,6 +62,7 @@ class SO101Leader(Teleoperator):
         self.is_intervening = False
         self.is_success = False
         self.terminate_episode = False
+        self.start_episode = False
         self.listener = None
         self.event_queue = Queue()
         self.bus_lock = Lock()
@@ -121,6 +122,9 @@ class SO101Leader(Teleoperator):
                 elif key.char == '0':
                     self.terminate_episode = True
                     logger.info("Failure/Termination triggered manually.")
+                elif key.char == '2':
+                    self.start_episode = True
+                    logger.info("Start Episode triggered manually.")
 
         except AttributeError:
             pass
@@ -198,6 +202,7 @@ class SO101Leader(Teleoperator):
             TeleopEvents.IS_INTERVENTION: self.is_intervening,
             TeleopEvents.TERMINATE_EPISODE: self.terminate_episode,
             TeleopEvents.SUCCESS: self.is_success,
+            TeleopEvents.START_EPISODE: self.start_episode,
             TeleopEvents.RERECORD_EPISODE: False,
         }
         
@@ -206,6 +211,8 @@ class SO101Leader(Teleoperator):
             self.is_success = False
         if self.terminate_episode:
             self.terminate_episode = False
+        if self.start_episode:
+            self.start_episode = False
             
         return events
 

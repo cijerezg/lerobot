@@ -275,247 +275,261 @@ def act_with_policy(
 
     policy_timer = TimerManager("Policy inference", log=False)
 
-    for interaction_step in range(cfg.policy.online_steps):
-        start_time = time.perf_counter()
-        if shutdown_event.is_set():
-            logging.info("[ACTOR] Shutting down act_with_policy")
-            return
+    try:
+        for interaction_step in range(cfg.policy.online_steps):
+            start_time = time.perf_counter()
+            if shutdown_event.is_set():
+                logging.info("[ACTOR] Shutting down act_with_policy")
+                return
 
-        # Build batch for preprocessor (needs all observation keys + task)
-        batch_for_preprocessor = {}
-        for k, v in transition[TransitionKey.OBSERVATION].items():
-            if k in cfg.policy.input_features:
-                batch_for_preprocessor[k] = v
-        
-        # Add task and robot_type - observations are already processed tensors from env_processor
-        # (already normalized [0,1], in CHW format, with batch dimension, on device)
-        batch_for_preprocessor["task"] = cfg.policy.task
-        batch_for_preprocessor["robot_type"] = online_env.robot.robot_type if hasattr(online_env, 'robot') else ""
+            # Build batch for preprocessor (needs all observation keys + task)
+            batch_for_preprocessor = {}
+            for k, v in transition[TransitionKey.OBSERVATION].items():
+                if k in cfg.policy.input_features:
+                    batch_for_preprocessor[k] = v
+            
+            # Add task and robot_type - observations are already processed tensors from env_processor
+            # (already normalized [0,1], in CHW format, with batch dimension, on device)
+            batch_for_preprocessor["task"] = cfg.policy.task
+            batch_for_preprocessor["robot_type"] = online_env.robot.robot_type if hasattr(online_env, 'robot') else ""
 
-        # Time policy inference and check if it meets FPS requirement
-        with policy_timer:
+            # Time policy inference and check if it meets FPS requirement
+            with policy_timer:
 
-            with torch.no_grad():
-                # Apply preprocessor if available (handles tokenization, state padding, etc.)
-                # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
-                # env_processor has already converted observations to proper tensor format.
-                if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
-                    processed_batch = policy.preprocessor(batch_for_preprocessor)
-                else:
-                    processed_batch = batch_for_preprocessor
-                
-                # PI05RLPolicy.select_action handles advantage injection internally (default 1.0)
-                action = policy.select_action(processed_batch)
-
-                # Apply postprocessor if available (handles unnormalization)
-                if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
-                    # Slice action to 6 dimensions as requested
-                    if action.shape[-1] > 6:
-                        action = action[..., :6]
-                    
-                    # Clamp to [-1, 1] to ensure safety and prevent violent movements
-                    #clamp_val = 0.1 + 1.9 / (1 + math.exp(-0.001 * (interaction_step - 5000)))
-                    #action = torch.clamp(action, lamp_val, clamp_val)
-
-                    action = policy.postprocessor(action)
-                    
-                    
-
-        policy_fps = policy_timer.fps_last
-
-        log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
-
-        # Use the new step function
-        new_transition = step_env_and_process_transition(
-            env=online_env,
-            transition=transition,
-            action=action,
-            env_processor=env_processor,
-            action_processor=action_processor,
-        )
-
-        # Extract values from processed transition
-        # (Conversion to policy format happens later when creating the transition)
-
-        # Teleop action is the action that was executed in the environment
-        # It is either the action from the teleop device or the action from the policy
-        executed_action = new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"]
-
-        reward = new_transition[TransitionKey.REWARD]
-
-        if reward > 0:
-            logging.info(f"[ACTOR] Received transition with reward: {reward}")
-
-        done = new_transition.get(TransitionKey.DONE, False)
-        truncated = new_transition.get(TransitionKey.TRUNCATED, False)
-
-        sum_reward_episode += float(reward)
-        episode_total_steps += 1
-
-        # Check for intervention from transition info
-        intervention_info = new_transition[TransitionKey.INFO]
-        is_intervening = intervention_info.get(TeleopEvents.IS_INTERVENTION, False)
-        if is_intervening:
-            episode_intervention = True
-            episode_intervention_steps += 1
-        else:
-            # Send feedback to teleop device if not intervening
-            # Extract raw joint positions from observation
-            feedback = {}
-            for key, value in new_transition[TransitionKey.OBSERVATION].items():
-                if key.endswith(".pos"):
-                    # value is likely a tensor, convert to float
-                    if isinstance(value, torch.Tensor):
-                        feedback[key] = value.item()
+                with torch.no_grad():
+                    # Apply preprocessor if available (handles tokenization, state padding, etc.)
+                    # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
+                    # env_processor has already converted observations to proper tensor format.
+                    if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
+                        processed_batch = policy.preprocessor(batch_for_preprocessor)
                     else:
-                        feedback[key] = float(value)
+                        processed_batch = batch_for_preprocessor
+                    
+                    # PI05RLPolicy.select_action handles advantage injection internally (default 1.0)
+                    action = policy.select_action(processed_batch)
 
-            if feedback:
-                teleop_device.send_feedback(feedback)
+                    # Apply postprocessor if available (handles unnormalization)
+                    if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
+                        # Slice action to 6 dimensions as requested
+                        if action.shape[-1] > 6:
+                            action = action[..., :6]
+                        
+                        # Clamp to [-1, 1] to ensure safety and prevent violent movements
+                        #clamp_val = 0.1 + 1.9 / (1 + math.exp(-0.001 * (interaction_step - 5000)))
+                        #action = torch.clamp(action, lamp_val, clamp_val)
 
-        complementary_info = {
-            "discrete_penalty": torch.tensor(
-                [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
-            ),
-        }
+                        action = policy.postprocessor(action)
+                        
+                        
+            policy_fps = policy_timer.fps_last
 
-        # Convert environment observations to policy-expected format
-        def convert_env_obs_to_policy_format(env_obs: dict) -> dict:
-            """Convert environment observation format to policy-expected format.
-            
-            Handles two cases:
-            1. Observations already in policy format (observation.images.xxx, observation.state)
-            2. Raw environment format (pixels dict or individual image keys, individual .pos keys)
-            """
-            policy_obs = {}
-            
-            # Check if observations are already in the correct format
-            # Relaxed check: if we have images OR state in policy format, we try to preserve them
-            has_policy_format = (
-                'observation.state' in env_obs or
-                any(k.startswith('observation.images.') for k in env_obs.keys())
+            log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
+
+            # Use the new step function
+            new_transition = step_env_and_process_transition(
+                env=online_env,
+                transition=transition,
+                action=action,
+                env_processor=env_processor,
+                action_processor=action_processor,
             )
-            
-            if has_policy_format:
-                # Observations are already in policy format (partial or full), just filter the relevant keys
-                for key in env_obs.keys():
-                    if key == 'observation.state' or key.startswith('observation.images.'):
-                        policy_obs[key] = env_obs[key]
-            
-            # If we are missing state or images, try to find them in raw format
-            # Images
-            camera_mapping = {
-                'wrist': 'observation.images.wrist',
-                'top': 'observation.images.top',
-                'side': 'observation.images.side',
+
+            # Extract values from processed transition
+            # (Conversion to policy format happens later when creating the transition)
+
+            # Teleop action is the action that was executed in the environment
+            # It is either the action from the teleop device or the action from the policy
+            executed_action = new_transition[TransitionKey.COMPLEMENTARY_DATA]["teleop_action"]
+
+            reward = new_transition[TransitionKey.REWARD]
+
+            if reward > 0:
+                logging.info(f"[ACTOR] Received transition with reward: {reward}")
+
+            done = new_transition.get(TransitionKey.DONE, False)
+            truncated = new_transition.get(TransitionKey.TRUNCATED, False)
+
+            sum_reward_episode += float(reward)
+            episode_total_steps += 1
+
+            # Check for intervention from transition info
+            intervention_info = new_transition[TransitionKey.INFO]
+            is_intervening = intervention_info.get(TeleopEvents.IS_INTERVENTION, False)
+            if is_intervening:
+                episode_intervention = True
+                episode_intervention_steps += 1
+            else:
+                # Send feedback to teleop device if not intervening
+                # Extract raw joint positions from observation
+                feedback = {}
+                for key, value in new_transition[TransitionKey.OBSERVATION].items():
+                    if key.endswith(".pos"):
+                        # value is likely a tensor, convert to float
+                        if isinstance(value, torch.Tensor):
+                            feedback[key] = value.item()
+                        else:
+                            feedback[key] = float(value)
+
+                if feedback:
+                    teleop_device.send_feedback(feedback)
+
+            complementary_info = {
+                "discrete_penalty": torch.tensor(
+                    [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
+                ),
             }
-            
-            pixels_dict = env_obs.get('pixels', env_obs)
-            
-            for env_key, policy_key in camera_mapping.items():
-                if policy_key not in policy_obs: # Only look if not already found
-                    if env_key in pixels_dict:
-                        policy_obs[policy_key] = pixels_dict[env_key]
-            
-            # State
-            if 'observation.state' not in policy_obs:
-                 # Collect joint positions in the correct order (matching SO101 motor order)
-                joint_order = [
-                    'shoulder_pan.pos',
-                    'shoulder_lift.pos',
-                    'elbow_flex.pos',
-                    'wrist_flex.pos',
-                    'wrist_roll.pos',
-                    'gripper.pos',
-                ]
+
+            # Convert environment observations to policy-expected format
+            def convert_env_obs_to_policy_format(env_obs: dict) -> dict:
+                """Convert environment observation format to policy-expected format.
                 
-                joint_values = []
-                for joint_key in joint_order:
-                    if joint_key in env_obs:
-                        val = env_obs[joint_key]
-                        # Convert to tensor if not already
-                        if not isinstance(val, torch.Tensor):
-                            val = torch.tensor([val], dtype=torch.float32)
-                        elif val.dim() == 0:
-                            val = val.unsqueeze(0)
-                        joint_values.append(val)
+                Handles two cases:
+                1. Observations already in policy format (observation.images.xxx, observation.state)
+                2. Raw environment format (pixels dict or individual image keys, individual .pos keys)
+                """
+                policy_obs = {}
                 
-                # Concatenate all joint positions into a single state tensor
-                if joint_values:
-                    policy_obs['observation.state'] = torch.cat(joint_values, dim=0)
-            
-            return policy_obs
-        
-        # Create transition for learner (convert to policy format)
-        observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
-        next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
-        
-        list_transition_to_send_to_learner.append(
-            Transition(
-                state=observation,
-                action=executed_action[:6],
-                reward=reward,
-                next_state=next_observation,
-                done=done,
-                truncated=truncated,
-                complementary_info=complementary_info,
-            )
-        )
-        
-        # Update transition for next iteration
-        transition = new_transition
-
-        if done or truncated:
-            logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
-
-            update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
-
-            if len(list_transition_to_send_to_learner) > 0:
-                push_transitions_to_transport_queue(
-                    transitions=list_transition_to_send_to_learner,
-                    transitions_queue=transitions_queue,
+                # Check if observations are already in the correct format
+                # Relaxed check: if we have images OR state in policy format, we try to preserve them
+                has_policy_format = (
+                    'observation.state' in env_obs or
+                    any(k.startswith('observation.images.') for k in env_obs.keys())
                 )
-                list_transition_to_send_to_learner = []
-
-            stats = get_frequency_stats(policy_timer)
-            policy_timer.reset()
-
-            # Calculate intervention rate
-            intervention_rate = 0.0
-            if episode_total_steps > 0:
-                intervention_rate = episode_intervention_steps / episode_total_steps
-
-            # Send episodic reward to the learner
-            interactions_queue.put(
-                python_object_to_bytes(
-                    {
-                        "Episodic reward": sum_reward_episode,
-                        "Interaction step": interaction_step,
-                        "Episode intervention": int(episode_intervention),
-                        "Intervention rate": intervention_rate,
-                        **stats,
-                    }
+                
+                if has_policy_format:
+                    # Observations are already in policy format (partial or full), just filter the relevant keys
+                    for key in env_obs.keys():
+                        if key == 'observation.state' or key.startswith('observation.images.'):
+                            policy_obs[key] = env_obs[key]
+                
+                # If we are missing state or images, try to find them in raw format
+                # Images
+                camera_mapping = {
+                    'wrist': 'observation.images.wrist',
+                    'top': 'observation.images.top',
+                    'side': 'observation.images.side',
+                }
+                
+                pixels_dict = env_obs.get('pixels', env_obs)
+                
+                for env_key, policy_key in camera_mapping.items():
+                    if policy_key not in policy_obs: # Only look if not already found
+                        if env_key in pixels_dict:
+                            policy_obs[policy_key] = pixels_dict[env_key]
+                
+                # State
+                if 'observation.state' not in policy_obs:
+                     # Collect joint positions in the correct order (matching SO101 motor order)
+                    joint_order = [
+                        'shoulder_pan.pos',
+                        'shoulder_lift.pos',
+                        'elbow_flex.pos',
+                        'wrist_flex.pos',
+                        'wrist_roll.pos',
+                        'gripper.pos',
+                    ]
+                    
+                    joint_values = []
+                    for joint_key in joint_order:
+                        if joint_key in env_obs:
+                            val = env_obs[joint_key]
+                            # Convert to tensor if not already
+                            if not isinstance(val, torch.Tensor):
+                                val = torch.tensor([val], dtype=torch.float32)
+                            elif val.dim() == 0:
+                                val = val.unsqueeze(0)
+                            joint_values.append(val)
+                    
+                    # Concatenate all joint positions into a single state tensor
+                    if joint_values:
+                        policy_obs['observation.state'] = torch.cat(joint_values, dim=0)
+                
+                return policy_obs
+            
+            # Create transition for learner (convert to policy format)
+            observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
+            next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
+            
+            list_transition_to_send_to_learner.append(
+                Transition(
+                    state=observation,
+                    action=executed_action[:6],
+                    reward=reward,
+                    next_state=next_observation,
+                    done=done,
+                    truncated=truncated,
+                    complementary_info=complementary_info,
                 )
             )
+            
+            # Update transition for next iteration
+            transition = new_transition
 
-            # Reset intervention counters and environment
-            sum_reward_episode = 0.0
-            episode_intervention = False
-            episode_intervention_steps = 0
-            episode_total_steps = 0
+            if done or truncated:
+                logging.info(f"[ACTOR] Global step {interaction_step}: Episode reward: {sum_reward_episode}")
 
-            # Reset environment and processors
-            obs, info = online_env.reset()
-            env_processor.reset()
-            action_processor.reset()
+                update_policy_parameters(policy=policy, parameters_queue=parameters_queue, device=device)
 
-            # Process initial observation
-            transition = create_transition(observation=obs, info=info)
-            transition = env_processor(transition)
+                if len(list_transition_to_send_to_learner) > 0:
+                    push_transitions_to_transport_queue(
+                        transitions=list_transition_to_send_to_learner,
+                        transitions_queue=transitions_queue,
+                    )
+                    list_transition_to_send_to_learner = []
 
-        if cfg.env.fps is not None:
-            dt_time = time.perf_counter() - start_time
-            busy_wait(1 / cfg.env.fps - dt_time)
+                stats = get_frequency_stats(policy_timer)
+                policy_timer.reset()
+
+                # Calculate intervention rate
+                intervention_rate = 0.0
+                if episode_total_steps > 0:
+                    intervention_rate = episode_intervention_steps / episode_total_steps
+
+                # Send episodic reward to the learner
+                interactions_queue.put(
+                    python_object_to_bytes(
+                        {
+                            "Episodic reward": sum_reward_episode,
+                            "Interaction step": interaction_step,
+                            "Episode intervention": int(episode_intervention),
+                            "Intervention rate": intervention_rate,
+                            **stats,
+                        }
+                    )
+                )
+
+                # Reset intervention counters and environment
+                sum_reward_episode = 0.0
+                episode_intervention = False
+                episode_intervention_steps = 0
+                episode_total_steps = 0
+
+                # Wait for '2' key on teleop device to start next episode
+                logging.info("[ACTOR] Episode ended. Press '2' on the keyboard to start the next episode...")
+                while not shutdown_event.is_set():
+                    if teleop_device.get_teleop_events().get(TeleopEvents.START_EPISODE, False):
+                        break
+                    time.sleep(0.1)
+                
+                if shutdown_event.is_set():
+                    break
+                
+                logging.info("[ACTOR] Starting next episode.")
+
+                # Reset environment and processors
+                obs, info = online_env.reset()
+                env_processor.reset()
+                action_processor.reset()
+
+                # Process initial observation
+                transition = create_transition(observation=obs, info=info)
+                transition = env_processor(transition)
+
+            if cfg.env.fps is not None:
+                dt_time = time.perf_counter() - start_time
+                busy_wait(1 / cfg.env.fps - dt_time)
+    finally:
+        pass
 
 
 def update_policy_parameters(policy, parameters_queue: Queue, device):

@@ -34,6 +34,13 @@ import grpc
 import torch
 from termcolor import colored
 from torch import nn
+import numpy as np
+import matplotlib.pyplot as plt
+import json
+from PIL import Image
+import cv2
+
+episode_logging_freq = 1
 from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
@@ -409,6 +416,18 @@ def add_actor_information_and_train(
             logging.info("[LEARNER] Shutdown signal received. Exiting...")
             break
 
+        # Process all available interaction messages sent by the actor server
+        interaction_message = process_interaction_messages(
+            interaction_message_queue=interaction_message_queue,
+            interaction_step_shift=interaction_step_shift,
+            wandb_logger=wandb_logger,
+            shutdown_event=shutdown_event,
+        )
+
+        # Track episodes for logging (every N episodes)
+        if not hasattr(add_actor_information_and_train, "episode_counter"):
+            add_actor_information_and_train.episode_counter = [0]
+
         # Process all available transitions to the replay buffer, send by the actor server
         process_transitions_pi05(
             transition_queue=transition_queue,
@@ -417,15 +436,11 @@ def add_actor_information_and_train(
             device=device,
             dataset_repo_id=dataset_repo_id,
             shutdown_event=shutdown_event,
+            policy=policy,
+            episode_counter=add_actor_information_and_train.episode_counter,
+            cfg=cfg,
         )
 
-        # Process all available interaction messages sent by the actor server
-        interaction_message = process_interaction_messages(
-            interaction_message_queue=interaction_message_queue,
-            interaction_step_shift=interaction_step_shift,
-            wandb_logger=wandb_logger,
-            shutdown_event=shutdown_event,
-        )
 
         # Wait until the replay buffer has enough samples to start training
         if len(replay_buffer) < online_step_before_learning:
@@ -873,14 +888,79 @@ def process_transitions_pi05(
     device: str,
     dataset_repo_id: str | None,
     shutdown_event: any,
+    policy: nn.Module = None,
+    episode_counter: list = None,
+    cfg: any = None,
 ):
     """Process all available transitions from the queue with action dimension handling."""
     while not transition_queue.empty() and not shutdown_event.is_set():
         transition_list = transition_queue.get()
         transition_list = bytes_to_transitions(buffer=transition_list)
 
-        for transition in transition_list:
+        # Check if this is a logging episode (every N episodes)
+        is_logging_episode = False
+        if episode_counter is not None:
+            episode_counter[0] += 1
+            if episode_counter[0] % episode_logging_freq == 0:
+                is_logging_episode = True
+                logging.info(f"[LEARNER] Starting logging episode {episode_counter[0]}")
+                log_dir = os.path.join(cfg.output_dir, "logging_episodes", f"episode_{episode_counter[0]:06d}")
+                os.makedirs(log_dir, exist_ok=True)
+                critic_values = []
+
+        for i, transition in enumerate(transition_list):
             transition = move_transition_to_device(transition=transition, device=device)
+
+            # If logging, save images and compute critic value
+            if is_logging_episode and policy is not None:
+                with torch.no_grad():
+                    # Save images
+                    obs = transition["state"]
+                    for key, val in obs.items():
+                        if "image" in key and "top" in key:
+                            # val is [1, C, H, W] tensor, convert to [H, W, C] numpy
+                            img_np = val.squeeze(0).detach().cpu().numpy().transpose(1, 2, 0)
+                            # Normalize to [0, 255] if needed (assuming [0, 1])
+                            if img_np.max() <= 1.0:
+                                img_np = (img_np * 255).astype(np.uint8)
+                            
+                            img_path = os.path.join(log_dir, f"step_{i:03d}_{key.split('.')[-1]}.png")
+                            Image.fromarray(img_np).save(img_path)
+                        elif "image" in key and "side" in key:
+                            # val is [1, C, H, W] tensor, convert to [H, W, C] numpy
+                            img_np = val.squeeze(0).detach().cpu().numpy().transpose(1, 2, 0)
+                            # Normalize to [0, 255] if needed (assuming [0, 1])
+                            if img_np.max() <= 1.0:
+                                img_np = (img_np * 255).astype(np.uint8)
+                            
+                            img_path = os.path.join(log_dir, f"step_{i:03d}_{key.split('.')[-1]}.png")
+                            Image.fromarray(img_np).save(img_path)
+
+                    # Compute critic value
+                    forward_batch = {
+                        "state": {k: v for k, v in transition["state"].items()},
+                        "action": transition[ACTION],
+                    }
+
+                    # Preprocessing
+                    batch_for_proc = {k: v for k, v in forward_batch["state"].items()}
+                    batch_for_proc["task"] = [cfg.policy.task]
+                    batch_for_proc[ACTION] = forward_batch["action"]
+                    
+                    processed_batch = policy.preprocessor(batch_for_proc)
+                    
+                    # Update forward_batch with processed features
+                    for key in processed_batch.keys():
+                        if key.startswith("observation."):
+                            forward_batch["state"][key] = processed_batch[key]
+                    
+                    from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
+                    forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
+                    forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+                    
+                    critic_output = policy.forward(forward_batch, model="critic_value")
+                    val = critic_output["critic_value_mean"]
+                    critic_values.append(val)
 
             # Skip transitions with NaN values
             if check_nan_in_transition(
@@ -939,6 +1019,115 @@ def process_transitions_pi05(
                             transition[ACTION] = incoming_action[..., :buffer_action_dim]
                             
                 offline_replay_buffer.add(**transition)
+
+        # After processing the episode, if it was a logging episode, save the plot
+        if is_logging_episode and policy is not None:
+            # Save critic values to JSON
+            with open(os.path.join(log_dir, "critic_values.json"), "w") as f:
+                json.dump(critic_values, f)
+            
+            # Plot critic values
+            plt.figure(figsize=(10, 5))
+            plt.plot(critic_values)
+            plt.title(f"Critic Values - Episode {episode_counter[0]}")
+            plt.xlabel("Step")
+            plt.ylabel("Value")
+            plt.grid(True)
+            plt.savefig(os.path.join(log_dir, "critic_plot.png"))
+            plt.close()
+            
+            # Generate video with critic overlay
+            try:
+                save_video_with_critic_overlay(log_dir, critic_values)
+                logging.info(f"[LEARNER] Video generated for episode {episode_counter[0]}")
+            except Exception as e:
+                logging.error(f"[LEARNER] Failed to generate video: {e}")
+                
+            logging.info(f"[LEARNER] Finished logging episode {episode_counter[0]}")
+
+
+def save_video_with_critic_overlay(log_dir, critic_values, fps=10):
+    """
+    Generate a side-by-side video of top and side views with a critic curve overlay.
+    """
+    import glob
+    import re
+
+    # Find all top and side images
+    top_images = sorted(glob.glob(os.path.join(log_dir, "*_top.png")))
+    side_images = sorted(glob.glob(os.path.join(log_dir, "*_side.png")))
+
+    if not top_images or not side_images:
+        raise ValueError("No images found for video generation")
+
+    # Ensure we have the same number of images and critic values
+    num_frames = min(len(top_images), len(side_images), len(critic_values))
+    
+    # Video settings
+    # Each view is 224x224, resized to 448x448. Side-by-side is 896x448.
+    frame_width = 896
+    frame_height = 448
+    video_path = os.path.join(log_dir, "episode_video.mp4")
+    
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+
+    # Prepare critic curve data for plotting
+    # Normalize critic values for plotting (0 to frame_height)
+    # Fixed scale from 0 to 5 as requested
+    critic_np = np.array(critic_values[:num_frames])
+    c_min, c_max = 0.0, 5.0
+    critic_norm = (critic_np - c_min) / (c_max - c_min)
+    critic_norm = np.clip(critic_norm, 0, 1)
+    
+    # Map to pixel coordinates (inverted Y for image space)
+    # Restrict to lower half (frame_height // 2 to frame_height)
+    lower_half_height = frame_height // 2
+    margin = 20
+    plot_y = (lower_half_height - 2 * margin) * (1 - critic_norm) + (frame_height // 2 + margin)
+    plot_x = np.linspace(0, frame_width, num_frames)
+
+    for i in range(num_frames):
+        # Load and resize images
+        top_img = cv2.imread(top_images[i])
+        side_img = cv2.imread(side_images[i])
+        
+        top_img = cv2.resize(top_img, (448, 448))
+        side_img = cv2.resize(side_img, (448, 448))
+        
+        # Concatenate side-by-side
+        frame = np.hstack((top_img, side_img))
+        
+        # Create an overlay for the curve
+        overlay = frame.copy()
+        
+        # 1. Draw full curve with low alpha (faint white)
+        points = np.vstack((plot_x, plot_y)).T.astype(np.int32)
+        cv2.polylines(overlay, [points], isClosed=False, color=(200, 200, 200), thickness=1)
+        
+        # 2. Draw progressing curve with high alpha (bright white)
+        prog_points = points[:i+1]
+        if len(prog_points) > 1:
+            cv2.polylines(overlay, [prog_points], isClosed=False, color=(255, 255, 255), thickness=3)
+            
+            # Draw a vertical dashed line at current position
+            curr_x, curr_y = prog_points[-1]
+            cv2.line(overlay, (curr_x, frame_height), (curr_x, curr_y), (255, 255, 255), 1, lineType=cv2.LINE_AA)
+
+        # Blend overlay with original frame
+        alpha = 0.6
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        
+        out.write(frame)
+
+    out.release()
+
+    # Cleanup: Remove individual images after video generation
+    for img_path in top_images + side_images:
+        try:
+            os.remove(img_path)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

@@ -647,7 +647,7 @@ class PI05RLPolicy(PI05Policy):
     def forward(
         self, 
         batch: dict[str, Tensor], 
-        model: Literal["actor", "critic", "temperature"] | None = None
+        model: Literal["actor", "critic", "temperature", "critic_value"] | None = None
     ) -> tuple[Tensor, dict] | dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training."""
         
@@ -823,6 +823,15 @@ class PI05RLPolicy(PI05Policy):
                 "td_error_mean": td_error.mean().item(),
                 "td_error_std": td_error.std(unbiased=False).item(),
                 "critic_values": current_v.detach().cpu().flatten(),  # For histogram logging
+            }
+            
+        elif model == "critic_value":
+            # --- Just get the critic value ---
+            current_v = self.critic(prefix_embs.detach(), prefix_pad_masks)
+            return {
+                "critic_value_mean": current_v.mean().item(),
+                "critic_value_std": current_v.std(unbiased=False).item(),
+                "critic_values": current_v.detach().cpu().flatten(),
             }
             
         else:
