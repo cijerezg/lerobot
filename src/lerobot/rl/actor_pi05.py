@@ -292,6 +292,7 @@ def act_with_policy(
             # (already normalized [0,1], in CHW format, with batch dimension, on device)
             batch_for_preprocessor["task"] = cfg.policy.task
             batch_for_preprocessor["robot_type"] = online_env.robot.robot_type if hasattr(online_env, 'robot') else ""
+            batch_for_preprocessor["advantage"] = cfg.policy.inference_advantage
 
             # Time policy inference and check if it meets FPS requirement
             with policy_timer:

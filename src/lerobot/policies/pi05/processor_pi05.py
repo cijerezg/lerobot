@@ -54,6 +54,8 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
     max_state_dim: int = 32
     task_key: str = "task"
+    advantage_key: str = "advantage"
+    advantage_scaling: float = 1.0
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -64,6 +66,14 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         tasks = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.task_key)
         if tasks is None:
             raise ValueError("No task found in complementary data")
+        
+        # Advantage is optional (default to 1.0 if not present, or use inference_advantage)
+        advantages = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.advantage_key)
+        if advantages is None:
+            # Fallback to a default value if not provided (e.g. during inference)
+            # We assume it's a tensor of shape [B, 1] or [B]
+            batch_size = len(tasks)
+            advantages = torch.ones((batch_size, 1), dtype=torch.float32)
 
         # TODO: check if this necessary
         state = deepcopy(state)
@@ -76,16 +86,59 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         state_np = state.to(dtype=torch.float32).cpu().numpy()
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
+        # Process Advantage with 5 bins
+        if isinstance(advantages, torch.Tensor):
+            adv_tensor = advantages.to(dtype=torch.float32)
+        else:
+            adv_tensor = torch.tensor(advantages, dtype=torch.float32)
+        
+        if adv_tensor.dim() == 1:
+            adv_tensor = adv_tensor.unsqueeze(-1)
+            
+        # Squash advantage to [-1, 1] using tanh after scaling
+        squashed_adv = torch.tanh(adv_tensor / self.advantage_scaling)
+        adv_np = squashed_adv.cpu().numpy()
+
+        # Use user-defined bins: [-1.0, -0.8, -0.4, 0.4, 0.8, 1.0]
+        # Bins:
+        # 0: < -0.8 (Very Negative)
+        # 1: -0.8 to -0.4 (Negative)
+        # 2: -0.4 to 0.4 (Neutral)
+        # 3: 0.4 to 0.8 (Positive)
+        # 4: > 0.8 (Very Positive)
+        
+        # Note: np.digitize returns 1-based indices for bins.
+        # bins=[-0.8, -0.4, 0.4, 0.8]
+        # x < -0.8 -> 0
+        # -0.8 <= x < -0.4 -> 1
+        # -0.4 <= x < 0.4 -> 2
+        # 0.4 <= x < 0.8 -> 3
+        # x >= 0.8 -> 4
+        bins = np.array([-0.8, -0.4, 0.4, 0.8])
+        bin_indices = np.digitize(adv_np, bins)
+        
+        labels = ["very negative", "negative", "neutral", "positive", "very positive"]
+        discretized_adv_labels = [labels[idx] for idx in bin_indices.flatten()]
+
         full_prompts = []
+        critic_prompts = []
         for i, task in enumerate(tasks):
             cleaned_text = task.strip().replace("_", " ").replace("\n", " ")
             state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
+            adv_str = discretized_adv_labels[i]
+            
+            # Actor prompt (with advantage)
+            full_prompt = f"Task: {cleaned_text}, State: {state_str}, Advantage: {adv_str};\nAction: "
             full_prompts.append(full_prompt)
+            
+            # Critic prompt (WITHOUT advantage)
+            # Format: "Task: {task}, State: {state}"
+            critic_prompt = f"Task: {cleaned_text}, State: {state_str}"
+            critic_prompts.append(critic_prompt)
 
         transition[TransitionKey.COMPLEMENTARY_DATA][self.task_key] = full_prompts
-        # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
-        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+        transition[TransitionKey.COMPLEMENTARY_DATA]["critic_prompt"] = critic_prompts
+        
         return transition
 
     def transform_features(
@@ -94,6 +147,58 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         """
         This step does not alter the feature definitions.
         """
+        return features
+
+
+@dataclass
+class CriticTokenizerProcessorStep(TokenizerProcessorStep):
+    """
+    Processor step to tokenize the critic prompt (without advantage).
+    """
+    task_key: str = "critic_prompt"
+    
+    def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        task = self.get_task(self.transition)
+        if task is None:
+            raise ValueError("Critic prompt cannot be None")
+
+        # Tokenize the task
+        tokenized_prompt = self._tokenize_text(task)
+
+        # Detect device
+        target_device = self._detect_device(self.transition)
+
+        # Move to device
+        if target_device is not None:
+            tokenized_prompt = {
+                k: v.to(target_device) if isinstance(v, torch.Tensor) else v
+                for k, v in tokenized_prompt.items()
+            }
+
+        # Create new observation dict
+        new_observation = dict(observation)
+
+        # Add tokenized data with CRITIC specific keys
+        # We use "critic_tokens" and "critic_pad_mask" as expected by PI05RLPolicy
+        new_observation["critic_tokens"] = tokenized_prompt["input_ids"]
+        new_observation["critic_pad_mask"] = tokenized_prompt["attention_mask"].to(dtype=torch.bool)
+
+        return new_observation
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        # Add features for critic tokens
+        if "critic_tokens" not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION]["critic_tokens"] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
+        if "critic_pad_mask" not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION]["critic_pad_mask"] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
         return features
 
 
@@ -140,12 +245,23 @@ def make_pi05_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+        Pi05PrepareStateTokenizerProcessorStep(
+            max_state_dim=config.max_state_dim,
+            advantage_scaling=getattr(config, "advantage_scaling", 1.0)
+        ),
         TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",
+        ),
+        # Add Critic Tokenizer Step
+        CriticTokenizerProcessorStep(
+            tokenizer_name="google/paligemma-3b-pt-224",
+            max_length=config.tokenizer_max_length,
+            padding_side="right",
+            padding="max_length",
+            task_key="critic_prompt"
         ),
         DeviceProcessorStep(device=config.device),
     ]

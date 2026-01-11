@@ -87,6 +87,8 @@ class ReplayBuffer:
         use_drq: bool = True,
         storage_device: str = "cpu",
         optimize_memory: bool = True,
+        reward_normalization_constant: float = 1.0,
+        terminal_failure_reward: float = -1.0,
     ):
         """
         Replay buffer for storing transitions.
@@ -114,7 +116,10 @@ class ReplayBuffer:
         self.position = 0
         self.size = 0
         self.initialized = False
+        self.initialized = False
         self.optimize_memory = optimize_memory
+        self.reward_normalization_constant = reward_normalization_constant
+        self.terminal_failure_reward = terminal_failure_reward
 
         # Track episode boundaries for memory optimization
         self.episode_ends = torch.zeros(capacity, dtype=torch.bool, device=storage_device)
@@ -337,10 +342,23 @@ class ReplayBuffer:
             # Get max reward and any done in the lookahead window
             batch_rewards = self.rewards[lookahead_window].max(dim=1)[0].to(self.device)
             batch_dones = self.dones[lookahead_window].any(dim=1).float().to(self.device)
+            
         else:
             # No chunking - use standard logic
             batch_rewards = self.rewards[idx].to(self.device)
             batch_dones = self.dones[idx].to(self.device).float()
+        
+        # Apply reward transformation
+        new_rewards = torch.full_like(batch_rewards, -1.0)
+        # Success case: Done and Reward=1 -> 0
+        success_mask = (batch_dones > 0.5) & (batch_rewards > 0.5)
+        new_rewards[success_mask] = 0.0
+        # Failure case: Done and Reward=0 -> terminal_failure_reward
+        failure_mask = (batch_dones > 0.5) & (batch_rewards < 0.5)
+        new_rewards[failure_mask] = self.terminal_failure_reward
+        
+        # Normalize
+        batch_rewards = new_rewards / self.reward_normalization_constant
         
         batch_truncateds = self.truncateds[idx].to(self.device).float()
 
@@ -485,6 +503,8 @@ class ReplayBuffer:
         use_drq: bool = True,
         storage_device: str = "cpu",
         optimize_memory: bool = False,
+        reward_normalization_constant: float = 1.0,
+        terminal_failure_reward: float = -1.0,
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -521,6 +541,8 @@ class ReplayBuffer:
             use_drq=use_drq,
             storage_device=storage_device,
             optimize_memory=optimize_memory,
+            reward_normalization_constant=reward_normalization_constant,
+            terminal_failure_reward=terminal_failure_reward,
         )
 
         # Process dataset transitions one at a time to save memory
