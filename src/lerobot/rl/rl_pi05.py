@@ -17,7 +17,8 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05.processor_pi05 import Pi05PrepareStateTokenizerProcessorStep
 from lerobot.processor import TokenizerProcessorStep
 from lerobot.processor.core import EnvTransition, TransitionKey
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import OBS_STATE, OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ACTION
+        
 
 from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks
         
@@ -72,12 +73,8 @@ class PI05RLConfig(PI05Config):
 
     # Critic parameters
     use_separate_critic: bool = True
-    critic_hidden_dims: tuple[int, ...] = (256, 256, 256)
-    critic_dropout: float = 0.0
     critic_llm_depth: int = 6
-    # Add critic_network_kwargs to satisfy config parser, even if we map it manually
-    # Or define a nested config class. SAC uses CriticNetworkConfig.
-    # Let's define it as dict or Any for simplicity, or import CriticNetworkConfig
+    # Critic network arguments
     critic_network_kwargs: dict | None = None
 
     # Training constraints
@@ -130,10 +127,15 @@ from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE
 PALIGEMMA_VOCAB_SIZE = 257152
 PALIGEMMA_PAD_TOKEN_ID = 0 # Standard for Gemma/PaliGemma
 
+class SwiGLU(nn.Module):
+    def forward(self, x):
+        x, gate = x.chunk(2, dim=-1)
+        return F.silu(gate) * x
+
 class Pi05TransformerCritic(nn.Module):
     """Transformer-based Value Critic using Gemma architecture.
     
-    Design (PI06-style):
+    Features:
     - Separate 6-layer Gemma LLM (configurable).
     - Uses shared vision features from the actor (detached).
     - Has its own embedding layer (initialized from actor).
@@ -191,11 +193,10 @@ class Pi05TransformerCritic(nn.Module):
         # Final normalization
         self.norm = GemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
         
-        # Value head (projects from 8 tokens -> 1 value)
+        # Value head (projects from 32 tokens -> 1 value)
         self.value_head = nn.Sequential(
-            nn.Linear(hidden_dim * self.num_query_tokens, 512),
-            nn.ReLU(),
-            nn.Dropout(config.critic_dropout),
+            nn.Linear(hidden_dim * self.num_query_tokens, 512 * 2),
+            SwiGLU(),
             nn.Linear(512, 1)
         )
         
@@ -231,6 +232,7 @@ class Pi05TransformerCritic(nn.Module):
         Returns:
             value: [B, 1]
         """
+        
         batch_size = text_embs.shape[0]
         
         # Expand queries
@@ -258,7 +260,6 @@ class Pi05TransformerCritic(nn.Module):
         # Rotary Embeddings
         cos, sin = self.rotary_emb(hidden_states, position_ids)
         
-        # Apply layers manually to support gated residuals from pretrained weights
         # Apply layers manually to support gated residuals from pretrained weights
         for i, layer in enumerate(self.layers):
             # Input Norm
@@ -328,10 +329,10 @@ class Pi05TransformerCritic(nn.Module):
         start_idx = vision_features.shape[1] + text_embs.shape[1]
         queries_out = hidden_states[:, start_idx:, :] # [B, num_queries, D]
         queries_flat = queries_out.reshape(batch_size, -1) # [B, num_queries*D]
-        
+
         # Value Head
         value = self.value_head(queries_flat.to(self.dtype))
-        
+
         return value
 
 class PI05RLPytorch(PI05Pytorch):
@@ -375,6 +376,13 @@ class PI05RLPytorch(PI05Pytorch):
         if time is None:
             time = self.sample_time(actions.shape[0], actions.device)
 
+        # Fix for BFloat16/Float32 mismatch: Ensure noise and time match action dtype
+        if actions.dtype == torch.bfloat16:
+            if noise.dtype != torch.bfloat16:
+                noise = noise.to(dtype=torch.bfloat16)
+            if time.dtype != torch.bfloat16:
+                time = time.to(dtype=torch.bfloat16)
+
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
@@ -392,9 +400,7 @@ class PI05RLPytorch(PI05Pytorch):
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
         
-        # Helper from modeling_pi05 but we need to import it or reimplement
-        # It's not exported. Let's reimplement simple version or import if possible.
-        # It is not in __all__. We can access it via module.
+        # Helper from modeling_pi05
         from lerobot.policies.pi05.modeling_pi05 import make_att_2d_masks, OPENPI_ATTENTION_MASK_VALUE
 
         
@@ -419,7 +425,9 @@ class PI05RLPytorch(PI05Pytorch):
         )
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
+        
+        # Ensure suffix_out matches projection weight dtype
+        suffix_out = suffix_out.to(dtype=self.action_out_proj.weight.dtype)
 
         def action_out_proj_func(suffix_out):
             return self.action_out_proj(suffix_out)
@@ -459,7 +467,8 @@ class PI05RLPytorch(PI05Pytorch):
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=torch.float32)
+        suffix_out = suffix_out.to(dtype=self.action_out_proj.weight.dtype)
+
         return self.action_out_proj(suffix_out)
 
     def sample_actions(self, images, img_masks, tokens, masks) -> Tensor:
@@ -720,7 +729,6 @@ class PI05RLPolicy(PI05Policy):
 
     def _share_critic_embeddings(self):
         """Share embeddings between actor and critic to save memory."""
-        # No longer needed as critic takes embeddings as input
         pass
 
     def get_optim_params(self) -> dict:
@@ -788,7 +796,6 @@ class PI05RLPolicy(PI05Policy):
         vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad)
         
         # Actor needs tokens too
-        from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ACTION
         current_batch = batch.copy()
         if "state" in batch:
             current_batch.update(batch["state"])
@@ -824,17 +831,7 @@ class PI05RLPolicy(PI05Policy):
             actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
             critic_text_embs = actor_embed_layer(critic_tokens)
             
-            # Detach if we don't want to update embeddings through critic (usually embeddings are frozen anyway)
-            # But if they are not frozen, we might want to detach?
-            # User said "The token embeedings are shared with the actor and hence not trained."
-            # So they are likely frozen. If not, we should probably detach to be safe or respect requires_grad.
-            # But since they are shared, if we update them via actor loss, it's fine.
-            # If we update them via critic loss? 
-            # The user said "They should not be part of the target network."
-            # If we pass them as input, they are not part of the target network parameters.
-            # So we are good.
-            # We should detach them if we don't want critic gradients to flow back to embeddings.
-            # Usually in RL, we don't update embeddings with critic loss if they are from a pretrained model.
+            # Detach embeddings to prevent critic updates from affecting the actor's language model.
             critic_text_embs = critic_text_embs.detach()
         
         # ... (Rest of the logic)
@@ -1019,16 +1016,7 @@ class PI05RLPolicy(PI05Policy):
         """Select action for inference."""
         # We need to inject advantage into the model for inference
         # The base select_action calls predict_action_chunk -> sample_actions
-        # We need to override predict_action_chunk or sample_actions?
-        # PI05Policy.predict_action_chunk calls self.model.sample_actions
-        # PI05Pytorch.sample_actions is compiled.
-        
-        # We need to override `sample_actions` in `PI05RLPytorch` to accept advantage
-        # And we need to override `predict_action_chunk` in `PI05RLPolicy` to pass it.
-        
-        # ... (Implementation details for inference override)
-        # For now, let's assume we can pass kwargs or we need to implement it.
-        # Let's implement `predict_action_chunk` in PI05RLPolicy.
+        # We override predict_action_chunk in PI05RLPolicy to pass it.
         return super().select_action(batch)
 
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:

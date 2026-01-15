@@ -104,6 +104,7 @@ from lerobot.rl.learner import (
     log_training_info,
     save_training_checkpoint,
 )
+from lerobot.rl.utils import preprocess_batch_for_pi05
 
 import wandb
                 
@@ -329,12 +330,15 @@ def add_actor_information_and_train(
     for name, param in policy.named_parameters():
         # Only train layer 17 of gemma_expert (the last layer)
         param.requires_grad = (
-            "gemma_expert" in name or
-            ("critic" in name and "embed_tokens" not in name) or
-            "log_alpha" in name or
-            ("language_model" in name and any(f".{i}." in name for i in [0, 1, 2, 3, 4, 12, 13, 14, 15, 16, 17])) or
+            "critic.value_head" in name or
+            "critic.layers.5" in name or
+            "critic.value_queries" in name or
+            ("gemma_expert" in name and any(f".{i}." in name for i in [12, 13, 14, 15, 16, 17])) or 
+            ("language_model" in name and any(f".{i}." in name for i in [12, 13, 14, 15, 16, 17])) or
             "language_model.norm" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [18, 19, 20, 21, 22, 23, 24, 25, 26]))
+            "action_in_proj" in name or
+            "action_out_proj" in name or
+            ("vision_tower" in name and any(f".{i}." in name for i in [21, 22, 23, 24, 25, 26]))
         )
     
     # Log trainable parameters
@@ -414,6 +418,11 @@ def add_actor_information_and_train(
     # Initialize iterators
     online_iterator = None
     offline_iterator = None
+
+    critic_warmup_steps = 0
+    policy_update_freq = 1
+
+
 
     # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
     while True:
@@ -539,6 +548,7 @@ def add_actor_information_and_train(
                     "next_observation_feature": next_observation_features,
                     "task": [cfg.policy.task] * current_batch_size,
                     "advantage": torch.full((current_batch_size, 1), cfg.policy.inference_advantage, device=device),
+                    "next.done": done,
                 }
 
                 # --- Preprocessing for Pi05 (Tokenization and Normalization) ---
@@ -652,6 +662,7 @@ def add_actor_information_and_train(
             "next_observation_feature": next_observation_features,
             "task": [cfg.policy.task] * current_batch_size,
             "advantage": torch.full((current_batch_size, 1), cfg.policy.inference_advantage, device=device),
+            "next.done": done,
         }
 
         # --- Preprocessing for Pi05 (Tokenization and Normalization) ---
@@ -775,20 +786,26 @@ def add_actor_information_and_train(
                 
                 for accum_step in range(gradient_accumulation_steps):
                     # Sample NEW batch for actor update
-                    batch = process_transitions_pi05(
-                        transition_queue, 
-                        batch_size, 
-                        offline_dataset, 
-                        offline_batch_size, 
-                        online_buffer, 
-                        online_batch_size,
-                        online_sampling_ratio,
-                        return_torch=True,
-                        device=device
-                    )
+                    # Sample NEW batch for actor update
+                    batch = next(online_iterator)
+
+                    # Ensure online batch actions are 6-dim (if buffer is 32-dim)
+                    if batch[ACTION].shape[-1] > 6:
+                         batch[ACTION] = batch[ACTION][..., :6]
+
+                    if dataset_repo_id is not None:
+                        batch_offline = next(offline_iterator)
+                        # Slice offline actions to match online actions (6 dims)
+                        batch_offline[ACTION] = batch_offline[ACTION][..., :6]
+                        batch = concatenate_batch_transitions(
+                            left_batch_transitions=batch, right_batch_transition=batch_offline
+                        )
+
+                    # Move batch to device
+                    batch = move_transition_to_device(batch, device)
                     batch[ACTION] = batch[ACTION][..., :6]
                     
-                    if cast_to_bf16 is not None:
+                    if cfg.policy.dtype == "bfloat16":
                          if isinstance(batch, dict):
                             batch = {k: cast_to_bf16(v) for k, v in batch.items()}
                          else:
@@ -865,7 +882,7 @@ def add_actor_information_and_train(
                     batch_for_proc["advantage"] = raw_advantage_flat
                     with torch.no_grad():
                         # Run preprocessor again to generate tokens conditioned on advantage
-                        processed_batch = accelerator.unwrap_model(policy).preprocessor(batch_for_proc)
+                        processed_batch = policy.preprocessor(batch_for_proc)
                         
                     # Now `processed_batch` has `OBS_LANGUAGE_TOKENS` with the correct advantage prompt!
                     
@@ -907,10 +924,17 @@ def add_actor_information_and_train(
                     forward_batch_actor[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
                     forward_batch_actor[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
                     
+                    # Ensure actor batch is in correct dtype (actions might be float32 from preprocessor)
+                    if cfg.policy.dtype == "bfloat16":
+                        forward_batch_actor = cast_to_bf16(forward_batch_actor)
+
                     # Forward Actor
                     actor_output = policy.forward(forward_batch_actor, model="actor")
+                    
                     loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
+                    
                     loss_actor = loss_actor.mean()
+
                     loss_actor.backward()
                     
                     # Accumulate metrics
@@ -922,7 +946,7 @@ def add_actor_information_and_train(
                 
                 # Clip and step after accumulation
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    parameters=accelerator.unwrap_model(policy).actor.parameters(),
+                    parameters=policy.actor.parameters(),
                     max_norm=clip_grad_norm_value
                 ).item()
                 optimizers["actor"].step()

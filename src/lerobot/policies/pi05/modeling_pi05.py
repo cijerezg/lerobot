@@ -668,7 +668,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)
 
-        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
+        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions.to(self.action_in_proj.weight.dtype))
 
         def time_mlp_func(time_emb):
             x = self.time_mlp_in(time_emb)
@@ -676,7 +676,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             x = self.time_mlp_out(x)
             return F.silu(x)
 
-        time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
+        time_emb = self._apply_checkpoint(time_mlp_func, time_emb.to(self.time_mlp_in.weight.dtype))
         action_time_emb = action_emb
         adarms_cond = time_emb
         
