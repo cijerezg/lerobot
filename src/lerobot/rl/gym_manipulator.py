@@ -249,7 +249,7 @@ class RobotEnv(gym.Env):
         self.episode_data = None
         obs = self._get_observation()
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
-        return obs, {TeleopEvents.IS_INTERVENTION: False}
+        return obs, {}
 
     def step(self, action) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
@@ -278,7 +278,7 @@ class RobotEnv(gym.Env):
             reward,
             terminated,
             truncated,
-            {TeleopEvents.IS_INTERVENTION: False},
+            {},
         )
 
     def render(self) -> None:

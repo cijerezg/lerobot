@@ -1002,8 +1002,10 @@ class PI05RLPolicy(PI05Policy):
             }
 
         elif model == "critic_value":
+             values = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
              return {
-                "critic_values": self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
+                "critic_values": values,
+                "critic_value_mean": values.mean().item()
              }
 
 

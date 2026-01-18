@@ -378,6 +378,7 @@ def act_with_policy(
                 "discrete_penalty": torch.tensor(
                     [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
                 ),
+                TeleopEvents.IS_INTERVENTION.value: torch.tensor([float(is_intervening)], dtype=torch.float32),
             }
 
             # Convert environment observations to policy-expected format
