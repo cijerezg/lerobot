@@ -111,12 +111,6 @@ from lerobot.rl.utils import preprocess_batch_for_pi05
 import wandb
 import gc
 
-def print_memory(step, tag):
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        print(f"Step {step} [{tag}] | Allocated: {allocated:.2f} GB | Reserved: {reserved:.2f} GB")
-
                 
 
 @parser.wrap()
@@ -296,7 +290,7 @@ def add_actor_information_and_train(
     online_steps = cfg.policy.online_steps
     online_steps = cfg.policy.online_steps
     async_prefetch = cfg.policy.async_prefetch
-    online_buffer_save_freq = getattr(cfg, "online_buffer_save_freq", None)
+    online_buffer_save_episode_freq = getattr(cfg, "online_buffer_save_episode_freq", None)
 
     # Initialize logging for multiprocessing
     if not use_threads(cfg):
@@ -344,11 +338,11 @@ def add_actor_information_and_train(
             "critic.layers.5" in name or
             "critic.value_queries" in name or
             ("gemma_expert" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17])) or 
-            ("language_model" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17])) or
+            ("language_model" in name and any(f".{i}." in name for i in [14, 15, 16, 17])) or
             "language_model.norm" in name or
             "action_in_proj" in name or
             "action_out_proj" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [22, 23, 24, 25, 26]))
+            ("vision_tower" in name and any(f".{i}." in name for i in [23, 24, 25, 26]))
         )
     
     # Log trainable parameters
@@ -364,6 +358,7 @@ def add_actor_information_and_train(
     log_training_info(cfg=cfg, policy=policy)
 
     replay_buffer = initialize_replay_buffer(cfg, device, storage_device)
+    last_save_episode = 0
     replay_buffer.reward_normalization_constant = cfg.policy.reward_normalization_constant
     replay_buffer.terminal_failure_reward = cfg.policy.terminal_failure_reward
     batch_size = cfg.batch_size
@@ -398,6 +393,52 @@ def add_actor_information_and_train(
             terminal_failure_reward=cfg.policy.terminal_failure_reward,
         )
         offline_replay_buffer.dataset = offline_dataset
+
+        # Load additional offline datasets
+        if hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths:
+            import torchvision.transforms.functional as F_vision
+            expected_height, expected_width = 224, 224
+
+            for path in cfg.dataset.additional_offline_dataset_paths:
+                logging.info(f"Loading additional offline dataset from {path}")
+                additional_dataset = LeRobotDataset(
+                    repo_id=cfg.dataset.repo_id,
+                    root=path,
+                )
+                additional_dataset.delta_timestamps = None
+                additional_dataset.delta_indices = None
+                
+                generator = ReplayBuffer._lerobotdataset_to_transitions_generator(
+                    additional_dataset,
+                    state_keys=cfg.policy.input_features.keys()
+                )
+
+                logging.info(f"Adding transitions from {path} to offline buffer...")
+                for data in generator:
+                    # Process data (resize, cast, move)
+                    for k, v in data.items():
+                        if isinstance(v, dict):
+                            for key, tensor in v.items():
+                                if "images" in key:
+                                    if tensor.shape[-2:] != (expected_height, expected_width):
+                                        tensor = F_vision.resize(tensor, (expected_height, expected_width))
+                                        tensor = tensor.clamp(0.0, 1.0)
+                                    v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
+                                else:
+                                    v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
+                        elif isinstance(v, torch.Tensor):
+                             data[k] = v.to(dtype=torch.bfloat16, device=storage_device)
+                    
+                    offline_replay_buffer.add(
+                        state=data["state"],
+                        action=data[ACTION],
+                        reward=data["reward"],
+                        next_state=data["next_state"],
+                        done=data["done"],
+                        truncated=False,
+                        complementary_info=data.get("complementary_info", None),
+                    )
+                logging.info(f"Finished adding transitions from {path}. Buffer size: {len(offline_replay_buffer)}")
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
     # import pdb; pdb.set_trace()
@@ -436,6 +477,9 @@ def add_actor_information_and_train(
 
     # NOTE: THIS IS THE MAIN LOOP OF THE LEARNER
     while True:
+
+
+
         # Exit the training loop if shutdown is requested
         if shutdown_event is not None and shutdown_event.is_set():
             logging.info("[LEARNER] Shutdown signal received. Exiting...")
@@ -454,7 +498,10 @@ def add_actor_information_and_train(
             add_actor_information_and_train.episode_counter = [0]
 
         # Process all available transitions to the replay buffer, send by the actor server
+
         process_transitions_pi05(
+
+
             transition_queue=transition_queue,
             replay_buffer=replay_buffer,
             offline_replay_buffer=offline_replay_buffer,
@@ -501,7 +548,9 @@ def add_actor_information_and_train(
                 return item
 
         time_for_one_optimization_step = time.time()
+
         for _ in range(utd_ratio - 1):
+
             # Gradient accumulation for critic
             optimizers["critic"].zero_grad()
             for accum_step in range(gradient_accumulation_steps):
@@ -616,7 +665,9 @@ def add_actor_information_and_train(
             # ----------------------------
 
         # Sample for the last update in the UTD ratio
+
         # Gradient accumulation for critic
+
         optimizers["critic"].zero_grad()
         
         # Initialize metric accumulators for critic
@@ -771,12 +822,16 @@ def add_actor_information_and_train(
         }
         
         # Store critic histogram from critic update
-        training_infos["critic_histogram_from_critic"] = torch.cat(critic_values_list, dim=0)
+        training_infos["critic_histogram_from_critic"] = torch.cat(critic_values_list, dim=0).detach().float().cpu().numpy()
+
+
             
         # Actor update (at specified frequency)
         # Skip actor update during critic warmup
         if optimization_step >= critic_warmup_steps and optimization_step % policy_update_freq == 0:
+
             # --- Pass 2: Calculate Advantage and Re-tokenize ---
+
             # --- Pass 2: Calculate Advantage and Re-tokenize ---
             # Calculate advantage using the updated critic, then re-tokenize for the actor.
             
@@ -987,8 +1042,10 @@ def add_actor_information_and_train(
                 training_infos["critic_value_std_actor"] = all_critic_values.std().item() if all_critic_values.numel() > 1 else 0.0
                 
                 # Store concatenated histograms
-                training_infos["advantage_histogram"] = all_advantage_values
-                training_infos["critic_histogram"] = all_critic_values
+                training_infos["advantage_histogram"] = all_advantage_values.detach().float().cpu().numpy()
+                training_infos["critic_histogram"] = all_critic_values.detach().float().cpu().numpy()
+
+
                 
                 # No Temperature Update for Pi05 RL (Entropy not used)
 
@@ -1004,6 +1061,8 @@ def add_actor_information_and_train(
 
         # Log training metrics at specified intervals
         if optimization_step % log_freq == 0:
+
+
             training_infos["replay_buffer_size"] = len(replay_buffer)
             if offline_replay_buffer is not None:
                 training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
@@ -1022,14 +1081,16 @@ def add_actor_information_and_train(
                 # Log histograms separately using wandb.Histogram
                 if advantage_hist is not None:
                     wandb_logger._wandb.log({
-                        "train/advantage_histogram": wandb.Histogram(advantage_hist.detach().float().cpu().numpy()),
+                        "train/advantage_histogram": wandb.Histogram(advantage_hist),
                         "Optimization step": optimization_step
                     })
                 if critic_hist is not None:
                     wandb_logger._wandb.log({
-                        "train/critic_value_histogram": wandb.Histogram(critic_hist.detach().float().cpu().numpy()),
+                        "train/critic_value_histogram": wandb.Histogram(critic_hist),
                         "Optimization step": optimization_step
                     })
+
+
 
         # Calculate and log optimization frequency
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
@@ -1048,6 +1109,7 @@ def add_actor_information_and_train(
             )
 
         optimization_step += 1
+
         if optimization_step % log_freq == 0:
             logging.info(f"[LEARNER] Number of optimization step: {optimization_step}")
 
@@ -1066,9 +1128,10 @@ def add_actor_information_and_train(
                 fps=fps,
             )
 
-        # Save online buffer at specified intervals
-        if online_buffer_save_freq is not None and optimization_step % online_buffer_save_freq == 0:
-            logging.info(f"[LEARNER] Saving online buffer at step {optimization_step}")
+        # Save online buffer at specified intervals (based on episode count)
+        current_episode = add_actor_information_and_train.episode_counter[0]
+        if online_buffer_save_episode_freq is not None and current_episode > 0 and current_episode % online_buffer_save_episode_freq == 0 and current_episode != last_save_episode:
+            logging.info(f"[LEARNER] Saving online buffer at episode {current_episode}, step {optimization_step}, buffer size {len(replay_buffer)}")
             online_buffer_dir = os.path.join(cfg.output_dir, "online_buffer")
             
             # Remove existing buffer directory to overwrite
@@ -1083,6 +1146,7 @@ def add_actor_information_and_train(
                 task_name=cfg.policy.task,
             )
             logging.info(f"[LEARNER] Online buffer saved to {online_buffer_dir}")
+            last_save_episode = current_episode
 
         if optimization_step >= online_steps:
             logging.info("[LEARNER] Reached maximum online steps. Stopping training.")
@@ -1112,11 +1176,15 @@ def process_transitions_pi05(
                 is_logging_episode = True
                 logging.info(f"[LEARNER] Starting logging episode {episode_counter[0]}")
                 log_dir = os.path.join(cfg.output_dir, "logging_episodes", f"episode_{episode_counter[0]:06d}")
+
+
                 os.makedirs(log_dir, exist_ok=True)
                 critic_values = []
 
         for i, transition in enumerate(transition_list):
-            transition = move_transition_to_device(transition=transition, device=device)
+            # Optimization: Keep transition on CPU to save GPU memory and bandwidth.
+            # Only move to device if needed (e.g. for logging).
+            # transition = move_transition_to_device(transition=transition, device=device)
 
             # If logging, save images and compute critic value
             if is_logging_episode and policy is not None:
@@ -1148,6 +1216,9 @@ def process_transitions_pi05(
                         "state": {k: v for k, v in transition["state"].items()},
                         "action": transition[ACTION],
                     }
+                    
+                    # Move forward_batch to device for model inference
+                    forward_batch = move_transition_to_device(forward_batch, device)
 
                     # Preprocessing
                     batch_for_proc = {k: v for k, v in forward_batch["state"].items()}
@@ -1282,7 +1353,7 @@ def save_video_with_critic_overlay(log_dir, critic_values, fps=10):
     # Prepare critic curve data for plotting
     # Normalize critic values for plotting (0 to frame_height)
     critic_np = np.array(critic_values[:num_frames])
-    c_min, c_max = -6.50, 0.25
+    c_min, c_max = -1, 0.25
     critic_norm = (critic_np - c_min) / (c_max - c_min)
     critic_norm = np.clip(critic_norm, 0, 1)
     

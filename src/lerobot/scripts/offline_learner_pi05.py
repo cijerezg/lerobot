@@ -44,6 +44,7 @@ from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.process import ProcessSignalHandler
@@ -326,6 +327,59 @@ def run_offline_training(
         terminal_failure_reward=cfg.policy.terminal_failure_reward,
     )
     offline_replay_buffer.dataset = offline_dataset
+
+    # Load additional offline datasets
+    if hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths:
+        import torchvision.transforms.functional as F_vision
+        expected_height, expected_width = 224, 224
+
+        for path in cfg.dataset.additional_offline_dataset_paths:
+            if is_main_process:
+                logging.info(f"Loading additional offline dataset from {path}")
+            
+            # Ensure all processes load the dataset
+            additional_dataset = LeRobotDataset(
+                repo_id=cfg.dataset.repo_id,
+                root=path,
+            )
+            additional_dataset.delta_timestamps = None
+            additional_dataset.delta_indices = None
+            
+            generator = ReplayBuffer._lerobotdataset_to_transitions_generator(
+                additional_dataset,
+                state_keys=cfg.policy.input_features.keys()
+            )
+
+            if is_main_process:
+                logging.info(f"Adding transitions from {path} to offline buffer...")
+            
+            for data in generator:
+                # Process data (resize, cast, move)
+                for k, v in data.items():
+                    if isinstance(v, dict):
+                        for key, tensor in v.items():
+                            if "images" in key:
+                                if tensor.shape[-2:] != (expected_height, expected_width):
+                                    tensor = F_vision.resize(tensor, (expected_height, expected_width))
+                                    tensor = tensor.clamp(0.0, 1.0)
+                                v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
+                            else:
+                                v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
+                    elif isinstance(v, torch.Tensor):
+                            data[k] = v.to(dtype=torch.bfloat16, device=storage_device)
+                
+                offline_replay_buffer.add(
+                    state=data["state"],
+                    action=data[ACTION],
+                    reward=data["reward"],
+                    next_state=data["next_state"],
+                    done=data["done"],
+                    truncated=False,
+                    complementary_info=data.get("complementary_info", None),
+                )
+            
+            if is_main_process:
+                logging.info(f"Finished adding transitions from {path}. Buffer size: {len(offline_replay_buffer)}")
 
     if is_main_process:
         logging.info(f"Offline buffer initialized with {len(offline_replay_buffer)} samples")

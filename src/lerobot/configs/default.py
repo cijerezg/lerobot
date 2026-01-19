@@ -35,6 +35,7 @@ class DatasetConfig:
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_codec)
     streaming: bool = False
+    additional_offline_dataset_paths: list[str] = field(default_factory=list)
 
 
 @dataclass

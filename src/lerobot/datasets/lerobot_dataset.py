@@ -1083,6 +1083,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
+                if image.dtype == torch.bfloat16:
+                    image = image.float()
                 image = image.cpu().numpy()
             write_image(image, fpath)
         else:
@@ -1097,6 +1099,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Convert torch to numpy if needed
         for name in frame:
             if isinstance(frame[name], torch.Tensor):
+                if frame[name].dtype == torch.bfloat16:
+                    frame[name] = frame[name].float()
                 frame[name] = frame[name].numpy()
 
         validate_frame(frame, self.features)
@@ -1145,6 +1149,19 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 None.
         """
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
+
+        # Ensure all tensors are converted to numpy (handling bfloat16)
+        if episode_data is not None:
+            for key, val in episode_buffer.items():
+                if isinstance(val, torch.Tensor):
+                    if val.dtype == torch.bfloat16:
+                        val = val.float()
+                    episode_buffer[key] = val.numpy()
+                elif isinstance(val, list) and len(val) > 0 and isinstance(val[0], torch.Tensor):
+                    episode_buffer[key] = [
+                        v.float().numpy() if v.dtype == torch.bfloat16 else v.numpy()
+                        for v in val
+                    ]
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 
