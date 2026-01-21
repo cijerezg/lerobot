@@ -818,8 +818,11 @@ class ReplayBuffer:
                     if next_sample["episode_index"] != current_sample["episode_index"]:
                         done = True
 
-            # Reward is inferred from done
-            reward = 1.0 if done else 0.0
+            # Reward is inferred from done if not present
+            if REWARD in current_sample:
+                reward = current_sample[REWARD].item()
+            else:
+                reward = 1.0 if done else 0.0
             
             # TODO: (azouitine) Handle truncation (using the same value as done for now)
             truncated = done

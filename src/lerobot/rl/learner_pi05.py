@@ -106,7 +106,7 @@ from lerobot.rl.learner import (
     log_training_info,
     save_training_checkpoint,
 )
-from lerobot.rl.utils import preprocess_batch_for_pi05
+from lerobot.rl.utils import preprocess_batch_for_pi05, monitor_advantage_impact
 
 import wandb
 import gc
@@ -458,9 +458,16 @@ def add_actor_information_and_train(
     # This ensures we use the exact same stats the policy was trained with
     from lerobot.policies.factory import make_pre_post_processors
     
+    preprocessor_overrides = {
+        "pi05_prepare_state_tokenizer_processor_step": {
+            "advantage_scaling": cfg.policy.advantage_scaling
+        }
+    }
+
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pi05_checkpoint,
+        preprocessor_overrides=preprocessor_overrides,
     )
     # Store preprocessors on the policy for actor to access
     policy.preprocessor = preprocessor
@@ -1061,8 +1068,8 @@ def add_actor_information_and_train(
 
         # Log training metrics at specified intervals
         if optimization_step % log_freq == 0:
-
-
+            monitor_advantage_impact(policy, batch, device, wandb_logger, optimization_step, cfg)
+            
             training_infos["replay_buffer_size"] = len(replay_buffer)
             if offline_replay_buffer is not None:
                 training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)

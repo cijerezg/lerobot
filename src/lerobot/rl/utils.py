@@ -98,3 +98,81 @@ def preprocess_batch_for_pi05(
     forward_batch[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
     
     return forward_batch
+
+def monitor_advantage_impact(policy, batch, device, wandb_logger, step, cfg):
+    """
+    Monitors the impact of different advantage values on the policy output by observing the loss.
+    If advantage affects v_t, and u_t is fixed, then MSE(u_t, v_t) should change.
+    """
+    policy.eval()
+    advantages = [-0.32, -0.16, 0.0, 0.16, 0.32]
+    
+    # Select a few unique states (e.g., first 2)
+    num_states_to_test = min(2, batch[ACTION].shape[0])
+    
+    # Fix noise and time
+    # Handle DDP wrapping
+    policy_model = getattr(policy, "module", policy).model
+    chunk_size = policy_model.config.chunk_size
+    action_dim = policy_model.config.max_action_dim
+    
+    with torch.no_grad():
+        # Generate fixed noise and time for the subset
+        noise = torch.randn(num_states_to_test, chunk_size, action_dim, device=device, dtype=torch.bfloat16)
+        time = torch.full((num_states_to_test,), 0.5, device=device, dtype=torch.bfloat16)
+        
+        # Preprocess images once for the subset
+        subset_batch = {
+            "observation.images.wrist": batch["state"]["observation.images.wrist"][:num_states_to_test],
+            "observation.images.top": batch["state"]["observation.images.top"][:num_states_to_test],
+            "observation.images.side": batch["state"]["observation.images.side"][:num_states_to_test],
+            "observation.state": batch["state"]["observation.state"][:num_states_to_test],
+        }
+        # Use policy._preprocess_images which handles the dict -> tensor conversion
+        # Handle DDP wrapping
+        policy_unwrapped = getattr(policy, "module", policy)
+        images, img_masks = policy_unwrapped._preprocess_images(subset_batch)
+        
+        subset_actions = batch[ACTION][:num_states_to_test]
+        
+        losses = []
+        for adv_val in advantages:
+            # Prepare batch with specific advantage
+            batch_for_proc = {k: v for k, v in subset_batch.items()}
+            batch_for_proc["task"] = [cfg.policy.task] * num_states_to_test
+            batch_for_proc[ACTION] = subset_actions
+            batch_for_proc["advantage"] = torch.full((num_states_to_test,), adv_val, device=device, dtype=torch.float32)
+            
+            # Tokenize
+            processed = policy_unwrapped.preprocessor(batch_for_proc)
+            tokens = processed[OBS_LANGUAGE_TOKENS]
+            masks = processed[OBS_LANGUAGE_ATTENTION_MASK]
+            
+            # Forward pass (returns loss)
+            loss = policy_model(
+                images, img_masks, tokens, masks, subset_actions,
+                noise=noise, time=time
+            )
+            # loss is [B, chunk, dim] (reduction="none")
+            # Mean over chunk and dim to get scalar per batch item
+            loss_per_item = loss.mean(dim=(1, 2)) 
+            losses.append(loss_per_item) # [B]
+            
+        # Stats
+        stack_losses = torch.stack(losses) # [5, B]
+        std_losses = stack_losses.std(dim=0) # [B]
+        mean_std = std_losses.mean().item()
+        max_std = std_losses.max().item()
+        mean_loss = stack_losses.mean().item()
+        
+        print(f"[Advantage Monitor] Step {step}: Loss Std (Mean): {mean_std:.6f}, Loss Std (Max): {max_std:.6f}, Loss Mean: {mean_loss:.6f}")
+        
+        if wandb_logger:
+             wandb_logger.log_dict({
+                 "train/advantage_impact_loss_std_mean": mean_std,
+                 "train/advantage_impact_loss_std_max": max_std,
+                 "train/advantage_impact_loss_mean": mean_loss,
+                 "Optimization step": step
+             }, mode="train", custom_step_key="Optimization step")
+             
+    policy.train()

@@ -32,6 +32,8 @@ from pathlib import Path
 from pprint import pformat
 from dataclasses import dataclass
 
+import numpy as np
+
 import torch
 from accelerate import Accelerator
 from accelerate.utils import DistributedDataParallelKwargs
@@ -72,7 +74,7 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
 )
-from lerobot.rl.utils import preprocess_batch_for_pi05
+from lerobot.rl.utils import preprocess_batch_for_pi05, monitor_advantage_impact
 
 import wandb
 
@@ -258,17 +260,17 @@ def run_offline_training(
     
     for name, param in policy.named_parameters():
         param.requires_grad = (
-            ("gemma_expert" in name and any(f".{i}." in name for i in [11, 12, 13, 14, 15, 16, 17])) or 
+            #("gemma_expert" in name and any(f".{i}." in name for i in [11, 12, 13, 14, 15, 16, 17])) or  # actor
             #"vision_tower" in name or 
             #"multi_modal_project" in name or
             #"action_in_proj" in name or
-            #"action_out_proj" in name or 
+            "action_out_proj" in name or 
             #"time_mlp_in" in name or
             #"time_mlp_out" in name or
-            #("critic" in name and "embed_tokens" not in name and ) or
-            "critic.value_head.2" in name or
-            ("language_model" in name and any(f".{i}." in name for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or
-            "language_model.norm" in name
+            ("critic" in name and "embed_tokens" not in name)
+            #"critic.value_head.2" in name or
+            #("language_model" in name and any(f".{i}." in name for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or # actor
+            #"language_model.norm" in name
         )
     
     # Log trainable parameters
@@ -293,9 +295,17 @@ def run_offline_training(
     # Create preprocessor and postprocessor
     if is_main_process:
         logging.info("Creating preprocessors and postprocessors")
+    
+    preprocessor_overrides = {
+        "pi05_prepare_state_tokenizer_processor_step": {
+            "advantage_scaling": cfg.policy.advantage_scaling
+        }
+    }
+    
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pi05_checkpoint,
+        preprocessor_overrides=preprocessor_overrides,
     )
     # Store preprocessors on the policy
     policy.preprocessor = preprocessor
@@ -758,6 +768,7 @@ def run_offline_training(
         
         # Log training metrics
         if optimization_step % log_freq == 0:
+            monitor_advantage_impact(policy, batch, device, wandb_logger, optimization_step, cfg)
             training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
             training_infos["Optimization step"] = optimization_step
             
@@ -777,15 +788,17 @@ def run_offline_training(
                         "Optimization step": optimization_step
                     })
                 if critic_hist is not None:
+                    critic_vals = np.clip(critic_hist.detach().float().cpu().numpy(), -5, .5)
                     wandb_logger._wandb.log({
-                        "train/critic_value_histogram": wandb.Histogram(critic_hist.detach().float().cpu().numpy()),
+                        "train/critic_value_histogram": wandb.Histogram(critic_vals),
                         "Optimization step": optimization_step
                     })
                 
                 # Log critic histogram from critic update
                 if critic_hist_from_critic is not None:
+                    critic_vals_from_critic = np.clip(critic_hist_from_critic.detach().float().cpu().numpy(), -5, .5)
                     wandb_logger._wandb.log({
-                        "train/critic_value_histogram_from_critic": wandb.Histogram(critic_hist_from_critic.detach().float().cpu().numpy()),
+                        "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
                         "Optimization step": optimization_step
                     })
         
