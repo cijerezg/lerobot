@@ -147,10 +147,11 @@ def monitor_advantage_impact(policy, batch, device, wandb_logger, step, cfg):
             processed = policy_unwrapped.preprocessor(batch_for_proc)
             tokens = processed[OBS_LANGUAGE_TOKENS]
             masks = processed[OBS_LANGUAGE_ATTENTION_MASK]
+            normalized_actions = processed[ACTION]
             
             # Forward pass (returns loss)
             loss = policy_model(
-                images, img_masks, tokens, masks, subset_actions,
+                images, img_masks, tokens, masks, normalized_actions,
                 noise=noise, time=time
             )
             # loss is [B, chunk, dim] (reduction="none")

@@ -40,7 +40,7 @@ import json
 from PIL import Image
 import cv2
 
-episode_logging_freq = 10
+episode_logging_freq = 2
 
 
 from torch.multiprocessing import Queue
@@ -1225,7 +1225,7 @@ def process_transitions_pi05(
                     }
                     
                     # Move forward_batch to device for model inference
-                    forward_batch = move_transition_to_device(forward_batch, device)
+                    forward_batch = move_state_dict_to_device(forward_batch, device)
 
                     # Preprocessing
                     batch_for_proc = {k: v for k, v in forward_batch["state"].items()}
@@ -1360,16 +1360,20 @@ def save_video_with_critic_overlay(log_dir, critic_values, fps=10):
     # Prepare critic curve data for plotting
     # Normalize critic values for plotting (0 to frame_height)
     critic_np = np.array(critic_values[:num_frames])
-    c_min, c_max = -1, 0.25
+    c_min, c_max = -1.1, 0.1
     critic_norm = (critic_np - c_min) / (c_max - c_min)
     critic_norm = np.clip(critic_norm, 0, 1)
     
     # Map to pixel coordinates (inverted Y for image space)
     # Restrict to lower half (frame_height // 2 to frame_height)
     lower_half_height = frame_height // 2
-    margin = 20
+    margin = 10
     plot_y = (lower_half_height - 2 * margin) * (1 - critic_norm) + (frame_height // 2 + margin)
     plot_x = np.linspace(0, frame_width, num_frames)
+
+    def get_y(val):
+        norm = (val - c_min) / (c_max - c_min)
+        return int((lower_half_height - 2 * margin) * (1 - norm) + (frame_height // 2 + margin))
 
     for i in range(num_frames):
         # Load and resize images
@@ -1384,22 +1388,45 @@ def save_video_with_critic_overlay(log_dir, critic_values, fps=10):
         
         # Create an overlay for the curve
         overlay = frame.copy()
+
+        # Draw vertical axis and ticks
+        axis_x = 50
+        tick_length = 10
+        ticks = [-1.0, -0.75, -0.5, -0.25, 0.0]
         
-        # 1. Draw full curve with low alpha (faint white)
+        # Draw axis line
+        y_bottom = get_y(-1.0)
+        y_top = get_y(0.0)
+        cv2.line(overlay, (axis_x, y_top), (axis_x, y_bottom), (105, 0, 0), 1)
+
+        # Draw ticks and labels
+        for tick_val in ticks:
+            y = get_y(tick_val)
+            # Tick line
+            cv2.line(overlay, (axis_x, y), (axis_x - tick_length, y), (105, 0, 0), 1)
+            # Label
+            label = f"{tick_val}"
+            # Adjust text position
+            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+            text_x = axis_x - tick_length - text_size[0] - 5
+            text_y = y + text_size[1] // 2
+            cv2.putText(overlay, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (105, 0, 0), 1, cv2.LINE_AA)
+        
+        # 1. Draw full curve with low alpha (faint dark blue)
         points = np.vstack((plot_x, plot_y)).T.astype(np.int32)
-        cv2.polylines(overlay, [points], isClosed=False, color=(200, 200, 200), thickness=1)
+        cv2.polylines(overlay, [points], isClosed=False, color=(200, 100, 100), thickness=1)
         
-        # 2. Draw progressing curve with high alpha (bright white)
+        # 2. Draw progressing curve with high alpha (dark blue)
         prog_points = points[:i+1]
         if len(prog_points) > 1:
-            cv2.polylines(overlay, [prog_points], isClosed=False, color=(255, 255, 255), thickness=3)
+            cv2.polylines(overlay, [prog_points], isClosed=False, color=(105, 0, 0), thickness=3)
             
             # Draw a vertical dashed line at current position
             curr_x, curr_y = prog_points[-1]
-            cv2.line(overlay, (curr_x, frame_height), (curr_x, curr_y), (255, 255, 255), 1, lineType=cv2.LINE_AA)
+            cv2.line(overlay, (curr_x, frame_height), (curr_x, curr_y), (105, 0, 0), 1, lineType=cv2.LINE_AA)
 
         # Blend overlay with original frame
-        alpha = 0.6
+        alpha = 0.8
         cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
         
         out.write(frame)
