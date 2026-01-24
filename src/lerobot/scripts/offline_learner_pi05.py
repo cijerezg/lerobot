@@ -260,17 +260,17 @@ def run_offline_training(
     
     for name, param in policy.named_parameters():
         param.requires_grad = (
-            #("gemma_expert" in name and any(f".{i}." in name for i in [11, 12, 13, 14, 15, 16, 17])) or  # actor
+            ("gemma_expert" in name and any(f".{i}." in name for i in [11, 12, 13, 14, 15, 16, 17])) or  # actor
             #"vision_tower" in name or 
             #"multi_modal_project" in name or
             #"action_in_proj" in name or
             "action_out_proj" in name or 
             #"time_mlp_in" in name or
             #"time_mlp_out" in name or
-            ("critic" in name and "embed_tokens" not in name)
-            #"critic.value_head.2" in name or
-            #("language_model" in name and any(f".{i}." in name for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or # actor
-            #"language_model.norm" in name
+            #("critic" in name and "embed_tokens" not in name)
+            "critic.value_head.2" in name or
+            ("language_model" in name and any(f".{i}." in name for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or # actor
+            "language_model.norm" in name
         )
     
     # Log trainable parameters

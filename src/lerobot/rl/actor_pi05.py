@@ -274,6 +274,7 @@ def act_with_policy(
     episode_total_steps = 0
 
     policy_timer = TimerManager("Policy inference", log=False)
+    was_intervening = False
 
     try:
         for interaction_step in range(cfg.policy.online_steps):
@@ -353,15 +354,23 @@ def act_with_policy(
             sum_reward_episode += float(reward)
             episode_total_steps += 1
 
+
             # Check for intervention from transition info
             intervention_info = new_transition[TransitionKey.INFO]
             is_intervening = intervention_info.get(TeleopEvents.IS_INTERVENTION, False)
+
+            if was_intervening and not is_intervening:
+                policy.reset()
+            
+            was_intervening = is_intervening   
+
             if is_intervening:
                 episode_intervention = True
                 episode_intervention_steps += 1
             else:
                 # Send feedback to teleop device if not intervening
                 # Extract raw joint positions from observation
+                intervention_reset_policy = True
                 feedback = {}
                 for key, value in new_transition[TransitionKey.OBSERVATION].items():
                     if key.endswith(".pos"):
@@ -373,6 +382,8 @@ def act_with_policy(
 
                 if feedback:
                     teleop_device.send_feedback(feedback)
+
+         
 
             complementary_info = {
                 "discrete_penalty": torch.tensor(
@@ -522,6 +533,7 @@ def act_with_policy(
                 obs, info = online_env.reset()
                 env_processor.reset()
                 action_processor.reset()
+                policy.reset()
 
                 # Process initial observation
                 transition = create_transition(observation=obs, info=info)
