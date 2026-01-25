@@ -337,12 +337,12 @@ def add_actor_information_and_train(
             "critic.value_head" in name or
             "critic.layers.5" in name or
             "critic.value_queries" in name or
-            ("gemma_expert" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17])) or 
-            ("language_model" in name and any(f".{i}." in name for i in [14, 15, 16, 17])) or
+            ("gemma_expert" in name and any(f".{i}." in name for i in [14, 15, 16, 17])) or 
+            ("language_model" in name and any(f".{i}." in name for i in [16, 17])) or
             "language_model.norm" in name or
             "action_in_proj" in name or
             "action_out_proj" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [23, 24, 25, 26]))
+            ("vision_tower" in name and any(f".{i}." in name for i in [24, 25, 26]))
         )
     
     # Log trainable parameters
@@ -855,6 +855,7 @@ def add_actor_information_and_train(
                 critic_values_list = []
                 target_values_list = []
                 reward_values_list = []
+                actor_loss_list = []
                 
                 for accum_step in range(gradient_accumulation_steps):
                     # Sample NEW batch for actor update
@@ -1021,6 +1022,39 @@ def add_actor_information_and_train(
                     critic_values_list.append(actor_output["critic_values"].detach())
                     target_values_list.append(actor_output["target_values"].detach())
                     reward_values_list.append(actor_output["rewards"].detach())
+
+                    # --- Advantage-based Loss Logging ---
+                    # loss_actor is [B, Chunk, Dim] (unreduced)
+                    # We want loss per sample: [B]
+                    loss_per_sample = actor_output["loss_actor"].detach().mean(dim=(1, 2))
+                    
+                    # Get advantage values (already tanh'd and scaled in policy.forward)
+                    adv_values = actor_output["advantage_values"].detach().squeeze()
+                    
+                    # Define bins (using fixed ranges for tanh'd advantage [-1, 1])
+                    # Bins: [-1.0, -0.6), [-0.6, -0.2), [-0.2, 0.2), [0.2, 0.6), [0.6, 1.0]
+                    bin_edges = [-1.0, -0.6, -0.2, 0.2, 0.6, 1.0]
+                    
+                    # Initialize bin accumulators if not exists
+                    if "actor_loss_by_bin" not in locals():
+                        actor_loss_by_bin = {i: [] for i in range(len(bin_edges) - 1)}
+                    
+                    for i in range(len(bin_edges) - 1):
+                        low = bin_edges[i]
+                        high = bin_edges[i+1]
+                        
+                        # Find indices in this bin
+                        if i == len(bin_edges) - 2:
+                            # Include upper bound for last bin
+                            mask = (adv_values >= low) & (adv_values <= high)
+                        else:
+                            mask = (adv_values >= low) & (adv_values < high)
+                        
+                        if mask.any():
+                            # Store all individual losses for this bin
+                            actor_loss_by_bin[i].append(loss_per_sample[mask].detach())
+                
+                actor_loss_list.append(loss_per_sample.detach())
                 
                 # Clip and step after accumulation
                 actor_grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -1034,6 +1068,7 @@ def add_actor_information_and_train(
                 all_critic_values = torch.cat(critic_values_list, dim=0)
                 all_target_values = torch.cat(target_values_list, dim=0)
                 all_reward_values = torch.cat(reward_values_list, dim=0)
+                all_actor_losses = torch.cat(actor_loss_list, dim=0)
 
                 if all_reward_values.mean().item() > 0:
                     print(f'Nonzero reward received: {all_reward_values.mean().item()} at optimization step {optimization_step}')
@@ -1048,9 +1083,23 @@ def add_actor_information_and_train(
                 training_infos["critic_value_mean_actor"] = all_critic_values.mean().item()
                 training_infos["critic_value_std_actor"] = all_critic_values.std().item() if all_critic_values.numel() > 1 else 0.0
                 
+                # Add advantage bin losses and histograms
+                if "actor_loss_by_bin" in locals():
+                    for i, losses in actor_loss_by_bin.items():
+                        if losses:
+                            # Concatenate all losses in this bin
+                            all_losses_in_bin = torch.cat(losses)
+                            # Log mean (scalar)
+                            training_infos[f"actor_loss_adv_bin_{i}"] = all_losses_in_bin.mean().item()
+                            # Log histogram
+                            training_infos[f"actor_loss_adv_bin_{i}_histogram"] = all_losses_in_bin.float().cpu().numpy()
+                        else:
+                            training_infos[f"actor_loss_adv_bin_{i}"] = 0.0
+
                 # Store concatenated histograms
                 training_infos["advantage_histogram"] = all_advantage_values.detach().float().cpu().numpy()
                 training_infos["critic_histogram"] = all_critic_values.detach().float().cpu().numpy()
+                training_infos["actor_loss_histogram"] = all_actor_losses.detach().float().cpu().numpy()
 
 
                 
@@ -1081,6 +1130,7 @@ def add_actor_information_and_train(
                 # Extract histograms if they exist
                 advantage_hist = training_infos.pop("advantage_histogram", None)
                 critic_hist = training_infos.pop("critic_histogram", None)
+                actor_loss_hist = training_infos.pop("actor_loss_histogram", None)
                 
                 # Log scalar metrics
                 wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
@@ -1096,6 +1146,19 @@ def add_actor_information_and_train(
                         "train/critic_value_histogram": wandb.Histogram(critic_hist),
                         "Optimization step": optimization_step
                     })
+                    wandb_logger._wandb.log({
+                        "train/actor_loss_histogram": wandb.Histogram(actor_loss_hist),
+                        "Optimization step": optimization_step
+                    })
+                
+                # Log advantage bin histograms
+                for i in range(5): # 5 bins
+                    bin_hist = training_infos.pop(f"actor_loss_adv_bin_{i}_histogram", None)
+                    if bin_hist is not None:
+                        wandb_logger._wandb.log({
+                            f"train/actor_loss_adv_bin_{i}_histogram": wandb.Histogram(bin_hist),
+                            "Optimization step": optimization_step
+                        })
 
 
 
