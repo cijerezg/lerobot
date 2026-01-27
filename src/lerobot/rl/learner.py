@@ -311,6 +311,11 @@ def add_actor_information_and_train(
         env_cfg=cfg.env,
     )
 
+    if cfg.policy.dtype == "bfloat16":
+        policy.to(dtype=torch.bfloat16)
+    elif cfg.policy.dtype == "float16":
+        policy.to(dtype=torch.float16)
+
     assert isinstance(policy, nn.Module)
 
     policy.train()
@@ -390,6 +395,20 @@ def add_actor_information_and_train(
                 batch_size=batch_size, async_prefetch=async_prefetch, queue_size=2
             )
 
+        print(f'Replay buffer size: {len(replay_buffer)}')
+        if cfg.policy.dtype == "bfloat16":
+            # Helper function to cast tensors in a structure
+            def cast_to_bf16(item):
+                if isinstance(item, torch.Tensor):
+                    if item.dtype == torch.float32:
+                        return item.to(dtype=torch.bfloat16)
+                    return item
+                elif isinstance(item, dict):
+                    return {k: cast_to_bf16(v) for k, v in item.items()}
+                elif isinstance(item, list):
+                    return [cast_to_bf16(v) for v in item]
+                return item
+
         time_for_one_optimization_step = time.time()
         for _ in range(utd_ratio - 1):
             # Sample from the iterators
@@ -400,6 +419,21 @@ def add_actor_information_and_train(
                 batch = concatenate_batch_transitions(
                     left_batch_transitions=batch, right_batch_transition=batch_offline
                 )
+
+            # Move batch to device
+            batch = move_transition_to_device(batch, device)
+
+            if cfg.policy.dtype == "bfloat16":
+                # Manual casting for now
+                if isinstance(batch, dict):
+                    batch = {k: cast_to_bf16(v) for k, v in batch.items()}
+                else:
+                    new_batch_data = {}
+                    for field in batch._fields:
+                        val = getattr(batch, field)
+                        new_batch_data[field] = cast_to_bf16(val)
+                    
+                    batch = type(batch)(**new_batch_data)
 
             actions = batch[ACTION]
             rewards = batch["reward"]
@@ -458,6 +492,21 @@ def add_actor_information_and_train(
             batch = concatenate_batch_transitions(
                 left_batch_transitions=batch, right_batch_transition=batch_offline
             )
+
+        # Move batch to device
+        batch = move_transition_to_device(batch, device)
+
+        if cfg.policy.dtype == "bfloat16":
+            # Manual casting for now
+            if isinstance(batch, dict):
+                batch = {k: cast_to_bf16(v) for k, v in batch.items()}
+            else:
+                new_batch_data = {}
+                for field in batch._fields:
+                    val = getattr(batch, field)
+                    new_batch_data[field] = cast_to_bf16(val)
+                
+                batch = type(batch)(**new_batch_data)
 
         actions = batch[ACTION]
         rewards = batch["reward"]
@@ -602,6 +651,10 @@ def add_actor_information_and_train(
                 dataset_repo_id=dataset_repo_id,
                 fps=fps,
             )
+
+        if optimization_step >= online_steps:
+            logging.info("[LEARNER] Reached maximum online steps. Stopping training.")
+            break
 
 
 def start_learner(
@@ -801,12 +854,10 @@ def make_optimizers_and_scheduler(cfg: TrainRLServerPipelineConfig, policy: nn.M
         optimizer_discrete_critic = torch.optim.Adam(
             params=policy.discrete_critic.parameters(), lr=cfg.policy.critic_lr
         )
-    optimizer_temperature = torch.optim.Adam(params=[policy.log_alpha], lr=cfg.policy.critic_lr)
     lr_scheduler = None
     optimizers = {
         "actor": optimizer_actor,
         "critic": optimizer_critic,
-        "temperature": optimizer_temperature,
     }
     if cfg.policy.num_discrete_actions is not None:
         optimizers["discrete_critic"] = optimizer_discrete_critic
@@ -1011,6 +1062,7 @@ def initialize_offline_replay_buffer(
         optimize_memory=True,
         capacity=cfg.policy.offline_buffer_capacity,
     )
+    offline_replay_buffer.dataset = offline_dataset
     return offline_replay_buffer
 
 

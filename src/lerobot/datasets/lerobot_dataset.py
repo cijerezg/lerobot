@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import concurrent.futures
 import contextlib
 import logging
 import shutil
@@ -57,9 +56,7 @@ from lerobot.datasets.utils import (
     load_info,
     load_nested_dataset,
     load_stats,
-    load_subtasks,
     load_tasks,
-    load_tasks_high_level,
     update_chunk_file_indices,
     validate_episode_buffer,
     validate_frame,
@@ -80,7 +77,6 @@ from lerobot.datasets.video_utils import (
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 CODEBASE_VERSION = "v3.0"
-VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1"}
 
 
 class LeRobotDatasetMetadata:
@@ -164,8 +160,6 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
-        self.tasks_high_level = load_tasks_high_level(self.root)
-        self.subtasks = load_subtasks(self.root)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 
@@ -522,8 +516,6 @@ class LeRobotDatasetMetadata:
         _validate_feature_names(features)
 
         obj.tasks = None
-        obj.tasks_high_level = None
-        obj.subtasks = None
         obj.episodes = None
         obj.stats = None
         obj.info = create_empty_dataset_info(
@@ -547,17 +539,6 @@ class LeRobotDatasetMetadata:
         return obj
 
 
-def _encode_video_worker(
-    video_key: str, episode_index: int, root: Path, fps: int, vcodec: str = "libsvtav1"
-) -> Path:
-    temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
-    fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
-    img_dir = (root / fpath).parent
-    encode_video_frames(img_dir, temp_path, fps, vcodec=vcodec, overwrite=True)
-    shutil.rmtree(img_dir)
-    return temp_path
-
-
 class LeRobotDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -572,7 +553,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         download_videos: bool = True,
         video_backend: str | None = None,
         batch_encoding_size: int = 1,
-        vcodec: str = "libsvtav1",
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -685,13 +665,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 You can also use the 'pyav' decoder used by Torchvision, which used to be the default option, or 'video_reader' which is another decoder of Torchvision.
             batch_encoding_size (int, optional): Number of episodes to accumulate before batch encoding videos.
                 Set to 1 for immediate encoding (default), or higher for batched encoding. Defaults to 1.
-            vcodec (str, optional): Video codec for encoding videos during recording. Options: 'h264', 'hevc',
-                'libsvtav1'. Defaults to 'libsvtav1'. Use 'h264' for faster encoding on systems where AV1
-                encoding is CPU-heavy.
         """
         super().__init__()
-        if vcodec not in VALID_VIDEO_CODECS:
-            raise ValueError(f"Invalid vcodec '{vcodec}'. Must be one of: {sorted(VALID_VIDEO_CODECS)}")
         self.repo_id = repo_id
         self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
@@ -703,7 +678,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.delta_indices = None
         self.batch_encoding_size = batch_encoding_size
         self.episodes_since_last_encoding = 0
-        self.vcodec = vcodec
 
         # Unused attributes
         self.image_writer = None
@@ -941,30 +915,17 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             return get_hf_features_from_features(self.features)
 
-    def _get_query_indices(
-        self, abs_idx: int, ep_idx: int
-    ) -> tuple[dict[str, list[int]], dict[str, torch.Tensor]]:
-        """Compute query indices for delta timestamps.
-
-        Args:
-            abs_idx: The absolute index in the full dataset (not the relative index in filtered episodes).
-            ep_idx: The episode index.
-
-        Returns:
-            A tuple of (query_indices, padding) where:
-            - query_indices: Dict mapping keys to lists of absolute indices to query
-            - padding: Dict mapping "{key}_is_pad" to boolean tensors indicating padded positions
-        """
+    def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
         ep = self.meta.episodes[ep_idx]
         ep_start = ep["dataset_from_index"]
         ep_end = ep["dataset_to_index"]
         query_indices = {
-            key: [max(ep_start, min(ep_end - 1, abs_idx + delta)) for delta in delta_idx]
+            key: [max(ep_start, min(ep_end - 1, idx + delta)) for delta in delta_idx]
             for key, delta_idx in self.delta_indices.items()
         }
         padding = {  # Pad values outside of current episode range
             f"{key}_is_pad": torch.BoolTensor(
-                [(abs_idx + delta < ep_start) | (abs_idx + delta >= ep_end) for delta in delta_idx]
+                [(idx + delta < ep_start) | (idx + delta >= ep_end) for delta in delta_idx]
             )
             for key, delta_idx in self.delta_indices.items()
         }
@@ -1056,12 +1017,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self._ensure_hf_dataset_loaded()
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
-        # Use the absolute index from the dataset for delta timestamp calculations
-        abs_idx = item["index"].item()
 
         query_indices = None
         if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(abs_idx, ep_idx)
+            query_indices, padding = self._get_query_indices(idx, ep_idx)
             query_result = self._query_hf_dataset(query_indices)
             item = {**item, **padding}
             for key, val in query_result.items():
@@ -1081,18 +1040,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Add task as a string
         task_idx = item["task_index"].item()
         item["task"] = self.meta.tasks.iloc[task_idx].name
-        
-        # optionally add high level task index
-        if "task_index_high_level" in self.features:
-            high_level_task_idx = item["task_index_high_level"].item()
-            item["robot_utterance"] = self.meta.tasks_high_level.iloc[high_level_task_idx]["robot_utterance"]
-            item["user_prompt"] = self.meta.tasks_high_level.iloc[high_level_task_idx]["user_prompt"]
-        
-        # optionally add subtask information
-        if "subtask_index" in self.features and self.meta.subtasks is not None:
-            subtask_idx = item["subtask_index"].item()
-            item["subtask"] = self.meta.subtasks.iloc[subtask_idx].name
-        
         return item
 
     def __repr__(self):
@@ -1124,7 +1071,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ep_buffer[key] = current_ep_idx if key == "episode_index" else []
         return ep_buffer
 
-    # TODO(Steven): consider move this to utils
     def _get_image_file_path(self, episode_index: int, image_key: str, frame_index: int) -> Path:
         fpath = DEFAULT_IMAGE_PATH.format(
             image_key=image_key, episode_index=episode_index, frame_index=frame_index
@@ -1134,15 +1080,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _get_image_file_dir(self, episode_index: int, image_key: str) -> Path:
         return self._get_image_file_path(episode_index, image_key, frame_index=0).parent
 
-    def _save_image(
-        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
-    ) -> None:
+    def _save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
+                if image.dtype == torch.bfloat16:
+                    image = image.float()
                 image = image.cpu().numpy()
-            write_image(image, fpath, compress_level=compress_level)
+            write_image(image, fpath)
         else:
-            self.image_writer.save_image(image=image, fpath=fpath, compress_level=compress_level)
+            self.image_writer.save_image(image=image, fpath=fpath)
 
     def add_frame(self, frame: dict) -> None:
         """
@@ -1153,6 +1099,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Convert torch to numpy if needed
         for name in frame:
             if isinstance(frame[name], torch.Tensor):
+                if frame[name].dtype == torch.bfloat16:
+                    frame[name] = frame[name].float()
                 frame[name] = frame[name].numpy()
 
         validate_frame(frame, self.features)
@@ -1180,8 +1128,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
-                compress_level = 1 if self.features[key]["dtype"] == "video" else 6
-                self._save_image(frame[key], img_path, compress_level)
+                self._save_image(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
@@ -1204,10 +1151,21 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_data (dict | None, optional): Dict containing the episode data to save. If None, this will
                 save the current episode in self.episode_buffer, which is filled with 'add_frame'. Defaults to
                 None.
-            parallel_encoding (bool, optional): If True, encode videos in parallel using ProcessPoolExecutor.
-                Defaults to True on Linux, False on macOS as it tends to use all the CPU available already.
         """
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
+
+        # Ensure all tensors are converted to numpy (handling bfloat16)
+        if episode_data is not None:
+            for key, val in episode_buffer.items():
+                if isinstance(val, torch.Tensor):
+                    if val.dtype == torch.bfloat16:
+                        val = val.float()
+                    episode_buffer[key] = val.numpy()
+                elif isinstance(val, list) and len(val) > 0 and isinstance(val[0], torch.Tensor):
+                    episode_buffer[key] = [
+                        v.float().numpy() if v.dtype == torch.bfloat16 else v.numpy()
+                        for v in val
+                    ]
 
         validate_episode_buffer(episode_buffer, self.meta.total_episodes, self.features)
 
@@ -1452,7 +1410,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
             ep_path = self._encode_temporary_episode_video(video_key, episode_index)
         else:
             ep_path = temp_path
-
         ep_size_in_mb = get_file_size_in_mb(ep_path)
         ep_duration_in_s = get_video_duration_in_s(ep_path)
 
@@ -1531,7 +1488,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episode_index = self.episode_buffer["episode_index"]
             if isinstance(episode_index, np.ndarray):
                 episode_index = episode_index.item() if episode_index.size == 1 else episode_index[0]
-            for cam_key in self.meta.image_keys:
+            for cam_key in self.meta.camera_keys:
                 img_dir = self._get_image_file_dir(episode_index, cam_key)
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)
@@ -1566,7 +1523,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def _encode_temporary_episode_video(self, video_key: str, episode_index: int) -> Path:
         """
-        Use ffmpeg to convert frames stored as png into mp4 videos.
+        Encode the frames of an episode into a mp4 video.
         Note: `encode_video_frames` is a blocking call. Making it asynchronous shouldn't speedup encoding,
         since video encoding with ffmpeg is already using multithreading.
         """

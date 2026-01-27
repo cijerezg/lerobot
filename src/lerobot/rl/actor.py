@@ -184,10 +184,8 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     )
     logging.info("[ACTOR] Policy process joined")
 
-    logging.info("[ACTOR] Closing queues")
-    transitions_queue.close()
-    interactions_queue.close()
-    parameters_queue.close()
+    # Signal background threads to stop
+    shutdown_event.set()
 
     transitions_process.join()
     logging.info("[ACTOR] Transitions process joined")
@@ -195,6 +193,11 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     logging.info("[ACTOR] Interactions process joined")
     receive_policy_process.join()
     logging.info("[ACTOR] Receive policy process joined")
+
+    logging.info("[ACTOR] Closing queues")
+    transitions_queue.close()
+    interactions_queue.close()
+    parameters_queue.close()
 
     logging.info("[ACTOR] join queues")
     transitions_queue.cancel_join_thread()
@@ -289,10 +292,13 @@ def act_with_policy(
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
             # Extract observation from transition for policy
-            action = policy.select_action(batch=observation)
+            with torch.no_grad():
+                action = policy.select_action(observation)
+
+            if "action" in policy.config.normalization_mapping:st
         policy_fps = policy_timer.fps_last
 
-        log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
+        #log_policy_frequency_issue(policy_fps=policy_fps, cfg=cfg, interaction_step=interaction_step)
 
         # Use the new step function
         new_transition = step_env_and_process_transition(
@@ -323,9 +329,24 @@ def act_with_policy(
 
         # Check for intervention from transition info
         intervention_info = new_transition[TransitionKey.INFO]
-        if intervention_info.get(TeleopEvents.IS_INTERVENTION, False):
+        is_intervening = intervention_info.get(TeleopEvents.IS_INTERVENTION, False)
+        if is_intervening:
             episode_intervention = True
             episode_intervention_steps += 1
+        else:
+            # Send feedback to teleop device if not intervening
+            # Extract raw joint positions from observation
+            feedback = {}
+            for key, value in new_transition[TransitionKey.OBSERVATION].items():
+                if key.endswith(".pos"):
+                    # value is likely a tensor, convert to float
+                    if isinstance(value, torch.Tensor):
+                        feedback[key] = value.item()
+                    else:
+                        feedback[key] = float(value)
+
+            if feedback:
+                teleop_device.send_feedback(feedback)
 
         complementary_info = {
             "discrete_penalty": torch.tensor(
@@ -726,7 +747,7 @@ def get_frequency_stats(timer: TimerManager) -> dict[str, float]:
 def log_policy_frequency_issue(policy_fps: float, cfg: TrainRLServerPipelineConfig, interaction_step: int):
     if policy_fps < cfg.env.fps:
         logging.warning(
-            f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.env.fps} at step {interaction_step}"
+           f"[ACTOR] Policy FPS {policy_fps:.1f} below required {cfg.env.fps} at step {interaction_step}"
         )
 
 

@@ -276,6 +276,8 @@ class Qwen2VL(BaseVLM):
             skip_special_tokens=True,
         )[0].strip()
 
+        self.console.print(f"\n[bold yellow]Raw VLM Response:[/bold yellow]\n{response}\n")
+
         return self._parse_skills_response(response)
 
     def segment_skills_batch(
@@ -334,6 +336,7 @@ class Qwen2VL(BaseVLM):
         # Parse each response
         all_skills = []
         for idx, response in enumerate(responses):
+            self.console.print(f"\n[bold yellow]Raw VLM Response (Video {idx}):[/bold yellow]\n{response}\n")
             try:
                 skills = self._parse_skills_response(response.strip())
                 if not skills:
@@ -490,6 +493,7 @@ class Qwen3VL(BaseVLM):
         # Parse each response
         all_skills = []
         for idx, response in enumerate(responses):
+            self.console.print(f"\n[bold yellow]Raw VLM Response (Video {idx}):[/bold yellow]\n{response}\n")
             try:
                 skills = self._parse_skills_response(response.strip())
                 if not skills:

@@ -56,6 +56,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
     max_state_dim: int = 32
     user_prompt_key: str = "task"
     command_key: str = "subtask"
+    advantage_scaling: float = 1.0
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -69,6 +70,9 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         commands = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.command_key)
         if commands is None:
             raise ValueError("No commands found in complementary data")
+        
+        # Check for advantage
+        advantages = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("advantage")
 
         # TODO: check if this necessary
         state = deepcopy(state)
@@ -85,7 +89,31 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         for i, user_prompt in enumerate(user_prompts):
             cleaned_text = user_prompt.strip().replace("_", " ").replace("\n", " ")
             state_str = " ".join(map(str, discretized_states[i]))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
+            
+            # Add advantage if present
+            advantage_str = ""
+            if advantages is not None:
+                # Scale and bin advantage
+                adv = advantages[i] * self.advantage_scaling
+                # Bins: [-1.0, -0.6, -0.2, 0.2, 0.6, 1.0] -> 5 bins (indices 1-5 from digitize)
+                # We map them to something readable or just the bin index?
+                # User said "add the advantage to the original prompt with the binning"
+                # Let's use the bin index for now, or a specific token if we knew it.
+                # Assuming simple integer bin.
+                # Note: np.digitize returns 0 if < bins[0], len(bins) if >= bins[-1].
+                # We want bins 0..4 or 1..5.
+                bins = np.array([-1.0, -0.6, -0.2, 0.2, 0.6, 1.0])
+                # Clip to range
+                adv = np.clip(adv, -1.0, 1.0)
+                # digitize
+                adv_bin = np.digitize(adv, bins) - 1 # 0 to 5
+                # Clamp to 0-4 (5 bins)
+                adv_bin = max(0, min(4, adv_bin))
+                
+                # Format: "Advantage: <bin>"
+                advantage_str = f", Advantage: {adv_bin}"
+
+            full_prompt = f"Task: {cleaned_text}, State: {state_str}{advantage_str};\n"
             full_prompts.append(full_prompt)
         
         transition[TransitionKey.COMPLEMENTARY_DATA][self.user_prompt_key] = full_prompts
@@ -116,6 +144,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
 def make_pi05_full_pre_post_processors(
     config: PI05FullConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -156,7 +185,10 @@ def make_pi05_full_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=dataset_stats,
         ),
-        Pi05FullPrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
+        Pi05FullPrepareStateTokenizerProcessorStep(
+            max_state_dim=config.max_state_dim,
+            **(preprocessor_overrides.get("pi05_full_prepare_state_tokenizer_processor_step", {}) if preprocessor_overrides else {})
+        ),
         TokenizerProcessorStep(
             tokenizer_name=config.text_tokenizer_name,
             max_length=config.tokenizer_max_length,

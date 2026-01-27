@@ -1,0 +1,245 @@
+{
+    "output_dir": null,
+    "job_name": "default",
+    "resume": false,
+    "seed": 42,
+    "num_workers": 4,
+    "batch_size": 8,
+    "log_freq": 5,
+    "save_checkpoint": true,
+    "save_freq": 50,
+    "offline_output_dir": "outputs/pi05_offline_training_v4",
+    "offline_save_freq": 200,
+    "online_buffer_save_episode_freq": 6,
+    "wandb": {
+        "enable": true,
+        "project": "so101_real",
+        "offline_project": "so101_real_offline",
+        "disable_artifact": true
+    },
+    "dataset": {
+        "repo_id": "cijerezg/multi-task-toys-v2",
+        "use_imagenet_stats": false,
+        "additional_offline_dataset_paths": [
+            "outputs/train/2026-01-18/20-23-32_default/online_buffer",
+            "outputs/train/2026-01-24/13-38-57_default/online_buffer"
+        ]
+    },
+    "policy": {
+        "type": "pi05_rl",
+        "task": "Pick up the yellow car and put it in the bowl",
+        "pi05_checkpoint": "outputs/pi05_offline_training_v4/checkpoints/001600/pretrained_model",
+        "use_separate_critic": true,
+        "inference_advantage": 1.0,
+        "advantage_scaling": 0.16,
+        "n_obs_steps": 1,
+        "reward_normalization_constant": 8.0,
+        "terminal_failure_reward": -24.0,
+        "normalization_mapping": {
+            "VISUAL": "MEAN_STD",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "MIN_MAX"
+        },
+        "input_features": {
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            },
+            "observation.images.top": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            },
+            "observation.images.side": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "device": "cuda",
+        "actor_device": "cuda:0",
+        "learner_device": "cuda:1",
+        "use_amp": false,
+        "dataset_stats": null,
+        "storage_device": "cpu",
+        "dtype": "bfloat16",
+        "gradient_checkpointing": true,
+        "online_steps": 20000,
+        "online_buffer_capacity": 40000,
+        "offline_buffer_capacity": 20000,
+        "online_step_before_learning": 10,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "async_prefetch": false,
+        "num_critics": 1,
+        "critic_lr": 0.00001,
+        "actor_lr": 0.00001,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 4,
+        "grad_clip_norm": 5.0,
+        "gradient_accumulation_steps": 8,
+        "critic_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true
+        },
+        "actor_learner_config": {
+            "learner_host": "127.0.0.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 120
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        },
+        "repo_id": "cijerezg/multi-task-toys-merged-v2"
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "robot": {
+            "type": "so101_follower",
+            "port": "/dev/ttyACM0",
+            "id": "follower_arm_v1",
+            "cameras": {
+                "wrist": {
+                    "type": "opencv",
+                    "index_or_path": 4,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                },
+                "top": {
+                    "type": "opencv",
+                    "index_or_path": 2,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                },
+                "side": {
+                    "type": "opencv",
+                    "index_or_path": 0,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                }
+            }
+        },
+        "teleop": {
+            "type": "so101_leader",
+            "port": "/dev/ttyACM1",
+            "id": "leader_arm_v1"
+        },
+        "processor": {
+            "control_mode": "leader",
+            "observation": {
+                "display_cameras": false,
+                "add_joint_velocity_to_observation": false,
+                "add_current_to_observation": false
+            },
+            "image_preprocessing": {
+                "resize_size": [
+                    224,
+                    224
+                ]
+            },
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0.00
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [
+                    0.37,
+                    -72.3,
+                    75.4,
+                    83.5,
+                    12.9,
+                    29.9
+                ],
+                "reset_time_s": 10,
+                "control_time_s": 200.0,
+                "terminate_on_success": true
+            },
+            "reward_classifier": {
+                "pretrained_path": null,
+                "success_threshold": 0.5,
+                "success_reward": 1.0
+            },
+            "max_gripper_pos": 30
+        },
+        "name": "real_robot",
+        "fps": 10,
+        "task": "Pick up the yellow car and put it in the bowl",
+        "features": {
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.top": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.side": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    6
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "features_map": {
+            "observation.images.wrist": "observation.images.wrist",
+            "observation.images.top": "observation.images.top",
+            "observation.images.side": "observation.images.side",
+            "observation.state": "observation.state",
+            "action": "action"
+        }
+    }
+}

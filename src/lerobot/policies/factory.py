@@ -397,6 +397,7 @@ def make_pre_post_processors(
         processors = make_pi05_full_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
         )
 
     else:
