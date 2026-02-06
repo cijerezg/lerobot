@@ -17,6 +17,7 @@
 import builtins
 import logging
 import math
+import time
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
@@ -51,6 +52,8 @@ from lerobot.utils.constants import (
     OPENPI_ATTENTION_MASK_VALUE,
     OBS_LANGUAGE_USER_PROMPT_TOKENS,
     OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK,
+    OBS_LANGUAGE_SUBTASK_TOKENS,
+    OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
     ACTION_TOKENS,
     ACTION_TOKEN_MASK,
 )
@@ -219,10 +222,11 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     return padded_images
 
 
-# Define the complete layer computation function for gradient checkpointing
+# Define the complete layer computation function for gradient checkpointing (without knowledge insulation)
 def compute_layer_complete(
     layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond, paligemma, gemma_expert
 ):
+    """Compute a single transformer layer with fused attention across VLM and action expert (no knowledge insulation)."""
     models = [paligemma.language_model, gemma_expert.model]
     query_states = []
     key_states = []
@@ -293,6 +297,173 @@ def compute_layer_complete(
     return outputs_embeds
 
 
+# Define the complete layer computation function with knowledge insulation for gradient checkpointing
+def compute_layer_complete_knowledge_insulation(
+    layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond, paligemma, gemma_expert
+):
+    """
+    Compute a single transformer layer with fused attention across VLM and action expert.
+
+    This implements knowledge insulation
+
+    Forward pass:
+        - VLM tokens (backbone) and action tokens (expert) are processed together
+        - Action queries CAN attend to VLM keys/values (cross-attention)
+        - VLM queries attend to all tokens normally
+
+    Backward pass (KI):
+        - Gradients from action tokens MUST NOT flow into VLM keys/values
+        - This prevents the action expert's loss (flow-matching/diffusion) from
+          updating the VLM backbone parameters through the K/V projections
+        - VLM self-attention gradients remain unchanged
+        - Action self-attention gradients remain unchanged
+
+    Implementation:
+        - Split attention into two parts: VLM queries and action queries
+        - VLM queries use original (non-detached) K/V for full gradient flow
+        - Action queries use detached VLM K/V (stops gradients) + normal action K/V
+        - Results are concatenated to produce the same output as unified attention
+
+    Args:
+        layer_idx: Index of the current transformer layer
+        inputs_embeds: List of [vlm_embeds, action_embeds] tensors
+        attention_mask: 4D attention mask (B, 1, total_len, total_len)
+        position_ids: Position IDs for rotary embeddings
+        adarms_cond: Conditioning for adaptive RMS norm [vlm_cond, action_cond]
+        paligemma: The VLM (PaliGemma) model
+        gemma_expert: The action expert (Gemma) model
+
+    Returns:
+        outputs_embeds: List of [vlm_output, action_output] tensors
+    """
+    models = [paligemma.language_model, gemma_expert.model]
+    query_states = []
+    key_states = []
+    value_states = []
+    gates = []
+
+    # this tracks vlm (backbone) token length for knowledge insulation
+    # inputs_embeds[0] = vlm tokens, inputs_embeds[1] = action expert tokens
+    vlm_len = inputs_embeds[0].shape[1]
+
+    for i, hidden_states in enumerate(inputs_embeds):
+        layer = models[i].layers[layer_idx]
+        hidden_states, gate = layer.input_layernorm(hidden_states, cond=adarms_cond[i])  # noqa: PLW2901
+        gates.append(gate)
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
+        query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        query_states.append(query_state)
+        key_states.append(key_state)
+        value_states.append(value_state)
+
+    # concat Q/K/V across VLM and action tokens
+    # (B, num_heads, vlm_len + action_len, head_dim)
+    query_states = torch.cat(query_states, dim=2)
+    key_states = torch.cat(key_states, dim=2)
+    value_states = torch.cat(value_states, dim=2)
+
+    # Apply rotary position embeddings
+    dummy_tensor = torch.zeros(
+        query_states.shape[0],
+        query_states.shape[2],
+        query_states.shape[-1],
+        device=query_states.device,
+        dtype=query_states.dtype,
+    )
+    cos, sin = paligemma.model.language_model.rotary_emb(dummy_tensor, position_ids)
+    query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
+        query_states, key_states, cos, sin, unsqueeze_dim=1
+    )
+
+    batch_size = query_states.shape[0]
+    scaling = paligemma.language_model.layers[layer_idx].self_attn.scaling
+
+    # KNOWLEDGE INSULATION
+    # split queries into vlm (backbone) and action (expert) parts
+    Q_vlm = query_states[:, :, :vlm_len, :]      # (B, num_heads, vlm_len, head_dim)
+    Q_action = query_states[:, :, vlm_len:, :]   # (B, num_heads, action_len, head_dim)
+
+    # split K/V into vlm and action parts
+    K_vlm = key_states[:, :, :vlm_len, :]        # (B, num_kv_heads, vlm_len, head_dim)
+    K_action = key_states[:, :, vlm_len:, :]     # (B, num_kv_heads, action_len, head_dim)
+    V_vlm = value_states[:, :, :vlm_len, :]      # (B, num_kv_heads, vlm_len, head_dim)
+    V_action = value_states[:, :, vlm_len:, :]   # (B, num_kv_heads, action_len, head_dim)
+
+    # create detached vlm K/V for action queries
+    # .detach() stops gradient flow: action loss wont backprop into VLM's K/V projections
+    K_vlm_detached = K_vlm.detach()
+    V_vlm_detached = V_vlm.detach()
+
+    # K/V for VLM queries: use original (full gradient flow for VLM self-attention)
+    K_for_vlm = key_states  # [K_vlm, K_action]
+    V_for_vlm = value_states  # [V_vlm, V_action]
+
+    # K/V for action queries: detached VLM K/V + normal action K/V
+    # knowledge insulation: action queries can "see" VLM K/V
+    # in forward pass, but gradients are blocked in backward pass
+    K_for_action = torch.cat([K_vlm_detached, K_action], dim=2)
+    V_for_action = torch.cat([V_vlm_detached, V_action], dim=2)
+
+    # split attention mask for vlm and action queries
+    # attention_mask shape: (B, 1, total_len, total_len)
+    mask_for_vlm = attention_mask[:, :, :vlm_len, :]      # (B, 1, vlm_len, total_len)
+    mask_for_action = attention_mask[:, :, vlm_len:, :]   # (B, 1, action_len, total_len)
+
+    # compute attention for vlm queries (normal gradient flow)
+    att_output_vlm, _ = modeling_gemma.eager_attention_forward(
+        paligemma.language_model.layers[layer_idx].self_attn,
+        Q_vlm,
+        K_for_vlm,
+        V_for_vlm,
+        mask_for_vlm,
+        scaling,
+    )
+
+    # compute attention for action queries (insulated from vlm K/V gradients)
+    att_output_action, _ = modeling_gemma.eager_attention_forward(
+        paligemma.language_model.layers[layer_idx].self_attn,
+        Q_action,
+        K_for_action,
+        V_for_action,
+        mask_for_action,
+        scaling,
+    )
+
+    # concat attention outputs to match original unified attention output shape
+    # att_output shape after eager_attention_forward: (B, seq_len, num_heads * head_dim)
+    att_output = torch.cat([att_output_vlm, att_output_action], dim=1)
+
+    # get head_dim from the current layer, not from the model
+    head_dim = paligemma.language_model.layers[layer_idx].self_attn.head_dim
+    att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
+
+    # process layer outputs (MLP, residuals, etc.)
+    outputs_embeds = []
+    start_pos = 0
+    for i, hidden_states in enumerate(inputs_embeds):
+        layer = models[i].layers[layer_idx]
+        end_pos = start_pos + hidden_states.shape[1]
+        if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
+            att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
+        out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
+        # first residual
+        out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gates[i])  # noqa: SLF001
+        after_first_residual = out_emb.clone()
+        out_emb, gate = layer.post_attention_layernorm(out_emb.clone(), cond=adarms_cond[i])
+        # convert to bfloat16 if the next layer (mlp) uses bfloat16
+        if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
+            out_emb = out_emb.to(dtype=torch.bfloat16)
+        out_emb = layer.mlp(out_emb)
+        # second residual
+        out_emb = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)  # noqa: SLF001
+        outputs_embeds.append(out_emb)
+        start_pos = end_pos
+    return outputs_embeds
+
+
 class GemmaConfig:  # see openpi `gemma.py: Config`
     """Configuration for Gemma model variants."""
 
@@ -343,12 +514,14 @@ class PaliGemmaWithExpertModel(
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
+        knowledge_insulation: bool = True,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
         super().__init__()
         self.freeze_vision_encoder = freeze_vision_encoder
         self.train_expert_only = train_expert_only
+        self.knowledge_insulation = knowledge_insulation
 
         vlm_config_hf = CONFIG_MAPPING["paligemma"]()
         vlm_config_hf._vocab_size = 257152  # noqa: SLF001
@@ -482,11 +655,16 @@ class PaliGemmaWithExpertModel(
                 and self.training
             ) or (hasattr(self, "gradient_checkpointing") and self.gradient_checkpointing and self.training)
 
+            # Select the appropriate layer computation function based on knowledge_insulation
+            layer_compute_fn = (
+                compute_layer_complete_knowledge_insulation if self.knowledge_insulation else compute_layer_complete
+            )
+
             # Process all layers with gradient checkpointing if enabled
             for layer_idx in range(num_layers):
                 if use_gradient_checkpointing:
                     inputs_embeds = torch.utils.checkpoint.checkpoint(
-                        compute_layer_complete,
+                        layer_compute_fn,
                         layer_idx,
                         inputs_embeds,
                         attention_mask,
@@ -498,7 +676,7 @@ class PaliGemmaWithExpertModel(
                         gemma_expert=self.gemma_expert,
                     )
                 else:
-                    inputs_embeds = compute_layer_complete(
+                    inputs_embeds = layer_compute_fn(
                         layer_idx,
                         inputs_embeds,
                         attention_mask,
@@ -559,6 +737,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
+            knowledge_insulation=config.knowledge_insulation,
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
@@ -1017,11 +1196,22 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
         flow_loss = F.mse_loss(u_t, v_t, reduction="none")
 
+        # Compute weighted total loss
+        flow_loss_mean = flow_loss.mean()
+        action_ce_loss_mean = fast_loss.mean()
+        subtask_ce_loss_mean = subtask_loss.mean()
+
+        total_loss = (
+            self.config.loss_weight_flow * flow_loss_mean
+            + self.config.loss_weight_action_ce * action_ce_loss_mean
+            + self.config.loss_weight_subtask_ce * subtask_ce_loss_mean
+        )
+
         return {
-            "flow_mse_loss": flow_loss.mean(),
-            "action_ce_loss": fast_loss.mean(),
-            "subtask_ce_loss": subtask_loss,
-            "loss": flow_loss.mean() + 0.1 * subtask_loss.mean() + 0.05 * fast_loss.mean(), # TODO: jadechoghari: check weights
+            "flow_mse_loss": flow_loss_mean,
+            "action_ce_loss": action_ce_loss_mean,
+            "subtask_ce_loss": subtask_ce_loss_mean,
+            "loss": total_loss,
         }
 
     @torch.no_grad()  # see openpi `sample_actions` (slightly adapted)
@@ -1518,6 +1708,10 @@ class PI05FullPolicy(PreTrainedPolicy):
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+        # Subtask caching state - regenerate every `subtask_regeneration_interval` seconds
+        self._cached_subtask_tokens: Tensor | None = None
+        self._cached_subtask_masks: Tensor | None = None
+        self._last_subtask_time: float | None = None
 
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
@@ -1617,6 +1811,7 @@ class PI05FullPolicy(PreTrainedPolicy):
 
         # Action queue logic for n_action_steps > 1
         if len(self._action_queue) == 0:
+            # TODO: jadechoghari, generate subtask tokens here - ideally every 1 second
             actions = self.predict_action_chunk(batch)[:, : self.config.n_action_steps]
             # Transpose to get shape (n_action_steps, batch_size, action_dim)
             self._action_queue.extend(actions.transpose(0, 1))
@@ -1633,12 +1828,31 @@ class PI05FullPolicy(PreTrainedPolicy):
         # tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         high_level_task_tokens, high_level_task_masks = batch[f"{OBS_LANGUAGE_USER_PROMPT_TOKENS}"], batch[f"{OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK}"]
         
-        # we will need to generate subtask tokens here - ideally every 1 second
-        # TODO: jadechoghari: this should be called every 1 second or when the user input a prompt
-        subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(images, img_masks, high_level_task_tokens, high_level_task_masks, max_decoding_steps=self.config.tokenizer_max_length)
+        # Generate subtask tokens with time-based caching
+        # Only regenerate if: no cache, or interval elapsed, or interval is 0 (always regenerate)
+        current_time = time.time()
+        interval = self.config.subtask_regeneration_interval
+        should_regenerate = (
+            self._cached_subtask_tokens is None
+            or self._last_subtask_time is None
+            or interval <= 0  # 0 means regenerate every call
+            or (current_time - self._last_subtask_time) >= interval
+        )
+
+        if should_regenerate:
+            subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
+                images, img_masks, high_level_task_tokens, high_level_task_masks,
+                max_decoding_steps=self.config.tokenizer_max_length
+            )
+            self._cached_subtask_tokens = subtask_tokens
+            self._cached_subtask_masks = subtask_masks
+            self._last_subtask_time = current_time
+        else:
+            subtask_tokens = self._cached_subtask_tokens
+            subtask_masks = self._cached_subtask_masks
+
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
         actions = self.model.sample_actions(images, img_masks, high_level_task_tokens, high_level_task_masks, subtask_tokens, subtask_masks, **kwargs)
-        breakpoint()
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
@@ -1657,8 +1871,8 @@ class PI05FullPolicy(PreTrainedPolicy):
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
 
-        high_level_task_tokens, high_level_task_masks = batch[f"{OBS_LANGUAGE_USER_PROMPT_TOKENS}"], batch[f"{OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK}"]
-        subtask_tokens, subtask_masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        high_level_task_tokens, high_level_task_masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        subtask_tokens, subtask_masks = batch[f"{OBS_LANGUAGE_SUBTASK_TOKENS}"], batch[f"{OBS_LANGUAGE_SUBTASK_ATTENTION_MASK}"]
         action_tokens, action_masks = batch[f"{ACTION_TOKENS}"], batch[f"{ACTION_TOKEN_MASK}"]
 
         actions = self.prepare_action(batch)

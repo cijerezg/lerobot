@@ -61,8 +61,6 @@ class PI05FullConfig(PreTrainedConfig):
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
-    tokenizer_max_length: int = 200  # see openpi `__post_init__`
-
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -79,6 +77,7 @@ class PI05FullConfig(PreTrainedConfig):
     # subtask stuff
     max_decoding_steps: int = 200
     temperature: float = 0.0
+    subtask_regeneration_interval: float = 1.0  # Regenerate subtask tokens every N seconds (0 = every call)
 
     # Training settings
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
@@ -89,6 +88,12 @@ class PI05FullConfig(PreTrainedConfig):
     # Finetuning settings
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
+    knowledge_insulation: bool = True  # Enable knowledge insulation in attention (blocks gradients from action to VLM K/V)
+
+    # Loss weights (used when knowledge_insulation is enabled)
+    loss_weight_flow: float = 1.0  # Weight for flow matching MSE loss (continuous actions)
+    loss_weight_action_ce: float = 1.0  # Weight for FAST action token cross-entropy loss
+    loss_weight_subtask_ce: float = 1.0  # Weight for subtask token cross-entropy loss
 
     # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
@@ -104,7 +109,7 @@ class PI05FullConfig(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 200  # see openpi `__post_init__`
+    tokenizer_max_length: int = 48  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()
