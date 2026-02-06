@@ -203,8 +203,13 @@ def create_skill_segmentation_prompt(coarse_goal: str | None = None) -> str:
         ```json
         {{
           "skills": [
-            {{"name": "skill description", "start": 0.0, "end": 1.5}},
-            {{"name": "another skill", "start": 1.5, "end": 3.2}}
+            {{"name": "Move gripper to blue block", "start": 0.0, "end": 3.5}},
+            {{"name": "Grasp blue block", "start": 3.5, "end": 5.0}},
+            {{"name": "Lift blue block", "start": 5.0, "end": 8.0}},
+            {{"name": "Move arm to bowl", "start": 8.0, "end": 14.0}},
+            {{"name": "Position block over bowl", "start": 14.0, "end": 17.0}},
+            {{"name": "Open gripper", "start": 17.0, "end": 19.0}},
+            {{"name": "Move arm to neutral position", "start": 19.0, "end": 25.4}}
           ]
         }}
         ```
