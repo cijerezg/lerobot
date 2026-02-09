@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
+import concurrent.futures
 import logging
 import shutil
 import tempfile
@@ -78,6 +79,7 @@ from lerobot.datasets.video_utils import (
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 CODEBASE_VERSION = "v3.0"
+VALID_VIDEO_CODECS = {"h264", "hevc", "libsvtav1"}
 
 
 class LeRobotDatasetMetadata:
@@ -539,6 +541,17 @@ class LeRobotDatasetMetadata:
         obj.metadata_buffer = []
         obj.metadata_buffer_size = metadata_buffer_size
         return obj
+
+
+def _encode_video_worker(
+    video_key: str, episode_index: int, root: Path, fps: int, vcodec: str = "libsvtav1"
+) -> Path:
+    temp_path = Path(tempfile.mkdtemp(dir=root)) / f"{video_key}_{episode_index:03d}.mp4"
+    fpath = DEFAULT_IMAGE_PATH.format(image_key=video_key, episode_index=episode_index, frame_index=0)
+    img_dir = (root / fpath).parent
+    encode_video_frames(img_dir, temp_path, fps, vcodec=vcodec, overwrite=True)
+    shutil.rmtree(img_dir)
+    return temp_path
 
 
 class LeRobotDataset(torch.utils.data.Dataset):
