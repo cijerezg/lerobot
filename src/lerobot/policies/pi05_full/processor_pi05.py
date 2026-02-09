@@ -64,15 +64,25 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
         if state is None:
             raise ValueError("State is required for PI05")
+        
+        # DEBUG: Check complementary data
+        comp_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+
         user_prompts = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.user_prompt_key)
         if user_prompts is None:
             raise ValueError("No user prompts found in complementary data")
         commands = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.command_key)
         if commands is None:
-            raise ValueError("No commands found in complementary data")
+            comp_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+            raise ValueError(
+                "No commands found in complementary data. "
+                "Ensure 'subtask' is present in batch['complementary_data']."
+            )
         
         # Check for advantage
         advantages = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("advantage")
+        if advantages is not None and isinstance(advantages, torch.Tensor):
+             advantages = advantages.cpu().float().numpy().flatten()
 
         # TODO: check if this necessary
         state = deepcopy(state)
@@ -82,7 +92,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
 
         # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
+        state_np = state.cpu().float().numpy()
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
         full_prompts = []
@@ -96,23 +106,24 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
             if advantages is not None:
                 # Scale and bin advantage
                 adv = advantages[i] * self.advantage_scaling
-                # Bins: [-1.0, -0.6, -0.2, 0.2, 0.6, 1.0] -> 5 bins (indices 1-5 from digitize)
-                # We map them to something readable or just the bin index?
-                # User said "add the advantage to the original prompt with the binning"
-                # Let's use the bin index for now, or a specific token if we knew it.
-                # Assuming simple integer bin.
-                # Note: np.digitize returns 0 if < bins[0], len(bins) if >= bins[-1].
-                # We want bins 0..4 or 1..5.
-                bins = np.array([-1.0, -0.6, -0.2, 0.2, 0.6, 1.0])
+                # Bins: [-1.0, -0.5, 0.5, 1.0] -> 3 bins (negative, neutral, positive)
+                # Advantages < -0.5: bin 0 (negative)
+                # Advantages >= -0.5 and < 0.5: bin 1 (neutral)
+                # Advantages >= 0.5: bin 2 (positive)
+                bins = np.array([-1.0, -0.5, 0.5, 1.0])
                 # Clip to range
                 adv = np.clip(adv, -1.0, 1.0)
                 # digitize
-                adv_bin = np.digitize(adv, bins) - 1 # 0 to 5
-                # Clamp to 0-4 (5 bins)
-                adv_bin = max(0, min(4, adv_bin))
+                adv_bin = np.digitize(adv, bins) - 1 # 0 to 3
+                # Clamp to 0-2 (3 bins)
+                adv_bin = max(0, min(2, adv_bin))
                 
-                # Format: "Advantage: <bin>"
-                advantage_str = f", Advantage: {adv_bin}"
+                # Map bin index to string label
+                labels = ["negative", "neutral", "positive"]
+                adv_label = labels[adv_bin]
+                
+                # Format: "Advantage: <label>"
+                advantage_str = f", Advantage: {adv_label}"
 
             full_prompt = f"Task: {cleaned_text}, State: {state_str}{advantage_str};\n"
             full_prompts.append(full_prompt)

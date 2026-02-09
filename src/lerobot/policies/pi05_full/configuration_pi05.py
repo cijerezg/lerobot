@@ -60,6 +60,9 @@ class PI05FullConfig(PreTrainedConfig):
 
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
+    
+    # Validation / Normalization settings
+    use_dataset_stats: bool = False  # If True, force using dataset stats for normalization instead of checkpoint stats
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {

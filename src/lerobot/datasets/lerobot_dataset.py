@@ -56,6 +56,7 @@ from lerobot.datasets.utils import (
     load_info,
     load_nested_dataset,
     load_stats,
+    load_subtasks,
     load_tasks,
     update_chunk_file_indices,
     validate_episode_buffer,
@@ -160,6 +161,7 @@ class LeRobotDatasetMetadata:
         self.info = load_info(self.root)
         check_version_compatibility(self.repo_id, self._version, CODEBASE_VERSION)
         self.tasks = load_tasks(self.root)
+        self.subtasks = load_subtasks(self.root)
         self.episodes = load_episodes(self.root)
         self.stats = load_stats(self.root)
 

@@ -545,7 +545,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
         for i in range(batch_size):
             # Tokenize single action (move to CPU first as tokenizer uses scipy which requires numpy)
-            action_cpu = action[i : i + 1].cpu()
+            action_cpu = action[i : i + 1].cpu().float()
             tokens = self.action_tokenizer(action_cpu)
 
             # Convert to numpy array if it's a list

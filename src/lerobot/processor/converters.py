@@ -348,12 +348,23 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
         raise ValueError(f"EnvTransition must be a dictionary. Got {type(batch).__name__}")
 
     action = batch.get(ACTION)
-    if action is not None and not isinstance(action, PolicyAction):
-        raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
+
+    # if action is not None and not isinstance(action, PolicyAction):
+    #     raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
 
     # Extract observation and complementary data keys.
+
     observation_keys = {k: v for k, v in batch.items() if k.startswith(OBS_PREFIX)}
     complementary_data = _extract_complementary_data(batch)
+
+    
+    # Check if we are dropping the nested complementary_data
+    if TransitionKey.COMPLEMENTARY_DATA in batch:
+        nested_comp_data = batch[TransitionKey.COMPLEMENTARY_DATA]
+        if nested_comp_data and isinstance(nested_comp_data, dict):
+            # Merge nested data into extracted data, nested data takes precedence if overlaps (though keys should be distinct usually)
+            complementary_data.update(nested_comp_data)
+
 
     return create_transition(
         observation=observation_keys if observation_keys else None,

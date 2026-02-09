@@ -778,6 +778,8 @@ class ReplayBuffer:
 
         # Check for complementary_info keys
         complementary_info_keys = [key for key in sample if key.startswith("complementary_info.")]
+        if "subtask_index" in sample:
+            complementary_info_keys.append("subtask_index")
         has_complementary_info = len(complementary_info_keys) > 0
 
         # If not, we need to infer it from episode boundaries
@@ -842,12 +844,16 @@ class ReplayBuffer:
                     next_state = next_state_data
 
             # ----- 5) Complementary info (if available) -----
+
             complementary_info = None
             if has_complementary_info:
                 complementary_info = {}
                 for key in complementary_info_keys:
                     # Strip the "complementary_info." prefix to get the actual key
-                    clean_key = key[len("complementary_info.") :]
+                    if key.startswith("complementary_info."):
+                        clean_key = key[len("complementary_info."):]
+                    else:
+                        clean_key = key
                     val = current_sample[key]
                     # Handle tensor and non-tensor values differently
                     if isinstance(val, torch.Tensor):

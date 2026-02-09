@@ -17,7 +17,16 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05_full.processor_pi05 import Pi05FullPrepareStateTokenizerProcessorStep
 from lerobot.processor import TokenizerProcessorStep
 from lerobot.processor.core import EnvTransition, TransitionKey
-from lerobot.utils.constants import OBS_STATE, OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK, ACTION
+from lerobot.utils.constants import (
+    OBS_STATE, 
+    OBS_LANGUAGE_TOKENS, 
+    OBS_LANGUAGE_ATTENTION_MASK, 
+    ACTION,
+    OBS_LANGUAGE_SUBTASK_TOKENS,
+    OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
+    ACTION_TOKENS,
+    ACTION_TOKEN_MASK,
+)
         
 
 from lerobot.policies.pi05_full.modeling_pi05 import make_att_2d_masks
@@ -340,6 +349,7 @@ class PI05RLPytorch(PI05Pytorch):
     
     def __init__(self, config: PI05RLConfig, rtc_processor=None):
         super().__init__(config, rtc_processor)
+        self.log_counter = 0
         
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep."""
@@ -387,14 +397,18 @@ class PI05RLPytorch(PI05Pytorch):
             )
         else:
             # Assume prefix_embs already contains everything needed
-            # We need image_len for attention mask creation if we were to re-create it, 
-            # but if prefix_att_masks is provided, we might not need it if we trust the provided mask.
-            # However, the new forward logic uses image_len, language_len etc to build the mask.
-            # If prefix_att_masks is provided, we assume it is the "prefix_att_masks" (2D).
-            # The new forward constructs "combined_att_2d_masks".
-            # It needs image_len etc. 
-            # For RL optimization, we assume prefix_att_masks IS the correct 2D mask for the prefix.
-            pass
+            # We need image_len for attention mask creation and loss calculation indexing.
+            # We calculate it by subtracting other known lengths from the total prefix length.
+            prefix_len = prefix_embs.shape[1]
+            task_len_temp = high_level_task_tokens.shape[1] if high_level_task_tokens is not None else 0
+            subtask_len_temp = subtask_tokens.shape[1] if subtask_tokens is not None else 0
+            fast_len_temp = action_tokens.shape[1] if action_tokens is not None else 0
+            
+            image_len = prefix_len - task_len_temp - subtask_len_temp - fast_len_temp
+            
+            # The new forward constructs "combined_att_2d_masks" using this image_len implicitly (via previous logic if we were to reuse it)
+            # But here we just needed image_len for the slicing below.
+
 
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
@@ -472,26 +486,103 @@ class PI05RLPytorch(PI05Pytorch):
         flow_loss = F.mse_loss(u_t, v_t, reduction="none")
         
         # Auxiliary losses (only if tokens provided)
-        loss = flow_loss.mean()
+        # Auxiliary losses (only if tokens provided)
+        # loss = flow_loss.mean() <- OLD
         
-        subtask_loss = torch.tensor(0.0, device=actions.device)
-        fast_loss = torch.tensor(0.0, device=actions.device)
-
-        if subtask_tokens is not None:
-             # ... (Copy logic if needed, but for RL we likely skip)
-             pass
-             
-        if action_tokens is not None:
-             # ... (Copy logic if needed)
-             pass
-
-        # Return flow loss (MSE) as expected by RL learner (it expects tensor, not dict, OR we update learner)
-        # Wait, learner_pi05.py expects: loss_actor = actor_output["loss_actor"]
-        # And PI05RLPolicy.forward returns a dict with "loss_actor".
-        # PI05RLPolicy.forward calls self.model(...) and assigns result to loss_actor.
-        # So self.model.forward MUST return the loss tensor (or something that can be averaged).
+        flow_loss_mean = flow_loss.mean()
         
-        return flow_loss # [B, Chunk, Dim]
+        subtask_ce_loss = torch.tensor(0.0, device=actions.device)
+        action_ce_loss = torch.tensor(0.0, device=actions.device)
+
+        # We need to calculate lengths manually as embed_prefix no longer returns them
+        subtask_len = subtask_tokens.shape[1] if subtask_tokens is not None else 0
+        fast_len = action_tokens.shape[1] if action_tokens is not None else 0
+
+        # Note: We rely on prefix_embs having [Image, Task, Subtask, FastAction] structure.
+
+
+
+        # Check if we need to compute logits (if either subtask or action tokens are present)
+        if subtask_tokens is not None or action_tokens is not None:
+            # Run VLM forward to get logits
+            # We use the prefix embeddings as input
+            # Ensure correct precision for mask
+            dtype = self.paligemma_with_expert.paligemma.model.dtype
+            prefix_att_4d_masks = self._prepare_attention_masks_4d(prefix_att_masks, dtype=dtype)
+            
+            outputs = self.paligemma_with_expert.paligemma.model(
+                inputs_embeds=prefix_embs,
+                attention_mask=prefix_att_4d_masks,
+                return_dict=True,
+            )
+            logits = self.paligemma_with_expert.paligemma.lm_head(outputs[0])
+            # Calculate Subtask Loss
+            if subtask_tokens is not None:
+                task_len = high_level_task_tokens.shape[1]
+                # Indices: Image + Task -> Subtask
+                
+                start_idx = image_len + task_len
+                end_idx = start_idx + subtask_len
+                 
+                 # Logits range: start_idx-1 to end_idx-1
+                subtask_logits = logits[:, start_idx - 1 : end_idx - 1, :].contiguous()
+                subtask_labels = subtask_tokens.contiguous()
+                 
+                loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+                st_loss = loss_fct(subtask_logits.view(-1, PALIGEMMA_VOCAB_SIZE), subtask_labels.view(-1))
+                 
+                 # Reshape and mask
+                st_loss = st_loss.view(subtask_labels.shape)
+                if subtask_masks is not None:
+                    st_loss = st_loss * subtask_masks
+                    subtask_ce_loss = st_loss.sum() / (subtask_masks.sum() + 1e-6)
+                else:
+                    subtask_ce_loss = st_loss.mean()
+
+             # Calculate Fast Action Loss
+            if action_tokens is not None:
+                task_len = high_level_task_tokens.shape[1]
+                prev_len = image_len + task_len + subtask_len
+                 
+                start_idx = prev_len
+                end_idx = start_idx + fast_len
+                 
+                 # Logits range: start_idx-1 to end_idx-1
+                action_logits = logits[:, start_idx - 1 : end_idx - 1, :].contiguous()
+                action_labels = action_tokens.contiguous()
+                 
+                loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+                act_loss = loss_fct(action_logits.view(-1, PALIGEMMA_VOCAB_SIZE), action_labels.view(-1))
+                
+                # Reshape to [B, T] to match mask
+                act_loss = act_loss.view(action_labels.shape)
+
+                if action_masks is not None:
+                    act_loss = act_loss * action_masks
+                    action_ce_loss = act_loss.sum() / (action_masks.sum() + 1e-6)
+                else:
+                    action_ce_loss = act_loss.mean()
+
+        # Weighted Sum
+
+        total_loss = (
+            self.config.loss_weight_flow * flow_loss.mean()
+            + self.config.loss_weight_action_ce * action_ce_loss
+            + self.config.loss_weight_subtask_ce * subtask_ce_loss
+        )
+
+        self.log_counter += 1
+        if self.log_counter % 10 == 0:
+            print(f"[Actor Loss] Total: {total_loss.item():.4f} | Flow: {flow_loss.mean().item():.4f} | ActionCE: {action_ce_loss.item():.4f} | SubtaskCE: {subtask_ce_loss.item():.4f}")
+
+        return {
+            "loss_actor": total_loss,
+            "flow_mse_loss": flow_loss.mean(),
+            "action_ce_loss": action_ce_loss,
+            "subtask_ce_loss": subtask_ce_loss,
+        }
+
+
 
     def sample_actions(self, images, img_masks, high_level_task_tokens, high_level_task_masks, subtask_tokens, subtask_masks, noise=None, num_steps=None, **kwargs) -> Tensor:
         """Sample actions."""
@@ -519,6 +610,8 @@ class PI05RLPolicy(PI05FullPolicy):
         self.init_rtc_processor()
         # Use our subclassed model
         self.model = PI05RLPytorch(config, rtc_processor=self.rtc_processor)
+        
+        self.critic_log_counter = 0
 
         # --- RL Integration ---
         # Initialize Value Critic
@@ -753,7 +846,8 @@ class PI05RLPolicy(PI05FullPolicy):
     def forward(
         self, 
         batch: dict[str, Tensor], 
-        model: Literal["actor", "critic", "critic_value"] | None = None
+        model: Literal["actor", "critic", "critic_value"] | None = None,
+        external_metrics: dict[str, Tensor] | None = None,
     ) -> tuple[Tensor, dict] | dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training."""
 
@@ -782,9 +876,21 @@ class PI05RLPolicy(PI05FullPolicy):
             # Compute full prefix embeddings for actor
             # We need images and img_masks for embed_prefix, so re-extract them
             images, img_masks = self._preprocess_images(current_batch)
-            # Pass None for subtasks and fast actions as we don't use them in RL yet
-            prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.model.embed_prefix(
-                images, img_masks, actor_tokens, None, actor_masks, None, None, None
+            
+            # Extract subtask and action tokens from batch if available
+            subtask_tokens = current_batch.get(OBS_LANGUAGE_SUBTASK_TOKENS, None)
+            subtask_masks = current_batch.get(OBS_LANGUAGE_SUBTASK_ATTENTION_MASK, None)
+            action_tokens = current_batch.get(ACTION_TOKENS, None)
+            action_masks = current_batch.get(ACTION_TOKEN_MASK, None)
+
+            # Pass full arguments to embed_prefix (implicit usage via self.model forward later, or explicit here)
+            # Actually, PI05RLPytorch.forward calls embed_prefix internally if prefix_embs is None.
+            # BUT here we are pre-computing it to pass to self.model later? 
+            # Wait, lines 894-900 (in view Step 94) show self.model call passes None for all these!
+            # We must fix BOTH the call to embed_prefix HERE and the call to self.model later.
+            
+            prefix_embs, prefix_pad_masks, prefix_att_masks, image_len = self.model.embed_prefix(
+                images, img_masks, actor_tokens, subtask_tokens, actor_masks, subtask_masks, action_tokens, action_masks
             )
             
         # --- Branching Logic ---
@@ -816,93 +922,118 @@ class PI05RLPolicy(PI05FullPolicy):
         # ... (Rest of the logic)
 
         if model is None:
-            # BC Mode (unchanged)
-            # ...
-            pass # (Keep existing BC code)
-
-        elif model == "actor":
-            # Calculate Advantage
-            with torch.no_grad():
-                # V(s)
-                current_v = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
-                
-                # V(s')
-                if "next_state" in batch:
-                    next_batch = batch["next_state"].copy()
-                    next_images, next_img_masks = self._preprocess_images(next_batch)
-                    
-                    # Next vision features
-                    next_vision_features = []
-                    next_vision_pad_masks = []
-                    for img, img_mask in zip(next_images, next_img_masks):
-                        feat = self.model.paligemma_with_expert.embed_image(img)
-                        next_vision_features.append(feat)
-                        B, N, _ = feat.shape
-                        mask = img_mask[:, None].expand(B, N)
-                        next_vision_pad_masks.append(mask)
-                    next_vision_features = torch.cat(next_vision_features, dim=1).detach()
-                    next_vision_pad_masks = torch.cat(next_vision_pad_masks, dim=1)
-                    
-                    # Next critic tokens
-                    if "critic_tokens" in next_batch:
-                        next_critic_tokens = next_batch["critic_tokens"]
-                        next_critic_token_masks = next_batch["critic_pad_mask"]
-                    else:
-                        next_critic_tokens = next_batch[OBS_LANGUAGE_TOKENS]
-                        next_critic_token_masks = next_batch[OBS_LANGUAGE_ATTENTION_MASK]
-                        
-                    # Embed next critic tokens
-                    actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
-                    next_critic_text_embs = actor_embed_layer(next_critic_tokens).detach()
-
-                    next_v = self.critic_target(next_vision_features, next_critic_text_embs, next_critic_token_masks)
-                else:
-                     # Handle missing next_state
-                    next_v = torch.zeros_like(current_v)
-
-                # Ensure correct dtype
-                reward = batch["reward"]
-                done = batch["next.done"]
-                
-                if reward.ndim == 1:
-                    reward = reward.unsqueeze(-1)
-                if done.ndim == 1:
-                    done = done.unsqueeze(-1)
-                
-                reward = reward.to(dtype=current_v.dtype)
-                done = done.to(dtype=current_v.dtype)
-                
-                target_v = reward + self.config.discount * next_v * (1 - done)
-                target_v = target_v.to(dtype=current_v.dtype)
-                
-                # Advantage = target_v - current_v (TD Error)
-                # We squash it to [-1, 1] using tanh and scaling
-                # We divide by advantage_scaling to match processor_pi05.py logic
-                raw_advantage = (target_v - current_v) / self.config.advantage_scaling
-                advantage = torch.tanh(raw_advantage)
-            
-            # Actor loss
-            actions = batch[ACTION]
-            
-            # We pass precomputed prefix embeddings to avoid re-computation
-            # Actor loss
-            actions = batch[ACTION]
-            
-            # We pass precomputed prefix embeddings to avoid re-computation
-            loss_actor = self.model(
+            # BC Mode
+            actions = self.prepare_action(batch)
+            # Use precomputed prefix embeddings
+            loss = self.model(
                 images=None, 
                 img_masks=None,
-                high_level_task_tokens=None,
-                high_level_task_masks=None,
-                subtask_tokens=None,
-                subtask_masks=None,
-                action_tokens=None,
-                action_masks=None,
+                high_level_task_tokens=actor_tokens,
+                high_level_task_masks=actor_masks,
+                subtask_tokens=subtask_tokens,
+                subtask_masks=subtask_masks,
+                action_tokens=action_tokens,
+                action_masks=action_masks,
                 actions=actions,
+                noise=None, 
+                time=None,
                 prefix_embs=prefix_embs,
                 prefix_pad_masks=prefix_pad_masks,
                 prefix_att_masks=prefix_att_masks
             )
+            return loss
+
+        elif model == "actor":
+            # Calculate Advantage
+            # If external metrics provided, use them to avoid redundant computation
+            if external_metrics is not None and "advantage" in external_metrics:
+                advantage = external_metrics["advantage"]
+                target_v = external_metrics.get("target_values", torch.tensor(0.0))
+                current_v = external_metrics.get("critic_values", torch.tensor(0.0))
+                reward = external_metrics.get("rewards", torch.tensor(0.0))
+            else:
+                with torch.no_grad():
+                    # V(s)
+                    current_v = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
+                    
+                    # V(s')
+                    if "next_state" in batch:
+                        next_batch = batch["next_state"].copy()
+                        next_images, next_img_masks = self._preprocess_images(next_batch)
+                        
+                        # Next vision features
+                        next_vision_features = []
+                        next_vision_pad_masks = []
+                        for img, img_mask in zip(next_images, next_img_masks):
+                            feat = self.model.paligemma_with_expert.embed_image(img)
+                            next_vision_features.append(feat)
+                            B, N, _ = feat.shape
+                            mask = img_mask[:, None].expand(B, N)
+                            next_vision_pad_masks.append(mask)
+                        next_vision_features = torch.cat(next_vision_features, dim=1).detach()
+                        next_vision_pad_masks = torch.cat(next_vision_pad_masks, dim=1)
+                        
+                        # Next critic tokens
+                        if "critic_tokens" in next_batch:
+                            next_critic_tokens = next_batch["critic_tokens"]
+                            next_critic_token_masks = next_batch["critic_pad_mask"]
+                        else:
+                            next_critic_tokens = next_batch[OBS_LANGUAGE_TOKENS]
+                            next_critic_token_masks = next_batch[OBS_LANGUAGE_ATTENTION_MASK]
+                            
+                        # Embed next critic tokens
+                        actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
+                        next_critic_text_embs = actor_embed_layer(next_critic_tokens).detach()
+
+                        next_v = self.critic_target(next_vision_features, next_critic_text_embs, next_critic_token_masks)
+                    else:
+                         # Handle missing next_state
+                        next_v = torch.zeros_like(current_v)
+
+                    # Ensure correct dtype
+                    reward = batch["reward"]
+                    done = batch["next.done"]
+                    
+                    if reward.ndim == 1:
+                        reward = reward.unsqueeze(-1)
+                    if done.ndim == 1:
+                        done = done.unsqueeze(-1)
+                    
+                    reward = reward.to(dtype=current_v.dtype)
+                    done = done.to(dtype=current_v.dtype)
+                    
+                    target_v = reward + self.config.discount * next_v * (1 - done)
+                    target_v = target_v.to(dtype=current_v.dtype)
+                    
+                    # Advantage = target_v - current_v (TD Error)
+                    # We squash it to [-1, 1] using tanh and scaling
+                    # We divide by advantage_scaling to match processor_pi05.py logic
+                    raw_advantage = (target_v - current_v) / self.config.advantage_scaling
+                    advantage = torch.tanh(raw_advantage)
+            
+            # Actor loss
+
+            actions = self.prepare_action(batch)
+            
+            # We pass precomputed prefix embeddings to avoid re-computation
+            # We pass precomputed prefix embeddings to avoid re-computation
+            loss_actor = self.model(
+                images=None, 
+                img_masks=None,
+                high_level_task_tokens=actor_tokens,
+                high_level_task_masks=actor_masks,
+                subtask_tokens=subtask_tokens, # Pass captured subtask tokens
+                subtask_masks=subtask_masks,
+                action_tokens=action_tokens, # Pass captured action tokens
+                action_masks=action_masks,
+                actions=actions,
+                noise=None, 
+                time=None,
+                prefix_embs=prefix_embs,
+                prefix_pad_masks=prefix_pad_masks,
+
+                prefix_att_masks=prefix_att_masks
+            )["loss_actor"]
             
             return {
                 "loss_actor": loss_actor,
@@ -974,6 +1105,10 @@ class PI05RLPolicy(PI05FullPolicy):
             target_q = target_q.to(dtype=current_v.dtype)
             
             loss_critic = F.mse_loss(current_v, target_q)
+
+            self.critic_log_counter += 1
+            if self.critic_log_counter % 50 == 0:
+                print(f"[Critic] Loss: {loss_critic.item():.4f} | V_mean: {current_v.mean().item():.4f} | Target_mean: {target_q.mean().item():.4f} | TD_err: {torch.abs(current_v - target_q).mean().item():.4f}")
             
             # Metrics
             td_error = torch.abs(current_v - target_q)
