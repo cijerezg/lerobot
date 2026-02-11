@@ -306,15 +306,7 @@ class PI0FastPytorch(nn.Module):  # see openpi `PI0Pytorch`
             self.sample_actions_fast = torch.compile(self.sample_actions_fast, mode=config.compile_mode)
             self.forward = torch.compile(self.forward, mode=config.compile_mode)
 
-        msg = """An incorrect transformer version is used, please create an issue on https://github.com/huggingface/lerobot/issues"""
 
-        try:
-            from transformers.models.siglip import check
-
-            if not check.check_whether_transformers_replace_is_installed_correctly():
-                raise ValueError(msg)
-        except ImportError:
-            raise ValueError(msg) from None
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""

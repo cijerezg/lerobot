@@ -467,7 +467,7 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
                  logging.warning("use_dataset_stats is True but no dataset provided! Stats will be None.")
 
     # 2. Check if we are loading the base model (which implies we should use dataset stats)
-    elif cfg.policy.pi05_checkpoint == "lerobot/pi05":
+    elif "pi05_base" in cfg.policy.pi05_checkpoint:
         if is_main_process:
             logging.info(f"Loading base model '{cfg.policy.pi05_checkpoint}'. Using dataset stats.")
         if dataset is not None:

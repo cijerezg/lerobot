@@ -183,34 +183,31 @@ def create_skill_segmentation_prompt(coarse_goal: str | None = None) -> str:
         You are a Robotics Vision System specializing in temporal action segmentation for robot manipulation demonstrations.
 
         # Task
-        {goal_context}Segment this robot demonstration video into short atomic manipulation skills. Each skill should:
-        - Last approximately 1-3 seconds
-        - Describe a clear, single action (e.g., "pick up object", "move arm left", "release gripper")
-        - Have precise start and end timestamps
+        {goal_context}Segment this pick-and-place robot demonstration into short, atomic manipulation skills.
 
         # Requirements
-        1. **Atomic Actions**: Each skill should be a single, indivisible action
-        2. **Complete Coverage**: Skills must cover the entire video duration with no gaps
-        3. **Boundary Consistency**: The end of one skill equals the start of the next
-        4. **Natural Language**: Use clear, descriptive names for each skill
-        5. **Timestamps**: Use seconds (float) for all timestamps
-
-
+        1. **Atomic Actions**: Each skill should capture a single distinct movement or interaction phase.
+        2. **Duration**: Target approximately 1-3 seconds per skill. 
+        - *Note: If a transport motion is long, split it into "Transport" (moving) and "Align" (positioning).*
+        3. **Complete Coverage**: Skills must cover the entire video duration with no gaps.
+        4. **Boundary Consistency**: The end of one skill must be the exact start of the next.
+        5. **Naming**: Use clear "Verb + Object" names (e.g., "Grasp blue block").
 
         # Output Format
         After your analysis, output ONLY valid JSON with this exact structure:
 
         ```json
         {{
-          "skills": [
-            {{"name": "Move gripper to blue block", "start": 0.0, "end": 3.5}},
-            {{"name": "Grasp blue block", "start": 3.5, "end": 5.0}},
-            {{"name": "Lift blue block", "start": 5.0, "end": 8.0}},
-            {{"name": "Move arm to bowl", "start": 8.0, "end": 14.0}},
-            {{"name": "Position block over bowl", "start": 14.0, "end": 17.0}},
-            {{"name": "Open gripper", "start": 17.0, "end": 19.0}},
-            {{"name": "Move arm to neutral position", "start": 19.0, "end": 25.4}}
-          ]
+        "skills": [
+            {{"name": "Move gripper to blue block", "start": 0.0, "end": 2.5}},
+            {{"name": "Grasp blue block", "start": 2.5, "end": 3.8}},
+            {{"name": "Lift blue block vertically", "start": 3.8, "end": 5.5}},
+            {{"name": "Transport block to bowl", "start": 5.5, "end": 8.2}},
+            {{"name": "Align block above bowl", "start": 8.2, "end": 10.0}},
+            {{"name": "Lower block into bowl", "start": 10.0, "end": 11.5}},
+            {{"name": "Open gripper", "start": 11.5, "end": 12.8}},
+            {{"name": "Retract arm to neutral", "start": 12.8, "end": 15.0}}
+        ]
         }}
         ```
 
