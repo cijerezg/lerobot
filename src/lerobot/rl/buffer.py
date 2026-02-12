@@ -614,7 +614,7 @@ class ReplayBuffer:
             )
 
         # Process remaining transitions one at a time
-        for data in transition_generator:
+        for i, data in enumerate(transition_generator):
             for k, v in data.items():
                 if isinstance(v, dict):
                     for key, tensor in v.items():

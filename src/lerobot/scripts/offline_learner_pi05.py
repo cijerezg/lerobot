@@ -27,6 +27,8 @@ Usage:
 
 import logging
 import os
+
+
 import time
 from pathlib import Path
 from pprint import pformat
@@ -75,7 +77,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.rl.utils import preprocess_batch_for_pi05
-from lerobot.rl.pi05_train_utils import pi05_update_step
+from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks
 
 import wandb
 
@@ -471,38 +473,14 @@ def run_offline_training(
                 # inject subtasks if available
                 # CRITICAL FIX: Hydrate subtask indices to strings and place at ROOT of observations
                 # batch_to_transition expects "subtask" at the root, not inside complementary_data
+                # inject subtasks if available
+                # CRITICAL FIX: Hydrate subtask indices to strings and place at ROOT of observations
+                # batch_to_transition expects "subtask" at the root, not inside complementary_data
                 if batch["complementary_info"] is not None and "subtask_index" in batch["complementary_info"]:
                     indices = batch["complementary_info"]["subtask_index"]
-                    indices = indices.tolist()
-                     
-                    subtask_names = []
-                    # Use the metadata loaded by LeRobotDataset
-                    if hasattr(offline_dataset, "meta"):
-                        if not hasattr(offline_dataset.meta, "subtasks"):
-                            logging.debug("offline_dataset.meta has no 'subtasks' attribute")
-                        elif offline_dataset.meta.subtasks is None:
-                            logging.debug("offline_dataset.meta.subtasks is None")
-                        else:
-                            subtasks_df = offline_dataset.meta.subtasks
-                            # Ensure we can look up by index/row number
-                            # Ensure "subtask" is a column by resetting index
-                            subtasks_df = subtasks_df.reset_index()
-                            # If "subtask_index" is a column, set it as index for lookup
-                            if "subtask_index" in subtasks_df.columns:
-                                subtasks_df = subtasks_df.set_index("subtask_index")
-                             
-                            # Map indices to strings
-                            # Handle case where index might be out of bounds or -1 (unannotated)
-                            for i in indices:
-                                if int(i) in subtasks_df.index:
-                                    subtask_names.append(subtasks_df.loc[int(i)]["subtask"])
-                                else:
-                                    subtask_names.append("") # Or "Unannotated"
-                    else:
-                        logging.debug("offline_dataset has no 'meta' attribute")
-                     
-                    if not subtask_names:
-                        logging.debug(f"Failed to generate subtask_names. Indices: {indices}")
+                    
+                    # Use shared hydration function
+                    subtask_names = hydrate_subtasks(indices, offline_dataset)
                      
                     if subtask_names:
                         observations["subtask"] = subtask_names

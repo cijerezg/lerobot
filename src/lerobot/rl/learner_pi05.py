@@ -107,7 +107,7 @@ from lerobot.rl.learner import (
     save_training_checkpoint,
 )
 from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16
-from lerobot.rl.pi05_train_utils import pi05_update_step
+from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks
 
 import wandb
 import gc
@@ -601,6 +601,15 @@ def add_actor_information_and_train(
                 batch_for_proc[ACTION] = actions
                 batch_for_proc["advantage"] = forward_batch["advantage"]
                 
+                # Hydrate subtasks for Critic manual loop
+                subtasks = None
+                if batch.get("complementary_info") is not None and "subtask_index" in batch["complementary_info"]:
+                    # Note: offline_dataset is defined in outer scope and holds the metadata
+                    subtasks = hydrate_subtasks(batch["complementary_info"]["subtask_index"], offline_dataset)
+                
+                if subtasks is not None:
+                    batch_for_proc["subtask"] = subtasks
+                
                 with torch.no_grad():
                     processed_batch = policy.preprocessor(batch_for_proc)
                 
@@ -609,6 +618,9 @@ def add_actor_information_and_train(
                 next_batch_for_proc["task"] = forward_batch["task"]
                 next_batch_for_proc[ACTION] = actions  # Not used, but required by preprocessor
                 next_batch_for_proc["advantage"] = forward_batch["advantage"]
+                
+                if subtasks is not None:
+                    next_batch_for_proc["subtask"] = subtasks
                 
                 with torch.no_grad():
                     processed_next_batch = policy.preprocessor(next_batch_for_proc)

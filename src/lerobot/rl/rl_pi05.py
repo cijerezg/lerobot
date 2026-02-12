@@ -572,7 +572,7 @@ class PI05RLPytorch(PI05Pytorch):
         )
 
         self.log_counter += 1
-        if self.log_counter % 10 == 0:
+        if self.log_counter % 40 == 0:
             print(f"[Actor Loss] Total: {total_loss.item():.4f} | Flow: {flow_loss.mean().item():.4f} | ActionCE: {action_ce_loss.item():.4f} | SubtaskCE: {subtask_ce_loss.item():.4f}")
 
         return {
@@ -1107,7 +1107,7 @@ class PI05RLPolicy(PI05FullPolicy):
             loss_critic = F.mse_loss(current_v, target_q)
 
             self.critic_log_counter += 1
-            if self.critic_log_counter % 50 == 0:
+            if self.critic_log_counter % 200 == 0:
                 print(f"[Critic] Loss: {loss_critic.item():.4f} | V_mean: {current_v.mean().item():.4f} | Target_mean: {target_q.mean().item():.4f} | TD_err: {torch.abs(current_v - target_q).mean().item():.4f}")
             
             # Metrics

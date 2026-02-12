@@ -27,6 +27,70 @@ import logging
 from lerobot.processor.core import TransitionKey
 
 
+
+def hydrate_subtasks(indices: list | torch.Tensor, dataset) -> list[str]:
+    """
+    Converts subtask indices to subtask description strings using dataset metadata.
+    
+    Args:
+        indices: List or Tensor of subtask indices (can include -1 for missing/online).
+        dataset: The dataset object containing metadata (meta.subtasks).
+        
+    Returns:
+        List of subtask strings. Returns empty string "" for index -1.
+    """
+    if isinstance(indices, torch.Tensor):
+        indices = indices.tolist()
+        
+    subtask_names = []
+    
+    # helper to check if we can lookup
+    has_meta = dataset and hasattr(dataset, "meta") and hasattr(dataset.meta, "subtasks")
+    subtasks_df = None
+    
+    # Optimization: prepare lookup structure once if possible
+    # We use a simple strategy assuming dataset.meta.subtasks is list-like or DataFrame-like
+    if has_meta:
+        subtasks_df = dataset.meta.subtasks
+
+    for i in indices:
+        i = int(i)
+        name = ""
+        # -1 indicates "no subtask" (e.g. online data, or unannotated frames)
+        if i >= 0 and has_meta:
+             try:
+                 # Logic copied/adapted from offline_learner_pi05.py
+                 # DataFrame-like check (has columns/index)
+                 if hasattr(subtasks_df, "columns") and hasattr(subtasks_df, "index"):
+                     # If "subtask_index" is a column, we must search for the row where subtask_index == i
+                     if "subtask_index" in subtasks_df.columns:
+                         # We can't efficiently do row lookup inside a loop without setting index first.
+                         # But we don't want to mutate the dataset's object every call.
+                         # Since this is a small dataframe usually, we can do a quick check or assume caller handles it?
+                         # Let's try to be robust:
+                         # 1. Check if index matches
+                         if i in subtasks_df.index and subtasks_df.loc[i].get("subtask_index", -999) == i:
+                              name = subtasks_df.loc[i]["subtask"]
+                         else:
+                              # Fallback: search (slow but safe)
+                              rows = subtasks_df[subtasks_df["subtask_index"] == i]
+                              if not rows.empty:
+                                  name = rows.iloc[0]["subtask"]
+                     # If "subtask_index" is NOT a column, assume the DataFrame index IS the subtask index
+                     elif i in subtasks_df.index:
+                         name = subtasks_df.loc[i]["subtask"]
+                 # List/Dict style
+                 elif hasattr(subtasks_df, "__getitem__"):
+                     name = subtasks_df[i]
+             except Exception as e:
+                 # logging.debug(f"Failed to lookup subtask index {i}: {e}")
+                 pass 
+                 
+        subtask_names.append(name)
+        
+    return subtask_names
+
+
 def pi05_update_step(
     policy: PI05FullPolicy,
     optimizers: dict[str, torch.optim.Optimizer],
@@ -77,11 +141,11 @@ def pi05_update_step(
 
 
         if dataset_repo_id is not None and offline_iterator is not None:
-             batch_offline = next(offline_iterator)
-             batch_offline[ACTION] = batch_offline[ACTION][..., :6] # Slice offline actions
-             batch = concatenate_batch_transitions(
-                 left_batch_transitions=batch, right_batch_transition=batch_offline
-             )
+            batch_offline = next(offline_iterator)
+            batch_offline[ACTION] = batch_offline[ACTION][..., :6] # Slice offline actions
+            batch = concatenate_batch_transitions(
+                left_batch_transitions=batch, right_batch_transition=batch_offline
+            )
 
 
         batch = move_transition_to_device(batch, device)
@@ -116,6 +180,39 @@ def pi05_update_step(
             done=done,
             task=cfg.policy.task,
         )
+
+        # Hydrate subtasks for Critic (if available in complementary info)
+        # This is needed because preprocess_batch_for_pi05 might not handle subtask injection from complementary info automatically
+        # unless we explicitly pass it or modify observations.
+        # However, `preprocess_batch_for_pi05` mainly calls policy.preprocessor.
+        # We need to inject subtasks into the `observations` dict BEFORE preprocessor?
+        # Actually, `preprocess_batch_for_pi05` doesn't seem to expose a way to inject subtasks easily if they aren't in observations.
+        # So we inject them into observations/next_observations dicts directly if they are present in batch["complementary_info"].
+        
+        # NOTE: logic moved from offline_learner_pi05.py
+        if batch.get("complementary_info") is not None and "subtask_index" in batch["complementary_info"]:
+            indices = batch["complementary_info"]["subtask_index"]
+            subtask_names = hydrate_subtasks(indices, dataset)
+            
+            # Inject into observations for the preprocessor to pick up
+            # (Assuming preprocessor looks for "subtask" key in input dict)
+            if subtask_names:
+                # We need to ensure we don't modify the original dict if it's shared? 
+                # Observations is usually a reference from batch.
+                # But creating a new key "subtask" is fine.
+                observations["subtask"] = subtask_names
+                next_observations["subtask"] = subtask_names
+                
+                # RERUN Preprocessing (only if we actually injected something)
+                forward_batch_critic = preprocess_batch_for_pi05(
+                    policy=policy,
+                    observations=observations,
+                    next_observations=next_observations,
+                    actions=actions,
+                    rewards=rewards,
+                    done=done,
+                    task=cfg.policy.task,
+                )
 
         # Forward Critic
 
@@ -274,26 +371,14 @@ def pi05_update_step(
                 
                 # Inject mapped subtasks
                 subtasks = [""] * actions.shape[0]
+                subtask_indices = None
+                
                 # Check for complementary data under various keys
-
                 comp_data = batch.get(TransitionKey.COMPLEMENTARY_DATA) or batch.get("complementary_info")
-                if comp_data is not None:
-                    if comp_data is not None and "subtask_index" in comp_data:
-                        indices = comp_data["subtask_index"].tolist()
-                        if dataset and hasattr(dataset, "meta") and hasattr(dataset.meta, "subtasks"):
-                            subtasks_meta = dataset.meta.subtasks
-                            # Check if it's a DataFrame (basic check without importing pandas if possible, or assume it behaves like one if it has columns)
-                            if hasattr(subtasks_meta, "columns") and hasattr(subtasks_meta, "index"):
-                                # Ensure "subtask" is a column by resetting index
-                                subtasks_df = subtasks_meta.reset_index()
-                                # If "subtask_index" is a column, set it as index for lookup
-                                if "subtask_index" in subtasks_df.columns:
-                                    subtasks_df = subtasks_df.set_index("subtask_index")
-                                subtasks = [subtasks_df.loc[int(i)]["subtask"] if int(i) in subtasks_df.index else "" for i in indices]
-                            else:
-                                subtasks = [subtasks_meta[int(i)] for i in indices]
-                        elif dataset and hasattr(dataset, "subtasks"):
-                            subtasks = [dataset.subtasks[int(i)] for i in indices]
+                if comp_data is not None and "subtask_index" in comp_data:
+                    subtask_indices = comp_data["subtask_index"]
+                    # Use shared hydration function
+                    subtasks = hydrate_subtasks(subtask_indices, dataset)
                 
                 batch_for_proc[TransitionKey.COMPLEMENTARY_DATA] = {
                     "subtask": subtasks,
@@ -306,6 +391,27 @@ def pi05_update_step(
                     if preprocessor is None:
                         raise ValueError("preprocessor must be provided for PI05 update step")
                     processed_batch = preprocessor(batch_for_proc)
+                
+                # --- MASKING LOGIC for Online Subtasks ---
+                # Apply mask for online data (where subtask_index == -1)
+                if subtask_indices is not None:
+                    # Identify online samples (index == -1)
+                    # subtask_indices is a tensor or list from comp_data["subtask_index"]
+                    if isinstance(subtask_indices, torch.Tensor):
+                        is_online_mask = (subtask_indices == -1)
+                    else:
+                        is_online_mask = torch.tensor([i == -1 for i in subtask_indices], device=device)
+                    
+                    if is_online_mask.any():
+                        # Mask Attention to 0 (False) so they are ignored in loss denominator and forward pass attention
+                        if OBS_LANGUAGE_SUBTASK_ATTENTION_MASK in processed_batch:
+                            # Apply mask: Set attention mask to 0 for online samples
+                            # processed_batch[mask_key] has shape [B, L]
+                            processed_batch[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK][is_online_mask] = 0
+                        
+                        # Note: We DO NOT set tokens to -100 because they are used as input embeddings.
+                        # Setting the attention mask to 0 is sufficient to zero out the loss contribution 
+                        # in `modeling_pi05.py` (masked_subtask_loss = loss * mask).
                     
                 # --- Step 3: Actor Update (Pass 3) ---
                 # Construct forward batch for Actor
