@@ -71,6 +71,7 @@ from lerobot.rl.gym_manipulator import (
     step_env_and_process_transition,
 )
 import lerobot.rl.rl_pi05  # Register PI05RLConfig
+from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
 
 from lerobot.rl.actor import (
     use_threads,
@@ -240,11 +241,12 @@ def act_with_policy(
     )
 
     # Initialize preprocessor and postprocessor
-    # Load stats directly from the pretrained checkpoint
-    # This ensures we use the exact same stats the policy was trained with
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg=cfg.policy,
-        pretrained_path=cfg.policy.pi05_checkpoint,
+    # Use the shared utility for runtime upgrade to support standard Pi05 checkpoints
+    # This ensures we use the exact same stats the policy was trained with (and applies advantage scaling)
+    preprocessor, postprocessor = make_pi05_full_processors_with_upgrade(
+        cfg=cfg,
+        dataset=None,
+        is_main_process=True
     )
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
@@ -400,6 +402,7 @@ def act_with_policy(
                     [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
                 ),
                 TeleopEvents.IS_INTERVENTION.value: torch.tensor([float(is_intervening)], dtype=torch.float32),
+                "subtask_index": torch.tensor([-1], dtype=torch.long),
             }
 
             # Convert environment observations to policy-expected format

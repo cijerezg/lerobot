@@ -467,25 +467,7 @@ def run_offline_training(
                 next_observations = batch["next_state"]
                 done = batch["done"]
                 
-                # Preprocess observations
-                from lerobot.processor.core import TransitionKey
-                
-                # inject subtasks if available
-                # CRITICAL FIX: Hydrate subtask indices to strings and place at ROOT of observations
-                # batch_to_transition expects "subtask" at the root, not inside complementary_data
-                # inject subtasks if available
-                # CRITICAL FIX: Hydrate subtask indices to strings and place at ROOT of observations
-                # batch_to_transition expects "subtask" at the root, not inside complementary_data
-                if batch["complementary_info"] is not None and "subtask_index" in batch["complementary_info"]:
-                    indices = batch["complementary_info"]["subtask_index"]
-                    
-                    # Use shared hydration function
-                    subtask_names = hydrate_subtasks(indices, offline_dataset)
-                     
-                    if subtask_names:
-                        observations["subtask"] = subtask_names
-                        next_observations["subtask"] = subtask_names
-                
+                # Note: No subtask hydration needed here — critic doesn't use subtasks.
                 forward_batch = preprocess_batch_for_pi05(
                     policy=policy,
                     observations=observations,

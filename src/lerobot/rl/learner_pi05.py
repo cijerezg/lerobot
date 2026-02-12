@@ -54,7 +54,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.policies.factory import make_policy
 from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
@@ -74,6 +74,7 @@ from lerobot.utils.constants import (
     LAST_CHECKPOINT_LINK,
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
+    OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
 )
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -314,8 +315,7 @@ def add_actor_information_and_train(
     # Restore original device config
     cfg.policy.device = original_device
 
-    # Create preprocessor for re-tokenization during training
-    preprocessor, _ = make_pre_post_processors(cfg.policy, cfg.env)
+
 
 
     # NOTE: Do not call policy.to(dtype=...) here!
@@ -573,74 +573,17 @@ def add_actor_information_and_train(
                 observations = batch["state"]
                 next_observations = batch["next_state"]
                 done = batch["done"]
-                current_batch_size = actions.shape[0]
-                check_nan_in_transition(observations=observations, actions=actions, next_state=next_observations)
-
-                observation_features, next_observation_features = get_observation_features(
-                    policy=policy, observations=observations, next_observations=next_observations
+                # --- Preprocessing using shared utility ---
+                # Note: No subtask hydration needed here — critic doesn't use subtasks.
+                forward_batch = preprocess_batch_for_pi05(
+                    policy=policy,
+                    observations=observations,
+                    next_observations=next_observations,
+                    actions=actions,
+                    rewards=rewards,
+                    done=done,
+                    task=cfg.policy.task,
                 )
-
-                # Create a batch dictionary with all required elements for the forward method
-                forward_batch = {
-                    ACTION: actions,
-                    "reward": rewards,
-                    "state": observations,
-                    "next_state": next_observations,
-                    "done": done,
-                    "observation_feature": observation_features,
-                    "next_observation_feature": next_observation_features,
-                    "task": [cfg.policy.task] * current_batch_size,
-                    "advantage": torch.full((current_batch_size, 1), cfg.policy.inference_advantage, device=device),
-                    "next.done": done,
-                }
-
-                # --- Preprocessing for Pi05 (Tokenization and Normalization) ---
-                # Preprocess current observations
-                batch_for_proc = {k: v for k, v in observations.items()}
-                batch_for_proc["task"] = forward_batch["task"]
-                batch_for_proc[ACTION] = actions
-                batch_for_proc["advantage"] = forward_batch["advantage"]
-                
-                # Hydrate subtasks for Critic manual loop
-                subtasks = None
-                if batch.get("complementary_info") is not None and "subtask_index" in batch["complementary_info"]:
-                    # Note: offline_dataset is defined in outer scope and holds the metadata
-                    subtasks = hydrate_subtasks(batch["complementary_info"]["subtask_index"], offline_dataset)
-                
-                if subtasks is not None:
-                    batch_for_proc["subtask"] = subtasks
-                
-                with torch.no_grad():
-                    processed_batch = policy.preprocessor(batch_for_proc)
-                
-                # Preprocess next observations (for critic)
-                next_batch_for_proc = {k: v for k, v in next_observations.items()}
-                next_batch_for_proc["task"] = forward_batch["task"]
-                next_batch_for_proc[ACTION] = actions  # Not used, but required by preprocessor
-                next_batch_for_proc["advantage"] = forward_batch["advantage"]
-                
-                if subtasks is not None:
-                    next_batch_for_proc["subtask"] = subtasks
-                
-                with torch.no_grad():
-                    processed_next_batch = policy.preprocessor(next_batch_for_proc)
-                
-                from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
-                
-                # Update forward_batch with tokens and normalized actions
-                # (We keep raw images in forward_batch["state"] so policy.forward can re-preprocess if needed)
-                
-                # Add tokens and normalized actions
-                forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
-                forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
-                
-                # Add tokens for next state (CRITICAL for critic)
-                forward_batch["next_state"][OBS_LANGUAGE_TOKENS] = processed_next_batch[OBS_LANGUAGE_TOKENS]
-                forward_batch["next_state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_next_batch[OBS_LANGUAGE_ATTENTION_MASK]
-                
-                forward_batch[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
-                forward_batch[OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
-                forward_batch[ACTION] = processed_batch[ACTION]
 
                 # --- Pi05 RL Update Logic ---
                 
@@ -671,7 +614,7 @@ def add_actor_information_and_train(
             optimizers=optimizers,
             online_iterator=online_iterator,
             offline_iterator=offline_iterator,
-            batch_size=current_batch_size, # This is just a hint, iterator determines size
+            batch_size=batch_size,
             device=device,
             cfg=cfg,
             optimization_step=optimization_step,
@@ -681,7 +624,7 @@ def add_actor_information_and_train(
             policy_update_freq=policy_update_freq,
             clip_grad_norm_value=clip_grad_norm_value,
             dataset=offline_dataset, # For subtask metadata
-            cast_to_bf16_fn=lambda b: {k: cast_to_bf16(v) for k, v in b.items()} if cfg.policy.dtype == "bfloat16" else None,
+            cast_to_bf16_fn=cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None,
             use_amp=False, # Learner typically uses raw backward or fp32
             scaler=None,
             preprocessor=preprocessor,
