@@ -958,17 +958,58 @@ def concatenate_batch_transitions(
     left_info = left_batch_transitions.get("complementary_info")
     right_info = right_batch_transition.get("complementary_info")
 
-    # Only process if right_info exists
-    if right_info is not None:
-        # Initialize left complementary_info if needed
-        if left_info is None:
-            left_batch_transitions["complementary_info"] = right_info
-        else:
-            # Concatenate each field
-            for key in right_info:
-                if key in left_info:
-                    left_info[key] = torch.cat([left_info[key], right_info[key]], dim=0)
-                else:
-                    left_info[key] = right_info[key]
+    # If both are None, nothing to do
+    if left_info is None and right_info is None:
+        return left_batch_transitions
+
+    # Ensure left_batch_transitions has a complementary_info dict
+    if left_info is None:
+        left_info = {}
+        left_batch_transitions["complementary_info"] = left_info
+    
+    # If right_info is None, treat as empty dict for key iteration
+    if right_info is None:
+        right_info = {}
+    
+    # Calculate batch sizes to determine padding size
+    # We use the 'reward' field as reference for batch size of each part
+    # Note: left_batch_transitions['reward'] is ALREADY concatenated, so we need to derive sizes differently.
+    # The 'state' concatenation loop assumes keys match, but 'action' concatenation line 932
+    # uses slicing on left and right.
+    # We can infer the size of 'right' from right_batch_transition['reward'].shape[0]
+    # And total size from left_batch_transitions['reward'].shape[0]
+    total_len = left_batch_transitions["reward"].shape[0]
+    right_len = right_batch_transition["reward"].shape[0]
+    left_len = total_len - right_len
+
+    # Get union of all keys
+    all_keys = set(left_info.keys()) | set(right_info.keys())
+
+    for key in all_keys:
+        left_val = left_info.get(key)
+        right_val = right_info.get(key)
+
+        # 1. Present in both
+        if left_val is not None and right_val is not None:
+             left_info[key] = torch.cat([left_val, right_val], dim=0)
+        
+        # 2. Present only in Right (Missing in Left) -> Pad Left
+        elif left_val is None:
+             # Create padding for left
+             # right_val shape: (right_len, ...)
+             # padding shape: (left_len, ...) + right_val.shape[1:]
+             shape = (left_len,) + right_val.shape[1:]
+             padding = torch.zeros(shape, dtype=right_val.dtype, device=right_val.device)
+             left_info[key] = torch.cat([padding, right_val], dim=0)
+
+        # 3. Present only in Left (Missing in Right) -> Pad Right
+        elif right_val is None:
+             # Create padding for right
+             # left_val represents the ORIGINAL left value (before any concatenation)
+             # Wait! 'left_info' is a mutable reference to the dictionary in 'left_batch_transitions'.
+             # Since we haven't modified 'left_info[key]' yet in this loop, 'left_val' IS the original tensor from the left batch.
+             shape = (right_len,) + left_val.shape[1:]
+             padding = torch.zeros(shape, dtype=left_val.dtype, device=left_val.device)
+             left_info[key] = torch.cat([left_val, padding], dim=0)
 
     return left_batch_transitions

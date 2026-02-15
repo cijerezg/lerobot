@@ -29,6 +29,7 @@ class TeleopEvents(Enum):
     RERECORD_EPISODE = "rerecord_episode"
     IS_INTERVENTION = "is_intervention"
     TERMINATE_EPISODE = "terminate_episode"
+    START_EPISODE = "start_episode"
 
 
 def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:

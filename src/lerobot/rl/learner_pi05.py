@@ -40,7 +40,7 @@ import json
 from PIL import Image
 import cv2
 
-episode_logging_freq = 2
+episode_logging_freq = 4
 
 
 from torch.multiprocessing import Queue
@@ -316,17 +316,18 @@ def add_actor_information_and_train(
     cfg.policy.device = original_device
 
 
-
-
-    # NOTE: Do not call policy.to(dtype=...) here!
-    # The dtype is already correctly handled during PI05 initialization:
-    # - PaliGemmaWithExpertModel handles bfloat16 conversion selectively
-    # - action_in_proj and action_out_proj remain in float32 
-    # - Calling .to(dtype=bfloat16) would override this and break the model
-
     assert isinstance(policy, nn.Module)
 
     policy.train()
+
+    # Enable gradient checkpointing if configured
+    if cfg.policy.gradient_checkpointing:
+        if hasattr(policy, "model") and hasattr(policy.model, "gradient_checkpointing_enable"):
+            policy.model.gradient_checkpointing_enable()
+        elif hasattr(policy, "gradient_checkpointing_enable"):
+            policy.gradient_checkpointing_enable()
+        else:
+            logging.warning("Gradient checkpointing requested but not available on policy model")
 
     push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
 
@@ -340,13 +341,15 @@ def add_actor_information_and_train(
         param.requires_grad = (
             "critic.value_head" in name or
             "critic.layers.5" in name or
+            "critic.layers.4" in name or
+            "critic.layers.3" in name or
             "critic.value_queries" in name or
-            ("gemma_expert" in name and any(f".{i}." in name for i in [14, 15, 16, 17])) or 
-            ("language_model" in name and any(f".{i}." in name for i in [16, 17])) or
+            ("gemma_expert" in name and any(f".{i}." in name for i in [10, 11, 12, 13,14, 15, 16, 17])) or 
+            ("language_model" in name and any(f".{i}." in name for i in [10, 11, 12, 13,14, 15, 16, 17])) or
             "language_model.norm" in name or
             "action_in_proj" in name or
             "action_out_proj" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [24, 25, 26]))
+            ("vision_tower" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]))
         )
     
     # Log trainable parameters
@@ -553,6 +556,7 @@ def add_actor_information_and_train(
                         left_batch_transitions=batch, right_batch_transition=batch_offline
                     )
 
+
                 # Move batch to device
                 batch = move_transition_to_device(batch, device)
 
@@ -585,6 +589,7 @@ def add_actor_information_and_train(
                     task=cfg.policy.task,
                 )
 
+
                 # --- Pi05 RL Update Logic ---
                 
                 # 1. Critic Update (Value Function) with scaled loss
@@ -604,8 +609,6 @@ def add_actor_information_and_train(
             # ----------------------------
 
         # Sample for the last update in the UTD ratio
-
-        # Gradient accumulation for critic
 
         # Call shared update step function
         # This handles: data fetching, preprocessing, critic update, (optional) actor update, metrics
@@ -646,6 +649,7 @@ def add_actor_information_and_train(
                 # Extract histograms if they exist
                 advantage_hist = training_infos.pop("advantage_histogram", None)
                 critic_hist = training_infos.pop("critic_histogram", None)
+                critic_hist_from_critic = training_infos.pop("critic_histogram_from_critic", None)
                 actor_loss_hist = training_infos.pop("actor_loss_histogram", None)
                 
                 # Log scalar metrics
@@ -653,6 +657,9 @@ def add_actor_information_and_train(
                 
                 # Log histograms separately using wandb.Histogram
                 if advantage_hist is not None:
+                    # differ ent from offline_learner_pi05.py: we need to handle if it is a list or tensor
+                    if isinstance(advantage_hist, torch.Tensor):
+                        advantage_hist = advantage_hist.detach().float().cpu().numpy()
                     wandb_logger._wandb.log({
                         "train/advantage_histogram": wandb.Histogram(advantage_hist),
                         "Optimization step": optimization_step
@@ -663,19 +670,14 @@ def add_actor_information_and_train(
                         "train/critic_value_histogram": wandb.Histogram(critic_vals),
                         "Optimization step": optimization_step
                     })
+                
+                # Log critic histogram from critic update
+                if critic_hist_from_critic is not None:
+                    critic_vals_from_critic = np.clip(critic_hist_from_critic, -5, .5)
                     wandb_logger._wandb.log({
-                        "train/actor_loss_histogram": wandb.Histogram(actor_loss_hist),
+                        "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
                         "Optimization step": optimization_step
                     })
-                
-                # Log advantage bin histograms
-                for i in range(5): # 5 bins
-                    bin_hist = training_infos.pop(f"actor_loss_adv_bin_{i}_histogram", None)
-                    if bin_hist is not None:
-                        wandb_logger._wandb.log({
-                            f"train/actor_loss_adv_bin_{i}_histogram": wandb.Histogram(bin_hist),
-                            "Optimization step": optimization_step
-                        })
 
 
 
@@ -739,6 +741,11 @@ def add_actor_information_and_train(
             logging.info("[LEARNER] Reached maximum online steps. Stopping training.")
             break
 
+        # Push policy to actors if needed
+        if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
+            push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+            last_time_policy_pushed = time.time()
+
 def process_transitions_pi05(
     transition_queue: Queue,
     replay_buffer: ReplayBuffer,
@@ -798,30 +805,30 @@ def process_transitions_pi05(
                             img_path = os.path.join(log_dir, f"step_{i:03d}_{key.split('.')[-1]}.png")
                             Image.fromarray(img_np).save(img_path)
 
-                    # Compute critic value
-                    forward_batch = {
-                        "state": {k: v for k, v in transition["state"].items()},
-                        "action": transition[ACTION],
-                    }
-                    
-                    # Move forward_batch to device for model inference
-                    forward_batch = move_state_dict_to_device(forward_batch, device)
 
-                    # Preprocessing
-                    batch_for_proc = {k: v for k, v in forward_batch["state"].items()}
-                    batch_for_proc["task"] = [cfg.policy.task]
-                    batch_for_proc[ACTION] = forward_batch["action"]
+                    # Prepare inputs for preprocessor (move to device and add batch dim)
+                    state_dev = {k: v.to(device) for k, v in transition["state"].items()}
+                    next_state_dev = {k: v.to(device) for k, v in transition["next_state"].items()}
                     
-                    processed_batch = policy.preprocessor(batch_for_proc)
+                    # Action needs to be on device and have batch dim [1, D]
+                    # We unsqueeze(0) to add the batch dimension
+                    action_dev = transition[ACTION].to(device).unsqueeze(0)
                     
-                    # Update forward_batch with processed features
-                    for key in processed_batch.keys():
-                        if key.startswith("observation."):
-                            forward_batch["state"][key] = processed_batch[key]
+                    # Reward and Done need to be tensors on device with batch dim [1]
+                    # .view(1) ensures they are 1D tensors of size 1
+                    reward_dev = torch.tensor(transition["reward"], device=device).view(1)
+                    done_dev = torch.tensor(transition["done"], device=device).view(1)
                     
-                    from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
-                    forward_batch["state"][OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]
-                    forward_batch["state"][OBS_LANGUAGE_ATTENTION_MASK] = processed_batch[OBS_LANGUAGE_ATTENTION_MASK]
+                    # Use shared utility to preprocess batch (handles subtask defaults correctly)
+                    forward_batch = preprocess_batch_for_pi05(
+                        policy=policy,
+                        observations=state_dev,
+                        next_observations=next_state_dev,
+                        actions=action_dev,
+                        rewards=reward_dev,
+                        done=done_dev,
+                        task=cfg.policy.task,
+                    )
                     
                     critic_output = policy.forward(forward_batch, model="critic_value")
                     val = critic_output["critic_value_mean"]

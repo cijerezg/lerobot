@@ -259,19 +259,21 @@ def act_with_policy(
     online_env, teleop_device = make_robot_env(cfg=cfg.env)
     env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
+
     obs, info = online_env.reset()
     env_processor.reset()
     action_processor.reset()
 
     # Process initial observation
     transition = create_transition(observation=obs, info=info)
+    
     # Add dummy subtask for Pi05Full compatibility
     if TransitionKey.COMPLEMENTARY_DATA not in transition:
         transition[TransitionKey.COMPLEMENTARY_DATA] = {}
     transition[TransitionKey.COMPLEMENTARY_DATA]["subtask"] = [""] * (len(obs) if isinstance(obs, list) else 1) # Assuming batch size 1 or list
     
     transition = env_processor(transition)
-    
+
     # NOTE: For the moment we will solely handle the case of a single environment
     sum_reward_episode = 0
     list_transition_to_send_to_learner = []
@@ -309,23 +311,28 @@ def act_with_policy(
                     # Apply preprocessor if available (handles tokenization, state padding, etc.)
                     # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
                     # env_processor has already converted observations to proper tensor format.
+
+                    batch_for_preprocessor['complementary_data'] = {'subtask': [""]} # single subtask because batch size is 1
+                    
                     if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
                         processed_batch = policy.preprocessor(batch_for_preprocessor)
                     else:
                         processed_batch = batch_for_preprocessor
                     
-                    # PI05RLPolicy.select_action handles advantage injection internally (default 1.0)
                     action = policy.select_action(processed_batch)
+
+                    # Extract single action for environment (Batch 0, Time 0)
+                    # Policy returns [Batch, Time, Dim], we need [Dim]
+                    if action.ndim == 3:
+                        action = action[0, 0]
+                    elif action.ndim == 2:
+                        action = action[0]
 
                     # Apply postprocessor if available (handles unnormalization)
                     if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
                         # Slice action to 6 dimensions as requested
                         if action.shape[-1] > 6:
                             action = action[..., :6]
-                        
-                        # Clamp to [-1, 1] to ensure safety and prevent violent movements
-                        #clamp_val = 0.1 + 1.9 / (1 + math.exp(-0.001 * (interaction_step - 5000)))
-                        #action = torch.clamp(action, lamp_val, clamp_val)
 
                         action = policy.postprocessor(action)
                         
@@ -342,7 +349,6 @@ def act_with_policy(
                 env_processor=env_processor,
                 action_processor=action_processor,
             )
-            # Add dummy subtask to new_transition if missing (it might be preserved or not)
             if TransitionKey.COMPLEMENTARY_DATA not in new_transition:
                 new_transition[TransitionKey.COMPLEMENTARY_DATA] = {}
             if "subtask" not in new_transition[TransitionKey.COMPLEMENTARY_DATA]:
@@ -421,7 +427,7 @@ def act_with_policy(
                     'observation.state' in env_obs or
                     any(k.startswith('observation.images.') for k in env_obs.keys())
                 )
-                
+
                 if has_policy_format:
                     # Observations are already in policy format (partial or full), just filter the relevant keys
                     for key in env_obs.keys():
@@ -475,18 +481,21 @@ def act_with_policy(
             # Create transition for learner (convert to policy format)
             observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
             next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
-            
-            list_transition_to_send_to_learner.append(
-                Transition(
-                    state=observation,
-                    action=executed_action[:6],
-                    reward=reward,
-                    next_state=next_observation,
-                    done=done,
-                    truncated=truncated,
-                    complementary_info=complementary_info,
-                )
+
+            transition_to_send = Transition(
+                state=observation,
+                action=executed_action[:6],
+                reward=reward,
+                next_state=next_observation,
+                done=done,
+                truncated=truncated,
+                complementary_info=complementary_info,
             )
+            
+            # Move to CPU to save VRAM on actor
+            transition_to_send = move_transition_to_device(transition_to_send, "cpu")
+            
+            list_transition_to_send_to_learner.append(transition_to_send)
             
             # Update transition for next iteration
             transition = new_transition

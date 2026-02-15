@@ -438,14 +438,21 @@ class InterventionActionProcessorStep(ProcessorStep):
         # Override action if intervention is active
         if is_intervention and teleop_action is not None:
             if isinstance(teleop_action, dict):
-                # Convert teleop_action dict to tensor format
-                action_list = [
-                    teleop_action.get("delta_x", 0.0),
-                    teleop_action.get("delta_y", 0.0),
-                    teleop_action.get("delta_z", 0.0),
-                ]
-                if self.use_gripper:
-                    action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                # Check if it's end-effector control (delta_x, etc.) or joint control
+                if "delta_x" in teleop_action:
+                    # Convert teleop_action dict to tensor format for EE control
+                    action_list = [
+                        teleop_action.get("delta_x", 0.0),
+                        teleop_action.get("delta_y", 0.0),
+                        teleop_action.get("delta_z", 0.0),
+                    ]
+                    if self.use_gripper:
+                        action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                else:
+
+                    action_list = [v for k, v in teleop_action.items() if k.endswith(".pos")]
+                    if not action_list:
+                         action_list = list(teleop_action.values())
             elif isinstance(teleop_action, np.ndarray):
                 action_list = teleop_action.tolist()
             else:
