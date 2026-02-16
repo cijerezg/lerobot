@@ -74,8 +74,74 @@ def hydrate_subtasks(indices: list | torch.Tensor, dataset) -> list[str]:
                  pass 
                  
         subtask_names.append(name)
-        
+    
     return subtask_names
+        
+
+def remap_subtasks_for_dataset(target_dataset, source_dataset, is_main_process=False):
+    """
+    Computes a remapping table for subtask indices from source_dataset to target_dataset.
+    If source_dataset has subtasks not present in target_dataset, they are added to target_dataset's metadata.
+    
+    Args:
+        target_dataset: The main dataset (destination of transitions).
+        source_dataset: The dataset being merged in.
+        is_main_process (bool): Whether to log details.
+        
+    Returns:
+        remap_table (dict): Map from source_index -> target_index.
+    """
+    remap_table = {} # old_index -> new_index
+            
+    # Helper to get subtask map {index: name}
+    def get_idx_to_name(ds):
+        mapping = {}
+        if hasattr(ds, "meta") and hasattr(ds.meta, "subtasks"):
+            df = ds.meta.subtasks
+            # Check if 'subtask_index' is a column
+            if "subtask_index" in df.columns:
+                # Iterate rows. We assume index is the subtask name (as per annotate script)
+                # but we should be robust.
+                for idx, row in df.iterrows():
+                    # If the index is the name, use it.
+                    name = idx if isinstance(idx, str) else row.get("subtask", str(idx))
+                    i = int(row["subtask_index"])
+                    mapping[i] = name
+        return mapping
+
+    target_idx_to_name = get_idx_to_name(target_dataset)
+    source_idx_to_name = get_idx_to_name(source_dataset)
+    
+    # Build name -> target_index map
+    target_name_to_idx = {n: i for i, n in target_idx_to_name.items()}
+    
+    # Next available index in target dataset
+    next_new_index = max(target_idx_to_name.keys()) + 1 if target_idx_to_name else 0
+    
+    # Calculate remapping
+    for old_idx, name in source_idx_to_name.items():
+        if name in target_name_to_idx:
+            # Subtask exists in target dataset, use its index
+            remap_table[old_idx] = target_name_to_idx[name]
+        else:
+            # New subtask, assign new index and update target metadata
+            new_idx = next_new_index
+            remap_table[old_idx] = new_idx
+            target_name_to_idx[name] = new_idx
+            target_idx_to_name[new_idx] = name
+            next_new_index += 1
+            
+            # Update target_dataset metadata in memory
+            if hasattr(target_dataset, "meta") and hasattr(target_dataset.meta, "subtasks"):
+                    import pandas as pd
+                    new_row = pd.DataFrame([{"subtask_index": new_idx}], index=[name])
+                    target_dataset.meta.subtasks = pd.concat([target_dataset.meta.subtasks, new_row])
+    
+    if is_main_process and remap_table:
+        logging.info(f"Remapping subtasks: {remap_table}")
+        
+    return remap_table
+
 
 
 def pi05_update_step(

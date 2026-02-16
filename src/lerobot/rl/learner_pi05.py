@@ -405,6 +405,8 @@ def add_actor_information_and_train(
         # Load additional offline datasets
         if hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths:
             import torchvision.transforms.functional as F_vision
+            from lerobot.rl.pi05_train_utils import remap_subtasks_for_dataset
+            
             expected_height, expected_width = 224, 224
 
             for path in cfg.dataset.additional_offline_dataset_paths:
@@ -422,6 +424,11 @@ def add_actor_information_and_train(
                 )
 
                 logging.info(f"Adding transitions from {path} to offline buffer...")
+                
+                # --- Subtask Remapping Logic ---
+                # is_main_process is not easily available here, but logging.info works fine
+                remap_table = remap_subtasks_for_dataset(offline_dataset, additional_dataset, is_main_process=True)
+                
                 for data in generator:
                     # Process data (resize, cast, move)
                     for k, v in data.items():
@@ -437,6 +444,20 @@ def add_actor_information_and_train(
                         elif isinstance(v, torch.Tensor):
                              data[k] = v.to(dtype=torch.bfloat16, device=storage_device)
                     
+                    # Apply remapping to subtask indices
+                    comp_info = data.get("complementary_info", {})
+                    if comp_info and "subtask_index" in comp_info:
+                        old_idx = comp_info["subtask_index"]
+                        if isinstance(old_idx, torch.Tensor):
+                            old_idx = old_idx.item()
+                        
+                        if old_idx in remap_table:
+                            new_idx = remap_table[old_idx]
+                            if isinstance(data.get("complementary_info", {}).get("subtask_index"), torch.Tensor):
+                                 comp_info["subtask_index"] = torch.tensor(new_idx, dtype=torch.int64)
+                            else:
+                                 comp_info["subtask_index"] = new_idx
+                    
                     offline_replay_buffer.add(
                         state=data["state"],
                         action=data[ACTION],
@@ -444,7 +465,7 @@ def add_actor_information_and_train(
                         next_state=data["next_state"],
                         done=data["done"],
                         truncated=False,
-                        complementary_info=data.get("complementary_info", None),
+                        complementary_info=comp_info,
                     )
                 logging.info(f"Finished adding transitions from {path}. Buffer size: {len(offline_replay_buffer)}")
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
