@@ -4,31 +4,28 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 8,
-    "log_freq": 5,
+    "batch_size": 10,
+    "log_freq": 40,
     "save_checkpoint": true,
-    "save_freq": 50,
-    "offline_output_dir": "outputs/pi05_offline_training_v4",
-    "offline_save_freq": 200,
+    "save_freq": 100,
+    "offline_output_dir": "outputs/pi05_full_offline_training_v1",
+    "offline_save_freq": 1000,
     "online_buffer_save_episode_freq": 6,
     "wandb": {
         "enable": true,
-        "project": "so101_real",
-        "offline_project": "so101_real_offline",
+        "project": "so101_real-v1",
+        "offline_project": "so101_real_offline-v1",
         "disable_artifact": true
     },
     "dataset": {
-        "repo_id": "cijerezg/multi-task-toys-v2",
-        "use_imagenet_stats": false,
-        "additional_offline_dataset_paths": [
-            "outputs/train/2026-01-18/20-23-32_default/online_buffer",
-            "outputs/train/2026-01-24/13-38-57_default/online_buffer"
-        ]
+        "root": "outputs/annotated_dataset-v1",
+        "repo_id": "cijerezg/yellow-car-offline-training-v2",
+        "use_imagenet_stats": false
     },
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the yellow car and put it in the bowl",
-        "pi05_checkpoint": "outputs/pi05_offline_training_v4/checkpoints/001600/pretrained_model",
+        "pi05_checkpoint": "outputs/pi05_base",
         "use_separate_critic": true,
         "inference_advantage": 1.0,
         "advantage_scaling": 0.16,
@@ -83,7 +80,7 @@
         },
         "device": "cuda",
         "actor_device": "cuda:0",
-        "learner_device": "cuda:1",
+        "learner_device": "cuda:0",
         "use_amp": false,
         "dataset_stats": null,
         "storage_device": "cpu",
@@ -91,7 +88,7 @@
         "gradient_checkpointing": true,
         "online_steps": 20000,
         "online_buffer_capacity": 40000,
-        "offline_buffer_capacity": 20000,
+        "offline_buffer_capacity": 35000,
         "online_step_before_learning": 10,
         "policy_update_freq": 1,
         "discount": 0.97,
@@ -100,9 +97,9 @@
         "critic_lr": 0.00001,
         "actor_lr": 0.00001,
         "critic_target_update_weight": 0.005,
-        "utd_ratio": 4,
-        "grad_clip_norm": 5.0,
-        "gradient_accumulation_steps": 8,
+        "utd_ratio": 2,
+        "grad_clip_norm": 2.0,
+        "gradient_accumulation_steps": 6,
         "critic_network_kwargs": {
             "hidden_dims": [
                 256,

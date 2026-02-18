@@ -288,9 +288,10 @@ def pi05_update_step(
         "critic_value_mean": all_critic_values.mean().item(),
         "critic_value_std": all_critic_values.std().item() if all_critic_values.numel() > 1 else 0.0,
         "target_value_mean_critic": all_target_values.mean().item(),
-        "target_value_std": all_target_values.std().item() if all_target_values.numel() > 1 else 0.0,
+        "target_value_std": all_target_values.std().item() if all_target_values.numel() > 1 else 0.0
     }
     training_infos["critic_histogram_from_critic"] = all_critic_values.detach().float().cpu().numpy()
+    training_infos["target_value_histogram"] = all_target_values.detach().float().cpu().numpy()
 
 
     # -------------------------------------------------------------------------
@@ -578,20 +579,20 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
         if is_main_process:
             logging.info("Config requests using dataset stats (use_dataset_stats=True).")
         if dataset is not None:
-             dataset_stats = dataset.meta.stats
+            dataset_stats = dataset.meta.stats
         else:
-             if is_main_process:
-                 logging.warning("use_dataset_stats is True but no dataset provided! Stats will be None.")
+            if is_main_process:
+                logging.warning("use_dataset_stats is True but no dataset provided! Stats will be None.")
 
     # 2. Check if we are loading the base model (which implies we should use dataset stats)
     elif "pi05_base" in cfg.policy.pi05_checkpoint:
         if is_main_process:
             logging.info(f"Loading base model '{cfg.policy.pi05_checkpoint}'. Using dataset stats.")
         if dataset is not None:
-             dataset_stats = dataset.meta.stats
+            dataset_stats = dataset.meta.stats
         else:
-             if is_main_process:
-                 logging.warning("Loading base model but no dataset provided! Stats will be None.")
+            if is_main_process:
+                logging.warning("Loading base model but no dataset provided! Stats will be None.")
 
     # 3. Otherwise, try to load stats from the checkpoint
     elif cfg.policy.pi05_checkpoint:

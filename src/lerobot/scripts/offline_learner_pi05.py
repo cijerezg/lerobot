@@ -553,6 +553,7 @@ def run_offline_training(
                 # Extract histograms
                 advantage_hist = training_infos.pop("advantage_histogram", None)
                 critic_hist = training_infos.pop("critic_histogram", None)
+                target_value_hist = training_infos.pop("target_value_histogram", None)
                 critic_hist_from_critic = training_infos.pop("critic_histogram_from_critic", None)
                 actor_loss_hist = training_infos.pop("actor_loss_histogram", None)
                 
@@ -566,15 +567,22 @@ def run_offline_training(
                         "Optimization step": optimization_step
                     })
                 if critic_hist is not None:
-                    critic_vals = np.clip(critic_hist, -5, .5)
+                    critic_vals = np.clip(critic_hist, -2, .5)
                     wandb_logger._wandb.log({
                         "train/critic_value_histogram": wandb.Histogram(critic_vals),
+                        "Optimization step": optimization_step
+                    })
+                    
+                if target_value_hist is not None:
+                     target_vals = np.clip(target_value_hist, -2, .5)
+                     wandb_logger._wandb.log({
+                        "train/target_value_histogram": wandb.Histogram(target_vals),
                         "Optimization step": optimization_step
                     })
                 
                 # Log critic histogram from critic update
                 if critic_hist_from_critic is not None:
-                    critic_vals_from_critic = np.clip(critic_hist_from_critic, -5, .5)
+                    critic_vals_from_critic = np.clip(critic_hist_from_critic, -2, .5)
                     wandb_logger._wandb.log({
                         "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
                         "Optimization step": optimization_step

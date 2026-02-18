@@ -720,7 +720,7 @@ class PI05RLPolicy(PI05FullPolicy):
                 # Vanilla checkpoint loading (original logic)
                 print("Loading as vanilla Pi05 checkpoint")
                 # Load a vanilla PI05Policy to get the pretrained weights
-                temp_policy = PI05Policy.from_pretrained(
+                temp_policy = PI05FullPolicy.from_pretrained(
                     config.pi05_checkpoint, 
                     config=config,
                     strict=False
@@ -1017,7 +1017,7 @@ class PI05RLPolicy(PI05FullPolicy):
             
             # We pass precomputed prefix embeddings to avoid re-computation
             # We pass precomputed prefix embeddings to avoid re-computation
-            loss_actor = self.model(
+            actor_output = self.model(
                 images=None, 
                 img_masks=None,
                 high_level_task_tokens=actor_tokens,
@@ -1031,12 +1031,14 @@ class PI05RLPolicy(PI05FullPolicy):
                 time=None,
                 prefix_embs=prefix_embs,
                 prefix_pad_masks=prefix_pad_masks,
-
                 prefix_att_masks=prefix_att_masks
-            )["loss_actor"]
+            )
             
             return {
-                "loss_actor": loss_actor,
+                "loss_actor": actor_output["loss_actor"],
+                "flow_mse_loss": actor_output["flow_mse_loss"],
+                "action_ce_loss": actor_output["action_ce_loss"],
+                "subtask_ce_loss": actor_output["subtask_ce_loss"],
                 "advantage_mean": advantage.mean().item(),
                 "target_value_mean": target_v.mean().item(),
                 "reward_mean": reward.mean().item(),
@@ -1105,7 +1107,7 @@ class PI05RLPolicy(PI05FullPolicy):
             target_q = target_q.to(dtype=current_v.dtype)
             
             loss_critic = F.mse_loss(current_v, target_q)
-
+            
             self.critic_log_counter += 1
             if self.critic_log_counter % 200 == 0:
                 print(f"[Critic] Loss: {loss_critic.item():.4f} | V_mean: {current_v.mean().item():.4f} | Target_mean: {target_q.mean().item():.4f} | TD_err: {torch.abs(current_v - target_q).mean().item():.4f}")

@@ -331,7 +331,6 @@ class ReplayBuffer:
             chunk_indices = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
             batch_actions = self.actions[chunk_indices].to(self.device)
 
-        
         # Handle rewards and dones with lookahead awareness
         if len(self.actions.shape) == 2 and action_chunk_size > 1:
             # Create lookahead window including current position [idx, idx+1, ..., idx+chunk_size-1]
