@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from lerobot.utils.constants import (
     ACTION, 
     OBS_LANGUAGE_TOKENS, 
@@ -25,6 +26,79 @@ import numpy as np
 import logging
 
 from lerobot.processor.core import TransitionKey
+
+
+def log_sampled_actions(
+    policy,
+    snapshot: dict,
+    optimization_step: int,
+    wandb_logger,
+):
+    """
+    Sample actions from the policy using the last processed-batch snapshot and log stats to WandB.
+
+    This is the canonical shared helper used by both offline_learner_pi05.py and learner_pi05.py.
+
+    Args:
+        policy: Unwrapped PI05RLPolicy (not DDP-wrapped). Must have ``_preprocess_images`` and
+                ``model.sample_actions``.
+        snapshot: dict produced by ``pi05_update_step`` under the key ``_action_log_snapshot``.
+                  Expected keys: ``observations``, ``task_tokens``, ``task_masks``,
+                  ``subtask_tokens`` (may be None), ``subtask_masks`` (may be None),
+                  ``gt_actions`` [B, 6] float32 CPU tensor,
+                  ``gt_actions_normalized`` for MSE calculation.
+        optimization_step: Current optimisation step used as the WandB x-axis value.
+        wandb_logger: WandBLogger instance, or None (metrics are always printed to stdout).
+
+    WandB metrics logged (all under the ``sampled_action/`` prefix):
+        - ``dim{i}_mean`` / ``dim{i}_std``  for i in 0..5   (per-joint bias / collapse check)
+        - ``vs_gt_mse``                                       (how far samples are from GT)
+        - ``histogram``                                        (full distribution of sampled values)
+        - ``gt_histogram``                                     (GT distribution for reference)
+    """
+    with torch.no_grad():
+        images, img_masks = policy._preprocess_images(snapshot["observations"])
+        sampled = policy.model.sample_actions(
+            images,
+            img_masks,
+            snapshot["task_tokens"],
+            snapshot["task_masks"],
+            None,#snapshot["subtask_tokens"],
+            None#snapshot["subtask_masks"],
+        )  # -> [B, chunk_size, max_action_dim]
+        
+
+    # Use the first chunk step, first 6 dims — the action the robot would actually execute
+    sampled = sampled[:, :, :6].float().cpu()
+    gt_6_normalized = snapshot["gt_actions_normalized"][:, :, :6]           # [B, 6] float32 CPU
+    
+    dim_means = sampled.mean(dim=0).mean(dim=0).tolist()
+    dim_stds  = sampled.std(dim=0).mean(dim=0).tolist()
+
+    vs_gt_mse = F.mse_loss(sampled, gt_6_normalized).item()
+
+    print(
+        f"[step {optimization_step}] sampled_action | "
+        f"means: {[f'{v:.3f}' for v in dim_means]} | "
+        f"stds: {[f'{v:.3f}' for v in dim_stds]} | "
+        f"vs-GT MSE: {vs_gt_mse:.4f}"
+    )
+
+    if wandb_logger:
+        import wandb  # local import to avoid hard dependency in train utils
+        scalar_log = {
+            "Optimization step": optimization_step,
+            "sampled_action/vs_gt_mse": vs_gt_mse,
+        }
+        for i, (m, s) in enumerate(zip(dim_means, dim_stds)):
+            scalar_log[f"sampled_action/dim{i}_mean"] = m
+            scalar_log[f"sampled_action/dim{i}_std"]  = s
+        wandb_logger._wandb.log(scalar_log)
+        wandb_logger._wandb.log({
+            "sampled_action/histogram":    wandb.Histogram(sampled.numpy().flatten()),
+            "sampled_action/gt_histogram": wandb.Histogram(gt_6_normalized.numpy().flatten()),
+            "Optimization step": optimization_step,
+        })
 
 
 
@@ -487,12 +561,12 @@ def pi05_update_step(
 
                 # Forward Actor
                 if use_amp:
-                     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                         actor_output = policy.forward(forward_batch_actor, model="actor", external_metrics=external_metrics)
-                         loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
+                    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                        actor_output = policy.forward(forward_batch_actor, model="actor", external_metrics=external_metrics)
+                        loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
                 else:
-                     actor_output = policy.forward(forward_batch_actor, model="actor", external_metrics=external_metrics)
-                     loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
+                    actor_output = policy.forward(forward_batch_actor, model="actor", external_metrics=external_metrics)
+                    loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
                 
                 loss_actor_mean = loss_actor.mean()
                 
@@ -548,7 +622,18 @@ def pi05_update_step(
             training_infos["critic_value_mean_actor"] = all_critic_values_actor.mean().item()
             
             training_infos["critic_histogram"] = all_critic_values.detach().float().cpu().numpy() # This overwrites pass 1 critic hist
-                
+
+            # Snapshot for action-reconstruction logging (consumed by callers via .pop)
+            training_infos["_action_log_snapshot"] = {
+                "observations": observations,
+                "task_tokens": forward_batch_actor[OBS_LANGUAGE_TOKENS],
+                "task_masks": forward_batch_actor[OBS_LANGUAGE_ATTENTION_MASK],
+                "subtask_tokens": forward_batch_actor.get(OBS_LANGUAGE_SUBTASK_TOKENS),
+                "subtask_masks": forward_batch_actor.get(OBS_LANGUAGE_SUBTASK_ATTENTION_MASK),
+                "gt_actions": actions.float().cpu(),
+                "gt_actions_normalized": forward_batch_actor[ACTION].float().cpu(),
+            }
+
     # Update target networks
     policy.update_target_networks()
     

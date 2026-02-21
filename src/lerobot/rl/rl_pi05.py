@@ -391,6 +391,7 @@ class PI05RLPytorch(PI05Pytorch):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
+        
         if prefix_embs is None:
             prefix_embs, prefix_pad_masks, prefix_att_masks, image_len = self.embed_prefix(
                 images, img_masks, high_level_task_tokens, subtask_tokens, high_level_task_masks, subtask_masks, action_tokens, action_masks
@@ -456,6 +457,7 @@ class PI05RLPytorch(PI05Pytorch):
         pad_2d_masks = combined_pad_masks[:, None, :] * combined_pad_masks[:, :, None]
         att_2d_masks = combined_att_2d_masks & pad_2d_masks
         
+        
         position_ids = torch.cumsum(combined_pad_masks, dim=1) - 1
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
@@ -483,8 +485,10 @@ class PI05RLPytorch(PI05Pytorch):
             return self.action_out_proj(suffix_out)
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
-        flow_loss = F.mse_loss(u_t, v_t, reduction="none")
         
+        # Only consider first 6 vals; they are action without padding
+        flow_loss = F.mse_loss(u_t[:, :6], v_t[:, :6], reduction="none") 
+
         # Auxiliary losses (only if tokens provided)
         # Auxiliary losses (only if tokens provided)
         # loss = flow_loss.mean() <- OLD
@@ -499,8 +503,6 @@ class PI05RLPytorch(PI05Pytorch):
         fast_len = action_tokens.shape[1] if action_tokens is not None else 0
 
         # Note: We rely on prefix_embs having [Image, Task, Subtask, FastAction] structure.
-
-
 
         # Check if we need to compute logits (if either subtask or action tokens are present)
         if subtask_tokens is not None or action_tokens is not None:
@@ -1147,9 +1149,18 @@ class PI05RLPolicy(PI05FullPolicy):
 
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict action chunk."""
+        for k, v in batch.items():
+            if "image" in k and hasattr(v, "min"):
+                print(f"[rl_pi05] predict_action_chunk before _preprocess_images {k}: min={v.min().item():.3f}, max={v.max().item():.3f}")
+        
         # Preprocessor has already normalized and tokenized the inputs
         # Advantage is already in the tokens (passed from actor or defaulted)
         images, img_masks = self._preprocess_images(batch)
+        
+        for i, img in enumerate(images):
+            if hasattr(img, "min"):
+                print(f"[rl_pi05] predict_action_chunk after _preprocess_images img {i}: min={img.min().item():.3f}, max={img.max().item():.3f}")
+                
         from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]

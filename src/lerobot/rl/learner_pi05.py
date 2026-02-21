@@ -108,7 +108,7 @@ from lerobot.rl.learner import (
     save_training_checkpoint,
 )
 from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16
-from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks
+from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks, log_sampled_actions
 
 import wandb
 import gc
@@ -663,6 +663,9 @@ def add_actor_information_and_train(
                 training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
             training_infos["Optimization step"] = optimization_step
 
+            # Pop snapshot before wandb scalar logging (tensors must not be sent as scalars)
+            action_log_snapshot = training_infos.pop("_action_log_snapshot", None)
+
             # Log training metrics
             if wandb_logger:
                 print(f"Logging to WandB at step {optimization_step}")
@@ -707,7 +710,14 @@ def add_actor_information_and_train(
                         "Optimization step": optimization_step
                     })
 
-
+            # --- Action reconstruction logging ---
+            if action_log_snapshot is not None:
+                log_sampled_actions(
+                    policy=policy,
+                    snapshot=action_log_snapshot,
+                    optimization_step=optimization_step,
+                    wandb_logger=wandb_logger,
+                )
 
         # Calculate and log optimization frequency
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step

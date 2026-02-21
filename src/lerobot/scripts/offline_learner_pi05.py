@@ -77,7 +77,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.rl.utils import preprocess_batch_for_pi05
-from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks
+from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks, log_sampled_actions
 
 import wandb
 
@@ -548,7 +548,10 @@ def run_offline_training(
         if optimization_step % log_freq == 0:
             training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
             training_infos["Optimization step"] = optimization_step
-            
+
+            # Pop snapshot before wandb scalar logging (tensors must not be sent as scalars)
+            action_log_snapshot = training_infos.pop("_action_log_snapshot", None)
+
             if wandb_logger:
                 # Extract histograms
                 advantage_hist = training_infos.pop("advantage_histogram", None)
@@ -587,8 +590,16 @@ def run_offline_training(
                         "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
                         "Optimization step": optimization_step
                     })
-                
-                
+
+            # --- Action reconstruction logging ---
+            if action_log_snapshot is not None and is_main_process:
+                log_sampled_actions(
+                    policy=accelerator.unwrap_model(policy),
+                    snapshot=action_log_snapshot,
+                    optimization_step=optimization_step,
+                    wandb_logger=wandb_logger,
+                )
+
         # Calculate optimization frequency
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)

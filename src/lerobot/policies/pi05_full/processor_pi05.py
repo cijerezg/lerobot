@@ -82,7 +82,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         # Check for advantage
         advantages = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("advantage")
         if advantages is not None and isinstance(advantages, torch.Tensor):
-             advantages = advantages.cpu().float().numpy().flatten()
+            advantages = advantages.cpu().float().numpy().flatten()
 
         # TODO: check if this necessary
         state = deepcopy(state)
@@ -110,7 +110,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
                 # Advantages < -0.5: bin 0 (negative)
                 # Advantages >= -0.5 and < 0.5: bin 1 (neutral)
                 # Advantages >= 0.5: bin 2 (positive)
-                bins = np.array([-1.0, -0.5, 0.5, 1.0])
+                bins = np.array([-1.0, 0.25, 1.0])
                 # Clip to range
                 adv = np.clip(adv, -1.0, 1.0)
                 # digitize
@@ -119,7 +119,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
                 adv_bin = max(0, min(2, adv_bin))
                 
                 # Map bin index to string label
-                labels = ["negative", "neutral", "positive"]
+                labels = ["negative", "positive"]
                 adv_label = labels[adv_bin]
                 
                 # Format: "Advantage: <label>"
@@ -129,7 +129,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
             full_prompts.append(full_prompt)
         
         transition[TransitionKey.COMPLEMENTARY_DATA][self.user_prompt_key] = full_prompts
-
+        
         # process commands
         full_commands = []
         for i, command in enumerate(commands):

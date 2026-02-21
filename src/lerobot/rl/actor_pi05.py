@@ -298,11 +298,16 @@ def act_with_policy(
                 if k in cfg.policy.input_features:
                     batch_for_preprocessor[k] = v
             
-            # Add task and robot_type - observations are already processed tensors from env_processor
+            # Add task and advantage to complementary_data where the processor expects them
+            # observations are already processed tensors from env_processor
             # (already normalized [0,1], in CHW format, with batch dimension, on device)
-            batch_for_preprocessor["task"] = cfg.policy.task
             batch_for_preprocessor["robot_type"] = online_env.robot.robot_type if hasattr(online_env, 'robot') else ""
-            batch_for_preprocessor["advantage"] = cfg.policy.inference_advantage
+
+            batch_for_preprocessor['complementary_data'] = {
+                'task': [cfg.policy.task],
+                'subtask': [""], # single subtask because batch size is 1
+                'advantage': torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
+            }
 
             # Time policy inference and check if it meets FPS requirement
             with policy_timer:
@@ -311,16 +316,13 @@ def act_with_policy(
                     # Apply preprocessor if available (handles tokenization, state padding, etc.)
                     # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
                     # env_processor has already converted observations to proper tensor format.
-
-                    batch_for_preprocessor['complementary_data'] = {'subtask': [""]} # single subtask because batch size is 1
-                    
                     if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
                         processed_batch = policy.preprocessor(batch_for_preprocessor)
                     else:
                         processed_batch = batch_for_preprocessor
                     
                     action = policy.select_action(processed_batch)
-
+                    
                     # Extract single action for environment (Batch 0, Time 0)
                     # Policy returns [Batch, Time, Dim], we need [Dim]
                     if action.ndim == 3:

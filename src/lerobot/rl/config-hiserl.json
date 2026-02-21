@@ -8,8 +8,8 @@
     "log_freq": 40,
     "save_checkpoint": true,
     "save_freq": 100,
-    "offline_output_dir": "outputs/pi05_full_offline_training_v1",
-    "offline_save_freq": 1000,
+    "offline_output_dir": "outputs/pi05_full_offline_dummy_training_v1",
+    "offline_save_freq": 200,
     "online_buffer_save_episode_freq": 6,
     "wandb": {
         "enable": true,
@@ -18,7 +18,7 @@
         "disable_artifact": true
     },
     "dataset": {
-        "root": "outputs/annotated_dataset-v1",
+        "root": "outputs/dummy-task-v3-annotated_dataset-v1",
         "repo_id": "cijerezg/yellow-car-offline-training-v2",
         "use_imagenet_stats": false
     },
