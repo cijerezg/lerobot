@@ -96,6 +96,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
         full_prompts = []
+        critic_prompts = []
         for i, user_prompt in enumerate(user_prompts):
             cleaned_text = user_prompt.strip().replace("_", " ").replace("\n", " ")
             cleaned_text = cleaned_text.lower()   # all lowercase # NOTE: added by (jadechoghari)
@@ -123,8 +124,12 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
 
             full_prompt = f"Task: {cleaned_text}, State: {state_str}{advantage_str};\n"
             full_prompts.append(full_prompt)
+            
+            critic_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
+            critic_prompts.append(critic_prompt)
         
         transition[TransitionKey.COMPLEMENTARY_DATA][self.user_prompt_key] = full_prompts
+        transition[TransitionKey.COMPLEMENTARY_DATA]["critic_prompt"] = critic_prompts
         
         # process commands
         full_commands = []

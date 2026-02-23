@@ -512,8 +512,8 @@ def pi05_update_step(
                 # Add critic tokens if available (from pass 1)
                 # Note: processed_batch MIGHT have critic tokens if preprocessor generates them
                 if "critic_tokens" in processed_batch:
-                     forward_batch_actor["critic_tokens"] = processed_batch["critic_tokens"]
-                     forward_batch_actor["critic_pad_mask"] = processed_batch["critic_pad_mask"]
+                    forward_batch_actor["critic_tokens"] = processed_batch["critic_tokens"]
+                    forward_batch_actor["critic_pad_mask"] = processed_batch["critic_pad_mask"]
                 
                 # Flatten convenient tokens
                 forward_batch_actor[OBS_LANGUAGE_TOKENS] = processed_batch[OBS_LANGUAGE_TOKENS]

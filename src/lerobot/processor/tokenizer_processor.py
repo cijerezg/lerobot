@@ -196,6 +196,32 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         return None
 
+    def get_critic_prompt(self, transition: EnvTransition) -> list[str] | None:
+        """
+        Extracts the critic_prompt from the transition's complementary data.
+
+        Args:
+            transition: The environment transition.
+
+        Returns:
+            A list of critic_prompt strings, or None if the critic_prompt key is not found or the value is None.
+        """
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return None
+
+        critic_prompt = complementary_data.get("critic_prompt")
+        if critic_prompt is None:
+            return None
+
+        # Standardize to a list of strings for the tokenizer
+        if isinstance(critic_prompt, str):
+            return [critic_prompt]
+        elif isinstance(critic_prompt, list) and all(isinstance(t, str) for t in critic_prompt):
+            return critic_prompt
+
+        return None
+
     def observation(self, observation: RobotObservation) -> RobotObservation:
         """
         Tokenizes the task description and user_prompt (if available) and adds them to the observation dictionary.
@@ -248,6 +274,22 @@ class TokenizerProcessorStep(ObservationProcessorStep):
             # Add tokenized user_prompt to the observation
             new_observation[OBS_LANGUAGE_USER_PROMPT_TOKENS] = tokenized_user_prompt["input_ids"]
             new_observation[OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK] = tokenized_user_prompt["attention_mask"].to(dtype=torch.bool)
+
+        # Tokenize critic_prompt if available
+        critic_prompt = self.get_critic_prompt(self.transition)
+        if critic_prompt is not None:
+            tokenized_critic_prompt = self._tokenize_text(critic_prompt)
+
+            # Move new tokenized tensors to the detected device
+            if target_device is not None:
+                tokenized_critic_prompt = {
+                    k: v.to(target_device) if isinstance(v, torch.Tensor) else v
+                    for k, v in tokenized_critic_prompt.items()
+                }
+
+            # Add tokenized critic_prompt to the observation
+            new_observation["critic_tokens"] = tokenized_critic_prompt["input_ids"]
+            new_observation["critic_pad_mask"] = tokenized_critic_prompt["attention_mask"].to(dtype=torch.bool)
 
         # Tokenize subtask if available
         subtask = self.get_subtask(self.transition)
@@ -400,6 +442,17 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         if OBS_LANGUAGE_SUBTASK_ATTENTION_MASK not in features[PipelineFeatureType.OBSERVATION]:
             features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
+        # Add features for critic_prompt tokens and attention mask if they don't already exist
+        if "critic_tokens" not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION]["critic_tokens"] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
+        if "critic_pad_mask" not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION]["critic_pad_mask"] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
             )
 

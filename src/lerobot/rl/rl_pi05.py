@@ -851,19 +851,13 @@ class PI05RLPolicy(PI05FullPolicy):
         external_metrics: dict[str, Tensor] | None = None,
     ) -> tuple[Tensor, dict] | dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training."""
-
         # --- Shared Computation: Vision Features ---
         # We always need vision features.
         # For 'actor', we need gradients.
         # For 'critic', we DO NOT need gradients for the vision encoder (it's detached).
-        
-        # However, `embed_image` is part of `embed_prefix`.
-        # We need to extract the vision part.
-        
         use_grad = (model != "critic")
         
         # We use the internal visual encoder of the policy
-        # vision_features: [B, num_patches, D]
         vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad)
         
         # Actor needs tokens too
@@ -873,6 +867,26 @@ class PI05RLPolicy(PI05FullPolicy):
         actor_tokens = current_batch[OBS_LANGUAGE_TOKENS]
         actor_masks = current_batch[OBS_LANGUAGE_ATTENTION_MASK]
         
+        # This block is used by all the models
+        # Prepare critic inputs
+        # 1. Extract Vision Features (Shared)
+        critic_vision_features = vision_features.detach()
+        critic_vision_masks = vision_pad_masks # No grad needed for masks
+
+        # 2. Critic Tokens (No Advantage)
+        critic_tokens = current_batch["critic_tokens"]
+        critic_token_masks = current_batch["critic_pad_mask"] # Assuming this key
+    
+        # Embed critic tokens using Actor's embedding layer
+        # We use the actor's embedding layer which is shared/frozen
+        # We need to access it from the model
+        actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
+        critic_text_embs = actor_embed_layer(critic_tokens)
+        
+        # Detach embeddings to prevent critic updates from affecting the actor's language model.
+        critic_text_embs = critic_text_embs.detach()
+
+
         if model != "critic":
             # Compute full prefix embeddings for actor
             # We need images and img_masks for embed_prefix, so re-extract them
@@ -884,139 +898,23 @@ class PI05RLPolicy(PI05FullPolicy):
             action_tokens = current_batch.get(ACTION_TOKENS, None)
             action_masks = current_batch.get(ACTION_TOKEN_MASK, None)
 
-            # Pass full arguments to embed_prefix (implicit usage via self.model forward later, or explicit here)
-            # Actually, PI05RLPytorch.forward calls embed_prefix internally if prefix_embs is None.
-            # BUT here we are pre-computing it to pass to self.model later? 
-            # Wait, lines 894-900 (in view Step 94) show self.model call passes None for all these!
-            # We must fix BOTH the call to embed_prefix HERE and the call to self.model later.
-            
             prefix_embs, prefix_pad_masks, prefix_att_masks, image_len = self.model.embed_prefix(
                 images, img_masks, actor_tokens, subtask_tokens, actor_masks, subtask_masks, action_tokens, action_masks
             )
             
         # --- Branching Logic ---
         
-        if model in ["critic", "actor", "critic_value"]:
-            # Prepare critic inputs
-            # 1. Extract Vision Features (Shared)
-            critic_vision_features = vision_features.detach()
-            critic_vision_masks = vision_pad_masks # No grad needed for masks
-
-            # 2. Critic Tokens (No Advantage)
-            if "critic_tokens" in current_batch:
-                critic_tokens = current_batch["critic_tokens"]
-                critic_token_masks = current_batch["critic_pad_mask"] # Assuming this key
-            else:
-                # Fallback: Use actor tokens (contains advantage if present)
-                critic_tokens = actor_tokens
-                critic_token_masks = actor_masks
-            
-            # Embed critic tokens using Actor's embedding layer
-            # We use the actor's embedding layer which is shared/frozen
-            # We need to access it from the model
-            actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
-            critic_text_embs = actor_embed_layer(critic_tokens)
-            
-            # Detach embeddings to prevent critic updates from affecting the actor's language model.
-            critic_text_embs = critic_text_embs.detach()
         
-        # ... (Rest of the logic)
-
-        if model is None:
-            # BC Mode
-            actions = self.prepare_action(batch)
-            # Use precomputed prefix embeddings
-            loss = self.model(
-                images=None, 
-                img_masks=None,
-                high_level_task_tokens=actor_tokens,
-                high_level_task_masks=actor_masks,
-                subtask_tokens=subtask_tokens,
-                subtask_masks=subtask_masks,
-                action_tokens=action_tokens,
-                action_masks=action_masks,
-                actions=actions,
-                noise=None, 
-                time=None,
-                prefix_embs=prefix_embs,
-                prefix_pad_masks=prefix_pad_masks,
-                prefix_att_masks=prefix_att_masks
-            )
-            return loss
-
-        elif model == "actor":
+        if model == "actor":
             # Calculate Advantage
             # If external metrics provided, use them to avoid redundant computation
-            if external_metrics is not None and "advantage" in external_metrics:
-                advantage = external_metrics["advantage"]
-                target_v = external_metrics.get("target_values", torch.tensor(0.0))
-                current_v = external_metrics.get("critic_values", torch.tensor(0.0))
-                reward = external_metrics.get("rewards", torch.tensor(0.0))
-            else:
-                with torch.no_grad():
-                    # V(s)
-                    current_v = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
-                    
-                    # V(s')
-                    if "next_state" in batch:
-                        next_batch = batch["next_state"].copy()
-                        next_images, next_img_masks = self._preprocess_images(next_batch)
-                        
-                        # Next vision features
-                        next_vision_features = []
-                        next_vision_pad_masks = []
-                        for img, img_mask in zip(next_images, next_img_masks):
-                            feat = self.model.paligemma_with_expert.embed_image(img)
-                            next_vision_features.append(feat)
-                            B, N, _ = feat.shape
-                            mask = img_mask[:, None].expand(B, N)
-                            next_vision_pad_masks.append(mask)
-                        next_vision_features = torch.cat(next_vision_features, dim=1).detach()
-                        next_vision_pad_masks = torch.cat(next_vision_pad_masks, dim=1)
-                        
-                        # Next critic tokens
-                        if "critic_tokens" in next_batch:
-                            next_critic_tokens = next_batch["critic_tokens"]
-                            next_critic_token_masks = next_batch["critic_pad_mask"]
-                        else:
-                            next_critic_tokens = next_batch[OBS_LANGUAGE_TOKENS]
-                            next_critic_token_masks = next_batch[OBS_LANGUAGE_ATTENTION_MASK]
-                            
-                        # Embed next critic tokens
-                        actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
-                        next_critic_text_embs = actor_embed_layer(next_critic_tokens).detach()
-
-                        next_v = self.critic_target(next_vision_features, next_critic_text_embs, next_critic_token_masks)
-                    else:
-                         # Handle missing next_state
-                        next_v = torch.zeros_like(current_v)
-
-                    # Ensure correct dtype
-                    reward = batch["reward"]
-                    done = batch["next.done"]
-                    
-                    if reward.ndim == 1:
-                        reward = reward.unsqueeze(-1)
-                    if done.ndim == 1:
-                        done = done.unsqueeze(-1)
-                    
-                    reward = reward.to(dtype=current_v.dtype)
-                    done = done.to(dtype=current_v.dtype)
-                    
-                    target_v = reward + self.config.discount * next_v * (1 - done)
-                    target_v = target_v.to(dtype=current_v.dtype)
-                    
-                    # Advantage = target_v - current_v (TD Error)
-                    # We squash it to [-1, 1] using tanh and scaling
-                    # We divide by advantage_scaling to match processor_pi05.py logic
-                    raw_advantage = (target_v - current_v) / self.config.advantage_scaling
-                    advantage = torch.tanh(raw_advantage)
-            
-            # Actor loss
+            advantage = external_metrics["advantage"]
+            target_v = external_metrics.get("target_values", torch.tensor(0.0))
+            current_v = external_metrics.get("critic_values", torch.tensor(0.0))
+            reward = external_metrics.get("rewards", torch.tensor(0.0))
 
             actions = self.prepare_action(batch)
             
-            # We pass precomputed prefix embeddings to avoid re-computation
             # We pass precomputed prefix embeddings to avoid re-computation
             actor_output = self.model(
                 images=None, 
@@ -1073,13 +971,9 @@ class PI05RLPolicy(PI05FullPolicy):
                     next_vision_pad_masks = torch.cat(next_vision_pad_masks, dim=1)
                     
                     # Next critic tokens
-                    if "critic_tokens" in next_batch:
-                        next_critic_tokens = next_batch["critic_tokens"]
-                        next_critic_token_masks = next_batch["critic_pad_mask"]
-                    else:
-                        next_critic_tokens = next_batch[OBS_LANGUAGE_TOKENS]
-                        next_critic_token_masks = next_batch[OBS_LANGUAGE_ATTENTION_MASK]
-                    
+                    next_critic_tokens = next_batch["critic_tokens"]
+                    next_critic_token_masks = next_batch["critic_pad_mask"]
+                
                     # Embed next critic tokens
                     actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
                     next_critic_text_embs = actor_embed_layer(next_critic_tokens).detach()
@@ -1127,16 +1021,15 @@ class PI05RLPolicy(PI05FullPolicy):
             }
 
         elif model == "critic_value":
-             values = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
-             return {
+            values = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
+            return {
                 "critic_values": values,
                 "critic_value_mean": values.mean().item()
-             }
+            }
 
-
-            
         else:
             raise ValueError(f"Unknown model: {model}")
+
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
