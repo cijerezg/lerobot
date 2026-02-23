@@ -4,12 +4,12 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 10,
-    "log_freq": 40,
+    "batch_size": 24,
+    "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 100,
-    "offline_output_dir": "outputs/pi05_full_offline_dummy_training_v1",
-    "offline_save_freq": 200,
+    "offline_output_dir": "outputs/pi05_full_offline_dummy_training_v3",
+    "offline_save_freq": 400,
     "online_buffer_save_episode_freq": 6,
     "wandb": {
         "enable": true,
@@ -18,14 +18,16 @@
         "disable_artifact": true
     },
     "dataset": {
-        "root": "outputs/dummy-task-v3-annotated_dataset-v1",
+        "root": "outputs/dummy-task-v5-annotated_dataset-v1",
         "repo_id": "cijerezg/yellow-car-offline-training-v2",
         "use_imagenet_stats": false
     },
     "policy": {
         "type": "pi05_rl",
-        "task": "Pick up the yellow car and put it in the bowl",
-        "pi05_checkpoint": "outputs/pi05_base",
+        "task": "Strech arm",
+        "pi05_checkpoint": "outputs/pi05_full_offline_dummy_training_v3/checkpoints/001600/pretrained_model",
+        "tokenizer_max_length": 80,
+        "max_state_dim": 32,
         "use_separate_critic": true,
         "inference_advantage": 1.0,
         "advantage_scaling": 0.16,
@@ -33,7 +35,7 @@
         "reward_normalization_constant": 8.0,
         "terminal_failure_reward": -24.0,
         "normalization_mapping": {
-            "VISUAL": "MEAN_STD",
+            "VISUAL": "IDENTITY",
             "STATE": "MIN_MAX",
             "ENV": "MIN_MAX",
             "ACTION": "MIN_MAX"
@@ -94,12 +96,12 @@
         "discount": 0.97,
         "async_prefetch": false,
         "num_critics": 1,
-        "critic_lr": 0.00001,
-        "actor_lr": 0.00001,
+        "critic_lr": 0.0005,
+        "actor_lr": 0.0005,
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
-        "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 6,
+        "grad_clip_norm": 10.0,
+        "gradient_accumulation_steps": 3,
         "critic_network_kwargs": {
             "hidden_dims": [
                 256,
@@ -134,14 +136,14 @@
                 },
                 "top": {
                     "type": "opencv",
-                    "index_or_path": 2,
+                    "index_or_path": 0,
                     "height": 480,
                     "width": 640,
                     "fps": 30
                 },
                 "side": {
                     "type": "opencv",
-                    "index_or_path": 0,
+                    "index_or_path": 2,
                     "height": 480,
                     "width": 640,
                     "fps": 30

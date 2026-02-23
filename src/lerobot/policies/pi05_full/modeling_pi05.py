@@ -802,7 +802,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     def sample_noise(self, shape, device):
         return torch.normal(
             mean=0.0,
-            std=.001,
+            std=1.0,
             size=shape,
             dtype=torch.float32,
             device=device,
