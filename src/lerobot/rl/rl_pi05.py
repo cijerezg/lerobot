@@ -488,10 +488,6 @@ class PI05RLPytorch(PI05Pytorch):
         # Only consider first 6 vals; they are action without padding
         flow_loss = F.mse_loss(u_t[:, :6], v_t[:, :6], reduction="none") 
 
-        # Auxiliary losses (only if tokens provided)
-        # Auxiliary losses (only if tokens provided)
-        # loss = flow_loss.mean() <- OLD
-        
         flow_loss_mean = flow_loss.mean()
         
         subtask_ce_loss = torch.tensor(0.0, device=actions.device)

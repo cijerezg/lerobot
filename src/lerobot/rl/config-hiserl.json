@@ -26,7 +26,7 @@
         "type": "pi05_rl",
         "task": "Strech arm",
         "pi05_checkpoint": "outputs/pi05_full_offline_dummy_training_v3/checkpoints/001600/pretrained_model",
-        "tokenizer_max_length": 80,
+        "tokenizer_max_length": 196,
         "max_state_dim": 32,
         "use_separate_critic": true,
         "inference_advantage": 1.0,
