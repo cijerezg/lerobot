@@ -391,7 +391,6 @@ class PI05RLPytorch(PI05Pytorch):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        
         if prefix_embs is None:
             prefix_embs, prefix_pad_masks, prefix_att_masks, image_len = self.embed_prefix(
                 images, img_masks, high_level_task_tokens, subtask_tokens, high_level_task_masks, subtask_masks, action_tokens, action_masks
@@ -1149,18 +1148,10 @@ class PI05RLPolicy(PI05FullPolicy):
 
     def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
         """Predict action chunk."""
-        for k, v in batch.items():
-            if "image" in k and hasattr(v, "min"):
-                print(f"[rl_pi05] predict_action_chunk before _preprocess_images {k}: min={v.min().item():.3f}, max={v.max().item():.3f}")
-        
         # Preprocessor has already normalized and tokenized the inputs
         # Advantage is already in the tokens (passed from actor or defaulted)
         images, img_masks = self._preprocess_images(batch)
-        
-        for i, img in enumerate(images):
-            if hasattr(img, "min"):
-                print(f"[rl_pi05] predict_action_chunk after _preprocess_images img {i}: min={img.min().item():.3f}, max={img.max().item():.3f}")
-                
+               
         from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]

@@ -106,17 +106,13 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
             if advantages is not None:
                 # Scale and bin advantage
                 adv = advantages[i] * self.advantage_scaling
-                # Bins: [-1.0, -0.5, 0.5, 1.0] -> 3 bins (negative, neutral, positive)
-                # Advantages < -0.5: bin 0 (negative)
-                # Advantages >= -0.5 and < 0.5: bin 1 (neutral)
-                # Advantages >= 0.5: bin 2 (positive)
                 bins = np.array([-1.0, 0.25, 1.0])
                 # Clip to range
                 adv = np.clip(adv, -1.0, 1.0)
                 # digitize
                 adv_bin = np.digitize(adv, bins) - 1 # 0 to 3
                 # Clamp to 0-2 (3 bins)
-                adv_bin = max(0, min(2, adv_bin))
+                adv_bin = max(0, min(1, adv_bin))
                 
                 # Map bin index to string label
                 labels = ["negative", "positive"]

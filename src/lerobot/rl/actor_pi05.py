@@ -308,35 +308,37 @@ def act_with_policy(
                 'subtask': [""], # single subtask because batch size is 1
                 'advantage': torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
             }
-
+            
             # Time policy inference and check if it meets FPS requirement
             with policy_timer:
+                if was_intervening:
+                    action = torch.zeros(6, dtype=torch.float32, device=device)
+                else:
+                    with torch.no_grad():
+                        # Apply preprocessor if available (handles tokenization, state padding, etc.)
+                        # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
+                        # env_processor has already converted observations to proper tensor format.
+                        if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
+                            processed_batch = policy.preprocessor(batch_for_preprocessor)
+                        else:
+                            processed_batch = batch_for_preprocessor
+                        
+                        action = policy.select_action(processed_batch)
+                        
+                        # Extract single action for environment (Batch 0, Time 0)
+                        # Policy returns [Batch, Time, Dim], we need [Dim]
+                        if action.ndim == 3:
+                            action = action[0, 0]
+                        elif action.ndim == 2:
+                            action = action[0]
 
-                with torch.no_grad():
-                    # Apply preprocessor if available (handles tokenization, state padding, etc.)
-                    # NOTE: Don't use prepare_observation_for_inference here! That's for raw numpy arrays.
-                    # env_processor has already converted observations to proper tensor format.
-                    if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
-                        processed_batch = policy.preprocessor(batch_for_preprocessor)
-                    else:
-                        processed_batch = batch_for_preprocessor
-                    
-                    action = policy.select_action(processed_batch)
-                    
-                    # Extract single action for environment (Batch 0, Time 0)
-                    # Policy returns [Batch, Time, Dim], we need [Dim]
-                    if action.ndim == 3:
-                        action = action[0, 0]
-                    elif action.ndim == 2:
-                        action = action[0]
+                        # Apply postprocessor if available (handles unnormalization)
+                        if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
+                            # Slice action to 6 dimensions as requested
+                            if action.shape[-1] > 6:
+                                action = action[..., :6]
 
-                    # Apply postprocessor if available (handles unnormalization)
-                    if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
-                        # Slice action to 6 dimensions as requested
-                        if action.shape[-1] > 6:
-                            action = action[..., :6]
-
-                        action = policy.postprocessor(action)
+                            action = policy.postprocessor(action)
                         
                         
             policy_fps = policy_timer.fps_last
@@ -379,7 +381,7 @@ def act_with_policy(
             intervention_info = new_transition[TransitionKey.INFO]
             is_intervening = intervention_info.get(TeleopEvents.IS_INTERVENTION, False)
 
-            if was_intervening and not is_intervening:
+            if was_intervening != is_intervening:
                 policy.reset()
             
             was_intervening = is_intervening   

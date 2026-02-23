@@ -77,13 +77,6 @@ def log_sampled_actions(
 
     vs_gt_mse = F.mse_loss(sampled, gt_6_normalized).item()
 
-    print(
-        f"[step {optimization_step}] sampled_action | "
-        f"means: {[f'{v:.3f}' for v in dim_means]} | "
-        f"stds: {[f'{v:.3f}' for v in dim_stds]} | "
-        f"vs-GT MSE: {vs_gt_mse:.4f}"
-    )
-
     if wandb_logger:
         import wandb  # local import to avoid hard dependency in train utils
         scalar_log = {
