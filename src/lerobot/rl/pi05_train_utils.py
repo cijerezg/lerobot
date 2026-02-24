@@ -191,6 +191,89 @@ def remap_subtasks_for_dataset(target_dataset, source_dataset, is_main_process=F
     return remap_table
 
 
+def load_additional_offline_datasets(
+    cfg, 
+    offline_dataset, 
+    offline_replay_buffer, 
+    storage_device, 
+    is_main_process=True
+):
+    """Loads additional offline datasets and adds their transitions to the offline replay buffer."""
+    if not (hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths):
+        return
+
+    import torchvision.transforms.functional as F_vision
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.rl.buffer import ReplayBuffer
+    
+    expected_height, expected_width = 224, 224
+
+    for path in cfg.dataset.additional_offline_dataset_paths:
+        if is_main_process:
+            logging.info(f"Loading additional offline dataset from {path}")
+        
+        # Ensure all processes load the dataset
+        additional_dataset = LeRobotDataset(
+            repo_id=cfg.dataset.repo_id,
+            root=path,
+        )
+        additional_dataset.delta_timestamps = None
+        additional_dataset.delta_indices = None
+        
+        generator = ReplayBuffer._lerobotdataset_to_transitions_generator(
+            additional_dataset,
+            state_keys=cfg.policy.input_features.keys()
+        )
+
+        if is_main_process:
+            logging.info(f"Adding transitions from {path} to offline buffer...")
+
+        # --- Subtask Remapping Logic ---
+        remap_table = remap_subtasks_for_dataset(offline_dataset, additional_dataset, is_main_process)
+        
+        for data in generator:
+            # Process data (resize, cast, move)
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    for key, tensor in v.items():
+                        if "images" in key:
+                            if tensor.shape[-2:] != (expected_height, expected_width):
+                                tensor = F_vision.resize(tensor, (expected_height, expected_width))
+                                tensor = tensor.clamp(0.0, 1.0)
+                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
+                        else:
+                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
+                elif isinstance(v, torch.Tensor):
+                        data[k] = v.to(dtype=torch.bfloat16, device=storage_device)
+            
+            # Apply remapping to subtask indices
+            comp_info = data.get("complementary_info", {})
+            if comp_info and "subtask_index" in comp_info:
+                old_idx = comp_info["subtask_index"]
+                if isinstance(old_idx, torch.Tensor):
+                    old_idx = old_idx.item()
+                
+                if old_idx in remap_table:
+                    new_idx = remap_table[old_idx]
+                    if isinstance(data.get("complementary_info", {}).get("subtask_index"), torch.Tensor):
+                         comp_info["subtask_index"] = torch.tensor(new_idx, dtype=torch.int64)
+                    else:
+                         comp_info["subtask_index"] = new_idx
+            
+            offline_replay_buffer.add(
+                state=data["state"],
+                action=data[ACTION],
+                reward=data["reward"],
+                next_state=data["next_state"],
+                done=data["done"],
+                truncated=False,
+                complementary_info=comp_info,
+            )
+        
+        if is_main_process:
+            logging.info(f"Finished adding transitions from {path}. Buffer size: {len(offline_replay_buffer)}")
+
+
 
 def _prepare_batch(online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn):
     batch = next(online_iterator)
@@ -730,6 +813,71 @@ def pi05_update_step(
     policy.update_target_networks()
     
     return training_infos
+
+def log_pi05_training_metrics(
+    training_infos: dict,
+    optimization_step: int,
+    wandb_logger,
+    policy,
+    is_main_process: bool = True
+):
+    import numpy as np
+    import torch
+    import wandb
+
+    # Pop snapshot before wandb scalar logging (tensors must not be sent as scalars)
+    action_log_snapshot = training_infos.pop("_action_log_snapshot", None)
+
+    if wandb_logger:
+        # Extract histograms if they exist
+        advantage_hist = training_infos.pop("advantage_histogram", None)
+        critic_hist = training_infos.pop("critic_histogram", None)
+        target_value_hist = training_infos.pop("target_value_histogram", None)
+        critic_hist_from_critic = training_infos.pop("critic_histogram_from_critic", None)
+        actor_loss_hist = training_infos.pop("actor_loss_histogram", None)
+        
+        # Log scalar metrics
+        wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
+        
+        # Log histograms separately using wandb.Histogram
+        if advantage_hist is not None:
+            if isinstance(advantage_hist, torch.Tensor):
+                advantage_hist = advantage_hist.detach().float().cpu().numpy()
+            wandb_logger._wandb.log({
+                "train/advantage_histogram": wandb.Histogram(advantage_hist),
+                "Optimization step": optimization_step
+            })
+        if critic_hist is not None:
+            critic_vals = np.clip(critic_hist, -2, .5)
+            wandb_logger._wandb.log({
+                "train/critic_value_histogram": wandb.Histogram(critic_vals),
+                "Optimization step": optimization_step
+            })
+        
+        if target_value_hist is not None:
+             target_vals = np.clip(target_value_hist, -2, .5)
+             wandb_logger._wandb.log({
+                "train/target_value_histogram": wandb.Histogram(target_vals),
+                "Optimization step": optimization_step
+            })
+        
+        # Log critic histogram from critic update
+        if critic_hist_from_critic is not None:
+            critic_vals_from_critic = np.clip(critic_hist_from_critic, -2, .5)
+            wandb_logger._wandb.log({
+                "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
+                "Optimization step": optimization_step
+            })
+
+    # --- Action reconstruction logging ---
+    if action_log_snapshot is not None and is_main_process:
+        from lerobot.rl.pi05_train_utils import log_sampled_actions
+        log_sampled_actions(
+            policy=policy,
+            snapshot=action_log_snapshot,
+            optimization_step=optimization_step,
+            wandb_logger=wandb_logger,
+        )
 
 def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=True):
     """

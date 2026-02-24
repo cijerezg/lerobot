@@ -402,71 +402,14 @@ def add_actor_information_and_train(
         offline_replay_buffer.dataset = offline_dataset
 
         # Load additional offline datasets
-        if hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths:
-            import torchvision.transforms.functional as F_vision
-            from lerobot.rl.pi05_train_utils import remap_subtasks_for_dataset
-            
-            expected_height, expected_width = 224, 224
-
-            for path in cfg.dataset.additional_offline_dataset_paths:
-                logging.info(f"Loading additional offline dataset from {path}")
-                additional_dataset = LeRobotDataset(
-                    repo_id=cfg.dataset.repo_id,
-                    root=path,
-                )
-                additional_dataset.delta_timestamps = None
-                additional_dataset.delta_indices = None
-                
-                generator = ReplayBuffer._lerobotdataset_to_transitions_generator(
-                    additional_dataset,
-                    state_keys=cfg.policy.input_features.keys()
-                )
-
-                logging.info(f"Adding transitions from {path} to offline buffer...")
-                
-                # --- Subtask Remapping Logic ---
-                # is_main_process is not easily available here, but logging.info works fine
-                remap_table = remap_subtasks_for_dataset(offline_dataset, additional_dataset, is_main_process=True)
-                
-                for data in generator:
-                    # Process data (resize, cast, move)
-                    for k, v in data.items():
-                        if isinstance(v, dict):
-                            for key, tensor in v.items():
-                                if "images" in key:
-                                    if tensor.shape[-2:] != (expected_height, expected_width):
-                                        tensor = F_vision.resize(tensor, (expected_height, expected_width))
-                                        tensor = tensor.clamp(0.0, 1.0)
-                                    v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
-                                else:
-                                    v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
-                        elif isinstance(v, torch.Tensor):
-                             data[k] = v.to(dtype=torch.bfloat16, device=storage_device)
-                    
-                    # Apply remapping to subtask indices
-                    comp_info = data.get("complementary_info", {})
-                    if comp_info and "subtask_index" in comp_info:
-                        old_idx = comp_info["subtask_index"]
-                        if isinstance(old_idx, torch.Tensor):
-                            old_idx = old_idx.item()
-                        
-                        if old_idx in remap_table:
-                            new_idx = remap_table[old_idx]
-                            if isinstance(data.get("complementary_info", {}).get("subtask_index"), torch.Tensor):
-                                 comp_info["subtask_index"] = torch.tensor(new_idx, dtype=torch.int64)
-                            else:
-                                 comp_info["subtask_index"] = new_idx
-                    
-                    offline_replay_buffer.add(
-                        state=data["state"],
-                        action=data[ACTION],
-                        reward=data["reward"],
-                        next_state=data["next_state"],
-                        done=data["done"],
-                        truncated=False,
-                        complementary_info=comp_info,
-                    )
-                logging.info(f"Finished adding transitions from {path}. Buffer size: {len(offline_replay_buffer)}")
+        from lerobot.rl.pi05_train_utils import load_additional_offline_datasets
+        load_additional_offline_datasets(
+            cfg=cfg,
+            offline_dataset=offline_dataset,
+            offline_replay_buffer=offline_replay_buffer,
+            storage_device=storage_device,
+            is_main_process=True
+        )
         batch_size: int = batch_size // 2  # We will sample from both replay buffer
 
 
@@ -519,8 +462,6 @@ def add_actor_information_and_train(
         # Process all available transitions to the replay buffer, send by the actor server
 
         process_transitions_pi05(
-
-
             transition_queue=transition_queue,
             replay_buffer=replay_buffer,
             offline_replay_buffer=offline_replay_buffer,
@@ -557,71 +498,21 @@ def add_actor_information_and_train(
         time_for_one_optimization_step = time.time()
 
         for _ in range(utd_ratio - 1):
-
-            # Gradient accumulation for critic
-            optimizers["critic"].zero_grad()
-            for accum_step in range(gradient_accumulation_steps):
-                # Sample from the iterators
-                batch = next(online_iterator)
-
-                # Ensure online batch actions are 6-dim (if buffer is 32-dim)
-                if batch[ACTION].shape[-1] > 6:
-                     batch[ACTION] = batch[ACTION][..., :6]
-
-                if dataset_repo_id is not None:
-                    batch_offline = next(offline_iterator)
-                    # Slice offline actions to match online actions (6 dims)
-                    batch_offline[ACTION] = batch_offline[ACTION][..., :6]
-                    batch = concatenate_batch_transitions(
-                        left_batch_transitions=batch, right_batch_transition=batch_offline
-                    )
-
-
-                # Move batch to device
-                batch = move_transition_to_device(batch, device)
-
-                if cfg.policy.dtype == "bfloat16":
-                    # Manual casting for now
-                    if isinstance(batch, dict):
-                        batch = {k: cast_to_bf16(v) for k, v in batch.items()}
-                    else:
-                        new_batch_data = {}
-                        for field in batch._fields:
-                            val = getattr(batch, field)
-                            new_batch_data[field] = cast_to_bf16(val)
-                        
-                        batch = type(batch)(**new_batch_data)
-
-                actions = batch[ACTION]
-                rewards = batch["reward"]
-                observations = batch["state"]
-                next_observations = batch["next_state"]
-                done = batch["done"]
-                # --- Preprocessing using shared utility ---
-                # Note: No subtask hydration needed here — critic doesn't use subtasks.
-                forward_batch = preprocess_batch_for_pi05(
-                    policy=policy,
-                    observations=observations,
-                    next_observations=next_observations,
-                    actions=actions,
-                    rewards=rewards,
-                    done=done,
-                    task=cfg.policy.task,
-                )
-
-
-                # --- Pi05 RL Update Logic ---
-                
-                # 1. Critic Update (Value Function) with scaled loss
-                critic_output = policy.forward(forward_batch, model="critic")
-                loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
-                loss_critic.backward()
-            
-            # Clip and step after accumulation
-            torch.nn.utils.clip_grad_norm_(
-                parameters=policy.critic_ensemble.parameters(), max_norm=clip_grad_norm_value
+            from lerobot.rl.pi05_train_utils import _update_critic
+            _update_critic(
+                policy=accelerator.unwrap_model(policy),
+                optimizers=optimizers,
+                online_iterator=online_iterator,
+                offline_iterator=offline_iterator,
+                device=device,
+                cfg=cfg,
+                dataset_repo_id=None,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                clip_grad_norm_value=clip_grad_norm_value,
+                cast_to_bf16_fn=cast_to_bf16,
+                use_amp=False,
+                scaler=None
             )
-            optimizers["critic"].step()
             
             # 2. Update Target Networks
             policy.update_target_networks()
@@ -663,61 +554,17 @@ def add_actor_information_and_train(
                 training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
             training_infos["Optimization step"] = optimization_step
 
-            # Pop snapshot before wandb scalar logging (tensors must not be sent as scalars)
-            action_log_snapshot = training_infos.pop("_action_log_snapshot", None)
-
-            # Log training metrics
             if wandb_logger:
                 print(f"Logging to WandB at step {optimization_step}")
-                # Extract histograms if they exist
-                advantage_hist = training_infos.pop("advantage_histogram", None)
-                critic_hist = training_infos.pop("critic_histogram", None)
-                target_value_hist = training_infos.pop("target_value_histogram", None)
-                critic_hist_from_critic = training_infos.pop("critic_histogram_from_critic", None)
-                actor_loss_hist = training_infos.pop("actor_loss_histogram", None)
-                
-                # Log scalar metrics
-                wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
-                
-                # Log histograms separately using wandb.Histogram
-                if advantage_hist is not None:
-                    # differ ent from offline_learner_pi05.py: we need to handle if it is a list or tensor
-                    if isinstance(advantage_hist, torch.Tensor):
-                        advantage_hist = advantage_hist.detach().float().cpu().numpy()
-                    wandb_logger._wandb.log({
-                        "train/advantage_histogram": wandb.Histogram(advantage_hist),
-                        "Optimization step": optimization_step
-                    })
-                if critic_hist is not None:
-                    critic_vals = np.clip(critic_hist, -2, .5)
-                    wandb_logger._wandb.log({
-                        "train/critic_value_histogram": wandb.Histogram(critic_vals),
-                        "Optimization step": optimization_step
-                    })
-                
-                if target_value_hist is not None:
-                     target_vals = np.clip(target_value_hist, -2, .5)
-                     wandb_logger._wandb.log({
-                        "train/target_value_histogram": wandb.Histogram(target_vals),
-                        "Optimization step": optimization_step
-                    })
-                
-                # Log critic histogram from critic update
-                if critic_hist_from_critic is not None:
-                    critic_vals_from_critic = np.clip(critic_hist_from_critic, -2, .5)
-                    wandb_logger._wandb.log({
-                        "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
-                        "Optimization step": optimization_step
-                    })
 
-            # --- Action reconstruction logging ---
-            if action_log_snapshot is not None:
-                log_sampled_actions(
-                    policy=policy,
-                    snapshot=action_log_snapshot,
-                    optimization_step=optimization_step,
-                    wandb_logger=wandb_logger,
-                )
+            from lerobot.rl.pi05_train_utils import log_pi05_training_metrics
+            log_pi05_training_metrics(
+                training_infos=training_infos,
+                optimization_step=optimization_step,
+                wandb_logger=wandb_logger,
+                policy=policy,
+                is_main_process=True
+            )
 
         # Calculate and log optimization frequency
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step

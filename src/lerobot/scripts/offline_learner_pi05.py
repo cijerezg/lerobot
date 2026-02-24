@@ -335,76 +335,14 @@ def run_offline_training(
     offline_replay_buffer.dataset = offline_dataset
 
     # Load additional offline datasets
-    if hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths:
-        import torchvision.transforms.functional as F_vision
-        from lerobot.rl.pi05_train_utils import remap_subtasks_for_dataset
-        
-        expected_height, expected_width = 224, 224
-
-        for path in cfg.dataset.additional_offline_dataset_paths:
-            if is_main_process:
-                logging.info(f"Loading additional offline dataset from {path}")
-            
-            # Ensure all processes load the dataset
-            additional_dataset = LeRobotDataset(
-                repo_id=cfg.dataset.repo_id,
-                root=path,
-            )
-            additional_dataset.delta_timestamps = None
-            additional_dataset.delta_indices = None
-            
-            generator = ReplayBuffer._lerobotdataset_to_transitions_generator(
-                additional_dataset,
-                state_keys=cfg.policy.input_features.keys()
-            )
-
-            if is_main_process:
-                logging.info(f"Adding transitions from {path} to offline buffer...")
-
-            # --- Subtask Remapping Logic ---
-            remap_table = remap_subtasks_for_dataset(offline_dataset, additional_dataset, is_main_process)
-            
-            for data in generator:
-                # Process data (resize, cast, move)
-                for k, v in data.items():
-                    if isinstance(v, dict):
-                        for key, tensor in v.items():
-                            if "images" in key:
-                                if tensor.shape[-2:] != (expected_height, expected_width):
-                                    tensor = F_vision.resize(tensor, (expected_height, expected_width))
-                                    tensor = tensor.clamp(0.0, 1.0)
-                                v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
-                            else:
-                                v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
-                    elif isinstance(v, torch.Tensor):
-                            data[k] = v.to(dtype=torch.bfloat16, device=storage_device)
-                
-                # Apply remapping to subtask indices
-                comp_info = data.get("complementary_info", {})
-                if comp_info and "subtask_index" in comp_info:
-                    old_idx = comp_info["subtask_index"]
-                    if isinstance(old_idx, torch.Tensor):
-                        old_idx = old_idx.item()
-                    
-                    if old_idx in remap_table:
-                        new_idx = remap_table[old_idx]
-                        if isinstance(data.get("complementary_info", {}).get("subtask_index"), torch.Tensor):
-                             comp_info["subtask_index"] = torch.tensor(new_idx, dtype=torch.int64)
-                        else:
-                             comp_info["subtask_index"] = new_idx
-                
-                offline_replay_buffer.add(
-                    state=data["state"],
-                    action=data[ACTION],
-                    reward=data["reward"],
-                    next_state=data["next_state"],
-                    done=data["done"],
-                    truncated=False,
-                    complementary_info=comp_info,
-                )
-            
-            if is_main_process:
-                logging.info(f"Finished adding transitions from {path}. Buffer size: {len(offline_replay_buffer)}")
+    from lerobot.rl.pi05_train_utils import load_additional_offline_datasets
+    load_additional_offline_datasets(
+        cfg=cfg,
+        offline_dataset=offline_dataset,
+        offline_replay_buffer=offline_replay_buffer,
+        storage_device=storage_device,
+        is_main_process=is_main_process
+    )
 
     if is_main_process:
         logging.info(f"Offline buffer initialized with {len(offline_replay_buffer)} samples")
@@ -458,57 +396,21 @@ def run_offline_training(
 
         # UTD ratio - 1 updates (critic only)
         for _ in range(utd_ratio - 1):
-            # Gradient accumulation for critic
-            optimizers["critic"].zero_grad()
-            for accum_step in range(gradient_accumulation_steps):
-                batch = next(offline_iterator)
-                
-                # Slice offline actions to match expected dimension (6 dims)
-                batch[ACTION] = batch[ACTION][..., :6]
-                
-                # Move batch to device
-                batch = move_transition_to_device(batch, device)
-                
-                # Cast to bfloat16 if needed
-                if cast_to_bf16 is not None:
-                    if isinstance(batch, dict):
-                        batch = {k: cast_to_bf16(v) for k, v in batch.items()}
-                    else:
-                        new_batch_data = {}
-                        for field in batch._fields:
-                            val = getattr(batch, field)
-                            new_batch_data[field] = cast_to_bf16(val)
-                        batch = type(batch)(**new_batch_data)
-                
-                actions = batch[ACTION]
-                rewards = batch["reward"]
-                observations = batch["state"]
-                next_observations = batch["next_state"]
-                done = batch["done"]
-                
-                # Note: No subtask hydration needed here — critic doesn't use subtasks.
-                forward_batch = preprocess_batch_for_pi05(
-                    policy=policy,
-                    observations=observations,
-                    next_observations=next_observations,
-                    actions=actions,
-                    rewards=rewards,
-                    done=done,
-                    task=cfg.policy.task,
-                )
-                
-                # Critic update with scaled loss
-                critic_output = policy.forward(forward_batch, model="critic")
-                loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
-                loss_critic.backward()
-            
-            # Clip and step after accumulation
-            # Use unwrap_model to access submodules if policy is wrapped
-            torch.nn.utils.clip_grad_norm_(
-                accelerator.unwrap_model(policy).critic_ensemble.parameters(), 
-                clip_grad_norm_value
+            from lerobot.rl.pi05_train_utils import _update_critic
+            _update_critic(
+                policy=accelerator.unwrap_model(policy),
+                optimizers=optimizers,
+                online_iterator=offline_iterator,
+                offline_iterator=None,
+                device=device,
+                cfg=cfg,
+                dataset_repo_id=None,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                clip_grad_norm_value=clip_grad_norm_value,
+                cast_to_bf16_fn=cast_to_bf16,
+                use_amp=False,
+                scaler=None
             )
-            optimizers["critic"].step()
             
             # Update target networks
             if hasattr(policy, "module"):
@@ -549,56 +451,14 @@ def run_offline_training(
             training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
             training_infos["Optimization step"] = optimization_step
 
-            # Pop snapshot before wandb scalar logging (tensors must not be sent as scalars)
-            action_log_snapshot = training_infos.pop("_action_log_snapshot", None)
-
-            if wandb_logger:
-                # Extract histograms
-                advantage_hist = training_infos.pop("advantage_histogram", None)
-                critic_hist = training_infos.pop("critic_histogram", None)
-                target_value_hist = training_infos.pop("target_value_histogram", None)
-                critic_hist_from_critic = training_infos.pop("critic_histogram_from_critic", None)
-                actor_loss_hist = training_infos.pop("actor_loss_histogram", None)
-                
-                # Log scalar metrics
-                wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
-                
-                # Log histograms
-                if advantage_hist is not None:
-                    wandb_logger._wandb.log({
-                        "train/advantage_histogram": wandb.Histogram(advantage_hist.detach().float().cpu().numpy()),
-                        "Optimization step": optimization_step
-                    })
-                if critic_hist is not None:
-                    critic_vals = np.clip(critic_hist, -2, .5)
-                    wandb_logger._wandb.log({
-                        "train/critic_value_histogram": wandb.Histogram(critic_vals),
-                        "Optimization step": optimization_step
-                    })
-                    
-                if target_value_hist is not None:
-                     target_vals = np.clip(target_value_hist, -2, .5)
-                     wandb_logger._wandb.log({
-                        "train/target_value_histogram": wandb.Histogram(target_vals),
-                        "Optimization step": optimization_step
-                    })
-                
-                # Log critic histogram from critic update
-                if critic_hist_from_critic is not None:
-                    critic_vals_from_critic = np.clip(critic_hist_from_critic, -2, .5)
-                    wandb_logger._wandb.log({
-                        "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
-                        "Optimization step": optimization_step
-                    })
-
-            # --- Action reconstruction logging ---
-            if action_log_snapshot is not None and is_main_process:
-                log_sampled_actions(
-                    policy=accelerator.unwrap_model(policy),
-                    snapshot=action_log_snapshot,
-                    optimization_step=optimization_step,
-                    wandb_logger=wandb_logger,
-                )
+            from lerobot.rl.pi05_train_utils import log_pi05_training_metrics
+            log_pi05_training_metrics(
+                training_infos=training_infos,
+                optimization_step=optimization_step,
+                wandb_logger=wandb_logger,
+                policy=accelerator.unwrap_model(policy),
+                is_main_process=is_main_process
+            )
 
         # Calculate optimization frequency
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
