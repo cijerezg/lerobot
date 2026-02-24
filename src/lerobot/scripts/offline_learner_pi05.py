@@ -76,7 +76,7 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
 )
-from lerobot.rl.utils import preprocess_batch_for_pi05
+from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16
 from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks, log_sampled_actions
 
 import wandb
@@ -365,19 +365,7 @@ def run_offline_training(
     )
     
     # Helper function for bfloat16 casting
-    if cfg.policy.dtype == "bfloat16":
-        def cast_to_bf16(item):
-            if isinstance(item, torch.Tensor):
-                if item.dtype == torch.float32:
-                    return item.to(dtype=torch.bfloat16)
-                return item
-            elif isinstance(item, dict):
-                return {k: cast_to_bf16(v) for k, v in item.items()}
-            elif isinstance(item, list):
-                return [cast_to_bf16(v) for v in item]
-            return item
-    else:
-        cast_to_bf16 = None
+    cast_to_bf16_fn = cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None
     
     if is_main_process:
         logging.info("Starting offline training loop")
@@ -407,7 +395,7 @@ def run_offline_training(
                 dataset_repo_id=None,
                 gradient_accumulation_steps=gradient_accumulation_steps,
                 clip_grad_norm_value=clip_grad_norm_value,
-                cast_to_bf16_fn=cast_to_bf16,
+                cast_to_bf16_fn=cast_to_bf16_fn,
                 use_amp=False,
                 scaler=None
             )
@@ -434,7 +422,7 @@ def run_offline_training(
             policy_update_freq=policy_update_freq,
             clip_grad_norm_value=clip_grad_norm_value,
             dataset=offline_dataset,
-            cast_to_bf16_fn=cast_to_bf16,
+            cast_to_bf16_fn=cast_to_bf16_fn,
             use_amp=False,
             scaler=None,
             preprocessor=preprocessor,

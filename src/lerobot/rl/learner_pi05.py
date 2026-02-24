@@ -500,7 +500,7 @@ def add_actor_information_and_train(
         for _ in range(utd_ratio - 1):
             from lerobot.rl.pi05_train_utils import _update_critic
             _update_critic(
-                policy=accelerator.unwrap_model(policy),
+                policy=policy,
                 optimizers=optimizers,
                 online_iterator=online_iterator,
                 offline_iterator=offline_iterator,
@@ -509,7 +509,7 @@ def add_actor_information_and_train(
                 dataset_repo_id=None,
                 gradient_accumulation_steps=gradient_accumulation_steps,
                 clip_grad_norm_value=clip_grad_norm_value,
-                cast_to_bf16_fn=cast_to_bf16,
+                cast_to_bf16_fn=cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None,
                 use_amp=False,
                 scaler=None
             )
@@ -543,6 +543,8 @@ def add_actor_information_and_train(
             scaler=None,
             preprocessor=preprocessor,
         )
+
+        policy.update_target_networks()
         
         # ----------------------------------------
 
@@ -717,7 +719,7 @@ def process_transitions_pi05(
                     
                     critic_output = policy.forward(forward_batch, model="critic_value")
                     val = critic_output["critic_value_mean"]
-                    critic_values.append(val)
+                    critic_values.append(val.item())
 
             # Skip transitions with NaN values
             if check_nan_in_transition(
