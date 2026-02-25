@@ -256,27 +256,32 @@ def run_offline_training(
     # Wait for all processes before continuing
     accelerator.wait_for_everyone()
     
-    # Freeze parameters based on config (same as online learner)
-    if is_main_process:
-        logging.info("Freezing ALL parameters except last gemma_expert layer (minimal mode)...")
     
-    
+    # Freezing some parameters
     for name, param in policy.named_parameters():
         param.requires_grad = (
-            #("paligemma_with_expert" in name and "embed_tokens" not in name) or
-            ("gemma_expert" in name and any(f".{i}." in name for i in [11, 12, 13, 14, 15, 16, 17])) or  # actor
-            #"vision_tower" in name or 
-            #"multi_modal_project" in name or
+            # Actor params
             "action_in_proj" in name or
             "action_out_proj" in name or 
             "time_mlp_in" in name or
             "time_mlp_out" in name or
-            #("critic" in name and "embed_tokens" not in name)
-            "critic.value_head.2" in name
-            #("language_model" in name and any(f".{i}." in name for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or # actor
-            #"language_model.norm" in name
+            "gemma_expert" in name or
+            "multi_modal_project" in name or
+            ("vision_tower" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])) or
+            ("language_model" in name and any(f".{i}." in name for i in [8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or 
+            "language_model.norm" in name or
+
+            # Critic params
+            "critic.layers.2" in name or
+            "critic.layers.3" in name or
+            "critic.layers.4" in name or
+            "critic.layers.5" in name or
+            "critic.norm" in name or
+            "critic.value_head" in name or
+            "critic.value_queries"
         )
-    
+
+
     # Log trainable parameters
     if is_main_process:
         trainable_params = [n for n, p in policy.named_parameters() if p.requires_grad]
@@ -428,11 +433,6 @@ def run_offline_training(
             preprocessor=preprocessor,
         )
         
-        # Update target networks
-        if hasattr(policy, "module"):
-            policy.module.update_target_networks()
-        else:
-            policy.update_target_networks()
         
         # Log training metrics
         if optimization_step % log_freq == 0:

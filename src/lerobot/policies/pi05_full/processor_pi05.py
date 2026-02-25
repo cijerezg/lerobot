@@ -106,7 +106,9 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
             advantage_str = ""
             if advantages is not None:
                 # Scale and bin advantage
-                adv = advantages[i] * self.advantage_scaling
+                adv = advantages[i] / self.advantage_scaling
+                adv = np.tanh(adv)
+                
                 bins = np.array([-1.0, 0.25, 1.0])
                 # Clip to range
                 adv = np.clip(adv, -1.0, 1.0)

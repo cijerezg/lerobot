@@ -115,6 +115,21 @@ import gc
 
                 
 
+def push_actor_policy_to_queue_pi05(parameters_queue: Queue, policy: nn.Module):
+    logging.debug("[LEARNER] Pushing actor policy to the queue (Pi05 Optimized)")
+
+    # Only send trainable parameters to save bandwidth for large models
+    trainable_state_dict = {}
+    for name, param in policy.actor.named_parameters():
+        if param.requires_grad:
+            trainable_state_dict[name] = param
+
+    state_dicts = {"policy": move_state_dict_to_device(trainable_state_dict, device="cpu")}
+    
+    state_bytes = state_to_bytes(state_dicts)
+    parameters_queue.put(state_bytes)
+
+
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):
     if not use_threads(cfg):
@@ -328,27 +343,31 @@ def add_actor_information_and_train(
             policy.gradient_checkpointing_enable()
         else:
             logging.warning("Gradient checkpointing requested but not available on policy model")
-
-    push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+    push_actor_policy_to_queue_pi05(parameters_queue=parameters_queue, policy=policy)
 
     last_time_policy_pushed = time.time()
 
-    # Freeze ALL parameters except the LAST layer of gemma_expert (for minimal testing)
-    # gemma_expert has layers 0-17, so layer 17 is the last one
-    logging.info("Freezing ALL parameters except last gemma_expert layer (minimal mode)...")
+
+    # Freezing some parameters    
     for name, param in policy.named_parameters():
-        # Only train layer 17 of gemma_expert (the last layer)
         param.requires_grad = (
-            "critic.value_head" in name or
-            "critic.layers.5" in name or
-            "critic.layers.4" in name or
-            "critic.value_queries" in name or
-            ("gemma_expert" in name and any(f".{i}." in name for i in [11, 12, 13,14, 15, 16, 17])) or 
-            ("language_model" in name and any(f".{i}." in name for i in [11, 12, 13, 14, 15, 16, 17])) or
-            "language_model.norm" in name or
+            # Actor params
             "action_in_proj" in name or
-            "action_out_proj" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]))
+            "action_out_proj" in name or 
+            "time_mlp_in" in name or
+            "time_mlp_out" in name or
+            "gemma_expert" in name or
+            "multi_modal_project" in name or
+            ("vision_tower" in name and any(f".{i}." in name for i in [19, 20, 21, 22, 23, 24, 25, 26])) or
+            ("language_model" in name and any(f".{i}." in name for i in [12, 13, 14, 15, 16, 17])) or 
+            "language_model.norm" in name or
+
+            # Critic params
+            "critic.layers.4" in name or
+            "critic.layers.5" in name or
+            "critic.norm" in name or
+            "critic.value_head" in name or
+            "critic.value_queries"
         )
     
     # Log trainable parameters
@@ -544,8 +563,6 @@ def add_actor_information_and_train(
             preprocessor=preprocessor,
         )
 
-        policy.update_target_networks()
-        
         # ----------------------------------------
 
         # Log training metrics at specified intervals
@@ -630,7 +647,7 @@ def add_actor_information_and_train(
 
         # Push policy to actors if needed
         if time.time() - last_time_policy_pushed > policy_parameters_push_frequency:
-            push_actor_policy_to_queue(parameters_queue=parameters_queue, policy=policy)
+            push_actor_policy_to_queue_pi05(parameters_queue=parameters_queue, policy=policy)
             last_time_policy_pushed = time.time()
 
 def process_transitions_pi05(

@@ -200,6 +200,73 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
 # Core algorithm functions
 
 
+def convert_env_obs_to_policy_format(env_obs: dict) -> dict:
+    """Convert environment observation format to policy-expected format.
+    
+    Handles two cases:
+    1. Observations already in policy format (observation.images.xxx, observation.state)
+    2. Raw environment format (pixels dict or individual image keys, individual .pos keys)
+    """
+    policy_obs = {}
+    
+    # Check if observations are already in the correct format
+    # Relaxed check: if we have images OR state in policy format, we try to preserve them
+    has_policy_format = (
+        'observation.state' in env_obs or
+        any(k.startswith('observation.images.') for k in env_obs.keys())
+    )
+
+    if has_policy_format:
+        # Observations are already in policy format (partial or full), just filter the relevant keys
+        for key in env_obs.keys():
+            if key == 'observation.state' or key.startswith('observation.images.'):
+                policy_obs[key] = env_obs[key]
+    
+    # If we are missing state or images, try to find them in raw format
+    # Images
+    camera_mapping = {
+        'wrist': 'observation.images.wrist',
+        'top': 'observation.images.top',
+        'side': 'observation.images.side',
+    }
+    
+    pixels_dict = env_obs.get('pixels', env_obs)
+    
+    for env_key, policy_key in camera_mapping.items():
+        if policy_key not in policy_obs: # Only look if not already found
+            if env_key in pixels_dict:
+                policy_obs[policy_key] = pixels_dict[env_key]
+    
+    # State
+    if 'observation.state' not in policy_obs:
+         # Collect joint positions in the correct order (matching SO101 motor order)
+        joint_order = [
+            'shoulder_pan.pos',
+            'shoulder_lift.pos',
+            'elbow_flex.pos',
+            'wrist_flex.pos',
+            'wrist_roll.pos',
+            'gripper.pos',
+        ]
+        
+        joint_values = []
+        for joint_key in joint_order:
+            if joint_key in env_obs:
+                val = env_obs[joint_key]
+                # Convert to tensor if not already
+                if not isinstance(val, torch.Tensor):
+                    val = torch.tensor([val], dtype=torch.float32)
+                elif val.dim() == 0:
+                    val = val.unsqueeze(0)
+                joint_values.append(val)
+        
+        # Concatenate all joint positions into a single state tensor
+        if joint_values:
+            policy_obs['observation.state'] = torch.cat(joint_values, dim=0)
+    
+    return policy_obs
+
+
 def act_with_policy(
     cfg: TrainRLServerPipelineConfig,
     shutdown_event: any,  # Event,
@@ -234,7 +301,9 @@ def act_with_policy(
 
     logging.info("make_policy")
 
-    ### Instantiate the policy in both the actor and learner processes
+    # Actor does not need a critic, so we disable it to save VRAM and initialization time
+    cfg.policy.use_separate_critic = False
+    
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
@@ -285,6 +354,11 @@ def act_with_policy(
     policy_timer = TimerManager("Policy inference", log=False)
     was_intervening = False
 
+    # Pre-allocate complementary data constants to avoid recreating them every step
+    static_task = [cfg.policy.task]
+    static_subtask = [""]
+    static_advantage = torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
+
     try:
         for interaction_step in range(cfg.policy.online_steps):
             start_time = time.perf_counter()
@@ -304,9 +378,9 @@ def act_with_policy(
             batch_for_preprocessor["robot_type"] = online_env.robot.robot_type if hasattr(online_env, 'robot') else ""
 
             batch_for_preprocessor['complementary_data'] = {
-                'task': [cfg.policy.task],
-                'subtask': [""], # single subtask because batch size is 1
-                'advantage': torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
+                'task': static_task,
+                'subtask': static_subtask,
+                'advantage': static_advantage
             }
             
             # Time policy inference and check if it meets FPS requirement
@@ -415,73 +489,6 @@ def act_with_policy(
                 "subtask_index": torch.tensor([-1], dtype=torch.long),
             }
 
-            # Convert environment observations to policy-expected format
-            def convert_env_obs_to_policy_format(env_obs: dict) -> dict:
-                """Convert environment observation format to policy-expected format.
-                
-                Handles two cases:
-                1. Observations already in policy format (observation.images.xxx, observation.state)
-                2. Raw environment format (pixels dict or individual image keys, individual .pos keys)
-                """
-                policy_obs = {}
-                
-                # Check if observations are already in the correct format
-                # Relaxed check: if we have images OR state in policy format, we try to preserve them
-                has_policy_format = (
-                    'observation.state' in env_obs or
-                    any(k.startswith('observation.images.') for k in env_obs.keys())
-                )
-
-                if has_policy_format:
-                    # Observations are already in policy format (partial or full), just filter the relevant keys
-                    for key in env_obs.keys():
-                        if key == 'observation.state' or key.startswith('observation.images.'):
-                            policy_obs[key] = env_obs[key]
-                
-                # If we are missing state or images, try to find them in raw format
-                # Images
-                camera_mapping = {
-                    'wrist': 'observation.images.wrist',
-                    'top': 'observation.images.top',
-                    'side': 'observation.images.side',
-                }
-                
-                pixels_dict = env_obs.get('pixels', env_obs)
-                
-                for env_key, policy_key in camera_mapping.items():
-                    if policy_key not in policy_obs: # Only look if not already found
-                        if env_key in pixels_dict:
-                            policy_obs[policy_key] = pixels_dict[env_key]
-                
-                # State
-                if 'observation.state' not in policy_obs:
-                     # Collect joint positions in the correct order (matching SO101 motor order)
-                    joint_order = [
-                        'shoulder_pan.pos',
-                        'shoulder_lift.pos',
-                        'elbow_flex.pos',
-                        'wrist_flex.pos',
-                        'wrist_roll.pos',
-                        'gripper.pos',
-                    ]
-                    
-                    joint_values = []
-                    for joint_key in joint_order:
-                        if joint_key in env_obs:
-                            val = env_obs[joint_key]
-                            # Convert to tensor if not already
-                            if not isinstance(val, torch.Tensor):
-                                val = torch.tensor([val], dtype=torch.float32)
-                            elif val.dim() == 0:
-                                val = val.unsqueeze(0)
-                            joint_values.append(val)
-                    
-                    # Concatenate all joint positions into a single state tensor
-                    if joint_values:
-                        policy_obs['observation.state'] = torch.cat(joint_values, dim=0)
-                
-                return policy_obs
-            
             # Create transition for learner (convert to policy format)
             observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
             next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
@@ -582,9 +589,9 @@ def update_policy_parameters(policy, parameters_queue: Queue, device):
         actor_state_dict = move_state_dict_to_device(state_dicts["policy"], device=device)
         # For Pi05, the actor is the model
         if hasattr(policy, "actor"):
-             policy.actor.load_state_dict(actor_state_dict)
+             policy.actor.load_state_dict(actor_state_dict, strict=False)
         else:
-             policy.model.load_state_dict(actor_state_dict)
+             policy.model.load_state_dict(actor_state_dict, strict=False)
 
 if __name__ == "__main__":
     actor_cli()
