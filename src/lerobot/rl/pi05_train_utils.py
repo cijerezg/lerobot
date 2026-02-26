@@ -326,7 +326,7 @@ def _update_critic(
     td_error_list = []
     target_values_list = []
     
-    optimizers["critic"].zero_grad()
+    optimizers["critic"].zero_grad(set_to_none=True)
     
     for _ in range(gradient_accumulation_steps):
         # Sample Batch
@@ -384,6 +384,9 @@ def _update_critic(
         scaler.update()
     else:
         optimizers["critic"].step()
+        
+    # Free critic gradients immediately to save memory during actor update
+    optimizers["critic"].zero_grad(set_to_none=True)
         
     # Aggregate Critic Metrics
     all_critic_values = torch.cat(critic_values_list, dim=0)
@@ -590,7 +593,7 @@ def _update_actor(
     actor_infos = {}
     
     for _ in range(policy_update_freq):
-        optimizers["actor"].zero_grad()
+        optimizers["actor"].zero_grad(set_to_none=True)
         
         accum_loss_actor = 0.0
         accum_flow_loss = 0.0
@@ -702,6 +705,9 @@ def _update_actor(
         else:
             optimizers["actor"].step()
             
+        # Free actor gradients immediately to save memory for next steps
+        optimizers["actor"].zero_grad(set_to_none=True)
+            
         # Aggregate Actor Metrics
         all_advantage_values = torch.cat(advantage_values_list, dim=0)
         all_critic_values_actor = torch.cat(critic_values_actor_list, dim=0)
@@ -723,15 +729,15 @@ def _update_actor(
         training_infos["critic_histogram"] = all_critic_values_actor.detach().float().cpu().numpy() # This overwrites pass 1 critic hist
 
         # Snapshot for action-reconstruction logging (consumed by callers via .pop)
-        training_infos["_action_log_snapshot"] = {
-        "observations": observations,
-        "task_tokens": forward_batch_actor[OBS_LANGUAGE_TOKENS],
-        "task_masks": forward_batch_actor[OBS_LANGUAGE_ATTENTION_MASK],
-        "subtask_tokens": forward_batch_actor.get(OBS_LANGUAGE_SUBTASK_TOKENS),
-        "subtask_masks": forward_batch_actor.get(OBS_LANGUAGE_SUBTASK_ATTENTION_MASK),
-        "gt_actions": actions.float().cpu(),
-        "gt_actions_normalized": forward_batch_actor[ACTION].float().cpu(),
-        }
+        #training_infos["_action_log_snapshot"] = {
+        #"observations": observations,
+        #"task_tokens": forward_batch_actor[OBS_LANGUAGE_TOKENS],
+        #"task_masks": forward_batch_actor[OBS_LANGUAGE_ATTENTION_MASK],
+        #"subtask_tokens": forward_batch_actor.get(OBS_LANGUAGE_SUBTASK_TOKENS),
+        #"subtask_masks": forward_batch_actor.get(OBS_LANGUAGE_SUBTASK_ATTENTION_MASK),
+        #"gt_actions": actions.float().cpu(),
+        #"gt_actions_normalized": forward_batch_actor[ACTION].float().cpu(),
+        #}
 
     return training_infos
 
@@ -826,7 +832,7 @@ def log_pi05_training_metrics(
     import wandb
 
     # Pop snapshot before wandb scalar logging (tensors must not be sent as scalars)
-    action_log_snapshot = training_infos.pop("_action_log_snapshot", None)
+    # action_log_snapshot = training_infos.pop("_action_log_snapshot", None)
 
     if wandb_logger:
         # Extract histograms if they exist
@@ -870,14 +876,14 @@ def log_pi05_training_metrics(
             })
 
     # --- Action reconstruction logging ---
-    if action_log_snapshot is not None and is_main_process:
-        from lerobot.rl.pi05_train_utils import log_sampled_actions
-        log_sampled_actions(
-            policy=policy,
-            snapshot=action_log_snapshot,
-            optimization_step=optimization_step,
-            wandb_logger=wandb_logger,
-        )
+    # if action_log_snapshot is not None and is_main_process:
+    #     # from lerobot.rl.pi05_train_utils import log_sampled_actions
+    #     # log_sampled_actions(
+    #     #     policy=policy,
+    #     #     snapshot=action_log_snapshot,
+    #     #     optimization_step=optimization_step,
+    #     #     wandb_logger=wandb_logger,
+    #     # )
 
 def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=True):
     """

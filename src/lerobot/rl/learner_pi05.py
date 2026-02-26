@@ -367,7 +367,7 @@ def add_actor_information_and_train(
             "critic.layers.5" in name or
             "critic.norm" in name or
             "critic.value_head" in name or
-            "critic.value_queries"
+            "critic.value_queries" in name
         )
     
     # Log trainable parameters

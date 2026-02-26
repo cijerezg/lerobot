@@ -77,7 +77,7 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16
-from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks, log_sampled_actions
+from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks #, log_sampled_actions
 
 import wandb
 
@@ -278,7 +278,7 @@ def run_offline_training(
             "critic.layers.5" in name or
             "critic.norm" in name or
             "critic.value_head" in name or
-            "critic.value_queries"
+            "critic.value_queries" in name
         )
 
 
