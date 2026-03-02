@@ -386,7 +386,19 @@ def act_with_policy(
             # Time policy inference and check if it meets FPS requirement
             with policy_timer:
                 if was_intervening:
-                    action = torch.zeros(6, dtype=torch.float32, device=device)
+                    if hasattr(online_env, 'get_raw_joint_positions'):
+                        raw_joints = online_env.get_raw_joint_positions()
+                        joint_order = [
+                            'shoulder_pan.pos',
+                            'shoulder_lift.pos',
+                            'elbow_flex.pos',
+                            'wrist_flex.pos',
+                            'wrist_roll.pos',
+                            'gripper.pos',
+                        ]
+                        action = torch.tensor([float(raw_joints.get(k, 0.0)) for k in joint_order], dtype=torch.float32, device=device)
+                    else:
+                        action = torch.zeros(6, dtype=torch.float32, device=device)
                 else:
                     with torch.no_grad():
                         # Apply preprocessor if available (handles tokenization, state padding, etc.)

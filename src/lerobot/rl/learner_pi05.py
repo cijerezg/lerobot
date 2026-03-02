@@ -358,12 +358,11 @@ def add_actor_information_and_train(
             "time_mlp_out" in name or
             "gemma_expert" in name or
             "multi_modal_project" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [19, 20, 21, 22, 23, 24, 25, 26])) or
-            ("language_model" in name and any(f".{i}." in name for i in [12, 13, 14, 15, 16, 17])) or 
+            ("vision_tower" in name and any(f".{i}." in name for i in [24, 25, 26])) or
+            ("language_model" in name and any(f".{i}." in name for i in [15, 16, 17])) or 
             "language_model.norm" in name or
 
             # Critic params
-            "critic.layers.4" in name or
             "critic.layers.5" in name or
             "critic.norm" in name or
             "critic.value_head" in name or
@@ -736,7 +735,7 @@ def process_transitions_pi05(
                     
                     critic_output = policy.forward(forward_batch, model="critic_value")
                     val = critic_output["critic_value_mean"]
-                    critic_values.append(val.item())
+                    critic_values.append(val)
 
             # Skip transitions with NaN values
             if check_nan_in_transition(

@@ -599,6 +599,12 @@ def _update_actor(
         accum_flow_loss = 0.0
         accum_action_loss = 0.0
         accum_subtask_loss = 0.0
+        accum_flow_first_10 = None
+        accum_flow_last_10 = None
+        accum_flow_time_low = 0.0
+        accum_flow_time_high = 0.0
+        count_flow_time_low = 0
+        count_flow_time_high = 0
         advantage_values_list = []
         critic_values_actor_list = []
         target_values_actor_list = []
@@ -677,10 +683,36 @@ def _update_actor(
                  else:
                      loss_actor_mean.backward()
 
-            # Accumulate Actor Metrics
-            accum_loss_actor += actor_output["loss_actor"].mean().item()
-            if "flow_mse_loss" in actor_output:
-                accum_flow_loss += actor_output["flow_mse_loss"].mean().item()
+            if "flow_loss_raw" in actor_output:
+                raw_loss = actor_output["flow_loss_raw"]
+                flow_time = actor_output["flow_time"]
+                flow_loss_raw_last = raw_loss
+                
+                T_dim = raw_loss.shape[1]
+                # First 10 and last 10
+                chunk_first = raw_loss[:, :10, :].mean().item() if T_dim >= 10 else raw_loss.mean().item()
+                chunk_last = raw_loss[:, -10:, :].mean().item() if T_dim >= 10 else raw_loss.mean().item()
+                
+                if accum_flow_first_10 is None:
+                    accum_flow_first_10 = chunk_first
+                    accum_flow_last_10 = chunk_last
+                else:
+                    accum_flow_first_10 += chunk_first
+                    accum_flow_last_10 += chunk_last
+                    
+                # Time noise conditions
+                # raw_loss: [B, T, D], flow_time: [B]
+                # We want to average the loss for batches where flow_time < 0.3 or > 0.7
+                mask_low = flow_time < 0.3
+                mask_high = flow_time > 0.7
+                
+                if mask_low.any():
+                    accum_flow_time_low += raw_loss[mask_low].mean().item() * mask_low.sum().item()
+                    count_flow_time_low += mask_low.sum().item()
+                if mask_high.any():
+                    accum_flow_time_high += raw_loss[mask_high].mean().item() * mask_high.sum().item()
+                    count_flow_time_high += mask_high.sum().item()
+                    
             if "action_ce_loss" in actor_output:
                 accum_action_loss += actor_output["action_ce_loss"].mean().item()
             if "subtask_ce_loss" in actor_output:
@@ -727,6 +759,16 @@ def _update_actor(
         training_infos["critic_value_mean_actor"] = all_critic_values_actor.mean().item()
         
         training_infos["critic_histogram"] = all_critic_values_actor.detach().float().cpu().numpy() # This overwrites pass 1 critic hist
+
+        if accum_flow_first_10 is not None:
+            training_infos["flow_loss_time/mean_first_10"] = accum_flow_first_10 / gradient_accumulation_steps
+            training_infos["flow_loss_time/mean_last_10"] = accum_flow_last_10 / gradient_accumulation_steps
+            training_infos["flow_loss_raw"] = flow_loss_raw_last.detach().float().cpu().numpy()
+
+        if count_flow_time_low > 0:
+            training_infos["flow_loss_noise/mean_low_noise_lt_0.3"] = accum_flow_time_low / count_flow_time_low
+        if count_flow_time_high > 0:
+            training_infos["flow_loss_noise/mean_high_noise_gt_0.7"] = accum_flow_time_high / count_flow_time_high
 
         # Snapshot for action-reconstruction logging (consumed by callers via .pop)
         #training_infos["_action_log_snapshot"] = {
@@ -841,6 +883,7 @@ def log_pi05_training_metrics(
         target_value_hist = training_infos.pop("target_value_histogram", None)
         critic_hist_from_critic = training_infos.pop("critic_histogram_from_critic", None)
         actor_loss_hist = training_infos.pop("actor_loss_histogram", None)
+        flow_loss_raw = training_infos.pop("flow_loss_raw", None)
         
         # Log scalar metrics
         wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
@@ -854,14 +897,14 @@ def log_pi05_training_metrics(
                 "Optimization step": optimization_step
             })
         if critic_hist is not None:
-            critic_vals = np.clip(critic_hist, -2, .5)
+            critic_vals = np.clip(critic_hist, -1, .5)
             wandb_logger._wandb.log({
                 "train/critic_value_histogram": wandb.Histogram(critic_vals),
                 "Optimization step": optimization_step
             })
         
         if target_value_hist is not None:
-             target_vals = np.clip(target_value_hist, -2, .5)
+             target_vals = np.clip(target_value_hist, -1, .5)
              wandb_logger._wandb.log({
                 "train/target_value_histogram": wandb.Histogram(target_vals),
                 "Optimization step": optimization_step
@@ -869,9 +912,15 @@ def log_pi05_training_metrics(
         
         # Log critic histogram from critic update
         if critic_hist_from_critic is not None:
-            critic_vals_from_critic = np.clip(critic_hist_from_critic, -2, .5)
+            critic_vals_from_critic = np.clip(critic_hist_from_critic, -1, .5)
             wandb_logger._wandb.log({
                 "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
+                "Optimization step": optimization_step
+            })
+
+        if flow_loss_raw is not None:
+            wandb_logger._wandb.log({
+                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 10.0)),
                 "Optimization step": optimization_step
             })
 

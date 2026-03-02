@@ -485,8 +485,8 @@ class PI05RLPytorch(PI05Pytorch):
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
         
-        # Only consider first 6 vals; they are action without padding
-        flow_loss = F.mse_loss(u_t[:, :6], v_t[:, :6], reduction="none") 
+        # Only consider first 6 vals; they are actions without padding
+        flow_loss = F.mse_loss(u_t[:, :, :6], v_t[:, :, :6], reduction="none") 
 
         flow_loss_mean = flow_loss.mean()
         
@@ -575,6 +575,8 @@ class PI05RLPytorch(PI05Pytorch):
         return {
             "loss_actor": total_loss,
             "flow_mse_loss": flow_loss.mean(),
+            "flow_loss_raw": flow_loss.detach(),
+            "flow_time": time.detach(),
             "action_ce_loss": action_ce_loss,
             "subtask_ce_loss": subtask_ce_loss,
         }
@@ -701,14 +703,15 @@ class PI05RLPolicy(PI05FullPolicy):
                     print(f"Sample missing actor: {missing_actor[:5]}")
                 
                 # Load critic
-                missing_critic, unexpected_critic = self.critic.load_state_dict(critic_state_dict, strict=False)
-                print(f"Critic loaded. Missing: {len(missing_critic)}, Unexpected: {len(unexpected_critic)}")
-                if missing_critic:
-                    print(f"Sample missing critic: {missing_critic[:5]}")
+                if hasattr(self, "critic"):
+                    missing_critic, unexpected_critic = self.critic.load_state_dict(critic_state_dict, strict=False)
+                    print(f"Critic loaded. Missing: {len(missing_critic)}, Unexpected: {len(unexpected_critic)}")
+                    if missing_critic:
+                        print(f"Sample missing critic: {missing_critic[:5]}")
 
-                # Sync critic_target
-                print("Syncing critic_target with loaded critic...")
-                self.critic_target.load_state_dict(self.critic.state_dict())
+                    # Sync critic_target
+                    print("Syncing critic_target with loaded critic...")
+                    self.critic_target.load_state_dict(self.critic.state_dict())
 
                 # NOTE: PI05 uses external preprocessors for normalization instead of internal modules.
                 print("✓ RL components loaded (Normalization is handled by external preprocessor)")
@@ -932,6 +935,8 @@ class PI05RLPolicy(PI05FullPolicy):
             return {
                 "loss_actor": actor_output["loss_actor"],
                 "flow_mse_loss": actor_output["flow_mse_loss"],
+                "flow_loss_raw": actor_output["flow_loss_raw"],
+                "flow_time": actor_output["flow_time"],
                 "action_ce_loss": actor_output["action_ce_loss"],
                 "subtask_ce_loss": actor_output["subtask_ce_loss"],
                 "advantage_mean": advantage.mean().item(),
