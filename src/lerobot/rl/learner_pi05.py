@@ -191,7 +191,8 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
     set_seed(seed=cfg.seed)
 
-    torch.backends.cudnn.benchmark = True
+    # Set to false to avoid VRAM consumption spike
+    torch.backends.cudnn.benchmark = False
     torch.backends.cuda.matmul.allow_tf32 = True
 
     is_threaded = use_threads(cfg)

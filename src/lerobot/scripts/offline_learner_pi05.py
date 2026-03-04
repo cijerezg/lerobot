@@ -171,7 +171,9 @@ def offline_train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None,
     if cfg.seed is not None:
         set_seed(seed=cfg.seed + accelerator.process_index, accelerator=accelerator)
     
-    torch.backends.cudnn.benchmark = True
+    # Set to false to avoid benchmarking which causes a memory spike.
+    torch.backends.cudnn.benchmark = False
+
     torch.backends.cuda.matmul.allow_tf32 = True
     
     shutdown_event = ProcessSignalHandler(True, display_pid=False).shutdown_event
@@ -267,13 +269,11 @@ def run_offline_training(
             "time_mlp_out" in name or
             "gemma_expert" in name or
             "multi_modal_project" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])) or
-            ("language_model" in name and any(f".{i}." in name for i in [8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or 
+            ("vision_tower" in name and any(f".{i}." in name for i in [19, 20, 21, 22, 23, 24, 25, 26])) or
+            ("language_model" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17])) or 
             "language_model.norm" in name or
 
             # Critic params
-            "critic.layers.2" in name or
-            "critic.layers.3" in name or
             "critic.layers.4" in name or
             "critic.layers.5" in name or
             "critic.norm" in name or

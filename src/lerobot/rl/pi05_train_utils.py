@@ -677,6 +677,9 @@ def _update_actor(
             
             loss_actor_mean = loss_actor.mean()
             
+            accum_loss_actor += actor_output["loss_actor"].mean().item()
+            accum_flow_loss += actor_output["flow_mse_loss"].mean().item()
+            
             if hasattr(loss_actor_mean, "backward"):
                  if scaler:
                      scaler.scale(loss_actor_mean).backward()
@@ -869,6 +872,9 @@ def log_pi05_training_metrics(
     policy,
     is_main_process: bool = True
 ):
+    if optimization_step == 0:
+        return
+
     import numpy as np
     import torch
     import wandb
@@ -920,7 +926,7 @@ def log_pi05_training_metrics(
 
         if flow_loss_raw is not None:
             wandb_logger._wandb.log({
-                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 10.0)),
+                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.2)),
                 "Optimization step": optimization_step
             })
 

@@ -202,11 +202,14 @@ class Pi05TransformerCritic(nn.Module):
         # Final normalization
         self.norm = GemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
         
-        # Value head (projects from 32 tokens -> 1 value)
+        # Token-wise projection to reduce dimensionality before flattening
+        self.token_proj = nn.Linear(hidden_dim, 256)
+        
+        # Value head (projects from flattened projected tokens -> 1 value)
         self.value_head = nn.Sequential(
-            nn.Linear(hidden_dim * self.num_query_tokens, 512 * 2),
+            nn.Linear(256 * self.num_query_tokens, 256 * 2),
             SwiGLU(),
-            nn.Linear(512, 1)
+            nn.Linear(256, 1)
         )
         
     def initialize_weights_from_actor(self, actor_model):
@@ -221,9 +224,8 @@ class Pi05TransformerCritic(nn.Module):
              
         source_model = paligemma_model.model.language_model
 
-        # Copy Embeddings
-        self.embed_tokens = source_model.embed_tokens
-        self.rotary_emb = source_model.rotary_emb
+        # Rotary embeddings are tiny and needed locally, deepcopy to avoid EMA bug
+        self.rotary_emb = copy.deepcopy(source_model.rotary_emb)
         
         # Copy Layers (Deepcopy to ensure we get the exact same class and weights)
         num_critic_layers = self.critic_gemma_config.num_hidden_layers
@@ -264,7 +266,7 @@ class Pi05TransformerCritic(nn.Module):
         attention_mask = torch.where(attention_mask, 0.0, OPENPI_ATTENTION_MASK_VALUE)
         
         # Position IDs
-        position_ids = torch.arange(full_seq_len, device=hidden_states.device).unsqueeze(0).expand(batch_size, -1)
+        position_ids = torch.cumsum(full_mask, dim=1) - 1
         
         # Rotary Embeddings
         cos, sin = self.rotary_emb(hidden_states, position_ids)
@@ -337,7 +339,12 @@ class Pi05TransformerCritic(nn.Module):
         # Extract Queries (At the END)
         start_idx = vision_features.shape[1] + text_embs.shape[1]
         queries_out = hidden_states[:, start_idx:, :] # [B, num_queries, D]
-        queries_flat = queries_out.reshape(batch_size, -1) # [B, num_queries*D]
+        
+        # Token-wise projection (applied to each of the 32 tokens independently)
+        queries_proj = self.token_proj(queries_out) # [B, num_queries, 256]
+        
+        # Flatten all projected tokens together
+        queries_flat = queries_proj.reshape(batch_size, -1) # [B, num_queries * 256]
 
         # Value Head
         value = self.value_head(queries_flat.to(self.dtype))

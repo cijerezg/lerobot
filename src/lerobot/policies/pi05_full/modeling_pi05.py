@@ -560,6 +560,10 @@ class PaliGemmaWithExpertModel(
         self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
+        
+        # lm_head is not used in the action_expert
+        if hasattr(self.gemma_expert, "lm_head"):
+            del self.gemma_expert.lm_head
 
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
