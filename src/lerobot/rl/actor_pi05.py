@@ -72,6 +72,7 @@ from lerobot.rl.gym_manipulator import (
 )
 import lerobot.rl.rl_pi05  # Register PI05RLConfig
 from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
+from lerobot.policies.rtc.action_queue import ActionQueue
 
 from lerobot.rl.actor import (
     use_threads,
@@ -333,6 +334,12 @@ def act_with_policy(
     env_processor.reset()
     action_processor.reset()
 
+    # RTC Setup
+    rtc_enabled = getattr(policy.config, "rtc_config", None) is not None and policy.config.rtc_config.enabled
+    action_queue = None
+    if rtc_enabled:
+        action_queue = ActionQueue(policy.config.rtc_config)
+
     # Process initial observation
     transition = create_transition(observation=obs, info=info)
     
@@ -409,22 +416,57 @@ def act_with_policy(
                         else:
                             processed_batch = batch_for_preprocessor
                         
-                        action = policy.select_action(processed_batch)
-                        
-                        # Extract single action for environment (Batch 0, Time 0)
-                        # Policy returns [Batch, Time, Dim], we need [Dim]
-                        if action.ndim == 3:
-                            action = action[0, 0]
-                        elif action.ndim == 2:
-                            action = action[0]
+                        if getattr(policy.config, "rtc_config", None) is not None and policy.config.rtc_config.enabled:
+                            rtc_cfg = policy.config.rtc_config
+                            needs_new_chunk = action_queue.empty() or action_queue.get_action_index() >= rtc_cfg.execution_horizon
 
-                        # Apply postprocessor if available (handles unnormalization)
-                        if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
-                            # Slice action to 6 dimensions as requested
+                            if needs_new_chunk:
+                                action_index_before = action_queue.get_action_index()
+                                prev_actions = action_queue.get_left_over()
+                                
+                                # In a synchronous loop where the env is paused, we assume 1.
+                                inference_delay = 1 
+
+                                actions_chunk = policy.predict_action_chunk(
+                                    processed_batch,
+                                    inference_delay=inference_delay,
+                                    prev_chunk_left_over=prev_actions,
+                                    execution_horizon=rtc_cfg.execution_horizon,
+                                )
+                                
+                                original_actions = actions_chunk.squeeze(0).clone()
+                                
+                                # Processed actions will be postprocessed after popping
+                                action_queue.merge(
+                                    original_actions=original_actions, 
+                                    processed_actions=original_actions.clone(), 
+                                    real_delay=inference_delay, 
+                                )
+
+                            action = action_queue.get()
+
                             if action.shape[-1] > 6:
                                 action = action[..., :6]
+                            
+                            if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
+                                action = policy.postprocessor(action)
+                        else:
+                            action = policy.select_action(processed_batch)
+                            
+                            # Extract single action for environment (Batch 0, Time 0)
+                            # Policy returns [Batch, Time, Dim], we need [Dim]
+                            if action.ndim == 3:
+                                action = action[0, 0]
+                            elif action.ndim == 2:
+                                action = action[0]
 
-                            action = policy.postprocessor(action)
+                            # Apply postprocessor if available (handles unnormalization)
+                            if hasattr(policy, 'postprocessor') and policy.postprocessor is not None:
+                                # Slice action to 6 dimensions as requested
+                                if action.shape[-1] > 6:
+                                    action = action[..., :6]
+
+                                action = policy.postprocessor(action)
                         
                         
             policy_fps = policy_timer.fps_last
@@ -469,6 +511,8 @@ def act_with_policy(
 
             if was_intervening != is_intervening:
                 policy.reset()
+                if action_queue is not None:
+                    action_queue = ActionQueue(policy.config.rtc_config)
             
             was_intervening = is_intervening   
 
@@ -579,6 +623,8 @@ def act_with_policy(
                 env_processor.reset()
                 action_processor.reset()
                 policy.reset()
+                if action_queue is not None:
+                    action_queue = ActionQueue(policy.config.rtc_config)
 
                 # Process initial observation
                 transition = create_transition(observation=obs, info=info)

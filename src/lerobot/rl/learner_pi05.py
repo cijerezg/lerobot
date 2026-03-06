@@ -771,30 +771,7 @@ def process_transitions_pi05(
 
             replay_buffer.add(**transition)
 
-            # Add to offline buffer if it's an intervention
-            if dataset_repo_id is not None and transition.get("complementary_info", {}).get(
-                TeleopEvents.IS_INTERVENTION.value
-            ):
-                # Apply same fix for offline buffer if needed
-                if offline_replay_buffer.initialized:
-                    buffer_action_dim = offline_replay_buffer.actions.shape[-1]
-                    incoming_action = transition[ACTION]
-                    incoming_dim = incoming_action.shape[-1]
-                    
-                    if incoming_dim != buffer_action_dim:
-                        if incoming_dim < buffer_action_dim:
-                            # Pad with zeros
-                            padding = torch.zeros(
-                                (*incoming_action.shape[:-1], buffer_action_dim - incoming_dim),
-                                dtype=incoming_action.dtype,
-                                device=incoming_action.device
-                            )
-                            transition[ACTION] = torch.cat([incoming_action, padding], dim=-1)
-                        else:
-                            # Slice
-                            transition[ACTION] = incoming_action[..., :buffer_action_dim]
-                            
-                offline_replay_buffer.add(**transition)
+
 
         # After processing the episode, if it was a logging episode, save the plot
         if is_logging_episode and policy is not None:

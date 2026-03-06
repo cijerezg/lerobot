@@ -203,13 +203,13 @@ class Pi05TransformerCritic(nn.Module):
         self.norm = GemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
         
         # Token-wise projection to reduce dimensionality before flattening
-        self.token_proj = nn.Linear(hidden_dim, 256)
+        self.token_proj = nn.Linear(hidden_dim, 512)
         
         # Value head (projects from flattened projected tokens -> 1 value)
         self.value_head = nn.Sequential(
-            nn.Linear(256 * self.num_query_tokens, 256 * 2),
+            nn.Linear(512 * self.num_query_tokens, 512 * 2),
             SwiGLU(),
-            nn.Linear(256, 1)
+            nn.Linear(512, 1)
         )
         
     def initialize_weights_from_actor(self, actor_model):
@@ -1008,8 +1008,12 @@ class PI05RLPolicy(PI05FullPolicy):
             
             target_q = reward + self.config.discount * next_v * (1 - done)
             target_q = target_q.to(dtype=current_v.dtype)
+            # By definition of reward structure, the values should are bounded by 0.
+            # We leave a little headroom
+            target_q = target_q.clamp(max=0.05)
             
-            loss_critic = F.mse_loss(current_v, target_q)
+            loss_critic_raw = F.mse_loss(current_v, target_q, reduction="none")
+            loss_critic = loss_critic_raw.mean()
             
             self.critic_log_counter += 1
             if self.critic_log_counter % 200 == 0:
@@ -1020,6 +1024,7 @@ class PI05RLPolicy(PI05FullPolicy):
             
             return {
                 "loss_critic": loss_critic,
+                "loss_critic_raw": loss_critic_raw.detach(),
                 "critic_values": current_v,
                 "target_values": target_q,
                 "td_error": td_error,
@@ -1047,7 +1052,7 @@ class PI05RLPolicy(PI05FullPolicy):
         # We override predict_action_chunk in PI05RLPolicy to pass it.
         return super().select_action(batch)
 
-    def predict_action_chunk(self, batch: dict[str, Tensor]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """Predict action chunk."""
         # Preprocessor has already normalized and tokenized the inputs
         # Advantage is already in the tokens (passed from actor or defaulted)
@@ -1058,7 +1063,7 @@ class PI05RLPolicy(PI05FullPolicy):
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         
         # Sample actions
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, None, None)
+        actions = self.model.sample_actions(images, img_masks, tokens, masks, None, None, **kwargs)
         
         # Unpad actions to actual action dimension
         from lerobot.utils.constants import ACTION

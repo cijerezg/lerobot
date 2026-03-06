@@ -325,6 +325,7 @@ def _update_critic(
     critic_values_list = []
     td_error_list = []
     target_values_list = []
+    loss_critic_raw_list = []
     
     optimizers["critic"].zero_grad(set_to_none=True)
     
@@ -368,6 +369,8 @@ def _update_critic(
         critic_values_list.append(critic_output["critic_values"].detach())
         td_error_list.append(critic_output["td_error"].detach())
         target_values_list.append(critic_output["target_values"].detach())
+        if "loss_critic_raw" in critic_output:
+            loss_critic_raw_list.append(critic_output["loss_critic_raw"].detach())
 
 
     # Step Critic Optimizer
@@ -405,6 +408,10 @@ def _update_critic(
         "critic_histogram_from_critic": all_critic_values.detach().float().cpu().numpy(),
         "target_value_histogram": all_target_values.detach().float().cpu().numpy(),
     }
+    
+    if loss_critic_raw_list:
+        all_loss_critic_raw = torch.cat(loss_critic_raw_list, dim=0)
+        training_infos["loss_critic_raw"] = all_loss_critic_raw.detach().float().cpu().numpy()
 
     # Store pass 1 raw pass-throughs for the actor
     # NOTE: As the previous implementation just overwrote last_batch_critic sequentially, 
@@ -890,6 +897,7 @@ def log_pi05_training_metrics(
         critic_hist_from_critic = training_infos.pop("critic_histogram_from_critic", None)
         actor_loss_hist = training_infos.pop("actor_loss_histogram", None)
         flow_loss_raw = training_infos.pop("flow_loss_raw", None)
+        loss_critic_raw = training_infos.pop("loss_critic_raw", None)
         
         # Log scalar metrics
         wandb_logger.log_dict(d=training_infos, mode="train", custom_step_key="Optimization step")
@@ -926,7 +934,13 @@ def log_pi05_training_metrics(
 
         if flow_loss_raw is not None:
             wandb_logger._wandb.log({
-                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.2)),
+                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.04)),
+                "Optimization step": optimization_step
+            })
+
+        if loss_critic_raw is not None:
+            wandb_logger._wandb.log({
+                "train/loss_critic_histogram_flat": wandb.Histogram(np.clip(loss_critic_raw.flatten(), 0, .02)),
                 "Optimization step": optimization_step
             })
 
