@@ -213,7 +213,7 @@ class ActionQueue:
         if indexes_diff != real_delay:
             # Let's check that action index difference (real delay calculated based on action queue)
             # is the same as delay calculated based on inference latency
-            logger.warning(
+            logger.debug(
                 f"[ACTION_QUEUE] Indexes diff is not equal to real delay. "
                 f"Indexes diff: {indexes_diff}, real delay: {real_delay}"
             )

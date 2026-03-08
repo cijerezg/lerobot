@@ -529,7 +529,9 @@ def step_env_and_process_transition(
     """
 
     # Create action transition (deepcopy to avoid mutating the original transition)
-    aux_transition = copy.deepcopy(transition)
+    #aux_transition = copy.deepcopy(transition)
+    aux_transition = copy.copy(transition)
+    
     aux_transition[TransitionKey.ACTION] = action
     aux_transition[TransitionKey.OBSERVATION] = (
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}

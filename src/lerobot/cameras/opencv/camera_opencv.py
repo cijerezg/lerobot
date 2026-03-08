@@ -511,7 +511,7 @@ class OpenCVCamera(Camera):
 
         with self.frame_lock:
             frame = self.latest_frame
-            self.new_frame_event.clear()
+            #self.new_frame_event.clear()
 
         if frame is None:
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
