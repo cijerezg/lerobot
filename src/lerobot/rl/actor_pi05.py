@@ -130,7 +130,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
 
     logging.info("[ACTOR] Connection with Learner established")
 
-    parameters_queue = Queue()
+    parameters_queue = Queue(maxsize=2)
     transitions_queue = Queue()
     interactions_queue = Queue()
 

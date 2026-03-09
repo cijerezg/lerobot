@@ -156,10 +156,10 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 policy.reset()
                 continue
             
-            # 2. Check if we actually need a new chunk
+            # 2. Check if we actually need a new chunk (use p95 for less pessimistic threshold)
             # To avoid over-inferencing and queue saturation, only infer if we're getting close
             # In a real async inference loop we fetch if queue <= execution_horizon + delay
-            current_delay = math.ceil(latency_tracker.max() / time_per_chunk)
+            current_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
             if not action_queue.empty() and action_queue.qsize() > execution_horizon + current_delay:
                 wait_start = time.perf_counter()
                 time.sleep(0.01)
@@ -198,7 +198,9 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 action_index_before = action_queue.get_action_index()
                 prev_actions = action_queue.get_left_over()
 
-                inference_delay = math.ceil(latency_tracker.max() / time_per_chunk)
+                # Using p95 instead of max: avoids a single latency spike biasing the model
+                # to predict too far ahead. See actor_pi05_async_utils.py for full rationale.
+                inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 
                 actions_chunk = policy.predict_action_chunk(
                     processed_batch,
@@ -224,7 +226,7 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 if not hasattr(policy, '_chunk_plot_counter'):
                     policy._chunk_plot_counter = 0
 
-                if True:
+                if False:
                     try:
                         import os
                         import numpy as np
