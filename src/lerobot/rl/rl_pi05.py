@@ -90,6 +90,9 @@ class PI05RLConfig(PI05FullConfig):
     freeze_vision_tower: bool = True
     freeze_language_model: bool = True
     freeze_action_expert: bool = False
+
+    # Inference parameters
+    num_inference_steps: int = 5
     
     # Advantage parameters
     inference_advantage: float = 1.0
@@ -820,6 +823,8 @@ class PI05RLPolicy(PI05FullPolicy):
         if hasattr(self, "critic_target"):
             with torch.no_grad():
                 for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
+                    if not param.requires_grad:
+                        continue
                     target_param.data.mul_(1 - self.config.critic_target_update_weight)
                     target_param.data.add_(param.data * self.config.critic_target_update_weight)
 

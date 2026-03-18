@@ -149,6 +149,11 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 policy.reset()
                 continue
             
+            # 3.5. Halt inference if human is intervening
+            if shared_state.is_intervening:
+                time.sleep(0.01)
+                continue
+
             # 4. Check if we need a new chunk (use p95 for less pessimistic threshold)
             current_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
             if not action_queue.empty() and action_queue.qsize() > execution_horizon + current_delay:
@@ -346,8 +351,8 @@ def env_interaction_worker_actor(
             start_time = time.perf_counter()
             
             # --- TELEOP AND STATE OVERRIDES ---
-            if was_intervening and not shared_state.is_intervening:
-                logger.info("[ENV] Teleop disengaged, soliciting policy/queue reset")
+            if was_intervening != shared_state.is_intervening:
+                logger.info(f"[ENV] Teleop state changed (intervening: {shared_state.is_intervening}), soliciting policy/queue reset")
                 shared_state.request_reset()
                 with action_queue.lock:
                     action_queue.queue = None

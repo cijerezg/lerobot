@@ -622,6 +622,8 @@ class PaliGemmaWithExpertModel(
         use_cache: bool | None = None,
         adarms_cond: list[torch.Tensor] | None = None,
     ):
+        
+
         if adarms_cond is None:
             adarms_cond = [None, None]
         if inputs_embeds[1] is None:

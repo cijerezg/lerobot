@@ -245,34 +245,37 @@ class ReplayBuffer:
         batch_size = min(batch_size, self.size)
         high = max(0, self.size - 1) if self.optimize_memory and self.size < self.capacity else self.size
 
-        # Loop until we get at least one valid sample
-        while True:
-            # Random indices for sampling - create on the same device as storage
-            idx = torch.randint(low=0, high=high, size=(batch_size,), device=self.storage_device)
+        valid_indices = []
+        collected_count = 0
+        max_retries = 200 # Safety hatch to prevent infinite loops
+        attempts = 0
 
-            # --- Index Validation & Filtering ---
-            # If we need to chunk single actions (online buffer), we must ensure chunks don't cross episode boundaries.
-            # We do this BEFORE sampling anything else so that states, actions, and rewards stay in sync.
-            
-            # Condition: Actions are single (ndim=2) AND we need chunks (size > 1)
+        # This while loop is to ensure frames are valid
+        while collected_count < batch_size:
+            if attempts >= max_retries:
+                raise RuntimeError("Failed to sample enough valid chunks. Is action_chunk_size larger than your episodes?")
+            attempts += 1
+
+            # Only sample enough to fill the remaining needed batch size (times a safety factor)
+            remaining = batch_size - collected_count
+            idx = torch.randint(low=0, high=high, size=(4 * remaining,), device=self.storage_device)
+
             if len(self.actions.shape) == 2 and action_chunk_size > 1:
-                # Check if any done flags are True in the chunk window for each index
-                # We look at the window [t, t+1, ..., t+chunk_size-2]
-                # If done is True at t+k, then the transition to t+k+1 crosses a boundary.
-                chunk_indices = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
+                # Use action_chunk_size - 1 if you don't want to check the final step's done flag
+                check_length = action_chunk_size - 1 
+                chunk_indices = (idx.unsqueeze(1) + torch.arange(check_length, device=self.storage_device)) % self.capacity
                 
-                # Get done flags for the chunk window
-                chunk_dones = self.dones[chunk_indices]  # Shape: (batch_size, chunk_size-1)
-                
-                # Find indices where any done flag is True in the window
-                invalid_mask = chunk_dones.any(dim=1)  # Shape: (batch_size,)
-                
-                # Filter out invalid indices
+                chunk_dones = self.dones[chunk_indices]
+                invalid_mask = chunk_dones.any(dim=1)
                 idx = idx[~invalid_mask]
             
-            # Check if we have any valid indices left
             if len(idx) > 0:
-                break
+                valid_indices.append(idx)
+                collected_count += len(idx)
+            
+        # Concatenate all collected indices and slice exactly to batch_size
+        idx = torch.cat(valid_indices)[:batch_size]
+
 
         # Identify image keys that need augmentation
         image_keys = [k for k in self.states if k.startswith(OBS_IMAGE)] if self.use_drq else []

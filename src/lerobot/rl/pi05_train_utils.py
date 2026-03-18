@@ -863,6 +863,7 @@ def pi05_update_step(
             preprocessor=preprocessor
         )
 
+
     training_infos = training_infos | actor_infos
 
     # -------------------------------------------------------------------------

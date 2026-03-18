@@ -269,11 +269,13 @@ def run_offline_training(
             "time_mlp_out" in name or
             "gemma_expert" in name or
             "multi_modal_project" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [19, 20, 21, 22, 23, 24, 25, 26])) or
-            ("language_model" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17])) or 
+            ("vision_tower" in name and any(f".{i}." in name for i in [8, 9, 10, 11, 12, 13,14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])) or
+            ("language_model" in name and any(f".{i}." in name for i in [10, 12, 13, 14, 15, 16, 17])) or 
             "language_model.norm" in name or
 
             # Critic params
+            #"critic.layers.2" in name or
+            #"critic.layers.3" in name or
             "critic.layers.4" in name or
             "critic.layers.5" in name or
             "critic.norm" in name or
@@ -281,6 +283,11 @@ def run_offline_training(
             "critic.value_queries" in name
         )
 
+    # Share underlying memory for frozen critic layers to save VRAM
+    if hasattr(policy, "critic") and hasattr(policy, "critic_target"):
+        for param, target_param in zip(policy.critic.parameters(), policy.critic_target.parameters()):
+            if not param.requires_grad:
+                target_param.data = param.data
 
     # Log trainable parameters
     if is_main_process:
@@ -410,6 +417,7 @@ def run_offline_training(
                 policy.module.update_target_networks()
             else:
                 policy.update_target_networks()
+        
         
         # Shared update step
         training_infos = pi05_update_step(

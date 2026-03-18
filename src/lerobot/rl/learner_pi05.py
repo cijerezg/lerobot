@@ -370,6 +370,12 @@ def add_actor_information_and_train(
             "critic.value_queries" in name
         )
     
+    # Share underlying memory for frozen critic layers to save VRAM
+    if hasattr(policy, "critic") and hasattr(policy, "critic_target"):
+        for param, target_param in zip(policy.critic.parameters(), policy.critic_target.parameters()):
+            if not param.requires_grad:
+                target_param.data = param.data
+
     # Log trainable parameters
     trainable_params = [n for n, p in policy.named_parameters() if p.requires_grad]
     logging.info(f"MINIMAL MODE: Trainable parameters: {len(trainable_params)}")

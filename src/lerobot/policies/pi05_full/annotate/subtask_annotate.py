@@ -180,38 +180,47 @@ def create_skill_segmentation_prompt(coarse_goal: str | None = None) -> str:
 
     return textwrap.dedent(f"""\
         # Role
-        You are a Robotics Vision System specializing in temporal action segmentation for robot manipulation demonstrations.
+        You are a very advanced Robotics Vision System specializing in temporal action segmentation for robot manipulation demonstrations.
 
         # Task
-        {goal_context}Segment this pick-and-place robot demonstration into short, atomic manipulation skills.
+        {goal_context} Segment this robot demonstration video into short atomic manipulation skills. Each skill should:
+        - Ideally last approximately 1-6 seconds, although in rare it may last more than 6 seconds. The ideal range is 1-6 seconds, though.
+        - Describe a clear, single action (e.g., "reach for blue cube", "grasp blue cube", "retract arm")
+        - Have precise start and end timestamps
 
         # Requirements
-        1. **Atomic Actions**: Each skill should capture a single distinct movement or interaction phase.
-        2. **Duration**: Target approximately 1-3 seconds per skill. 
-        - *Note: If a transport motion is long, split it into "Transport" (moving) and "Align" (positioning).*
-        3. **Complete Coverage**: Skills must cover the entire video duration with no gaps.
-        4. **Boundary Consistency**: The end of one skill must be the exact start of the next.
-        5. **Naming**: Use clear "Verb + Object" names (e.g., "Grasp blue block").
+        1. **Atomic Actions**: Each skill should be a single, indivisible action
+        2. **Complete Coverage**: Skills must cover the entire video duration with no gaps
+        3. **Boundary Consistency**: The end of one skill equals the start of the next
+        4. **Natural Language**: Use clear, descriptive names for each skill
+        5. **Timestamps**: Use seconds (float) for all timestamps
+
+        # Suggestions
+        - A skill might need to be executed several times when there are failed attempts, especially skills involving grasping. In such cases, duplicating the skill is acceptable.
+        - Keep mind in the main task specificed above. If the task is pick up the blue cube and place in the red cup, then skills generally won't involve other objects in the scene.
+        - If a skill completes in the unseen gap between two frames, assume it took the maximum possible time. Set its end timestamp to immediately before the next frame begins.
 
         # Output Format
-        After your analysis, output ONLY valid JSON with this exact structure:
+        After your analysis, output ONLY valid JSON with the structure in the following example:
 
         ```json
         {{
-        "skills": [
-            {{"name": "Move gripper to blue block", "start": 0.0, "end": 2.5}},
-            {{"name": "Grasp blue block", "start": 2.5, "end": 3.8}},
-            {{"name": "Lift blue block vertically", "start": 3.8, "end": 5.5}},
-            {{"name": "Transport block to bowl", "start": 5.5, "end": 8.2}},
-            {{"name": "Align block above bowl", "start": 8.2, "end": 10.0}},
-            {{"name": "Lower block into bowl", "start": 10.0, "end": 11.5}},
-            {{"name": "Open gripper", "start": 11.5, "end": 12.8}},
-            {{"name": "Retract arm to neutral", "start": 12.8, "end": 15.0}}
-        ]
+          "skills": [
+            {{"name": "reach for black ball", "start": 0.0, "end": 5.1}},
+            {{"name": "align arm with black ball", "start": 5.1, "end": 6.3}},
+            {{"name": "grasp black ball", "start": 6.3, "end": 9.4}},
+            {{"name": "lift black ball", "start": 9.4, "end": 11.7}},
+            {{"name": "move black ball over to bowl", "start": 11.7 "end": 17.1}},
+            {{"name": "align black ball with bowl", "start": 17.1, "end": 19.3}}
+            {{"name": "release black ball", "start": 19.3, "end": 20.4}},
+            {{"name": "retract arm to neutral position", "start": 20.4, "end": 24.6}}
+          ]
         }}
         ```
+        Note that this is just an example, and you should focus solely on the video to generate the skill intervals.
 
         The first skill must start at 0.0 and the last skill must end at the video duration.
+        Remember that temporal boundaries are very important, so be very careful when assigning them.        
         """)
 
 
@@ -278,8 +287,6 @@ class Qwen2VL(BaseVLM):
             skip_special_tokens=True,
         )[0].strip()
 
-        self.console.print(f"\n[bold yellow]Raw VLM Response:[/bold yellow]\n{response}\n")
-
         return self._parse_skills_response(response)
 
     def segment_skills_batch(
@@ -338,7 +345,6 @@ class Qwen2VL(BaseVLM):
         # Parse each response
         all_skills = []
         for idx, response in enumerate(responses):
-            self.console.print(f"\n[bold yellow]Raw VLM Response (Video {idx}):[/bold yellow]\n{response}\n")
             try:
                 skills = self._parse_skills_response(response.strip())
                 if not skills:
@@ -429,6 +435,7 @@ class Qwen3VL(BaseVLM):
             return_tensors="pt",
         ).to(self.device)
 
+
         with torch.no_grad():
             generated_ids = self.model.generate(**inputs, max_new_tokens=1024, do_sample=True, temperature=0.7)
 
@@ -439,13 +446,14 @@ class Qwen3VL(BaseVLM):
 
         return self._parse_skills_response(response)
 
+
+
     def segment_skills_batch(
         self, video_paths: list[Path], episode_durations: list[float], coarse_goal: str | None = None
     ) -> list[list[Skill]]:
-        """Segment multiple videos into skills using Qwen3-VL in a batch."""
+        """Segment multiple videos into skills using Qwen-VL in a manual batch."""
         prompt = create_skill_segmentation_prompt(coarse_goal)
         
-        # Create messages for each video
         all_messages = []
         for video_path, duration in zip(video_paths, episode_durations):
             duration_str = f"{int(duration // 60):02d}:{int(duration % 60):02d}"
@@ -463,39 +471,77 @@ class Qwen3VL(BaseVLM):
                 },
             ]
             all_messages.append(messages)
-        
-        # Process all videos in batch
-        all_texts = []
-        all_image_inputs = []
-        all_video_inputs = []
-        
+
+        all_inputs = []
         for messages in all_messages:
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             image_inputs, video_inputs = self.process_vision_info(messages)
-            all_texts.append(text)
-            all_image_inputs.extend(image_inputs or [])
-            all_video_inputs.extend(video_inputs or [])
+            
+            inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=video_inputs,
+                return_tensors="pt"
+            )
+            all_inputs.append(inputs)
+            
+        # Manually collate the batch with left-padding
+        batched_inputs = {}
+        max_len = max(inp["input_ids"].shape[1] for inp in all_inputs)
+        pad_token_id = self.processor.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = 151643
+
+        input_ids_list = []
+        attention_mask_list = []
+        position_ids_list = []
+
+        for inp in all_inputs:
+            pad_len = max_len - inp["input_ids"].shape[1]
+            
+            # Left pad text sequences
+            pad_ids = torch.full((1, pad_len), pad_token_id, dtype=inp["input_ids"].dtype)
+            input_ids_list.append(torch.cat([pad_ids, inp["input_ids"]], dim=1))
+            
+            # Left pad attention_mask
+            pad_mask = torch.zeros((1, pad_len), dtype=inp["attention_mask"].dtype)
+            attention_mask_list.append(torch.cat([pad_mask, inp["attention_mask"]], dim=1))
+
+            # Left pad 3D position_ids for mRoPE
+            if "position_ids" in inp:
+                pos_shape = list(inp["position_ids"].shape)
+                pos_shape[-1] = pad_len # Set the sequence dimension to the pad length
+                
+                pad_pos = torch.zeros(pos_shape, dtype=inp["position_ids"].dtype)
+                position_ids_list.append(torch.cat([pad_pos, inp["position_ids"]], dim=-1))
+
+        batched_inputs["input_ids"] = torch.cat(input_ids_list, dim=0).to(self.device)
+        batched_inputs["attention_mask"] = torch.cat(attention_mask_list, dim=0).to(self.device)
         
-        inputs = self.processor(
-            text=all_texts,
-            images=all_image_inputs if all_image_inputs else None,
-            videos=all_video_inputs if all_video_inputs else None,
-            padding=True,
-            return_tensors="pt",
-        ).to(self.device)
+        if position_ids_list:
+            batched_inputs["position_ids"] = torch.cat(position_ids_list, dim=0).to(self.device)
 
+        # Concatenate vision tensors (these are strictly flat across the batch for Qwen)
+        vision_keys = ["pixel_values", "image_grid_thw", "pixel_values_videos", "video_grid_thw"]
+        for key in vision_keys:
+            valid_tensors = [inp[key] for inp in all_inputs if key in inp and inp[key] is not None]
+            if valid_tensors:
+                batched_inputs[key] = torch.cat(valid_tensors, dim=0).to(self.device)
+        
         with torch.no_grad():
-            generated_ids = self.model.generate(**inputs, max_new_tokens=1024, do_sample=True, temperature=0.7)
+            generated_ids = self.model.generate(**batched_inputs, max_new_tokens=1024, do_sample=False)
 
+        # Decode using the properly batched input_ids, not the leaked loop variable
         responses = self.processor.batch_decode(
-            [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)],
+            [out[len(inp):] for inp, out in zip(batched_inputs["input_ids"], generated_ids)],
             skip_special_tokens=True,
         )
+
+        print("coarse_goal", coarse_goal)
+        print("responses", responses)
         
-        # Parse each response
         all_skills = []
         for idx, response in enumerate(responses):
-            self.console.print(f"\n[bold yellow]Raw VLM Response (Video {idx}):[/bold yellow]\n{response}\n")
             try:
                 skills = self._parse_skills_response(response.strip())
                 if not skills:
@@ -506,6 +552,8 @@ class Qwen3VL(BaseVLM):
                 all_skills.append([])
         
         return all_skills
+
+
 
     def _parse_skills_response(self, response: str) -> list[Skill]:
         """Parse the VLM response into Skill objects."""
