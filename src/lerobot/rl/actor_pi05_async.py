@@ -321,7 +321,7 @@ def act_with_policy_async(
             else:
                 lat_str = "N/A"
             
-            logging.info(f"[MAIN LOG] Episode: {episode_stat} | Queue Buffer: {q_size} | Teleop: {teleop_stat} | Runtime: {int(time.time() - start_time)}s")
+            logging.debug(f"[MAIN LOG] Episode: {episode_stat} | Queue Buffer: {q_size} | Teleop: {teleop_stat} | Runtime: {int(time.time() - start_time)}s")
             
             # Only log detailed metrics when something is concerning
             action_interval = 1.0 / cfg.env.fps

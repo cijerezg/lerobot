@@ -703,7 +703,7 @@ def process_transitions_pi05(
                             if img_np.max() <= 1.0:
                                 img_np = (img_np * 255).astype(np.uint8)
                             
-                            img_path = os.path.join(log_dir, f"step_{i:03d}_{key.split('.')[-1]}.png")
+                            img_path = os.path.join(log_dir, f"step_{i:06d}_{key.split('.')[-1]}.png")
                             Image.fromarray(img_np).save(img_path)
                         elif "image" in key and "side" in key:
                             # val is [1, C, H, W] tensor, convert to [H, W, C] numpy
@@ -712,7 +712,7 @@ def process_transitions_pi05(
                             if img_np.max() <= 1.0:
                                 img_np = (img_np * 255).astype(np.uint8)
                             
-                            img_path = os.path.join(log_dir, f"step_{i:03d}_{key.split('.')[-1]}.png")
+                            img_path = os.path.join(log_dir, f"step_{i:06d}_{key.split('.')[-1]}.png")
                             Image.fromarray(img_np).save(img_path)
 
 

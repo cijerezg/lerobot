@@ -773,6 +773,8 @@ class ReplayBuffer:
             raise ValueError("State keys must be provided when converting LeRobotDataset to Transitions.")
 
         num_frames = len(dataset)
+        if num_frames == 0:
+            return
 
         # Check if the dataset has "next.done" key
         sample = dataset[0]
@@ -788,9 +790,18 @@ class ReplayBuffer:
         if not has_done_key:
             print("'next.done' key not found in dataset. Inferring from episode boundaries...")
 
-        for i in tqdm(range(num_frames)):
-            current_sample = dataset[i]
+        from torch.utils.data import DataLoader
+        import multiprocessing
+        
+        num_workers = min(4, multiprocessing.cpu_count() or 1)
+        loader = DataLoader(
+            dataset,
+            batch_size=None,
+            num_workers=num_workers,
+            prefetch_factor=2 if num_workers > 0 else None,
+        )
 
+        def process_sample(current_sample, next_sample, is_last):
             # ----- 1) Current state -----
             current_state: dict[str, torch.Tensor] = {}
             for key in state_keys:
@@ -815,12 +826,10 @@ class ReplayBuffer:
             else:
                 # If this is the last frame or if next frame is in a different episode, mark as done
                 done = False
-                if i == num_frames - 1:
+                if is_last:
                     done = True
-                elif i < num_frames - 1:
-                    next_sample = dataset[i + 1]
-                    if next_sample["episode_index"] != current_sample["episode_index"]:
-                        done = True
+                elif next_sample["episode_index"] != current_sample["episode_index"]:
+                    done = True
 
             # Reward is inferred from done if not present
             if REWARD in current_sample:
@@ -835,8 +844,7 @@ class ReplayBuffer:
             # If not done and the next sample is in the same episode, we pull the next sample's state.
             # Otherwise (done=True or next sample crosses to a new episode), next_state = current_state.
             next_state = current_state  # default
-            if not done and (i < num_frames - 1):
-                next_sample = dataset[i + 1]
+            if not done and not is_last:
                 if next_sample["episode_index"] == current_sample["episode_index"]:
                     # Build next_state from the same keys
                     next_state_data: dict[str, torch.Tensor] = {}
@@ -865,7 +873,7 @@ class ReplayBuffer:
                         complementary_info[clean_key] = val
 
             # ----- Construct and yield the Transition -----
-            transition = Transition(
+            return Transition(
                 state=current_state,
                 action=action,
                 reward=reward,
@@ -874,7 +882,18 @@ class ReplayBuffer:
                 truncated=truncated,
                 complementary_info=complementary_info,
             )
-            yield transition
+
+        iterator = iter(loader)
+        try:
+            prev_sample = next(iterator)
+        except StopIteration:
+            return
+
+        for current_sample in tqdm(iterator, total=num_frames - 1):
+            yield process_sample(prev_sample, current_sample, is_last=False)
+            prev_sample = current_sample
+            
+        yield process_sample(prev_sample, None, is_last=True)
 
 
 # Utility function to guess shapes/dtypes from a tensor

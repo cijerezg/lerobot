@@ -217,7 +217,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
                 crop_params = self.crop_params_dict[key]
                 image = F.crop(image, *crop_params)
             if self.resize_size is not None:
-                image = F.resize(image, self.resize_size)
+                image = F.resize(image, self.resize_size, antialias=True)
                 image = image.clamp(0.0, 1.0)
             new_observation[key] = image.to(device)
 
