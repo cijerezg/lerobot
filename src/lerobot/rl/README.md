@@ -76,11 +76,11 @@ python -m lerobot.rl.learner_pi05 --config_path config-hiserl.json
 
 ### 2. Start the Actor (Client)
 
-The actor runs the policy on the robot and sends the data to the learner.
+The actor runs the policy on the robot asynchronously and sends the data to the learner. By default it runs RTC at 30Hz. Make sure `rtc_config` is enabled in your config.
 
 **Command:**
 ```bash
-python -m lerobot.rl.actor_pi05 --config_path config-hiserl.json
+python -m lerobot.rl.actor_pi05_async --config_path config-hiserl.json
 ```
 
 ### 3. Intervention & Leader Arm Control

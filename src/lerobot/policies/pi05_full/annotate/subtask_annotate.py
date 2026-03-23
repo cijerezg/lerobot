@@ -174,54 +174,46 @@ class BaseVLM(ABC):
         pass
 
 
+import textwrap
+
+
 def create_skill_segmentation_prompt(coarse_goal: str | None = None) -> str:
-    """Create the prompt for skill segmentation."""
-    goal_context = f'The overall goal is: "{coarse_goal}"\n\n' if coarse_goal else ""
+    """Create a detailed but abstract prompt for skill segmentation."""
+    goal_context = f'The overall goal of this demonstration is: "{coarse_goal}"\n\n' if coarse_goal else ""
 
     return textwrap.dedent(f"""\
         # Role
-        You are a very advanced Robotics Vision System specializing in temporal action segmentation for robot manipulation demonstrations.
+        You are an advanced Robotics Vision System specializing in precise temporal action segmentation for robot manipulation demonstrations.
 
         # Task
-        {goal_context} Segment this robot demonstration video into short atomic manipulation skills. Each skill should:
-        - Ideally last approximately 1-6 seconds, although in rare it may last more than 6 seconds. The ideal range is 1-6 seconds, though.
-        - Describe a clear, single action (e.g., "reach for blue cube", "grasp blue cube", "retract arm")
-        - Have precise start and end timestamps
+        {goal_context}Analyze the provided robot demonstration video and segment it into a continuous sequence of short, atomic manipulation skills based strictly on visual evidence.
 
-        # Requirements
-        1. **Atomic Actions**: Each skill should be a single, indivisible action
-        2. **Complete Coverage**: Skills must cover the entire video duration with no gaps
-        3. **Boundary Consistency**: The end of one skill equals the start of the next
-        4. **Natural Language**: Use clear, descriptive names for each skill
-        5. **Timestamps**: Use seconds (float) for all timestamps
+        # Strict Boundary Requirements
+        1. **Continuous Timeline**: There must be NO temporal gaps. The `end` timestamp of Skill N must be the exact `start` timestamp of Skill N+1.
+        2. **Full Coverage**: The sequence MUST start at exactly 0.0 and end exactly at the total duration of the video.
+        3. **Inter-frame Gaps**: If an action completes in the unseen gap between two frames, assume it took the maximum possible time. Set its end timestamp to immediately before the next frame begins.
+        4. **Timestamps**: Use standard floats for all seconds.
 
-        # Suggestions
-        - A skill might need to be executed several times when there are failed attempts, especially skills involving grasping. In such cases, duplicating the skill is acceptable.
-        - Keep mind in the main task specificed above. If the task is pick up the blue cube and place in the red cup, then skills generally won't involve other objects in the scene.
-        - If a skill completes in the unseen gap between two frames, assume it took the maximum possible time. Set its end timestamp to immediately before the next frame begins.
+        # Skill Granularity, Naming & Occlusion
+        1. **Atomic Actions**: Each skill must be a single, indivisible physical movement.
+        2. **Duration Limits**: The ideal range is 1.0 to 6.0 seconds. Only exceed 6.0 seconds if a single continuous motion demands it.
+        3. **Naming Convention**: Use clear, descriptive natural language describing the robot's physical action and the target object (e.g., "[verb] [object] [optional spatial modifier]").
+        4. **Task Focus**: Name skills based only on the active task elements. Do not describe passive background objects.
+        5. **Failed Attempts**: If the robot fails an action (e.g., a missed grasp) and retries, segment each attempt as its own distinct skill. Duplicating skill names for repeated attempts is expected.
+        6. **Out of View / Occlusion**: If the robot or its end-effector moves entirely out of the camera's view, assume it is continuously performing the exact same action it was executing immediately before disappearing, until visual evidence proves otherwise.
 
         # Output Format
-        After your analysis, output ONLY valid JSON with the structure in the following example:
+        Output ONLY a valid JSON object. Do not include markdown code blocks (```json), conversational text, or explanations. Use the exact schema below, substituting the bracketed `<types>` with your visual analysis:
 
-        ```json
         {{
           "skills": [
-            {{"name": "reach for black ball", "start": 0.0, "end": 5.1}},
-            {{"name": "align arm with black ball", "start": 5.1, "end": 6.3}},
-            {{"name": "grasp black ball", "start": 6.3, "end": 9.4}},
-            {{"name": "lift black ball", "start": 9.4, "end": 11.7}},
-            {{"name": "move black ball over to bowl", "start": 11.7 "end": 17.1}},
-            {{"name": "align black ball with bowl", "start": 17.1, "end": 19.3}}
-            {{"name": "release black ball", "start": 19.3, "end": 20.4}},
-            {{"name": "retract arm to neutral position", "start": 20.4, "end": 24.6}}
+            {{"name": "<action_string_1>", "start": 0.0, "end": <float_t1>}},
+            {{"name": "<action_string_2>", "start": <float_t1>, "end": <float_t2>}},
+            {{"name": "<action_string_3>", "start": <float_t2>, "end": <float_t3>}}
+            // ... continue until final video duration ...
           ]
         }}
-        ```
-        Note that this is just an example, and you should focus solely on the video to generate the skill intervals.
-
-        The first skill must start at 0.0 and the last skill must end at the video duration.
-        Remember that temporal boundaries are very important, so be very careful when assigning them.        
-        """)
+    """)
 
 
 # Qwen2-VL Implementation
@@ -1083,8 +1075,8 @@ def create_subtask_index_array(
 
         # Process each frame in the episode
         for frame_idx in range(ep_from, ep_to):
-            frame = dataset[frame_idx]
-            timestamp = frame["timestamp"].item()
+            # Accessing the underlying hf_dataset directly to bypass expensive video frame loading
+            timestamp = float(dataset.hf_dataset[int(frame_idx)]["timestamp"])
             
             # Find which skill covers this timestamp
             skill = get_skill_for_timestamp(skills, timestamp)

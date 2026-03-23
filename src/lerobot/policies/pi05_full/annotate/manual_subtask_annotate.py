@@ -1,9 +1,25 @@
+"""
+manual_subtask_annotate.py
+
+How to Run:
+-------------------
+From the root of your LeRobot repository (or where your python environment has lerobot installed), run:
+    python lerobot/src/lerobot/policies/pi05_full/annotate/manual_subtask_annotate.py
+
+Once running, a local web server will start. Open the printed URL (usually http://localhost:7860) in your browser.
+
+Keyboard Shortcuts:
+-------------------
+No longer using keyboard shortcuts. This uses a manual slider and explicit skill buttons, which provides a cleaner, state-based annotation process.
+"""
 import logging
 import json
 import gradio as gr
 from pathlib import Path
 import traceback
 import cv2
+import yaml
+
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.pi05_full.annotate.subtask_annotate import (
@@ -21,6 +37,19 @@ from rich.console import Console
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def load_skills():
+    try:
+        skills_path = Path(__file__).parent / "skills.yaml"
+        if skills_path.exists():
+            with open(skills_path, "r") as f:
+                return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning(f"Could not load skills.yaml: {e}")
+    return {}
+
+SKILLS_DICT = load_skills()
+
 
 def load_dataset_metadata(data_dir, repo_id, video_key):
     """Loads dataset and existing annotations."""
@@ -60,15 +89,48 @@ def load_dataset_metadata(data_dir, repo_id, video_key):
 
 
 
+def generate_timeline_html(annotation_text, total_duration):
+    if not total_duration or total_duration <= 0:
+        return "<div style='height: 30px; background: #f0f0f0; border-radius: 4px;'></div>"
+    
+    html = "<div style='display: flex; height: 30px; background: #eaecf0; border-radius: 4px; overflow: hidden; width: 100%;'>"
+    colors = ["#ffadad", "#ffd6a5", "#fdffb6", "#caffbf", "#9bf6ff", "#a0c4ff", "#bdb2ff", "#ffc6ff"]
+    
+    parsed_skills = []
+    # Handle possible literal '\\n' strings mixed with actual newlines
+    clean_text = annotation_text.replace('\\n', '\n')
+    lines = [L.strip() for L in clean_text.strip().split('\n') if L.strip()]
+    last_end = 0.0
+    for line in lines:
+        try:
+            parts = [p.strip() for p in line.split(',')]
+            start, end, name = float(parts[0]), float(parts[1]), parts[2]
+            parsed_skills.append((start, end, name))
+            last_end = end
+        except:
+            pass
+            
+    for i, (start, end, name) in enumerate(parsed_skills):
+        width_pct = max(0, min(100, ((end - start) / total_duration) * 100))
+        color = colors[i % len(colors)]
+        html += f"<div style='width: {width_pct}%; background: {color}; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; border-right: 1px solid white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #333;' title='{name} ({start:.2f}-{end:.2f})'>{name}</div>"
+        
+    if last_end < total_duration:
+        rem_pct = max(0, min(100, ((total_duration - last_end) / total_duration) * 100))
+        html += f"<div style='width: {rem_pct}%; background: transparent; height: 100%;'></div>"
+        
+    html += "</div>"
+    return html
+
 def load_episode_video(dataset, episode_idx, video_key, annotations, coarse_goal):
     """Extracts video for the given episode and prepares the text area."""
     if dataset is None:
-        return None, "Please load a dataset first.", ""
+        return None, "Please load a dataset first.", "", 1.0, "<div style='height: 30px; background: #f0f0f0; border-radius: 4px;'></div>"
     
     try:
         video_path = dataset.root / dataset.meta.get_video_file_path(episode_idx, video_key)
         if not video_path.exists():
-            return None, f"Video not found: {video_path}", ""
+            return None, f"Video not found: {video_path}", "", 1.0, "<div style='height: 30px; background: #f0f0f0; border-radius: 4px;'></div>"
         
         ep = dataset.meta.episodes[episode_idx]
         start_ts = float(ep[f"videos/{video_key}/from_timestamp"])
@@ -86,20 +148,20 @@ def load_episode_video(dataset, episode_idx, video_key, annotations, coarse_goal
             ep_skills = annotations[episode_idx].skills
             for skill in ep_skills:
                 annotation_text += f"{skill.start:.2f}, {skill.end:.2f}, {skill.name}\n"
-        else:
-            annotation_text = f"0.00, {duration:.2f}, New Skill"
             
         status = f"Loaded episode {episode_idx} (Duration: {duration:.2f}s)"
-        return str(extracted_path), status, annotation_text
+        return str(extracted_path), status, annotation_text, duration, generate_timeline_html(annotation_text, duration)
     except Exception as e:
         logger.error(f"Failed to load video: {e}")
         logger.error(traceback.format_exc())
-        return None, f"Error: {e}", ""
+        return None, f"Error: {e}", "", 1.0, "<div style='height: 30px; background: #f0f0f0; border-radius: 4px;'></div>"
+
 
 def parse_annotations_text(text):
     """Parses the multiline CSV text into Skill objects."""
     skills = []
-    for line in text.strip().split('\n'):
+    clean_text = text.replace('\\n', '\n')
+    for line in clean_text.strip().split('\n'):
         if not line.strip():
             continue
         parts = [p.strip() for p in line.split(',')]
@@ -229,6 +291,7 @@ def build_app():
         
         dataset_state = gr.State(None)
         annotations_state = gr.State({})
+        duration_state = gr.State(1.0)
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -252,15 +315,30 @@ def build_app():
                 
                 ep_status = gr.Textbox(label="Episode Status", interactive=False)
                 video_player = gr.Video(label="Episode Video Tape", interactive=False)
-                gr.Markdown("*Tip: Use the three-dots menu (⋮) on the video player to increase playback speed (e.g., to 1.5x or 2x).*")
+                timeline_html = gr.HTML("<div style='height: 30px; background: #f0f0f0; border-radius: 4px;'></div>", label="Skill Timeline")
                 
+                dummy_time = gr.Number(value=0.0, visible=False)
+                
+                gr.Markdown("#### Dynamic Skill Buttons")
+                gr.Markdown("*Pause the video at the end of an action, then click a button below to save it.*")
+                
+                skill_buttons = []
+                with gr.Row():
+                    for key, skill_name in SKILLS_DICT.items():
+                        btn = gr.Button(f"{skill_name} [{key}]", variant="secondary")
+                        skill_buttons.append((btn, skill_name))
+
                 coarse_goal_input = gr.Textbox(label="Coarse Goal", value="Perform the demonstrated manipulation task.")
+
                 
                 gr.Markdown("#### Annotations (Format: `start_time, end_time, skill_name`)")
                 gr.Markdown("Example:\n`0.00, 2.50, Move to block`\n`2.50, 4.00, Grasp block`")
                 annotation_input = gr.Textbox(label="Edit Skills", lines=10)
                 
-                save_ep_btn = gr.Button("Save Episode Annotations", variant="secondary")
+                with gr.Row():
+                    save_ep_btn = gr.Button("Save Episode Annotations", variant="secondary")
+                    save_next_ep_btn = gr.Button("Save & Load Next", variant="primary")
+                    
                 save_status = gr.Textbox(label="Save Status", interactive=False)
                 
         # Callbacks
@@ -273,13 +351,70 @@ def build_app():
         load_ep_btn.click(
             load_episode_video,
             inputs=[dataset_state, episode_slider, video_key_input, annotations_state, coarse_goal_input],
-            outputs=[video_player, ep_status, annotation_input]
+            outputs=[video_player, ep_status, annotation_input, duration_state, timeline_html]
         )
         
+        # Update timeline if text is modified manually
+        annotation_input.change(
+            generate_timeline_html,
+            inputs=[annotation_input, duration_state],
+            outputs=[timeline_html]
+        )
+        
+        # Skill button callbacks
+        def create_skill_callback(s_name):
+            def callback(t, current_text, total_duration):
+                start_time = 0.0
+                clean_text = current_text.replace('\\n', '\n')
+                lines = [L.strip() for L in clean_text.strip().split('\n') if L.strip()]
+                if lines:
+                    try:
+                        last_line = lines[-1]
+                        parts = [p.strip() for p in last_line.split(',')]
+                        if len(parts) >= 2:
+                            start_time = float(parts[1])
+                    except Exception:
+                        pass
+                
+                # Validation to prevent backwards bounding
+                if t <= start_time:
+                    t = start_time + 0.5  # Just an arbitrary minimum duration
+                    
+                new_line = f"{start_time:.2f}, {t:.2f}, {s_name}"
+                new_text = current_text.rstrip() + "\n" + new_line + "\n" if current_text.strip() else new_line + "\n"
+                return new_text, generate_timeline_html(new_text, total_duration)
+            return callback
+
+        for btn, name in skill_buttons:
+            btn.click(
+                create_skill_callback(name),
+                inputs=[dummy_time, annotation_input, duration_state],
+                outputs=[annotation_input, timeline_html],
+                js="(dummy, text, dur) => { const v = document.querySelector('video'); return [v ? v.currentTime : 0.0, text, dur]; }"
+            )
+
         save_ep_btn.click(
             save_episode_annotations,
             inputs=[dataset_state, episode_slider, annotation_input, coarse_goal_input, annotations_state],
             outputs=[annotations_state, save_status]
+        )
+        
+        def increment_ep(dataset, ep_idx):
+            if dataset is None: return ep_idx
+            return min(ep_idx + 1, dataset.meta.total_episodes - 1)
+            
+        save_next_ep_btn.click(
+            save_episode_annotations,
+            inputs=[dataset_state, episode_slider, annotation_input, coarse_goal_input, annotations_state],
+            outputs=[annotations_state, save_status]
+        ).then(
+            increment_ep,
+            inputs=[dataset_state, episode_slider],
+            outputs=[episode_slider]
+        ).then(
+            load_episode_video,
+            inputs=[dataset_state, episode_slider, video_key_input, annotations_state, coarse_goal_input],
+            outputs=[video_player, ep_status, annotation_input, duration_state, timeline_html]
         )
         
         compile_btn.click(

@@ -4,12 +4,12 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 8,
+    "batch_size": 30,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 100,
-    "offline_output_dir": "outputs/pi05_full_offline_training_v4",
-    "offline_save_freq": 500,
+    "offline_output_dir": "outputs/pi05_full_offline_training_v2",
+    "offline_save_freq": 200,
     "online_buffer_save_episode_freq": 12,
     "wandb": {
         "enable": true,
@@ -18,16 +18,17 @@
         "disable_artifact": true
     },
     "dataset": {
-        "root": "outputs/annotated_dataset",
+        "root": "outputs/annotated_dataset-v3",
         "repo_id": "cijerezg/yellow-car-offline-training-v2",
         "use_imagenet_stats": false
     },
     "policy": {
         "type": "pi05_rl",
-        "task": "Pick up the yellow car and put it in the bowl",
-        "pi05_checkpoint": "outputs/pi05_full_offline_training_v4/checkpoints/009000/pretrained_model",
+        "task": "Pick up the red truck and put it in the bowl",
+        "pi05_checkpoint": "outputs/pi05_full_offline_training_v2/checkpoints/000600/pretrained_model",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
+        "num_inference_steps": 5,
         "use_separate_critic": true,
         "knowledge_insulation": false,
         "loss_weight_flow": 1.0,
@@ -101,8 +102,8 @@
         "dtype": "bfloat16",
         "gradient_checkpointing": true,
         "online_steps": 20000,
-        "online_buffer_capacity": 10000,
-        "offline_buffer_capacity": 70000,
+        "online_buffer_capacity": 30000,
+        "offline_buffer_capacity": 80000,
         "online_step_before_learning": 10,
         "policy_update_freq": 1,
         "discount": 0.97,
@@ -113,7 +114,7 @@
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 2,
+        "gradient_accumulation_steps": 3,
         "critic_network_kwargs": {
             "hidden_dims": [
                 256,
@@ -137,25 +138,25 @@
         "robot": {
             "type": "so101_follower",
             "port": "/dev/ttyACM0",
-            "id": "follower_arm_v1",
+            "id": "follower_arm_v2",
             "cameras": {
                 "wrist": {
                     "type": "opencv",
-                    "index_or_path": 4,
+                    "index_or_path": 2,
                     "height": 480,
                     "width": 640,
                     "fps": 30
                 },
                 "top": {
                     "type": "opencv",
-                    "index_or_path": 0,
+                    "index_or_path": 4,
                     "height": 480,
                     "width": 640,
                     "fps": 30
                 },
                 "side": {
                     "type": "opencv",
-                    "index_or_path": 2,
+                    "index_or_path": 0,
                     "height": 480,
                     "width": 640,
                     "fps": 30
@@ -165,7 +166,7 @@
         "teleop": {
             "type": "so101_leader",
             "port": "/dev/ttyACM1",
-            "id": "leader_arm_v1"
+            "id": "leader_arm_v2"
         },
         "processor": {
             "control_mode": "leader",

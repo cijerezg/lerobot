@@ -1,0 +1,17 @@
+# Dummy skills library for manual annotation
+# Map single characters (keys) to skill names.
+# Example:
+# a: Approach object
+# b: Grasp object
+# c: Lift object
+# d: Move object to target
+# e: Place object
+# f: Retreat
+
+a: reach red truck
+b: align gripper with red truck
+c: grasp red truck
+d: lift red truck
+e: bring red truck toward bowl
+f: release red truck
+g: retract arm to neutral position

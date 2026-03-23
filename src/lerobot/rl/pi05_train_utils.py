@@ -764,6 +764,8 @@ def _update_actor(
         training_infos["actor_grad_norm"] = actor_grad_norm
         training_infos["advantage_mean"] = all_advantage_values.mean().item()
         training_infos["advantage_std"] = all_advantage_values.std().item() if all_advantage_values.numel() > 1 else 0.0
+        training_infos["advantage_positive_label_fraction"] = (all_advantage_values > 0.25).float().mean().item() if all_advantage_values.numel() > 0 else 0.0
+        training_infos["advantage_histogram"] = all_advantage_values.detach().float().cpu().numpy()
         training_infos["target_value_mean"] = all_target_values_actor.mean().item()
         training_infos["reward_mean"] = all_reward_values.mean().item()
         training_infos["critic_value_mean_actor"] = all_critic_values_actor.mean().item()
