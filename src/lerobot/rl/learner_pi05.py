@@ -358,8 +358,8 @@ def add_actor_information_and_train(
             "time_mlp_in" in name or
             "time_mlp_out" in name or
             "gemma_expert" in name or
-            "multi_modal_project" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [24, 25, 26])) or
+            #"multi_modal_project" in name or
+            #("vision_tower" in name and any(f".{i}." in name for i in [24, 25, 26])) or
             ("language_model" in name and any(f".{i}." in name for i in [15, 16, 17])) or 
             "language_model.norm" in name or
 

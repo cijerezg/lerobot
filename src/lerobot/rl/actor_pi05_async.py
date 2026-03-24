@@ -94,6 +94,11 @@ import math
 @parser.wrap()
 def actor_cli(cfg: TrainRLServerPipelineConfig):
     cfg.validate()
+    
+    if getattr(cfg, "use_rerun", False):
+        import rerun as rr
+        rr.init("lerobot_actor", spawn=True, default_blueprint=None)
+        
     display_pid = False
     if not use_threads(cfg):
         import torch.multiprocessing as mp

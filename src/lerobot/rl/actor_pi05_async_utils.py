@@ -30,6 +30,7 @@ class SharedStateActor:
         self.inference_wait_time = 0.0
         self.inference_count = 0
         self.inference_latencies = []
+        self.current_step = 0
 
     def add_env_wait_time(self, wait_time: float):
         with self.lock:
@@ -328,6 +329,11 @@ def env_interaction_worker_actor(
                     break
                 
                 logger.info("[ACTOR] Starting next episode.")
+                
+                if getattr(cfg, "use_rerun", False):
+                    import rerun as rr
+                    rr.log("/", rr.Clear(recursive=True))
+
                 obs, info = online_env.reset()
                 env_processor.reset()
                 action_processor.reset()
@@ -469,10 +475,30 @@ def env_interaction_worker_actor(
             list_transition_to_send_to_learner.append(transition_to_send)
 
             next_policy_fmt_obs = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
+
+            if getattr(cfg, "use_rerun", False):
+                import rerun as rr
+                rr.set_time_sequence("step", interaction_step)
+                
+                # Log the pre-processed low-res tensor images from observation
+                for key, val in next_policy_fmt_obs.items():
+                    if "image" in key:
+                        val_np = val[0].cpu().numpy() if val.ndim == 4 else val.cpu().numpy()
+                        image_np = val_np.transpose(1, 2, 0)
+                        rr.log(f"world/cameras/{key}", rr.Image(image_np))
+                
+                # Keep tracking actual joint state so we understand physical robot state
+                if hasattr(online_env, 'get_raw_joint_positions'):
+                    joints = online_env.get_raw_joint_positions()
+                    if joints:
+                        for j_name, j_val in joints.items():
+                            rr.log(f"world/robot_joints/{j_name}", rr.Scalars(float(j_val)))
+
             shared_state.update_observation(next_policy_fmt_obs, is_intervening)
             transition = new_transition
             
             interaction_step += 1
+            shared_state.current_step = interaction_step
 
             # --- EPISODE END HANDLING ---
             if done or truncated:

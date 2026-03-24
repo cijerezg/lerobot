@@ -214,3 +214,4 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     online_buffer_save_episode_freq: int | None = None
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
+    use_rerun: bool = True
