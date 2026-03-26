@@ -97,7 +97,7 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
     
     if getattr(cfg, "use_rerun", False):
         import rerun as rr
-        rr.init("lerobot_actor", spawn=True, default_blueprint=None)
+        rr.init("lerobot_actor", spawn=True)
         
     display_pid = False
     if not use_threads(cfg):

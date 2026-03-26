@@ -110,3 +110,5 @@ def log_rerun_data(
                     flat = v.flatten()
                     for i, vi in enumerate(flat):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+
+

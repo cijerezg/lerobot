@@ -507,6 +507,7 @@ class ReplayBuffer:
         optimize_memory: bool = False,
         reward_normalization_constant: float = 1.0,
         terminal_failure_reward: float = -1.0,
+        inject_complementary_info: dict | None = None,
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -548,7 +549,11 @@ class ReplayBuffer:
         )
 
         # Process dataset transitions one at a time to save memory
-        transition_generator = cls._lerobotdataset_to_transitions_generator(dataset=lerobot_dataset, state_keys=state_keys)
+        transition_generator = cls._lerobotdataset_to_transitions_generator(
+            dataset=lerobot_dataset, 
+            state_keys=state_keys,
+            inject_complementary_info=inject_complementary_info,
+        )
         
         # Get first transition for initialization
         first_transition = next(transition_generator, None)
@@ -758,6 +763,7 @@ class ReplayBuffer:
     def _lerobotdataset_to_transitions_generator(
         dataset: LeRobotDataset,
         state_keys: Sequence[str] | None = None,
+        inject_complementary_info: dict | None = None,
     ):
         """
         Generator version that yields RL transitions one at a time to save memory.
@@ -784,6 +790,12 @@ class ReplayBuffer:
         complementary_info_keys = [key for key in sample if key.startswith("complementary_info.")]
         if "subtask_index" in sample:
             complementary_info_keys.append("subtask_index")
+            
+        if inject_complementary_info:
+            for k in inject_complementary_info:
+                if k not in complementary_info_keys:
+                    complementary_info_keys.append(k)
+
         has_complementary_info = len(complementary_info_keys) > 0
 
         # If not, we need to infer it from episode boundaries
@@ -864,7 +876,20 @@ class ReplayBuffer:
                         clean_key = key[len("complementary_info."):]
                     else:
                         clean_key = key
-                    val = current_sample[key]
+                        
+                    if inject_complementary_info is not None and clean_key in inject_complementary_info:
+                        val = inject_complementary_info[clean_key]
+                        if isinstance(val, bool):
+                            val = torch.tensor(val, dtype=torch.bool)
+                        elif isinstance(val, float):
+                            val = torch.tensor(val, dtype=torch.float32)
+                        elif hasattr(val, "dtype"): # Already a tensor
+                            pass 
+                        else:
+                            val = torch.tensor(val)
+                    else:
+                        val = current_sample[key]
+                        
                     # Handle tensor and non-tensor values differently
                     if isinstance(val, torch.Tensor):
                         complementary_info[clean_key] = val.unsqueeze(0)  # Add batch dimension

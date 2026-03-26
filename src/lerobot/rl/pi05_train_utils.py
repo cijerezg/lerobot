@@ -429,6 +429,23 @@ def _compute_advantage_with_interventions(
     done: torch.Tensor,
     cfg: any
 ):
+    is_golden_mask = None
+    if "complementary_info" in batch and "is_golden" in batch["complementary_info"]:
+        is_golden = batch["complementary_info"]["is_golden"]
+        is_golden_mask = (is_golden > 0.5)
+        
+        # Expand mask robustly
+        if hasattr(rewards, "shape") and is_golden_mask.shape != rewards.shape:
+             is_golden_mask = is_golden_mask.view(rewards.shape)
+             
+        if is_golden_mask.all():
+             # Golden dataset bypass: skip critic pass to save computation
+             raw_advantage = torch.ones_like(rewards) * 1.0
+             raw_advantage_flat = raw_advantage.view(-1)
+             current_v = torch.zeros_like(rewards)
+             target_v = torch.zeros_like(rewards)
+             return raw_advantage, raw_advantage_flat, current_v, target_v
+
     # Preprocess for Critic
     forward_batch_pass1 = preprocess_batch_for_pi05(
         policy=policy,
@@ -449,6 +466,12 @@ def _compute_advantage_with_interventions(
         # Calculate Raw Advantage
         raw_advantage = target_v - current_v
         
+        # [NEW] Golden Dataset Override
+        if is_golden_mask is not None:
+            if is_golden_mask.shape != raw_advantage.shape:
+                is_golden_mask = is_golden_mask.view(raw_advantage.shape)
+            raw_advantage[is_golden_mask] = 1.0
+        
         # [NEW] Intervention Override Logic
         intervention_key = TeleopEvents.IS_INTERVENTION.value
         if "complementary_info" in batch and intervention_key in batch["complementary_info"]:
@@ -456,12 +479,7 @@ def _compute_advantage_with_interventions(
             is_intervention_mask = (is_intervention > 0.5)
             
             if is_intervention_mask.shape != raw_advantage.shape:
-                if is_intervention_mask.numel() < raw_advantage.numel():
-                    padding_size = raw_advantage.numel() - is_intervention_mask.numel()
-                    padding = torch.zeros(padding_size, dtype=torch.bool, device=is_intervention_mask.device)
-                    is_intervention_mask = torch.cat([is_intervention_mask.view(-1), padding]).view(raw_advantage.shape)
-                else:
-                    is_intervention_mask = is_intervention_mask.view(raw_advantage.shape)
+                is_intervention_mask = is_intervention_mask.view(raw_advantage.shape)
             
             raw_advantage[is_intervention_mask] = 1.0 # Max advantage for interventions
 

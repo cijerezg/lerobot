@@ -6,6 +6,7 @@ import copy
 import traceback
 
 import torch
+from lerobot.utils.robot_utils import precise_sleep
 from lerobot.processor import TransitionKey
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
@@ -327,6 +328,8 @@ def env_interaction_worker(
         policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
         shared_state.update_observation(policy_fmt_obs, False)
 
+        interaction_step = 0
+
         while shared_state.running:
             start_time = time.perf_counter()
             
@@ -408,6 +411,23 @@ def env_interaction_worker(
 
             # --- STATE PROPAGATION ---
             next_policy_fmt_obs = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
+            
+            if getattr(cfg, "use_rerun", False):
+                import rerun as rr
+                rr.set_time_sequence("step", interaction_step)
+                
+                for key, val in next_policy_fmt_obs.items():
+                    if "image" in key:
+                        val_np = val[0].cpu().numpy() if val.ndim == 4 else val.cpu().numpy()
+                        image_np = val_np.transpose(1, 2, 0)
+                        rr.log(f"world/cameras/{key}", rr.Image(image_np))
+                
+                if hasattr(online_env, 'get_raw_joint_positions'):
+                    joints = online_env.get_raw_joint_positions()
+                    if joints:
+                        for j_name, j_val in joints.items():
+                            rr.log(f"world/robot_joints/{j_name}", rr.Scalars(float(j_val)))
+
             shared_state.update_observation(next_policy_fmt_obs, is_intervening)
             transition = new_transition
 
@@ -423,7 +443,8 @@ def env_interaction_worker(
             
             shared_state.add_env_wait_time(sleep_time)
             
-            time.sleep(sleep_time)
+            interaction_step += 1
+            precise_sleep(sleep_time)
 
         logger.info("[ENV] Environmental loop complete.")
     except Exception as e:

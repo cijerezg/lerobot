@@ -82,6 +82,10 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     
     signal.signal(signal.SIGINT, intercept_sigint)
 
+    if getattr(cfg, "use_rerun", False):
+        import rerun as rr
+        rr.init("lerobot_inference_v1", spawn=True)
+
     logger.info("Instantiating policy architecture")
     policy = make_policy(
         cfg=cfg.policy,

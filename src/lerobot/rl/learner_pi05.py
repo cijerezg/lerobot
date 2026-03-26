@@ -404,9 +404,15 @@ def add_actor_information_and_train(
         else:
             logging.info("load offline dataset")
             dataset_offline_path = os.path.join(cfg.output_dir, "dataset_offline")
+
+            episodes = cfg.dataset.episodes
+            if episodes is None and cfg.dataset.max_episodes is not None:
+                episodes = list(range(cfg.dataset.max_episodes))
+
             offline_dataset = LeRobotDataset(
                 repo_id=cfg.dataset.repo_id,
                 root=dataset_offline_path,
+                episodes=episodes,
             )
 
         # Disable delta_timestamps to avoid chunking (we want single frames for the buffer)
@@ -423,6 +429,7 @@ def add_actor_information_and_train(
             capacity=cfg.policy.offline_buffer_capacity,
             reward_normalization_constant=cfg.policy.reward_normalization_constant,
             terminal_failure_reward=cfg.policy.terminal_failure_reward,
+            inject_complementary_info={"is_golden": True},
         )
         offline_replay_buffer.dataset = offline_dataset
 
