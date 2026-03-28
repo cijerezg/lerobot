@@ -8,8 +8,8 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.dataset_tools import convert_image_to_video_dataset
 
 # Paths
-DATA_DIR = Path("outputs/train/2026-03-17/20-43-01_default/online_buffer")
-OUTPUT_DIR = Path("outputs/train/2026-03-17/20-43-01_default/online_buffer_video")
+DATA_DIR = Path("outputs/train/2026-03-25/20-39-50_default/online_buffer")
+OUTPUT_DIR = Path("outputs/train/2026-03-25/20-39-50_default/online_buffer_video")
 
 def main():
     if not DATA_DIR.exists():

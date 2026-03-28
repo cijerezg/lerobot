@@ -254,7 +254,6 @@ class RobotEnv(gym.Env):
     def step(self, action) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
         joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
-
         self.robot.send_action(joint_targets_dict)
 
         obs = self._get_observation()

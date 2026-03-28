@@ -1,4 +1,5 @@
 import torch
+from typing import Any
 import torch.nn as nn
 import torch.nn.functional as F
 from lerobot.utils.constants import (
@@ -23,6 +24,9 @@ from lerobot.processor import PolicyProcessorPipeline, NormalizerProcessorStep
 import time
 import numpy as np
 import logging
+import os
+from pathlib import Path
+from typing import Any
 
 from lerobot.processor.core import TransitionKey
 
@@ -440,10 +444,10 @@ def _compute_advantage_with_interventions(
              
         if is_golden_mask.all():
              # Golden dataset bypass: skip critic pass to save computation
-             raw_advantage = torch.ones_like(rewards) * 1.0
+             raw_advantage = torch.ones_like(rewards).view(-1, 1) * 1.0
              raw_advantage_flat = raw_advantage.view(-1)
-             current_v = torch.zeros_like(rewards)
-             target_v = torch.zeros_like(rewards)
+             current_v = torch.zeros_like(rewards).view(-1, 1)
+             target_v = torch.zeros_like(rewards).view(-1, 1)
              return raw_advantage, raw_advantage_flat, current_v, target_v
 
     # Preprocess for Critic
@@ -498,7 +502,17 @@ def _prepare_actor_batch(
     preprocessor: any,
 ) -> tuple[dict, torch.Tensor | None]:
     batch_for_proc = {k: v for k, v in observations.items()}
-    # batch_for_proc["task"] and ["advantage"] are now inside COMPLEMENTARY_DATA below
+    
+    if hasattr(cfg.policy, "use_displacement_delta") and cfg.policy.use_displacement_delta:
+        # actions: [B, T, D], anchor_state: [B, D]
+        # We assume OBS_STATE is the first state in the observation window [B, D]
+        from lerobot.utils.constants import OBS_STATE
+        if OBS_STATE in observations:
+            anchor_state = observations[OBS_STATE]
+            actions = actions - anchor_state[:, None, :]
+        else:
+            logging.warning(f"[TRAIN] use_displacement_delta is True but {OBS_STATE} not found in observations!")
+
     batch_for_proc[ACTION] = actions
     
     # Inject mapped subtasks
@@ -522,7 +536,7 @@ def _prepare_actor_batch(
         if preprocessor is None:
             raise ValueError("preprocessor must be provided for PI05 update step")
         processed_batch = preprocessor(batch_for_proc)
-        
+               
     return processed_batch, subtask_indices
 
 
@@ -974,6 +988,29 @@ def log_pi05_training_metrics(
     #     #     optimization_step=optimization_step,
     #     #     wandb_logger=wandb_logger,
     #     # )
+def unflatten_stats(stats: dict[str, torch.Tensor | Any]) -> dict[str, dict[str, Any]]:
+    """
+    Converts a flat dictionary of stats (e.g., {"action.p1": tensor})
+    into a nested dictionary (e.g., {"action": {"p1": tensor}}).
+    
+    If the key doesn't contain a dot, it is preserved at the top level.
+    """
+    unflattened = {}
+    for key, value in stats.items():
+        if "." in key:
+            prefix, suffix = key.rsplit(".", 1)
+            if prefix not in unflattened:
+                unflattened[prefix] = {}
+            unflattened[prefix][suffix] = value
+        else:
+            if key not in unflattened:
+                unflattened[key] = value
+            elif isinstance(unflattened[key], dict) and isinstance(value, dict):
+                unflattened[key].update(value)
+            else:
+                unflattened[key] = value
+    return unflattened
+
 
 def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=True):
     """
@@ -1018,35 +1055,72 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
     # 3. Otherwise, try to load stats from the checkpoint
     elif cfg.policy.pi05_checkpoint:
         try:
+            checkpoint_path = Path(cfg.policy.pi05_checkpoint)
+            config_path = checkpoint_path / f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+            
             if is_main_process:
-                logging.info(f"Loading pretrained pipeline from {cfg.policy.pi05_checkpoint} to extract stats...")
+                logging.info(f"Extracting stats from pretrained pipeline config: {config_path}")
             
-            # Load existing pipeline just to grab stats
-            # We specifically look for "policy_preprocessor.json"
-            temp_pipeline = PolicyProcessorPipeline.from_pretrained(
-                cfg.policy.pi05_checkpoint,
-                config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
-            )
-            for step in temp_pipeline.steps:
-                if isinstance(step, NormalizerProcessorStep):
-                    dataset_stats = step.stats
-                    if is_main_process:
-                        logging.info("Successfully extracted dataset_stats from NormalizerProcessorStep.")
-                    break
-            
-            if dataset_stats is None and is_main_process:
-                logging.warning("No NormalizerProcessorStep found in pretrained pipeline! Stats will be None.")
+            if not config_path.exists():
+                if is_main_process:
+                    logging.warning(f"Pipeline config not found at {config_path}. Stats will be None.")
+                dataset_stats = None
+            else:
+                import json
+                from safetensors.torch import load_file
                 
+                with open(config_path, "r") as f:
+                    processor_config = json.load(f)
+                
+                # Find the normalizer step and its state file
+                found_normalizer = False
+                for step_entry in processor_config.get("steps", []):
+                    if step_entry.get("registry_name") == "normalizer_processor":
+                        state_filename = step_entry.get("state_file")
+                        if state_filename:
+                            state_path = checkpoint_path / state_filename
+                            if state_path.exists():
+                                dataset_stats = load_file(str(state_path))
+                                if is_main_process:
+                                    logging.info(f"Successfully loaded stats from {state_path}")
+                                found_normalizer = True
+                                break
+                
+                if not found_normalizer and is_main_process:
+                    logging.warning("No 'normalizer_processor' step with a state file found in the pipeline config.")
+                
+                # Unflatten stats if loaded from state file
+                if dataset_stats is not None:
+                    dataset_stats = unflatten_stats(dataset_stats)
         except Exception as e:
             if is_main_process:
-                logging.warning(f"Failed to load pretrained pipeline for stats extraction: {e}")
+                logging.warning(f"Failed to extract stats from checkpoint: {e}")
                 logging.warning("Proceeding with dataset stats as fallback.")
-            
+            dataset_stats = None
+
+        # Fallback if not found in checkpoint
+        if dataset_stats is None:
+            if is_main_process:
+                logging.info("Falling back to dataset stats...")
             if dataset is not None:
                 dataset_stats = dataset.meta.stats
-            else:
-                 if is_main_process:
-                     logging.warning("Fallback to dataset failed: no dataset provided! Stats will be None.")
+            elif is_main_process:
+                logging.warning("Fallback to dataset failed: no dataset provided! Stats will be None.")
+    
+    # [NEW] Load Displacement Stats if Recursive Delta is enabled
+    if getattr(cfg.policy, "use_displacement_delta", False):
+        stats_path = getattr(cfg.policy, "displacement_stats_path", None)
+        if stats_path and os.path.exists(stats_path):
+            if is_main_process:
+                logging.info(f"Loading displacement stats from {stats_path}")
+            disp_stats = torch.load(stats_path, map_location="cpu")
+            # Override 'action' stats in dataset_stats
+            if dataset_stats is None:
+                dataset_stats = {}
+            dataset_stats[ACTION] = disp_stats
+        else:
+            if is_main_process:
+                logging.warning(f"use_displacement_delta is True but displacement_stats_path '{stats_path}' is invalid!")
 
     # Create fresh pipeline with PI05FullConfig structure + Extracted Stats
     preprocessor, postprocessor = make_pre_post_processors(

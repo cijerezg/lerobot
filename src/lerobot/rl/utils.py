@@ -55,6 +55,15 @@ def preprocess_batch_for_pi05(
         "advantage": torch.full((current_batch_size, 1), inference_advantage, device=actions.device)
     }
 
+    # [NEW] Recursive Delta Action Space (Displacement)
+    if hasattr(policy_config, "use_displacement_delta") and policy_config.use_displacement_delta:
+        from lerobot.utils.constants import OBS_STATE
+        if OBS_STATE in observations:
+            anchor_state = observations[OBS_STATE]
+            actions = actions - anchor_state[:, None, :]
+        else:
+            logging.warning(f"[UTILS] use_displacement_delta is True but {OBS_STATE} not found in observations!")
+
     # Construct EnvTransition for current step
     batch_for_proc = {
         TransitionKey.ACTION: actions,

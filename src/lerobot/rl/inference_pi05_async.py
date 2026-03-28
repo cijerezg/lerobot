@@ -25,6 +25,9 @@ Usage:
     python lerobot/src/lerobot/rl/inference_pi05_async.py --config-path=config-hiserl.json
 """
 
+episode_logging_freq = 1
+episode_save_freq = 3
+
 import logging
 import time
 import sys
@@ -47,6 +50,7 @@ from lerobot.rl.gym_manipulator import make_processors, make_robot_env
 import lerobot.rl.rl_pi05  # Important: Register PI05RLConfig via import side-effects
 from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
 from lerobot.rl.inference_utils import SharedState, get_actions_worker, env_interaction_worker
+from lerobot.rl.buffer import ReplayBuffer
 
 
 @parser.wrap()
@@ -58,7 +62,7 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     logger.info("Initializing Standalone Asynchronous Pi05 Inference")
 
     # Override configurations for isolated actor running
-    cfg.policy.use_separate_critic = False
+    # cfg.policy.use_separate_critic = False  # Critic is now needed for logging
     set_seed(cfg.seed)
 
     device_name = getattr(cfg.policy, "actor_device", None)
@@ -119,6 +123,27 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     shared_state = SharedState()
     shared_state.running = not shutdown_event.is_set()
     
+    # Initialize Episode parameters
+    shared_state.episode_logging_freq = episode_logging_freq
+    shared_state.episode_save_freq = episode_save_freq
+    # Add them to cfg for worker access if needed (though they are in shared_state too)
+    cfg.episode_logging_freq = episode_logging_freq
+    cfg.episode_save_freq = episode_save_freq
+
+    shared_state.is_logging_episode = (shared_state.episode_counter % episode_logging_freq == 0)
+
+    # Initialize ReplayBuffer for recording
+    logger.info("Initializing ReplayBuffer for recording")
+    state_keys = list(cfg.policy.input_features.keys())
+    # capacity: 10000 steps should be plenty for a few episodes
+    replay_buffer = ReplayBuffer(
+        capacity=10000,
+        device=device.type,
+        state_keys=state_keys,
+        storage_device="cpu", # Keep on CPU
+    )
+    shared_state.replay_buffer = replay_buffer
+
     action_queue = ActionQueue(policy.config.rtc_config)
 
     # Spawn daemonized Thread Wrappers
@@ -133,7 +158,7 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     logger.info("Spawning Environment worker thread.")
     environment_thread = Thread(
         target=env_interaction_worker,
-        args=(online_env, env_processor, action_processor, action_queue, shared_state, teleop_device, cfg, policy.postprocessor),
+        args=(online_env, env_processor, action_processor, action_queue, shared_state, teleop_device, cfg, policy, policy.postprocessor),
         daemon=True,
         name="env_interaction_worker"
     )

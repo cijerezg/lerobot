@@ -109,7 +109,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
                 adv = advantages[i] / self.advantage_scaling
                 adv = np.tanh(adv)
                 
-                bins = np.array([-1.0, 0.25, 1.0])
+                bins = np.array([-1.0, 0.35, 1.0])
                 # Clip to range
                 adv = np.clip(adv, -1.0, 1.0)
                 # digitize

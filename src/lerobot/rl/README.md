@@ -1,4 +1,33 @@
-# Pi05 RL Usage Guide
+# Implementation of RECAP-like RL algorithm
+
+
+This work aims to replicate [RECAP](https://arxiv.org/pdf/2511.14759) from Physical Intelligence. RECAP is the algorithm used to train $\pi_{0.6}$. 
+
+The key idea of RECAP is an advantage-conditioned VLA. Specifically, a critic is trained along the policy, and the advantage value from the critic is fed to the policy as an extended part of the prompt. As a result, the policy learns to distinguish between high-advantage (good) and low-advantage (bad) actions.
+
+This is very useful for two reasons:
+1. The policy can now learn from its own experience because there is a grounding signal about the "goodness" of actions (i.e., the advantage value) that is completely driven by reward via the critic. Without this, the policy would make a mistake and just learn to imitate it.
+2. Even demonstrations might have suboptimal trajectories, but with a carefully designed reward function, the critic can learn to distinguish them, which in turn informs the policy via the advantage.
+
+
+## How does this implementation compare to RECAP
+
+
+Let's first do a small recap (no pun intended).
+
+A typical VLA is modeled as $\pi(a|o, \ell)$, where $o$ is the observation (proprioceptive + vision) and $\ell$ is a language instruction. $\pi_{0.6}$ is essentially the same and also conditioned on the advantage, namely $\pi(a|o, \ell, A)$ -- technically, they use an advantage indicator $I$ that indicates whether the advantage is above or below a threshold. In practice, the indicator is apended to the prompt containing the language instruction and the proprioceptive observations.
+
+
+Now we can dive into the differences
+- RECAP uses an on-policy estimator for the critic, where they compute the return for a trajectory and that is the target for the critic. In contrast, we use an off-policy estimator that uses the Bellman equation to compute the target for the critic.
+- RECAP discretizes the return into bins and uses cross entropy loss. In contrast, we do not discretize the reward and use MSE loss.
+- During training, RECAP drops the advantage labels randomly as proposed by classifier-free guidance. In contrast, we always provide the advantage labels to the policy.
+- RECAP uses Gemma 3 4B as backbone and the action expert is enlarged to 868M parameters. In contrast, we use PaliGemma 3B as backbone and our action expert has 300M parameters, which is the $\pi_{0.5}$ model. An implicit different is that Gemma 3 processes 896x896, whereas PaliGemma 224x224.
+
+
+
+
+## Usage
 
 This guide explains how to use the Reinforcement Learning (RL) module for Pi05, focusing on the offline-to-online training workflow.
 

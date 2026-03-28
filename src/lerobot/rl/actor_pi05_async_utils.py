@@ -197,6 +197,35 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 action_index_before = action_queue.get_action_index()
                 prev_actions = action_queue.get_left_over()
 
+                # --- [NEW] Recursive Delta Alignment for RTC ---
+                use_delta = getattr(policy.config, "use_displacement_delta", False)
+                anchor_now = None
+                if use_delta:
+                    from lerobot.utils.constants import OBS_STATE
+                    if OBS_STATE in latest_obs:
+                        anchor_now = latest_obs[OBS_STATE]
+                        if prev_actions is not None and action_queue.anchor_state is not None:
+                            # Align: d_new = norm( unnorm(d_old) + s_0_old - s_now )
+                            anchor_old = action_queue.anchor_state
+                            with torch.no_grad():
+                                import pdb; pdb.set_trace()  # <-- INSPECT RTC ALIGNMENT
+                                d_abs_old = policy.postprocessor(prev_actions)
+                                # 2. Shift
+                                d_abs_new = d_abs_old + (anchor_old - anchor_now)
+                                
+                                # Print alignment info
+                                print(f"\n[RTC] Alignment Offset (delta_s): {(anchor_old - anchor_now).norm().item():.3f}")
+                                
+                                # 3. Re-normalize using the normalizer step in preprocessor
+                                from lerobot.processor import NormalizerProcessorStep
+                                normalizer = next(s for s in policy.preprocessor.steps if isinstance(s, NormalizerProcessorStep))
+                                prev_actions = normalizer._normalize_action(d_abs_new, inverse=False)
+                                
+                                import pdb; pdb.set_trace()  # <-- INSPECT ALIGNMENT (prev_actions, d_abs_new)
+                        else:
+                            # First chunk or no leftover, no alignment needed
+                            pass
+
                 # Using p95 instead of max: max() is overly conservative
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 
@@ -211,18 +240,27 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 torch.cuda.synchronize()
                 t_gpu_end = time.perf_counter()
 
+                # actions_chunk is [1, T, D] normalized
                 original_actions = actions_chunk.squeeze(0).clone()
                 
-                # --- Apply Centered Moving Average (Window Size 3) ---
-                if original_actions.shape[0] >= 3:
-                    padded = torch.cat([original_actions[0:1], original_actions, original_actions[-1:]], dim=0)
-                    smoothed = (padded[:-2] + padded[1:-1] + padded[2:]) / 3.0
-                    original_actions = smoothed
+                # --- [NEW] Absolute Action Reconstruction ---
+                if use_delta and anchor_now is not None:
+                    # processed_actions = unnorm(d_norm) + s_now
+                    d_abs = policy.postprocessor(original_actions)
+                    processed_actions = d_abs + anchor_now[None, :]
+                    
+                    print(f"\n[INFERENCE] Normalized Delta (first 2): {original_actions[0, :2]}")
+                    print(f"[INFERENCE] Reconstructed Abs (first 2): {processed_actions[0, :2]}")
+                    import pdb; pdb.set_trace()  # <-- INSPECT NORMALIZED vs ABSOLUTE
+                else:
+                    processed_actions = original_actions.clone()
                 
-                # Unlike `inference_pi05_async.py`, we do NOT save chunk arrays to disk in the actor
-
-                processed_actions = original_actions.clone()
-
+                # --- Apply Centered Moving Average (Window Size 3) ---
+                if processed_actions.shape[0] >= 3:
+                    padded = torch.cat([processed_actions[0:1], processed_actions, processed_actions[-1:]], dim=0)
+                    smoothed = (padded[:-2] + padded[1:-1] + padded[2:]) / 3.0
+                    processed_actions = smoothed
+                
             new_latency = time.perf_counter() - current_time
             new_delay = math.ceil(new_latency / time_per_chunk)
             latency_tracker.add(new_latency)
@@ -252,7 +290,8 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 original_actions=original_actions,
                 processed_actions=processed_actions,
                 real_delay=effective_delay, 
-                action_index_before_inference=action_index_before
+                action_index_before_inference=action_index_before,
+                anchor_state=anchor_now
             )
 
         logger.info("[GET_ACTIONS] Inference thread shutting down smoothly.")
@@ -383,7 +422,9 @@ def env_interaction_worker_actor(
                 if action is not None:
                     if action.shape[-1] > 6:
                         action = action[..., :6]
-                    if postprocessor is not None:
+                    # IF recursive deltas are used, the queue ALREADY contains unnormalized absolute actions.
+                    # Otherwise, we unnormalize here as usual.
+                    if postprocessor is not None and not getattr(cfg.policy, "use_displacement_delta", False):
                         action = postprocessor(action)
                 else:
                     if hasattr(online_env, 'get_raw_joint_positions'):

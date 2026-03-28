@@ -102,6 +102,7 @@ class PI05RLConfig(PI05FullConfig):
     pi05_checkpoint: str | None = None
     
     # Dataset stats (inherited from PreTrainedConfig? No, SAC defines it explicitly)
+    displacement_stats_path: str | None = None  # Path to precomputed displacement stats (.pt)
     dataset_stats: dict | None = None
     
     # Storage device

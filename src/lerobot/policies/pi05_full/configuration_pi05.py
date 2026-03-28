@@ -92,6 +92,7 @@ class PI05FullConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
     knowledge_insulation: bool = True  # Enable knowledge insulation in attention (blocks gradients from action to VLM K/V)
+    use_displacement_delta: bool = False  # Enable recursive displacement mapping (action = delta + state[0])
 
     # Loss weights (used when knowledge_insulation is enabled)
     loss_weight_flow: float = 1.0  # Weight for flow matching MSE loss (continuous actions)
