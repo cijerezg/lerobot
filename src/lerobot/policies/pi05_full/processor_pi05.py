@@ -141,6 +141,7 @@ class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
             full_command = f"Subtask: {cleaned_text};\n"
             full_commands.append(full_command)
 
+        
         transition[TransitionKey.COMPLEMENTARY_DATA][self.command_key] = full_commands
 
         # note: action tokens will be processed in the ActionTokenizerProcessorStep

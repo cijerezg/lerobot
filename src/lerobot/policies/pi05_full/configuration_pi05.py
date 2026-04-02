@@ -43,7 +43,7 @@ class PI05FullConfig(PreTrainedConfig):
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10
-    time_sampling_beta_alpha: float = 1.5
+    time_sampling_beta_alpha: float = 1.0
     time_sampling_beta_beta: float = 1.0
     time_sampling_scale: float = 0.999
     time_sampling_offset: float = 0.001
@@ -80,7 +80,7 @@ class PI05FullConfig(PreTrainedConfig):
     # subtask stuff
     max_decoding_steps: int = 200
     temperature: float = 0.0
-    subtask_regeneration_interval: float = 1.0  # Regenerate subtask tokens every N seconds (0 = every call)
+    subtask_regeneration_interval: float = 1.5  # Regenerate subtask tokens every N seconds (0 = every call)
 
     # Training settings
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization
@@ -92,7 +92,8 @@ class PI05FullConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
     knowledge_insulation: bool = True  # Enable knowledge insulation in attention (blocks gradients from action to VLM K/V)
-    use_displacement_delta: bool = False  # Enable recursive displacement mapping (action = delta + state[0])
+    action_encoding: str = "absolute"  # "absolute", "anchor" (a_t - s_0), "delta" (a_t - a_{t-1})
+
 
     # Loss weights (used when knowledge_insulation is enabled)
     loss_weight_flow: float = 1.0  # Weight for flow matching MSE loss (continuous actions)
@@ -117,6 +118,11 @@ class PI05FullConfig(PreTrainedConfig):
 
     def __post_init__(self):
         super().__post_init__()
+
+        if self.action_encoding not in ["absolute", "anchor", "delta"]:
+            raise ValueError(f"action_encoding must be 'absolute', 'anchor', or 'delta' (got {self.action_encoding})")
+
+
 
         # Validate configuration
         if self.n_action_steps > self.chunk_size:

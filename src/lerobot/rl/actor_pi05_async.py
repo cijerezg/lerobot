@@ -25,8 +25,11 @@ import logging
 import os
 import time
 from functools import lru_cache
+from multiprocessing import Process
 from queue import Empty
+from threading import Thread
 
+import torch.multiprocessing as mp
 import grpc
 import torch
 from torch import nn
@@ -72,6 +75,11 @@ from lerobot.rl.gym_manipulator import (
 )
 import lerobot.rl.rl_pi05  # Register PI05RLConfig
 from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
+from lerobot.rl.actor_pi05_async_utils import (
+    SharedStateActor,
+    get_actions_worker_actor,
+    env_interaction_worker_actor,
+)
 from lerobot.policies.rtc.action_queue import ActionQueue
 
 from lerobot.rl.actor import (
@@ -101,8 +109,6 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
         
     display_pid = False
     if not use_threads(cfg):
-        import torch.multiprocessing as mp
-
         mp.set_start_method("spawn")
         display_pid = True
 
@@ -141,12 +147,8 @@ def actor_cli(cfg: TrainRLServerPipelineConfig):
 
     concurrency_entity = None
     if use_threads(cfg):
-        from threading import Thread
-
         concurrency_entity = Thread
     else:
-        from multiprocessing import Process
-
         concurrency_entity = Process
 
     receive_policy_process = concurrency_entity(
@@ -265,13 +267,6 @@ def act_with_policy_async(
     env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
     # Instantiate bridging components
-    from lerobot.rl.actor_pi05_async_utils import (
-        SharedStateActor,
-        get_actions_worker_actor,
-        env_interaction_worker_actor,
-    )
-    from threading import Thread
-
     shared_state = SharedStateActor()
     shared_state.running = not shutdown_event.is_set()
     

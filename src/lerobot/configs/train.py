@@ -215,3 +215,4 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
     use_rerun: bool = True
+    video_logging_cameras: list[str] = field(default_factory=lambda: ["top", "side"])

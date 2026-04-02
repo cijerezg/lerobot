@@ -1343,22 +1343,22 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         bsize = tokens.shape[0]
         device = tokens.device
+
         lm_head = self.paligemma_with_expert.paligemma.lm_head
 
         #1. prefill phase
         # Process Images + Text Prompt + BOS token once to populate the KV cache.
 
-        # Add BOS token to the prompt
+        # Seed subtask generation with BOS in the subtask segment (matches training attention structure)
         bos_token = torch.full(
             (bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device
         )
-        tokens_in = torch.cat([tokens, bos_token], dim=1)
-        masks_in = torch.cat([masks, torch.ones((bsize, 1), dtype=torch.bool, device=device)], dim=1)
+        bos_mask = torch.ones((bsize, 1), dtype=torch.bool, device=device)
 
-        # Embed prefix [Images, Language, BOS]
+        # Embed prefix [Images, Language | BOS] — BOS in subtask segment, not language segment
         prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
-            images=images, img_masks=img_masks, tokens=tokens_in, subtask_tokens=None,
-            masks=masks_in, subtask_masks=None, fast_action_tokens=None, fast_action_masks=None
+            images=images, img_masks=img_masks, tokens=tokens, subtask_tokens=bos_token,
+            masks=masks, subtask_masks=bos_mask, fast_action_tokens=None, fast_action_masks=None
         )
 
         # Ensure correct precision (bfloat16/float32)

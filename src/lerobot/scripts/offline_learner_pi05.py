@@ -77,7 +77,14 @@ from lerobot.utils.utils import (
     init_logging,
 )
 from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16
-from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks, log_sampled_actions
+from lerobot.rl.pi05_train_utils import (
+    pi05_update_step,
+    hydrate_subtasks,
+    make_pi05_full_processors_with_upgrade,
+    load_additional_offline_datasets,
+    _update_critic,
+    log_pi05_training_metrics,
+)
 
 import wandb
 
@@ -268,16 +275,15 @@ def run_offline_training(
             "time_mlp_in" in name or
             "time_mlp_out" in name or
             "gemma_expert" in name or
-            #"multi_modal_project" in name or
-            #("vision_tower" in name and any(f".{i}." in name for i in [7, 8, 9, 10, 11, 12, 13,14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])) or
-            #("language_model" in name and any(f".{i}." in name for i in [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])) or 
-            ("language_model" in name and any(f".{i}." in name for i in [14, 15, 16, 17])) or 
+            "multi_modal_project" in name or
+            ("vision_tower" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])) or
+            ("language_model" in name and any(f".{i}." in name for i in [12, 13, 14, 15, 16, 17])) or 
             "language_model.norm" in name or
 
             # Critic params
             #"critic.layers.2" in name or
-            #"critic.layers.3" in name or
-            #"critic.layers.4" in name or
+            "critic.layers.3" in name or
+            "critic.layers.4" in name or
             "critic.layers.5" in name or
             "critic.norm" in name or
             "critic.value_head" in name or
@@ -328,7 +334,6 @@ def run_offline_training(
     if is_main_process:
         logging.info("Creating preprocessors and postprocessors")
     
-    from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
     preprocessor, postprocessor = make_pi05_full_processors_with_upgrade(cfg, dataset=offline_dataset, is_main_process=is_main_process)
     
     # Store preprocessors on the policy
@@ -349,7 +354,6 @@ def run_offline_training(
     offline_replay_buffer.dataset = offline_dataset
 
     # Load additional offline datasets
-    from lerobot.rl.pi05_train_utils import load_additional_offline_datasets
     load_additional_offline_datasets(
         cfg=cfg,
         offline_dataset=offline_dataset,
@@ -398,7 +402,6 @@ def run_offline_training(
 
         # UTD ratio - 1 updates (critic only)
         for _ in range(utd_ratio - 1):
-            from lerobot.rl.pi05_train_utils import _update_critic
             _update_critic(
                 policy=accelerator.unwrap_model(policy),
                 optimizers=optimizers,
@@ -449,7 +452,6 @@ def run_offline_training(
             training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
             training_infos["Optimization step"] = optimization_step
 
-            from lerobot.rl.pi05_train_utils import log_pi05_training_metrics
             log_pi05_training_metrics(
                 training_infos=training_infos,
                 optimization_step=optimization_step,
@@ -523,7 +525,6 @@ def save_offline_checkpoint(
     logging.info(f"[OFFLINE LEARNER] Saving checkpoint at step {optimization_step}")
     
     # Create checkpoint directory (convert output_dir to Path if it's a string)
-    from pathlib import Path
     output_dir_path = Path(cfg.output_dir) if isinstance(cfg.output_dir, str) else cfg.output_dir
     checkpoint_dir = get_step_checkpoint_dir(output_dir_path, offline_steps, optimization_step)
     

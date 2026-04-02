@@ -198,9 +198,9 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 prev_actions = action_queue.get_left_over()
 
                 # --- [NEW] Recursive Delta Alignment for RTC ---
-                use_delta = getattr(policy.config, "use_displacement_delta", False)
+                action_encoding = getattr(policy.config, "action_encoding", "absolute")
                 anchor_now = None
-                if use_delta:
+                if action_encoding in ["anchor", "delta"]:
                     from lerobot.utils.constants import OBS_STATE
                     if OBS_STATE in latest_obs:
                         anchor_now = latest_obs[OBS_STATE]
@@ -208,10 +208,13 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                             # Align: d_new = norm( unnorm(d_old) + s_0_old - s_now )
                             anchor_old = action_queue.anchor_state
                             with torch.no_grad():
-                                import pdb; pdb.set_trace()  # <-- INSPECT RTC ALIGNMENT
                                 d_abs_old = policy.postprocessor(prev_actions)
                                 # 2. Shift
-                                d_abs_new = d_abs_old + (anchor_old - anchor_now)
+                                if action_encoding == "anchor":
+                                    d_abs_new = d_abs_old + (anchor_old - anchor_now)
+                                elif action_encoding == "delta":
+                                    d_abs_new = d_abs_old.clone()
+                                    d_abs_new[0] = d_abs_new[0] + (anchor_old - anchor_now)
                                 
                                 # Print alignment info
                                 print(f"\n[RTC] Alignment Offset (delta_s): {(anchor_old - anchor_now).norm().item():.3f}")
@@ -220,8 +223,6 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                                 from lerobot.processor import NormalizerProcessorStep
                                 normalizer = next(s for s in policy.preprocessor.steps if isinstance(s, NormalizerProcessorStep))
                                 prev_actions = normalizer._normalize_action(d_abs_new, inverse=False)
-                                
-                                import pdb; pdb.set_trace()  # <-- INSPECT ALIGNMENT (prev_actions, d_abs_new)
                         else:
                             # First chunk or no leftover, no alignment needed
                             pass
@@ -244,14 +245,15 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 original_actions = actions_chunk.squeeze(0).clone()
                 
                 # --- [NEW] Absolute Action Reconstruction ---
-                if use_delta and anchor_now is not None:
+                if anchor_now is not None and action_encoding in ["anchor", "delta"]:
                     # processed_actions = unnorm(d_norm) + s_now
                     d_abs = policy.postprocessor(original_actions)
-                    processed_actions = d_abs + anchor_now[None, :]
+                    anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
                     
-                    print(f"\n[INFERENCE] Normalized Delta (first 2): {original_actions[0, :2]}")
-                    print(f"[INFERENCE] Reconstructed Abs (first 2): {processed_actions[0, :2]}")
-                    import pdb; pdb.set_trace()  # <-- INSPECT NORMALIZED vs ABSOLUTE
+                    if action_encoding == "anchor":
+                        processed_actions = d_abs + anchor_sq.to(d_abs.device)[None, :]
+                    elif action_encoding == "delta":
+                        processed_actions = torch.cumsum(d_abs, dim=0) + anchor_sq.to(d_abs.device)[None, :]
                 else:
                     processed_actions = original_actions.clone()
                 
@@ -291,7 +293,7 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 processed_actions=processed_actions,
                 real_delay=effective_delay, 
                 action_index_before_inference=action_index_before,
-                anchor_state=anchor_now
+                anchor_state=anchor_now if getattr(cfg.policy, "action_encoding", "absolute") in ["anchor", "delta"] else None
             )
 
         logger.info("[GET_ACTIONS] Inference thread shutting down smoothly.")
@@ -424,7 +426,7 @@ def env_interaction_worker_actor(
                         action = action[..., :6]
                     # IF recursive deltas are used, the queue ALREADY contains unnormalized absolute actions.
                     # Otherwise, we unnormalize here as usual.
-                    if postprocessor is not None and not getattr(cfg.policy, "use_displacement_delta", False):
+                    if postprocessor is not None and getattr(cfg.policy, "action_encoding", "absolute") == "absolute":
                         action = postprocessor(action)
                 else:
                     if hasattr(online_env, 'get_raw_joint_positions'):

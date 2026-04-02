@@ -1,16 +1,24 @@
+import json
+import logging
+import numpy as np
+import os
+import time
 import torch
-from typing import Any
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.transforms.functional as F_vision
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.rl.buffer import ReplayBuffer
 from lerobot.utils.constants import (
-    ACTION, 
-    OBS_LANGUAGE_TOKENS, 
-    OBS_LANGUAGE_ATTENTION_MASK, 
+    ACTION,
+    OBS_LANGUAGE_TOKENS,
+    OBS_LANGUAGE_ATTENTION_MASK,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
     OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
     ACTION_TOKENS,
     ACTION_TOKEN_MASK,
+    OBS_STATE,
 )
 from lerobot.rl.utils import (
     preprocess_batch_for_pi05
@@ -21,10 +29,6 @@ from lerobot.policies.pi05_full.modeling_pi05 import PI05FullPolicy
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline, NormalizerProcessorStep
-import time
-import numpy as np
-import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -93,13 +97,13 @@ def hydrate_subtasks(indices: list | torch.Tensor, dataset) -> list[str]:
     """
     if isinstance(indices, torch.Tensor):
         indices = indices.tolist()
-        
+
     subtask_names = []
-    
+
     # helper to check if we can lookup
     has_meta = dataset and hasattr(dataset, "meta") and hasattr(dataset.meta, "subtasks")
     subtasks_df = None
-    
+
     if has_meta:
         subtasks_df = dataset.meta.subtasks
 
@@ -111,22 +115,18 @@ def hydrate_subtasks(indices: list | torch.Tensor, dataset) -> list[str]:
              try:
                  if hasattr(subtasks_df, "columns") and hasattr(subtasks_df, "index"):
                      if "subtask_index" in subtasks_df.columns:
-                         if i in subtasks_df.index and subtasks_df.loc[i].get("subtask_index", -999) == i:
-                              name = subtasks_df.loc[i]["subtask"]
-                         else:
-                              rows = subtasks_df[subtasks_df["subtask_index"] == i]
-                              if not rows.empty:
-                                  name = rows.iloc[0]["subtask"]
+                         rows = subtasks_df[subtasks_df["subtask_index"] == i]
+                         if not rows.empty:
+                             name = rows.iloc[0].name
                      elif i in subtasks_df.index:
-                         name = subtasks_df.loc[i]["subtask"]
+                         name = subtasks_df.iloc[i].name
                  elif hasattr(subtasks_df, "__getitem__"):
                      name = subtasks_df[i]
              except Exception as e:
-                 # logging.debug(f"Failed to lookup subtask index {i}: {e}")
-                 pass 
-                 
+                 pass
+
         subtask_names.append(name)
-    
+
     return subtask_names
         
 
@@ -206,10 +206,6 @@ def load_additional_offline_datasets(
     if not (hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths):
         return
 
-    import torchvision.transforms.functional as F_vision
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    from lerobot.rl.buffer import ReplayBuffer
-    
     expected_height, expected_width = 224, 224
 
     for path in cfg.dataset.additional_offline_dataset_paths:
@@ -263,6 +259,10 @@ def load_additional_offline_datasets(
                          comp_info["subtask_index"] = torch.tensor(new_idx, dtype=torch.int64)
                     else:
                          comp_info["subtask_index"] = new_idx
+            
+            # Ensure "is_golden" is explicitly set to False for additional offline datasets
+            if "is_golden" not in comp_info:
+                comp_info["is_golden"] = False
             
             offline_replay_buffer.add(
                 state=data["state"],
@@ -503,15 +503,24 @@ def _prepare_actor_batch(
 ) -> tuple[dict, torch.Tensor | None]:
     batch_for_proc = {k: v for k, v in observations.items()}
     
-    if hasattr(cfg.policy, "use_displacement_delta") and cfg.policy.use_displacement_delta:
-        # actions: [B, T, D], anchor_state: [B, D]
-        # We assume OBS_STATE is the first state in the observation window [B, D]
-        from lerobot.utils.constants import OBS_STATE
+    
+    action_encoding = getattr(cfg.policy, "action_encoding", "absolute")
+    if action_encoding in ["anchor", "delta"]:
         if OBS_STATE in observations:
             anchor_state = observations[OBS_STATE]
-            actions = actions - anchor_state[:, None, :]
+            if action_encoding == "anchor":
+                # anchor: d_t = a_t - s_0
+                actions = actions - anchor_state[:, None, :]
+            else:
+                # delta: d_0 = a_0 - s_0, d_t = a_t - a_{t-1}
+                d_0 = actions[:, 0, :] - anchor_state
+                if actions.shape[1] > 1:
+                    d_rest = torch.diff(actions, dim=1)
+                    actions = torch.cat([d_0.unsqueeze(1), d_rest], dim=1)
+                else:
+                    actions = d_0.unsqueeze(1)
         else:
-            logging.warning(f"[TRAIN] use_displacement_delta is True but {OBS_STATE} not found in observations!")
+            logging.warning(f"[TRAIN] action_encoding={action_encoding} but {OBS_STATE} not found!")
 
     batch_for_proc[ACTION] = actions
     
@@ -917,9 +926,7 @@ def log_pi05_training_metrics(
     if optimization_step == 0:
         return
 
-    import numpy as np
-    import torch
-    import wandb
+    import wandb  # local import to avoid hard dependency in train utils
 
     # Pop snapshot before wandb scalar logging (tensors must not be sent as scalars)
     # action_log_snapshot = training_infos.pop("_action_log_snapshot", None)
@@ -1066,7 +1073,6 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
                     logging.warning(f"Pipeline config not found at {config_path}. Stats will be None.")
                 dataset_stats = None
             else:
-                import json
                 from safetensors.torch import load_file
                 
                 with open(config_path, "r") as f:
@@ -1107,20 +1113,23 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
             elif is_main_process:
                 logging.warning("Fallback to dataset failed: no dataset provided! Stats will be None.")
     
-    # [NEW] Load Displacement Stats if Recursive Delta is enabled
-    if getattr(cfg.policy, "use_displacement_delta", False):
-        stats_path = getattr(cfg.policy, "displacement_stats_path", None)
+    # [NEW] Load custom action encoding stats if enabled
+    action_encoding = getattr(cfg.policy, "action_encoding", "absolute")
+    if action_encoding in ["anchor", "delta"]:
+        stats_path = getattr(cfg.policy, "action_encoding_stats_path", None)
         if stats_path and os.path.exists(stats_path):
             if is_main_process:
-                logging.info(f"Loading displacement stats from {stats_path}")
+                logging.info(f"Loading {action_encoding} action stats from {stats_path}")
             disp_stats = torch.load(stats_path, map_location="cpu")
             # Override 'action' stats in dataset_stats
             if dataset_stats is None:
                 dataset_stats = {}
             dataset_stats[ACTION] = disp_stats
         else:
-            if is_main_process:
-                logging.warning(f"use_displacement_delta is True but displacement_stats_path '{stats_path}' is invalid!")
+            raise ValueError(
+                f"action_encoding is {action_encoding} but action_encoding_stats_path "
+                f"'{stats_path}' is invalid or does not exist!"
+            )
 
     # Create fresh pipeline with PI05FullConfig structure + Extracted Stats
     preprocessor, postprocessor = make_pre_post_processors(

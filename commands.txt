@@ -238,6 +238,7 @@ cijerezg/multi-task-toys-merged-v2
 
 "outputs/pi05_offline_training_v2/checkpoints/000100/pretrained_model",
 # Offline Learner
+
 accelerate launch --num_processes=2 --multi_gpu -m lerobot.scripts.offline_learner_pi05 --config_path config-hiserl.json
 
 # Online Learner
@@ -245,6 +246,10 @@ python -m lerobot.rl.learner_pi05 --config_path config-hiserl.json
 
 # Actor
 python -m lerobot.rl.actor_pi05 --config_path config-hiserl.json
+
+
+
+
 
 # Command to annotate dataset
 python lerobot/src/lerobot/policies/pi05_full/annotate/subtask_annotate.py \

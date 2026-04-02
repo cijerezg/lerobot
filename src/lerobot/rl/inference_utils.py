@@ -18,7 +18,7 @@ from lerobot.utils.robot_utils import precise_sleep
 from lerobot.processor import TransitionKey
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
-from lerobot.rl.learner_pi05 import save_video_with_critic_overlay
+from lerobot.rl.utils import save_video_with_critic_overlay
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,8 @@ class SharedState:
         self.is_logging_episode = False
         self.replay_buffer = None
         self.critic_values = []
+        self.subtask_texts = []
+        self.current_subtask_text = ""
         self.episode_active = False
 
     def add_env_wait_time(self, wait_time: float):
@@ -158,6 +160,8 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
     try:
         logger.info("[GET_ACTIONS] Starting background inference thread")
         latency_tracker = LatencyTracker()
+        last_subtask_text = None
+        inference_step = 0
         
         # In this stripped down standalone mode, we assume policy properties are set
         execution_horizon = policy.config.rtc_config.execution_horizon
@@ -171,6 +175,7 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
             # 1. Reset check
             if shared_state.check_and_clear_reset():
                 policy.reset()
+                last_subtask_text = None
                 continue
                 
             if not shared_state.episode_active:
@@ -232,23 +237,47 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                     execution_horizon=execution_horizon
                 )
 
+                # --- Subtask Token Decoding ---
+                inference_step += 1
+                try:
+                    cached_tokens = getattr(policy, '_cached_subtask_tokens', None)
+                    cached_masks = getattr(policy, '_cached_subtask_masks', None)
+                    if cached_tokens is not None and cached_masks is not None:
+                        tokenizer = policy.model._paligemma_tokenizer
+                        valid_tokens = cached_tokens[0][cached_masks[0]]
+                        subtask_text = tokenizer.decode(valid_tokens, skip_special_tokens=True).strip()
+                        with shared_state.lock:
+                            shared_state.current_subtask_text = subtask_text
+                        if subtask_text != last_subtask_text:
+                            logger.info(
+                                f"[SUBTASK] inference_step={inference_step} | "
+                                f"subtask: \"{subtask_text}\""
+                            )
+                            last_subtask_text = subtask_text
+                except Exception as e:
+                    logger.debug(f"[SUBTASK] Could not decode subtask tokens: {e}")
+
                 original_actions = actions_chunk.squeeze(0).clone()
                 
                 # --- [NEW] Global Chunk Unnormalization & Absolute Action Reconstruction ---
                 unnormalized_actions = policy.postprocessor(original_actions) if hasattr(policy, 'postprocessor') and policy.postprocessor is not None else original_actions.clone()
                 
-                use_delta = getattr(policy.config, "use_displacement_delta", False)
+                action_encoding = getattr(policy.config, "action_encoding", "absolute")
                 anchor_now = None
-                if use_delta:
+                if action_encoding in ["anchor", "delta"]:
                     from lerobot.utils.constants import OBS_STATE
                     if OBS_STATE in latest_obs:
                         anchor_now = latest_obs[OBS_STATE]
                 
-                if use_delta and anchor_now is not None:
+                if anchor_now is not None and action_encoding in ["anchor", "delta"]:
                     # processed_actions = unnorm(d_norm) + s_now
                     # Fix broadcasting bug: anchor_now might have a batch dimension [1, 6] from env_processor
                     anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
-                    processed_actions = unnormalized_actions + anchor_sq.to(unnormalized_actions.device)[None, :]
+                    
+                    if action_encoding == "anchor":
+                        processed_actions = unnormalized_actions + anchor_sq.to(unnormalized_actions.device)[None, :]
+                    elif action_encoding == "delta":
+                        processed_actions = torch.cumsum(unnormalized_actions, dim=0) + anchor_sq.to(unnormalized_actions.device)[None, :]
                 else:
                     processed_actions = unnormalized_actions
                 
@@ -322,7 +351,7 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 processed_actions=processed_actions,
                 real_delay=effective_delay,  # Use the effective delay to avoid throwing away unsent actions
                 action_index_before_inference=action_index_before,
-                anchor_state=anchor_now if getattr(cfg.policy, "use_displacement_delta", False) else None
+                anchor_state=anchor_now if getattr(cfg.policy, "action_encoding", "absolute") in ["anchor", "delta"] else None
             )
 
         logger.info("[GET_ACTIONS] Inference thread shutting down smoothly.")
@@ -377,6 +406,7 @@ def env_interaction_worker(
         shared_state.update_observation(policy_fmt_obs, False)
 
         interaction_step = 0
+        video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
 
         while shared_state.running:
             # 1. Episode boundary check
@@ -515,29 +545,33 @@ def env_interaction_worker(
 
             # --- LOGGING IMAGES ---
             if shared_state.is_logging_episode:
-                # Save first image found in obs as PNG
+                # Save images as PNG based on config
                 log_dir = os.path.join(cfg.output_dir, "logging_episodes", f"episode_{shared_state.episode_counter:06d}")
                 os.makedirs(log_dir, exist_ok=True)
                 
                 for key, val in next_policy_fmt_obs.items():
                     if "image" in key:
-                        # val is (1, C, H, W) or (C, H, W)
-                        img_tensor = val[0] if val.ndim == 4 else val
-                        
-                        if img_tensor.dtype == torch.uint8:
-                            img_np = img_tensor.cpu().numpy().transpose(1, 2, 0)
-                        else:
-                            v_max = img_tensor.max().item()
-                            if v_max <= 5.0:
-                                img_np = (img_tensor.float().cpu().numpy().transpose(1, 2, 0) * 255.0).clip(0, 255).astype(np.uint8)
-                            else:
-                                img_np = img_tensor.float().cpu().numpy().transpose(1, 2, 0).clip(0, 255).astype(np.uint8)
-                                
                         cam_name = key.split('.')[-1]
-                        if cam_name in ["top", "side"]:
+                        if cam_name in video_logging_cameras:
+                            # val is (1, C, H, W) or (C, H, W)
+                            img_tensor = val[0] if val.ndim == 4 else val
+                            
+                            if img_tensor.dtype == torch.uint8:
+                                img_np = img_tensor.cpu().numpy().transpose(1, 2, 0)
+                            else:
+                                v_max = img_tensor.max().item()
+                                if v_max <= 5.0:
+                                    img_np = (img_tensor.float().cpu().numpy().transpose(1, 2, 0) * 255.0).clip(0, 255).astype(np.uint8)
+                                else:
+                                    img_np = img_tensor.float().cpu().numpy().transpose(1, 2, 0).clip(0, 255).astype(np.uint8)
+                                    
                             # Save required frames for video
                             img_path = os.path.join(log_dir, f"step_{interaction_step:06d}_{cam_name}.png")
                             Image.fromarray(img_np).save(img_path)
+
+                # Save subtask text for this step
+                with shared_state.lock:
+                    shared_state.subtask_texts.append(shared_state.current_subtask_text)
 
                 # --- NEW: CRITIC VALUES SYNCHRONOUS LOGGING ---
                 if policy is not None:
@@ -600,7 +634,7 @@ def env_interaction_worker(
                     
                     # Generate video with critic overlay
                     try:
-                        save_video_with_critic_overlay(log_dir, shared_state.critic_values)
+                        save_video_with_critic_overlay(log_dir, shared_state.critic_values, camera_names=video_logging_cameras, subtask_texts=shared_state.subtask_texts)
                         logger.info(f"[ENV] Video generated for episode {shared_state.episode_counter}")
                     except Exception as e:
                         logger.error(f"[ENV] Failed to generate video: {e}")
@@ -633,6 +667,7 @@ def env_interaction_worker(
                 episode_logging_freq = getattr(cfg, "episode_logging_freq", 4)
                 shared_state.is_logging_episode = (shared_state.episode_counter % episode_logging_freq == 0)
                 shared_state.critic_values = []
+                shared_state.subtask_texts = []
                 
                 shared_state.episode_active = False
 

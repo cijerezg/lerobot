@@ -102,7 +102,7 @@ class PI05RLConfig(PI05FullConfig):
     pi05_checkpoint: str | None = None
     
     # Dataset stats (inherited from PreTrainedConfig? No, SAC defines it explicitly)
-    displacement_stats_path: str | None = None  # Path to precomputed displacement stats (.pt)
+    action_encoding_stats_path: str | None = None  # Path to precomputed action encoding stats (.pt)
     dataset_stats: dict | None = None
     
     # Storage device
@@ -535,7 +535,7 @@ class PI05RLPytorch(PI05Pytorch):
                  # Logits range: start_idx-1 to end_idx-1
                 subtask_logits = logits[:, start_idx - 1 : end_idx - 1, :].contiguous()
                 subtask_labels = subtask_tokens.contiguous()
-                 
+
                 loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
                 st_loss = loss_fct(subtask_logits.view(-1, PALIGEMMA_VOCAB_SIZE), subtask_labels.view(-1))
                  
@@ -1059,7 +1059,14 @@ class PI05RLPolicy(PI05FullPolicy):
         return super().select_action(batch)
 
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
-        """Predict action chunk."""
+        """Predict action chunk with subtask token generation.
+        
+        Uses time-based caching controlled by `config.subtask_regeneration_interval`
+        (default 1s) to amortize the cost of autoregressive subtask decoding across
+        the high-frequency inference loop.
+        """
+        import time as _time
+        
         # Preprocessor has already normalized and tokenized the inputs
         # Advantage is already in the tokens (passed from actor or defaulted)
         images, img_masks = self._preprocess_images(batch)
@@ -1068,8 +1075,33 @@ class PI05RLPolicy(PI05FullPolicy):
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
         
-        # Sample actions
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, None, None, **kwargs)
+        # --- Subtask Token Generation with Time-Based Caching ---
+        current_time = _time.time()
+        interval = self.config.subtask_regeneration_interval
+        should_regenerate = (
+            self._cached_subtask_tokens is None
+            or self._last_subtask_time is None
+            or interval <= 0  # 0 means regenerate every call
+            or (current_time - self._last_subtask_time) >= interval
+        )
+
+        if should_regenerate:
+            subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
+                images, img_masks, tokens, masks,
+                max_decoding_steps=self.config.tokenizer_max_length
+            )
+            self._cached_subtask_tokens = subtask_tokens
+            self._cached_subtask_masks = subtask_masks
+            self._last_subtask_time = current_time
+        else:
+            subtask_tokens = self._cached_subtask_tokens
+            subtask_masks = self._cached_subtask_masks
+
+        # Sample actions with subtask conditioning
+        actions = self.model.sample_actions(
+            images, img_masks, tokens, masks,
+            subtask_tokens, subtask_masks, **kwargs
+        )
         
         # Unpad actions to actual action dimension
         from lerobot.utils.constants import ACTION

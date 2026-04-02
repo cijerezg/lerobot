@@ -29,6 +29,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pprint import pformat
+from threading import Thread
+from torch.multiprocessing import Process
+import torch.multiprocessing as mp
 
 import grpc
 import torch
@@ -107,8 +110,15 @@ from lerobot.rl.learner import (
     log_training_info,
     save_training_checkpoint,
 )
-from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16
-from lerobot.rl.pi05_train_utils import pi05_update_step, hydrate_subtasks, log_sampled_actions
+from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16, save_video_with_critic_overlay
+from lerobot.rl.pi05_train_utils import (
+    pi05_update_step,
+    hydrate_subtasks,
+    load_additional_offline_datasets,
+    make_pi05_full_processors_with_upgrade,
+    _update_critic,
+    log_pi05_training_metrics,
+)
 
 import wandb
 import gc
@@ -133,8 +143,6 @@ def push_actor_policy_to_queue_pi05(parameters_queue: Queue, policy: nn.Module):
 @parser.wrap()
 def train_cli(cfg: TrainRLServerPipelineConfig):
     if not use_threads(cfg):
-        import torch.multiprocessing as mp
-
         mp.set_start_method("spawn")
 
     # Use the job_name from the config
@@ -179,8 +187,6 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
 
     # Setup WandB logging if enabled
     if cfg.wandb.enable and cfg.wandb.project:
-        from lerobot.rl.wandb_utils import WandBLogger
-
         wandb_logger = WandBLogger(cfg)
     else:
         wandb_logger = None
@@ -226,12 +232,8 @@ def start_learner_threads(
     concurrency_entity = None
 
     if use_threads(cfg):
-        from threading import Thread
-
         concurrency_entity = Thread
     else:
-        from torch.multiprocessing import Process
-
         concurrency_entity = Process
 
     communication_process = concurrency_entity(
@@ -434,7 +436,6 @@ def add_actor_information_and_train(
         offline_replay_buffer.dataset = offline_dataset
 
         # Load additional offline datasets
-        from lerobot.rl.pi05_train_utils import load_additional_offline_datasets
         load_additional_offline_datasets(
             cfg=cfg,
             offline_dataset=offline_dataset,
@@ -457,7 +458,6 @@ def add_actor_information_and_train(
 
     # Create preprocessor and postprocessor for the policy
     # Use the shared utility for runtime upgrade to support standard Pi05 checkpoints
-    from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
     preprocessor, postprocessor = make_pi05_full_processors_with_upgrade(cfg, dataset=offline_dataset, is_main_process=True)
 
     # Store preprocessors on the policy for actor to access
@@ -530,7 +530,6 @@ def add_actor_information_and_train(
         time_for_one_optimization_step = time.time()
 
         for _ in range(utd_ratio - 1):
-            from lerobot.rl.pi05_train_utils import _update_critic
             _update_critic(
                 policy=policy,
                 optimizers=optimizers,
@@ -589,7 +588,6 @@ def add_actor_information_and_train(
             if wandb_logger:
                 print(f"Logging to WandB at step {optimization_step}")
 
-            from lerobot.rl.pi05_train_utils import log_pi05_training_metrics
             log_pi05_training_metrics(
                 training_infos=training_infos,
                 optimization_step=optimization_step,
@@ -702,25 +700,20 @@ def process_transitions_pi05(
                 with torch.no_grad():
                     # Save images
                     obs = transition["state"]
+                    video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
+                    
                     for key, val in obs.items():
-                        if "image" in key and "top" in key:
-                            # val is [1, C, H, W] tensor, convert to [H, W, C] numpy
-                            img_np = val.squeeze(0).detach().cpu().numpy().transpose(1, 2, 0)
-                            # Normalize to [0, 255] if needed (assuming [0, 1])
-                            if img_np.max() <= 1.0:
-                                img_np = (img_np * 255).astype(np.uint8)
-                            
-                            img_path = os.path.join(log_dir, f"step_{i:06d}_{key.split('.')[-1]}.png")
-                            Image.fromarray(img_np).save(img_path)
-                        elif "image" in key and "side" in key:
-                            # val is [1, C, H, W] tensor, convert to [H, W, C] numpy
-                            img_np = val.squeeze(0).detach().cpu().numpy().transpose(1, 2, 0)
-                            # Normalize to [0, 255] if needed (assuming [0, 1])
-                            if img_np.max() <= 1.0:
-                                img_np = (img_np * 255).astype(np.uint8)
-                            
-                            img_path = os.path.join(log_dir, f"step_{i:06d}_{key.split('.')[-1]}.png")
-                            Image.fromarray(img_np).save(img_path)
+                        if "image" in key:
+                            cam_name = key.split('.')[-1]
+                            if cam_name in video_logging_cameras:
+                                # val is [1, C, H, W] tensor, convert to [H, W, C] numpy
+                                img_np = val.squeeze(0).detach().cpu().numpy().transpose(1, 2, 0)
+                                # Normalize to [0, 255] if needed (assuming [0, 1])
+                                if img_np.max() <= 1.0:
+                                    img_np = (img_np * 255).astype(np.uint8)
+                                
+                                img_path = os.path.join(log_dir, f"step_{i:06d}_{cam_name}.png")
+                                Image.fromarray(img_np).save(img_path)
 
 
                     # Prepare inputs for preprocessor (move to device and add batch dim)
@@ -804,122 +797,12 @@ def process_transitions_pi05(
             
             # Generate video with critic overlay
             try:
-                save_video_with_critic_overlay(log_dir, critic_values)
+                save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras)
                 logging.info(f"[LEARNER] Video generated for episode {episode_counter[0]}")
             except Exception as e:
                 logging.error(f"[LEARNER] Failed to generate video: {e}")
                 
             logging.info(f"[LEARNER] Finished logging episode {episode_counter[0]}")
-
-
-def save_video_with_critic_overlay(log_dir, critic_values, fps=10):
-    """
-    Generate a side-by-side video of top and side views with a critic curve overlay.
-    """
-    import glob
-    import re
-
-    # Find all top and side images
-    top_images = sorted(glob.glob(os.path.join(log_dir, "*_top.png")))
-    side_images = sorted(glob.glob(os.path.join(log_dir, "*_side.png")))
-
-    if not top_images or not side_images:
-        raise ValueError("No images found for video generation")
-
-    # Ensure we have the same number of images and critic values
-    num_frames = min(len(top_images), len(side_images), len(critic_values))
-    
-    # Video settings
-    # Each view is 224x224, resized to 448x448. Side-by-side is 896x448.
-    frame_width = 896
-    frame_height = 448
-    video_path = os.path.join(log_dir, "episode_video.mp4")
-    
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
-
-    # Prepare critic curve data for plotting
-    # Normalize critic values for plotting (0 to frame_height)
-    critic_np = np.array(critic_values[:num_frames])
-    c_min, c_max = -1.1, 0.1
-    critic_norm = (critic_np - c_min) / (c_max - c_min)
-    critic_norm = np.clip(critic_norm, 0, 1)
-    
-    # Map to pixel coordinates (inverted Y for image space)
-    # Restrict to lower half (frame_height // 2 to frame_height)
-    lower_half_height = frame_height // 2
-    margin = 10
-    plot_y = (lower_half_height - 2 * margin) * (1 - critic_norm) + (frame_height // 2 + margin)
-    plot_x = np.linspace(0, frame_width, num_frames)
-
-    def get_y(val):
-        norm = (val - c_min) / (c_max - c_min)
-        return int((lower_half_height - 2 * margin) * (1 - norm) + (frame_height // 2 + margin))
-
-    for i in range(num_frames):
-        # Load and resize images
-        top_img = cv2.imread(top_images[i])
-        side_img = cv2.imread(side_images[i])
-        
-        top_img = cv2.resize(top_img, (448, 448))
-        side_img = cv2.resize(side_img, (448, 448))
-        
-        # Concatenate side-by-side
-        frame = np.hstack((top_img, side_img))
-        
-        # Create an overlay for the curve
-        overlay = frame.copy()
-
-        # Draw vertical axis and ticks
-        axis_x = 50
-        tick_length = 10
-        ticks = [-1.0, -0.75, -0.5, -0.25, 0.0]
-        
-        # Draw axis line
-        y_bottom = get_y(-1.0)
-        y_top = get_y(0.0)
-        cv2.line(overlay, (axis_x, y_top), (axis_x, y_bottom), (105, 0, 0), 1)
-
-        # Draw ticks and labels
-        for tick_val in ticks:
-            y = get_y(tick_val)
-            # Tick line
-            cv2.line(overlay, (axis_x, y), (axis_x - tick_length, y), (105, 0, 0), 1)
-            # Label
-            label = f"{tick_val}"
-            # Adjust text position
-            text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
-            text_x = axis_x - tick_length - text_size[0] - 5
-            text_y = y + text_size[1] // 2
-            cv2.putText(overlay, label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (105, 0, 0), 1, cv2.LINE_AA)
-        
-        # 1. Draw full curve with low alpha (faint dark blue)
-        points = np.vstack((plot_x, plot_y)).T.astype(np.int32)
-        cv2.polylines(overlay, [points], isClosed=False, color=(200, 100, 100), thickness=1)
-        
-        # 2. Draw progressing curve with high alpha (dark blue)
-        prog_points = points[:i+1]
-        if len(prog_points) > 1:
-            cv2.polylines(overlay, [prog_points], isClosed=False, color=(105, 0, 0), thickness=3)
-            
-            # Draw a vertical dashed line at current position
-            curr_x, curr_y = prog_points[-1]
-            cv2.line(overlay, (curr_x, frame_height), (curr_x, curr_y), (105, 0, 0), 1, lineType=cv2.LINE_AA)
-
-        # Blend overlay with original frame
-        alpha = 0.8
-        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-        
-        out.write(frame)
-
-    out.release()
-
-    # Cleanup: Remove individual images after video generation
-    for img_path in top_images + side_images:
-        try:
-            os.remove(img_path)
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":
