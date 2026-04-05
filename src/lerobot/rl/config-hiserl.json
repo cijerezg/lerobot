@@ -1,16 +1,21 @@
 {
     "output_dir": null,
+    "use_rerun": true,
     "job_name": "default",
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 30,
+    "batch_size": 8,
     "log_freq": 20,
     "save_checkpoint": true,
-    "save_freq": 100,
-    "offline_output_dir": "outputs/pi05_full_offline_training_v2",
+    "save_freq": 400,
+    "offline_output_dir": "outputs/pi05_full_offline_training_v1_delta_actions",
     "offline_save_freq": 200,
     "online_buffer_save_episode_freq": 12,
+    "video_logging_cameras": [
+        "side",
+        "wrist"
+    ],
     "wandb": {
         "enable": true,
         "project": "so101_real-v1",
@@ -18,27 +23,28 @@
         "disable_artifact": true
     },
     "dataset": {
-        "root": "outputs/annotated_dataset-v3",
+        "root": "outputs/annotated_dataset",
         "repo_id": "cijerezg/yellow-car-offline-training-v2",
-        "use_imagenet_stats": false
+        "use_imagenet_stats": false,
+        "max_episodes": null
     },
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the red truck and put it in the bowl",
-        "pi05_checkpoint": "outputs/pi05_full_offline_training_v2/checkpoints/000600/pretrained_model",
+        "pi05_checkpoint": "outputs/pi05_full_offline_training_v3_best_Mar_28_anchor_actions/checkpoints/004500/pretrained_model",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
         "use_separate_critic": true,
-        "knowledge_insulation": false,
+        "knowledge_insulation": true,
         "loss_weight_flow": 1.0,
-        "loss_weight_action_ce": 0.5,
-        "loss_weight_subtask_ce": 0.25,
+        "loss_weight_action_ce": 1.0,
+        "loss_weight_subtask_ce": 1.0,
         "inference_advantage": 1.0,
-        "advantage_scaling": 0.16,
+        "advantage_scaling": 0.20,
         "n_obs_steps": 1,
-        "reward_normalization_constant": 8.0,
-        "terminal_failure_reward": -24.0,
+        "reward_normalization_constant": 5.0,
+        "terminal_failure_reward": -16.0,
         "rtc_config": {
             "enabled": true,
             "execution_horizon": 10,
@@ -51,8 +57,10 @@
             "VISUAL": "IDENTITY",
             "STATE": "MIN_MAX",
             "ENV": "MIN_MAX",
-            "ACTION": "MIN_MAX"
+            "ACTION": "QUANTILES"
         },
+        "action_encoding": "anchor",
+        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_annotated_dataset-v3.pt",
         "input_features": {
             "observation.images.wrist": {
                 "type": "VISUAL",
@@ -102,8 +110,8 @@
         "dtype": "bfloat16",
         "gradient_checkpointing": true,
         "online_steps": 20000,
-        "online_buffer_capacity": 30000,
-        "offline_buffer_capacity": 80000,
+        "online_buffer_capacity": 1000,
+        "offline_buffer_capacity": 85000,
         "online_step_before_learning": 10,
         "policy_update_freq": 1,
         "discount": 0.97,
@@ -114,7 +122,7 @@
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 3,
+        "gradient_accumulation_steps": 12,
         "critic_network_kwargs": {
             "hidden_dims": [
                 256,
@@ -187,12 +195,12 @@
             },
             "reset": {
                 "fixed_reset_joint_positions": [
-                    0.37,
-                    -72.3,
-                    75.4,
-                    83.5,
-                    12.9,
-                    29.9
+                    0.54,
+                    -90.69,
+                    99.55,
+                    73.70,
+                    -50.23,
+                    42.71
                 ],
                 "reset_time_s": 10,
                 "control_time_s": 200.0,
@@ -207,7 +215,7 @@
         },
         "name": "real_robot",
         "fps": 30,
-        "task": "Pick up the yellow car and put it in the bowl",
+        "task": "Pick up the red truck and put it in the bowl",
         "features": {
             "observation.images.wrist": {
                 "type": "VISUAL",

@@ -336,7 +336,6 @@ class ReplayBuffer:
 
         # Handle rewards and dones with lookahead awareness
         if len(self.actions.shape) == 2 and action_chunk_size > 1:
-            # Create lookahead window including current position [idx, idx+1, ..., idx+chunk_size-1]
             lookahead_window = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
             lookahead_window = lookahead_window + action_chunk_size
             lookahead_window = torch.clamp(lookahead_window, max=self.size - 1)

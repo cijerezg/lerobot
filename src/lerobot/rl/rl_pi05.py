@@ -580,8 +580,22 @@ class PI05RLPytorch(PI05Pytorch):
         )
 
         self.log_counter += 1
-        if self.log_counter % 40 == 0:
+        if self.log_counter % 120 == 0:
             print(f"[Actor Loss] Total: {total_loss.item():.4f} | Flow: {flow_loss.mean().item():.4f} | ActionCE: {action_ce_loss.item():.4f} | SubtaskCE: {subtask_ce_loss.item():.4f}")
+            if subtask_tokens is not None:
+                pred_ids = subtask_logits.argmax(dim=-1)  # [B, subtask_len]
+                for i in range(min(2, pred_ids.shape[0])):
+                    tgt  = self._paligemma_tokenizer.decode(subtask_labels[i], skip_special_tokens=True).strip()
+                    pred = self._paligemma_tokenizer.decode(pred_ids[i], skip_special_tokens=True).strip()
+                    print(f"  [subtask {i}] target: {tgt!r}  pred: {pred!r}")
+            if action_tokens is not None:
+                act_pred_ids = action_logits.argmax(dim=-1)  # [B, fast_len]
+                for i in range(min(2, act_pred_ids.shape[0])):
+                    mask_i = action_masks[i].bool() if action_masks is not None else slice(None)
+                    tgt  = action_labels[i][mask_i].tolist()
+                    pred = act_pred_ids[i][mask_i].tolist()
+                    pairs = list(zip(tgt, pred))
+                    print(f"  [action  {i}] (target,pred): {pairs}")
 
         return {
             "loss_actor": total_loss,
@@ -869,21 +883,18 @@ class PI05RLPolicy(PI05FullPolicy):
         # For 'critic', we DO NOT need gradients for the vision encoder (it's detached).
         use_grad = (model != "critic")
         
-        # We use the internal visual encoder of the policy
-        vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad)
-        
+        # Actor computes vision features inside embed_prefix; only critic/critic_value need them here.
+        if model != "actor":
+            vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad)
+            critic_vision_features = vision_features.detach()
+            critic_vision_masks = vision_pad_masks
+
         # Actor needs tokens too
         current_batch = batch.copy()
         if "state" in batch:
             current_batch.update(batch["state"])
         actor_tokens = current_batch[OBS_LANGUAGE_TOKENS]
         actor_masks = current_batch[OBS_LANGUAGE_ATTENTION_MASK]
-        
-        # This block is used by all the models
-        # Prepare critic inputs
-        # 1. Extract Vision Features (Shared)
-        critic_vision_features = vision_features.detach()
-        critic_vision_masks = vision_pad_masks # No grad needed for masks
 
         # 2. Critic Tokens (No Advantage)
         critic_tokens = current_batch["critic_tokens"]

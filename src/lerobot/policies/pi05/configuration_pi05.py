@@ -43,7 +43,7 @@ class PI05Config(PreTrainedConfig):
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10
-    time_sampling_beta_alpha: float = 1.2
+    time_sampling_beta_alpha: float = 1.0
     time_sampling_beta_beta: float = 1.0
     time_sampling_scale: float = 0.999
     time_sampling_offset: float = 0.001
@@ -95,7 +95,6 @@ class PI05Config(PreTrainedConfig):
     scheduler_decay_steps: int = 30_000
     scheduler_decay_lr: float = 2.5e-6
 
-    tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
     def __post_init__(self):
         super().__post_init__()

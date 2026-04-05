@@ -251,7 +251,7 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
 
         # --- Subtask text overlay (top-left) ---
         if subtask_texts is not None and i < len(subtask_texts) and subtask_texts[i]:
-            text = f"Subtask: {subtask_texts[i]}"
+            text = f"{subtask_texts[i]}"
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.55
             thickness = 1

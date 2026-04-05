@@ -12,6 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from PIL import Image
 import cv2
+from tqdm import tqdm
 
 import torch
 from lerobot.utils.robot_utils import precise_sleep
@@ -40,8 +41,6 @@ class SharedState:
         self.episode_counter = 0
         self.is_logging_episode = False
         self.replay_buffer = None
-        self.critic_values = []
-        self.subtask_texts = []
         self.current_subtask_text = ""
         self.episode_active = False
 
@@ -226,6 +225,34 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 action_index_before = action_queue.get_action_index()
                 prev_actions = action_queue.get_left_over()
 
+                # --- Anchor/Delta Alignment for RTC impainting ---
+                action_encoding = getattr(policy.config, "action_encoding", "absolute")
+                anchor_now = None
+                if action_encoding in ["anchor", "delta"]:
+                    from lerobot.utils.constants import OBS_STATE
+                    if OBS_STATE in latest_obs:
+                        anchor_now = latest_obs[OBS_STATE]
+                        if prev_actions is not None and action_queue.anchor_state is not None:
+                            anchor_old = action_queue.anchor_state
+                            from lerobot.processor import NormalizerProcessorStep
+                            from lerobot.rl.actor_pi05_async_utils import align_prev_actions
+                            normalizer = next(
+                                s for s in policy.preprocessor.steps
+                                if isinstance(s, NormalizerProcessorStep)
+                            )
+                            logger.debug(
+                                f"[RTC] Alignment offset norm: {(anchor_old - anchor_now).norm().item():.4f}"
+                            )
+                            prev_actions = align_prev_actions(
+                                prev_actions=prev_actions,
+                                anchor_old=anchor_old,
+                                anchor_now=anchor_now,
+                                action_encoding=action_encoding,
+                                chunk_size=policy.config.chunk_size,
+                                postprocessor=policy.postprocessor,
+                                normalizer=normalizer,
+                            )
+
                 # Using p95 instead of max: avoids a single latency spike biasing the model
                 # to predict too far ahead. See actor_pi05_async_utils.py for full rationale.
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
@@ -258,16 +285,11 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                     logger.debug(f"[SUBTASK] Could not decode subtask tokens: {e}")
 
                 original_actions = actions_chunk.squeeze(0).clone()
-                
+
                 # --- [NEW] Global Chunk Unnormalization & Absolute Action Reconstruction ---
                 unnormalized_actions = policy.postprocessor(original_actions) if hasattr(policy, 'postprocessor') and policy.postprocessor is not None else original_actions.clone()
-                
-                action_encoding = getattr(policy.config, "action_encoding", "absolute")
-                anchor_now = None
-                if action_encoding in ["anchor", "delta"]:
-                    from lerobot.utils.constants import OBS_STATE
-                    if OBS_STATE in latest_obs:
-                        anchor_now = latest_obs[OBS_STATE]
+
+                # anchor_now already computed above for alignment; used again here for reconstruction
                 
                 if anchor_now is not None and action_encoding in ["anchor", "delta"]:
                     # processed_actions = unnorm(d_norm) + s_now
@@ -296,6 +318,7 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 if not hasattr(policy, '_chunk_plot_counter'):
                     policy._chunk_plot_counter = 0
 
+                # Disabling for now because it takes too much time, but we'll keep just in case
                 if False:
                     try:
                         import os
@@ -328,8 +351,7 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                     except Exception as e:
                         logger.error(f"Failed to save chunk array: {e}")
                 
-                policy._chunk_plot_counter += 1
-
+                
                 policy._chunk_plot_counter += 1
 
             # Track literal latency
@@ -360,13 +382,115 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
         logger.error(traceback.format_exc())
 
 
+def _finalize_episode_log(
+    episode_log_buffer,
+    policy,
+    cfg,
+    log_dir,
+    episode_counter,
+    video_logging_cameras,
+    critic_batch_size=20,
+):
+    """
+    Process a buffered episode's frames after the episode ends.
+    Called during the natural pause between episodes — no env loop impact.
+    Runs critic inference, saves PNGs, and generates the overlay video,
+    all behind tqdm progress bars.
+    """
+    if not episode_log_buffer:
+        return
+
+    os.makedirs(log_dir, exist_ok=True)
+    n_steps = len(episode_log_buffer)
+    subtask_texts = [frame['subtask_text'] for frame in episode_log_buffer]
+
+    # --- 1. Save PNGs ---
+    logger.info(f"[ENV] Saving {n_steps} frames for episode {episode_counter}...")
+    for step_idx, frame in enumerate(tqdm(episode_log_buffer, desc="Saving frames", unit="frame")):
+        for key, val in frame['obs'].items():
+            if "image" in key:
+                cam_name = key.split('.')[-1]
+                if cam_name in video_logging_cameras:
+                    img_tensor = val[0] if val.ndim == 4 else val
+                    if img_tensor.dtype == torch.uint8:
+                        img_np = img_tensor.numpy().transpose(1, 2, 0)
+                    else:
+                        v_max = img_tensor.max().item()
+                        # Heuristic: if max value is small, assume [0,1] normalized float; otherwise assume [0,255]
+                        if v_max <= 5.0:
+                            img_np = (img_tensor.float().numpy().transpose(1, 2, 0) * 255.0).clip(0, 255).astype(np.uint8)
+                        else:
+                            img_np = img_tensor.float().numpy().transpose(1, 2, 0).clip(0, 255).astype(np.uint8)
+                    img_path = os.path.join(log_dir, f"step_{step_idx:06d}_{cam_name}.png")
+                    Image.fromarray(img_np).save(img_path)
+
+    # --- 2. Batched critic inference ---
+    critic_values = []
+    if policy is not None:
+        task_str = cfg.policy.task
+        adv_val = torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
+        robot_type = cfg.env.robot.type if hasattr(cfg.env, 'robot') else ""
+
+        n_batches = (n_steps + critic_batch_size - 1) // critic_batch_size
+        logger.info(f"[ENV] Running critic inference: {n_steps} steps in {n_batches} batches (batch_size={critic_batch_size})...")
+        with torch.no_grad():
+            for batch_start in tqdm(range(0, n_steps, critic_batch_size), desc="Critic inference", unit="batch"):
+                for frame in episode_log_buffer[batch_start:batch_start + critic_batch_size]:
+                    batch_for_preprocessor = {
+                        k: v for k, v in frame['obs'].items()
+                        if k in cfg.policy.input_features
+                    }
+                    batch_for_preprocessor["robot_type"] = robot_type
+                    batch_for_preprocessor['complementary_data'] = {
+                        'task': [task_str],
+                        'subtask': [""],
+                        'advantage': adv_val,
+                    }
+
+                    if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
+                        processed_batch = policy.preprocessor(batch_for_preprocessor)
+                    else:
+                        processed_batch = batch_for_preprocessor
+
+                    critic_output = policy.forward(processed_batch, model="critic_value")
+                    if "critic_values" in critic_output:
+                        critic_val = critic_output["critic_values"].mean().item()
+                    elif "critic_value_mean" in critic_output:
+                        critic_val = critic_output["critic_value_mean"].mean().item()
+                    else:
+                        logger.error("[ENV] Could not find critic values in critic output")
+                        critic_val = 0.0
+                    critic_values.append(critic_val)
+
+    # --- 3. Save critic JSON + plot ---
+    with open(os.path.join(log_dir, "critic_values.json"), "w") as f:
+        json.dump(critic_values, f)
+
+    if critic_values:
+        plt.figure(figsize=(10, 5))
+        plt.plot(critic_values)
+        plt.title(f"Critic Values - Episode {episode_counter}")
+        plt.xlabel("Step")
+        plt.ylabel("Min Q-Value")
+        plt.grid(True)
+        plt.savefig(os.path.join(log_dir, "critic_plot.png"))
+        plt.close()
+
+    # --- 4. Generate video ---
+    try:
+        save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras, subtask_texts=subtask_texts)
+        logger.info(f"[ENV] Video generated for episode {episode_counter}")
+    except Exception as e:
+        logger.error(f"[ENV] Failed to generate video: {e}")
+
+
 def env_interaction_worker(
-    online_env, 
-    env_processor, 
-    action_processor, 
-    action_queue, 
-    shared_state: SharedState, 
-    teleop_device, 
+    online_env,
+    env_processor,
+    action_processor,
+    action_queue,
+    shared_state: SharedState,
+    teleop_device,
     cfg,
     policy=None,
     postprocessor=None
@@ -407,6 +531,7 @@ def env_interaction_worker(
 
         interaction_step = 0
         video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
+        episode_log_buffer = []
 
         while shared_state.running:
             # 1. Episode boundary check
@@ -434,6 +559,7 @@ def env_interaction_worker(
                 
                 shared_state.request_reset()
                 was_intervening = False
+                episode_log_buffer = []
 
                 transition = create_transition(observation=obs, info=info)
                 transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
@@ -492,7 +618,8 @@ def env_interaction_worker(
                     logger.warning("[ENV] Action queue starved. Executing null ops.")
             
             # Save current transition before stepping for next_state later
-            current_transition_data = copy.deepcopy(transition)
+            # No deep copy needed: step_env_and_process_transition never mutates transition in-place
+            current_transition_data = transition
 
             # --- ENVIRONMENT STEP ---
             new_transition = step_env_and_process_transition(
@@ -543,105 +670,40 @@ def env_interaction_worker(
             # --- STATE PROPAGATION ---
             next_policy_fmt_obs = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
 
-            # --- LOGGING IMAGES ---
+            # --- LOGGING BUFFER ---
+            # Cheaply snapshot the current obs + subtask text into a list.
+            # Expensive work (critic inference, PNG saving, video) is deferred
+            # to _finalize_episode_log(), which runs during the pause between episodes.
             if shared_state.is_logging_episode:
-                # Save images as PNG based on config
-                log_dir = os.path.join(cfg.output_dir, "logging_episodes", f"episode_{shared_state.episode_counter:06d}")
-                os.makedirs(log_dir, exist_ok=True)
-                
-                for key, val in next_policy_fmt_obs.items():
-                    if "image" in key:
-                        cam_name = key.split('.')[-1]
-                        if cam_name in video_logging_cameras:
-                            # val is (1, C, H, W) or (C, H, W)
-                            img_tensor = val[0] if val.ndim == 4 else val
-                            
-                            if img_tensor.dtype == torch.uint8:
-                                img_np = img_tensor.cpu().numpy().transpose(1, 2, 0)
-                            else:
-                                v_max = img_tensor.max().item()
-                                if v_max <= 5.0:
-                                    img_np = (img_tensor.float().cpu().numpy().transpose(1, 2, 0) * 255.0).clip(0, 255).astype(np.uint8)
-                                else:
-                                    img_np = img_tensor.float().cpu().numpy().transpose(1, 2, 0).clip(0, 255).astype(np.uint8)
-                                    
-                            # Save required frames for video
-                            img_path = os.path.join(log_dir, f"step_{interaction_step:06d}_{cam_name}.png")
-                            Image.fromarray(img_np).save(img_path)
-
-                # Save subtask text for this step
                 with shared_state.lock:
-                    shared_state.subtask_texts.append(shared_state.current_subtask_text)
-
-                # --- NEW: CRITIC VALUES SYNCHRONOUS LOGGING ---
-                if policy is not None:
-                    with torch.no_grad():
-                        # Prepare exactly as get_actions_worker did
-                        batch_for_preprocessor = {}
-                        for k, v in next_policy_fmt_obs.items():
-                            if k in cfg.policy.input_features:
-                                batch_for_preprocessor[k] = v
-
-                        # Inject complementary data
-                        batch_for_preprocessor["robot_type"] = cfg.env.robot.type if hasattr(cfg.env, 'robot') else ""
-                        task_str = cfg.policy.task
-                        adv_val = torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
-                        
-                        batch_for_preprocessor['complementary_data'] = {
-                            'task': [task_str],
-                            'subtask': [""],
-                            'advantage': adv_val
-                        }
-
-                        if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
-                            processed_batch = policy.preprocessor(batch_for_preprocessor)
-                        else:
-                            processed_batch = batch_for_preprocessor
-                        
-                        critic_output = policy.forward(processed_batch, model="critic_value")
-                        if "critic_values" in critic_output:
-                            critic_val = critic_output["critic_values"].mean().item()
-                        elif "critic_value_mean" in critic_output:
-                            critic_val = critic_output["critic_value_mean"].mean().item()
-                        else:
-                            logger.error("[ENV] Could not find critic values in output")
-                            critic_val = 0.0
-                        
-                        with shared_state.lock:
-                            shared_state.critic_values.append(critic_val)
+                    current_subtask = shared_state.current_subtask_text
+                episode_log_buffer.append({
+                    'obs': {k: v.detach().cpu().clone() for k, v in next_policy_fmt_obs.items()},
+                    'subtask_text': current_subtask,
+                })
 
             # Handle episode boundary
             if new_transition[TransitionKey.DONE] or new_transition[TransitionKey.TRUNCATED]:
                 logger.info(f"[ENV] Episode {shared_state.episode_counter} finished.")
-                
-                # 1. Finalize logging for this episode
+
+                # 1. Finalize logging — runs during the natural pause before the next episode.
+                # Inference thread is already idle (episode_active=False), so no env impact.
                 if shared_state.is_logging_episode:
                     log_dir = os.path.join(cfg.output_dir, "logging_episodes", f"episode_{shared_state.episode_counter:06d}")
-                    # Save critic values
-                    with open(os.path.join(log_dir, "critic_values.json"), "w") as f:
-                        json.dump(shared_state.critic_values, f)
-                    
-                    # Plot critic values
-                    if len(shared_state.critic_values) > 0:
-                        plt.figure(figsize=(10, 5))
-                        plt.plot(shared_state.critic_values)
-                        plt.title(f"Critic Values - Episode {shared_state.episode_counter}")
-                        plt.xlabel("Step")
-                        plt.ylabel("Min Q-Value")
-                        plt.grid(True)
-                        plt.savefig(os.path.join(log_dir, "critic_plot.png"))
-                        plt.close()
-                    
-                    # Generate video with critic overlay
-                    try:
-                        save_video_with_critic_overlay(log_dir, shared_state.critic_values, camera_names=video_logging_cameras, subtask_texts=shared_state.subtask_texts)
-                        logger.info(f"[ENV] Video generated for episode {shared_state.episode_counter}")
-                    except Exception as e:
-                        logger.error(f"[ENV] Failed to generate video: {e}")
-                
+                    _finalize_episode_log(
+                        episode_log_buffer=episode_log_buffer,
+                        policy=policy,
+                        cfg=cfg,
+                        log_dir=log_dir,
+                        episode_counter=shared_state.episode_counter,
+                        video_logging_cameras=video_logging_cameras,
+                        critic_batch_size=10,
+                    )
+                    episode_log_buffer = []
+
                 # 2. Increment counter and check next logging/save status
                 shared_state.episode_counter += 1
-                
+
                 # Check if we should save the dataset
                 episode_save_freq = getattr(cfg, "episode_save_freq", 10)
                 if shared_state.episode_counter % episode_save_freq == 0:
@@ -650,9 +712,6 @@ def env_interaction_worker(
                     import shutil
                     if os.path.exists(dataset_root):
                         shutil.rmtree(dataset_root)
-                    # Important: bfloat16 to uint8 conversion is handled by LeRobotDataset if we pass right data?
-                    # Actually ReplayBuffer.to_lerobot_dataset uses guess_feature_info.
-                    # I'll let it use the default for now but monitor.
                     try:
                         shared_state.replay_buffer.to_lerobot_dataset(
                             repo_id="inference_recorded",
@@ -662,13 +721,11 @@ def env_interaction_worker(
                         )
                     except Exception as e:
                         logger.error(f"[ENV] Failed to save lerobot dataset: {e}")
-                
+
                 # Check if next episode should be logged
                 episode_logging_freq = getattr(cfg, "episode_logging_freq", 4)
                 shared_state.is_logging_episode = (shared_state.episode_counter % episode_logging_freq == 0)
-                shared_state.critic_values = []
-                shared_state.subtask_texts = []
-                
+
                 shared_state.episode_active = False
 
             # Update teleop interventions

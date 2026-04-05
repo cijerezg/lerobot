@@ -545,7 +545,20 @@ def _prepare_actor_batch(
         if preprocessor is None:
             raise ValueError("preprocessor must be provided for PI05 update step")
         processed_batch = preprocessor(batch_for_proc)
-               
+
+    # For online transitions, the actor passed the exact tokens it used — bypass the
+    # preprocessor's tokenization and use them directly so flow loss sees the same
+    # conditioning context the actor saw.
+    if comp_data is not None and "subtask_tokens" in comp_data:
+        ref_device = processed_batch[OBS_LANGUAGE_TOKENS].device
+        ref_mask_dtype = processed_batch[OBS_LANGUAGE_ATTENTION_MASK].dtype
+        processed_batch[OBS_LANGUAGE_SUBTASK_TOKENS] = comp_data["subtask_tokens"].to(
+            device=ref_device, dtype=torch.long
+        )
+        processed_batch[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = comp_data["subtask_masks"].to(
+            device=ref_device, dtype=ref_mask_dtype
+        )
+
     return processed_batch, subtask_indices
 
 
@@ -561,17 +574,6 @@ def _construct_actor_forward_batch(
     device: str,
     cast_to_bf16_fn: any,
 ) -> dict:
-    # --- MASKING LOGIC for Online Subtasks ---
-    if subtask_indices is not None:
-        if isinstance(subtask_indices, torch.Tensor):
-            is_online_mask = (subtask_indices == -1)
-        else:
-            is_online_mask = torch.tensor([i == -1 for i in subtask_indices], device=device)
-        
-        if is_online_mask.any():
-            if OBS_LANGUAGE_SUBTASK_ATTENTION_MASK in processed_batch:
-                processed_batch[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK][is_online_mask] = 0
-        
     # Construct forward batch for Actor
     forward_batch_actor = {
         ACTION: processed_batch[ACTION],

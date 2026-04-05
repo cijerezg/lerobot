@@ -31,6 +31,8 @@ class SharedStateActor:
         self.inference_count = 0
         self.inference_latencies = []
         self.current_step = 0
+        self.cached_subtask_tokens = None  # [max_decoding_steps] long, CPU
+        self.cached_subtask_masks = None   # [max_decoding_steps] bool, CPU
 
     def add_env_wait_time(self, wait_time: float):
         with self.lock:
@@ -106,6 +108,11 @@ class SharedStateActor:
                 return True
             return False
 
+    def update_subtask_cache(self, tokens: torch.Tensor, masks: torch.Tensor):
+        with self.lock:
+            self.cached_subtask_tokens = tokens.clone()
+            self.cached_subtask_masks = masks.clone()
+
 def pull_new_policy_weights(policy, parameters_queue, device):
     bytes_state_dict = get_last_item_from_queue(parameters_queue, block=False)
     if bytes_state_dict is not None:
@@ -119,6 +126,73 @@ def pull_new_policy_weights(policy, parameters_queue, device):
              policy.actor.load_state_dict(actor_state_dict, strict=False)
         else:
              policy.model.load_state_dict(actor_state_dict, strict=False)
+
+
+def align_prev_actions(
+    prev_actions: torch.Tensor,
+    anchor_old: torch.Tensor,
+    anchor_now: torch.Tensor,
+    action_encoding: str,
+    chunk_size: int,
+    postprocessor,
+    normalizer,
+) -> torch.Tensor:
+    """Re-align leftover chunk actions when the anchor state changes between chunks.
+
+    For anchor encoding (d_t = a_t - s_0), every action in the leftover references s_0
+    and must be corrected when s_0 changes: d_t_new = d_t_old + (s_0_old - s_0_new).
+
+    For delta encoding (d_0 = a_0 - s_0, d_t = a_t - a_{t-1} for t > 0), only d_0
+    references s_0. Leftovers that begin at offset > 0 contain only consecutive diffs
+    and need no correction at all.
+
+    Per-timestep normalization stats have shape [chunk_size, action_dim]. The leftover
+    starts at index offset = chunk_size - n_left in the original chunk, so we right-align
+    it in a padded buffer before calling postprocessor (unnorm) to ensure each position
+    uses the correct per-timestep stats. After the correction we left-align for renorm,
+    because the model receives prev_chunk_left_over left-aligned (positions 0..n_left-1).
+
+    Args:
+        prev_actions: Leftover normalized actions from the previous chunk, [n_left, action_dim].
+        anchor_old: s_0 that was used when the previous chunk was generated.
+        anchor_now: Current observation state (new s_0).
+        action_encoding: "anchor" or "delta".
+        chunk_size: Full chunk size (used to derive offset).
+        postprocessor: Callable that unnormalizes a [chunk_size, action_dim] tensor.
+        normalizer: NormalizerProcessorStep used to renormalize after correction.
+
+    Returns:
+        Re-aligned normalized prev_actions with shape [n_left, action_dim].
+    """
+    n_left = prev_actions.shape[0]
+    action_dim = prev_actions.shape[1]
+    offset = chunk_size - n_left  # position of prev_actions[0] in the original chunk
+
+    if action_encoding == "delta" and offset > 0:
+        # prev_actions[0] is d_{offset} = a_{offset} - a_{offset-1}, a consecutive diff
+        # that does not reference s_0 at all.  No alignment needed.
+        return prev_actions
+
+    # Right-align in a padded buffer so postprocessor applies the correct per-timestep
+    # stats: stats[offset+i] is used to unnorm prev_actions[i].
+    right_padded = torch.zeros(chunk_size, action_dim, device=prev_actions.device, dtype=prev_actions.dtype)
+    right_padded[offset:] = prev_actions
+    d_abs = postprocessor(right_padded)
+
+    dev = d_abs.device
+    delta_s = anchor_old.squeeze(0).to(dev) - anchor_now.squeeze(0).to(dev)
+    if action_encoding == "anchor":
+        # All positions reference s_0; shift every leftover element.
+        d_abs[offset:] += delta_s
+    else:
+        # delta with offset == 0: only d_0 = a_0 - s_0 references the anchor.
+        d_abs[0] += delta_s
+
+    # Left-align for renorm: the model receives prev_chunk_left_over at positions 0..n_left-1.
+    left_padded = torch.zeros(chunk_size, action_dim, device=dev, dtype=d_abs.dtype)
+    left_padded[:n_left] = d_abs[offset:]
+    return normalizer._normalize_action(left_padded, inverse=False)[:n_left]
+
 
 def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queue, parameters_queue, device, cfg):
     """
@@ -197,7 +271,7 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 action_index_before = action_queue.get_action_index()
                 prev_actions = action_queue.get_left_over()
 
-                # --- [NEW] Recursive Delta Alignment for RTC ---
+                # --- Anchor/Delta Alignment for RTC impainting ---
                 action_encoding = getattr(policy.config, "action_encoding", "absolute")
                 anchor_now = None
                 if action_encoding in ["anchor", "delta"]:
@@ -205,27 +279,19 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                     if OBS_STATE in latest_obs:
                         anchor_now = latest_obs[OBS_STATE]
                         if prev_actions is not None and action_queue.anchor_state is not None:
-                            # Align: d_new = norm( unnorm(d_old) + s_0_old - s_now )
                             anchor_old = action_queue.anchor_state
-                            with torch.no_grad():
-                                d_abs_old = policy.postprocessor(prev_actions)
-                                # 2. Shift
-                                if action_encoding == "anchor":
-                                    d_abs_new = d_abs_old + (anchor_old - anchor_now)
-                                elif action_encoding == "delta":
-                                    d_abs_new = d_abs_old.clone()
-                                    d_abs_new[0] = d_abs_new[0] + (anchor_old - anchor_now)
-                                
-                                # Print alignment info
-                                print(f"\n[RTC] Alignment Offset (delta_s): {(anchor_old - anchor_now).norm().item():.3f}")
-                                
-                                # 3. Re-normalize using the normalizer step in preprocessor
-                                from lerobot.processor import NormalizerProcessorStep
-                                normalizer = next(s for s in policy.preprocessor.steps if isinstance(s, NormalizerProcessorStep))
-                                prev_actions = normalizer._normalize_action(d_abs_new, inverse=False)
-                        else:
-                            # First chunk or no leftover, no alignment needed
-                            pass
+                            from lerobot.processor import NormalizerProcessorStep
+                            normalizer = next(s for s in policy.preprocessor.steps if isinstance(s, NormalizerProcessorStep))
+                            logger.debug(f"[RTC] Alignment Offset (delta_s): {(anchor_old - anchor_now).norm().item():.3f}")
+                            prev_actions = align_prev_actions(
+                                prev_actions=prev_actions,
+                                anchor_old=anchor_old,
+                                anchor_now=anchor_now,
+                                action_encoding=action_encoding,
+                                chunk_size=policy.config.chunk_size,
+                                postprocessor=policy.postprocessor,
+                                normalizer=normalizer,
+                            )
 
                 # Using p95 instead of max: max() is overly conservative
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
@@ -240,6 +306,12 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 )
                 torch.cuda.synchronize()
                 t_gpu_end = time.perf_counter()
+
+                if policy._cached_subtask_tokens is not None:
+                    shared_state.update_subtask_cache(
+                        policy._cached_subtask_tokens[0].cpu(),
+                        policy._cached_subtask_masks[0].cpu(),
+                    )
 
                 # actions_chunk is [1, T, D] normalized
                 original_actions = actions_chunk.squeeze(0).clone()
@@ -493,12 +565,25 @@ def env_interaction_worker_actor(
                     teleop_device.send_feedback(feedback)
 
             # --- TRANSITION FORMATTING ---
+            with shared_state.lock:
+                cached_tokens = shared_state.cached_subtask_tokens
+                cached_masks = shared_state.cached_subtask_masks
+                if cached_tokens is not None:
+                    subtask_tokens_for_transition = cached_tokens.clone()
+                    subtask_masks_for_transition = cached_masks.clone()
+                else:
+                    max_len = cfg.policy.tokenizer_max_length
+                    subtask_tokens_for_transition = torch.zeros(max_len, dtype=torch.long)
+                    subtask_masks_for_transition = torch.zeros(max_len, dtype=torch.bool)
+
             complementary_info = {
                 "discrete_penalty": torch.tensor(
                     [new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)]
                 ),
                 TeleopEvents.IS_INTERVENTION.value: torch.tensor([float(is_intervening)], dtype=torch.float32),
                 "subtask_index": torch.tensor([-1], dtype=torch.long),
+                "subtask_tokens": subtask_tokens_for_transition,
+                "subtask_masks": subtask_masks_for_transition,
             }
 
             observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])

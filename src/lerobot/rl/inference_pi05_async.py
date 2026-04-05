@@ -26,7 +26,7 @@ Usage:
 """
 
 episode_logging_freq = 1
-episode_save_freq = 3
+episode_save_freq = 10
 
 import logging
 import time

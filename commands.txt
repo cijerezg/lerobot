@@ -247,7 +247,8 @@ python -m lerobot.rl.learner_pi05 --config_path config-hiserl.json
 # Actor
 python -m lerobot.rl.actor_pi05 --config_path config-hiserl.json
 
-
+# Inference
+python -m lerobot.rl.inference_pi05_async --config_path config-hiserl.json
 
 
 

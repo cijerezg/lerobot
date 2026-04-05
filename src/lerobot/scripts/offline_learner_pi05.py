@@ -275,15 +275,16 @@ def run_offline_training(
             "time_mlp_in" in name or
             "time_mlp_out" in name or
             "gemma_expert" in name or
-            "multi_modal_project" in name or
-            ("vision_tower" in name and any(f".{i}." in name for i in [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])) or
-            ("language_model" in name and any(f".{i}." in name for i in [12, 13, 14, 15, 16, 17])) or 
+            #"multi_modal_project" in name or
+            #("vision_tower" in name and any(f".{i}." in name for i in [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])) or
+            #("language_model" in name and any(f".{i}." in name for i in [10, 11, 12, 13, 14, 15, 16, 17])) or 
+            ("language_model" in name and any(f".{i}." in name for i in [14, 15, 16, 17])) or 
             "language_model.norm" in name or
 
             # Critic params
             #"critic.layers.2" in name or
-            "critic.layers.3" in name or
-            "critic.layers.4" in name or
+            #"critic.layers.3" in name or
+            #"critic.layers.4" in name or
             "critic.layers.5" in name or
             "critic.norm" in name or
             "critic.value_head" in name or
