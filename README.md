@@ -1,3 +1,13 @@
+**Custom implementation of a RECAP-like algorithm from physical intelligence, which was used to train $\pi_{0.6}$.**
+
+I used to work on the my-pi05-merge branch, but I've moved the code to the main branch and will continue to develop it here.
+
+A README.md about this work is avaliable in the RL folder. Also, happy to take features requests, and if you try to run my code and run into trouble, please reach out. My discord is: cijerezg.
+
+
+The plan is to eventually merge this to LeRobot.
+
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
 </p>
