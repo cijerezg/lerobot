@@ -782,15 +782,6 @@ class PI05RLPolicy(PI05FullPolicy):
                 print("Initializing critic from actor weights (random init)...")
                 self._init_critic_from_actor()
 
-        # Freeze parameters if requested
-        if config.freeze_vision_tower:
-            for param in self.model.paligemma_with_expert.paligemma.model.vision_tower.parameters():
-                param.requires_grad = False
-        
-        if config.freeze_language_model:
-             for param in self.model.paligemma_with_expert.paligemma.model.language_model.parameters():
-                param.requires_grad = False
-
         # Finalize critic setup
         if config.use_separate_critic:
             # Sync target
