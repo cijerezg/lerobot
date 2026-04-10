@@ -1,9 +1,9 @@
 # Custom implementation of a RECAP-like algorithm built on LeRobot
 
-[RECAP](https://arxiv.org/pdf/2511.14759) is the RL algorithm developed by [Physical Intelligence](https://www.pi.website/) that was used to train the $\pi_{0.6}$ model.
+[RECAP](https://arxiv.org/pdf/2511.14759) is the RL algorithm developed by [Physical Intelligence](https://www.pi.website/) that was used to train the π<sub>0.6</sub> model.
 
 
-RECAP proposes an advantage-conditioned VLA, where the advantage comes from a critic that is trained along the policy (the VLA). Specifically, the advantage is computed from the critic, then binarized and passed to the policy as an extended part of the prompt. 
+RECAP proposes an advantage-conditioned VLA, where the advantage comes from a critic that is trained along the policy (the VLA). Specifically, the advantage is computed from the critic, then binarized and passed to the policy as an extended part of the prompt.
 
 
 This is very useful for two reasons:
@@ -17,11 +17,11 @@ In the following sections, we highlight the key features of this implementation,
 
 ### Models
 
-- The policy is $\pi_{0.5}$ from LeRobot, and it was hard-coded. The critic shares a similar architecture with fewer layers. Both models were hard-coded throughout the codebase, so it isn't trivial to change them. 
+- The policy is π<sub>0.5</sub> from LeRobot, and it was hard-coded. The critic shares a similar architecture with fewer layers. Both models were hard-coded throughout the codebase, so it isn't trivial to change them.
 
-- This implementation uses the full version of $\pi_{0.5}$, which includes subtask generation and FAST tokens with knowledge insulation.
+- This implementation uses the full version of π<sub>0.5</sub>, which includes subtask generation and FAST tokens with knowledge insulation.
 
-- This implementation supports absolute actions, anchor actions (i.e., $\delta_t=a_t-s_0$), and delta actions (i.e., $\delta_t=a_t-a_{t-1}$). Experimentally, we have found that anchor actions work best as they inherit translation invariance and aren't as prone to drift as pure delta actions. 
+- This implementation supports absolute actions, anchor actions (i.e., δ<sub>t</sub> = a<sub>t</sub> - s<sub>0</sub>), and delta actions (i.e., δ<sub>t</sub> = a<sub>t</sub> - a<sub>t-1</sub>). Experimentally, we have found that anchor actions work best as they inherit translation invariance and aren't as prone to drift as pure delta actions.
 
 
 ### Offline
@@ -36,7 +36,9 @@ The file `lerobot.script.offline_learner_pi05.py` supports offline training usin
 - `lerobot.rl.inference_pi05_async` is the equivalent of `lerobot-record` for inference. It works on the real robot and it runs RTC asynchronously at 30Hz. It keeps an online buffer with episode data that is periodically saved. It also generates the following video:
 
 <div align="center">
-  <video src="media/readme/episode_video.mp4" width="100%" controls></video>
+
+[▶ Watch episode video](media/readme/episode_video.mp4)
+
 </div>
 
 
@@ -44,7 +46,7 @@ This implementation was completely built on LeRobot, and hence it might be usefu
 
 
 ### Models
-- Policy: We use $\pi_{0.5}$ as the base model, and it was hard-coded. It won't be trivial to adapt it to other models.
+- Policy: We use π<sub>0.5</sub> as the base model, and it was hard-coded. It won't be trivial to adapt it to other models.
 - Critic: The critic shares the policy architecture, but it is much smaller. The critic also has an
 
 
