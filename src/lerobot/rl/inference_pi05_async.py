@@ -25,9 +25,6 @@ Usage:
     python lerobot/src/lerobot/rl/inference_pi05_async.py --config-path=config-hiserl.json
 """
 
-episode_logging_freq = 1
-episode_save_freq = 10
-
 import logging
 import time
 import sys
@@ -88,7 +85,7 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
 
     if getattr(cfg, "use_rerun", False):
         import rerun as rr
-        rr.init("lerobot_inference_v1", spawn=True)
+        rr.init("lerobot_inference", spawn=True)
 
     logger.info("Instantiating policy architecture")
     policy = make_policy(
@@ -124,13 +121,10 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     shared_state.running = not shutdown_event.is_set()
     
     # Initialize Episode parameters
-    shared_state.episode_logging_freq = episode_logging_freq
-    shared_state.episode_save_freq = episode_save_freq
-    # Add them to cfg for worker access if needed (though they are in shared_state too)
-    cfg.episode_logging_freq = episode_logging_freq
-    cfg.episode_save_freq = episode_save_freq
+    shared_state.episode_logging_freq = cfg.episode_logging_freq
+    shared_state.episode_save_freq = cfg.episode_save_freq
 
-    shared_state.is_logging_episode = (shared_state.episode_counter % episode_logging_freq == 0)
+    shared_state.is_logging_episode = (shared_state.episode_counter % cfg.episode_logging_freq == 0)
 
     # Initialize ReplayBuffer for recording
     logger.info("Initializing ReplayBuffer for recording")

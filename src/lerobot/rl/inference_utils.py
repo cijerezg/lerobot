@@ -389,7 +389,7 @@ def _finalize_episode_log(
     log_dir,
     episode_counter,
     video_logging_cameras,
-    critic_batch_size=20,
+    critic_batch_size=40,
 ):
     """
     Process a buffered episode's frames after the episode ends.
@@ -478,7 +478,7 @@ def _finalize_episode_log(
 
     # --- 4. Generate video ---
     try:
-        save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras, subtask_texts=subtask_texts)
+        save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras, fps=cfg.env.fps, subtask_texts=subtask_texts)
         logger.info(f"[ENV] Video generated for episode {episode_counter}")
     except Exception as e:
         logger.error(f"[ENV] Failed to generate video: {e}")

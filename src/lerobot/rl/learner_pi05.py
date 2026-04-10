@@ -43,9 +43,6 @@ import json
 from PIL import Image
 import cv2
 
-episode_logging_freq = 4
-
-
 from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
@@ -309,7 +306,7 @@ def add_actor_information_and_train(
     saving_checkpoint = cfg.save_checkpoint
     online_steps = cfg.policy.online_steps
     async_prefetch = cfg.policy.async_prefetch
-    online_buffer_save_episode_freq = getattr(cfg, "online_buffer_save_episode_freq", None)
+    episode_save_freq = cfg.episode_save_freq
 
     # Initialize logging for multiprocessing
     if not use_threads(cfg):
@@ -351,25 +348,34 @@ def add_actor_information_and_train(
     last_time_policy_pushed = time.time()
 
 
-    # Freezing some parameters    
+    # Freezing some parameters
+    _VISION_TOWER_DEPTH = 27   # SigLIP-400M
+    _LANGUAGE_MODEL_DEPTH = 18  # Gemma 2B
+    tp = cfg.policy.trainable_params
+    critic_depth = cfg.policy.critic_llm_depth
+    lm_layers = list(range(tp.language_from_layer, _LANGUAGE_MODEL_DEPTH)) if tp.language_from_layer is not None else []
+    vt_layers  = list(range(tp.vision_encoder_from_layer.vision_tower, _VISION_TOWER_DEPTH)) if tp.vision_encoder_from_layer.vision_tower is not None else []
+    cr_layers  = list(range(tp.critic_language_from_layer, critic_depth)) if tp.critic_language_from_layer is not None else []
+
     for name, param in policy.named_parameters():
         param.requires_grad = (
-            # Actor params
+            # Action expert — always on
             "action_in_proj" in name or
-            "action_out_proj" in name or 
+            "action_out_proj" in name or
             "time_mlp_in" in name or
             "time_mlp_out" in name or
             "gemma_expert" in name or
-            #"multi_modal_project" in name or
-            #("vision_tower" in name and any(f".{i}." in name for i in [24, 25, 26])) or
-            ("language_model" in name and any(f".{i}." in name for i in [15, 16, 17])) or 
-            "language_model.norm" in name or
-
-            # Critic params
-            "critic.layers.5" in name or
+            # Vision encoder
+            (tp.vision_encoder_from_layer.multi_modal_projector and "multi_modal_project" in name) or
+            ("vision_tower" in name and any(f".{i}." in name for i in vt_layers)) or
+            # Language model
+            ("language_model" in name and any(f".{i}." in name for i in lm_layers)) or
+            ("language_model.norm" in name and bool(lm_layers)) or
+            # Critic — norm/value_head/queries always on
             "critic.norm" in name or
             "critic.value_head" in name or
-            "critic.value_queries" in name
+            "critic.value_queries" in name or
+            ("critic.layers" in name and any(f".{i}." in name for i in cr_layers))
         )
     
     # Share underlying memory for frozen critic layers to save VRAM
@@ -634,7 +640,7 @@ def add_actor_information_and_train(
 
         # Save online buffer at specified intervals (based on episode count)
         current_episode = add_actor_information_and_train.episode_counter[0]
-        if online_buffer_save_episode_freq is not None and current_episode > 0 and current_episode % online_buffer_save_episode_freq == 0 and current_episode != last_save_episode:
+        if current_episode > 0 and current_episode % episode_save_freq == 0 and current_episode != last_save_episode:
             logging.info(f"[LEARNER] Saving online buffer at episode {current_episode}, step {optimization_step}, buffer size {len(replay_buffer)}")
             online_buffer_dir = os.path.join(cfg.output_dir, "online_buffer")
             
@@ -681,7 +687,7 @@ def process_transitions_pi05(
         is_logging_episode = False
         if episode_counter is not None:
             episode_counter[0] += 1
-            if episode_counter[0] % episode_logging_freq == 0:
+            if episode_counter[0] % cfg.episode_logging_freq == 0:
                 is_logging_episode = True
                 logging.info(f"[LEARNER] Starting logging episode {episode_counter[0]}")
                 log_dir = os.path.join(cfg.output_dir, "logging_episodes", f"episode_{episode_counter[0]:06d}")

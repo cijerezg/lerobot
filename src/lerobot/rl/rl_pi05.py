@@ -45,6 +45,17 @@ class ConcurrencyConfig:
     actor: str = "threads"
     learner: str = "threads"
 
+@dataclass
+class VisionEncoderTrainConfig:
+    vision_tower: int | None = None      # None=frozen, int=train from this layer index onwards
+    multi_modal_projector: bool = False  # True=train all, False=frozen
+
+@dataclass
+class TrainableParamsConfig:
+    vision_encoder_from_layer: VisionEncoderTrainConfig = field(default_factory=VisionEncoderTrainConfig)
+    language_from_layer: int | None = None         # None=frozen, int=train layers >= this index
+    critic_language_from_layer: int | None = None  # same; critic norm/value_head/queries always on
+
 @PreTrainedConfig.register_subclass("pi05_rl")
 @dataclass
 class PI05RLConfig(PI05FullConfig):
@@ -86,10 +97,11 @@ class PI05RLConfig(PI05FullConfig):
     # Critic network arguments
     critic_network_kwargs: dict | None = None
 
-    # Training constraints
-    freeze_vision_tower: bool = True
-    freeze_language_model: bool = True
-    freeze_action_expert: bool = False
+    # Trainable parameter configuration
+    trainable_params: TrainableParamsConfig = field(default_factory=TrainableParamsConfig)
+
+    # Offline training steps
+    offline_steps: int = 10000
 
     # Inference parameters
     num_inference_steps: int = 5

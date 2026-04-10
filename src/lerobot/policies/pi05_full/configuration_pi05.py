@@ -80,7 +80,7 @@ class PI05FullConfig(PreTrainedConfig):
     # subtask stuff
     max_decoding_steps: int = 200
     temperature: float = 0.0
-    subtask_regeneration_interval: float = 1.5  # Regenerate subtask tokens every N seconds (0 = every call)
+    subtask_regeneration_interval: float = 2  # Regenerate subtask tokens every N seconds (0 = every call)
 
     # Training settings
     gradient_checkpointing: bool = False  # Enable gradient checkpointing for memory optimization

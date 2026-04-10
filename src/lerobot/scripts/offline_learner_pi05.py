@@ -228,8 +228,7 @@ def run_offline_training(
     saving_checkpoint = cfg.save_checkpoint
     async_prefetch = cfg.policy.async_prefetch
     
-    # Get offline training steps from config or use default
-    offline_steps = getattr(cfg.policy, "offline_steps", 10000)
+    offline_steps = cfg.policy.offline_steps
     
     # Critic warmup steps
     critic_warmup_steps = 0
@@ -267,28 +266,33 @@ def run_offline_training(
     
     
     # Freezing some parameters
+    _VISION_TOWER_DEPTH = 27   # SigLIP-400M
+    _LANGUAGE_MODEL_DEPTH = 18  # Gemma 2B
+    tp = cfg.policy.trainable_params
+    critic_depth = cfg.policy.critic_llm_depth
+    lm_layers = list(range(tp.language_from_layer, _LANGUAGE_MODEL_DEPTH)) if tp.language_from_layer is not None else []
+    vt_layers  = list(range(tp.vision_encoder_from_layer.vision_tower, _VISION_TOWER_DEPTH)) if tp.vision_encoder_from_layer.vision_tower is not None else []
+    cr_layers  = list(range(tp.critic_language_from_layer, critic_depth)) if tp.critic_language_from_layer is not None else []
+
     for name, param in policy.named_parameters():
         param.requires_grad = (
-            # Actor params
+            # Action expert — always on
             "action_in_proj" in name or
-            "action_out_proj" in name or 
+            "action_out_proj" in name or
             "time_mlp_in" in name or
             "time_mlp_out" in name or
             "gemma_expert" in name or
-            #"multi_modal_project" in name or
-            #("vision_tower" in name and any(f".{i}." in name for i in [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])) or
-            #("language_model" in name and any(f".{i}." in name for i in [10, 11, 12, 13, 14, 15, 16, 17])) or 
-            ("language_model" in name and any(f".{i}." in name for i in [14, 15, 16, 17])) or 
-            "language_model.norm" in name or
-
-            # Critic params
-            #"critic.layers.2" in name or
-            #"critic.layers.3" in name or
-            #"critic.layers.4" in name or
-            "critic.layers.5" in name or
+            # Vision encoder
+            (tp.vision_encoder_from_layer.multi_modal_projector and "multi_modal_project" in name) or
+            ("vision_tower" in name and any(f".{i}." in name for i in vt_layers)) or
+            # Language model
+            ("language_model" in name and any(f".{i}." in name for i in lm_layers)) or
+            ("language_model.norm" in name and bool(lm_layers)) or
+            # Critic — norm/value_head/queries always on
             "critic.norm" in name or
             "critic.value_head" in name or
-            "critic.value_queries" in name
+            "critic.value_queries" in name or
+            ("critic.layers" in name and any(f".{i}." in name for i in cr_layers))
         )
 
     # Share underlying memory for frozen critic layers to save VRAM
