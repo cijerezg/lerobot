@@ -8,6 +8,7 @@ import math
 import copy
 from transformers.models.gemma import modeling_gemma
 
+from lerobot.policies.pi_gemma import PiGemmaRMSNorm, _gated_residual, layernorm_forward
 from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
 from lerobot.optim.optimizers import AdamWConfig, MultiAdamConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
@@ -145,7 +146,7 @@ class PI05RLConfig(PI05FullConfig):
         return None
 
 from transformers import CONFIG_MAPPING
-from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer, GemmaRMSNorm, GemmaRotaryEmbedding
+from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer, GemmaRotaryEmbedding
 from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE
 
 # Hardcoded vocabulary size matching PaliGemmaWithExpertModel in modeling_pi05.py
@@ -215,8 +216,9 @@ class Pi05TransformerCritic(nn.Module):
             for i in range(num_layers)
         ])
         
-        # Final normalization
-        self.norm = GemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
+        # Final normalization (PiGemmaRMSNorm is a drop-in for GemmaRMSNorm
+        # that also accepts cond= for AdaRMS, returning (output, gate))
+        self.norm = PiGemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
         
         # Token-wise projection to reduce dimensionality before flattening
         self.token_proj = nn.Linear(hidden_dim, 512)
@@ -289,14 +291,8 @@ class Pi05TransformerCritic(nn.Module):
         
         # Apply layers manually to support gated residuals from pretrained weights
         for i, layer in enumerate(self.layers):
-            # Input Norm
-            norm_out = layer.input_layernorm(hidden_states, cond=None)
-            if isinstance(norm_out, tuple):
-                hidden_states_norm, gate = norm_out
-            else:
-                hidden_states_norm, gate = norm_out, None
+            hidden_states_norm, gate = layernorm_forward(layer.input_layernorm, hidden_states)
 
-            # Attention Projections
             input_shape = hidden_states_norm.shape[:-1]
             hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
             
@@ -304,12 +300,10 @@ class Pi05TransformerCritic(nn.Module):
             key_states = layer.self_attn.k_proj(hidden_states_norm).view(hidden_shape).transpose(1, 2)
             value_states = layer.self_attn.v_proj(hidden_states_norm).view(hidden_shape).transpose(1, 2)
             
-            # Apply RoPE
             query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
                 query_states, key_states, cos, sin, unsqueeze_dim=1
             )
             
-            # Attention Forward
             att_output, _ = modeling_gemma.eager_attention_forward(
                 layer.self_attn,
                 query_states,
@@ -319,38 +313,18 @@ class Pi05TransformerCritic(nn.Module):
                 layer.self_attn.scaling,
             )
             
-            # Reshape back and Project
             att_output = att_output.reshape(batch_size, -1, self.critic_gemma_config.hidden_size)
             out_emb = layer.self_attn.o_proj(att_output)
-            
-            # First Residual (Gated)
-            if gate is not None:
-                out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gate)
-            else:
-                out_emb = hidden_states + out_emb
+            out_emb = _gated_residual(hidden_states, out_emb, gate)
                 
             after_first_residual = out_emb.clone()
             
-            # Post Attention Norm
-            norm_out = layer.post_attention_layernorm(out_emb, cond=None)
-            if isinstance(norm_out, tuple):
-                out_emb, gate = norm_out
-            else:
-                out_emb, gate = norm_out, None
-                
-            # MLP
+            out_emb, gate = layernorm_forward(layer.post_attention_layernorm, out_emb)
             out_emb = layer.mlp(out_emb)
-            
-            # Second Residual (Gated)
-            if gate is not None:
-                hidden_states = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)
-            else:
-                hidden_states = after_first_residual + out_emb
+            hidden_states = _gated_residual(after_first_residual, out_emb, gate)
             
         # Final Norm
-        hidden_states = self.norm(hidden_states)
-        if isinstance(hidden_states, tuple):
-            hidden_states = hidden_states[0]
+        hidden_states, _ = self.norm(hidden_states)
         
         # Extract Queries (At the END)
         start_idx = vision_features.shape[1] + text_embs.shape[1]

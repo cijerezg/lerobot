@@ -1,15 +1,15 @@
 {
-    "output_dir": "outputs/recap_offline_v1",
+    "output_dir": "outputs/recap_offline_v2",
     "use_rerun": false,
     "job_name": "recap_pickplace_offline",
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 16,
+    "batch_size": 8,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/recap_offline_v1",
+    "offline_output_dir": "outputs/recap_offline_v2",
     "offline_save_freq": 500,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
@@ -105,7 +105,7 @@
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 6,
+        "gradient_accumulation_steps": 12,
         "offline_steps": 10000,
         "trainable_params": {
             "vision_encoder_from_layer": {
