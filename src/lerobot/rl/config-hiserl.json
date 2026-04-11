@@ -12,7 +12,7 @@
     "offline_output_dir": "outputs/pi05_full_offline_training_v2_anchor_actions",
     "offline_save_freq": 100,
     "episode_logging_freq": 4,
-    "episode_save_freq": 12,
+    "episode_save_freq": 6,
     "video_logging_cameras": [
         "top",
         "wrist"
