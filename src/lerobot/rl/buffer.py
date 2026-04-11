@@ -15,10 +15,15 @@
 # limitations under the License.
 
 import functools
+import hashlib
+import json
+import logging
 from collections.abc import Callable, Sequence
 from contextlib import suppress
+from pathlib import Path
 from typing import TypedDict
 
+import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
 from tqdm import tqdm
@@ -26,6 +31,8 @@ from tqdm import tqdm
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
 from lerobot.utils.transition import Transition
+
+logger = logging.getLogger(__name__)
 
 
 class BatchTransition(TypedDict):
@@ -494,6 +501,143 @@ class ReplayBuffer:
             enqueue(1)
 
     @classmethod
+    def from_cache(
+        cls,
+        cache_dir: str | Path,
+        device: str = "cuda:0",
+        image_augmentation_function: Callable | None = None,
+        use_drq: bool = True,
+        reward_normalization_constant: float = 1.0,
+        terminal_failure_reward: float = -1.0,
+    ) -> "ReplayBuffer":
+        """
+        Load a ReplayBuffer from pre-decoded memmap cache files.
+
+        Image data stays memory-mapped (OS pages in on demand), while
+        non-image data is loaded into RAM (small enough to fit easily).
+        """
+        cache_dir = Path(cache_dir)
+        meta_path = cache_dir / "metadata.json"
+        if not meta_path.exists():
+            raise FileNotFoundError(f"No metadata.json in {cache_dir}")
+
+        with open(meta_path) as f:
+            meta = json.load(f)
+
+        N = meta["num_transitions"]
+        state_keys = meta["state_keys"]
+        image_keys = meta["image_keys"]
+        non_image_state_keys = meta["non_image_state_keys"]
+
+        logger.info(f"Loading buffer cache from {cache_dir} ({N} transitions)")
+
+        replay_buffer = cls(
+            capacity=N,
+            device=device,
+            state_keys=state_keys,
+            image_augmentation_function=image_augmentation_function,
+            use_drq=use_drq,
+            storage_device="cpu",
+            optimize_memory=True,
+            reward_normalization_constant=reward_normalization_constant,
+            terminal_failure_reward=terminal_failure_reward,
+        )
+
+        def _sanitize(key: str) -> str:
+            return key.replace("/", "_")
+
+        def _load_memmap(key: str, shape: tuple, as_torch_dtype: torch.dtype | None = None) -> torch.Tensor:
+            safe_key = _sanitize(key)
+            bin_path = cache_dir / f"{safe_key}.bin"
+            dtype_str = meta["dtypes"][safe_key]
+            np_dtype = np.dtype(dtype_str)
+            full_shape = tuple([N] + meta["shapes"][safe_key]) if meta["shapes"][safe_key] else (N,)
+            mm = np.memmap(str(bin_path), dtype=np_dtype, mode="r", shape=full_shape)
+            t = torch.from_numpy(mm)
+            if as_torch_dtype is not None and np_dtype == np.uint16:
+                t = t.view(as_torch_dtype)
+            return t
+
+        def _load_small(key: str, clone: bool = True, as_torch_dtype: torch.dtype | None = None) -> torch.Tensor:
+            t = _load_memmap(key, (), as_torch_dtype=as_torch_dtype)
+            return t.clone() if clone else t
+
+        # Image keys: keep as memmap-backed tensors
+        replay_buffer.states = {}
+        for key in image_keys:
+            replay_buffer.states[key] = _load_memmap(key, (), as_torch_dtype=torch.bfloat16)
+            logger.info(f"  {key}: memmap {replay_buffer.states[key].shape}")
+
+        # Non-image state: small, clone into RAM
+        for key in non_image_state_keys:
+            replay_buffer.states[key] = _load_small(key, clone=True, as_torch_dtype=torch.bfloat16)
+            logger.info(f"  {key}: RAM {replay_buffer.states[key].shape}")
+
+        # optimize_memory=True: next_states is just a reference
+        replay_buffer.next_states = replay_buffer.states
+
+        # Actions, rewards, dones -- small, load into RAM
+        replay_buffer.actions = _load_small("actions", clone=True, as_torch_dtype=torch.bfloat16)
+        replay_buffer.rewards = _load_small("rewards", clone=True, as_torch_dtype=torch.bfloat16)
+        replay_buffer.dones = _load_small("dones", clone=True).to(torch.bool)
+        replay_buffer.truncateds = _load_small("truncateds", clone=True).to(torch.bool)
+        replay_buffer.episode_ends = _load_small("episode_ends", clone=True).to(torch.bool)
+
+        # Complementary info
+        comp_keys = meta.get("complementary_info_keys", [])
+        has_golden = meta.get("inject_golden", False)
+
+        all_comp_keys = []
+        for k in comp_keys:
+            safe = _sanitize(f"complementary_info.{k}")
+            if (cache_dir / f"{safe}.bin").exists():
+                all_comp_keys.append(k)
+        if has_golden and "is_golden" not in all_comp_keys:
+            safe = _sanitize("complementary_info.is_golden")
+            if (cache_dir / f"{safe}.bin").exists():
+                all_comp_keys.append("is_golden")
+
+        replay_buffer.has_complementary_info = len(all_comp_keys) > 0
+        replay_buffer.complementary_info_keys = list(all_comp_keys)
+        replay_buffer.complementary_info = {}
+
+        for k in all_comp_keys:
+            full_key = f"complementary_info.{k}"
+            replay_buffer.complementary_info[k] = _load_small(
+                full_key, clone=True, as_torch_dtype=torch.bfloat16
+            )
+            logger.info(f"  complementary_info.{k}: {replay_buffer.complementary_info[k].shape}")
+
+        replay_buffer.size = N
+        replay_buffer.position = N % replay_buffer.capacity
+        replay_buffer.initialized = True
+
+        logger.info(f"Buffer loaded from cache: {N} transitions, memmap images, RAM non-image data")
+        return replay_buffer
+
+    @staticmethod
+    def _dataset_fingerprint(dataset: LeRobotDataset) -> str:
+        key = f"{dataset.root}|{dataset.meta.total_frames}|{dataset.meta.total_episodes}"
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    @classmethod
+    def find_cache(cls, dataset: LeRobotDataset, cache_dir: str | Path) -> Path | None:
+        """Check if a valid cache exists for this dataset."""
+        cache_dir = Path(cache_dir)
+        fingerprint = cls._dataset_fingerprint(dataset)
+        candidate = cache_dir / fingerprint
+        meta_path = candidate / "metadata.json"
+        if not meta_path.exists():
+            return None
+        with open(meta_path) as f:
+            meta = json.load(f)
+        if meta.get("fingerprint") != fingerprint:
+            return None
+        if meta.get("num_transitions", 0) == 0:
+            return None
+        return candidate
+
+    @classmethod
     def from_lerobot_dataset(
         cls,
         lerobot_dataset: LeRobotDataset,
@@ -507,6 +651,7 @@ class ReplayBuffer:
         reward_normalization_constant: float = 1.0,
         terminal_failure_reward: float = -1.0,
         inject_complementary_info: dict | None = None,
+        cache_dir: str | Path | None = None,
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -526,6 +671,22 @@ class ReplayBuffer:
         Returns:
             ReplayBuffer: The replay buffer with dataset transitions.
         """
+        # Check for memmap cache before doing the expensive video decode
+        if cache_dir is not None:
+            cached = cls.find_cache(lerobot_dataset, cache_dir)
+            if cached is not None:
+                logger.info(f"Found memmap cache at {cached}, loading from disk...")
+                return cls.from_cache(
+                    cache_dir=cached,
+                    device=device,
+                    image_augmentation_function=image_augmentation_function,
+                    use_drq=use_drq,
+                    reward_normalization_constant=reward_normalization_constant,
+                    terminal_failure_reward=terminal_failure_reward,
+                )
+            else:
+                logger.info(f"No valid cache found in {cache_dir}, falling back to video decode")
+
         if capacity is None:
             capacity = len(lerobot_dataset)
 

@@ -25,7 +25,7 @@ The manual Gradio tool is the most reliable option.
 - [x] Launch the annotation UI:
 ```bash
 uv run python src/lerobot/policies/pi05_full/annotate/manual_subtask_annotate.py
-```
+```*
 
 - [x] Open `http://localhost:7860` in your browser
 - [x] Enter the repo ID: `jackvial/so101_pickplace_success_120_v2`
@@ -115,7 +115,52 @@ Also update the `env.features` and `env.robot.cameras` sections to match your ha
 
 ---
 
-## Step 4: Run Offline Training
+## Step 4: Pre-decode the Dataset (Recommended)
+
+The offline training loop decodes every video frame into RAM on startup. For a 120-episode dataset with two cameras this means ~43k frames decoded from `.mp4`, which takes ~20 minutes and uses ~26 GB of RAM.
+
+Pre-decoding writes all frames to memory-mapped files on disk **once**. On subsequent runs the buffer loads in ~1 second and uses only ~1–2 GB of resident RAM (the OS pages in frames on demand).
+
+- [ ] Run the pre-decode script:
+```bash
+uv run python scripts/predecode_dataset.py \
+    --repo-id jackvial/so101_pickplace_success_120_v2_with_subtasks \
+    --data-dir outputs/so101_pickplace_success_120_v2_w_subtasks \
+    --cache-dir outputs/buffer_cache \
+    --video-backend pyav
+```
+
+This will take roughly the same ~20 minutes as a normal training startup, but you only do it once. The output goes to `outputs/buffer_cache/<fingerprint>/` where the fingerprint is derived from the dataset path, frame count, and episode count.
+
+- [ ] Verify the cache was created:
+```bash
+ls -lh outputs/buffer_cache/*/
+```
+
+You should see `metadata.json` plus `.bin` files for each data key. The two image files (`observation.images.top.bin`, `observation.images.side.bin`) will be ~13 GB each.
+
+### How the buffer cache works
+
+The cache stores each data key as a flat binary file that can be opened as a `numpy.memmap`:
+
+| File | Contents | Size |
+|---|---|---|
+| `observation.images.top.bin` | `[N, 3, 224, 224]` bf16 | ~13 GB |
+| `observation.images.side.bin` | `[N, 3, 224, 224]` bf16 | ~13 GB |
+| `observation.state.bin` | `[N, 6]` bf16 | ~500 KB |
+| `actions.bin` | `[N, 6]` bf16 | ~500 KB |
+| `rewards.bin` / `dones.bin` / etc. | scalars | tiny |
+| `metadata.json` | shapes, dtypes, fingerprint | 1 KB |
+
+When the offline learner starts, `ReplayBuffer.from_lerobot_dataset()` checks `outputs/buffer_cache/` for a cache matching the dataset fingerprint. If found, image tensors are backed by read-only memory maps — the OS pages in only the frames that are actually sampled during training. Non-image data (state, actions, rewards) is small enough to load into RAM directly.
+
+The cache is **read-only** and never modified during training. You can safely delete it and re-generate at any time. If the dataset changes (different number of episodes or frames), the fingerprint will differ and a new cache will be created.
+
+> **Tip:** The `buffer_cache_dir` defaults to `"outputs/buffer_cache"` in the offline learner config. You can override it in `config-recap.json` or set it to `null` to disable caching and fall back to video decode.
+
+---
+
+## Step 5: Run Offline Training
 
 This trains the policy (flow matching) and critic (Bellman updates) together. Target ~8000–10000 steps.
 
@@ -124,6 +169,8 @@ This trains the policy (flow matching) and critic (Bellman updates) together. Ta
 uv run python -m lerobot.scripts.offline_learner_pi05 --config_path config-recap.json
 ```
 
+If you ran Step 4, the buffer will load from cache in ~1 second. Otherwise it will decode video frames on the fly (~20 minutes).
+
 - [ ] Monitor loss curves (if wandb enabled, or check terminal output)
 - [ ] Checkpoints saved to `outputs/recap_offline_v1/checkpoints/`
 
@@ -131,7 +178,7 @@ Expected runtime: ~2–4 hours on a single GPU depending on batch size and gradi
 
 ---
 
-## Step 5: Verify the Checkpoint
+## Step 6: Verify the Checkpoint
 
 - [ ] Confirm checkpoint exists:
 ```bash
@@ -151,7 +198,7 @@ print(f'Total keys: {len(ckpt)}')
 
 ---
 
-## Step 6 (Optional): Online Training
+## Step 7 (Optional): Online Training
 
 Once offline training is done, you can move to online RL on the real robot. This requires two processes.
 
@@ -187,7 +234,10 @@ uv run python -m lerobot.rl.actor_pi05_async --config_path config-recap.json
 → The dataset must have `subtask_index` as a feature and `subtasks` in `meta/info.json`. Re-run the annotation tool if missing.
 
 **OOM during training**
-→ Reduce `batch_size` (try 8–16) or increase `gradient_accumulation_steps` to compensate. Enable `gradient_checkpointing: true`.
+→ If you haven't pre-decoded the dataset (Step 4), the buffer decode alone uses ~26 GB RAM. Run the pre-decode script first. If still OOMing during the training loop, reduce `batch_size` (try 8–16) or increase `gradient_accumulation_steps` to compensate. Enable `gradient_checkpointing: true`.
+
+**Buffer loading is slow even with cache**
+→ Make sure the cache fingerprint matches. Run `cat outputs/buffer_cache/*/metadata.json | head` and check that the `dataset_root` and `total_frames` match your dataset. If they don't match, delete the cache directory and re-run `scripts/predecode_dataset.py`.
 
 **Checkpoint won't load**
 → If using `pi05_base`, the path should contain the string `pi05_base` so the loader uses dataset stats instead of checkpoint stats. If renamed, the loader may behave differently.
