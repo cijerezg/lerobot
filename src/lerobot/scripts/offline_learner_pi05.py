@@ -53,8 +53,11 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.rl.wandb_utils import WandBLogger
-from lerobot.robots import so_follower  # noqa: F401
-from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
+try:
+    from lerobot.robots import so_follower  # noqa: F401
+    from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
+except ImportError:
+    pass
 from lerobot.utils.constants import (
     ACTION,
     CHECKPOINTS_DIR,
