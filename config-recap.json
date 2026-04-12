@@ -103,7 +103,7 @@
         "critic_lr": 0.00005,
         "actor_lr": 0.00005,
         "critic_target_update_weight": 0.005,
-        "utd_ratio": 2,
+        "utd_ratio": 1,
         "grad_clip_norm": 2.0,
         "gradient_accumulation_steps": 12,
         "offline_steps": 10000,

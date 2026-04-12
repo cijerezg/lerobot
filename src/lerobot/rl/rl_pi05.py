@@ -95,6 +95,8 @@ class PI05RLConfig(PI05FullConfig):
     # Critic parameters
     use_separate_critic: bool = True
     critic_llm_depth: int = 6
+    critic_intermediate_size: int | None = 4096
+    critic_num_query_tokens: int = 8
     # Critic network arguments
     critic_network_kwargs: dict | None = None
 
@@ -173,20 +175,17 @@ class Pi05TransformerCritic(nn.Module):
         self.config = config
         self.dtype = getattr(torch, config.dtype) if hasattr(torch, config.dtype) else torch.float32
         
-        # Get Gemma config to match actor architecture
         paligemma_config = get_gemma_config(config.paligemma_variant)
         hidden_dim = paligemma_config.width
         vocab_size = PALIGEMMA_VOCAB_SIZE
         
-        # Configurable dimensions
-        # Default to 6 layers as per PI06 design
         num_layers = getattr(config, "critic_llm_depth", 6)
-        mlp_dim = paligemma_config.mlp_dim
+        intermediate_size = getattr(config, "critic_intermediate_size", None) or paligemma_config.mlp_dim
         
         critic_gemma_config = CONFIG_MAPPING["gemma"](
             head_dim=256,
             hidden_size=hidden_dim,
-            intermediate_size=mlp_dim,
+            intermediate_size=intermediate_size,
             num_attention_heads=8,
             num_hidden_layers=num_layers,
             num_key_value_heads=1,
@@ -197,42 +196,32 @@ class Pi05TransformerCritic(nn.Module):
         )
         self.critic_gemma_config = critic_gemma_config
         
-        # Learned query tokens for value prediction (32 tokens)
-        # Initialize with magnitude similar to scaled text embeddings (~270)
-        # Text norm ≈ sqrt(hidden_dim) * embedding_norm ≈ 45 * 6 ≈ 270
-        # So we init queries with std ≈ 270 / sqrt(hidden_dim) ≈ 6
-        self.num_query_tokens = 32
-        query_init_std = 1.0  # Standard initialization
-        self.value_queries = nn.Parameter(torch.randn(1, self.num_query_tokens, hidden_dim) * query_init_std)
-        # Force contiguous gradients
+        self.num_query_tokens = getattr(config, "critic_num_query_tokens", 8)
+        self.value_queries = nn.Parameter(torch.randn(1, self.num_query_tokens, hidden_dim))
         self.value_queries.register_hook(lambda grad: grad.contiguous())
         
-        # Rotary Embeddings
         self.rotary_emb = GemmaRotaryEmbedding(critic_gemma_config)
         
-        # Transformer layers
         self.layers = nn.ModuleList([
             GemmaDecoderLayer(critic_gemma_config, layer_idx=i)
             for i in range(num_layers)
         ])
         
-        # Final normalization (PiGemmaRMSNorm is a drop-in for GemmaRMSNorm
-        # that also accepts cond= for AdaRMS, returning (output, gate))
         self.norm = PiGemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
         
-        # Token-wise projection to reduce dimensionality before flattening
-        self.token_proj = nn.Linear(hidden_dim, 512)
-        
-        # Value head (projects from flattened projected tokens -> 1 value)
+        # Value head: simple linear projection
         self.value_head = nn.Sequential(
-            nn.Linear(512 * self.num_query_tokens, 512 * 2),
-            SwiGLU(),
-            nn.Linear(512, 1)
+            nn.Linear(hidden_dim * self.num_query_tokens, 256),
+            nn.GELU(),
+            nn.Linear(256, 1),
         )
         
     def initialize_weights_from_actor(self, actor_model):
-        """Initialize critic weights from the actor's pretrained weights."""
-        # Access the underlying PaliGemma model
+        """Initialize critic weights from the actor's pretrained weights.
+        
+        Copies attention weights and norms from the actor's language model.
+        MLP weights are NOT copied when critic uses a different intermediate_size.
+        """
         if hasattr(actor_model, "paligemma_with_expert"):
              paligemma_model = actor_model.paligemma_with_expert.paligemma
         elif hasattr(actor_model, "paligemma"):
@@ -241,16 +230,40 @@ class Pi05TransformerCritic(nn.Module):
              raise ValueError(f"Could not find paligemma in actor model of type {type(actor_model)}")
              
         source_model = paligemma_model.model.language_model
-
-        # Rotary embeddings are tiny and needed locally, deepcopy to avoid EMA bug
-        self.rotary_emb = copy.deepcopy(source_model.rotary_emb)
-        
-        # Copy Layers (Deepcopy to ensure we get the exact same class and weights)
         num_critic_layers = self.critic_gemma_config.num_hidden_layers
-        self.layers = nn.ModuleList([copy.deepcopy(source_model.layers[i]) for i in range(num_critic_layers)])
-        
-        # Copy Norm
-        self.norm = copy.deepcopy(source_model.norm)
+
+        self.rotary_emb = copy.deepcopy(source_model.rotary_emb)
+
+        src_intermediate = source_model.layers[0].mlp.up_proj.weight.shape[0]
+        dst_intermediate = self.critic_gemma_config.intermediate_size
+        mlp_compatible = (src_intermediate == dst_intermediate)
+
+        if mlp_compatible:
+            self.layers = nn.ModuleList([
+                copy.deepcopy(source_model.layers[i]) for i in range(num_critic_layers)
+            ])
+        else:
+            for i in range(num_critic_layers):
+                src_layer = source_model.layers[i]
+                dst_layer = self.layers[i]
+                # Copy attention weights
+                dst_layer.self_attn.load_state_dict(src_layer.self_attn.state_dict())
+                # Copy norm weights where shapes match
+                for norm_name in ("input_layernorm", "post_attention_layernorm"):
+                    src_norm = getattr(src_layer, norm_name)
+                    dst_norm = getattr(dst_layer, norm_name)
+                    src_sd = src_norm.state_dict()
+                    dst_sd = dst_norm.state_dict()
+                    compatible = {k: v for k, v in src_sd.items() if k in dst_sd and v.shape == dst_sd[k].shape}
+                    if compatible:
+                        dst_norm.load_state_dict(compatible, strict=False)
+
+        # Copy final norm
+        src_norm_sd = source_model.norm.state_dict()
+        dst_norm_sd = self.norm.state_dict()
+        compatible = {k: v for k, v in src_norm_sd.items() if k in dst_norm_sd and v.shape == dst_norm_sd[k].shape}
+        if compatible:
+            self.norm.load_state_dict(compatible, strict=False)
 
     def forward(self, vision_features: Tensor, text_embs: Tensor, token_masks: Tensor) -> Tensor:
         """
@@ -326,17 +339,11 @@ class Pi05TransformerCritic(nn.Module):
         # Final Norm
         hidden_states, _ = self.norm(hidden_states)
         
-        # Extract Queries (At the END)
+        # Extract query token outputs
         start_idx = vision_features.shape[1] + text_embs.shape[1]
-        queries_out = hidden_states[:, start_idx:, :] # [B, num_queries, D]
-        
-        # Token-wise projection (applied to each of the 32 tokens independently)
-        queries_proj = self.token_proj(queries_out) # [B, num_queries, 256]
-        
-        # Flatten all projected tokens together
-        queries_flat = queries_proj.reshape(batch_size, -1) # [B, num_queries * 256]
+        queries_out = hidden_states[:, start_idx:, :]  # [B, num_queries, D]
+        queries_flat = queries_out.reshape(batch_size, -1)  # [B, num_queries * D]
 
-        # Value Head
         value = self.value_head(queries_flat.to(self.dtype))
 
         return value
