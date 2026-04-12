@@ -15,12 +15,18 @@
 # limitations under the License.
 
 import logging
+import os
+import select
+import sys
 import time
 from queue import Queue
-from threading import Lock
+from threading import Lock, Thread
 from typing import TypeAlias
 
-from pynput import keyboard
+try:
+    from pynput import keyboard as pynput_keyboard
+except ImportError:
+    pynput_keyboard = None
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -34,6 +40,49 @@ from ..utils import TeleopEvents
 from .config_so_leader import SOLeaderTeleopConfig
 
 logger = logging.getLogger(__name__)
+
+
+class TerminalKeyboardListener:
+    """Fallback keyboard listener that reads raw stdin keystrokes.
+    Works over SSH and on headless machines without X11/Wayland.
+    Uses termios/tty to get single-character input without waiting for Enter.
+    """
+
+    def __init__(self, on_press):
+        self._on_press = on_press
+        self._thread = None
+        self._running = False
+
+    def start(self):
+        self._running = True
+        self._thread = Thread(target=self._read_loop, daemon=True, name="terminal_kbd")
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+
+    def _read_loop(self):
+        import tty
+        import termios
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            while self._running:
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    ch = sys.stdin.read(1)
+                    self._on_press(_CharKey(ch))
+        except Exception as e:
+            logger.debug(f"Terminal keyboard listener stopped: {e}")
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+class _CharKey:
+    """Minimal shim so TerminalKeyboardListener events look like pynput keys."""
+    def __init__(self, char: str):
+        self.char = char
 
 
 class SOLeader(Teleoperator):
@@ -90,9 +139,20 @@ class SOLeader(Teleoperator):
 
             self.configure()
 
-        # Start keyboard listener
-        self.listener = keyboard.Listener(on_press=self._on_press)
-        self.listener.start()
+        # Start keyboard listener — prefer pynput, fall back to raw terminal stdin
+        if pynput_keyboard is not None:
+            try:
+                self.listener = pynput_keyboard.Listener(on_press=self._on_press)
+                self.listener.start()
+                logger.info("Using pynput keyboard listener")
+            except Exception as e:
+                logger.warning(f"pynput failed ({e}), falling back to terminal stdin listener")
+                self.listener = TerminalKeyboardListener(on_press=self._on_press)
+                self.listener.start()
+        else:
+            logger.info("pynput not available, using terminal stdin keyboard listener")
+            self.listener = TerminalKeyboardListener(on_press=self._on_press)
+            self.listener.start()
 
         logger.info(f"{self} connected.")
 
