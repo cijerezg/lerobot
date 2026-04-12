@@ -427,6 +427,7 @@ def add_actor_information_and_train(
         offline_dataset.delta_timestamps = None
         offline_dataset.delta_indices = None
 
+        buffer_cache_dir = getattr(cfg, "buffer_cache_dir", "outputs/buffer_cache")
         logging.info("Convert to a offline replay buffer")
         offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
             offline_dataset,
@@ -438,6 +439,7 @@ def add_actor_information_and_train(
             reward_normalization_constant=cfg.policy.reward_normalization_constant,
             terminal_failure_reward=cfg.policy.terminal_failure_reward,
             inject_complementary_info={"is_golden": True},
+            cache_dir=buffer_cache_dir,
         )
         offline_replay_buffer.dataset = offline_dataset
 

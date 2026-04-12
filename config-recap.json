@@ -1,5 +1,5 @@
 {
-    "output_dir": "outputs/recap_online_v0",
+    "output_dir": "outputs/recap_online_v3",
     "use_rerun": false,
     "job_name": "recap_pickplace_offline",
     "resume": false,
@@ -9,7 +9,7 @@
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/recap_online_v0",
+    "offline_output_dir": "outputs/recap_online_v3",
     "offline_save_freq": 500,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
