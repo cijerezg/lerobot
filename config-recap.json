@@ -33,7 +33,7 @@
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "outputs/recap_offline_v4/checkpoints/001500",
+        "pi05_checkpoint": "outputs/recap_offline_v4/checkpoints/001500/pretrained_model",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
@@ -142,14 +142,16 @@
                     "index_or_path": "/dev/video0",
                     "height": 600,
                     "width": 800,
-                    "fps": 30
+                    "fps": 30,
+                    "fourcc": "MJPG"
                 },
                 "side": {
                     "type": "opencv",
                     "index_or_path": "/dev/video4",
                     "height": 600,
                     "width": 800,
-                    "fps": 30
+                    "fps": 30,
+                    "fourcc": "MJPG"
                 }
             }
         },
