@@ -329,10 +329,10 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 else:
                     processed_actions = original_actions.clone()
                 
-                # --- Apply Centered Moving Average (Window Size 3) ---
-                if processed_actions.shape[0] >= 3:
-                    padded = torch.cat([processed_actions[0:1], processed_actions, processed_actions[-1:]], dim=0)
-                    smoothed = (padded[:-2] + padded[1:-1] + padded[2:]) / 3.0
+                # --- Apply Centered Moving Average (Window Size 5) ---
+                if processed_actions.shape[0] >= 5:
+                    padded = torch.cat([processed_actions[0:1]] * 2 + [processed_actions] + [processed_actions[-1:]] * 2, dim=0)
+                    smoothed = (padded[:-4] + padded[1:-3] + padded[2:-2] + padded[3:-1] + padded[4:]) / 5.0
                     processed_actions = smoothed
                 
             new_latency = time.perf_counter() - current_time

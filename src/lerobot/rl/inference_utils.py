@@ -303,14 +303,14 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 else:
                     processed_actions = unnormalized_actions
                 
-                # --- Apply Centered Moving Average (Window Size 3) ---
+                # --- Apply Centered Moving Average (Window Size 5) ---
                 # The policy actually outputs a full chunk at once here before passing
                 # to the queue, so implementing a centered moving average is trivial.
-                if processed_actions.shape[0] >= 3:
+                if processed_actions.shape[0] >= 5:
                     # Pad the start and end to maintain sequence length
-                    padded = torch.cat([processed_actions[0:1], processed_actions, processed_actions[-1:]], dim=0)
-                    # Compute mean over the window of 3
-                    smoothed = (padded[:-2] + padded[1:-1] + padded[2:]) / 3.0
+                    padded = torch.cat([processed_actions[0:1]] * 2 + [processed_actions] + [processed_actions[-1:]] * 2, dim=0)
+                    # Compute mean over the window of 5
+                    smoothed = (padded[:-4] + padded[1:-3] + padded[2:-2] + padded[3:-1] + padded[4:]) / 5.0
                     processed_actions = smoothed
                 # -----------------------------------------------------
                 
