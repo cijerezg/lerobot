@@ -5,7 +5,7 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 1,
+    "batch_size": 2,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
