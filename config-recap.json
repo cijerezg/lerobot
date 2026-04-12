@@ -5,7 +5,7 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 4,
+    "batch_size": 1,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
@@ -105,7 +105,7 @@
         "critic_target_update_weight": 0.005,
         "utd_ratio": 1,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 24,
+        "gradient_accumulation_steps": 6,
         "offline_steps": 10000,
         "trainable_params": {
             "vision_encoder_from_layer": {

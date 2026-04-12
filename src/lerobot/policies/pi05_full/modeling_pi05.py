@@ -41,7 +41,7 @@ else:
     GemmaForCausalLM = None
     PaliGemmaForConditionalGeneration = None
 
-from lerobot.policies.pi_gemma import PiGemmaForCausalLM
+from lerobot.policies.pi_gemma import PiGemmaForCausalLM, _gated_residual, layernorm_forward
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05_full.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05FullConfig
@@ -236,7 +236,7 @@ def compute_layer_complete(
     gates = []
     for i, hidden_states in enumerate(inputs_embeds):
         layer = models[i].layers[layer_idx]
-        hidden_states, gate = layer.input_layernorm(hidden_states, cond=adarms_cond[i])  # noqa: PLW2901
+        hidden_states, gate = layernorm_forward(layer.input_layernorm, hidden_states, cond=adarms_cond[i])  # noqa: PLW2901
         gates.append(gate)
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
@@ -284,16 +284,13 @@ def compute_layer_complete(
         if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
             att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
         out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
-        # first residual
-        out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gates[i])  # noqa: SLF001
+        out_emb = _gated_residual(hidden_states, out_emb, gates[i])
         after_first_residual = out_emb.clone()
-        out_emb, gate = layer.post_attention_layernorm(out_emb, cond=adarms_cond[i])
-        # Convert to bfloat16 if the next layer (mlp) uses bfloat16
+        out_emb, gate = layernorm_forward(layer.post_attention_layernorm, out_emb, cond=adarms_cond[i])
         if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
             out_emb = out_emb.to(dtype=torch.bfloat16)
         out_emb = layer.mlp(out_emb)
-        # second residual
-        out_emb = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)  # noqa: SLF001
+        out_emb = _gated_residual(after_first_residual, out_emb, gate)
         outputs_embeds.append(out_emb)
         start_pos = end_pos
     return outputs_embeds
@@ -350,7 +347,7 @@ def compute_layer_complete_knowledge_insulation(
 
     for i, hidden_states in enumerate(inputs_embeds):
         layer = models[i].layers[layer_idx]
-        hidden_states, gate = layer.input_layernorm(hidden_states, cond=adarms_cond[i])  # noqa: PLW2901
+        hidden_states, gate = layernorm_forward(layer.input_layernorm, hidden_states, cond=adarms_cond[i])  # noqa: PLW2901
         gates.append(gate)
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
@@ -451,16 +448,13 @@ def compute_layer_complete_knowledge_insulation(
         if att_output.dtype != layer.self_attn.o_proj.weight.dtype:
             att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
         out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
-        # first residual
-        out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gates[i])  # noqa: SLF001
+        out_emb = _gated_residual(hidden_states, out_emb, gates[i])
         after_first_residual = out_emb.clone()
-        out_emb, gate = layer.post_attention_layernorm(out_emb.clone(), cond=adarms_cond[i])
-        # convert to bfloat16 if the next layer (mlp) uses bfloat16
+        out_emb, gate = layernorm_forward(layer.post_attention_layernorm, out_emb.clone(), cond=adarms_cond[i])
         if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
             out_emb = out_emb.to(dtype=torch.bfloat16)
         out_emb = layer.mlp(out_emb)
-        # second residual
-        out_emb = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)  # noqa: SLF001
+        out_emb = _gated_residual(after_first_residual, out_emb, gate)
         outputs_embeds.append(out_emb)
         start_pos = end_pos
     return outputs_embeds
@@ -560,6 +554,10 @@ class PaliGemmaWithExpertModel(
         )
 
         self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
+        if isinstance(getattr(self.paligemma.model, "text_config_dtype", None), str):
+            self.paligemma.model.text_config_dtype = getattr(
+                torch, self.paligemma.model.text_config_dtype, torch.float32
+            )
         self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
         
@@ -698,7 +696,7 @@ class PaliGemmaWithExpertModel(
             def compute_final_norms(inputs_embeds, adarms_cond):
                 outputs_embeds = []
                 for i, hidden_states in enumerate(inputs_embeds):
-                    out_emb, _ = models[i].norm(hidden_states, cond=adarms_cond[i])
+                    out_emb, _ = layernorm_forward(models[i].norm, hidden_states, cond=adarms_cond[i])
                     outputs_embeds.append(out_emb)
                 return outputs_embeds
 
