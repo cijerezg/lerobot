@@ -12,13 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Ported from lerobot main branch (pi_gemma.py) to provide PiGemmaRMSNorm
-# and related utilities for the RECAP critic and policy models.
+# Standalone PiGemma components (no inheritance from transformers model classes)
+# to avoid peak memory doubling during construction.
 
 from __future__ import annotations
 
 import torch
 from torch import nn
+
+from transformers.models.gemma.modeling_gemma import (
+    GemmaAttention,
+    GemmaMLP,
+    GemmaRotaryEmbedding,
+)
+from transformers.modeling_outputs import BaseModelOutputWithPast
+from transformers.cache_utils import DynamicCache
 
 
 def _gated_residual(
@@ -42,9 +50,8 @@ def layernorm_forward(
     cond: torch.Tensor | None = None,
 ):
     """
-    Call layernorm and return hidden states and gate.
-    If cond is not None, use conditional norm.
-    Otherwise, use normal gemma norm (returns (output, None)).
+    Call layernorm and return (hidden_states, gate).
+    Works with both PiGemmaRMSNorm and stock GemmaRMSNorm.
     """
     if cond is not None:
         return layernorm(x, cond=cond)
@@ -57,10 +64,9 @@ def layernorm_forward(
 
 class PiGemmaRMSNorm(nn.Module):
     """
-    Adaptive RMSNorm for PI Gemma (AdaRMS).
-    When cond_dim is set, uses cond to modulate scale/shift/gate;
-    otherwise behaves like standard GemmaRMSNorm.
-    forward(x, cond=None) returns (output, gate) for use with _gated_residual.
+    Adaptive RMSNorm (AdaRMS). When cond_dim is set, uses cond to
+    modulate scale/shift/gate; otherwise behaves like standard GemmaRMSNorm.
+    forward(x, cond=None) always returns (output, gate).
     """
 
     def __init__(self, dim: int, eps: float = 1e-6, cond_dim: int | None = None):
@@ -77,15 +83,13 @@ class PiGemmaRMSNorm(nn.Module):
 
     def _norm(self, x):
         var = torch.mean(torch.square(x.float()), dim=-1, keepdim=True)
-        normed_inputs = x * torch.rsqrt(var + self.eps)
-        return normed_inputs
+        return x * torch.rsqrt(var + self.eps)
 
     def forward(
         self,
         x: torch.Tensor,
         cond: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        dtype = x.dtype
         normed = self._norm(x)
         if cond is None or self.dense is None:
             normed = normed * (1.0 + self.weight.float())
@@ -97,7 +101,7 @@ class PiGemmaRMSNorm(nn.Module):
             modulation = modulation.unsqueeze(1)
         scale, shift, gate = modulation.chunk(3, dim=-1)
         normed = normed * (1 + scale.float()) + shift.float()
-        return normed.to(dtype), gate.to(dtype)
+        return normed.to(x.dtype), gate.to(x.dtype)
 
     def extra_repr(self) -> str:
         if self.dense is not None:
@@ -105,8 +109,165 @@ class PiGemmaRMSNorm(nn.Module):
         return f"dim={self.dim}, eps={self.eps}"
 
 
+class PiGemmaDecoderLayer(nn.Module):
+    """Decoder layer with PiGemmaRMSNorm and gated residuals."""
+
+    def __init__(self, config, layer_idx: int):
+        super().__init__()
+        self.hidden_size = config.hidden_size
+        self.self_attn = GemmaAttention(config=config, layer_idx=layer_idx)
+        self.mlp = GemmaMLP(config)
+        cond_dim = (
+            getattr(config, "adarms_cond_dim", None) if getattr(config, "use_adarms", False) else None
+        )
+        self.input_layernorm = PiGemmaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim
+        )
+        self.post_attention_layernorm = PiGemmaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim
+        )
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values=None,
+        use_cache: bool = False,
+        cache_position: torch.LongTensor | None = None,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
+        adarms_cond: torch.Tensor | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        residual = hidden_states
+        hidden_states, gate = self.input_layernorm(hidden_states, cond=adarms_cond)
+        hidden_states, _ = self.self_attn(
+            hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        hidden_states = _gated_residual(residual, hidden_states, gate)
+
+        residual = hidden_states
+        hidden_states, gate = self.post_attention_layernorm(hidden_states, cond=adarms_cond)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = _gated_residual(residual, hidden_states, gate)
+        return hidden_states
+
+
+class PiGemmaModel(nn.Module):
+    """
+    Standalone Gemma decoder with PiGemmaRMSNorm.
+    Built as a plain nn.Module — no inheritance from GemmaModel/PreTrainedModel,
+    so no duplicate weight allocation during construction.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.padding_idx = getattr(config, "pad_token_id", 0)
+        self.vocab_size = config.vocab_size
+
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.layers = nn.ModuleList(
+            [PiGemmaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+        )
+        cond_dim = getattr(config, "adarms_cond_dim", None)
+        self.norm = PiGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps, cond_dim=cond_dim)
+        self.rotary_emb = GemmaRotaryEmbedding(config=config)
+        self.gradient_checkpointing = False
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: DynamicCache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        cache_position: torch.LongTensor | None = None,
+        adarms_cond: torch.Tensor | None = None,
+        **kwargs,
+    ) -> BaseModelOutputWithPast:
+        use_cache = use_cache if use_cache is not None else getattr(self.config, "use_cache", False)
+
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_tokens(input_ids)
+
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache()
+
+        if cache_position is None:
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            cache_position = torch.arange(
+                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+            )
+
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
+
+        hidden_states = inputs_embeds
+        if len(self.layers) > 0 and self.layers[0].self_attn.q_proj.weight.dtype == torch.bfloat16:
+            hidden_states = hidden_states.to(torch.bfloat16)
+
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+
+        all_hidden_states = () if output_hidden_states else None
+
+        for decoder_layer in self.layers:
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+
+            hidden_states = decoder_layer(
+                hidden_states,
+                attention_mask=None,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                cache_position=cache_position,
+                position_embeddings=position_embeddings,
+                adarms_cond=adarms_cond,
+                **kwargs,
+            )
+
+        hidden_states, _ = self.norm(hidden_states, adarms_cond)
+
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+
+        return BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=past_key_values if use_cache else None,
+            hidden_states=all_hidden_states,
+        )
+
+
+class PiGemmaForCausalLM(nn.Module):
+    """
+    Standalone causal LM wrapper around PiGemmaModel.
+    No inheritance from GemmaForCausalLM/PreTrainedModel.
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.model = PiGemmaModel(config)
+        self.vocab_size = config.vocab_size
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+
 __all__ = [
     "PiGemmaRMSNorm",
+    "PiGemmaDecoderLayer",
+    "PiGemmaModel",
+    "PiGemmaForCausalLM",
     "_gated_residual",
     "layernorm_forward",
 ]

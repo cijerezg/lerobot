@@ -41,6 +41,8 @@ else:
     GemmaForCausalLM = None
     PaliGemmaForConditionalGeneration = None
 
+from lerobot.policies.pi_gemma import PiGemmaForCausalLM
+
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05_full.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05FullConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
@@ -558,7 +560,7 @@ class PaliGemmaWithExpertModel(
         )
 
         self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
-        self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
+        self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
         
         # lm_head is not used in the action_expert
