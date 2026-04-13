@@ -79,10 +79,21 @@ class EvalOfflineConfig(TrainRLServerPipelineConfig):
     eval_frames: Optional[str] = None
     # Random sampling: sample this many frames at random (in addition to any explicit ones)
     eval_random_n: int = 0
+    # Seed for random frame sampling — set to any int for reproducible picks
+    eval_random_seed: Optional[int] = None
     # Where to save evaluation plots
     eval_output_dir: str = "outputs/eval_offline"
     # Path to a second checkpoint for side-by-side comparison (optional)
     eval_checkpoint_b: Optional[str] = None
+    # When True: run each checkpoint with both "positive" (1.0) and "negative" (-1.0) advantage
+    # overlaid as solid/dashed traces. Mutually exclusive with eval_compare_subtasks.
+    eval_compare_advantage: bool = False
+    # When True: run each checkpoint with three subtask conditions per frame —
+    #   "gen"    — model-generated subtask (solid)
+    #   "gt"     — ground-truth subtask label from the dataset (dashed)
+    #   "manual" — string from MANUAL_SUBTASKS dict below, skipped if no entry (dotted)
+    # Mutually exclusive with eval_compare_advantage.
+    eval_compare_subtasks: bool = False
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -134,7 +145,7 @@ def _build_episode_index(dataset):
     return ep_to_indices
 
 
-def build_sample_list(dataset, episodes_str, frames_str, random_n, chunk_size):
+def build_sample_list(dataset, episodes_str, frames_str, random_n, chunk_size, seed=None):
     """
     Returns a list of (episode_idx, frame_idx_in_episode, global_idx).
 
@@ -167,8 +178,9 @@ def build_sample_list(dataset, episodes_str, frames_str, random_n, chunk_size):
 
     # ── Random sampling ─────────────────────────────────────────────────────
     if random_n:
+        rng = random.Random(seed)
         all_global = list(range(len(dataset)))
-        random.shuffle(all_global)
+        rng.shuffle(all_global)
         added = 0
         existing_globals = {g for _, _, g in samples}
         for global_idx in all_global:
@@ -266,20 +278,31 @@ def get_frame_data(dataset, global_idx, chunk_size):
 # ──────────────────────────────────────────────────────────────────────────────
 
 @torch.no_grad()
-def run_inference(policy, preprocessor, postprocessor, obs, task_str, device, state=None):
+def run_inference(policy, preprocessor, postprocessor, obs, task_str, device, state=None,
+                  advantage: float = 1.0,
+                  injected_subtask_tokens=None, injected_subtask_masks=None):
     """
     Run one forward pass.
+
+    Args:
+        advantage: scalar passed to the processor. The processor applies tanh + binning:
+            ≥ ~0.37 → "Advantage: positive", otherwise → "Advantage: negative".
+            Default 1.0 (positive) matches how the model was trained on golden data.
+        injected_subtask_tokens: if provided ([1, max_len] long), skip generate_subtask_tokens
+            and use these tokens directly for action sampling.
+        injected_subtask_masks: required when injected_subtask_tokens is provided ([1, max_len] bool).
+
     Returns:
         pred_actions_unnorm (Tensor):  [chunk_size, action_dim] — unnormalised, float32 CPU
         pred_actions_norm (Tensor):    [chunk_size, action_dim] — normalised (model space), float32 CPU
-        pred_subtask (str):            decoded subtask text
+        pred_subtask (str):            decoded subtask text (generated or decoded from injection)
     """
     batch_size = 1
 
     complementary_data = {
         "task": [task_str],
         "subtask": [""],
-        "advantage": torch.zeros(batch_size, 1, device=device),
+        "advantage": torch.tensor([[advantage]], device=device),
     }
     # Dummy action — only used by the preprocessor for FAST tokenisation,
     # which we don't need for inference.
@@ -298,13 +321,19 @@ def run_inference(policy, preprocessor, postprocessor, obs, task_str, device, st
     task_tokens = processed[OBS_LANGUAGE_TOKENS]
     task_masks = processed[OBS_LANGUAGE_ATTENTION_MASK]
 
-    # ── Subtask generation ───────────────────────────────────────────────────
-    subtask_tokens, subtask_masks = policy.model.generate_subtask_tokens(
-        images, img_masks, task_tokens, task_masks
-    )
+    # ── Subtask generation (or injection) ────────────────────────────────────
     tokenizer = policy.model._paligemma_tokenizer
-    valid_tokens = subtask_tokens[0][subtask_masks[0]]
-    pred_subtask = tokenizer.decode(valid_tokens, skip_special_tokens=True).strip()
+    if injected_subtask_tokens is not None:
+        subtask_tokens = injected_subtask_tokens.to(device)
+        subtask_masks  = injected_subtask_masks.to(device)
+        valid_tokens   = subtask_tokens[0][subtask_masks[0]]
+        pred_subtask   = tokenizer.decode(valid_tokens, skip_special_tokens=True).strip()
+    else:
+        subtask_tokens, subtask_masks = policy.model.generate_subtask_tokens(
+            images, img_masks, task_tokens, task_masks
+        )
+        valid_tokens = subtask_tokens[0][subtask_masks[0]]
+        pred_subtask = tokenizer.decode(valid_tokens, skip_special_tokens=True).strip()
 
     # ── Action sampling ──────────────────────────────────────────────────────
     pred_actions = policy.model.sample_actions(
@@ -385,12 +414,67 @@ def normalize_gt(preprocessor, gt_actions, state, device, action_encoding="absol
     return gt_actions_norm, None
 
 
+def tokenize_subtask(subtask_str: str, tokenizer, max_len: int, device):
+    """
+    Tokenize a raw subtask label into the exact format that generate_subtask_tokens returns.
+
+    The processor formats subtask labels as "Subtask: {text};\n" before tokenizing during
+    training. We replicate that here so injected tokens match the training distribution.
+    The tokenizer was loaded with add_eos_token=True, add_bos_token=False, so encoding
+    produces [...content tokens..., EOS] — matching what generate_subtask_tokens returns
+    (BOS is used as the generation seed but is not included in the returned tensor).
+
+    Returns:
+        tokens: [1, max_len] long
+        masks:  [1, max_len] bool
+    """
+    formatted = f"Subtask: {subtask_str.strip().lower()};\n"
+    encoded = tokenizer.encode(formatted, add_special_tokens=True)
+    n = min(len(encoded), max_len)
+    tokens = torch.zeros(1, max_len, dtype=torch.long, device=device)
+    masks  = torch.zeros(1, max_len, dtype=torch.bool,  device=device)
+    tokens[0, :n] = torch.tensor(encoded[:n], dtype=torch.long, device=device)
+    masks[0,  :n] = True
+    return tokens, masks
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Visualisation
 # ──────────────────────────────────────────────────────────────────────────────
 
 _GT_COLOR = "#3A86FF"          # blue
 _CKPT_COLORS = ["#FF6B35", "#2EC4B6", "#9B5DE5", "#F15BB5"]   # orange, teal, purple, pink
+
+# Plot style per condition label.
+# Info-panel style tags (unicode line characters) mirror the linestyle.
+_CONDITION_STYLE: dict[str, dict] = {
+    # advantage-sweep conditions
+    "pos":    {"linewidth": 1.4, "linestyle": "-",  "alpha": 1.00},
+    "neg":    {"linewidth": 1.4, "linestyle": "--", "alpha": 0.80},
+    # subtask-sweep conditions
+    "gen":    {"linewidth": 1.4, "linestyle": "-",  "alpha": 1.00},
+    "gt":     {"linewidth": 1.4, "linestyle": "--", "alpha": 0.80},
+    "manual": {"linewidth": 1.4, "linestyle": ":",  "alpha": 0.80},
+    # default (single-condition)
+    "pred":   {"linewidth": 1.4, "linestyle": "-",  "alpha": 1.00},
+}
+_CONDITION_TAG: dict[str, str] = {
+    "pos": "─", "neg": "╌",
+    "gen": "─", "gt":  "╌", "manual": "·",
+    "pred": "─",
+}
+
+# ── Manual subtask overrides ──────────────────────────────────────────────────
+# Fill in entries here when running with eval_compare_subtasks=True.
+# Keys are (episode_idx, frame_idx). Frames without an entry skip the "manual" condition.
+# The string should be the raw subtask label (e.g. "grasp red truck"), NOT the full
+# "Subtask: ...;\n" format — the script applies that formatting automatically.
+MANUAL_SUBTASKS: dict[tuple[int, int], str] = {
+    # (57, 222): "grasp red truck",
+}
+
+# Advantage conditions used when eval_compare_advantage=True.
+_ADVANTAGE_CONDITIONS = [("pos", 1.0), ("neg", -1.0)]
 
 
 def smooth_actions(actions, window_size):
@@ -400,7 +484,7 @@ def smooth_actions(actions, window_size):
     import torch.nn.functional as F
     pad = window_size // 2
     padded = torch.cat([actions[:1].repeat(pad, 1), actions, actions[-1:].repeat(pad, 1)], dim=0)
-    x = padded.t().unsqueeze(1) # [D, 1, T]
+    x = padded.t().unsqueeze(1)
     weight = torch.ones(1, 1, window_size, device=actions.device, dtype=actions.dtype) / window_size
     smoothed = F.conv1d(x, weight).squeeze(1).t()
     return smoothed
@@ -409,7 +493,7 @@ def smooth_actions(actions, window_size):
 def render_sample(
     obs,
     gt_actions,
-    checkpoints_info,      # list of dict: {"label": "A", "subtask": "...", "color_idx": 0}
+    checkpoints_info,      # list of dict: {"label": "A", "subtasks": {"pos": "...", "neg": "..."}, "color_idx": 0}
     pred_traces,           # list of dict: {"actions": tensor, "label": "A", "color_idx": 0, "kwargs": dict}
     gt_subtask,
     episode_idx,
@@ -457,65 +541,89 @@ def render_sample(
         ax.set_title(key.split(".")[-1], fontsize=9, fontweight="bold", pad=4)
         ax.axis("off")
 
-    # ── Subtask info box (spare top-right column when cameras < n_cols) ──────
+    # ── Info panel (spare top-right column when cameras < n_cols) ───────────
     spare_cols = list(range(min(n_cameras, n_cols), n_cols))
     if spare_cols:
+        import textwrap
+
         ax_info = fig.add_subplot(gs[0, spare_cols[0]])
         ax_info.axis("off")
+        ax_info.set_xlim(0, 1)
+        ax_info.set_ylim(0, 1)
 
-        def _info_text(ax, y, text, color, fontsize=7.5, bold=False):
-            """Render text with simple word-wrap, return new y after last line."""
-            words = text.split()
-            line_buf, line_h = [], y
-            for word in words:
-                line_buf.append(word)
-                if len(" ".join(line_buf)) > 30:
-                    ax.text(
-                        0.06, line_h, " ".join(line_buf[:-1]),
-                        transform=ax.transAxes, fontsize=fontsize, va="top",
-                        color=color, fontweight="bold" if bold else "normal",
-                    )
-                    line_buf = [word]
-                    line_h -= 0.09
-            if line_buf:
-                ax.text(
-                    0.06, line_h, " ".join(line_buf),
-                    transform=ax.transAxes, fontsize=fontsize, va="top",
-                    color=color, fontweight="bold" if bold else "normal",
-                )
-            return line_h - 0.09
+        n_ckpts = len(checkpoints_info)
+        # Two-column layout: A left, B right. Single checkpoint uses full width.
+        if n_ckpts >= 2:
+            col_x   = [0.02, 0.52]   # left edge of each checkpoint column (axes coords)
+            wrap_w  = 20              # chars per column before wrapping
+        else:
+            col_x   = [0.02]
+            wrap_w  = 40
 
-        y = 0.97
-        # GT subtask
-        ax_info.text(
-            0.06, y, "GT subtask:", transform=ax_info.transAxes,
-            fontsize=8, fontweight="bold", color="#555555", va="top",
-        )
-        y -= 0.10
-        y = _info_text(ax_info, y, gt_subtask or "(none)", "#333333")
-        y -= 0.06
+        def _wrap(text, max_lines=3):
+            """Wrap at wrap_w chars (breaking long tokens too), cap at max_lines."""
+            lines = textwrap.wrap(
+                text or "(empty)", width=wrap_w,
+                break_long_words=True, break_on_hyphens=False,
+            )
+            if not lines:
+                return ["(empty)"]
+            if len(lines) > max_lines:
+                lines = lines[:max_lines]
+                lines[-1] = lines[-1][:wrap_w - 1] + "…"
+            return lines
 
-        # Per-checkpoint: path + predicted subtask
-        for info in checkpoints_info:
+        def _draw_lines(x, y, lines, color, fontsize=7.0, step=0.085):
+            for line in lines:
+                ax_info.text(x, y, line, transform=ax_info.transAxes,
+                             fontsize=fontsize, va="top", color=color, clip_on=True)
+                y -= step
+            return y
+
+        # GT subtask — full width at top
+        y_gt = 0.97
+        ax_info.text(0.02, y_gt, "GT subtask:", transform=ax_info.transAxes,
+                     fontsize=7.5, fontweight="bold", color="#555555", va="top")
+        y_gt -= 0.10
+        y_gt = _draw_lines(0.02, y_gt, _wrap(gt_subtask or "(none)", max_lines=2), "#333333")
+
+        # Thin separator line
+        sep_y = y_gt - 0.02
+        ax_info.plot([0.02, 0.98], [sep_y, sep_y], transform=ax_info.transAxes,
+                     color="#cccccc", linewidth=0.6, clip_on=True)
+
+        # Per-checkpoint columns
+        for col_idx, info in enumerate(checkpoints_info[:2]):
+            x     = col_x[col_idx]
+            y     = sep_y - 0.06
             label = info["label"]
-            pred_subtask = info["subtask"]
             color = _CKPT_COLORS[info["color_idx"] % len(_CKPT_COLORS)]
+            subtasks = info["subtasks"]
+
+            # Header
+            ax_info.text(x, y, f"Ckpt {label}", transform=ax_info.transAxes,
+                         fontsize=7.5, fontweight="bold", color=color, va="top")
+            y -= 0.10
+
+            # Path — last 2 path components only, truncated to wrap_w chars
             path_str = (checkpoint_paths or {}).get(label, "")
-            ax_info.text(
-                0.06, y, f"Checkpoint {label}:", transform=ax_info.transAxes,
-                fontsize=8, fontweight="bold", color=color, va="top",
-            )
-            y -= 0.10
             if path_str:
-                y = _info_text(ax_info, y, path_str, "#555555", fontsize=6.5)
+                parts     = path_str.replace("\\", "/").split("/")
+                short_path = "/".join(parts[-2:]) if len(parts) >= 2 else path_str
+                if len(short_path) > wrap_w:
+                    short_path = "…" + short_path[-(wrap_w - 1):]
+                ax_info.text(x, y, short_path, transform=ax_info.transAxes,
+                             fontsize=6.0, color="#888888", va="top", clip_on=True)
+                y -= 0.09
+
+            # Predicted subtask per condition
+            for cond_label, sub in subtasks.items():
+                style_tag = _CONDITION_TAG.get(cond_label, "─")
+                ax_info.text(x, y, f"{style_tag} {cond_label}:", transform=ax_info.transAxes,
+                             fontsize=6.5, color="#777777", va="top", style="italic")
+                y -= 0.09
+                y = _draw_lines(x, y, _wrap(sub, max_lines=2), "#333333", fontsize=6.5)
                 y -= 0.04
-            ax_info.text(
-                0.06, y, "subtask:", transform=ax_info.transAxes,
-                fontsize=7, color="#666666", va="top", style="italic",
-            )
-            y -= 0.09
-            y = _info_text(ax_info, y, pred_subtask or "(empty)", "#333333")
-            y -= 0.10
 
     # ── 2×3 joint action traces (all checkpoints overlaid per joint) ─────────
     for j in range(min(n_joints, 6)):
@@ -590,6 +698,13 @@ def eval_cli(cfg: EvalOfflineConfig):
     chunk_size = cfg.policy.n_action_steps
     checkpoint_b = cfg.eval_checkpoint_b
     random_n = cfg.eval_random_n or None
+    compare_advantage = cfg.eval_compare_advantage
+    compare_subtasks  = cfg.eval_compare_subtasks
+
+    # Determine which advantage conditions to run.
+    # Default mode: single "pos" (=positive) inference — fixes the original bug where 0 was passed.
+    # Advantage-sweep mode: both "pos" and "neg" overlaid with solid/dashed linestyles.
+    adv_conditions = _ADVANTAGE_CONDITIONS if compare_advantage else [("pos", 1.0)]
 
     os.makedirs(output_dir, exist_ok=True)
     logging.info(f"Output dir: {output_dir}")
@@ -610,6 +725,7 @@ def eval_cli(cfg: EvalOfflineConfig):
         frames_str=cfg.eval_frames,
         random_n=random_n,
         chunk_size=chunk_size,
+        seed=cfg.eval_random_seed,
     )
     if not samples:
         raise ValueError(
@@ -624,34 +740,43 @@ def eval_cli(cfg: EvalOfflineConfig):
     os.makedirs(dir_norm,   exist_ok=True)
 
     # ── Run inference with policy A ───────────────────────────────────────────
-    # Stored per global_idx:
-    #   (obs, gt_actions, gt_actions_norm, state, state_norm,
-    #    gt_subtask, task_str, pred_unnorm, pred_norm, pred_subtask)
-    results_a = {}
-    mse_a_list = []
+    # frame_data[global_idx]: per-frame data shared across all conditions.
+    # preds_a[global_idx]: {adv_label: (pred_unnorm, pred_norm, pred_subtask)}
+    frame_data = {}
+    preds_a = {}
+    mse_a = {lbl: [] for lbl, _ in adv_conditions}
+    action_encoding_a = getattr(policy_a.config, "action_encoding", "absolute")
+
     for ep_idx, fr_idx, global_idx in samples:
         obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
             dataset, global_idx, chunk_size
         )
-        pred_unnorm, pred_norm, pred_subtask = run_inference(
-            policy_a, pre_a, post_a, obs, task_str, device, state=state
-        )
-        action_encoding = getattr(policy_a.config, "action_encoding", "absolute")
-        gt_actions_norm, state_norm = normalize_gt(pre_a, gt_actions, state, device, action_encoding=action_encoding)
-        mse = torch.nn.functional.mse_loss(pred_unnorm, gt_actions.float()).item()
-        mse_a_list.append(mse)
-        results_a[global_idx] = (
-            obs, gt_actions, gt_actions_norm, state, state_norm,
-            gt_subtask, task_str, pred_unnorm, pred_norm, pred_subtask,
-        )
+        gt_actions_norm, _ = normalize_gt(pre_a, gt_actions, state, device, action_encoding=action_encoding_a)
+        frame_data[global_idx] = {
+            "obs": obs, "gt_actions": gt_actions, "gt_actions_norm": gt_actions_norm,
+            "state": state, "gt_subtask": gt_subtask, "task_str": task_str,
+        }
+
+        preds_a[global_idx] = {}
+        for adv_label, adv_val in adv_conditions:
+            pred_unnorm, pred_norm, pred_subtask = run_inference(
+                policy_a, pre_a, post_a, obs, task_str, device,
+                state=state, advantage=adv_val,
+            )
+            mse = torch.nn.functional.mse_loss(pred_unnorm, gt_actions.float()).item()
+            mse_a[adv_label].append(mse)
+            preds_a[global_idx][adv_label] = (pred_unnorm, pred_norm, pred_subtask)
+
+        mse_str = "  ".join(f"mse_{lbl}={mse_a[lbl][-1]:.4f}" for lbl, _ in adv_conditions)
+        pred_sub_log = preds_a[global_idx]["pos"][2]
         logging.info(
-            f"  ep={ep_idx:04d} fr={fr_idx:04d} | mse={mse:.4f} | "
-            f"GT: '{gt_subtask}' | pred: '{pred_subtask}'"
+            f"  ep={ep_idx:04d} fr={fr_idx:04d} | {mse_str} | "
+            f"GT: '{gt_subtask}' | pred(pos): '{pred_sub_log}'"
         )
 
     # ── Optional: load checkpoint B and run inference ─────────────────────────
     # Load sequentially to avoid holding two large models in GPU memory.
-    results_b = {}
+    preds_b = {}
     if checkpoint_b:
         del policy_a
         torch.cuda.empty_cache()
@@ -660,38 +785,242 @@ def eval_cli(cfg: EvalOfflineConfig):
         cfg.policy.pi05_checkpoint = checkpoint_b
         policy_b, pre_b, post_b, _ = _load_policy_and_processors(cfg, device, dataset=dataset)
 
-        mse_b_list = []
+        mse_b = {lbl: [] for lbl, _ in adv_conditions}
         for ep_idx, fr_idx, global_idx in samples:
-            obs, gt_actions, _, state, _, _, task_str, _, _, _ = results_a[global_idx]
-            pred_unnorm, pred_norm, pred_subtask = run_inference(
-                policy_b, pre_b, post_b, obs, task_str, device, state=state
-            )
-            mse = torch.nn.functional.mse_loss(pred_unnorm, gt_actions.float()).item()
-            mse_b_list.append(mse)
-            results_b[global_idx] = (pred_unnorm, pred_norm, pred_subtask)
-            logging.info(f"  [B] ep={ep_idx:04d} fr={fr_idx:04d} | mse={mse:.4f} | pred: '{pred_subtask}'")
+            fd = frame_data[global_idx]
+            obs, gt_actions, state, task_str = fd["obs"], fd["gt_actions"], fd["state"], fd["task_str"]
+            preds_b[global_idx] = {}
+            for adv_label, adv_val in adv_conditions:
+                pred_unnorm, pred_norm, pred_subtask = run_inference(
+                    policy_b, pre_b, post_b, obs, task_str, device,
+                    state=state, advantage=adv_val,
+                )
+                mse = torch.nn.functional.mse_loss(pred_unnorm, gt_actions.float()).item()
+                mse_b[adv_label].append(mse)
+                preds_b[global_idx][adv_label] = (pred_unnorm, pred_norm, pred_subtask)
+            mse_str = "  ".join(f"mse_{lbl}={mse_b[lbl][-1]:.4f}" for lbl, _ in adv_conditions)
+            logging.info(f"  [B] ep={ep_idx:04d} fr={fr_idx:04d} | {mse_str}")
 
         del policy_b
         torch.cuda.empty_cache()
 
-    # ── MSE summary ───────────────────────────────────────────────────────────
-    mean_mse_a = sum(mse_a_list) / len(mse_a_list)
-    summary = f"MSE  A ({path_a}): {mean_mse_a:.4f}"
-    if results_b:
-        mean_mse_b = sum(mse_b_list) / len(mse_b_list)
-        summary += f"  |  B ({path_b}): {mean_mse_b:.4f}"
-    logging.info(summary)
-
-    # ── Render plots ──────────────────────────────────────────────────────────
-    action_dim = next(iter(results_a.values()))[1].shape[-1]
+    # Shared across both advantage and subtask rendering blocks
+    action_dim = frame_data[samples[0][2]]["gt_actions"].shape[-1]
     joint_names = SO100_JOINT_NAMES[:action_dim]
     checkpoint_paths = {label_a: path_a}
     if checkpoint_b:
         checkpoint_paths[label_b] = path_b
 
+    # ── Subtask-sweep inference + rendering ──────────────────────────────────
+    # Runs completely independently of the advantage sweep above.
+    # Produces plots in separate subfolders so nothing is overwritten.
+    if compare_subtasks:
+        dir_sub_unnorm = os.path.join(output_dir, "subtask_unnormalized_eval")
+        dir_sub_norm   = os.path.join(output_dir, "subtask_normalized_eval")
+        os.makedirs(dir_sub_unnorm, exist_ok=True)
+        os.makedirs(dir_sub_norm,   exist_ok=True)
+
+        # Policy A must still be in scope (not deleted by ckpt-B path).
+        # If checkpoint_b was used we already deleted policy_a above, so reload it.
+        if checkpoint_b:
+            cfg.policy.pi05_checkpoint = path_a
+            policy_sub_a, pre_sub_a, post_sub_a, _ = _load_policy_and_processors(
+                cfg, device, dataset=dataset
+            )
+        else:
+            policy_sub_a, pre_sub_a, post_sub_a = policy_a, pre_a, post_a
+
+        tokenizer = policy_sub_a.model._paligemma_tokenizer
+        max_sub_len = policy_sub_a.config.tokenizer_max_length
+
+        def _run_subtask_inference_for_policy(policy, pre, post, label):
+            """Run gen/gt/manual subtask conditions for all samples. Returns preds dict."""
+            preds = {}
+            for ep_idx, fr_idx, global_idx in samples:
+                fd = frame_data[global_idx]
+                obs, gt_actions, state, gt_subtask_str, task_str = (
+                    fd["obs"], fd["gt_actions"], fd["state"], fd["gt_subtask"], fd["task_str"]
+                )
+                preds[global_idx] = {}
+
+                # "gen" — model generates the subtask normally
+                pred_unnorm, pred_norm, gen_subtask_text = run_inference(
+                    policy, pre, post, obs, task_str, device, state=state, advantage=1.0,
+                )
+                preds[global_idx]["gen"] = (pred_unnorm, pred_norm, gen_subtask_text)
+
+                # "gt" — inject the ground-truth subtask label
+                gt_tokens, gt_masks = tokenize_subtask(
+                    gt_subtask_str, tokenizer, max_sub_len, device
+                )
+                pred_unnorm, pred_norm, _ = run_inference(
+                    policy, pre, post, obs, task_str, device, state=state, advantage=1.0,
+                    injected_subtask_tokens=gt_tokens, injected_subtask_masks=gt_masks,
+                )
+                preds[global_idx]["gt"] = (pred_unnorm, pred_norm, gt_subtask_str)
+
+                # "manual" — user-provided string, skip frame if no entry
+                manual_str = MANUAL_SUBTASKS.get((ep_idx, fr_idx))
+                if manual_str is not None:
+                    m_tokens, m_masks = tokenize_subtask(
+                        manual_str, tokenizer, max_sub_len, device
+                    )
+                    pred_unnorm, pred_norm, _ = run_inference(
+                        policy, pre, post, obs, task_str, device, state=state, advantage=1.0,
+                        injected_subtask_tokens=m_tokens, injected_subtask_masks=m_masks,
+                    )
+                    preds[global_idx]["manual"] = (pred_unnorm, pred_norm, manual_str)
+
+                logging.info(
+                    f"  [{label}] ep={ep_idx:04d} fr={fr_idx:04d} | "
+                    f"gen='{gen_subtask_text}' | gt='{gt_subtask_str}'"
+                )
+            return preds
+
+        logging.info("Subtask sweep — policy A ...")
+        preds_sub_a = _run_subtask_inference_for_policy(
+            policy_sub_a, pre_sub_a, post_sub_a, label_a
+        )
+
+        preds_sub_b = {}
+        if checkpoint_b:
+            cfg.policy.pi05_checkpoint = path_b
+            policy_sub_b, pre_sub_b, post_sub_b, _ = _load_policy_and_processors(
+                cfg, device, dataset=dataset
+            )
+            logging.info("Subtask sweep — policy B ...")
+            preds_sub_b = _run_subtask_inference_for_policy(
+                policy_sub_b, pre_sub_b, post_sub_b, label_b
+            )
+            del policy_sub_b
+            torch.cuda.empty_cache()
+
+        if checkpoint_b:
+            del policy_sub_a
+            torch.cuda.empty_cache()
+
+        def build_subtask_traces(ckpt_preds, color_idx, ckpt_label, val_idx):
+            traces = []
+            for cond_label, vals in ckpt_preds.items():
+                traces.append({
+                    "actions": vals[val_idx],
+                    "label": f"{ckpt_label} {cond_label}",
+                    "color_idx": color_idx,
+                    "kwargs": _CONDITION_STYLE.get(cond_label, _CONDITION_STYLE["pred"]),
+                })
+            return traces
+
+        for ep_idx, fr_idx, global_idx in samples:
+            fd = frame_data[global_idx]
+            obs, gt_actions, gt_actions_norm, state, gt_subtask = (
+                fd["obs"], fd["gt_actions"], fd["gt_actions_norm"], fd["state"], fd["gt_subtask"]
+            )
+
+            sub_ckpts_info = [
+                {
+                    "label": label_a,
+                    "subtasks": {k: v[2] for k, v in preds_sub_a[global_idx].items()},
+                    "color_idx": 0,
+                }
+            ]
+            if global_idx in preds_sub_b:
+                sub_ckpts_info.append({
+                    "label": label_b,
+                    "subtasks": {k: v[2] for k, v in preds_sub_b[global_idx].items()},
+                    "color_idx": 1,
+                })
+
+            sub_common = dict(
+                obs=obs, gt_subtask=gt_subtask,
+                episode_idx=ep_idx, frame_idx=fr_idx,
+                joint_names=joint_names, checkpoint_paths=checkpoint_paths,
+                checkpoints_info=sub_ckpts_info,
+            )
+
+            sub_traces_unnorm = build_subtask_traces(preds_sub_a[global_idx], 0, label_a, 0)
+            sub_traces_norm   = build_subtask_traces(preds_sub_a[global_idx], 0, label_a, 1)
+            if global_idx in preds_sub_b:
+                sub_traces_unnorm += build_subtask_traces(preds_sub_b[global_idx], 1, label_b, 0)
+                sub_traces_norm   += build_subtask_traces(preds_sub_b[global_idx], 1, label_b, 1)
+
+            render_sample(
+                **sub_common, gt_actions=gt_actions,
+                pred_traces=sub_traces_unnorm, output_dir=dir_sub_unnorm, state=state,
+            )
+            render_sample(
+                **sub_common, gt_actions=gt_actions_norm,
+                pred_traces=sub_traces_norm, output_dir=dir_sub_norm, state=None,
+            )
+
+        logging.info(
+            f"Subtask plots saved to {dir_sub_unnorm}/ and {dir_sub_norm}/"
+        )
+
+    # ── MSE summary ───────────────────────────────────────────────────────────
+    parts = [f"MSE  A ({path_a}):"]
+    for lbl, _ in adv_conditions:
+        parts.append(f"  {lbl}={sum(mse_a[lbl]) / len(mse_a[lbl]):.4f}")
+    if preds_b:
+        parts.append(f"  |  B ({path_b}):")
+        for lbl, _ in adv_conditions:
+            parts.append(f"  {lbl}={sum(mse_b[lbl]) / len(mse_b[lbl]):.4f}")
+    logging.info("".join(parts))
+
+    # ── Render plots ──────────────────────────────────────────────────────────
+    def build_traces(ckpt_preds, color_idx, ckpt_label, val_idx):
+        """Build trace list for one checkpoint across all advantage conditions.
+
+        ckpt_preds: {adv_label: (unnorm, norm, subtask)}
+        val_idx: 0 = unnormalized, 1 = normalized.
+
+        Default mode (single "pos" condition): adds raw + smooth to match original behavior.
+        Advantage-sweep mode (multiple conditions): adds one trace per condition, no smooth
+        (linestyle already encodes the condition; adding smooth would double the line count).
+        """
+        traces = []
+        for adv_label, vals in ckpt_preds.items():
+            actions = vals[val_idx]
+            if compare_advantage:
+                # Linestyle encodes advantage; no smooth to keep the plot readable.
+                label = f"{ckpt_label} {adv_label}"
+                traces.append({
+                    "actions": actions, "label": label, "color_idx": color_idx,
+                    "kwargs": _CONDITION_STYLE.get(adv_label, _CONDITION_STYLE["pred"]),
+                })
+            else:
+                # Single condition: show raw + smooth, same as original behavior.
+                traces.append({
+                    "actions": actions, "label": f"{ckpt_label} raw", "color_idx": color_idx,
+                    "kwargs": {"linewidth": 1.2, "linestyle": "-", "alpha": 1.0},
+                })
+                traces.append({
+                    "actions": smooth_actions(actions, 5), "label": f"{ckpt_label} (w=5)",
+                    "color_idx": color_idx,
+                    "kwargs": {"linewidth": 1.0, "linestyle": "-", "alpha": 0.4},
+                })
+        return traces
+
     for ep_idx, fr_idx, global_idx in samples:
-        (obs, gt_actions, gt_actions_norm, state, state_norm,
-         gt_subtask, task_str, pred_a_unnorm, pred_a_norm, sub_a) = results_a[global_idx]
+        fd = frame_data[global_idx]
+        obs          = fd["obs"]
+        gt_actions      = fd["gt_actions"]
+        gt_actions_norm = fd["gt_actions_norm"]
+        state        = fd["state"]
+        gt_subtask   = fd["gt_subtask"]
+
+        checkpoints_info = [
+            {
+                "label": label_a,
+                "subtasks": {lbl: preds_a[global_idx][lbl][2] for lbl, _ in adv_conditions},
+                "color_idx": 0,
+            }
+        ]
+        if global_idx in preds_b:
+            checkpoints_info.append({
+                "label": label_b,
+                "subtasks": {lbl: preds_b[global_idx][lbl][2] for lbl, _ in adv_conditions},
+                "color_idx": 1,
+            })
 
         common_kwargs = dict(
             obs=obs,
@@ -700,47 +1029,22 @@ def eval_cli(cfg: EvalOfflineConfig):
             frame_idx=fr_idx,
             joint_names=joint_names,
             checkpoint_paths=checkpoint_paths,
+            checkpoints_info=checkpoints_info,
         )
 
-        checkpoints_info = [
-            {"label": label_a, "subtask": sub_a, "color_idx": 0}
-        ]
-        if global_idx in results_b:
-            checkpoints_info.append({"label": label_b, "subtask": results_b[global_idx][2], "color_idx": 1})
-
-        def build_traces(pred_a, pred_b=None):
-            traces = []
-            # Policy A
-            traces.append({"actions": pred_a, "label": f"{label_a} raw", "color_idx": 0,
-                           "kwargs": {"linewidth": 1.2, "linestyle": "-", "alpha": 1.0}})
-            traces.append({"actions": smooth_actions(pred_a, 5), "label": f"{label_a} (w=5)", "color_idx": 0,
-                           "kwargs": {"linewidth": 1.0, "linestyle": "-", "alpha": 0.4}})
-            # Policy B
-            if pred_b is not None:
-                traces.append({"actions": pred_b, "label": f"{label_b} raw", "color_idx": 1,
-                               "kwargs": {"linewidth": 1.2, "linestyle": "-", "alpha": 1.0}})
-                traces.append({"actions": smooth_actions(pred_b, 5), "label": f"{label_b} (w=5)", "color_idx": 1,
-                               "kwargs": {"linewidth": 1.0, "linestyle": "-", "alpha": 0.4}})
-            return traces
-
-        pred_b_unnorm = results_b[global_idx][0] if global_idx in results_b else None
-        pred_b_norm   = results_b[global_idx][1] if global_idx in results_b else None
+        traces_unnorm = build_traces(preds_a[global_idx], color_idx=0, ckpt_label=label_a, val_idx=0)
+        traces_norm   = build_traces(preds_a[global_idx], color_idx=0, ckpt_label=label_a, val_idx=1)
+        if global_idx in preds_b:
+            traces_unnorm += build_traces(preds_b[global_idx], color_idx=1, ckpt_label=label_b, val_idx=0)
+            traces_norm   += build_traces(preds_b[global_idx], color_idx=1, ckpt_label=label_b, val_idx=1)
 
         render_sample(
-            **common_kwargs,
-            gt_actions=gt_actions,
-            checkpoints_info=checkpoints_info,
-            pred_traces=build_traces(pred_a_unnorm, pred_b_unnorm),
-            output_dir=dir_unnorm,
-            state=state,
+            **common_kwargs, gt_actions=gt_actions,
+            pred_traces=traces_unnorm, output_dir=dir_unnorm, state=state,
         )
         render_sample(
-            **common_kwargs,
-            gt_actions=gt_actions_norm,
-            checkpoints_info=checkpoints_info,
-            pred_traces=build_traces(pred_a_norm, pred_b_norm),
-            output_dir=dir_norm,
-            state=None,
+            **common_kwargs, gt_actions=gt_actions_norm,
+            pred_traces=traces_norm, output_dir=dir_norm, state=None,
         )
 
     logging.info(f"Done. {len(samples)} plots saved to {dir_unnorm}/ and {dir_norm}/")
