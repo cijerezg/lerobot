@@ -154,11 +154,12 @@ class ReplayBuffer:
 
         # Pre-allocate tensors for storage
         self.states = {
-            key: torch.empty(
-                (self.capacity, *shape), dtype=torch.bfloat16, device=self.storage_device)
+            key: torch.empty((self.capacity, *shape), dtype=torch.bfloat16, device=self.storage_device)
             for key, shape in state_shapes.items()
         }
-        self.actions = torch.empty((self.capacity, *action_shape), dtype=torch.bfloat16, device=self.storage_device)
+        self.actions = torch.empty(
+            (self.capacity, *action_shape), dtype=torch.bfloat16, device=self.storage_device
+        )
         self.rewards = torch.empty((self.capacity,), dtype=torch.bfloat16, device=self.storage_device)
 
         if not self.optimize_memory:
@@ -191,7 +192,9 @@ class ReplayBuffer:
                     )
                 elif isinstance(value, (int | float)):
                     # Handle scalar values similar to reward
-                    self.complementary_info[key] = torch.empty((self.capacity,), dtype=torch.bfloat16, device=self.storage_device)
+                    self.complementary_info[key] = torch.empty(
+                        (self.capacity,), dtype=torch.bfloat16, device=self.storage_device
+                    )
                 else:
                     raise ValueError(f"Unsupported type {type(value)} for complementary_info[{key}]")
 
@@ -229,7 +232,6 @@ class ReplayBuffer:
         self.dones[self.position] = done
         self.truncateds[self.position] = truncated
 
-
         # Handle complementary_info if provided and storage is initialized
         if complementary_info is not None and self.has_complementary_info:
             # Store the complementary_info
@@ -254,13 +256,15 @@ class ReplayBuffer:
 
         valid_indices = []
         collected_count = 0
-        max_retries = 200 # Safety hatch to prevent infinite loops
+        max_retries = 200  # Safety hatch to prevent infinite loops
         attempts = 0
 
         # This while loop is to ensure frames are valid
         while collected_count < batch_size:
             if attempts >= max_retries:
-                raise RuntimeError("Failed to sample enough valid chunks. Is action_chunk_size larger than your episodes?")
+                raise RuntimeError(
+                    "Failed to sample enough valid chunks. Is action_chunk_size larger than your episodes?"
+                )
             attempts += 1
 
             # Only sample enough to fill the remaining needed batch size (times a safety factor)
@@ -269,20 +273,21 @@ class ReplayBuffer:
 
             if len(self.actions.shape) == 2 and action_chunk_size > 1:
                 # Use action_chunk_size - 1 if you don't want to check the final step's done flag
-                check_length = action_chunk_size - 1 
-                chunk_indices = (idx.unsqueeze(1) + torch.arange(check_length, device=self.storage_device)) % self.capacity
-                
+                check_length = action_chunk_size - 1
+                chunk_indices = (
+                    idx.unsqueeze(1) + torch.arange(check_length, device=self.storage_device)
+                ) % self.capacity
+
                 chunk_dones = self.dones[chunk_indices]
                 invalid_mask = chunk_dones.any(dim=1)
                 idx = idx[~invalid_mask]
-            
+
             if len(idx) > 0:
                 valid_indices.append(idx)
                 collected_count += len(idx)
-            
+
         # Concatenate all collected indices and slice exactly to batch_size
         idx = torch.cat(valid_indices)[:batch_size]
-
 
         # Identify image keys that need augmentation
         image_keys = [k for k in self.states if k.startswith(OBS_IMAGE)] if self.use_drq else []
@@ -336,26 +341,30 @@ class ReplayBuffer:
         elif action_chunk_size == 1:
             # Single actions, no chunking needed
             batch_actions = self.actions[idx].to(self.device)
-        else: # len(self.actions.shape) == 2 and action_chunk_size > 1
+        else:  # len(self.actions.shape) == 2 and action_chunk_size > 1
             # Create chunk indices from valid starting positions (idx has already been filtered)
-            chunk_indices = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
+            chunk_indices = (
+                idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)
+            ) % self.capacity
             batch_actions = self.actions[chunk_indices].to(self.device)
 
         # Handle rewards and dones with lookahead awareness
         if len(self.actions.shape) == 2 and action_chunk_size > 1:
-            lookahead_window = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
+            lookahead_window = (
+                idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)
+            ) % self.capacity
             lookahead_window = lookahead_window + action_chunk_size
             lookahead_window = torch.clamp(lookahead_window, max=self.size - 1)
-            
+
             # Get max reward and any done in the lookahead window
             batch_rewards = self.rewards[lookahead_window].max(dim=1)[0].to(self.device)
             batch_dones = self.dones[lookahead_window].any(dim=1).float().to(self.device)
-            
+
         else:
             # No chunking - use standard logic
             batch_rewards = self.rewards[idx].to(self.device)
             batch_dones = self.dones[idx].to(self.device).float()
-        
+
         # Apply reward transformation
         new_rewards = torch.full_like(batch_rewards, -1.0)
         # Success case: Done and Reward=1 -> 0
@@ -364,10 +373,10 @@ class ReplayBuffer:
         # Failure case: Done and Reward=0 -> terminal_failure_reward
         failure_mask = (batch_dones > 0.5) & (batch_rewards < 0.5)
         new_rewards[failure_mask] = self.terminal_failure_reward
-        
+
         # Normalize
         batch_rewards = new_rewards / self.reward_normalization_constant
-        
+
         batch_truncateds = self.truncateds[idx].to(self.device).float()
 
         # Sample complementary_info if available
@@ -377,7 +386,6 @@ class ReplayBuffer:
             for key in self.complementary_info_keys:
                 batch_complementary_info[key] = self.complementary_info[key][idx].to(self.device)
 
-        
         return BatchTransition(
             state=batch_state,
             action=batch_actions,
@@ -411,9 +419,13 @@ class ReplayBuffer:
         while True:  # Create an infinite loop
             if async_prefetch:
                 # Get the standard iterator
-                iterator = self._get_async_iterator(queue_size=queue_size, batch_size=batch_size, action_chunk_size=action_chunk_size)
+                iterator = self._get_async_iterator(
+                    queue_size=queue_size, batch_size=batch_size, action_chunk_size=action_chunk_size
+                )
             else:
-                iterator = self._get_naive_iterator(batch_size=batch_size, queue_size=queue_size, action_chunk_size=action_chunk_size)
+                iterator = self._get_naive_iterator(
+                    batch_size=batch_size, queue_size=queue_size, action_chunk_size=action_chunk_size
+                )
 
             # Yield all items from the iterator
             with suppress(StopIteration):
@@ -524,7 +536,7 @@ class ReplayBuffer:
         with open(meta_path) as f:
             meta = json.load(f)
 
-        N = meta["num_transitions"]
+        n_transitions = meta["num_transitions"]
         state_keys = meta["state_keys"]
         image_keys = meta["image_keys"]
         non_image_state_keys = meta["non_image_state_keys"]
@@ -532,7 +544,7 @@ class ReplayBuffer:
         logger.info(f"Loading buffer cache from {cache_dir} ({N} transitions)")
 
         replay_buffer = cls(
-            capacity=N,
+            capacity=n_transitions,
             device=device,
             state_keys=state_keys,
             image_augmentation_function=image_augmentation_function,
@@ -558,7 +570,9 @@ class ReplayBuffer:
                 t = t.view(as_torch_dtype)
             return t
 
-        def _load_small(key: str, clone: bool = True, as_torch_dtype: torch.dtype | None = None) -> torch.Tensor:
+        def _load_small(
+            key: str, clone: bool = True, as_torch_dtype: torch.dtype | None = None
+        ) -> torch.Tensor:
             t = _load_memmap(key, (), as_torch_dtype=as_torch_dtype)
             return t.clone() if clone else t
 
@@ -710,22 +724,21 @@ class ReplayBuffer:
 
         # Process dataset transitions one at a time to save memory
         transition_generator = cls._lerobotdataset_to_transitions_generator(
-            dataset=lerobot_dataset, 
+            dataset=lerobot_dataset,
             state_keys=state_keys,
             inject_complementary_info=inject_complementary_info,
         )
-        
+
         # Get first transition for initialization
         first_transition = next(transition_generator, None)
 
-        
-        
         if first_transition is not None:
             # Resize images in first transition BEFORE initializing storage
             # This ensures buffer allocates correct size (224x224) not original size (640x480)
             import torchvision.transforms.functional as F_vision  # noqa: N812
+
             expected_height, expected_width = 224, 224
-            
+
             first_state = {}
             for k, v in first_transition["state"].items():
                 tensor = v.to(device)
@@ -733,7 +746,7 @@ class ReplayBuffer:
                     tensor = F_vision.resize(tensor, (expected_height, expected_width))
                     tensor = tensor.clamp(0.0, 1.0)
                 first_state[k] = tensor
-                
+
             first_action = first_transition[ACTION].to(device)
 
             # Get complementary info if available
@@ -749,7 +762,7 @@ class ReplayBuffer:
             replay_buffer._initialize_storage(
                 state=first_state, action=first_action, complementary_info=first_complementary_info
             )
-            
+
             # Process first transition
             data = first_transition
             for k, v in data.items():
@@ -759,6 +772,7 @@ class ReplayBuffer:
                         if "images" in key:
                             # Resize images to 224x224 before storing (offline dataset may have different size)
                             import torchvision.transforms.functional as F_vision  # noqa: N812
+
                             expected_height, expected_width = 224, 224
                             if tensor.shape[-2:] != (expected_height, expected_width):
                                 tensor = F_vision.resize(tensor, (expected_height, expected_width))
@@ -789,6 +803,7 @@ class ReplayBuffer:
                         if "images" in key:
                             # Resize images to 224x224 before storing (offline dataset may have different size)
                             import torchvision.transforms.functional as F_vision  # noqa: N812
+
                             expected_height, expected_width = 224, 224
                             if tensor.shape[-2:] != (expected_height, expected_width):
                                 tensor = F_vision.resize(tensor, (expected_height, expected_width))
@@ -927,11 +942,11 @@ class ReplayBuffer:
     ):
         """
         Generator version that yields RL transitions one at a time to save memory.
-        
+
         Args:
             dataset (LeRobotDataset): The dataset to convert.
             state_keys (Sequence[str] | None): The dataset keys to include in 'state' and 'next_state'.
-            
+
         Yields:
             Transition: One transition at a time.
         """
@@ -950,7 +965,7 @@ class ReplayBuffer:
         complementary_info_keys = [key for key in sample if key.startswith("complementary_info.")]
         if "subtask_index" in sample:
             complementary_info_keys.append("subtask_index")
-            
+
         if inject_complementary_info:
             for k in inject_complementary_info:
                 if k not in complementary_info_keys:
@@ -964,7 +979,7 @@ class ReplayBuffer:
 
         from torch.utils.data import DataLoader
         import multiprocessing
-        
+
         num_workers = min(4, multiprocessing.cpu_count() or 1)
         loader = DataLoader(
             dataset,
@@ -982,14 +997,14 @@ class ReplayBuffer:
 
             # ----- 2) Action -----
             action = current_sample[ACTION]
-            
+
             # CRITICAL FIX: Handle pre-chunked actions from dataset
             # If the dataset was loaded with delta_indices (e.g., [0, 1, ..., 49]),
             # actions will be shape [50, 6] instead of [6]
             # We only want the FIRST action to keep buffer storage simple and consistent
             if action.ndim == 2:  # Shape is [chunk_size, action_dim]
                 action = action[0]  # Extract first timestep only  → shape [action_dim]
-            
+
             action = action.unsqueeze(0)  # Add batch dimension → shape [1, action_dim]
 
             # ----- 3) Determine done flag -----
@@ -1008,7 +1023,7 @@ class ReplayBuffer:
                 reward = current_sample[REWARD].item()
             else:
                 reward = 1.0 if done else 0.0
-            
+
             # TODO: (azouitine) Handle truncation (using the same value as done for now)
             truncated = done
 
@@ -1033,23 +1048,23 @@ class ReplayBuffer:
                 for key in complementary_info_keys:
                     # Strip the "complementary_info." prefix to get the actual key
                     if key.startswith("complementary_info."):
-                        clean_key = key[len("complementary_info."):]
+                        clean_key = key[len("complementary_info.") :]
                     else:
                         clean_key = key
-                        
+
                     if inject_complementary_info is not None and clean_key in inject_complementary_info:
                         val = inject_complementary_info[clean_key]
                         if isinstance(val, bool):
                             val = torch.tensor(val, dtype=torch.bool)
                         elif isinstance(val, float):
                             val = torch.tensor(val, dtype=torch.float32)
-                        elif hasattr(val, "dtype"): # Already a tensor
-                            pass 
+                        elif hasattr(val, "dtype"):  # Already a tensor
+                            pass
                         else:
                             val = torch.tensor(val)
                     else:
                         val = current_sample[key]
-                        
+
                     # Handle tensor and non-tensor values differently
                     if isinstance(val, torch.Tensor):
                         complementary_info[clean_key] = val.unsqueeze(0)  # Add batch dimension
@@ -1077,7 +1092,7 @@ class ReplayBuffer:
         for current_sample in tqdm(iterator, total=num_frames - 1):
             yield process_sample(prev_sample, current_sample, is_last=False)
             prev_sample = current_sample
-            
+
         yield process_sample(prev_sample, None, is_last=True)
 
 
@@ -1172,11 +1187,11 @@ def concatenate_batch_transitions(
     if left_info is None:
         left_info = {}
         left_batch_transitions["complementary_info"] = left_info
-    
+
     # If right_info is None, treat as empty dict for key iteration
     if right_info is None:
         right_info = {}
-    
+
     # Calculate batch sizes to determine padding size
     # We use the 'reward' field as reference for batch size of each part
     # Note: left_batch_transitions['reward'] is ALREADY concatenated, so we need to derive sizes differently.
@@ -1197,25 +1212,26 @@ def concatenate_batch_transitions(
 
         # 1. Present in both
         if left_val is not None and right_val is not None:
-             left_info[key] = torch.cat([left_val, right_val], dim=0)
-        
+            left_info[key] = torch.cat([left_val, right_val], dim=0)
+
         # 2. Present only in Right (Missing in Left) -> Pad Left
         elif left_val is None:
-             # Create padding for left
-             # right_val shape: (right_len, ...)
-             # padding shape: (left_len, ...) + right_val.shape[1:]
-             shape = (left_len,) + right_val.shape[1:]
-             padding = torch.zeros(shape, dtype=right_val.dtype, device=right_val.device)
-             left_info[key] = torch.cat([padding, right_val], dim=0)
+            # Create padding for left
+            # right_val shape: (right_len, ...)
+            # padding shape: (left_len, ...) + right_val.shape[1:]
+            shape = (left_len,) + right_val.shape[1:]
+            padding = torch.zeros(shape, dtype=right_val.dtype, device=right_val.device)
+            left_info[key] = torch.cat([padding, right_val], dim=0)
 
         # 3. Present only in Left (Missing in Right) -> Pad Right
         elif right_val is None:
-             # Create padding for right
-             # left_val represents the ORIGINAL left value (before any concatenation)
-             # Wait! 'left_info' is a mutable reference to the dictionary in 'left_batch_transitions'.
-             # Since we haven't modified 'left_info[key]' yet in this loop, 'left_val' IS the original tensor from the left batch.
-             shape = (right_len,) + left_val.shape[1:]
-             padding = torch.zeros(shape, dtype=left_val.dtype, device=left_val.device)
+            # Create padding for right
+            # left_val represents the ORIGINAL left value (before any concatenation)
+            # Wait! 'left_info' is a mutable reference to the dictionary in 'left_batch_transitions'.
+            # Since we haven't modified 'left_info[key]' yet in this loop, 'left_val' IS the original tensor from the left batch.
+            shape = (right_len,) + left_val.shape[1:]
+            padding = torch.zeros(shape, dtype=left_val.dtype, device=left_val.device)
+            left_info[key] = torch.cat([left_val, padding], dim=0)
              left_info[key] = torch.cat([left_val, padding], dim=0)
 
     return left_batch_transitions
