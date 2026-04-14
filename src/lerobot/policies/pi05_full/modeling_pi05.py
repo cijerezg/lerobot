@@ -1387,6 +1387,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Sample the first action token from the last logit of the prefix
         last_logits = lm_head(prefix_out[:, -1:, :])  # (B, 1, V)
+        # Suppress all PaLiGemma special tokens (<loc0000>-<loc1023>, <seg>, etc.) so the model
+        # cannot generate visual-grounding or FAST action tokens during subtask text decoding.
+        # These special tokens all start at ID 256000 (the base Gemma vocab boundary).
+        # FAST token IDs are a subset of these (the upper <loc> range), but the model also
+        # generates lower <loc> tokens, so we mask the entire special-token region.
+        loc0_id = self._paligemma_tokenizer.convert_tokens_to_ids("<loc0000>")
+        last_logits[:, -1, loc0_id:] = float("-inf")
         if temperature > 0:
             probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
             next_token = torch.multinomial(probs, num_samples=1)
@@ -1446,6 +1453,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             # Sample next token
             last_logits = lm_head(step_out[:, -1:, :])
+            # Suppress all PaLiGemma special tokens (same masking as the prefill step above)
+            last_logits[:, -1, loc0_id:] = float("-inf")
             if temperature > 0:
                 probs = torch.softmax(last_logits[:, -1] / temperature, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
@@ -1469,6 +1478,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         if generated_subtask_tokens.shape[1] < max_decoding_steps:
             generated_subtask_tokens = torch.cat([generated_subtask_tokens, torch.zeros((bsize, max_decoding_steps - generated_subtask_tokens.shape[1]), dtype=torch.long, device=device)], dim=1)
             generated_subtask_masks = torch.cat([generated_subtask_masks, torch.zeros((bsize, max_decoding_steps - generated_subtask_masks.shape[1]), dtype=torch.bool, device=device)], dim=1)
+
+        # Prepend BOS to match training format: TokenizerProcessorStep uses add_bos_token=True (Gemma default),
+        # so training subtask_tokens = [BOS, 'Sub', 'task', ...]. generate_subtask_tokens seeds with BOS but
+        # stores only the predicted tokens after it, causing a 1-position RoPE shift in sample_actions.
+        # Fix: prepend BOS and drop the last (padding) slot to keep length = max_decoding_steps.
+        bos_col = torch.full((bsize, 1), self._paligemma_tokenizer.bos_token_id, dtype=torch.long, device=device)
+        bos_mask_col = torch.ones((bsize, 1), dtype=torch.bool, device=device)
+        generated_subtask_tokens = torch.cat([bos_col, generated_subtask_tokens[:, :-1]], dim=1)
+        generated_subtask_masks = torch.cat([bos_mask_col, generated_subtask_masks[:, :-1]], dim=1)
 
         return generated_subtask_tokens, generated_subtask_masks
 
@@ -1912,7 +1930,7 @@ class PI05FullPolicy(PreTrainedPolicy):
         images, img_masks = self._preprocess_images(batch)
         # tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         high_level_task_tokens, high_level_task_masks = batch[f"{OBS_LANGUAGE_USER_PROMPT_TOKENS}"], batch[f"{OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK}"]
-        
+
         # Generate subtask tokens with time-based caching
         # Only regenerate if: no cache, or interval elapsed, or interval is 0 (always regenerate)
         current_time = time.time()

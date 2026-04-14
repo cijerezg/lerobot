@@ -20,6 +20,7 @@ from queue import Queue
 from threading import Lock
 from typing import TypeAlias
 
+import numpy as np
 from pynput import keyboard
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
@@ -28,6 +29,7 @@ from lerobot.motors.feetech import (
     OperatingMode,
 )
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.robot_utils import precise_sleep
 
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
