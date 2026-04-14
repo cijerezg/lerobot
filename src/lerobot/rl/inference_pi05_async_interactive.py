@@ -130,7 +130,7 @@ def async_inference_interactive_cli(cfg: TrainRLServerPipelineConfig):
     logger.info("Initializing ReplayBuffer for recording")
     state_keys = list(cfg.policy.input_features.keys())
     replay_buffer = ReplayBuffer(
-        capacity=10000,
+        capacity=cfg.policy.online_buffer_capacity,
         device=device.type,
         state_keys=state_keys,
         storage_device="cpu",

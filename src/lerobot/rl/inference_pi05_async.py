@@ -129,9 +129,8 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     # Initialize ReplayBuffer for recording
     logger.info("Initializing ReplayBuffer for recording")
     state_keys = list(cfg.policy.input_features.keys())
-    # capacity: 10000 steps should be plenty for a few episodes
     replay_buffer = ReplayBuffer(
-        capacity=10000,
+        capacity=cfg.policy.online_buffer_capacity,
         device=device.type,
         state_keys=state_keys,
         storage_device="cpu", # Keep on CPU
