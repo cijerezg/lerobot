@@ -4,7 +4,7 @@
 
 - The full version of π0.5 with subtasks and FAST tokens with subtask annotation utilities. As of 2026/04/14 this has not been added to the `main` branch in lerobot. All credits to [@jadechoghari](https://github.com/jadechoghari).
 - End-to-end implementation of RECAP-like algorithm for offline and online training.
-- Asynchronous inference with RTC that can run at 30Hz. It automatically saves a buffer and creates a video of the episode with the critic values overlaid.
+- Asynchronous inference with RTC that can run at 30Hz with leader guided human intervention. It automatically saves a buffer and creates a video of the episode with the critic values overlaid.
 - Offline eval script to compare actions across checkpoints, subtasks, or advantage labels.
 - Experimental: live inference where a user can manually write subtasks for π0.5 on the fly.
 
@@ -41,7 +41,7 @@ In the following sections, we highlight the key features of this implementation,
 
 - This implementation uses the full version of π0.5, which includes subtask generation and FAST tokens with knowledge insulation.
 
-- This implementation supports absolute actions, anchor actions (i.e., $\delta_t = a_t - s_0$), and delta actions (i.e., $\delta_t = a_t - a_{t-1}$). Experimentally, we have found that anchor actions work best as they inherit translation invariance and aren't as prone to drift as pure delta actions.
+- This implementation supports absolute actions, anchor actions (i.e., δt = at - s0), and delta actions (i.e., δt = at - at-1). Experimentally, we have found that anchor actions work best as they inherit translation invariance and aren't as prone to drift as pure delta actions.
 
 
 ### Offline
@@ -221,7 +221,7 @@ Key functions:
 
 RTC decouples inference from environment stepping: the policy generates action chunks on a background thread while the main thread consumes them at 30 Hz. When the queue runs low, a new chunk is generated and merged with whatever actions are left over from the previous one.
 
-The complication with anchor encoding is that leftover actions reference a stale anchor $s_0$. `align_prev_actions` in `actor_pi05_async_utils.py` corrects this in absolute space, then re-normalizes. What makes it non-trivial is per-timestep normalization: stats have shape `[chunk_size, action_dim]`, so each position in the chunk has its own mean/std. You can't just shift normalized values directly — the function right-aligns the leftover into a padded buffer before unnormalizing (so each value uses the stats for its original chunk position), applies the anchor delta, then re-normalizes left-aligned for the next chunk. For delta encoding with offset > 0, no correction is needed since leftover actions are consecutive diffs that don't reference $s_0$.
+The complication with anchor encoding is that leftover actions reference a stale anchor s0. `align_prev_actions` in `actor_pi05_async_utils.py` corrects this in absolute space, then re-normalizes. What makes it non-trivial is per-timestep normalization: stats have shape `[chunk_size, action_dim]`, so each position in the chunk has its own mean/std. You can't just shift normalized values directly — the function right-aligns the leftover into a padded buffer before unnormalizing (so each value uses the stats for its original chunk position), applies the anchor delta, then re-normalizes left-aligned for the next chunk. For delta encoding with offset > 0, no correction is needed since leftover actions are consecutive diffs that don't reference s0.
 
 Normalization by modality: actions use `QUANTILES`, joint state uses `MIN_MAX`, images use `IDENTITY`.
 
