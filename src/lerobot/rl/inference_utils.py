@@ -303,14 +303,14 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 else:
                     processed_actions = unnormalized_actions
                 
-                # --- Apply Centered Moving Average (Window Size 3) ---
+                # --- Apply Centered Moving Average (Window Size 5) ---
                 # The policy actually outputs a full chunk at once here before passing
                 # to the queue, so implementing a centered moving average is trivial.
-                if processed_actions.shape[0] >= 3:
+                if processed_actions.shape[0] >= 5:
                     # Pad the start and end to maintain sequence length
-                    padded = torch.cat([processed_actions[0:1], processed_actions, processed_actions[-1:]], dim=0)
-                    # Compute mean over the window of 3
-                    smoothed = (padded[:-2] + padded[1:-1] + padded[2:]) / 3.0
+                    padded = torch.cat([processed_actions[0:1]] * 2 + [processed_actions] + [processed_actions[-1:]] * 2, dim=0)
+                    # Compute mean over the window of 5
+                    smoothed = (padded[:-4] + padded[1:-3] + padded[2:-2] + padded[3:-1] + padded[4:]) / 5.0
                     processed_actions = smoothed
                 # -----------------------------------------------------
                 
@@ -537,26 +537,43 @@ def env_interaction_worker(
             # 1. Episode boundary check
             if not shared_state.episode_active:
                 logger.info("[ENV] Episode ended. Press '2' on the keyboard to start the next episode...")
-                while shared_state.running and not shared_state.episode_active:
+                new_episode_requested = False
+                while shared_state.running and not new_episode_requested:
                     if teleop_device.get_teleop_events().get(TeleopEvents.START_EPISODE, False):
-                        shared_state.episode_active = True
+                        new_episode_requested = True
                         break
                     time.sleep(0.1)
 
                 if not shared_state.running:
                     break
-                
+
                 logger.info("[ENV] Starting next episode.")
-                
+
                 obs, info = online_env.reset()
+
+                # Smoothly bring the leader arm to neutral alongside the follower.
+                # reset_follower_position only needs .bus with sync_read/sync_write,
+                # which SOLeader satisfies via duck typing.
+                reset_pose = (
+                    cfg.env.processor.reset.fixed_reset_joint_positions
+                    if getattr(cfg.env, "processor", None) is not None
+                    and getattr(cfg.env.processor, "reset", None) is not None
+                    and getattr(cfg.env.processor.reset, "fixed_reset_joint_positions", None) is not None
+                    else None
+                )
+                if teleop_device is not None and reset_pose is not None:
+                    import numpy as _np
+                    from lerobot.rl.gym_manipulator import reset_follower_position
+                    reset_follower_position(teleop_device, _np.array(reset_pose, dtype=_np.float32))
+
                 env_processor.reset()
                 action_processor.reset()
-                
+
                 with action_queue.lock:
                     action_queue.queue = None
                     action_queue.original_queue = None
                     action_queue.last_index = 0
-                
+
                 shared_state.request_reset()
                 was_intervening = False
                 episode_log_buffer = []
@@ -564,9 +581,13 @@ def env_interaction_worker(
                 transition = create_transition(observation=obs, info=info)
                 transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
                 transition = env_processor(transition)
-                
+
                 policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
                 shared_state.update_observation(policy_fmt_obs, False)
+                # Set episode_active only after the full reset sequence (robot move, queue
+                # clear, obs update) so the inference thread never sees episode_active=True
+                # while the shared observation still points to the failed-episode position.
+                shared_state.episode_active = True
 
             start_time = time.perf_counter()
             

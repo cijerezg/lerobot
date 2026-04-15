@@ -14,15 +14,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Standalone Asynchronous Inference script for Pi05 policies.
+Interactive Asynchronous Inference script for Pi05 policies.
 
-This script runs the policy in inference mode using RTC asynchronously with
-the environment. It delegates threading orchestration to `inference_utils.py`
-and strictly avoids communicating with distributed learner servers, acting
-as an isolated test bed for Pi05 robotics deployment.
+Identical to inference_pi05_async.py except the operator can type a subtask
+string into the terminal at any time. The typed text is tokenized and injected
+into the policy's subtask token cache, taking effect on the very next action
+chunk generation. The model's normal time-based cache then resumes.
 
 Usage:
-    python lerobot/src/lerobot/rl/inference_pi05_async.py --config-path=config-hiserl.json
+    python lerobot/src/lerobot/rl/inference_pi05_async_interactive.py --config-path=config-hiserl.json
+
+Config note:
+    subtask_regeneration_interval must be > 0 (e.g. 30). If it is 0 the model
+    regenerates subtask tokens on every cycle and injected overrides are
+    immediately overwritten.
 """
 
 import logging
@@ -46,106 +51,109 @@ from lerobot.utils.utils import get_safe_torch_device, init_logging
 from lerobot.rl.gym_manipulator import make_processors, make_robot_env
 import lerobot.rl.rl_pi05  # Important: Register PI05RLConfig via import side-effects
 from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
-from lerobot.rl.inference_utils import SharedState, get_actions_worker, env_interaction_worker
+from lerobot.rl.inference_utils import env_interaction_worker  # reused unchanged
 from lerobot.rl.buffer import ReplayBuffer
+
+# Interactive-specific additions
+from lerobot.rl.inference_utils_interactive import (
+    SharedStateInteractive,
+    terminal_input_worker,
+    get_actions_worker_interactive,
+)
 
 
 @parser.wrap()
-def async_inference_cli(cfg: TrainRLServerPipelineConfig):
+def async_inference_interactive_cli(cfg: TrainRLServerPipelineConfig):
     cfg.validate()
 
     init_logging(display_pid=False)
     logger = logging.getLogger(__name__)
-    logger.info("Initializing Standalone Asynchronous Pi05 Inference")
+    logger.info("Initializing Interactive Asynchronous Pi05 Inference")
 
-    # Override configurations for isolated actor running
-    # cfg.policy.use_separate_critic = False  # Critic is now needed for logging
     set_seed(cfg.seed)
 
     device_name = getattr(cfg.policy, "actor_device", None)
     if device_name is None:
         device_name = cfg.policy.device
-        
+
     device = get_safe_torch_device(device_name, log=True)
-    cfg.policy.device = device.type  # Enforce propagation 
+    cfg.policy.device = device.type
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Setup signal handler for graceful shutdown
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
-    
-    # Optional override for debugging/stopping
+
     def intercept_sigint(sig, frame):
-        logger.info("\nCaught SIGINT! Shutting down async inference safely...")
+        logger.info("\nCaught SIGINT! Shutting down interactive inference safely...")
         shutdown_event.set()
-    
+
     signal.signal(signal.SIGINT, intercept_sigint)
 
     if getattr(cfg, "use_rerun", False):
         import rerun as rr
-        rr.init("lerobot_inference", spawn=True)
+        rr.init("lerobot_inference_interactive", spawn=True)
 
     logger.info("Instantiating policy architecture")
-    policy = make_policy(
-        cfg=cfg.policy,
-        env_cfg=cfg.env,
-    )
+    policy = make_policy(cfg=cfg.policy, env_cfg=cfg.env)
 
     logger.info("Instantiating pi05 full processors + un-normalization upgrade hooks")
     preprocessor, postprocessor = make_pi05_full_processors_with_upgrade(
-        cfg=cfg,
-        dataset=None,
-        is_main_process=True
+        cfg=cfg, dataset=None, is_main_process=True
     )
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
 
-    # Ensure policy runs entirely in eval
     policy = policy.to(device)
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
-    # Validate RTC features
     if getattr(policy.config, "rtc_config", None) is None or not policy.config.rtc_config.enabled:
-        logger.error("FATAL: RTC configuration is not populated or enabled in the config. Cannot run async inference on synchronous policy!")
+        logger.error(
+            "FATAL: RTC configuration is not populated or enabled. "
+            "Cannot run async inference on a synchronous policy!"
+        )
         sys.exit(1)
 
     logger.info("Instantiating generic online environment connection")
     online_env, teleop_device = make_robot_env(cfg=cfg.env)
     env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
-    # Instantiate bridging components
-    shared_state = SharedState()
+    # Use the interactive shared state instead of plain SharedState
+    shared_state = SharedStateInteractive()
     shared_state.running = not shutdown_event.is_set()
-    
-    # Initialize Episode parameters
     shared_state.episode_logging_freq = cfg.episode_logging_freq
     shared_state.episode_save_freq = cfg.episode_save_freq
-
     shared_state.is_logging_episode = (shared_state.episode_counter % cfg.episode_logging_freq == 0)
 
-    # Initialize ReplayBuffer for recording
     logger.info("Initializing ReplayBuffer for recording")
     state_keys = list(cfg.policy.input_features.keys())
     replay_buffer = ReplayBuffer(
         capacity=cfg.policy.online_buffer_capacity,
         device=device.type,
         state_keys=state_keys,
-        storage_device="cpu", # Keep on CPU
+        storage_device="cpu",
     )
     shared_state.replay_buffer = replay_buffer
 
     action_queue = ActionQueue(policy.config.rtc_config)
 
-    # Spawn daemonized Thread Wrappers
+    # Three threads: input, inference (interactive), environment
+    logger.info("Spawning Input worker thread.")
+    input_thread = Thread(
+        target=terminal_input_worker,
+        args=(shared_state, policy, cfg, shutdown_event),
+        daemon=True,
+        name="InputThread",
+    )
+
     logger.info("Spawning Inference worker thread.")
     inference_thread = Thread(
-        target=get_actions_worker,
+        target=get_actions_worker_interactive,
         args=(policy, shared_state, action_queue, cfg),
         daemon=True,
-        name="get_actions_worker"
+        name="get_actions_worker_interactive",
     )
 
     logger.info("Spawning Environment worker thread.")
@@ -153,35 +161,44 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
         target=env_interaction_worker,
         args=(online_env, env_processor, action_processor, action_queue, shared_state, teleop_device, cfg, policy, policy.postprocessor),
         daemon=True,
-        name="env_interaction_worker"
+        name="env_interaction_worker",
     )
 
     try:
         environment_thread.start()
-        # Give environment thread 1 second to bootstrap the `SharedState` before the inference loop goes wild
-        time.sleep(1.0) 
+        time.sleep(1.0)  # let env thread bootstrap SharedState before inference starts
         inference_thread.start()
+        input_thread.start()
 
         start_time = time.time()
-        logger.info("[MAIN] Successfully orchestrated asynchronous context. Awaiting KeyboardInterrupt to exit.")
+        logger.info(
+            "[MAIN] Interactive inference running. "
+            "Type a subtask in the terminal at any time. Awaiting KeyboardInterrupt to exit."
+        )
 
-        # Polling supervisor log loop
         while not shutdown_event.is_set():
             time.sleep(5)
-            
+
             q_size = action_queue.qsize() if action_queue is not None else 0
             teleop_stat = "ON" if shared_state.is_intervening else "OFF"
-            
+
             metrics = shared_state.get_and_reset_metrics()
-            inf_wait = metrics['inference_wait_time']
-            env_wait = metrics['env_wait_time']
-            env_steps = metrics['env_steps']
-            
+            inf_wait = metrics["inference_wait_time"]
+            env_wait = metrics["env_wait_time"]
+            env_steps = metrics["env_steps"]
+
             avg_env_wait = env_wait / max(1, env_steps)
-            avg_env_active = metrics.get('env_active_time', 0.0) / max(1, env_steps)
-            
-            logger.info(f"[MAIN LOG] Queue Buffer Length: {q_size} | Teleop Intervention: {teleop_stat} | Runtime: {int(time.time() - start_time)}s")
-            logger.info(f"[metrics] Inference sleep time: {inf_wait:.2f}s | Env active (camera/step) avg: {avg_env_active:.4f}s | Env sleep avg: {avg_env_wait:.4f}s")
+            avg_env_active = metrics.get("env_active_time", 0.0) / max(1, env_steps)
+
+            logger.info(
+                f"[MAIN LOG] Queue Buffer Length: {q_size} | Teleop Intervention: {teleop_stat} | "
+                f"Runtime: {int(time.time() - start_time)}s"
+            )
+            logger.info(
+                f"[metrics] Inference sleep time: {inf_wait:.2f}s | "
+                f"Env active (camera/step) avg: {avg_env_active:.4f}s | "
+                f"Env sleep avg: {avg_env_wait:.4f}s"
+            )
 
     except Exception as e:
         logger.error(f"Error in main orchestration thread: {e}")
@@ -189,20 +206,21 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     finally:
         shutdown_event.set()
         shared_state.running = False
-        
+
         logger.info("Executing safe un-spool connection teardowns.")
         if inference_thread.is_alive():
             inference_thread.join(timeout=3.0)
         if environment_thread.is_alive():
             environment_thread.join(timeout=3.0)
+        # input_thread is daemon — Python will not wait for it
 
-        # Teardown camera hooks and serial ports
         try:
             online_env.close()
         except Exception:
             pass
 
-        logger.info("Program termintated gracefully.")
+        logger.info("Program terminated gracefully.")
+
 
 if __name__ == "__main__":
-    async_inference_cli()
+    async_inference_interactive_cli()

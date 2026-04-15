@@ -274,9 +274,7 @@ class ReplayBuffer:
             if len(self.actions.shape) == 2 and action_chunk_size > 1:
                 # Use action_chunk_size - 1 if you don't want to check the final step's done flag
                 check_length = action_chunk_size - 1
-                chunk_indices = (
-                    idx.unsqueeze(1) + torch.arange(check_length, device=self.storage_device)
-                ) % self.capacity
+                chunk_indices = (idx.unsqueeze(1) + torch.arange(check_length, device=self.storage_device)) % self.capacity
 
                 chunk_dones = self.dones[chunk_indices]
                 invalid_mask = chunk_dones.any(dim=1)
@@ -536,15 +534,15 @@ class ReplayBuffer:
         with open(meta_path) as f:
             meta = json.load(f)
 
-        n_transitions = meta["num_transitions"]
+        num_transitions = meta["num_transitions"]
         state_keys = meta["state_keys"]
         image_keys = meta["image_keys"]
         non_image_state_keys = meta["non_image_state_keys"]
 
-        logger.info(f"Loading buffer cache from {cache_dir} ({N} transitions)")
+        logger.info(f"Loading buffer cache from {cache_dir} ({num_transitions} transitions)")
 
         replay_buffer = cls(
-            capacity=n_transitions,
+            capacity=num_transitions,
             device=device,
             state_keys=state_keys,
             image_augmentation_function=image_augmentation_function,
@@ -563,16 +561,14 @@ class ReplayBuffer:
             bin_path = cache_dir / f"{safe_key}.bin"
             dtype_str = meta["dtypes"][safe_key]
             np_dtype = np.dtype(dtype_str)
-            full_shape = tuple([N] + meta["shapes"][safe_key]) if meta["shapes"][safe_key] else (N,)
-            mm = np.memmap(str(bin_path), dtype=np_dtype, mode="r", shape=full_shape)
+            full_shape = tuple([num_transitions] + meta["shapes"][safe_key]) if meta["shapes"][safe_key] else (num_transitions,)
+            mm = np.memmap(str(bin_path), dtype=np_dtype, mode="c", shape=full_shape)
             t = torch.from_numpy(mm)
             if as_torch_dtype is not None and np_dtype == np.uint16:
                 t = t.view(as_torch_dtype)
             return t
 
-        def _load_small(
-            key: str, clone: bool = True, as_torch_dtype: torch.dtype | None = None
-        ) -> torch.Tensor:
+        def _load_small(key: str, clone: bool = True, as_torch_dtype: torch.dtype | None = None) -> torch.Tensor:
             t = _load_memmap(key, (), as_torch_dtype=as_torch_dtype)
             return t.clone() if clone else t
 
@@ -622,11 +618,11 @@ class ReplayBuffer:
             )
             logger.info(f"  complementary_info.{k}: {replay_buffer.complementary_info[k].shape}")
 
-        replay_buffer.size = N
-        replay_buffer.position = N % replay_buffer.capacity
+        replay_buffer.size = num_transitions
+        replay_buffer.position = num_transitions % replay_buffer.capacity
         replay_buffer.initialized = True
 
-        logger.info(f"Buffer loaded from cache: {N} transitions, memmap images, RAM non-image data")
+        logger.info(f"Buffer loaded from cache: {num_transitions} transitions, memmap images, RAM non-image data")
         return replay_buffer
 
     @staticmethod
@@ -795,7 +791,7 @@ class ReplayBuffer:
             )
 
         # Process remaining transitions one at a time
-        for i, data in enumerate(transition_generator):
+        for _i, data in enumerate(transition_generator):
             for k, v in data.items():
                 if isinstance(v, dict):
                     for key, tensor in v.items():
@@ -977,8 +973,9 @@ class ReplayBuffer:
         if not has_done_key:
             print("'next.done' key not found in dataset. Inferring from episode boundaries...")
 
-        from torch.utils.data import DataLoader
         import multiprocessing
+
+        from torch.utils.data import DataLoader
 
         num_workers = min(4, multiprocessing.cpu_count() or 1)
         loader = DataLoader(
@@ -1013,9 +1010,7 @@ class ReplayBuffer:
             else:
                 # If this is the last frame or if next frame is in a different episode, mark as done
                 done = False
-                if is_last:
-                    done = True
-                elif next_sample["episode_index"] != current_sample["episode_index"]:
+                if is_last or next_sample["episode_index"] != current_sample["episode_index"]:
                     done = True
 
             # Reward is inferred from done if not present
@@ -1058,7 +1053,7 @@ class ReplayBuffer:
                             val = torch.tensor(val, dtype=torch.bool)
                         elif isinstance(val, float):
                             val = torch.tensor(val, dtype=torch.float32)
-                        elif hasattr(val, "dtype"):  # Already a tensor
+                        elif hasattr(val, "dtype"): # Already a tensor
                             pass
                         else:
                             val = torch.tensor(val)
@@ -1212,7 +1207,7 @@ def concatenate_batch_transitions(
 
         # 1. Present in both
         if left_val is not None and right_val is not None:
-            left_info[key] = torch.cat([left_val, right_val], dim=0)
+             left_info[key] = torch.cat([left_val, right_val], dim=0)
 
         # 2. Present only in Right (Missing in Left) -> Pad Left
         elif left_val is None:
@@ -1232,6 +1227,6 @@ def concatenate_batch_transitions(
             shape = (right_len,) + left_val.shape[1:]
             padding = torch.zeros(shape, dtype=left_val.dtype, device=left_val.device)
             left_info[key] = torch.cat([left_val, padding], dim=0)
-             left_info[key] = torch.cat([left_val, padding], dim=0)
+            left_info[key] = torch.cat([left_val, padding], dim=0)
 
     return left_batch_transitions

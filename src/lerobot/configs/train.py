@@ -213,6 +213,7 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     dataset: DatasetConfig | None = None  # type: ignore[assignment] # because the parent class has made it's type non-optional
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
+    buffer_cache_dir: str | None = None
     use_rerun: bool = True
     video_logging_cameras: list[str] = field(default_factory=lambda: ["top", "side"])
     episode_logging_freq: int = 4

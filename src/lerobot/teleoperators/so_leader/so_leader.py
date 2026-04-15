@@ -15,7 +15,6 @@
 # limitations under the License.
 
 import logging
-import os
 import select
 import sys
 import time
@@ -62,8 +61,8 @@ class TerminalKeyboardListener:
         self._running = False
 
     def _read_loop(self):
-        import tty
         import termios
+        import tty
 
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)

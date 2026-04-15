@@ -22,32 +22,22 @@ It initializes the policy network, maintains replay buffers, and updates
 the policy based on transitions received from the actor server.
 """
 
+import json
 import logging
 import os
 import shutil
 import time
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from pprint import pformat
 from threading import Thread
-from torch.multiprocessing import Process
-import torch.multiprocessing as mp
 
-import grpc
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
+import torch.multiprocessing as mp
+from PIL import Image
 from termcolor import colored
 from torch import nn
-import numpy as np
-import matplotlib.pyplot as plt
-import json
-from PIL import Image
-import cv2
-
-from torch.multiprocessing import Queue
-from torch.optim.optimizer import Optimizer
-
-import torch.nn.functional as F
-import lerobot.rl.rl_pi05  # Register PI05RLConfig
+from torch.multiprocessing import Process, Queue
 
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
@@ -55,72 +45,45 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
-from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
+from lerobot.rl.buffer import ReplayBuffer
+from lerobot.rl.learner import (
+    check_nan_in_transition,
+    handle_resume_logic,
+    initialize_replay_buffer,
+    load_training_state,
+    log_training_info,
+    make_optimizers_and_scheduler,
+    process_interaction_messages,
+    save_training_checkpoint,
+    start_learner,
+    use_threads,
+)
+from lerobot.rl.pi05_train_utils import (
+    _update_critic,
+    load_additional_offline_datasets,
+    log_pi05_training_metrics,
+    make_pi05_full_processors_with_upgrade,
+    pi05_update_step,
+)
 from lerobot.rl.process import ProcessSignalHandler
+from lerobot.rl.utils import cast_to_bf16, preprocess_batch_for_pi05, save_video_with_critic_overlay
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
-from lerobot.teleoperators.utils import TeleopEvents
-from lerobot.transport import services_pb2_grpc
 from lerobot.transport.utils import (
-    MAX_MESSAGE_SIZE,
-    bytes_to_python_object,
     bytes_to_transitions,
     state_to_bytes,
 )
 from lerobot.utils.constants import (
     ACTION,
-    CHECKPOINTS_DIR,
-    LAST_CHECKPOINT_LINK,
-    PRETRAINED_MODEL_DIR,
-    TRAINING_STATE_DIR,
-    OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
 )
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
-    get_step_checkpoint_dir,
-    load_training_state as utils_load_training_state,
-    save_checkpoint,
-    update_last_checkpoint,
-)
-from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
+from lerobot.utils.transition import move_state_dict_to_device
 from lerobot.utils.utils import (
-    format_big_number,
     get_safe_torch_device,
     init_logging,
 )
 
-from lerobot.rl.learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
-from lerobot.rl.learner import (
-    use_threads,
-    handle_resume_logic,
-    start_learner,
-    process_transitions,
-    process_interaction_messages,
-    check_nan_in_transition,
-    get_observation_features,
-    push_actor_policy_to_queue,
-    make_optimizers_and_scheduler,
-    load_training_state,
-    initialize_replay_buffer,
-    initialize_offline_replay_buffer,
-    log_training_info,
-    save_training_checkpoint,
-)
-from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16, save_video_with_critic_overlay
-from lerobot.rl.pi05_train_utils import (
-    pi05_update_step,
-    hydrate_subtasks,
-    load_additional_offline_datasets,
-    make_pi05_full_processors_with_upgrade,
-    _update_critic,
-    log_pi05_training_metrics,
-)
-
-import wandb
-import gc
-
-                
 
 def push_actor_policy_to_queue_pi05(parameters_queue: Queue, policy: nn.Module):
     logging.debug("[LEARNER] Pushing actor policy to the queue (Pi05 Optimized)")
@@ -132,7 +95,7 @@ def push_actor_policy_to_queue_pi05(parameters_queue: Queue, policy: nn.Module):
             trainable_state_dict[name] = param
 
     state_dicts = {"policy": move_state_dict_to_device(trainable_state_dict, device="cpu")}
-    
+
     state_bytes = state_to_bytes(state_dicts)
     parameters_queue.put(state_bytes)
 
@@ -321,12 +284,12 @@ def add_actor_information_and_train(
     # Override device to ensure policy is created on the correct device
     original_device = cfg.policy.device
     cfg.policy.device = device_name
-    
+
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
-    
+
     # Restore original device config
     cfg.policy.device = original_device
 
@@ -377,7 +340,7 @@ def add_actor_information_and_train(
             "critic.value_queries" in name or
             ("critic.layers" in name and any(f".{i}." in name for i in cr_layers))
         )
-    
+
     # Share underlying memory for frozen critic layers to save VRAM
     if hasattr(policy, "critic") and hasattr(policy, "critic_target"):
         for param, target_param in zip(policy.critic.parameters(), policy.critic_target.parameters()):
@@ -439,7 +402,7 @@ def add_actor_information_and_train(
             reward_normalization_constant=cfg.policy.reward_normalization_constant,
             terminal_failure_reward=cfg.policy.terminal_failure_reward,
             inject_complementary_info={"is_golden": True},
-            cache_dir=buffer_cache_dir,
+            cache_dir=getattr(cfg, "buffer_cache_dir", None),
         )
         offline_replay_buffer.dataset = offline_dataset
 
@@ -462,7 +425,7 @@ def add_actor_information_and_train(
     dataset_repo_id = None
     if cfg.dataset is not None:
         dataset_repo_id = cfg.dataset.repo_id
-    
+
 
     # Create preprocessor and postprocessor for the policy
     # Use the shared utility for runtime upgrade to support standard Pi05 checkpoints
@@ -552,10 +515,10 @@ def add_actor_information_and_train(
                 use_amp=False,
                 scaler=None
             )
-            
+
             # 2. Update Target Networks
             policy.update_target_networks()
-            
+
             # ----------------------------
 
         # Sample for the last update in the UTD ratio
@@ -587,7 +550,7 @@ def add_actor_information_and_train(
 
         # Log training metrics at specified intervals
         if optimization_step % log_freq == 0:
-            
+
             training_infos["replay_buffer_size"] = len(replay_buffer)
             if offline_replay_buffer is not None:
                 training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
@@ -608,7 +571,7 @@ def add_actor_information_and_train(
         time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
 
-        
+
         # Log optimization frequency
         if wandb_logger:
             wandb_logger.log_dict(
@@ -645,11 +608,11 @@ def add_actor_information_and_train(
         if current_episode > 0 and current_episode % episode_save_freq == 0 and current_episode != last_save_episode:
             logging.info(f"[LEARNER] Saving online buffer at episode {current_episode}, step {optimization_step}, buffer size {len(replay_buffer)}")
             online_buffer_dir = os.path.join(cfg.output_dir, "online_buffer")
-            
+
             # Remove existing buffer directory to overwrite
             if os.path.exists(online_buffer_dir) and os.path.isdir(online_buffer_dir):
                 shutil.rmtree(online_buffer_dir)
-            
+
             # Save buffer as dataset
             replay_buffer.to_lerobot_dataset(
                 repo_id="online_buffer",
@@ -709,7 +672,7 @@ def process_transitions_pi05(
                     # Save images
                     obs = transition["state"]
                     video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
-                    
+
                     for key, val in obs.items():
                         if "image" in key:
                             cam_name = key.split('.')[-1]
@@ -719,7 +682,7 @@ def process_transitions_pi05(
                                 # Normalize to [0, 255] if needed (assuming [0, 1])
                                 if img_np.max() <= 1.0:
                                     img_np = (img_np * 255).astype(np.uint8)
-                                
+
                                 img_path = os.path.join(log_dir, f"step_{i:06d}_{cam_name}.png")
                                 Image.fromarray(img_np).save(img_path)
 
@@ -727,16 +690,16 @@ def process_transitions_pi05(
                     # Prepare inputs for preprocessor (move to device and add batch dim)
                     state_dev = {k: v.to(device) for k, v in transition["state"].items()}
                     next_state_dev = {k: v.to(device) for k, v in transition["next_state"].items()}
-                    
+
                     # Action needs to be on device and have batch dim [1, D]
                     # We unsqueeze(0) to add the batch dimension
                     action_dev = transition[ACTION].to(device).unsqueeze(0)
-                    
+
                     # Reward and Done need to be tensors on device with batch dim [1]
                     # .view(1) ensures they are 1D tensors of size 1
                     reward_dev = torch.tensor(transition["reward"], device=device).view(1)
                     done_dev = torch.tensor(transition["done"], device=device).view(1)
-                    
+
                     # Use shared utility to preprocess batch (handles subtask defaults correctly)
                     forward_batch = preprocess_batch_for_pi05(
                         policy=policy,
@@ -747,7 +710,7 @@ def process_transitions_pi05(
                         done=done_dev,
                         task=cfg.policy.task,
                     )
-                    
+
                     critic_output = policy.forward(forward_batch, model="critic_value")
                     val = critic_output["critic_value_mean"]
                     critic_values.append(val)
@@ -767,7 +730,7 @@ def process_transitions_pi05(
                 buffer_action_dim = replay_buffer.actions.shape[-1]
                 incoming_action = transition[ACTION]
                 incoming_dim = incoming_action.shape[-1]
-                
+
                 if incoming_dim != buffer_action_dim:
                     # logging.warning(f"Action dim mismatch: Buffer {buffer_action_dim}, Incoming {incoming_dim}. Adjusting...")
                     if incoming_dim < buffer_action_dim:
@@ -792,7 +755,7 @@ def process_transitions_pi05(
             # Save critic values to JSON
             with open(os.path.join(log_dir, "critic_values.json"), "w") as f:
                 json.dump(critic_values, f)
-            
+
             # Plot critic values
             plt.figure(figsize=(10, 5))
             plt.plot(critic_values)
@@ -802,14 +765,14 @@ def process_transitions_pi05(
             plt.grid(True)
             plt.savefig(os.path.join(log_dir, "critic_plot.png"))
             plt.close()
-            
+
             # Generate video with critic overlay
             try:
                 save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras)
                 logging.info(f"[LEARNER] Video generated for episode {episode_counter[0]}")
             except Exception as e:
                 logging.error(f"[LEARNER] Failed to generate video: {e}")
-                
+
             logging.info(f"[LEARNER] Finished logging episode {episode_counter[0]}")
 
 

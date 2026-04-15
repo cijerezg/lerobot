@@ -299,12 +299,6 @@ def run_offline_training(
             ("critic.layers" in name and any(f".{i}." in name for i in cr_layers))
         )
 
-    # Share underlying memory for frozen critic layers to save VRAM
-    if hasattr(policy, "critic") and hasattr(policy, "critic_target"):
-        for param, target_param in zip(policy.critic.parameters(), policy.critic_target.parameters()):
-            if not param.requires_grad:
-                target_param.data = param.data
-
     # Log trainable parameters
     if is_main_process:
         trainable_params = [n for n, p in policy.named_parameters() if p.requires_grad]
@@ -392,6 +386,14 @@ def run_offline_training(
     policy, optimizers["actor"], optimizers["critic"] = accelerator.prepare(
         policy, optimizers["actor"], optimizers["critic"]
     )
+
+    # Share underlying GPU memory for frozen critic target layers to save VRAM.
+    # Must happen AFTER accelerator.prepare, which moves params to GPU (new tensors).
+    _policy = accelerator.unwrap_model(policy)
+    if hasattr(_policy, "critic") and hasattr(_policy, "critic_target"):
+        for param, target_param in zip(_policy.critic.parameters(), _policy.critic_target.parameters()):
+            if not param.requires_grad:
+                target_param.data = param.data
     
     # Helper function for bfloat16 casting
     cast_to_bf16_fn = cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None
@@ -566,16 +568,12 @@ def save_offline_checkpoint(
 def make_optimizers(cfg: TrainRLServerPipelineConfig, policy: nn.Module):
     """Create optimizers for actor and critic."""
     optimizer_actor = torch.optim.Adam(
-        params=[
-            p
-            for n, p in (policy.module.actor.named_parameters() if hasattr(policy, "module") else policy.actor.named_parameters())
-            if p.requires_grad
-        ],
+        params=[p for n, p in policy.actor.named_parameters() if p.requires_grad],
         lr=cfg.policy.actor_lr,
     )
     optimizer_critic = torch.optim.Adam(
-        params=(policy.module.critic_ensemble.parameters() if hasattr(policy, "module") else policy.critic_ensemble.parameters()), 
-        lr=cfg.policy.critic_lr
+        params=[p for p in policy.critic_ensemble.parameters() if p.requires_grad],
+        lr=cfg.policy.critic_lr,
     )
     
     optimizers = {

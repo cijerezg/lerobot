@@ -43,7 +43,7 @@ class PI05FullConfig(PreTrainedConfig):
 
     # Flow matching parameters: see openpi `PI0Pytorch`
     num_inference_steps: int = 10
-    time_sampling_beta_alpha: float = 1.0
+    time_sampling_beta_alpha: float = 1.5
     time_sampling_beta_beta: float = 1.0
     time_sampling_scale: float = 0.999
     time_sampling_offset: float = 0.001

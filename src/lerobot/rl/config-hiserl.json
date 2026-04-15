@@ -5,12 +5,12 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 30,
+    "batch_size": 32,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/pi05_full_offline_training_v2_anchor_actions",
-    "offline_save_freq": 100,
+    "offline_output_dir": "outputs/pi05_full_offline_training_v3_anchor_actions",
+    "offline_save_freq": 400,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
     "video_logging_cameras": [
@@ -23,24 +23,28 @@
         "offline_project": "so101_real_offline-v1",
         "disable_artifact": true
     },
+    "buffer_cache_dir": null,
     "dataset": {
-        "root": "outputs/annotated_dataset-v3",
+        "root": "outputs/annotated_dataset",
         "repo_id": "cijerezg/yellow-car-offline-training-v2",
         "use_imagenet_stats": false,
-        "max_episodes": null
+        "max_episodes": null,
+        "additional_offline_dataset_paths": [
+            "outputs/train/2026-04-13/20-47-39_default/inference_dataset_video_annotated"
+        ]
     },
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the red truck and put it in the bowl",
-        "pi05_checkpoint": "outputs/pi05_full_offline_training_v2_anchor_actions_2cam/checkpoints/004000/pretrained_model",
+        "pi05_checkpoint": "outputs/pi05_full_offline_training_v1_anchor_actions/checkpoints/001000/pretrained_model",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
         "use_separate_critic": true,
-        "knowledge_insulation": false,
+        "knowledge_insulation": true,
         "loss_weight_flow": 1.0,
-        "loss_weight_action_ce": 0.5,
-        "loss_weight_subtask_ce": 0.5,
+        "loss_weight_action_ce": 1.0,
+        "loss_weight_subtask_ce": 1.0,
         "inference_advantage": 1.0,
         "subtask_regeneration_interval": 1.5,
         "advantage_scaling": 0.20,
@@ -62,7 +66,7 @@
             "ACTION": "QUANTILES"
         },
         "action_encoding": "anchor",
-        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_annotated_dataset-v3.pt",
+        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_annotated_dataset-v4.pt",
         "input_features": {
             "observation.images.wrist": {
                 "type": "VISUAL",
@@ -104,27 +108,27 @@
         "dtype": "bfloat16",
         "gradient_checkpointing": true,
         "online_steps": 20000,
-        "online_buffer_capacity": 1000,
-        "offline_buffer_capacity": 85000,
+        "online_buffer_capacity": 20000,
+        "offline_buffer_capacity": 60000,
         "online_step_before_learning": 10,
         "policy_update_freq": 1,
         "discount": 0.97,
         "async_prefetch": false,
         "num_critics": 1,
-        "critic_lr": 0.00005,
-        "actor_lr": 0.00005,
+        "critic_lr": 0.0001,
+        "actor_lr": 0.0001,
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 6,
+        "gradient_accumulation_steps": 4,
         "offline_steps": 10000,
         "trainable_params": {
             "vision_encoder_from_layer": {
                 "vision_tower": null,
                 "multi_modal_projector": false
             },
-            "language_from_layer": 15,
-            "critic_language_from_layer": 5
+            "language_from_layer": 12,
+            "critic_language_from_layer": 4
         },
         "critic_network_kwargs": {
             "hidden_dims": [
