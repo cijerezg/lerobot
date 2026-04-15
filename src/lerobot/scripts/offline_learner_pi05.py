@@ -94,7 +94,6 @@ import wandb
 class OfflineTrainRLServerPipelineConfig(TrainRLServerPipelineConfig):
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
-    buffer_cache_dir: str | None = "outputs/buffer_cache"
 
 
 @parser.wrap()

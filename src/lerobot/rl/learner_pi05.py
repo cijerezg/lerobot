@@ -438,6 +438,7 @@ def add_actor_information_and_train(
             reward_normalization_constant=cfg.policy.reward_normalization_constant,
             terminal_failure_reward=cfg.policy.terminal_failure_reward,
             inject_complementary_info={"is_golden": True},
+            cache_dir=getattr(cfg, "buffer_cache_dir", None),
         )
         offline_replay_buffer.dataset = offline_dataset
 
