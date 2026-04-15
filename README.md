@@ -10,7 +10,7 @@
 
 The emphasis of this code is RECAP, but other capabilities were added in the process. Even if you don't intend to use RECAP, the other capabilities might be useful.
 
-[![Watch the demo](https://img.youtube.com/vi/IMwXt9LYne4/maxresdefault.jpg)](https://youtu.be/IMwXt9LYne4)
+<video src="https://github.com/user-attachments/assets/4913943c-e357-4195-8997-e5bab01a55d2" controls width="100%"></video>
 
 *Inference on the SO-101 arm. The policy generalizes reasonably well from 60 demonstrations. Subtask generation is functional but shows some collision with FAST token generation (from training). Critic values track behavior accurately, though with occasional jumps.*
 
