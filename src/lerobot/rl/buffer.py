@@ -551,7 +551,7 @@ class ReplayBuffer:
             bin_path = cache_dir / f"{safe_key}.bin"
             dtype_str = meta["dtypes"][safe_key]
             np_dtype = np.dtype(dtype_str)
-            full_shape = tuple([N] + meta["shapes"][safe_key]) if meta["shapes"][safe_key] else (N,)
+            full_shape = tuple([num_transitions] + meta["shapes"][safe_key]) if meta["shapes"][safe_key] else (num_transitions,)
             mm = np.memmap(str(bin_path), dtype=np_dtype, mode="r", shape=full_shape)
             t = torch.from_numpy(mm)
             if as_torch_dtype is not None and np_dtype == np.uint16:
@@ -608,11 +608,11 @@ class ReplayBuffer:
             )
             logger.info(f"  complementary_info.{k}: {replay_buffer.complementary_info[k].shape}")
 
-        replay_buffer.size = N
-        replay_buffer.position = N % replay_buffer.capacity
+        replay_buffer.size = num_transitions
+        replay_buffer.position = num_transitions % replay_buffer.capacity
         replay_buffer.initialized = True
 
-        logger.info(f"Buffer loaded from cache: {N} transitions, memmap images, RAM non-image data")
+        logger.info(f"Buffer loaded from cache: {num_transitions} transitions, memmap images, RAM non-image data")
         return replay_buffer
 
     @staticmethod
@@ -781,7 +781,7 @@ class ReplayBuffer:
             )
 
         # Process remaining transitions one at a time
-        for i, data in enumerate(transition_generator):
+        for _i, data in enumerate(transition_generator):
             for k, v in data.items():
                 if isinstance(v, dict):
                     for key, tensor in v.items():
@@ -927,11 +927,11 @@ class ReplayBuffer:
     ):
         """
         Generator version that yields RL transitions one at a time to save memory.
-        
+
         Args:
             dataset (LeRobotDataset): The dataset to convert.
             state_keys (Sequence[str] | None): The dataset keys to include in 'state' and 'next_state'.
-            
+
         Yields:
             Transition: One transition at a time.
         """
