@@ -121,7 +121,7 @@ The offline training loop decodes every video frame into RAM on startup. For a 1
 
 Pre-decoding writes all frames to memory-mapped files on disk **once**. On subsequent runs the buffer loads in ~1 second and uses only ~1–2 GB of resident RAM (the OS pages in frames on demand).
 
-- [ ] Run the pre-decode script:
+- [x] Run the pre-decode script:
 ```bash
 uv run python scripts/predecode_dataset.py \
     --repo-id jackvial/so101_pickplace_success_120_v2_with_subtasks \
@@ -132,7 +132,7 @@ uv run python scripts/predecode_dataset.py \
 
 This will take roughly the same ~20 minutes as a normal training startup, but you only do it once. The output goes to `outputs/buffer_cache/<fingerprint>/` where the fingerprint is derived from the dataset path, frame count, and episode count.
 
-- [ ] Verify the cache was created:
+- [x] Verify the cache was created:
 ```bash
 ls -lh outputs/buffer_cache/*/
 ```
@@ -200,12 +200,19 @@ print(f'Total keys: {len(ckpt)}')
 
 ## Step 7 (Optional): Online Training
 
-Once offline training is done, you can move to online RL on the real robot. This requires two processes.
+Once offline training is done, you can move to online RL on the real robot. The system uses an actor-learner architecture connected over gRPC:
+
+- **Actor** — runs on the robot machine, controls the robot at 30 Hz and streams transitions to the learner
+- **Learner** — runs on a GPU machine, maintains replay buffers and trains the policy+critic
+
+The learner is GPU-intensive (it holds the full ~3B param policy, critic, and critic target in VRAM). The actor also needs a GPU for real-time inference but its memory footprint is much smaller (policy only, no critic). You can run both on the same machine, or split them across two machines.
+
+### Option A: Single Machine (actor + learner on the same GPU box)
 
 - [ ] Update `config-recap.json`:
   - Set `policy.pi05_checkpoint` to your offline checkpoint path
   - Configure `env.robot` for your hardware (ports, cameras)
-  - Set `policy.actor_learner_config.learner_host` to your machine's IP
+  - Leave `policy.actor_learner_config.learner_host` as `"localhost"`
 
 - [ ] Start the learner (terminal 1):
 ```bash
@@ -217,7 +224,99 @@ uv run python -m lerobot.rl.learner_pi05 --config_path config-recap.json
 uv run python -m lerobot.rl.actor_pi05_async --config_path config-recap.json
 ```
 
-- [ ] Use intervention keys during rollouts:
+### Option B: Remote Learner (learner on a separate GPU server)
+
+This is the recommended setup when the robot machine doesn't have enough VRAM for both actor and learner, or when you want to dedicate GPU resources. The learner runs on a remote server and the actor runs on the robot machine — they communicate over the network via gRPC.
+
+#### 1. Prepare the remote GPU machine
+
+Clone the repo and install dependencies on the remote machine:
+```bash
+git clone <your-fork> lerobot && cd lerobot
+git checkout carlos-recap-main
+uv sync
+```
+
+Copy the files the learner needs from your robot machine:
+- `config-recap.json` — your training config
+- `outputs/recap_offline_v4/checkpoints/` — offline checkpoint (or whichever path `policy.pi05_checkpoint` points to)
+- `outputs/so101_pickplace_success_120_v2_w_subtasks/` — annotated dataset (for the offline replay buffer)
+- `outputs/stats/action_stats_anchor_*.pt` — action encoding stats
+- `outputs/buffer_cache/` — pre-decoded buffer cache (optional, but saves ~20 min of startup time)
+
+You can use `rsync` to transfer everything at once:
+```bash
+rsync -avzP \
+  config-recap.json \
+  outputs/recap_offline_v4/checkpoints/ \
+  outputs/so101_pickplace_success_120_v2_w_subtasks/ \
+  outputs/stats/ \
+  outputs/buffer_cache/ \
+  user@learner-machine:/path/to/lerobot/
+```
+
+> **Tip:** The offline dataset + buffer cache can be 30+ GB. If bandwidth is limited, skip `buffer_cache/` and let the learner decode on first startup.
+
+#### 2. Configure networking
+
+You need two config files (or edit the same file differently on each machine). The key field is `policy.actor_learner_config.learner_host`:
+
+**On the learner machine** — set the host to `0.0.0.0` so the gRPC server accepts connections on all network interfaces:
+```json
+"actor_learner_config": {
+    "learner_host": "0.0.0.0",
+    "learner_port": 50051,
+    "policy_parameters_push_frequency": 120
+}
+```
+
+**On the actor (robot) machine** — set the host to the learner's actual IP address:
+```json
+"actor_learner_config": {
+    "learner_host": "192.168.1.100",
+    "learner_port": 50051,
+    "policy_parameters_push_frequency": 120
+}
+```
+
+Replace `192.168.1.100` with the learner machine's IP (run `hostname -I` on the learner to find it).
+
+Make sure port `50051` is open on the learner machine's firewall:
+```bash
+# Ubuntu/Debian
+sudo ufw allow 50051/tcp
+
+# Or with iptables
+sudo iptables -A INPUT -p tcp --dport 50051 -j ACCEPT
+```
+
+#### 3. Start the learner on the remote machine
+
+```bash
+uv run python -m lerobot.rl.learner_pi05 --config_path config-recap.json
+```
+
+Wait until you see `[LEARNER] gRPC server started` in the terminal output before starting the actor.
+
+#### 4. Start the actor on the robot machine
+
+```bash
+uv run python -m lerobot.rl.actor_pi05_async --config_path config-recap.json
+```
+
+The actor will connect to the learner via gRPC, perform a `Ready` handshake, and begin streaming transitions. You should see `[ACTOR] Establishing connection with Learner` followed by a successful connection message.
+
+#### Bandwidth considerations
+
+The main bandwidth consumers are:
+- **Actor → Learner:** transitions streamed at episode end (observations include images, so each episode is several MB)
+- **Learner → Actor:** trainable policy weights pushed every `policy_parameters_push_frequency` seconds (~800 MB at bf16 with default trainable layers)
+
+A stable connection with at least 100 Mbps between the machines is recommended. Weight pushes happen infrequently (default every 120 seconds), so bursty bandwidth is fine. If you're on a slower link, increase `policy_parameters_push_frequency` to push weights less often.
+
+### Intervention keys during rollouts
+
+Once both processes are running:
   - `5` — toggle intervention (take/release control with leader arm)
   - `1` — mark success and end episode
   - `0` — mark failure and end episode
@@ -238,6 +337,9 @@ uv run python -m lerobot.rl.actor_pi05_async --config_path config-recap.json
 
 **Buffer loading is slow even with cache**
 → Make sure the cache fingerprint matches. Run `cat outputs/buffer_cache/*/metadata.json | head` and check that the `dataset_root` and `total_frames` match your dataset. If they don't match, delete the cache directory and re-run `scripts/predecode_dataset.py`.
+
+**Actor can't connect to remote learner**
+→ Verify the learner is binding to `0.0.0.0` (not `localhost` or `127.0.0.1`) in its config. Check that port 50051 is open on the learner's firewall (`sudo ufw status`). Test connectivity from the actor machine with `nc -zv <learner-ip> 50051`. If using a cloud VM, also check the provider's security group / network ACL settings.
 
 **Checkpoint won't load**
 → If using `pi05_base`, the path should contain the string `pi05_base` so the loader uses dataset stats instead of checkpoint stats. If renamed, the loader may behave differently.
