@@ -2,22 +2,25 @@
 
 ## What is implemented here:
 
-- The full version of $\pi_{0.5}$ with subtasks and FAST tokens with subtask annotation utilities. As of 2026/04/14 this has not been added to the `main` branch in lerobot. All credits to [@jadechoghari](https://github.com/jadechoghari).
+- The full version of π0.5 with subtasks and FAST tokens with subtask annotation utilities. As of 2026/04/14 this has not been added to the `main` branch in lerobot. All credits to [@jadechoghari](https://github.com/jadechoghari).
 - End-to-end implementation of RECAP-like algorithm for offline and online training.
 - Asynchronous inference with RTC that can run at 30Hz. It automatically saves a buffer and creates a video of the episode with the critic values overlaid.
 - Offline eval script to compare actions across checkpoints, subtasks, or advantage labels.
-- Experimental: live inference where a user can manually write subtasks for $\pi_{0.5}$ on the fly.
+- Experimental: live inference where a user can manually write subtasks for π0.5 on the fly.
 
 The emphasis of this code is RECAP, but other capabilities were added in the process. Even if you don't intend to use RECAP, the other capabilities might be useful.
 
-<video src="https://github.com/user-attachments/assets/4913943c-e357-4195-8997-e5bab01a55d2" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/9461ba1e-725b-4ee4-8d32-173fa6a86600" controls width="100%"></video>
 
 *Inference on the SO-101 arm. The policy generalizes reasonably well from 60 demonstrations. Subtask generation is functional but shows some collision with FAST token generation (from training). Critic values track behavior accurately, though with occasional jumps.*
+
+
+We are also happy to accept contributions, feature requests, or any feedback. Please reach out here or on discord @cijerezg.
 
 ## Introduction to RECAP
 
 
-[RECAP](https://arxiv.org/pdf/2511.14759) is the RL algorithm developed by [Physical Intelligence](https://www.pi.website/) that was used to train the $\pi_{0.6}$ model.
+[RECAP](https://arxiv.org/pdf/2511.14759) is the RL algorithm developed by [Physical Intelligence](https://www.pi.website/) that was used to train the π0.6 model.
 
 
 RECAP proposes an advantage-conditioned VLA, where the advantage comes from a critic that is trained along the policy (the VLA). Specifically, the advantage is computed from the critic, then binarized and passed to the policy as an extended part of the prompt.
@@ -34,9 +37,9 @@ In the following sections, we highlight the key features of this implementation,
 
 ### Models
 
-- The policy is $\pi_{0.5}$ from LeRobot, and it was hard-coded. The critic shares a similar architecture with fewer layers. Both models were hard-coded throughout the codebase, so it isn't trivial to change them.
+- The policy is π0.5 from LeRobot, and it was hard-coded. The critic shares a similar architecture with fewer layers. Both models were hard-coded throughout the codebase, so it isn't trivial to change them.
 
-- This implementation uses the full version of $\pi_{0.5}$, which includes subtask generation and FAST tokens with knowledge insulation.
+- This implementation uses the full version of π0.5, which includes subtask generation and FAST tokens with knowledge insulation.
 
 - This implementation supports absolute actions, anchor actions (i.e., $\delta_t = a_t - s_0$), and delta actions (i.e., $\delta_t = a_t - a_{t-1}$). Experimentally, we have found that anchor actions work best as they inherit translation invariance and aren't as prone to drift as pure delta actions.
 
@@ -64,13 +67,13 @@ The file `lerobot.script.offline_learner_pi05.py` supports offline training usin
 Before training, you need three things:
 
 1. **Dataset** — at least 50 episodes, annotated with subtasks/skills using `lerobot/src/lerobot/policies/pi05_full/annotate/subtask_annotate.py`.
-2. **$\pi_{0.5}$ base weights** — downloaded locally from Hugging Face. Set the path in `policy.pi05_checkpoint`.
+2. **π0.5 base weights** — downloaded locally from Hugging Face. Set the path in `policy.pi05_checkpoint`.
 3. **Config file** — everything is driven by `config-hiserl.json`. The key fields to set before doing anything:
 
 | Field | What it does |
 |---|---|
 | `dataset.root` | Path to your annotated dataset |
-| `policy.pi05_checkpoint` | Path to your $\pi_{0.5}$ base weights (or offline checkpoint) |
+| `policy.pi05_checkpoint` | Path to your π0.5 base weights (or offline checkpoint) |
 | `policy.task` | Natural language description of the task |
 | `output_dir` | Where checkpoints, logs, and buffers are saved |
 | `policy.action_encoding` | Action representation: `"absolute"`, `"anchor"`, or `"delta"`. We recommend `"anchor"` |
@@ -195,7 +198,7 @@ A map for contributors: where to go depending on what you want to change.
 
 Three things live here: the master config dataclass (`PI05RLConfig`), the critic model (`Pi05TransformerCritic`), and the full policy class (`PI05RLPolicy`). If you're adding a hyperparameter, this is where it goes. If you're touching the critic or the policy class itself, same file.
 
-`PI05RLPolicy` is the complete model object. It subclasses `PI05FullPolicy` and swaps in `PI05RLPytorch` as its model — an extension of the base $\pi_{0.5}$ forward pass with advantage conditioning wired in. It also instantiates the critic and critic target, handles checkpoint loading (detecting whether a checkpoint is a base $\pi_{0.5}$ or an RL checkpoint by inspecting state dict keys), and exposes `self.actor = self.model` as an alias for compatibility with the learner infrastructure. When loading from a base checkpoint, critic weights are initialized by copying the first N layers of the actor.
+`PI05RLPolicy` is the complete model object. It subclasses `PI05FullPolicy` and swaps in `PI05RLPytorch` as its model — an extension of the base π0.5 forward pass with advantage conditioning wired in. It also instantiates the critic and critic target, handles checkpoint loading (detecting whether a checkpoint is a base π0.5 or an RL checkpoint by inspecting state dict keys), and exposes `self.actor = self.model` as an alias for compatibility with the learner infrastructure. When loading from a base checkpoint, critic weights are initialized by copying the first N layers of the actor.
 
 The critic is a 6-layer Gemma transformer (configurable via `critic_llm_depth`). It receives vision features and text embeddings, appends 32 learned query tokens, runs them through the transformer, and projects the query outputs through a SwiGLU MLP to produce a scalar value. The query tokens are the bottleneck: they're what actually gets trained to summarize the full context into a value estimate.
 
