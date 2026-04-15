@@ -552,7 +552,7 @@ class ReplayBuffer:
             dtype_str = meta["dtypes"][safe_key]
             np_dtype = np.dtype(dtype_str)
             full_shape = tuple([num_transitions] + meta["shapes"][safe_key]) if meta["shapes"][safe_key] else (num_transitions,)
-            mm = np.memmap(str(bin_path), dtype=np_dtype, mode="r", shape=full_shape)
+            mm = np.memmap(str(bin_path), dtype=np_dtype, mode="c", shape=full_shape)
             t = torch.from_numpy(mm)
             if as_torch_dtype is not None and np_dtype == np.uint16:
                 t = t.view(as_torch_dtype)
