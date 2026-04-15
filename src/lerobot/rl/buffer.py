@@ -269,17 +269,17 @@ class ReplayBuffer:
 
             if len(self.actions.shape) == 2 and action_chunk_size > 1:
                 # Use action_chunk_size - 1 if you don't want to check the final step's done flag
-                check_length = action_chunk_size - 1 
+                check_length = action_chunk_size - 1
                 chunk_indices = (idx.unsqueeze(1) + torch.arange(check_length, device=self.storage_device)) % self.capacity
-                
+
                 chunk_dones = self.dones[chunk_indices]
                 invalid_mask = chunk_dones.any(dim=1)
                 idx = idx[~invalid_mask]
-            
+
             if len(idx) > 0:
                 valid_indices.append(idx)
                 collected_count += len(idx)
-            
+
         # Concatenate all collected indices and slice exactly to batch_size
         idx = torch.cat(valid_indices)[:batch_size]
 
@@ -346,16 +346,16 @@ class ReplayBuffer:
             lookahead_window = (idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)) % self.capacity
             lookahead_window = lookahead_window + action_chunk_size
             lookahead_window = torch.clamp(lookahead_window, max=self.size - 1)
-            
+
             # Get max reward and any done in the lookahead window
             batch_rewards = self.rewards[lookahead_window].max(dim=1)[0].to(self.device)
             batch_dones = self.dones[lookahead_window].any(dim=1).float().to(self.device)
-            
+
         else:
             # No chunking - use standard logic
             batch_rewards = self.rewards[idx].to(self.device)
             batch_dones = self.dones[idx].to(self.device).float()
-        
+
         # Apply reward transformation
         new_rewards = torch.full_like(batch_rewards, -1.0)
         # Success case: Done and Reward=1 -> 0
@@ -364,10 +364,10 @@ class ReplayBuffer:
         # Failure case: Done and Reward=0 -> terminal_failure_reward
         failure_mask = (batch_dones > 0.5) & (batch_rewards < 0.5)
         new_rewards[failure_mask] = self.terminal_failure_reward
-        
+
         # Normalize
         batch_rewards = new_rewards / self.reward_normalization_constant
-        
+
         batch_truncateds = self.truncateds[idx].to(self.device).float()
 
         # Sample complementary_info if available
@@ -377,7 +377,7 @@ class ReplayBuffer:
             for key in self.complementary_info_keys:
                 batch_complementary_info[key] = self.complementary_info[key][idx].to(self.device)
 
-        
+
         return BatchTransition(
             state=batch_state,
             action=batch_actions,
@@ -524,15 +524,15 @@ class ReplayBuffer:
         with open(meta_path) as f:
             meta = json.load(f)
 
-        N = meta["num_transitions"]
+        num_transitions = meta["num_transitions"]
         state_keys = meta["state_keys"]
         image_keys = meta["image_keys"]
         non_image_state_keys = meta["non_image_state_keys"]
 
-        logger.info(f"Loading buffer cache from {cache_dir} ({N} transitions)")
+        logger.info(f"Loading buffer cache from {cache_dir} ({num_transitions} transitions)")
 
         replay_buffer = cls(
-            capacity=N,
+            capacity=num_transitions,
             device=device,
             state_keys=state_keys,
             image_augmentation_function=image_augmentation_function,
@@ -710,22 +710,22 @@ class ReplayBuffer:
 
         # Process dataset transitions one at a time to save memory
         transition_generator = cls._lerobotdataset_to_transitions_generator(
-            dataset=lerobot_dataset, 
+            dataset=lerobot_dataset,
             state_keys=state_keys,
             inject_complementary_info=inject_complementary_info,
         )
-        
+
         # Get first transition for initialization
         first_transition = next(transition_generator, None)
 
-        
-        
+
+
         if first_transition is not None:
             # Resize images in first transition BEFORE initializing storage
             # This ensures buffer allocates correct size (224x224) not original size (640x480)
             import torchvision.transforms.functional as F_vision  # noqa: N812
             expected_height, expected_width = 224, 224
-            
+
             first_state = {}
             for k, v in first_transition["state"].items():
                 tensor = v.to(device)
@@ -733,7 +733,7 @@ class ReplayBuffer:
                     tensor = F_vision.resize(tensor, (expected_height, expected_width))
                     tensor = tensor.clamp(0.0, 1.0)
                 first_state[k] = tensor
-                
+
             first_action = first_transition[ACTION].to(device)
 
             # Get complementary info if available
@@ -749,7 +749,7 @@ class ReplayBuffer:
             replay_buffer._initialize_storage(
                 state=first_state, action=first_action, complementary_info=first_complementary_info
             )
-            
+
             # Process first transition
             data = first_transition
             for k, v in data.items():
@@ -950,7 +950,7 @@ class ReplayBuffer:
         complementary_info_keys = [key for key in sample if key.startswith("complementary_info.")]
         if "subtask_index" in sample:
             complementary_info_keys.append("subtask_index")
-            
+
         if inject_complementary_info:
             for k in inject_complementary_info:
                 if k not in complementary_info_keys:
@@ -962,9 +962,10 @@ class ReplayBuffer:
         if not has_done_key:
             print("'next.done' key not found in dataset. Inferring from episode boundaries...")
 
-        from torch.utils.data import DataLoader
         import multiprocessing
-        
+
+        from torch.utils.data import DataLoader
+
         num_workers = min(4, multiprocessing.cpu_count() or 1)
         loader = DataLoader(
             dataset,
@@ -982,14 +983,14 @@ class ReplayBuffer:
 
             # ----- 2) Action -----
             action = current_sample[ACTION]
-            
+
             # CRITICAL FIX: Handle pre-chunked actions from dataset
             # If the dataset was loaded with delta_indices (e.g., [0, 1, ..., 49]),
             # actions will be shape [50, 6] instead of [6]
             # We only want the FIRST action to keep buffer storage simple and consistent
             if action.ndim == 2:  # Shape is [chunk_size, action_dim]
                 action = action[0]  # Extract first timestep only  → shape [action_dim]
-            
+
             action = action.unsqueeze(0)  # Add batch dimension → shape [1, action_dim]
 
             # ----- 3) Determine done flag -----
@@ -998,9 +999,7 @@ class ReplayBuffer:
             else:
                 # If this is the last frame or if next frame is in a different episode, mark as done
                 done = False
-                if is_last:
-                    done = True
-                elif next_sample["episode_index"] != current_sample["episode_index"]:
+                if is_last or next_sample["episode_index"] != current_sample["episode_index"]:
                     done = True
 
             # Reward is inferred from done if not present
@@ -1008,7 +1007,7 @@ class ReplayBuffer:
                 reward = current_sample[REWARD].item()
             else:
                 reward = 1.0 if done else 0.0
-            
+
             # TODO: (azouitine) Handle truncation (using the same value as done for now)
             truncated = done
 
@@ -1036,7 +1035,7 @@ class ReplayBuffer:
                         clean_key = key[len("complementary_info."):]
                     else:
                         clean_key = key
-                        
+
                     if inject_complementary_info is not None and clean_key in inject_complementary_info:
                         val = inject_complementary_info[clean_key]
                         if isinstance(val, bool):
@@ -1044,12 +1043,12 @@ class ReplayBuffer:
                         elif isinstance(val, float):
                             val = torch.tensor(val, dtype=torch.float32)
                         elif hasattr(val, "dtype"): # Already a tensor
-                            pass 
+                            pass
                         else:
                             val = torch.tensor(val)
                     else:
                         val = current_sample[key]
-                        
+
                     # Handle tensor and non-tensor values differently
                     if isinstance(val, torch.Tensor):
                         complementary_info[clean_key] = val.unsqueeze(0)  # Add batch dimension
@@ -1077,7 +1076,7 @@ class ReplayBuffer:
         for current_sample in tqdm(iterator, total=num_frames - 1):
             yield process_sample(prev_sample, current_sample, is_last=False)
             prev_sample = current_sample
-            
+
         yield process_sample(prev_sample, None, is_last=True)
 
 
@@ -1172,11 +1171,11 @@ def concatenate_batch_transitions(
     if left_info is None:
         left_info = {}
         left_batch_transitions["complementary_info"] = left_info
-    
+
     # If right_info is None, treat as empty dict for key iteration
     if right_info is None:
         right_info = {}
-    
+
     # Calculate batch sizes to determine padding size
     # We use the 'reward' field as reference for batch size of each part
     # Note: left_batch_transitions['reward'] is ALREADY concatenated, so we need to derive sizes differently.
@@ -1198,7 +1197,7 @@ def concatenate_batch_transitions(
         # 1. Present in both
         if left_val is not None and right_val is not None:
              left_info[key] = torch.cat([left_val, right_val], dim=0)
-        
+
         # 2. Present only in Right (Missing in Left) -> Pad Left
         elif left_val is None:
              # Create padding for left

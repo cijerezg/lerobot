@@ -1,12 +1,40 @@
 #!/usr/bin/env python
 """
-Pre-decode video frames from a LeRobot dataset into memory-mapped files.
+Convert a LeRobot dataset into RL replay buffer frame format and save to disk.
 
-This avoids re-decoding video on every training run. The output cache can be
-loaded by ReplayBuffer.from_cache() for near-instant startup with minimal RAM.
+Decodes video frames, resizes images, and writes every field (states, actions,
+rewards, dones, complementary info) as flat numpy memmap files alongside a
+metadata manifest. The resulting cache can be loaded via
+ReplayBuffer.from_cache() to populate the replay buffer almost instantly.
+Because the image data stays memory-mapped, it is paged in on demand by the OS
+rather than loaded all at once, keeping RAM usage low even for large datasets.
+
+How memory mapping works
+------------------------
+Each tensor (images, states, actions, …) is written to a separate .bin file
+using np.memmap with mode="w+". This creates a file on disk whose bytes are the
+raw array data in row-major order — no headers, no compression, just contiguous
+dtype elements. Writing through a memmap means the OS can flush pages to disk
+incrementally, so the full dataset never needs to live in RAM at once.
+
+On the read side (ReplayBuffer.from_cache), the same .bin files are reopened
+with np.memmap(mode="r") and wrapped in a torch tensor via torch.from_numpy().
+The tensor shares the memmap's memory: no data is copied until the program
+actually accesses a page. The OS virtual-memory subsystem loads pages on demand
+and can evict them under memory pressure, which is why a 50 GB image cache can
+be used on a machine with far less free RAM.
+
+Small arrays (actions, rewards, dones, non-image state) are .clone()'d into
+regular RAM after loading because they're cheap to hold and benefit from faster
+random access. Image arrays stay memmap-backed so only the pages touched during
+each training batch are resident.
+
+A metadata.json file is written alongside the .bin files recording shapes,
+dtypes, and a dataset fingerprint so the loader can reconstruct tensors with the
+correct dimensions and verify cache validity.
 
 Usage:
-    uv run python scripts/predecode_dataset.py \
+    uv run python src/lerobot/scripts/lerobot_memmap_buffer_cache.py \
         --repo-id jackvial/so101_pickplace_success_120_v2_with_subtasks \
         --data-dir outputs/so101_pickplace_success_120_v2_w_subtasks \
         --cache-dir outputs/buffer_cache \
