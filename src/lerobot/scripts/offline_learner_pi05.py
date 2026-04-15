@@ -94,6 +94,7 @@ import wandb
 class OfflineTrainRLServerPipelineConfig(TrainRLServerPipelineConfig):
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
+    buffer_cache_dir: str | None = "outputs/buffer_cache"
 
 
 @parser.wrap()
@@ -339,6 +340,7 @@ def run_offline_training(
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
     
+    buffer_cache_dir = getattr(cfg, "buffer_cache_dir", None)
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
         offline_dataset,
         device=device,
@@ -349,6 +351,7 @@ def run_offline_training(
         reward_normalization_constant=cfg.policy.reward_normalization_constant,
         terminal_failure_reward=cfg.policy.terminal_failure_reward,
         inject_complementary_info={"is_golden": True},
+        cache_dir=buffer_cache_dir,
     )
     offline_replay_buffer.dataset = offline_dataset
 
