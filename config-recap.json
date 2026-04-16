@@ -1,5 +1,5 @@
 {
-    "output_dir": "outputs/recap_online_v10",
+    "output_dir": "outputs/recap_online_v11",
     "interactive": true,
     "use_rerun": false,
     "job_name": "recap_pickplace_offline",
@@ -10,8 +10,9 @@
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/recap_online_v10",
+    "offline_output_dir": "outputs/recap_online_v11",
     "offline_save_freq": 500,
+    "buffer_cache_dir": "outputs/buffer_cache",
     "episode_logging_freq": 99999,
     "episode_save_freq": 9999,
     "video_logging_cameras": [
@@ -21,12 +22,12 @@
     "wandb": {
         "enable": false,
         "project": "recap_pickplace",
-        "offline_project": "recap_pickplace_offline",
+        "offline_project": "recap_pickplace_offline_v11",
         "disable_artifact": true
     },
     "dataset": {
-        "root": "outputs/so101_pickplace_success_120_v2_w_subtasks",
-        "repo_id": "jackvial/so101_pickplace_success_120_v2_with_subtasks",
+        "root": "outputs/so101_pickplace_success_120_v2_w_subtasks_v2",
+        "repo_id": "jackvial/so101_pickplace_success_120_v2_w_subtasks_v2",
         "use_imagenet_stats": false,
         "max_episodes": null,
         "video_backend": "pyav"
@@ -34,7 +35,7 @@
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "outputs/recap_offline_v4/checkpoints/001500/pretrained_model",
+        "pi05_checkpoint": "",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
@@ -129,7 +130,7 @@
             "actor": "threads",
             "learner": "threads"
         },
-        "repo_id": "jackvial/so101_pickplace_success_120_v2_with_subtasks"
+        "repo_id": "jackvial/so101_pickplace_success_120_v2_w_subtasks_v2"
     },
     "env": {
         "type": "gym_manipulator",

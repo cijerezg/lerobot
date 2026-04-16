@@ -55,9 +55,9 @@ RECAP works best with anchor actions (a_t − s_0). You need per-timestep normal
 - [x] Run the stats computation script:
 ```bash
 uv run python src/lerobot/scripts/compute_delta_stats.py \
-    --root outputs/so101_pickplace_success_120_v2_w_subtasks \
+    --root outputs/so101_pickplace_success_120_v2_w_subtasks_v2 \
     --encoding anchor \
-    --output-dir outputs/stats
+    --output-dir outputs/stats_so101_pickplace_success_120_v2_w_subtasks_v2
 ```
 
 - [x] Verify the output file exists:
@@ -124,8 +124,8 @@ Pre-decoding writes all frames to memory-mapped files on disk **once**. On subse
 - [x] Run the pre-decode script:
 ```bash
 uv run python src/lerobot/scripts/lerobot_memmap_buffer_cache.py \
-    --repo-id jackvial/so101_pickplace_success_120_v2_with_subtasks \
-    --data-dir outputs/so101_pickplace_success_120_v2_w_subtasks \
+    --repo-id jackvial/so101_pickplace_success_120_v2_w_subtasks_v2 \
+    --data-dir outputs/so101_pickplace_success_120_v2_w_subtasks_v2 \
     --cache-dir outputs/buffer_cache \
     --video-backend pyav
 ```
