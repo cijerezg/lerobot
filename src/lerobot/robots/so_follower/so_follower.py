@@ -175,11 +175,18 @@ class SOFollower(Robot):
             self.bus.setup_motor(motor)
             print(f"'{motor}' motor id set to {self.bus.motors[motor].id}")
 
+    _last_pos_log_time: float = 0.0
+
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         # Read arm position
         start = time.perf_counter()
         obs_dict = self.bus.sync_read("Present_Position")
+        now = time.perf_counter()
+        if now - self._last_pos_log_time >= 2.0:
+            positions = [round(obs_dict[motor], 2) for motor in self.bus.motors]
+            print(f"\n>>> fixed_reset_joint_positions: {positions}\n", flush=True)
+            self._last_pos_log_time = now
         obs_dict = {f"{motor}.pos": val for motor, val in obs_dict.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")

@@ -1,5 +1,5 @@
 {
-    "output_dir": "outputs/recap_online_v11",
+    "output_dir": "outputs/recap_online_v12",
     "interactive": true,
     "use_rerun": false,
     "job_name": "recap_pickplace_offline",
@@ -10,7 +10,7 @@
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/recap_online_v11",
+    "offline_output_dir": "outputs/recap_online_v12",
     "offline_save_freq": 2500,
     "buffer_cache_dir": "outputs/buffer_cache",
     "episode_logging_freq": 99999,
@@ -35,7 +35,7 @@
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "",
+        "pi05_checkpoint": "outputs/recap_online_v11/checkpoints/007500/pretrained_model",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
@@ -177,7 +177,7 @@
                 "gripper_penalty": 0.00
             },
             "reset": {
-                "fixed_reset_joint_positions": [0.54, -90.69, 99.55, 73.70, -50.23, 42.71],
+                "fixed_reset_joint_positions": [40.82, -99.03, 98.2, 80.4, -43.64, 5.39],
                 "reset_time_s": 10,
                 "control_time_s": 200.0,
                 "terminate_on_success": true
