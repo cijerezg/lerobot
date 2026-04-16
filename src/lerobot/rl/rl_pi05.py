@@ -1080,7 +1080,9 @@ class PI05RLPolicy(PI05FullPolicy):
         if should_regenerate:
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
                 images, img_masks, tokens, masks,
-                max_decoding_steps=self.config.tokenizer_max_length
+                max_decoding_steps=self.config.tokenizer_max_length,
+                repetition_penalty=self.config.repetition_penalty,
+                no_repeat_ngram_size=self.config.no_repeat_ngram_size,
             )
             self._cached_subtask_tokens = subtask_tokens
             self._cached_subtask_masks = subtask_masks

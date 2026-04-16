@@ -80,6 +80,8 @@ class PI05FullConfig(PreTrainedConfig):
     # subtask stuff
     max_decoding_steps: int = 200
     temperature: float = 0.0
+    repetition_penalty: float = 1.3
+    no_repeat_ngram_size: int = 3
     subtask_regeneration_interval: float = 2  # Regenerate subtask tokens every N seconds (0 = every call)
 
     # Training settings

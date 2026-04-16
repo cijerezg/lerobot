@@ -206,7 +206,7 @@ If your setup can't run the learner and actor simultaneously (or you simply want
 
 - [ ] Launch inference:
 ```bash
-uv run python -m lerobot.rl.inference_pi05_async --config_path config-recap.json
+python -m lerobot.rl.inference_pi05_async --config_path config-recap.json
 ```
 
 ### What to expect

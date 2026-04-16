@@ -21,8 +21,14 @@ the environment. It delegates threading orchestration to `inference_utils.py`
 and strictly avoids communicating with distributed learner servers, acting
 as an isolated test bed for Pi05 robotics deployment.
 
+When `interactive` is set to true in the config (or via CLI override), an
+additional input thread is spawned so the operator can type subtask strings
+into the terminal at any time, overriding the model's generated subtask
+tokens until the next regeneration interval.
+
 Usage:
     python lerobot/src/lerobot/rl/inference_pi05_async.py --config-path=config-hiserl.json
+    python lerobot/src/lerobot/rl/inference_pi05_async.py --config-path=config-hiserl.json --interactive=true
 """
 
 import logging
@@ -56,7 +62,9 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
 
     init_logging(display_pid=False)
     logger = logging.getLogger(__name__)
-    logger.info("Initializing Standalone Asynchronous Pi05 Inference")
+    interactive = getattr(cfg, "interactive", False)
+    mode_label = "Interactive " if interactive else ""
+    logger.info(f"Initializing {mode_label}Standalone Asynchronous Pi05 Inference")
 
     # Override configurations for isolated actor running
     # cfg.policy.use_separate_critic = False  # Critic is now needed for logging
@@ -116,8 +124,17 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     online_env, teleop_device = make_robot_env(cfg=cfg.env)
     env_processor, action_processor = make_processors(online_env, teleop_device, cfg.env, cfg.policy.device)
 
-    # Instantiate bridging components
-    shared_state = SharedState()
+    # Instantiate bridging components -- use interactive shared state when requested
+    if interactive:
+        from lerobot.rl.inference_utils_interactive import (
+            SharedStateInteractive,
+            terminal_input_worker,
+            get_actions_worker_interactive,
+        )
+        shared_state = SharedStateInteractive()
+    else:
+        shared_state = SharedState()
+
     shared_state.running = not shutdown_event.is_set()
     
     # Initialize Episode parameters
@@ -140,13 +157,31 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     action_queue = ActionQueue(policy.config.rtc_config)
 
     # Spawn daemonized Thread Wrappers
-    logger.info("Spawning Inference worker thread.")
-    inference_thread = Thread(
-        target=get_actions_worker,
-        args=(policy, shared_state, action_queue, cfg),
-        daemon=True,
-        name="get_actions_worker"
-    )
+    if interactive:
+        logger.info("Spawning Input worker thread.")
+        input_thread = Thread(
+            target=terminal_input_worker,
+            args=(shared_state, policy, cfg, shutdown_event),
+            daemon=True,
+            name="InputThread",
+        )
+
+        logger.info("Spawning Inference worker thread (interactive).")
+        inference_thread = Thread(
+            target=get_actions_worker_interactive,
+            args=(policy, shared_state, action_queue, cfg),
+            daemon=True,
+            name="get_actions_worker_interactive",
+        )
+    else:
+        input_thread = None
+        logger.info("Spawning Inference worker thread.")
+        inference_thread = Thread(
+            target=get_actions_worker,
+            args=(policy, shared_state, action_queue, cfg),
+            daemon=True,
+            name="get_actions_worker",
+        )
 
     logger.info("Spawning Environment worker thread.")
     environment_thread = Thread(
@@ -161,6 +196,8 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
         # Give environment thread 1 second to bootstrap the `SharedState` before the inference loop goes wild
         time.sleep(1.0) 
         inference_thread.start()
+        if input_thread is not None:
+            input_thread.start()
 
         start_time = time.time()
         logger.info("[MAIN] Successfully orchestrated asynchronous context. Awaiting KeyboardInterrupt to exit.")

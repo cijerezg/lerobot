@@ -218,3 +218,4 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     video_logging_cameras: list[str] = field(default_factory=lambda: ["top", "side"])
     episode_logging_freq: int = 4
     episode_save_freq: int = 10
+    interactive: bool = False
