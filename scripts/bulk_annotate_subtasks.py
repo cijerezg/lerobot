@@ -7,9 +7,9 @@ manually annotating each one. You define the skills and their proportional
 time boundaries, and this script applies them uniformly.
 
 Usage:
-    uv run python scripts/bulk_annotate_subtasks.py \
-        --repo-id jackvial/so101_pickplace_success_120_v2 \
-        --output-dir outputs/annotated_dataset
+    python scripts/bulk_annotate_subtasks.py \
+    --repo-id jackvial/so101_pickplace_success_120_v2 \
+    --output-dir outputs/so101_pickplace_success_120_v2_w_subtasks_v2
 """
 
 import argparse
@@ -37,8 +37,7 @@ console = Console()
 # Each tuple is (skill_name, start_seconds, end_seconds)
 # end_seconds=None means "until end of episode"
 SKILL_TEMPLATE_ABSOLUTE = [
-    ("reach for cube",       0,  3),
-    ("grasp cube",           3,  4),
+    ("reach and grasp cube", 0,  4),
     ("move to x marker",     4,  7),
     ("return to reset",      7,  None),
 ]

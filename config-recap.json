@@ -1,5 +1,5 @@
 {
-    "output_dir": "outputs/recap_online_v8",
+    "output_dir": "outputs/recap_online_v10",
     "interactive": true,
     "use_rerun": false,
     "job_name": "recap_pickplace_offline",
@@ -10,10 +10,10 @@
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/recap_online_v8",
+    "offline_output_dir": "outputs/recap_online_v10",
     "offline_save_freq": 500,
-    "episode_logging_freq": 4,
-    "episode_save_freq": 6,
+    "episode_logging_freq": 99999,
+    "episode_save_freq": 9999,
     "video_logging_cameras": [
         "top",
         "side"
