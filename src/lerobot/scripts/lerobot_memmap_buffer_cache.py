@@ -37,10 +37,10 @@ Usage
 -----
 Step 1: Generate the cache from a dataset (one-time cost):
 
-    uv run python src/lerobot/scripts/lerobot_memmap_buffer_cache.py \\
-        --repo-id jackvial/so101_pickplace_success_120_v2_with_subtasks \\
-        --data-dir outputs/so101_pickplace_success_120_v2_w_subtasks \\
-        --cache-dir outputs/buffer_cache \\
+    uv run python src/lerobot/scripts/lerobot_memmap_buffer_cache.py \
+        --repo-id jackvial/so101_pickplace_success_120_v2_with_subtasks \
+        --data-dir outputs/so101_pickplace_success_120_v2_w_subtasks \
+        --cache-dir outputs/buffer_cache \
         --video-backend pyav
 
     This decodes every video frame, resizes images to 224x224, and writes

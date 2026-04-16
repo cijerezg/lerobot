@@ -1,5 +1,5 @@
 {
-    "output_dir": "outputs/recap_online_v5",
+    "output_dir": "outputs/recap_online_v6",
     "use_rerun": false,
     "job_name": "recap_pickplace_offline",
     "resume": false,
@@ -9,7 +9,7 @@
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/recap_online_v5",
+    "offline_output_dir": "outputs/recap_online_v6",
     "offline_save_freq": 500,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
@@ -135,7 +135,7 @@
         "robot": {
             "type": "so101_follower",
             "port": "/dev/ttyACM0",
-            "id": "so101_follower_2026_04_12",
+            "id": "so101_follower_2026_04_15",
             "cameras": {
                 "top": {
                     "type": "opencv",
@@ -158,7 +158,7 @@
         "teleop": {
             "type": "so101_leader",
             "port": "/dev/ttyACM1",
-            "id": "so101_leader_2026_04_12"
+            "id": "so101_leader_2026_04_15"
         },
         "processor": {
             "control_mode": "leader",

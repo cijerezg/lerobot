@@ -123,7 +123,7 @@ Pre-decoding writes all frames to memory-mapped files on disk **once**. On subse
 
 - [x] Run the pre-decode script:
 ```bash
-uv run python scripts/predecode_dataset.py \
+uv run python src/lerobot/scripts/lerobot_memmap_buffer_cache.py \
     --repo-id jackvial/so101_pickplace_success_120_v2_with_subtasks \
     --data-dir outputs/so101_pickplace_success_120_v2_w_subtasks \
     --cache-dir outputs/buffer_cache \
@@ -198,7 +198,79 @@ print(f'Total keys: {len(ckpt)}')
 
 ---
 
-## Step 7 (Optional): Online Training
+## Step 7: Inference and Rollout Recording
+
+If your setup can't run the learner and actor simultaneously (or you simply want to collect data first and train later), this step lets you run inference on the robot with human intervention and save rollouts to disk. You can then feed those rollouts back into offline training (Step 5) for iterative improvement.
+
+- [ ] Make sure `policy.pi05_checkpoint` in `config-recap.json` points to your trained checkpoint from Step 5 (e.g. `outputs/recap_offline_v1/checkpoints/latest/pretrained_model`)
+
+- [ ] Launch inference:
+```bash
+uv run python -m lerobot.rl.inference_pi05_async --config_path config-recap.json
+```
+
+### What to expect
+
+1. The script loads the policy and critic onto your GPU, connects to the robot and cameras, and then waits. You'll see `Waiting for '2' on the teleop device to start episode...` in the terminal.
+2. Press **`2`** on the leader arm keyboard to start the first episode. The robot will begin executing the policy at 30 Hz using RTC (asynchronous chunked inference).
+3. A supervisor log prints every 5 seconds showing queue depth, intervention status, and timing metrics.
+
+### Intervention controls
+
+| Key | Action |
+|---|---|
+| `2` | Start the next episode |
+| `5` | Toggle intervention — take/release control with the leader arm |
+| `1` | Mark episode as **success** and end it |
+| `0` | Mark episode as **failure** and end it |
+
+Intervene (press `5`) when the policy is clearly drifting, guide the robot with the leader arm, then press `5` again to hand control back. Intervened timesteps are flagged as high-quality human actions in the saved buffer.
+
+### What gets saved
+
+- **Replay buffer as a LeRobot dataset** — saved every `episode_save_freq` episodes (default 6) to `{output_dir}/inference_dataset/`. This contains observations, actions, rewards, done flags, and intervention labels for every timestep.
+- **Episode videos with critic overlay** — generated every `episode_logging_freq` episodes (default 4) under `{output_dir}/logging_episodes/`. Each video shows the camera feeds side-by-side with the critic value curve and predicted subtask text overlaid, useful for visually evaluating the checkpoint.
+- **Critic value JSON** — raw critic values per step saved alongside each logged episode.
+
+### Tuning the config for inference
+
+| Field | Default | Notes |
+|---|---|---|
+| `episode_save_freq` | `6` | How often the full buffer is flushed to a LeRobot dataset |
+| `episode_logging_freq` | `4` | How often an annotated video is rendered |
+| `policy.online_buffer_capacity` | `1000` | Max transitions in memory — increase if you plan to collect many episodes in one session |
+| `policy.inference_advantage` | `1.0` | Advantage conditioning at inference; `1.0` = "good actions" |
+| `use_rerun` | `false` | Set to `true` to stream camera feeds and joint values to a Rerun viewer in real time |
+
+### Using collected rollouts for further offline training
+
+After you've collected rollouts, you can fold them back into offline training:
+
+1. **Annotate with subtasks** (required for π0.5 full). Convert the saved buffer to video format, then annotate:
+```bash
+uv run python src/lerobot/policies/pi05_full/annotate/online_buffer_to_video.py
+uv run python src/lerobot/policies/pi05_full/annotate/subtask_annotate_gemma_4.py \
+    --data-dir outputs/recap_online_v5/inference_dataset \
+    --video-key observation.images.top \
+    --output-dir outputs/inference_rollouts_annotated
+```
+
+2. **Add to config** — set `dataset.additional_offline_dataset_paths` in `config-recap.json`:
+```json
+"dataset": {
+    "additional_offline_dataset_paths": [
+        "outputs/inference_rollouts_annotated"
+    ]
+}
+```
+
+3. **Re-run offline training** (Step 5) — the learner will load both the original demonstrations and the new rollouts into its replay buffer.
+
+4. **Repeat** — point `policy.pi05_checkpoint` at the new checkpoint and collect more rollouts. Each cycle gives the policy more on-task experience.
+
+---
+
+## Step 8 (Optional): Online Training
 
 Once offline training is done, you can move to online RL on the real robot. The system uses an actor-learner architecture connected over gRPC:
 
