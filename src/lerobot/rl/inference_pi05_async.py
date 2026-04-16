@@ -120,10 +120,6 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     shared_state = SharedState()
     shared_state.running = not shutdown_event.is_set()
     
-    # Initialize Episode parameters
-    shared_state.episode_logging_freq = cfg.episode_logging_freq
-    shared_state.episode_save_freq = cfg.episode_save_freq
-
     shared_state.is_logging_episode = (shared_state.episode_counter % cfg.episode_logging_freq == 0)
 
     # Initialize ReplayBuffer for recording
@@ -167,7 +163,7 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
 
         # Polling supervisor log loop
         while not shutdown_event.is_set():
-            time.sleep(5)
+            time.sleep(20)
             
             q_size = action_queue.qsize() if action_queue is not None else 0
             teleop_stat = "ON" if shared_state.is_intervening else "OFF"

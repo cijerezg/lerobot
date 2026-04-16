@@ -51,15 +51,13 @@ from lerobot.utils.utils import get_safe_torch_device, init_logging
 from lerobot.rl.gym_manipulator import make_processors, make_robot_env
 import lerobot.rl.rl_pi05  # Important: Register PI05RLConfig via import side-effects
 from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
-from lerobot.rl.inference_utils import env_interaction_worker  # reused unchanged
-from lerobot.rl.buffer import ReplayBuffer
-
-# Interactive-specific additions
-from lerobot.rl.inference_utils_interactive import (
+from lerobot.rl.inference_utils import (
     SharedStateInteractive,
     terminal_input_worker,
-    get_actions_worker_interactive,
+    get_actions_worker,
+    env_interaction_worker,
 )
+from lerobot.rl.buffer import ReplayBuffer
 
 
 @parser.wrap()
@@ -123,8 +121,6 @@ def async_inference_interactive_cli(cfg: TrainRLServerPipelineConfig):
     # Use the interactive shared state instead of plain SharedState
     shared_state = SharedStateInteractive()
     shared_state.running = not shutdown_event.is_set()
-    shared_state.episode_logging_freq = cfg.episode_logging_freq
-    shared_state.episode_save_freq = cfg.episode_save_freq
     shared_state.is_logging_episode = (shared_state.episode_counter % cfg.episode_logging_freq == 0)
 
     logger.info("Initializing ReplayBuffer for recording")
@@ -150,10 +146,10 @@ def async_inference_interactive_cli(cfg: TrainRLServerPipelineConfig):
 
     logger.info("Spawning Inference worker thread.")
     inference_thread = Thread(
-        target=get_actions_worker_interactive,
+        target=get_actions_worker,
         args=(policy, shared_state, action_queue, cfg),
         daemon=True,
-        name="get_actions_worker_interactive",
+        name="get_actions_worker",
     )
 
     logger.info("Spawning Environment worker thread.")
@@ -177,7 +173,7 @@ def async_inference_interactive_cli(cfg: TrainRLServerPipelineConfig):
         )
 
         while not shutdown_event.is_set():
-            time.sleep(5)
+            time.sleep(20)
 
             q_size = action_queue.qsize() if action_queue is not None else 0
             teleop_stat = "ON" if shared_state.is_intervening else "OFF"
