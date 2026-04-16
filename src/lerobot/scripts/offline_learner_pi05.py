@@ -25,6 +25,7 @@ Usage:
     python offline_learner_pi05.py config-hiserl.json --offline-steps 10000
 """
 
+import json
 import logging
 import os
 
@@ -67,12 +68,13 @@ from lerobot.utils.constants import (
     PRETRAINED_MODEL_DIR,
     TRAINING_STATE_DIR,
 )
-from lerobot.utils.random_utils import set_seed
+from lerobot.utils.random_utils import load_rng_state, set_seed
 from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
     save_checkpoint,
     update_last_checkpoint,
 )
+from lerobot.optim.optimizers import load_optimizer_state
 from lerobot.utils.transition import move_transition_to_device
 from lerobot.utils.utils import (
     format_big_number,
@@ -98,6 +100,26 @@ class OfflineTrainRLServerPipelineConfig(TrainRLServerPipelineConfig):
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
     buffer_cache_dir: str | None = "outputs/buffer_cache"
+
+    def validate(self) -> None:
+        if self.resume and self.policy is not None and self.policy.pi05_checkpoint:
+            checkpoint_model_dir = Path(self.policy.pi05_checkpoint)
+            self.policy.pretrained_path = checkpoint_model_dir
+            self.checkpoint_path = checkpoint_model_dir.parent
+        else:
+            super().validate()
+            return
+
+        if self.policy is None:
+            raise ValueError(
+                "Policy is not configured. Please specify a pretrained policy with --policy.pi05_checkpoint."
+            )
+
+        if not self.job_name:
+            if self.env is None:
+                self.job_name = f"{self.policy.type}"
+            else:
+                self.job_name = f"{self.env.type}_{self.policy.type}"
 
 
 @parser.wrap()
@@ -307,6 +329,14 @@ def run_offline_training(
     
     # Create optimizers
     optimizers = make_optimizers(cfg=cfg, policy=policy)
+
+    if cfg.resume and hasattr(cfg, "checkpoint_path") and cfg.checkpoint_path:
+        training_state_dir = Path(cfg.checkpoint_path) / TRAINING_STATE_DIR
+        if training_state_dir.is_dir():
+            optimizers = load_optimizer_state(optimizers, training_state_dir)
+            load_rng_state(training_state_dir)
+            if is_main_process:
+                logging.info(f"Restored optimizer and RNG state from {training_state_dir}")
     
     # Wait before logging training info
     accelerator.wait_for_everyone()
@@ -400,7 +430,15 @@ def run_offline_training(
     
     if is_main_process:
         logging.info("Starting offline training loop")
+
     optimization_step = 0
+    if cfg.resume and hasattr(cfg, "checkpoint_path") and cfg.checkpoint_path:
+        training_step_file = Path(cfg.checkpoint_path) / TRAINING_STATE_DIR / "training_step.json"
+        if training_step_file.exists():
+            with open(training_step_file) as f:
+                optimization_step = json.load(f).get("step", 0)
+            if is_main_process:
+                logging.info(f"Resuming from optimization step {optimization_step}")
     
     # Main training loop
     while optimization_step < offline_steps:

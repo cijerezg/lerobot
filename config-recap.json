@@ -11,7 +11,7 @@
     "save_checkpoint": true,
     "save_freq": 400,
     "offline_output_dir": "outputs/recap_online_v11",
-    "offline_save_freq": 500,
+    "offline_save_freq": 2500,
     "buffer_cache_dir": "outputs/buffer_cache",
     "episode_logging_freq": 99999,
     "episode_save_freq": 9999,
