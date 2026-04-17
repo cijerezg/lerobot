@@ -43,6 +43,8 @@ In the following sections, we highlight the key features of this implementation,
 
 - This implementation supports absolute actions, anchor actions (i.e., δt = at - s0), and delta actions (i.e., δt = at - at-1). Experimentally, we have found that anchor actions work best as they inherit translation invariance and aren't as prone to drift as pure delta actions.
 
+- Actions are smoothed with a centered moving average (window size 5) applied after each chunk is generated. This reduces jerk throughout the trajectory, which is especially useful when the dataset is collected from the policy — smoother rollouts produce cleaner demonstrations.
+
 
 ### Offline
 
@@ -92,6 +94,16 @@ The output `.pt` file is what you pass to `policy.action_encoding_stats_path`.
 ### Dataset Annotation
 
 Subtask annotations are required for training. There are two ways to do it.
+
+> **Note — annotating online buffer data:** If your data comes from a saved online buffer (learner or inference), you must convert it to video format first. Run:
+> ```bash
+> python lerobot/src/lerobot/policies/pi05_full/annotate/online_buffer_to_video.py \
+>     --data-dir /path/to/online_buffer \
+>     --output-dir /path/to/online_buffer_video
+> ```
+> The default paths are set at the top of the script — pass them explicitly to avoid editing the file. Use the output directory as `--data-dir` for the annotation command below.
+>
+> **Note — Python environment:** The annotation scripts require `transformers>=5.3`, which conflicts with the custom `transformers` version used by π0.5. Use a **separate virtual environment** for annotation.
 
 **Option 1 — Automatic (LLM-based):** Two scripts are available: `subtask_annotate.py` (Qwen2-VL / Qwen3-VL) and `gemma_subtask_annotate.py` (Gemma 4). In practice, Gemma 4 works much better than Qwen. Gemma 4 31B produces annotations that are close to manual quality, and even 4B is still decent. Qwen lags noticeably behind both.
 
@@ -229,7 +241,7 @@ Normalization by modality: actions use `QUANTILES`, joint state uses `MIN_MAX`, 
 
 `actor_pi05_async.py` and `inference_pi05_async.py` follow the same pattern: a main thread steps the environment at 30 Hz, a background thread runs GPU inference, and a `SharedState` object with a lock passes observations between them. The actor variant (`actor_pi05_async_utils.py`) also manages the gRPC connection to the learner — pushing transitions and pulling updated weights. The inference variant (`inference_utils.py`) drops all of that: simpler `SharedState`, no network I/O.
 
-After each action chunk is generated, the absolute actions also pass through a 3-tap centered moving average to smooth jerk at chunk boundaries.
+After each action chunk is generated, the absolute actions pass through a centered moving average (window size 5) to smooth jerk throughout the trajectory.
 
 ### `buffer.py` — Replay Buffer
 

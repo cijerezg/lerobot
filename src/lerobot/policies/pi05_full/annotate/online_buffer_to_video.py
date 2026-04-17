@@ -1,3 +1,4 @@
+import argparse
 import sys
 from pathlib import Path
 
@@ -7,39 +8,50 @@ sys.path.append("lerobot/src")
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.dataset_tools import convert_image_to_video_dataset
 
-# Paths
-DATA_DIR = Path("outputs/train/2026-04-13/20-47-39_default/inference_dataset")
-OUTPUT_DIR = Path("outputs/train/2026-04-13/20-47-39_default/inference_dataset_video")
 
 def main():
-    if not DATA_DIR.exists():
-        print(f"Error: Dataset directory {DATA_DIR} does not exist.")
+    parser = argparse.ArgumentParser(description="Convert an online buffer dataset to video format.")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("outputs/train/2026-04-16/20-09-41_default/dataset"),
+        help="Path to the input dataset directory.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("outputs/train/2026-04-16/20-09-41_default/dataset_video"),
+        help="Path to write the converted video dataset.",
+    )
+    args = parser.parse_args()
+
+    if not args.data_dir.exists():
+        print(f"Error: Dataset directory {args.data_dir} does not exist.")
         return
 
-    print(f"Loading dataset from {DATA_DIR}...")
+    print(f"Loading dataset from {args.data_dir}...")
     try:
-        dataset = LeRobotDataset(root=DATA_DIR, repo_id="cijerezg/dummy_dataset")
+        dataset = LeRobotDataset(root=args.data_dir, repo_id="cijerezg/dummy_dataset")
     except Exception as e:
         print(f"Failed to load dataset: {e}")
         return
-    
-    print(f"Converting dataset to video format at {OUTPUT_DIR}...")
-    # Use h264 for better compatibility with standard tools
+
+    print(f"Converting dataset to video format at {args.output_dir}...")
     try:
         convert_image_to_video_dataset(
             dataset=dataset,
-            output_dir=OUTPUT_DIR,
-            vcodec="h264", 
+            output_dir=args.output_dir,
+            vcodec="h264",
             repo_id="online_buffer_video",
-            # Force overwrite if needed/possible, though the tool might raise if exists
         )
         print("Conversion complete!")
-        print(f"New dataset is available at: {OUTPUT_DIR}")
-        print("You can now run subtask_annotate.py with --dataset-dir", OUTPUT_DIR)
+        print(f"New dataset is available at: {args.output_dir}")
+        print("You can now run subtask_annotate.py with --data-dir", args.output_dir)
     except Exception as e:
         print(f"Conversion failed: {e}")
         import traceback
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     main()

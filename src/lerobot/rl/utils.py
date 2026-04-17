@@ -176,7 +176,7 @@ def preprocess_batch_for_pi05(
     
     return forward_batch
 
-def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fps=10, subtask_texts=None):
+def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fps=30, subtask_texts=None):
     """
     Generate a side-by-side video of configured camera views with a critic curve overlay.
 

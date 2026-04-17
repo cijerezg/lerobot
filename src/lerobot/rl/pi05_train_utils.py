@@ -559,6 +559,14 @@ def _prepare_actor_batch(
             device=ref_device, dtype=ref_mask_dtype
         )
 
+    # Zero subtask masks for online elements (subtask_index == -1) so they don't contribute
+    # to the CE loss. The tokens are still present for flow conditioning; only the loss
+    # supervision is suppressed. Offline elements (real subtask_index) are unaffected.
+    if subtask_indices is not None and OBS_LANGUAGE_SUBTASK_ATTENTION_MASK in processed_batch:
+        online_mask = (subtask_indices.view(-1) == -1)
+        if online_mask.any():
+            processed_batch[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK][online_mask] = False
+
     return processed_batch, subtask_indices
 
 
@@ -687,9 +695,9 @@ def _update_actor(
                 raw_advantage_flat=raw_advantage_flat,
                 cfg=cfg,
                 dataset=dataset,
-                preprocessor=preprocessor
+                preprocessor=preprocessor,
             )
-            
+
             # --- Step 3: Actor Update (Pass 3) ---
             forward_batch_actor = _construct_actor_forward_batch(
                 processed_batch=processed_batch,

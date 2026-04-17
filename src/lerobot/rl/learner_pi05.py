@@ -641,7 +641,7 @@ def add_actor_information_and_train(
 
         # Save online buffer at specified intervals (based on episode count)
         current_episode = add_actor_information_and_train.episode_counter[0]
-        if current_episode > 0 and current_episode % episode_save_freq == 0 and current_episode != last_save_episode:
+        if current_episode > 0 and current_episode >= last_save_episode + episode_save_freq:
             logging.info(f"[LEARNER] Saving online buffer at episode {current_episode}, step {optimization_step}, buffer size {len(replay_buffer)}")
             online_buffer_dir = os.path.join(cfg.output_dir, "online_buffer")
             
