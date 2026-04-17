@@ -33,6 +33,8 @@ class SharedStateActor:
         self.current_step = 0
         self.cached_subtask_tokens = None  # [max_decoding_steps] long, CPU
         self.cached_subtask_masks = None   # [max_decoding_steps] bool, CPU
+        self.params_loaded_event = threading.Event()
+        self.params_loaded_event.set()  # Initially set so startup doesn't block if no params arrive
 
     def add_env_wait_time(self, wait_time: float):
         with self.lock:
@@ -100,6 +102,7 @@ class SharedStateActor:
     def request_parameter_update(self):
         with self.lock:
             self.update_parameters_requested = True
+        self.params_loaded_event.clear()
 
     def check_and_clear_parameter_update(self) -> bool:
         with self.lock:
@@ -213,6 +216,7 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
             # 1. Update Weights
             if shared_state.check_and_clear_parameter_update():
                 pull_new_policy_weights(policy, parameters_queue, device)
+                shared_state.params_loaded_event.set()
 
             # 2. Halt if episode is not active
             if not shared_state.episode_active:
@@ -409,9 +413,8 @@ def env_interaction_worker_actor(
 
         # Wait for initial episode start
         logger.info("[ACTOR] Waiting for '2' on the teleop device to start episode...")
-        while shared_state.running and not shared_state.episode_active:
+        while shared_state.running:
             if teleop_device.get_teleop_events().get(TeleopEvents.START_EPISODE, False):
-                shared_state.set_episode_active(True)
                 break
             time.sleep(0.1)
 
@@ -419,30 +422,37 @@ def env_interaction_worker_actor(
         obs, info = online_env.reset()
         env_processor.reset()
         action_processor.reset()
-        
+
         transition = create_transition(observation=obs, info=info)
         transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
         transition = env_processor(transition)
-        
+
         policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
         shared_state.update_observation(policy_fmt_obs, False)
         shared_state.request_parameter_update()
+
+        # Wait for params to load before starting the episode
+        logger.info("[ACTOR] Loading new params, please wait before episode starts...")
+        while shared_state.running:
+            if shared_state.params_loaded_event.wait(timeout=0.5):
+                break
+        logger.info("[ACTOR] Params loaded. Starting episode.")
+        shared_state.set_episode_active(True)
 
         while shared_state.running:
             # 1. Episode boundary check
             if not shared_state.episode_active:
                 logger.info("[ACTOR] Episode ended. Press '2' on the keyboard to start the next episode...")
-                while shared_state.running and not shared_state.episode_active:
+                while shared_state.running:
                     if teleop_device.get_teleop_events().get(TeleopEvents.START_EPISODE, False):
-                        shared_state.set_episode_active(True)
                         break
                     time.sleep(0.1)
 
                 if not shared_state.running:
                     break
-                
+
                 logger.info("[ACTOR] Starting next episode.")
-                
+
                 if getattr(cfg, "use_rerun", False):
                     import rerun as rr
                     rr.log("/", rr.Clear(recursive=True))
@@ -450,12 +460,12 @@ def env_interaction_worker_actor(
                 obs, info = online_env.reset()
                 env_processor.reset()
                 action_processor.reset()
-                
+
                 with action_queue.lock:
                     action_queue.queue = None
                     action_queue.original_queue = None
                     action_queue.last_index = 0
-                
+
                 shared_state.request_reset()
                 shared_state.request_parameter_update()
                 was_intervening = False
@@ -463,9 +473,17 @@ def env_interaction_worker_actor(
                 transition = create_transition(observation=obs, info=info)
                 transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
                 transition = env_processor(transition)
-                
+
                 policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
                 shared_state.update_observation(policy_fmt_obs, False)
+
+                # Wait for params to load before starting the episode
+                logger.info("[ACTOR] Loading new params, please wait before episode starts...")
+                while shared_state.running:
+                    if shared_state.params_loaded_event.wait(timeout=0.5):
+                        break
+                logger.info("[ACTOR] Params loaded. Starting episode.")
+                shared_state.set_episode_active(True)
 
             start_time = time.perf_counter()
             
