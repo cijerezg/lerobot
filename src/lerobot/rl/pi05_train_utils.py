@@ -1133,6 +1133,18 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
                 f"'{stats_path}' is invalid or does not exist!"
             )
 
+    # [FIX] Detect missing stats for non-IDENTITY features and supplement from dataset.
+    # Older RL checkpoints saved only `action.*` stats — `observation.state` was lost,
+    # which silently makes Pi05FullPrepareStateTokenizerProcessorStep digitize raw joint
+    # angles against [-1, 1] bins, producing constant garbage state tokens. See
+    # `_apply_transform` early-return on missing key in normalize_processor.py.
+    dataset_stats = _supplement_missing_stats(
+        cfg=cfg,
+        dataset_stats=dataset_stats,
+        dataset=dataset,
+        is_main_process=is_main_process,
+    )
+
     # Create fresh pipeline with PI05FullConfig structure + Extracted Stats
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=cfg.policy,
@@ -1142,3 +1154,93 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
     )
     
     return preprocessor, postprocessor
+
+
+def _supplement_missing_stats(cfg, dataset_stats, dataset, is_main_process):
+    """Ensure every non-IDENTITY normalized feature has stats; auto-load from dataset if needed.
+
+    Returns the (possibly supplemented) dataset_stats dict.
+    Raises ValueError when required stats can't be sourced.
+    """
+    from lerobot.configs.types import FeatureType
+
+    norm_map = cfg.policy.normalization_mapping
+    all_features = {**cfg.policy.input_features, **cfg.policy.output_features}
+
+    if dataset_stats is None:
+        dataset_stats = {}
+
+    # Find features whose normalization mode is not IDENTITY but whose stats are missing.
+    missing: list[tuple[str, str, str]] = []  # (key, feature_type_value, norm_mode)
+    for key, feat in all_features.items():
+        ft_type = feat.type
+        norm_mode = norm_map.get(ft_type.value if hasattr(ft_type, "value") else ft_type, "IDENTITY")
+        if hasattr(norm_mode, "value"):
+            norm_mode = norm_mode.value
+        if norm_mode == "IDENTITY":
+            continue
+        if key in dataset_stats and dataset_stats[key]:
+            continue
+        missing.append((key, ft_type.value if hasattr(ft_type, "value") else str(ft_type), norm_mode))
+
+    if not missing:
+        return dataset_stats
+
+    if is_main_process:
+        logging.warning(
+            "[STATS] Loaded preprocessor stats are missing entries for non-IDENTITY features:"
+        )
+        for key, ftv, nm in missing:
+            logging.warning(f"  - {key} (type={ftv}, norm_mode={nm})")
+        logging.warning(
+            "[STATS] These features would silently bypass normalization (see "
+            "normalize_processor.py _apply_transform early return). Attempting to "
+            "supplement from dataset stats."
+        )
+
+    # Resolve a stats dict from the dataset (if not provided, try to load from cfg).
+    supplement_source: dict | None = None
+    if dataset is not None and hasattr(dataset, "meta") and getattr(dataset.meta, "stats", None):
+        supplement_source = dataset.meta.stats
+    else:
+        try:
+            from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+            ds_cfg = getattr(cfg, "dataset", None)
+            if ds_cfg is not None:
+                repo_id = getattr(ds_cfg, "repo_id", None)
+                root = getattr(ds_cfg, "root", None)
+                if repo_id is not None or root is not None:
+                    if is_main_process:
+                        logging.warning(
+                            f"[STATS] Auto-loading dataset metadata to recover stats "
+                            f"(repo_id={repo_id}, root={root})"
+                        )
+                    meta = LeRobotDatasetMetadata(repo_id=repo_id, root=root)
+                    supplement_source = meta.stats
+        except Exception as e:
+            if is_main_process:
+                logging.error(f"[STATS] Failed to auto-load dataset metadata: {e}")
+
+    if supplement_source is None:
+        raise ValueError(
+            f"[STATS] Cannot supplement missing normalization stats for {[k for k,_,_ in missing]}. "
+            "Provide a dataset (set cfg.dataset.repo_id/root) or set "
+            "normalization_mapping[STATE]='IDENTITY' if you really want unnormalized state."
+        )
+
+    still_missing = []
+    for key, ftv, nm in missing:
+        if key in supplement_source and supplement_source[key]:
+            dataset_stats[key] = supplement_source[key]
+            if is_main_process:
+                logging.warning(f"[STATS] Supplemented '{key}' from dataset stats.")
+        else:
+            still_missing.append((key, ftv, nm))
+
+    if still_missing:
+        raise ValueError(
+            f"[STATS] Dataset has no stats for required keys: {[k for k,_,_ in still_missing]}. "
+            "Recompute dataset stats or change normalization_mapping for these feature types."
+        )
+
+    return dataset_stats

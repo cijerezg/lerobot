@@ -111,6 +111,9 @@ def terminal_input_worker(
 # Inference worker with subtask injection
 # ---------------------------------------------------------------------------
 
+_HARDCODED_SUBTASK: str | None = "Subtask: reach and grasp cube;"
+
+
 def get_actions_worker_interactive(
     policy,
     shared_state: SharedStateInteractive,
@@ -138,6 +141,26 @@ def get_actions_worker_interactive(
 
         # Derive device from policy weights — no device arg in the original worker signature
         device = next(policy.parameters()).device
+
+        hardcoded_tokens: torch.Tensor | None = None
+        hardcoded_masks: torch.Tensor | None = None
+        if _HARDCODED_SUBTASK is not None:
+            tokenizer = policy.model._paligemma_tokenizer
+            max_len = cfg.policy.tokenizer_max_length
+            enc = tokenizer(
+                _HARDCODED_SUBTASK,
+                max_length=max_len,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt",
+            )
+            hardcoded_tokens = enc["input_ids"].to(device)        # [1, max_len]
+            hardcoded_masks = enc["attention_mask"].bool().to(device)
+            logger.warning(
+                f"[INTERACTIVE] HARDCODED SUBTASK ENABLED: '{_HARDCODED_SUBTASK}' "
+                "— will be re-injected before every chunk, overriding typed input and "
+                "the model's auto-generation. Set _HARDCODED_SUBTASK = None to disable."
+            )
 
         while shared_state.running:
             # 1. Reset check
@@ -234,6 +257,13 @@ def get_actions_worker_interactive(
                     policy._last_subtask_time = time.time()
                     logger.info(f"[INTERACTIVE] Injecting subtask override: '{text}'")
                 # ----------------------------------
+
+                # --- Hardcoded subtask injection (always wins, every cycle) ---
+                if hardcoded_tokens is not None:
+                    policy._cached_subtask_tokens = hardcoded_tokens
+                    policy._cached_subtask_masks = hardcoded_masks
+                    policy._last_subtask_time = time.time() + 1e9  # never expire
+                # --------------------------------------------------------------
 
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 

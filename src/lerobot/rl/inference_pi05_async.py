@@ -32,10 +32,12 @@ Usage:
 """
 
 import logging
+import os
 import time
 import sys
 import traceback
 import signal
+from pathlib import Path
 from threading import Thread
 
 import torch
@@ -56,12 +58,93 @@ from lerobot.rl.inference_utils import SharedState, get_actions_worker, env_inte
 from lerobot.rl.buffer import ReplayBuffer
 
 
+def _verify_loaded_weights(policy, cfg, logger):
+    """Verify that trained weights were actually loaded, not a random init."""
+    checkpoint_path = getattr(cfg.policy, "pi05_checkpoint", "") or getattr(cfg.policy, "pretrained_path", "")
+
+    with torch.no_grad():
+        probe_keys = ["lm_head", "action_out_proj", "gemma_expert"]
+        logger.info("[WEIGHT CHECK] Parameter norms for key layers:")
+        for name, param in policy.named_parameters():
+            if any(k in name for k in probe_keys) and "weight" in name:
+                logger.info(f"  {name}: norm={param.norm().item():.4f}  mean={param.mean().item():.8f}")
+                break
+
+    if not checkpoint_path:
+        logger.error(
+            "[WEIGHT CHECK] FAILED: No checkpoint was specified. "
+            "Model is running with RANDOM weights!"
+        )
+        return
+
+    model_file = None
+    cp = Path(checkpoint_path)
+    if cp.is_dir():
+        for candidate in ["model.safetensors", "pytorch_model.bin"]:
+            if (cp / candidate).exists():
+                model_file = cp / candidate
+                break
+    elif cp.is_file():
+        model_file = cp
+
+    if model_file is None:
+        logger.warning(f"[WEIGHT CHECK] Could not locate weight file at {checkpoint_path} for verification")
+        return
+
+    try:
+        if str(model_file).endswith(".safetensors"):
+            from safetensors.torch import load_file
+            saved = load_file(str(model_file))
+        else:
+            saved = torch.load(str(model_file), map_location="cpu")
+
+        mismatches = []
+        checked = 0
+        for name, param in policy.named_parameters():
+            saved_key = name
+            if saved_key not in saved:
+                alt_key = name.replace("model.", "actor.", 1) if name.startswith("model.") else None
+                if alt_key and alt_key in saved:
+                    saved_key = alt_key
+                else:
+                    continue
+
+            saved_norm = saved[saved_key].float().norm().item()
+            loaded_norm = param.float().norm().item()
+            if abs(saved_norm - loaded_norm) > 1e-2:
+                mismatches.append((name, saved_norm, loaded_norm))
+            checked += 1
+            if checked >= 5:
+                break
+
+        if mismatches:
+            logger.error("[WEIGHT CHECK] FAILED: Loaded weights do NOT match checkpoint!")
+            for name, s, l in mismatches:
+                logger.error(f"  {name}: checkpoint_norm={s:.4f}  loaded_norm={l:.4f}")
+        else:
+            logger.info(f"[WEIGHT CHECK] PASSED: {checked} parameters verified against {model_file.name}")
+    except Exception as e:
+        logger.warning(f"[WEIGHT CHECK] Could not verify weights: {e}")
+
+
 @parser.wrap()
 def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     cfg.validate()
 
     init_logging(display_pid=False)
     logger = logging.getLogger(__name__)
+
+    pretrained_path = getattr(cfg.policy, "pretrained_path", None)
+    pi05_checkpoint = getattr(cfg.policy, "pi05_checkpoint", None)
+    logger.info(f"[CHECKPOINT CHECK] pretrained_path = {pretrained_path}")
+    logger.info(f"[CHECKPOINT CHECK] pi05_checkpoint = {pi05_checkpoint}")
+    if not pretrained_path and not pi05_checkpoint:
+        logger.warning(
+            "[CHECKPOINT CHECK] No checkpoint specified! "
+            "The model will be randomly initialized. "
+            "Pass --policy.pi05_checkpoint <path> to load trained weights."
+        )
+
     interactive = getattr(cfg, "interactive", False)
     mode_label = "Interactive " if interactive else ""
     logger.info(f"Initializing {mode_label}Standalone Asynchronous Pi05 Inference")
@@ -100,6 +183,8 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
+
+    _verify_loaded_weights(policy, cfg, logger)
 
     logger.info("Instantiating pi05 full processors + un-normalization upgrade hooks")
     preprocessor, postprocessor = make_pi05_full_processors_with_upgrade(

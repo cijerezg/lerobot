@@ -151,6 +151,9 @@ def convert_env_obs_to_policy_format(env_obs: dict) -> dict:
     return policy_obs
 
 
+_HARDCODED_SUBTASK: str | None = "Subtask: reach and grasp cube;"
+
+
 def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
     """
     Background inference thread wrapper.
@@ -169,6 +172,27 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
         # Used for complementary data injections
         task_str = cfg.policy.task
         advantage_val = torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
+
+        device = next(policy.parameters()).device
+        hardcoded_subtask_tokens: torch.Tensor | None = None
+        hardcoded_subtask_masks: torch.Tensor | None = None
+        if _HARDCODED_SUBTASK is not None:
+            tokenizer = policy.model._paligemma_tokenizer
+            max_len = cfg.policy.tokenizer_max_length
+            enc = tokenizer(
+                _HARDCODED_SUBTASK,
+                max_length=max_len,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt",
+            )
+            hardcoded_subtask_tokens = enc["input_ids"].to(device)        # [1, max_len]
+            hardcoded_subtask_masks = enc["attention_mask"].bool().to(device)
+            logger.warning(
+                f"[INFERENCE] HARDCODED SUBTASK ENABLED: '{_HARDCODED_SUBTASK}' "
+                "— will be re-injected before every chunk, overriding the model's "
+                "auto-generation. Set _HARDCODED_SUBTASK = None in inference_utils.py to disable."
+            )
 
         while shared_state.running:
             # 1. Reset check
@@ -256,6 +280,11 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 # Using p95 instead of max: avoids a single latency spike biasing the model
                 # to predict too far ahead. See actor_pi05_async_utils.py for full rationale.
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
+
+                if hardcoded_subtask_tokens is not None:
+                    policy._cached_subtask_tokens = hardcoded_subtask_tokens
+                    policy._cached_subtask_masks = hardcoded_subtask_masks
+                    policy._last_subtask_time = time.time() + 1e9  # never expire
 
                 actions_chunk = policy.predict_action_chunk(
                     processed_batch,

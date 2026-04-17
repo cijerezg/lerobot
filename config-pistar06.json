@@ -1,28 +1,28 @@
 {
-    "output_dir": "outputs/recap_online_v14",
-    "interactive": true,
+    "output_dir": "outputs/pistar06_inference",
+    "interactive": false,
     "use_rerun": false,
-    "job_name": "recap_pickplace_offline",
+    "job_name": "pistar06_pickplace_inference",
     "resume": false,
     "seed": 42,
     "num_workers": 4,
     "batch_size": 2,
     "log_freq": 20,
-    "save_checkpoint": true,
+    "save_checkpoint": false,
     "save_freq": 400,
-    "offline_output_dir": "outputs/recap_online_v14",
+    "offline_output_dir": "outputs/pistar06_inference",
     "offline_save_freq": 500,
     "buffer_cache_dir": "outputs/buffer_cache",
-    "episode_logging_freq": 99999,
-    "episode_save_freq": 9999,
+    "episode_logging_freq": 1,
+    "episode_save_freq": 10,
     "video_logging_cameras": [
         "top",
         "side"
     ],
     "wandb": {
         "enable": false,
-        "project": "recap_pickplace",
-        "offline_project": "recap_pickplace_offline_v11",
+        "project": "pistar06_pickplace",
+        "offline_project": "pistar06_pickplace_offline",
         "disable_artifact": true
     },
     "dataset": {
@@ -33,23 +33,12 @@
         "video_backend": "pyav"
     },
     "policy": {
-        "type": "pi05_rl",
-        "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "outputs/recap_online_v11/checkpoints/last/pretrained_model",
+        "type": "pistar06",
+        "pretrained_path": "models/recap_baseline_120_v2",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
-        "use_separate_critic": true,
-        "knowledge_insulation": false,
-        "loss_weight_flow": 1.0,
-        "loss_weight_action_ce": 0.5,
-        "loss_weight_subtask_ce": 0.5,
-        "inference_advantage": 1.0,
-        "subtask_regeneration_interval": 1.5,
-        "advantage_scaling": 0.20,
         "n_obs_steps": 1,
-        "reward_normalization_constant": 5.0,
-        "terminal_failure_reward": -16.0,
         "rtc_config": {
             "enabled": true,
             "execution_horizon": 10,
@@ -64,8 +53,6 @@
             "ENV": "MIN_MAX",
             "ACTION": "QUANTILES"
         },
-        "action_encoding": "anchor",
-        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_so101_pickplace_success_120_v2_w_subtasks.pt",
         "input_features": {
             "observation.images.top": {
                 "type": "VISUAL",
@@ -87,49 +74,12 @@
             }
         },
         "device": "cuda",
-        "actor_device": "cuda:0",
-        "learner_device": "cuda:0",
         "use_amp": false,
-        "dataset_stats": null,
-        "storage_device": "cpu",
         "dtype": "bfloat16",
-        "gradient_checkpointing": true,
-        "online_steps": 20000,
-        "online_buffer_capacity": 1000,
-        "offline_buffer_capacity": 85000,
-        "online_step_before_learning": 10,
-        "policy_update_freq": 1,
-        "discount": 0.97,
-        "async_prefetch": false,
-        "num_critics": 1,
-        "critic_lr": 0.00005,
-        "actor_lr": 0.00005,
-        "critic_target_update_weight": 0.005,
-        "utd_ratio": 1,
-        "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 6,
-        "offline_steps": 10000,
-        "trainable_params": {
-            "vision_encoder_from_layer": {
-                "vision_tower": null,
-                "multi_modal_projector": false
-            },
-            "language_from_layer": 15,
-            "critic_language_from_layer": 5
-        },
-        "critic_network_kwargs": {
-            "hidden_dims": [256, 256],
-            "activate_final": true
-        },
-        "actor_learner_config": {
-            "learner_host": "localhost",
-            "learner_port": 50051,
-            "policy_parameters_push_frequency": 120
-        },
-        "concurrency": {
-            "actor": "threads",
-            "learner": "threads"
-        },
+        "gradient_checkpointing": false,
+        "enable_advantage_conditioning": true,
+        "advantage_threshold": 0.0,
+        "cfg_beta": 1.0,
         "repo_id": "jackvial/so101_pickplace_success_120_v2_w_subtasks_v2"
     },
     "env": {
