@@ -685,24 +685,29 @@ def env_interaction_worker(
 
                 shared_state.episode_counter += 1
 
-                episode_save_freq = getattr(cfg, "episode_save_freq", 10)
-                if shared_state.episode_counter % episode_save_freq == 0:
-                    logger.info(
-                        f"[ENV] Saving inference dataset at episode {shared_state.episode_counter}..."
-                    )
-                    dataset_root = os.path.join(cfg.output_dir, "inference_dataset")
-                    import shutil
-                    if os.path.exists(dataset_root):
-                        shutil.rmtree(dataset_root)
-                    try:
-                        shared_state.replay_buffer.to_lerobot_dataset(
-                            repo_id="inference_recorded",
-                            fps=cfg.env.fps,
-                            root=dataset_root,
-                            task_name=cfg.env.task,
+                # Periodic dataset flush is only meaningful when a replay
+                # buffer is attached. The pistar06 inference flow records
+                # rollouts as per-episode PNGs/MP4s (see _save_episode_video)
+                # rather than streaming through a ReplayBuffer.
+                if shared_state.replay_buffer is not None:
+                    episode_save_freq = getattr(cfg, "episode_save_freq", 10)
+                    if shared_state.episode_counter % episode_save_freq == 0:
+                        logger.info(
+                            f"[ENV] Saving inference dataset at episode {shared_state.episode_counter}..."
                         )
-                    except Exception as e:
-                        logger.error(f"[ENV] Failed to save lerobot dataset: {e}")
+                        dataset_root = os.path.join(cfg.output_dir, "inference_dataset")
+                        import shutil
+                        if os.path.exists(dataset_root):
+                            shutil.rmtree(dataset_root)
+                        try:
+                            shared_state.replay_buffer.to_lerobot_dataset(
+                                repo_id="inference_recorded",
+                                fps=cfg.env.fps,
+                                root=dataset_root,
+                                task_name=cfg.env.task,
+                            )
+                        except Exception as e:
+                            logger.error(f"[ENV] Failed to save lerobot dataset: {e}")
 
                 episode_logging_freq = getattr(cfg, "episode_logging_freq", 4)
                 shared_state.is_logging_episode = (

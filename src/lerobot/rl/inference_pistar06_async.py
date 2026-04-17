@@ -94,7 +94,6 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.rtc.action_queue import ActionQueue
-from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.gym_manipulator import make_processors, make_robot_env
 from lerobot.rl.inference_pistar06_utils import (
     SharedState,
@@ -359,15 +358,13 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
         shared_state.episode_counter % cfg.episode_logging_freq == 0
     )
 
-    logger.info("Initializing ReplayBuffer for recording")
-    state_keys = list(cfg.policy.input_features.keys())
-    replay_buffer = ReplayBuffer(
-        capacity=getattr(cfg.policy, "online_buffer_capacity", 200_000),
-        device=device.type,
-        state_keys=state_keys,
-        storage_device="cpu",
-    )
-    shared_state.replay_buffer = replay_buffer
+    # Rollouts are recorded to disk as per-episode PNGs + MP4s by
+    # `_save_episode_video` (see inference_pistar06_utils.env_interaction_worker).
+    # The in-memory ReplayBuffer is *not* used for inference: it would
+    # eagerly pre-allocate `capacity * frame_size` and quickly OOM the host
+    # (200k * 2 cams * 224x224 bf16 ~= 60 GB), and we don't need to feed
+    # rollouts back into a learner on this branch.
+    shared_state.replay_buffer = None
 
     action_queue = ActionQueue(policy.config.rtc_config)
 

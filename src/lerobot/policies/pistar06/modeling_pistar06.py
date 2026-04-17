@@ -53,8 +53,23 @@ from lerobot.utils.import_utils import _transformers_available
 if TYPE_CHECKING or _transformers_available:
     from transformers import AutoModel
     from transformers.cache_utils import DynamicCache
-    from transformers.masking_utils import create_causal_mask
+    from transformers.masking_utils import create_causal_mask as _hf_create_causal_mask
     from transformers.modeling_layers import GradientCheckpointingLayer
+
+    # transformers v5 renamed the embeddings kwarg from `input_embeds` (singular)
+    # to `inputs_embeds` (plural). Detect once at import time and wrap so this
+    # module works on both API versions.
+    import inspect as _inspect
+
+    _CCM_PARAMS = set(_inspect.signature(_hf_create_causal_mask).parameters)
+    if "inputs_embeds" in _CCM_PARAMS:
+        create_causal_mask = _hf_create_causal_mask
+    else:
+        def create_causal_mask(*args, inputs_embeds=None, **kwargs):  # noqa: D401
+            """Compatibility shim: forward `inputs_embeds` as `input_embeds`."""
+            if inputs_embeds is not None:
+                kwargs["input_embeds"] = inputs_embeds
+            return _hf_create_causal_mask(*args, **kwargs)
     from transformers.modeling_outputs import BaseModelOutputWithPast
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
