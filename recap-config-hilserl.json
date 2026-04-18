@@ -9,7 +9,7 @@
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/pi05_full_offline_recap_20260418_1",
+    "offline_output_dir": "outputs/pi05_full_offline_recap_20260418_3",
     "offline_save_freq": 1000,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
