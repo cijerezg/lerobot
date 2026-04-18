@@ -38,6 +38,8 @@ from accelerate.utils import DistributedDataParallelKwargs
 from termcolor import colored
 from torch import nn
 
+import lerobot.rl.rl_pi05  # noqa: F401  # register PI05RLConfig (pi05_rl policy type)
+
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
