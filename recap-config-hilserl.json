@@ -5,11 +5,11 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 16,
+    "batch_size": 12,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/pi05_full_offline_recap_20260418_1",
+    "offline_output_dir": "outputs/pi05_full_offline_recap_20260418_2",
     "offline_save_freq": 1000,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
@@ -119,7 +119,7 @@
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 8,
+        "gradient_accumulation_steps": 10,
         "offline_steps": 5000,
         "trainable_params": {
             "vision_encoder_from_layer": {
