@@ -1,0 +1,255 @@
+{
+    "output_dir": null,
+    "use_rerun": true,
+    "job_name": "default",
+    "resume": false,
+    "seed": 42,
+    "num_workers": 4,
+    "batch_size": 16,
+    "log_freq": 20,
+    "save_checkpoint": true,
+    "save_freq": 400,
+    "offline_output_dir": "outputs/pi05_full_offline_recap_20260418_0",
+    "offline_save_freq": 800,
+    "episode_logging_freq": 4,
+    "episode_save_freq": 6,
+    "video_logging_cameras": [
+        "top",
+        "wrist"
+    ],
+    "wandb": {
+        "enable": true,
+        "project": "so101_real-v1",
+        "offline_project": "so101_real_offline-v1",
+        "disable_artifact": true
+    },
+    "buffer_cache_dir": "outputs/buffer_cache",
+    "dataset": {
+        "root": "outputs/so101_pickplace_success_120_v2_w_subtasks_v2",
+        "repo_id": "jackvial/so101_pickplace_success_120_v2_w_subtasks_v2",
+        "use_imagenet_stats": false,
+        "max_episodes": null,
+        "additional_offline_dataset_paths": [
+        ]
+    },
+    "policy": {
+        "type": "pi05_rl",
+        "task": "Pick up the orange cube and place it on the black X marker",
+        "pi05_checkpoint": "",
+        "tokenizer_max_length": 64,
+        "max_state_dim": 6,
+        "num_inference_steps": 5,
+        "use_separate_critic": true,
+        "knowledge_insulation": true,
+        "loss_weight_flow": 1.0,
+        "loss_weight_action_ce": 1.0,
+        "loss_weight_subtask_ce": 1.0,
+        "inference_advantage": 1.0,
+        "subtask_regeneration_interval": 1.5,
+        "advantage_scaling": 0.20,
+        "n_obs_steps": 1,
+        "reward_normalization_constant": 5.0,
+        "terminal_failure_reward": -16.0,
+        "rtc_config": {
+            "enabled": true,
+            "execution_horizon": 10,
+            "prefix_attention_schedule": "LINEAR",
+            "max_guidance_weight": 10.0,
+            "debug": false,
+            "debug_maxlen": 100
+        },
+        "normalization_mapping": {
+            "VISUAL": "IDENTITY",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "QUANTILES"
+        },
+        "action_encoding": "anchor",
+        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_so101_pickplace_success_120_v2_w_subtasks.pt",
+        "input_features": {
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            },
+            "observation.images.top": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "device": "cuda",
+        "actor_device": "cuda:0",
+        "learner_device": "cuda:0",
+        "use_amp": false,
+        "dataset_stats": null,
+        "storage_device": "cpu",
+        "dtype": "bfloat16",
+        "gradient_checkpointing": true,
+        "online_steps": 20000,
+        "online_buffer_capacity": 20000,
+        "offline_buffer_capacity": 60000,
+        "online_step_before_learning": 10,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "async_prefetch": false,
+        "num_critics": 1,
+        "critic_lr": 0.0001,
+        "actor_lr": 0.0001,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "grad_clip_norm": 2.0,
+        "gradient_accumulation_steps": 8,
+        "offline_steps": 3200,
+        "trainable_params": {
+            "vision_encoder_from_layer": {
+                "vision_tower": null,
+                "multi_modal_projector": false
+            },
+            "language_from_layer": 12,
+            "critic_language_from_layer": 4
+        },
+        "critic_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true
+        },
+        "actor_learner_config": {
+            "learner_host": "192.168.50.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 120
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        },
+        "repo_id": "jackvial/so101_pickplace_success_120_v2_w_subtasks_v2"
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "robot": {
+            "type": "so101_follower",
+            "port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00",
+            "id": "so101_follower_2026_04_16_v2",
+            "cameras": {
+                "wrist": {
+                    "type": "opencv",
+                    "index_or_path": 0,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                },
+                "top": {
+                    "type": "opencv",
+                    "index_or_path": 2,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                }
+            }
+        },
+        "teleop": {
+            "type": "so101_leader",
+            "port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00",
+            "id": "so101_leader_2026_04_16_v2"
+        },
+        "processor": {
+            "control_mode": "leader",
+            "observation": {
+                "display_cameras": false,
+                "add_joint_velocity_to_observation": false,
+                "add_current_to_observation": false
+            },
+            "image_preprocessing": {
+                "resize_size": [
+                    224,
+                    224
+                ]
+            },
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0.00
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [
+                    0.54,
+                    -90.69,
+                    99.55,
+                    73.70,
+                    -50.23,
+                    42.71
+                ],
+                "reset_time_s": 10,
+                "control_time_s": 200.0,
+                "terminate_on_success": true
+            },
+            "reward_classifier": {
+                "pretrained_path": null,
+                "success_threshold": 0.5,
+                "success_reward": 1.0
+            },
+            "max_gripper_pos": 30
+        },
+        "name": "real_robot",
+        "fps": 30,
+        "task": "Pick up the orange cube and place it on the black X marker",
+        "features": {
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.top": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    6
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "features_map": {
+            "observation.images.wrist": "observation.images.wrist",
+            "observation.images.top": "observation.images.top",
+            "observation.state": "observation.state",
+            "action": "action"
+        }
+    }
+}
