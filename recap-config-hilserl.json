@@ -10,7 +10,7 @@
     "save_checkpoint": true,
     "save_freq": 400,
     "offline_output_dir": "outputs/pi05_full_offline_recap_20260418_0",
-    "offline_save_freq": 800,
+    "offline_save_freq": 1000,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
     "video_logging_cameras": [
@@ -35,7 +35,7 @@
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "",
+        "pi05_checkpoint": "models/pi05_base",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
@@ -120,7 +120,7 @@
         "utd_ratio": 2,
         "grad_clip_norm": 2.0,
         "gradient_accumulation_steps": 8,
-        "offline_steps": 3200,
+        "offline_steps": 5000,
         "trainable_params": {
             "vision_encoder_from_layer": {
                 "vision_tower": null,
