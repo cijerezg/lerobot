@@ -35,7 +35,7 @@
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "outputs/recap_online_v11/checkpoints/001000/pretrained_model",
+        "pi05_checkpoint": "",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
