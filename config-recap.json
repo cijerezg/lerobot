@@ -1,20 +1,20 @@
 {
-    "output_dir": "outputs/recap_online_v14",
+    "output_dir": "outputs/recap_offline_v15",
     "interactive": true,
     "use_rerun": false,
     "job_name": "recap_pickplace_offline",
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 2,
+    "batch_size": 16,
     "log_freq": 20,
     "save_checkpoint": true,
-    "save_freq": 400,
-    "offline_output_dir": "outputs/recap_online_v14",
-    "offline_save_freq": 500,
+    "save_freq": 1000,
+    "offline_output_dir": "outputs/recap_offline_v15",
+    "offline_save_freq": 1000,
     "buffer_cache_dir": "outputs/buffer_cache",
-    "episode_logging_freq": 99999,
-    "episode_save_freq": 9999,
+    "episode_logging_freq": 1000,
+    "episode_save_freq": 1000,
     "video_logging_cameras": [
         "top",
         "side"
@@ -22,7 +22,7 @@
     "wandb": {
         "enable": false,
         "project": "recap_pickplace",
-        "offline_project": "recap_pickplace_offline_v11",
+        "offline_project": "recap_pickplace_offline_v15",
         "disable_artifact": true
     },
     "dataset": {
@@ -35,7 +35,7 @@
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "outputs/recap_online_v11/checkpoints/last/pretrained_model",
+        "pi05_checkpoint": "outputs/recap_online_v11/checkpoints/001000/pretrained_model",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
