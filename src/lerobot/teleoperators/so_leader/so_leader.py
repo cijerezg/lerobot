@@ -21,7 +21,6 @@ from threading import Lock
 from typing import TypeAlias
 
 import numpy as np
-from pynput import keyboard
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -92,7 +91,9 @@ class SOLeader(Teleoperator):
 
             self.configure()
 
-        # Start keyboard listener
+        # Start keyboard listener (lazy import to avoid pynput crash on headless machines)
+        from pynput import keyboard
+
         self.listener = keyboard.Listener(on_press=self._on_press)
         self.listener.start()
 
