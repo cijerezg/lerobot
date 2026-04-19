@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-UMAP probe for PI05 model representations.
+Probe PI05 model representations via PCA + UMAP visualisation.
 
 Collects prefix_out and suffix_out activations from dataset frames, reduces with
 PCA → UMAP, and saves diagnostic plots to explore:
@@ -13,9 +13,9 @@ Probe-specific parameters are constants at the top of this file.
 Pass the training config JSON as the first argument; all other flags have defaults.
 
 Usage:
-    python probe_umap_pi05.py config-hiserl.json
-    python probe_umap_pi05.py config-hiserl.json --probe_output_dir outputs/my_probe
-    python probe_umap_pi05.py config-hiserl.json --probe_mode plot --probe_cache outputs/probe_umap/activations_cache.pt
+    python probe_representations_pi05.py config-hiserl.json
+    python probe_representations_pi05.py config-hiserl.json --probe_output_dir outputs/my_probe
+    python probe_representations_pi05.py config-hiserl.json --probe_mode plot --probe_cache outputs/probe_representations/activations_cache.pt
 """
 
 import logging
@@ -29,7 +29,6 @@ from typing import Optional
 
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -66,12 +65,12 @@ from lerobot.scripts.eval_offline_pi05 import (
 # Probe parameters — edit these or override via the config dataclass below
 # ──────────────────────────────────────────────────────────────────────────────
 
-N_FRAMES_PER_EPISODE = 50          # evenly spaced frames sampled per episode
-MAX_EPISODES = None                 # None = all episodes in dataset
+N_FRAMES_PER_EPISODE = 128          # evenly spaced frames sampled per episode
+MAX_EPISODES = 5                    # set to None to use all episodes in dataset
 RANDOM_SEED = 42
 
 PROBE_SITES = "prefix,suffix"      # "prefix", "suffix", or "prefix,suffix"
-DENOISING_TIMESTEPS = "1.0,0.5,0.25"  # t values for suffix probing (comma-separated)
+DENOISING_TIMESTEPS = "1.0,0.25"  # t values for suffix probing (comma-separated)
 
 PCA_DIMS = 100                     # pre-UMAP reduction dimension
 UMAP_N_NEIGHBORS = 15
@@ -89,10 +88,10 @@ DO_SUBTASK_INJECTION = True        # run gen vs GT subtask injection analysis
 # ──────────────────────────────────────────────────────────────────────────────
 
 @dataclass
-class ProbeUmapConfig(TrainRLServerPipelineConfig):
-    """Extends the base training config with UMAP probe parameters."""
+class ProbeRepresentationsConfig(TrainRLServerPipelineConfig):
+    """Extends the base training config with representation probe parameters."""
 
-    probe_output_dir: str = "outputs/probe_umap"
+    probe_output_dir: str = "outputs/probe_representations"
     # "collect" → only collect activations and save cache
     # "plot"    → load existing cache and generate all plots
     # "all"     → collect then plot
@@ -157,24 +156,32 @@ def _load_policy_and_processors(cfg, device, dataset=None):
 @contextmanager
 def _capture_hook(module):
     """
-    Registers a forward hook on module and yields a shared dict.
-    After each forward call through module, the dict contains:
-      "prefix_out": (B, prefix_len, hidden_dim)  — raw, on-device
-      "suffix_out": (B, full_seq_len, hidden_dim) — raw, on-device
-    The hook captures the return value of PaliGemmaWithExpertModel.forward(),
-    which is a list [prefix_out, suffix_out].
+    Monkey-patches module.forward to capture its outputs and yields a shared dict.
+    After each call, the dict contains:
+      "prefix_out": (B, prefix_len, hidden_dim)  — float32, on CPU
+      "suffix_out": (B, full_seq_len, hidden_dim) — float32, on CPU
+
+    NOTE: register_forward_hook is NOT used because the call chain calls .forward()
+    directly (not via __call__), which bypasses PyTorch hooks entirely.
     """
     captured = {}
+    original_forward = module.forward
 
-    def _hook(_mod, _inp, output):
-        captured["prefix_out"] = output[0].detach().float()
-        captured["suffix_out"] = output[1].detach().float()
+    def patched_forward(*args, **kwargs):
+        # PaliGemmaWithExpertModel.forward() returns ([prefix_out, suffix_out], past_key_values)
+        # Either output may be None (e.g. prefix-only call from generate_subtask_tokens)
+        result = original_forward(*args, **kwargs)
+        if result[0][0] is not None:
+            captured["prefix_out"] = result[0][0].detach().float()
+        if result[0][1] is not None:
+            captured["suffix_out"] = result[0][1].detach().float()
+        return result
 
-    handle = module.register_forward_hook(_hook)
+    module.forward = patched_forward
     try:
         yield captured
     finally:
-        handle.remove()
+        module.forward = original_forward
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -190,11 +197,12 @@ def _forward_at_t(policy, images, img_masks, task_tokens, task_masks,
     time_tensor = torch.full(
         (actions_padded.shape[0],), t_val, device=device, dtype=actions_padded.dtype
     )
+    # FAST action tokens are training-only; pass None to match inference behaviour
     policy.model.forward(
         images, img_masks,
         task_tokens, task_masks,
         subtask_tokens, subtask_masks,
-        action_tokens, action_masks,
+        None, None,
         actions_padded,
         noise=noise,
         time=time_tensor,
@@ -272,10 +280,11 @@ def collect_activations(policy, preprocessor, dataset, samples, device, cfg):
     metadata   = []
 
     # Hook on PaliGemmaWithExpertModel (policy.model is PI05Pytorch,
-    # policy.model.model is PaliGemmaWithExpertModel)
-    with _capture_hook(policy.model.model) as captured:
+    # policy.model.paligemma_with_expert is PaliGemmaWithExpertModel)
+    with _capture_hook(policy.model.paligemma_with_expert) as captured:
         for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
-            logging.info(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
+            if i % 100 == 0:
+                logging.info(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
 
             obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
                 dataset, global_idx, chunk_size
@@ -351,9 +360,10 @@ def collect_subtask_injection(policy, preprocessor, dataset, samples, device, cf
     suffix_gen = {t: [] for t in t_values}
     gen_subtask_texts = []
 
-    with _capture_hook(policy.model.model) as captured:
+    with _capture_hook(policy.model.paligemma_with_expert) as captured:
         for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
-            logging.info(f"  [injection {i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
+            if i % 100 == 0:
+                logging.info(f"  [injection {i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
 
             obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
                 dataset, global_idx, chunk_size
@@ -481,6 +491,7 @@ def run_pca(X, n_components, label, pca_dir):
 
 def run_umap(X_pca, n_components, n_neighbors, min_dist, seed):
     """Fit UMAP and return embedding array (N, n_components)."""
+    import warnings
     import umap as umap_lib
     reducer = umap_lib.UMAP(
         n_components=n_components,
@@ -488,7 +499,10 @@ def run_umap(X_pca, n_components, n_neighbors, min_dist, seed):
         min_dist=min_dist,
         random_state=seed,
     )
-    return reducer.fit_transform(X_pca.numpy())
+    # n_jobs is silently forced to 1 when random_state is set — suppress the noise
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="n_jobs value.*overridden", category=UserWarning)
+        return reducer.fit_transform(X_pca.numpy())
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -496,7 +510,8 @@ def run_umap(X_pca, n_components, n_neighbors, min_dist, seed):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _ax_style(ax, title):
-    ax.set_title(title, fontsize=9)
+    import textwrap
+    ax.set_title(textwrap.fill(title, width=55), fontsize=9)
     ax.set_xlabel("UMAP-1", fontsize=8)
     ax.set_ylabel("UMAP-2", fontsize=8)
     ax.tick_params(labelsize=7)
@@ -504,31 +519,46 @@ def _ax_style(ax, title):
 
 
 def plot_2d_by_episode(emb, metadata, output_path):
+    from matplotlib.patches import Patch
+
     ep_ids     = np.array([m["episode_idx"] for m in metadata])
+    frame_ids  = np.array([m["frame_idx"]   for m in metadata])
     unique_eps = np.unique(ep_ids)
-    cmap       = cm.get_cmap("tab20", len(unique_eps))
-    ep_to_c    = {ep: i for i, ep in enumerate(unique_eps)}
+
+    # One sequential colormap per episode: dark = early frame, light = late frame
+    seq_cmaps = ["Blues", "Reds", "Greens", "Oranges", "Purples",
+                 "YlOrBr", "PuRd", "BuGn", "GnBu", "OrRd"]
 
     fig, ax = plt.subplots(figsize=(7, 6))
-    for ep in unique_eps:
-        mask = ep_ids == ep
-        ax.scatter(emb[mask, 0], emb[mask, 1], s=8, alpha=0.75, linewidths=0,
-                   color=cmap(ep_to_c[ep]),
-                   label=f"ep {ep}" if len(unique_eps) <= 20 else None)
+    legend_handles = []
+    for i, ep in enumerate(unique_eps):
+        mask      = ep_ids == ep
+        ep_frames = frame_ids[mask]
+        fmin, fmax = ep_frames.min(), ep_frames.max()
+        # Normalise to [0.9, 0.3]: early frames → 0.9 (dark end), late → 0.3 (pale end)
+        # Sequential colormaps go light→dark as value increases, so we invert
+        norm     = 0.9 - (ep_frames - fmin) / max(fmax - fmin, 1) * 0.6
+        cmap_ep  = matplotlib.colormaps.get_cmap(seq_cmaps[i % len(seq_cmaps)])
+        colors   = cmap_ep(norm)
+        ax.scatter(emb[mask, 0], emb[mask, 1], c=colors, s=22, alpha=0.85, linewidths=0)
+        legend_handles.append(Patch(facecolor=cmap_ep(0.6), label=f"ep {ep}"))
+
     if len(unique_eps) <= 20:
-        ax.legend(fontsize=6, ncol=2, markerscale=2)
-    _ax_style(ax, "Coloured by episode")
+        ax.legend(handles=legend_handles, fontsize=6, ncol=2)
+    n_eps = len(unique_eps)
+    _ax_style(ax, f"By episode ({n_eps} eps) — dark→light = early→late frame")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_2d_by_frame(emb, metadata, output_path):
-    frame_ids = np.array([m["frame_idx"] for m in metadata])
+    frame_ids  = np.array([m["frame_idx"]   for m in metadata])
+    n_eps = len(np.unique([m["episode_idx"] for m in metadata]))
     fig, ax = plt.subplots(figsize=(7, 6))
-    sc = ax.scatter(emb[:, 0], emb[:, 1], c=frame_ids, cmap="plasma", s=8, alpha=0.75, linewidths=0)
+    sc = ax.scatter(emb[:, 0], emb[:, 1], c=frame_ids, cmap="plasma", s=22, alpha=0.80, linewidths=0)
     plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label="Frame index within episode")
-    _ax_style(ax, "Coloured by frame index (temporal position)")
+    _ax_style(ax, f"By frame index (temporal position) — {n_eps} episodes pooled")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -538,7 +568,7 @@ def plot_2d_by_subtask(emb, metadata, output_path):
     sub_ids      = np.array([m["subtask_idx"] for m in metadata])
     unique_subs  = np.unique(sub_ids)
     subtask_text = {m["subtask_idx"]: m["subtask"] for m in metadata}
-    cmap         = cm.get_cmap("tab20", max(len(unique_subs), 1))
+    cmap         = matplotlib.colormaps.get_cmap("tab20")
 
     fig, ax = plt.subplots(figsize=(9, 6))
     for i, sub_id in enumerate(unique_subs):
@@ -546,10 +576,11 @@ def plot_2d_by_subtask(emb, metadata, output_path):
         label = subtask_text.get(sub_id, str(sub_id))
         if len(label) > 32:
             label = label[:30] + "…"
-        ax.scatter(emb[mask, 0], emb[mask, 1], s=8, alpha=0.75, linewidths=0,
+        ax.scatter(emb[mask, 0], emb[mask, 1], s=22, alpha=0.80, linewidths=0,
                    color=cmap(i), label=f"[{sub_id}] {label}")
+    n_eps = len(np.unique([m["episode_idx"] for m in metadata]))
     ax.legend(fontsize=6, markerscale=2, bbox_to_anchor=(1.01, 1), loc="upper left")
-    _ax_style(ax, "Coloured by subtask")
+    _ax_style(ax, f"By subtask — {n_eps} episodes pooled")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -565,7 +596,7 @@ def plot_2d_subtask_injection(emb_gt, emb_gen, metadata, output_path):
 
     sub_ids     = np.array([m["subtask_idx"] for m in metadata])
     unique_subs = np.unique(sub_ids)
-    cmap        = cm.get_cmap("tab10", max(len(unique_subs), 1))
+    cmap        = matplotlib.colormaps.get_cmap("tab10")
     sub_to_i    = {s: i for i, s in enumerate(unique_subs)}
 
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -579,8 +610,9 @@ def plot_2d_subtask_injection(emb_gt, emb_gen, metadata, output_path):
         Line2D([0], [0], marker="x", color="gray", linestyle="none", markersize=7,
                markeredgewidth=1.2, label="Generated subtask"),
     ]
+    n_eps = len(set(m["episode_idx"] for m in metadata))
     ax.legend(handles=legend_handles, fontsize=8)
-    _ax_style(ax, "Subtask injection — GT (●) vs generated (✕), coloured by subtask index")
+    _ax_style(ax, f"Subtask injection — GT (●) vs generated (✕), by subtask · {n_eps} episodes pooled")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -624,17 +656,52 @@ def _plotly_scatter3d(emb, color_vals, color_label, hover_texts, title, output_p
 
 
 def plot_3d_by_episode(emb, metadata, output_path):
-    ep_ids = [m["episode_idx"] for m in metadata]
-    hover  = [f"ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}" for m in metadata]
-    _plotly_scatter3d(emb, ep_ids, "Episode", hover,
-                      "3D UMAP — coloured by episode", output_path, colorscale="Turbo")
+    import plotly.graph_objects as go
+
+    ep_ids    = [m["episode_idx"] for m in metadata]
+    frame_ids = [m["frame_idx"]   for m in metadata]
+    unique_eps = sorted(set(ep_ids))
+    n_eps = len(unique_eps)
+
+    # Mirror the 2D design: one Plasma-reversed trace per episode, coloured by frame index
+    # (high frame_idx = pale, low = dark, matching the 2D sequential colourmap logic)
+    traces = []
+    for ep in unique_eps:
+        idx    = [i for i, e in enumerate(ep_ids) if e == ep]
+        frames = [frame_ids[i] for i in idx]
+        hover  = [f"ep={ep} fr={metadata[i]['frame_idx']}<br>{metadata[i]['subtask']}"
+                  for i in idx]
+        traces.append(go.Scatter3d(
+            x=[emb[i, 0] for i in idx],
+            y=[emb[i, 1] for i in idx],
+            z=[emb[i, 2] for i in idx],
+            mode="markers",
+            name=f"ep {ep}",
+            marker=dict(
+                size=4,
+                color=frames,
+                colorscale="Plasma_r",   # reversed: low frame = dark, high = pale
+                showscale=False,
+            ),
+            text=hover,
+            hovertemplate="%{text}<extra></extra>",
+        ))
+
+    _plotly_scatter3d(
+        emb, None, None, None,
+        f"3D — by episode ({n_eps} eps) · dark→pale = early→late frame",
+        output_path,
+        traces=traces,
+    )
 
 
 def plot_3d_by_subtask(emb, metadata, output_path):
     sub_ids = [m["subtask_idx"] for m in metadata]
+    n_eps   = len(set(m["episode_idx"] for m in metadata))
     hover   = [f"ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}" for m in metadata]
     _plotly_scatter3d(emb, sub_ids, "Subtask ID", hover,
-                      "3D UMAP — coloured by subtask", output_path, colorscale="Rainbow")
+                      f"3D — by subtask ({n_eps} episodes pooled)",
+                      output_path, colorscale="Rainbow")
 
 
 def plot_3d_two_episodes(emb, metadata, ep_a, ep_b, output_path):
@@ -672,7 +739,7 @@ def plot_3d_two_episodes(emb, metadata, ep_a, ep_b, output_path):
 
     _plotly_scatter3d(
         emb, None, None, None,
-        f"3D UMAP — episode {ep_a} (●) vs {ep_b} (■), coloured by frame index",
+        f"3D — episode {ep_a} (●) vs {ep_b} (■) · coloured by frame index",
         output_path,
         traces=traces,
     )
@@ -685,6 +752,40 @@ def plot_3d_two_episodes(emb, metadata, ep_a, ep_b, output_path):
 def _makedirs(*paths):
     for p in paths:
         os.makedirs(p, exist_ok=True)
+
+
+def _save_episode_thumbnails(dataset, ep_to_indices, output_dir):
+    """Save the first frame image of each episode so users can identify episodes."""
+    thumb_dir = os.path.join(output_dir, "episode_thumbnails")
+    _makedirs(thumb_dir)
+
+    # Find all image observation keys
+    sample_frame = dataset[0]
+    img_keys = sorted(k for k in sample_frame.keys()
+                      if k.startswith("observation.image") and isinstance(sample_frame[k], torch.Tensor))
+    if not img_keys:
+        logging.warning("No image observation keys found; skipping episode thumbnails.")
+        return
+
+    for ep_idx, indices in sorted(ep_to_indices.items()):
+        frame  = dataset[indices[0]]
+        n_imgs = len(img_keys)
+        fig, axes = plt.subplots(1, n_imgs, figsize=(3 * n_imgs, 3))
+        if n_imgs == 1:
+            axes = [axes]
+        for ax, key in zip(axes, img_keys):
+            img    = frame[key]  # (C, H, W)
+            img_np = img.float().numpy().transpose(1, 2, 0)
+            img_np = (img_np * 255).clip(0, 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
+            ax.imshow(img_np)
+            ax.axis("off")
+            ax.set_title(key.replace("observation.images.", "").replace("observation.image.", ""), fontsize=7)
+        fig.suptitle(f"Episode {ep_idx}", fontsize=9)
+        fig.tight_layout(pad=0.2)
+        fig.savefig(os.path.join(thumb_dir, f"ep_{ep_idx:04d}.png"), dpi=100, bbox_inches="tight")
+        plt.close(fig)
+
+    logging.info(f"  Episode thumbnails ({len(ep_to_indices)}) → {thumb_dir}/")
 
 
 def _run_site(tag, X, metadata, cfg, pca_dir, output_dir):
@@ -739,13 +840,36 @@ def run_plotting(cache, cfg, output_dir):
     logging.info("  Plotting subtask injection …")
     n = len(metadata)
 
+    # ── Save generated subtask CSV ───────────────────────────────────────────
+    gen_texts_all = cache.get("gen_subtask_texts", [])
+    if gen_texts_all:
+        import csv
+        csv_path = os.path.join(output_dir, "subtask_injection", "generated_subtasks.csv")
+        _makedirs(os.path.dirname(csv_path))
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=["episode_idx", "frame_idx", "global_idx", "gt_subtask", "gen_subtask"]
+            )
+            writer.writeheader()
+            for i, m in enumerate(metadata):
+                writer.writerow({
+                    "episode_idx": m["episode_idx"],
+                    "frame_idx":   m["frame_idx"],
+                    "global_idx":  m["global_idx"],
+                    "gt_subtask":  m["subtask"],
+                    "gen_subtask": gen_texts_all[i] if i < len(gen_texts_all) else "",
+                })
+        logging.info(f"  Generated subtasks CSV → {csv_path}")
+
     def _injection_plots(tag, X_gt, X_gen):
         inj2 = os.path.join(output_dir, "subtask_injection", tag, "2d")
         inj3 = os.path.join(output_dir, "subtask_injection", tag, "3d")
         _makedirs(inj2, inj3)
 
         X_combined = torch.cat([X_gt, X_gen], dim=0)
-        X_pca, _   = run_pca(X_combined, cfg.probe_pca_dims, f"{tag}_injection", pca_dir)
+        # Label clarifies this PCA is fit on GT+Gen combined (2×N samples)
+        pca_label  = f"{tag}_inj_GT+Gen"
+        X_pca, _   = run_pca(X_combined, cfg.probe_pca_dims, pca_label, pca_dir)
 
         logging.info(f"    Fitting 2D UMAP for {tag} injection …")
         emb2 = run_umap(X_pca, 2, cfg.probe_umap_n_neighbors, cfg.probe_umap_min_dist, cfg.probe_umap_seed)
@@ -762,7 +886,7 @@ def run_plotting(cache, cfg, output_dir):
         condition_colors = [0] * n + [1] * n
         _plotly_scatter3d(
             emb3, condition_colors, "0=GT / 1=Gen", hover,
-            f"3D UMAP — {tag}: GT subtask vs generated subtask",
+            f"3D — {tag}: GT (blue) vs generated (red) subtask · {n} frames, {len(set(m['episode_idx'] for m in metadata))} episodes",
             os.path.join(inj3, "gen_vs_gt.html"),
             colorscale="Bluered",
         )
@@ -786,7 +910,7 @@ def run_plotting(cache, cfg, output_dir):
 # ──────────────────────────────────────────────────────────────────────────────
 
 @parser.wrap()
-def probe_cli(cfg: ProbeUmapConfig):
+def probe_cli(cfg: ProbeRepresentationsConfig):
     init_logging()
     device     = get_safe_torch_device(try_device=cfg.policy.device)
     output_dir = cfg.probe_output_dir
@@ -806,6 +930,11 @@ def probe_cli(cfg: ProbeUmapConfig):
             max_episodes=cfg.probe_max_episodes,
             seed=cfg.probe_random_seed,
         )
+        ep_to_indices = _build_episode_index(dataset)
+        # Only keep episodes that were actually sampled
+        sampled_eps = {ep for ep, _, _ in samples}
+        ep_to_indices_sampled = {ep: ep_to_indices[ep] for ep in sampled_eps if ep in ep_to_indices}
+        _save_episode_thumbnails(dataset, ep_to_indices_sampled, output_dir)
         logging.info(f"Collecting activations for {len(samples)} frames …")
         cache = collect_activations(policy, preprocessor, dataset, samples, device, cfg)
 

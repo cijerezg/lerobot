@@ -22,6 +22,7 @@ python probe_attention_pi05.py config.json \\
     --probe_timesteps "1.0,0.5,0.25"
 """
 
+import csv
 import logging
 import os
 import random
@@ -75,7 +76,7 @@ class ProbeAttentionConfig(TrainRLServerPipelineConfig):
     eval_random_seed: Optional[int] = None
     probe_output_dir: str = "outputs/probe_attention"
     # Comma-separated diffusion timesteps to probe, e.g. "1.0,0.5,0.25"
-    probe_timesteps: str = "1.0,0.5,0.25"
+    probe_timesteps: str = "1.0,0.25"
     probe_batch_size: int = 32
 
 
@@ -274,8 +275,8 @@ def _attn_to_heatmap(attn_heads, q_start, q_end, k_start, k_end,
         # x: [n_patches]  → grid [n_p, n_p] → [img_h, img_w]
         grid = x.reshape(n_p, n_p)
         grid_4d = grid[None, None].float()
-        up = F.interpolate(grid_4d, size=(img_h, img_w), mode="bilinear", align_corners=False)
-        return up.squeeze()
+        up = F.interpolate(grid_4d, size=(img_h, img_w), mode="bicubic", align_corners=False)
+        return up.squeeze().clamp(min=0)
 
     per_head_up = torch.stack([_reshape_upsample(per_head[h]) for h in range(n_heads)])
     mean_up = _reshape_upsample(per_head.mean(0))
@@ -286,11 +287,12 @@ def _attn_to_heatmap(attn_heads, q_start, q_end, k_start, k_end,
 # Figure generation helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def cv2_overlay(img_np, heatmap, title, alpha=0.55):
-    h_min, h_max = heatmap.min(), heatmap.max()
-    h_norm = (heatmap - h_min) / (h_max - h_min + 1e-8)
-    h_gray = (h_norm * 255).numpy().astype(np.uint8)
-    h_color = cv2.applyColorMap(h_gray, cv2.COLORMAP_HOT)
+def cv2_overlay(img_np, heatmap, title, alpha=0.55, vmax=None):
+    if vmax is None:
+        vmax = heatmap.max().item()
+    h_norm = heatmap / (vmax + 1e-8)
+    h_gray = (h_norm.clamp(0, 1) * 255).numpy().astype(np.uint8)
+    h_color = cv2.applyColorMap(h_gray, cv2.COLORMAP_JET)
     h_color_rgb = cv2.cvtColor(h_color, cv2.COLOR_BGR2RGB)
     
     if h_color_rgb.shape != img_np.shape:
@@ -301,7 +303,14 @@ def cv2_overlay(img_np, heatmap, title, alpha=0.55):
     return overlay
 
 def render_image_overlays(attn_weights, segments, image_tensors, pad_masks, patches_per_cam):
+    """
+    Returns
+    -------
+    frames_out  : dict  key → np.ndarray  (video frames)
+    norm_consts : dict  key → float  (raw peak attention value used as vmax per panel)
+    """
     frames_out = {}
+    norm_consts = {}
     n_heads = attn_weights.shape[1]
     n_p = int(patches_per_cam ** 0.5)
 
@@ -323,45 +332,53 @@ def render_image_overlays(attn_weights, segments, image_tensors, pad_masks, patc
             img_t = image_tensors[cam_idx].squeeze(0).cpu()
             img_t = img_t * 0.5 + 0.5
             img_np = (img_t.clamp(0, 1).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-        
+
         img_h = img_np.shape[0] if img_np is not None else 224
         img_w = img_np.shape[1] if img_np is not None else 224
         if img_np is None:
             img_np = np.zeros((img_h, img_w, 3), dtype=np.uint8)
 
-        mean_overlays = [img_np.copy()]
-        cv2.putText(mean_overlays[0], f"{cam_name} (orig)", (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-
+        mean_maps = []
         for qname, q_s, q_e in query_groups:
             _, mean_map = _attn_to_heatmap(
                 attn, q_s, q_e, cam_s, cam_e, pad, n_p, img_h, img_w
             )
-            ov = cv2_overlay(img_np, mean_map, f"mean: {qname}")
+            mean_maps.append((qname, mean_map))
+
+        mean_overlays = [img_np.copy()]
+        cv2.putText(mean_overlays[0], f"{cam_name} (orig)", (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+        for qname, mean_map in mean_maps:
+            # Each panel normalized independently by its own peak value
+            vmax = mean_map.max().item()
+            norm_consts[f"{cam_name}_{qname}"] = vmax
+            ov = cv2_overlay(img_np, mean_map, f"mean: {qname}", vmax=vmax)
             mean_overlays.append(ov)
-        
+
         frames_out[f"{cam_name}_mean"] = np.hstack(mean_overlays)
 
         q_s_all, q_e_all = 0, segments[-1][2]
         per_head_maps, _ = _attn_to_heatmap(
             attn, q_s_all, q_e_all, cam_s, cam_e, pad, n_p, img_h, img_w
         )
+        heads_vmax = per_head_maps.max().item()
+        norm_consts[f"{cam_name}_heads"] = heads_vmax
 
         h_cols = 4
         h_rows = (n_heads + h_cols - 1) // h_cols
-        
+
         head_rows = []
         for r in range(h_rows):
             row_imgs = []
             for c in range(h_cols):
                 idx = r * h_cols + c
                 if idx < n_heads:
-                    row_imgs.append(cv2_overlay(img_np, per_head_maps[idx], f"head {idx}"))
+                    row_imgs.append(cv2_overlay(img_np, per_head_maps[idx], f"head {idx}", vmax=heads_vmax))
                 else:
                     row_imgs.append(np.zeros_like(img_np))
             head_rows.append(np.hstack(row_imgs))
         frames_out[f"{cam_name}_heads"] = np.vstack(head_rows)
-        
-    return frames_out
+
+    return frames_out, norm_consts
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Figure 2: full attention matrix
@@ -535,24 +552,33 @@ def probe_cli(cfg: ProbeAttentionConfig):
                     ep_dir = os.path.join(ds_output_dir, f"ep{ep_idx:04d}_t{t_str}")
                     os.makedirs(ep_dir, exist_ok=True)
 
-                    for b_idx in range(len(batch_slice)):
+                    csv_path = os.path.join(ep_dir, "norm_consts.csv")
+                    csv_file = open(csv_path, "a", newline="")
+                    csv_writer = csv.writer(csv_file)
+                    if os.path.getsize(csv_path) == 0:
+                        csv_writer.writerow(["ep", "fr", "t_val", "panel", "vmax"])
+
+                    for b_idx, (fr_idx, _) in enumerate(batch_slice):
                         a_w = attn_weights[b_idx:b_idx+1]
                         p_m = pad_masks[b_idx:b_idx+1]
                         i_t = [img[b_idx:b_idx+1] for img in images]
-                        
-                        frames_out = {}
-                        frames_out.update(render_image_overlays(
+
+                        overlay_frames, norm_consts = render_image_overlays(
                             a_w, segments, i_t, p_m, patches_per_cam
-                        ))
-                        frames_out.update(render_full_matrix(
-                            a_w, segments, p_m
-                        ))
+                        )
+                        frames_out = dict(overlay_frames)
+                        frames_out.update(render_full_matrix(a_w, segments, p_m))
+
+                        for panel, vmax in norm_consts.items():
+                            csv_writer.writerow([ep_idx, fr_idx, t_val, panel, f"{vmax:.6e}"])
 
                         for k, frame_np in frames_out.items():
                             if k not in writers[t_val]:
                                 path = os.path.join(ep_dir, f"{k}.mp4")
                                 writers[t_val][k] = imageio.get_writer(path, fps=fps, macro_block_size=1)
                             writers[t_val][k].append_data(frame_np)
+
+                    csv_file.close()
 
             # Close writers for this episode
             for dict_t in writers.values():

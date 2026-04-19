@@ -226,6 +226,16 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
     return padded_images
 
 
+def capture_attn_weights(layer_idx, query_states, key_states, scaling, attention_mask):
+    """Capture layer-0 softmax attention weights into _PROBING_CAPTURE when probing is enabled."""
+    if layer_idx == 0 and _PROBING_CAPTURE.get("enabled"):
+        with torch.no_grad():
+            scores = torch.matmul(query_states.float(), key_states.float().transpose(-2, -1)) * scaling
+            if attention_mask is not None:
+                scores = scores + attention_mask.float()
+            _PROBING_CAPTURE["attn_weights"] = torch.softmax(scores, dim=-1).cpu()
+
+
 # Define the complete layer computation function for gradient checkpointing (without knowledge insulation)
 def compute_layer_complete(
     layer_idx, inputs_embeds, attention_mask, position_ids, adarms_cond, paligemma, gemma_expert
@@ -265,12 +275,7 @@ def compute_layer_complete(
     )
     batch_size = query_states.shape[0]
     scaling = paligemma.language_model.layers[layer_idx].self_attn.scaling
-    if layer_idx == 0 and _PROBING_CAPTURE.get("enabled"):
-        with torch.no_grad():
-            scores = torch.matmul(query_states.float(), key_states.float().transpose(-2, -1)) * scaling
-            if attention_mask is not None:
-                scores = scores + attention_mask.float()
-            _PROBING_CAPTURE["attn_weights"] = torch.softmax(scores, dim=-1).cpu()
+    capture_attn_weights(layer_idx, query_states, key_states, scaling, attention_mask)
     # Attention computation
     att_output, _ = modeling_gemma.eager_attention_forward(
         paligemma.language_model.layers[layer_idx].self_attn,
@@ -390,6 +395,7 @@ def compute_layer_complete_knowledge_insulation(
 
     batch_size = query_states.shape[0]
     scaling = paligemma.language_model.layers[layer_idx].self_attn.scaling
+    capture_attn_weights(layer_idx, query_states, key_states, scaling, attention_mask)
 
     # KNOWLEDGE INSULATION
     # split queries into vlm (backbone) and action (expert) parts
@@ -1012,6 +1018,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
+        noisy_actions = noisy_actions.to(dtype=self.action_in_proj.weight.dtype)
         embs = []
         pad_masks = []
         att_masks = []
@@ -1024,7 +1031,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             max_period=self.config.max_period,
             device=timestep.device,
         )
-        time_emb = time_emb.type(dtype=timestep.dtype)
+        time_emb = time_emb.to(dtype=self.action_in_proj.weight.dtype)
 
         # Fuse timestep + action information using an MLP
         def action_proj_func(noisy_actions):
