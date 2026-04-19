@@ -373,6 +373,7 @@ class PI05RLPytorch(PI05Pytorch):
     def __init__(self, config: PI05RLConfig, rtc_processor=None):
         super().__init__(config, rtc_processor)
         self.log_counter = 0
+        self.suppress_debug_log = False
         
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep."""
@@ -592,7 +593,7 @@ class PI05RLPytorch(PI05Pytorch):
         )
 
         self.log_counter += 1
-        if self.log_counter % 120 == 0:
+        if self.log_counter % 120 == 0 and not self.suppress_debug_log:
             print(f"[Actor Loss] Total: {total_loss.item():.4f} | Flow: {flow_loss.mean().item():.4f} | ActionCE: {action_ce_loss.item():.4f} | SubtaskCE: {subtask_ce_loss.item():.4f}")
             if subtask_tokens is not None:
                 pred_ids = subtask_logits.argmax(dim=-1)  # [B, subtask_len]

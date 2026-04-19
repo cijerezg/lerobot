@@ -65,6 +65,8 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
     OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_TOKENS,
+    OBS_LANGUAGE_USER_PROMPT_TOKENS,
+    OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK,
 )
 from lerobot.utils.utils import get_safe_torch_device, init_logging
 
@@ -110,8 +112,6 @@ class ProbeRepresentationsConfig(TrainRLServerPipelineConfig):
     # "plot"    → load existing cache and generate all plots
     # "all"     → collect then plot
     probe_mode: str = "all"
-    # Path to a pre-collected .pt cache file (skips collection when set)
-    probe_cache: Optional[str] = None
 
     # Data sampling
     probe_n_frames_per_episode: int = N_FRAMES_PER_EPISODE
@@ -249,6 +249,8 @@ def _prepare_inputs(policy, preprocessor, obs, gt_actions, gt_subtask, task_str,
 
     task_tokens    = processed[OBS_LANGUAGE_TOKENS].to(device)
     task_masks     = processed[OBS_LANGUAGE_ATTENTION_MASK].to(device)
+    pure_task_tokens = processed[OBS_LANGUAGE_USER_PROMPT_TOKENS].to(device)
+    pure_task_masks = processed[OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK].to(device)
     subtask_tokens = processed[OBS_LANGUAGE_SUBTASK_TOKENS].to(device)
     subtask_masks  = processed[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK].to(device)
     action_tokens  = processed[ACTION_TOKENS].to(device)
@@ -263,8 +265,8 @@ def _prepare_inputs(policy, preprocessor, obs, gt_actions, gt_subtask, task_str,
         actions_norm = processed[ACTION]
     actions_padded = pad_vector(actions_norm.to(device), policy.config.max_action_dim)
 
-    return (images, img_masks, task_tokens, task_masks, subtask_tokens, subtask_masks,
-            action_tokens, action_masks, actions_padded)
+    return (images, img_masks, task_tokens, task_masks, pure_task_tokens, pure_task_masks,
+            subtask_tokens, subtask_masks, action_tokens, action_masks, actions_padded)
 
 
 def _mean_pool(tensor, dim=1):
@@ -307,7 +309,7 @@ def collect_activations(policy, preprocessor, dataset, samples, device, cfg):
             inputs = _prepare_inputs(
                 policy, preprocessor, obs, gt_actions, gt_subtask, task_str, device
             )
-            (images, img_masks, task_tokens, task_masks,
+            (images, img_masks, task_tokens, task_masks, pure_task_tokens, pure_task_masks,
              subtask_tokens, subtask_masks, action_tokens, action_masks, actions_padded) = inputs
 
             for t_idx, t_val in enumerate(t_values):
@@ -374,6 +376,7 @@ def collect_subtask_injection(policy, preprocessor, dataset, samples, device, cf
     suffix_gen = {t: [] for t in t_values}
     gen_subtask_texts = []
 
+    policy.model.suppress_debug_log = True
     with _capture_hook(policy.model.paligemma_with_expert) as captured:
         for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
             if i % 100 == 0:
@@ -385,12 +388,12 @@ def collect_subtask_injection(policy, preprocessor, dataset, samples, device, cf
             inputs = _prepare_inputs(
                 policy, preprocessor, obs, gt_actions, gt_subtask, task_str, device
             )
-            (images, img_masks, task_tokens, task_masks,
+            (images, img_masks, task_tokens, task_masks, pure_task_tokens, pure_task_masks,
              gt_sub_tokens, gt_sub_masks, action_tokens, action_masks, actions_padded) = inputs
 
-            # Generate subtask tokens with the model
+            # Generate subtask tokens with the model using the pure task prompt
             gen_sub_tokens, gen_sub_masks = policy.model.generate_subtask_tokens(
-                images, img_masks, task_tokens, task_masks
+                images, img_masks, pure_task_tokens, pure_task_masks
             )
             valid = gen_sub_tokens[0][gen_sub_masks[0]]
             gen_subtask_texts.append(tokenizer.decode(valid, skip_special_tokens=True).strip())
@@ -415,6 +418,7 @@ def collect_subtask_injection(policy, preprocessor, dataset, samples, device, cf
                     sout = _mean_pool(captured["suffix_out"][:, -chunk_size:, :])  # (1, 1024)
                     (suffix_gt if cond_name == "gt" else suffix_gen)[t_val].append(sout)
 
+    policy.model.suppress_debug_log = False
     return {
         "prefix_gt":          torch.cat(prefix_gt,  dim=0),
         "prefix_gen":         torch.cat(prefix_gen, dim=0),
@@ -649,10 +653,12 @@ def _plotly_scatter3d(emb, color_vals, color_label, hover_texts, title, output_p
             x=emb[:, 0], y=emb[:, 1], z=emb[:, 2],
             mode="markers",
             marker=dict(
-                size=3,
+                size=6,
                 color=color_vals,
                 colorscale=colorscale,
                 showscale=True,
+                opacity=0.85,
+                line=dict(width=0),
                 colorbar=dict(title=color_label),
             ),
             text=hover_texts,
@@ -664,6 +670,7 @@ def _plotly_scatter3d(emb, color_vals, color_label, hover_texts, title, output_p
         title=title,
         scene=dict(xaxis_title="UMAP-1", yaxis_title="UMAP-2", zaxis_title="UMAP-3"),
         margin=dict(l=0, r=0, b=0, t=45),
+        legend=dict(itemsizing='constant', font=dict(size=14)),
     )
     fig.write_html(output_path)
     logging.info(f"    3D plot → {output_path}")
@@ -671,31 +678,42 @@ def _plotly_scatter3d(emb, color_vals, color_label, hover_texts, title, output_p
 
 def plot_3d_by_episode(emb, metadata, output_path):
     import plotly.graph_objects as go
+    import numpy as np
+    import matplotlib
 
     ep_ids    = [m["episode_idx"] for m in metadata]
     frame_ids = [m["frame_idx"]   for m in metadata]
     unique_eps = sorted(set(ep_ids))
     n_eps = len(unique_eps)
 
-    # Mirror the 2D design: one Plasma-reversed trace per episode, coloured by frame index
-    # (high frame_idx = pale, low = dark, matching the 2D sequential colourmap logic)
+    seq_cmaps = ["Blues", "Reds", "Greens", "Oranges", "Purples",
+                 "YlOrBr", "PuRd", "BuGn", "GnBu", "OrRd"]
+
     traces = []
-    for ep in unique_eps:
-        idx    = [i for i, e in enumerate(ep_ids) if e == ep]
-        frames = [frame_ids[i] for i in idx]
-        hover  = [f"ep={ep} fr={metadata[i]['frame_idx']}<br>{metadata[i]['subtask']}"
-                  for i in idx]
+    for i, ep in enumerate(unique_eps):
+        idx    = [j for j, e in enumerate(ep_ids) if e == ep]
+        frames = np.array([frame_ids[j] for j in idx])
+        hover  = [f"ep={ep} fr={metadata[j]['frame_idx']}<br>{metadata[j]['subtask']}"
+                  for j in idx]
+        
+        fmin, fmax = frames.min(), frames.max()
+        norm = 0.9 - (frames - fmin) / max(fmax - fmin, 1) * 0.6
+        cmap_ep = matplotlib.colormaps.get_cmap(seq_cmaps[i % len(seq_cmaps)])
+        
+        rgba_colors = cmap_ep(norm)
+        alpha = 0.85
+        plotly_colors = [f"rgba({int(r*255)}, {int(g*255)}, {int(b*255)}, {alpha})" for r, g, b, _ in rgba_colors]
+        
         traces.append(go.Scatter3d(
-            x=[emb[i, 0] for i in idx],
-            y=[emb[i, 1] for i in idx],
-            z=[emb[i, 2] for i in idx],
+            x=[emb[j, 0] for j in idx],
+            y=[emb[j, 1] for j in idx],
+            z=[emb[j, 2] for j in idx],
             mode="markers",
             name=f"ep {ep}",
             marker=dict(
-                size=4,
-                color=frames,
-                colorscale="Plasma_r",   # reversed: low frame = dark, high = pale
-                showscale=False,
+                size=6,
+                color=plotly_colors,
+                line=dict(width=0),
             ),
             text=hover,
             hovertemplate="%{text}<extra></extra>",
@@ -704,6 +722,37 @@ def plot_3d_by_episode(emb, metadata, output_path):
     _plotly_scatter3d(
         emb, None, None, None,
         f"3D — by episode ({n_eps} eps) · dark→pale = early→late frame",
+        output_path,
+        traces=traces,
+    )
+
+
+def plot_3d_by_frame(emb, metadata, output_path):
+    import plotly.graph_objects as go
+
+    frame_ids = [m["frame_idx"] for m in metadata]
+    n_eps = len(set(m["episode_idx"] for m in metadata))
+    hover = [f"ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}" for m in metadata]
+    
+    traces = [go.Scatter3d(
+        x=emb[:, 0], y=emb[:, 1], z=emb[:, 2],
+        mode="markers",
+        marker=dict(
+            size=6,
+            color=frame_ids,
+            colorscale="Plasma",
+            showscale=True,
+            colorbar=dict(title="Frame index within episode"),
+            opacity=0.85,
+            line=dict(width=0),
+        ),
+        text=hover,
+        hovertemplate="%{text}<extra></extra>",
+    )]
+    
+    _plotly_scatter3d(
+        emb, None, None, None,
+        f"3D — by frame index (temporal position) — {n_eps} episodes pooled",
         output_path,
         traces=traces,
     )
@@ -740,10 +789,12 @@ def plot_3d_two_episodes(emb, metadata, ep_a, ep_b, output_path):
             mode="markers",
             name=f"Episode {ep}",
             marker=dict(
-                size=4,
+                size=6,
                 color=frames,
                 colorscale="Plasma",
                 showscale=(ep == ep_a),
+                opacity=0.85,
+                line=dict(width=0),
                 colorbar=dict(title="Frame index"),
                 symbol=sym,
             ),
@@ -768,11 +819,16 @@ def _makedirs(*paths):
         os.makedirs(p, exist_ok=True)
 
 
-def _save_episode_thumbnails(dataset, ep_to_indices, output_dir):
-    """Save the first frame image of each episode so users can identify episodes."""
-    thumb_dir = os.path.join(output_dir, "episode_thumbnails")
-    _makedirs(thumb_dir)
+def _grid_layout(n):
+    """Return (rows, cols) for a near-square grid that fits n cells, wider than tall."""
+    import math
+    rows = max(1, math.floor(math.sqrt(n)))
+    cols = math.ceil(n / rows)
+    return rows, cols
 
+
+def _save_episode_thumbnails(dataset, ep_to_indices, output_dir):
+    """Save a single montage image with first-frame thumbnails for every episode."""
     # Find all image observation keys
     sample_frame = dataset[0]
     img_keys = sorted(k for k in sample_frame.keys()
@@ -781,25 +837,47 @@ def _save_episode_thumbnails(dataset, ep_to_indices, output_dir):
         logging.warning("No image observation keys found; skipping episode thumbnails.")
         return
 
-    for ep_idx, indices in sorted(ep_to_indices.items()):
-        frame  = dataset[indices[0]]
-        n_imgs = len(img_keys)
-        fig, axes = plt.subplots(1, n_imgs, figsize=(3 * n_imgs, 3))
-        if n_imgs == 1:
-            axes = [axes]
-        for ax, key in zip(axes, img_keys):
+    episodes = sorted(ep_to_indices.keys())
+    n_eps  = len(episodes)
+    n_cams = len(img_keys)
+    cam_labels = [k.replace("observation.images.", "").replace("observation.image.", "")
+                  for k in img_keys]
+
+    # Layout: one row per episode, one column per camera.
+    # When there is only a single camera use a square-ish grid instead.
+    if n_cams == 1:
+        rows, cols = _grid_layout(n_eps)
+    else:
+        rows, cols = n_eps, n_cams
+
+    fig, axes = plt.subplots(rows, cols, figsize=(3 * cols, 3 * rows), squeeze=False)
+
+    for i, ep_idx in enumerate(episodes):
+        frame = dataset[ep_to_indices[ep_idx][0]]
+        r, c_start = (i, 0) if n_cams > 1 else divmod(i, cols)
+        for cam_j, (key, label) in enumerate(zip(img_keys, cam_labels)):
+            c = c_start + cam_j if n_cams == 1 else cam_j
+            ax = axes[r][c]
             img    = frame[key]  # (C, H, W)
             img_np = img.float().numpy().transpose(1, 2, 0)
             img_np = (img_np * 255).clip(0, 255).astype(np.uint8) if img_np.max() <= 1.0 else img_np.astype(np.uint8)
             ax.imshow(img_np)
             ax.axis("off")
-            ax.set_title(key.replace("observation.images.", "").replace("observation.image.", ""), fontsize=7)
-        fig.suptitle(f"Episode {ep_idx}", fontsize=9)
-        fig.tight_layout(pad=0.2)
-        fig.savefig(os.path.join(thumb_dir, f"ep_{ep_idx:04d}.png"), dpi=100, bbox_inches="tight")
-        plt.close(fig)
+            title = f"ep {ep_idx}" if n_cams == 1 else (f"ep {ep_idx} · {label}" if i == 0 or True else label)
+            ax.set_title(title, fontsize=7)
 
-    logging.info(f"  Episode thumbnails ({len(ep_to_indices)}) → {thumb_dir}/")
+    # Hide any unused cells (single-camera case only)
+    if n_cams == 1:
+        for j in range(n_eps, rows * cols):
+            r, c = divmod(j, cols)
+            axes[r][c].set_visible(False)
+
+    fig.suptitle(f"Episode thumbnails  ({n_eps} episodes)", fontsize=10)
+    fig.tight_layout(pad=0.3)
+    out_path = os.path.join(output_dir, "episode_thumbnails.png")
+    fig.savefig(out_path, dpi=100, bbox_inches="tight")
+    plt.close(fig)
+    logging.info(f"  Episode thumbnails ({n_eps} episodes) → {out_path}")
 
 
 def _run_site(tag, X, metadata, cfg, pca_dir, output_dir):
@@ -821,6 +899,7 @@ def _run_site(tag, X, metadata, cfg, pca_dir, output_dir):
     logging.info(f"    Fitting 3D UMAP …")
     emb3 = run_umap(X_pca, 3, cfg.probe_umap_n_neighbors, cfg.probe_umap_min_dist, cfg.probe_umap_seed)
     plot_3d_by_episode(emb3, metadata, os.path.join(d3, "by_episode.html"))
+    plot_3d_by_frame(emb3, metadata,   os.path.join(d3, "by_frame.html"))
     plot_3d_by_subtask(emb3, metadata, os.path.join(d3, "by_subtask.html"))
     plot_3d_two_episodes(
         emb3, metadata, cfg.probe_ep_3d_a, cfg.probe_ep_3d_b,
@@ -920,24 +999,23 @@ def run_plotting(cache, cfg, output_dir):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Entry point
+# Per-dataset pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 
-@parser.wrap()
-def probe_cli(cfg: ProbeRepresentationsConfig):
-    init_logging()
-    device     = get_safe_torch_device(try_device=cfg.policy.device)
-    output_dir = cfg.probe_output_dir
-    cache_path = cfg.probe_cache or os.path.join(output_dir, "activations_cache.pt")
-    _makedirs(output_dir)
+def _probe_one_dataset(policy, preprocessor, dataset, ds_dir, cfg, device):
+    """
+    Run the full sample → collect → plot pipeline for a single dataset.
+    Outputs land in ds_dir (a subdirectory named after the dataset root).
+    policy / preprocessor may be None when probe_mode == "plot".
+    """
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset  # local to avoid circular imports
 
+    cache_path = os.path.join(ds_dir, "activations_cache.pt")
+    _makedirs(ds_dir)
     cache = None
 
     if cfg.probe_mode in ("collect", "all"):
-        logging.info("Loading policy and dataset …")
-        policy, preprocessor, dataset = _load_policy_and_processors(cfg, device)
-
-        logging.info("Building sample list …")
+        logging.info("  Building sample list …")
         samples = _sample_evenly(
             dataset,
             n_per_episode=cfg.probe_n_frames_per_episode,
@@ -945,29 +1023,69 @@ def probe_cli(cfg: ProbeRepresentationsConfig):
             seed=cfg.probe_random_seed,
         )
         ep_to_indices = _build_episode_index(dataset)
-        # Only keep episodes that were actually sampled
-        sampled_eps = {ep for ep, _, _ in samples}
+        sampled_eps   = {ep for ep, _, _ in samples}
         ep_to_indices_sampled = {ep: ep_to_indices[ep] for ep in sampled_eps if ep in ep_to_indices}
-        _save_episode_thumbnails(dataset, ep_to_indices_sampled, output_dir)
-        logging.info(f"Collecting activations for {len(samples)} frames …")
+        _save_episode_thumbnails(dataset, ep_to_indices_sampled, ds_dir)
+
+        logging.info(f"  Collecting activations for {len(samples)} frames …")
         cache = collect_activations(policy, preprocessor, dataset, samples, device, cfg)
 
         if cfg.probe_subtask_injection:
-            logging.info("Collecting subtask injection activations …")
+            logging.info("  Collecting subtask injection activations …")
             inj = collect_subtask_injection(policy, preprocessor, dataset, samples, device, cfg)
             cache.update(inj)
 
         torch.save(cache, cache_path)
-        logging.info(f"Activations saved → {cache_path}")
+        logging.info(f"  Activations saved → {cache_path}")
 
     if cfg.probe_mode in ("plot", "all"):
         if cache is None:
-            logging.info(f"Loading cached activations from {cache_path} …")
+            logging.info(f"  Loading cached activations from {cache_path} …")
             cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+        logging.info("  Running PCA + UMAP and saving plots …")
+        run_plotting(cache, cfg, ds_dir)
+        logging.info(f"  Done. Plots in {ds_dir}/")
 
-        logging.info("Running PCA + UMAP and saving plots …")
-        run_plotting(cache, cfg, output_dir)
-        logging.info(f"Done. All plots in {output_dir}/")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Entry point
+# ──────────────────────────────────────────────────────────────────────────────
+
+@parser.wrap()
+def probe_cli(cfg: ProbeRepresentationsConfig):
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    init_logging()
+    device     = get_safe_torch_device(try_device=cfg.policy.device)
+    output_dir = cfg.probe_output_dir
+    _makedirs(output_dir)
+
+    # Load policy once; reuse across all datasets.
+    policy = preprocessor = primary_dataset = None
+    if cfg.probe_mode in ("collect", "all"):
+        logging.info("Loading policy and primary dataset …")
+        policy, preprocessor, primary_dataset = _load_policy_and_processors(cfg, device)
+
+    # ── Primary dataset ────────────────────────────────────────────────────────
+    primary_name = os.path.basename(os.path.normpath(cfg.dataset.root))
+    logging.info(f"=== Dataset: {primary_name} ===")
+    _probe_one_dataset(policy, preprocessor, primary_dataset,
+                       os.path.join(output_dir, primary_name), cfg, device)
+
+    # ── Additional datasets ────────────────────────────────────────────────────
+    extra_paths = getattr(cfg.dataset, "additional_offline_dataset_paths", None) or []
+    for extra_root in extra_paths:
+        ds_name = os.path.basename(os.path.normpath(extra_root))
+        logging.info(f"=== Dataset: {ds_name} ===")
+        extra_ds = None
+        if cfg.probe_mode in ("collect", "all"):
+            extra_ds = LeRobotDataset(repo_id=cfg.dataset.repo_id, root=extra_root)
+            extra_ds.delta_timestamps = None
+            extra_ds.delta_indices    = None
+        _probe_one_dataset(policy, preprocessor, extra_ds,
+                           os.path.join(output_dir, ds_name), cfg, device)
+
+    logging.info("All datasets done.")
 
 
 if __name__ == "__main__":
