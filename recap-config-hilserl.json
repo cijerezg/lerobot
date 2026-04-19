@@ -1,6 +1,6 @@
 {
     "output_dir": null,
-    "use_rerun": true,
+    "use_rerun": false,
     "job_name": "default",
     "resume": false,
     "seed": 42,
@@ -107,8 +107,8 @@
         "dtype": "bfloat16",
         "gradient_checkpointing": true,
         "online_steps": 20000,
-        "online_buffer_capacity": 20000,
-        "offline_buffer_capacity": 60000,
+        "online_buffer_capacity": 100000,
+        "offline_buffer_capacity": 200000,
         "online_step_before_learning": 10,
         "policy_update_freq": 1,
         "discount": 0.97,
@@ -156,14 +156,14 @@
             "cameras": {
                 "wrist": {
                     "type": "opencv",
-                    "index_or_path": 0,
+                    "index_or_path": "/dev/video0",
                     "height": 480,
                     "width": 640,
                     "fps": 30
                 },
                 "top": {
                     "type": "opencv",
-                    "index_or_path": 2,
+                    "index_or_path": "/dev/video4",
                     "height": 480,
                     "width": 640,
                     "fps": 30
