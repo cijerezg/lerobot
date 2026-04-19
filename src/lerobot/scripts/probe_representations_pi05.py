@@ -1,16 +1,30 @@
 #!/usr/bin/env python
 """
-Probe PI05 model representations via PCA + UMAP visualisation.
+PI05 representation probe — visualise what the model has learned.
 
-Collects prefix_out and suffix_out activations from dataset frames, reduces with
-PCA → UMAP, and saves diagnostic plots to explore:
-  - Memorisation vs generalisation (cluster by episode vs subtask)
-  - Temporal structure within episodes
-  - Subtask organisation in representation space
-  - Effect of subtask conditioning: model-generated vs GT subtask injection
+For each sampled frame we run a forward pass and capture two activation tensors:
+  prefix_out  (B, prefix_len, 2048)  — VLM hidden states after image + language tokens
+  suffix_out  (B, suffix_len, 1024)  — expert hidden states after noisy action tokens
 
-Probe-specific parameters are constants at the top of this file.
-Pass the training config JSON as the first argument; all other flags have defaults.
+Each tensor is mean-pooled to one vector per frame, then compressed with PCA (→100 dims)
+and UMAP (→2D or 3D) for plotting. Suffix is collected at multiple denoising timesteps t.
+
+For the subtask-injection analysis we run each frame twice — once with the GT subtask
+tokens, once with model-generated ones — and embed both sets in the same UMAP space to
+see how much the subtask representation drifts.
+
+Output layout (all under --probe_output_dir):
+  activations_cache.pt          reusable tensor cache (skip re-inference with --probe_mode plot)
+  episode_thumbnails/           first-frame images so you can identify each episode
+  pca_variance/                 scree plots for every PCA fit
+  2d/<site>/by_episode.png      per-episode gradient: dark=early frame, light=late
+  2d/<site>/by_frame.png        all episodes pooled, coloured by frame index
+  2d/<site>/by_subtask.png      all episodes pooled, coloured by subtask
+  3d/<site>/by_episode.html     interactive version of by_episode
+  3d/<site>/by_subtask.html     interactive version of by_subtask
+  3d/<site>/ep{A}_vs_ep{B}.html two-episode comparison coloured by frame index
+  subtask_injection/<site>/     GT vs generated subtask UMAP (2d + 3d)
+  subtask_injection/generated_subtasks.csv  per-frame GT and model-generated subtask text
 
 Usage:
     python probe_representations_pi05.py config-hiserl.json
