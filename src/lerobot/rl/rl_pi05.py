@@ -687,12 +687,16 @@ class PI05RLPolicy(PI05FullPolicy):
                     # Fallback to vanilla loading if no weight file found directly
                     print("No weight file found directly, falling back to vanilla loading")
                     state_dict = None
-            else:
-                 # It's a file
+            elif os.path.isfile(checkpoint_path):
                 if checkpoint_path.endswith(".safetensors"):
                     state_dict = load_file(checkpoint_path)
                 else:
                     state_dict = torch.load(checkpoint_path, map_location="cpu")
+            else:
+                # Not a local path — treat as HuggingFace Hub repo ID.
+                # The vanilla loading path below (PI05FullPolicy.from_pretrained) handles HF Hub.
+                print(f"'{checkpoint_path}' is not a local path; treating as HF Hub repo ID")
+                state_dict = None
 
             is_rl_checkpoint = False
             if state_dict is not None:

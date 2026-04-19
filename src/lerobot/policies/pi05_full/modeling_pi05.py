@@ -22,6 +22,10 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
 
+# Module-level dict for attention probing. Populated only when 'enabled' is True.
+# Keys set during capture: 'attn_weights' -> Tensor[B, heads, seq, seq] (cpu float32)
+_PROBING_CAPTURE: dict = {}
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
@@ -261,6 +265,12 @@ def compute_layer_complete(
     )
     batch_size = query_states.shape[0]
     scaling = paligemma.language_model.layers[layer_idx].self_attn.scaling
+    if layer_idx == 0 and _PROBING_CAPTURE.get("enabled"):
+        with torch.no_grad():
+            scores = torch.matmul(query_states.float(), key_states.float().transpose(-2, -1)) * scaling
+            if attention_mask is not None:
+                scores = scores + attention_mask.float()
+            _PROBING_CAPTURE["attn_weights"] = torch.softmax(scores, dim=-1).cpu()
     # Attention computation
     att_output, _ = modeling_gemma.eager_attention_forward(
         paligemma.language_model.layers[layer_idx].self_attn,
@@ -1659,13 +1669,13 @@ class PI05FullPolicy(PreTrainedPolicy):
                 resolved_file = cached_file(
                     pretrained_name_or_path,
                     "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    use_auth_token=kwargs.get("use_auth_token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
+                    cache_dir=cache_dir,
+                    force_download=force_download,
+                    resume_download=resume_download,
+                    proxies=proxies,
+                    token=token,
+                    revision=revision,
+                    local_files_only=local_files_only,
                 )
                 from safetensors.torch import load_file
 
