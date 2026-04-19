@@ -1232,6 +1232,20 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         bsize = high_level_task_tokens.shape[0]
         device = high_level_task_tokens.device
 
+        # --- Phase timing instrumentation (gated; off by default to avoid impact on training) ---
+        profile = getattr(self, '_profile_inference', False)
+        is_cuda = device.type == 'cuda'
+        def _sync():
+            if profile and is_cuda:
+                torch.cuda.synchronize()
+        def _now():
+            _sync()
+            return time.perf_counter()
+        if profile:
+            self._phase_timings = {}
+
+        t_setup_start = _now() if profile else 0.0
+
         if noise is None:
             # Sample noise with padded dimension as expected by action_in_proj
             actions_shape = (
@@ -1248,6 +1262,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         ):
              noise = noise.to(dtype=torch.bfloat16)
 
+        if profile:
+            self._phase_timings['noise_setup_ms'] = (_now() - t_setup_start) * 1000.0
+
+        t_embed_start = _now() if profile else 0.0
         prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
             images=images, img_masks=img_masks, tokens=high_level_task_tokens, subtask_tokens=subtask_tokens,
             masks=high_level_task_masks, subtask_masks=subtask_masks, fast_action_tokens=None, fast_action_masks=None
@@ -1267,6 +1285,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
         self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
 
+        if profile:
+            self._phase_timings['embed_prefix_ms'] = (_now() - t_embed_start) * 1000.0
+
+        t_prefix_fwd_start = _now() if profile else 0.0
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
@@ -1274,13 +1296,31 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
         )
+        if profile:
+            self._phase_timings['prefix_forward_ms'] = (_now() - t_prefix_fwd_start) * 1000.0
+
+        # HF Gemma's DynamicCache.update() appends the suffix's K/V on every forward
+        # regardless of `use_cache=False`. Across denoise iterations that would grow
+        # the cache by `chunk_size` per step while the 4D attention_mask we build in
+        # `denoise_step` is sized only for `prefix_len + suffix_len`, leading to a
+        # shape mismatch (`attn_weights` kv_len > `causal_mask` kv_len) on iter >= 1.
+        # Snapshot the prefix length so we can crop the cache back before each call.
+        prefix_cache_len = past_key_values.get_seq_length()
 
         dt = -1.0 / num_steps
 
+        per_step_ms: list[float] = []
+        t_denoise_loop_start = _now() if profile else 0.0
         x_t = noise
         for step in range(num_steps):
-            time = 1.0 + step * dt
-            time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
+            t_step_start = _now() if profile else 0.0
+            # Ensure the cache only contains the prefix tokens; otherwise the suffix
+            # K/V from the previous denoise iteration would still be appended.
+            if past_key_values.get_seq_length() != prefix_cache_len:
+                past_key_values.crop(prefix_cache_len)
+
+            time_val = 1.0 + step * dt
+            time_tensor = torch.tensor(time_val, dtype=torch.float32, device=device).expand(bsize)
             
             # Ensure time_tensor matches model dtype
             if (
@@ -1306,7 +1346,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     x_t=x_t,
                     prev_chunk_left_over=prev_chunk_left_over,
                     inference_delay=inference_delay,
-                    time=time,
+                    time=time_val,
                     original_denoise_step_partial=denoise_step_partial_call,
                     execution_horizon=execution_horizon,
                 )
@@ -1316,7 +1356,19 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             x_t = x_t + dt * v_t
 
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
-                self.rtc_processor.track(time=time, x_t=x_t, v_t=v_t)
+                self.rtc_processor.track(time=time_val, x_t=x_t, v_t=v_t)
+
+            if profile:
+                per_step_ms.append((_now() - t_step_start) * 1000.0)
+
+        if profile:
+            self._phase_timings['denoise_total_ms'] = (_now() - t_denoise_loop_start) * 1000.0
+            self._phase_timings['denoise_steps'] = len(per_step_ms)
+            if per_step_ms:
+                self._phase_timings['denoise_per_step_avg_ms'] = sum(per_step_ms) / len(per_step_ms)
+                self._phase_timings['denoise_per_step_min_ms'] = min(per_step_ms)
+                self._phase_timings['denoise_per_step_max_ms'] = max(per_step_ms)
+                self._phase_timings['denoise_first_step_ms'] = per_step_ms[0]
 
         return x_t
 
@@ -1926,10 +1978,25 @@ class PI05FullPolicy(PreTrainedPolicy):
         """Predict a chunk of actions given environment observations."""
         self.eval()
 
+        # Phase timing instrumentation (gated; off by default)
+        profile = getattr(self.model, '_profile_inference', False)
+        device_is_cuda = next(self.parameters()).device.type == 'cuda'
+        def _sync():
+            if profile and device_is_cuda:
+                torch.cuda.synchronize()
+        def _now():
+            _sync()
+            return time.perf_counter()
+
+        t_imgs_start = _now() if profile else 0.0
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
         # tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         high_level_task_tokens, high_level_task_masks = batch[f"{OBS_LANGUAGE_USER_PROMPT_TOKENS}"], batch[f"{OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK}"]
+        if profile:
+            self.model._phase_timings_outer = {
+                'preprocess_images_ms': (_now() - t_imgs_start) * 1000.0,
+            }
 
         # Generate subtask tokens with time-based caching
         # Only regenerate if: no cache, or interval elapsed, or interval is 0 (always regenerate)
@@ -1942,6 +2009,7 @@ class PI05FullPolicy(PreTrainedPolicy):
             or (current_time - self._last_subtask_time) >= interval
         )
 
+        t_subtask_start = _now() if profile else 0.0
         if should_regenerate:
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
                 images, img_masks, high_level_task_tokens, high_level_task_masks,
@@ -1953,9 +2021,16 @@ class PI05FullPolicy(PreTrainedPolicy):
         else:
             subtask_tokens = self._cached_subtask_tokens
             subtask_masks = self._cached_subtask_masks
+        if profile:
+            self.model._phase_timings_outer['subtask_gen_ms'] = (_now() - t_subtask_start) * 1000.0
+            self.model._phase_timings_outer['subtask_regenerated'] = bool(should_regenerate)
 
+        t_sample_start = _now() if profile else 0.0
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
         actions = self.model.sample_actions(images, img_masks, high_level_task_tokens, high_level_task_masks, subtask_tokens, subtask_masks, **kwargs)
+        if profile:
+            self.model._phase_timings_outer['sample_actions_ms'] = (_now() - t_sample_start) * 1000.0
+
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]

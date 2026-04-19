@@ -36,7 +36,14 @@ class SharedState:
         self.env_wait_time = 0.0
         self.env_steps = 0
         self.inference_wait_time = 0.0
-        
+
+        # Effective control-rate tracking
+        self.starved_steps = 0
+        self.window_start_time = time.perf_counter()
+        self.inference_count = 0
+        self.inference_latency_total = 0.0
+        self.inference_latency_max = 0.0
+
         # Recording and Logging
         self.episode_counter = 0
         self.is_logging_episode = False
@@ -53,18 +60,47 @@ class SharedState:
         with self.lock:
             self.inference_wait_time += wait_time
 
+    def add_starved_step(self):
+        with self.lock:
+            self.starved_steps += 1
+
+    def add_inference_latency(self, latency: float):
+        with self.lock:
+            self.inference_count += 1
+            self.inference_latency_total += latency
+            if latency > self.inference_latency_max:
+                self.inference_latency_max = latency
+
     def get_and_reset_metrics(self):
         with self.lock:
+            now = time.perf_counter()
+            window_elapsed = max(1e-6, now - self.window_start_time)
             metrics = {
                 'env_wait_time': self.env_wait_time,
                 'env_steps': self.env_steps,
                 'inference_wait_time': self.inference_wait_time,
-                'env_active_time': getattr(self, 'env_active_time_total', 0.0)
+                'env_active_time': getattr(self, 'env_active_time_total', 0.0),
+                'starved_steps': self.starved_steps,
+                'window_elapsed': window_elapsed,
+                'effective_hz': self.env_steps / window_elapsed,
+                'starvation_rate': (self.starved_steps / self.env_steps) if self.env_steps > 0 else 0.0,
+                'inference_count': self.inference_count,
+                'inference_latency_avg': (
+                    self.inference_latency_total / self.inference_count
+                    if self.inference_count > 0 else 0.0
+                ),
+                'inference_latency_max': self.inference_latency_max,
+                'inference_hz': self.inference_count / window_elapsed,
             }
             self.env_wait_time = 0.0
             self.env_steps = 0
             self.inference_wait_time = 0.0
             self.env_active_time_total = 0.0
+            self.starved_steps = 0
+            self.inference_count = 0
+            self.inference_latency_total = 0.0
+            self.inference_latency_max = 0.0
+            self.window_start_time = now
             return metrics
 
     def update_observation(self, obs: dict, is_intervening: bool):
@@ -260,6 +296,17 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
         pop_override   = getattr(shared_state, 'pop_pending_override',   None)
         clear_override = getattr(shared_state, 'clear_pending_override', None)
 
+        # Per-chunk timing helpers. We sync CUDA before each measurement so the numbers
+        # reflect actual completion of GPU work, not just kernel enqueue. Defined once
+        # outside the loop so closures don't capture loop-iteration variables.
+        timing_device_is_cuda = device.type == 'cuda'
+        def _t_sync():
+            if timing_device_is_cuda:
+                torch.cuda.synchronize()
+        def _t_now():
+            _t_sync()
+            return time.perf_counter()
+
         while shared_state.running:
             # 1. Reset check
             if shared_state.check_and_clear_reset():
@@ -281,7 +328,8 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 shared_state.add_inference_wait_time(time.perf_counter() - wait_start)
                 continue
 
-            # 3. Fetch latest environment observation
+            # === PHASE 1: observation fetch ===
+            t_obs_start = _t_now()
             latest_obs = shared_state.get_latest_observation()
             if latest_obs is None:
                 time.sleep(0.01)
@@ -297,18 +345,35 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 'subtask': [""],
                 'advantage': advantage_val,
             }
+            t_obs_capture_ms = (_t_now() - t_obs_start) * 1000.0
 
             current_time = time.perf_counter()
 
             with torch.no_grad():
+                # === PHASE 2: preprocessor (image normalization, tokenization, host->device) ===
+                t_pre_start = _t_now()
                 if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
                     processed_batch = policy.preprocessor(batch_for_preprocessor)
                 else:
                     processed_batch = batch_for_preprocessor
+                t_preprocess_ms = (_t_now() - t_pre_start) * 1000.0
 
                 action_index_before = action_queue.get_action_index()
                 prev_actions        = action_queue.get_left_over()
 
+                # Debug toggle: forcing prev_actions=None turns RTC into a no-op
+                # (RTCProcessor.denoise_step short-circuits to the plain denoiser when
+                # prev_chunk_left_over is None). Use this to isolate whether chaotic
+                # inference behavior comes from RTC's prefix-attention guidance or
+                # from the underlying flow-matching denoiser. Set
+                # LEROBOT_DISABLE_RTC_GUIDANCE=1 to enable.
+                if os.environ.get("LEROBOT_DISABLE_RTC_GUIDANCE", "").lower() in ("1", "true", "yes"):
+                    if prev_actions is not None:
+                        logger.info("[RTC] LEROBOT_DISABLE_RTC_GUIDANCE=1 — dropping prev_actions to neutralize guidance")
+                    prev_actions = None
+
+                # === PHASE 3: RTC alignment (re-projects prev chunk into new anchor frame) ===
+                t_align_start = _t_now()
                 # --- Anchor/Delta alignment for RTC inpainting ---
                 action_encoding = getattr(policy.config, "action_encoding", "absolute")
                 anchor_now = None
@@ -336,6 +401,7 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                                 postprocessor=policy.postprocessor,
                                 normalizer=normalizer,
                             )
+                t_align_ms = (_t_now() - t_align_start) * 1000.0
 
                 # --- Subtask override injection (interactive mode only) ---
                 if pop_override is not None:
@@ -356,12 +422,15 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 # p95 latency avoids a single spike biasing the model to look too far ahead
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 
+                # === PHASE 4: model inference (predict_action_chunk) ===
+                t_model_start = _t_now()
                 actions_chunk = policy.predict_action_chunk(
                     processed_batch,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_actions,
                     execution_horizon=execution_horizon,
                 )
+                t_model_ms = (_t_now() - t_model_start) * 1000.0
 
                 # --- Subtask token decoding (for logging) ---
                 inference_step += 1
@@ -380,6 +449,8 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 except Exception as e:
                     logger.debug(f"[SUBTASK] Could not decode subtask tokens: {e}")
 
+                # === PHASE 5: postprocess (unnormalize + anchor reconstruction + smoothing) ===
+                t_post_start = _t_now()
                 original_actions = actions_chunk.squeeze(0).clone()
 
                 # --- Unnormalization & absolute action reconstruction ---
@@ -407,11 +478,13 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 if not hasattr(policy, '_chunk_plot_counter'):
                     policy._chunk_plot_counter = 0
                 policy._chunk_plot_counter += 1
+                t_postprocess_ms = (_t_now() - t_post_start) * 1000.0
 
             # Track latency
             new_latency = time.perf_counter() - current_time
             new_delay   = math.ceil(new_latency / time_per_chunk)
             latency_tracker.add(new_latency)
+            shared_state.add_inference_latency(new_latency)
 
             # Constrain discarded delay by how many actions the env actually consumed
             # (avoids jerky start when the queue was starved on the first chunk)
@@ -426,6 +499,50 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 action_index_before_inference=action_index_before,
                 anchor_state=anchor_now if action_encoding in ["anchor", "delta"] else None,
             )
+
+            qsize_after = action_queue.qsize()
+            logger.info(
+                f"[INFER] chunk #{inference_step} latency={new_latency * 1000:.0f}ms "
+                f"| consumed_during_inference={actions_consumed} "
+                f"| new_delay={new_delay} effective_delay={effective_delay} (kept={processed_actions.shape[0] - effective_delay}/{processed_actions.shape[0]}) "
+                f"| queue: {action_index_before} -> {current_index} -> {qsize_after}"
+            )
+
+            # === Per-phase timing breakdown ===
+            # Worker-side phases sum + model-internal phases (from PI05Pytorch.sample_actions
+            # via predict_action_chunk) should add up close to total round-trip latency.
+            worker_phase_total_ms = (
+                t_obs_capture_ms + t_preprocess_ms + t_align_ms + t_model_ms + t_postprocess_ms
+            )
+            phase_outer = getattr(policy.model, '_phase_timings_outer', {}) if hasattr(policy, 'model') else {}
+            phase_inner = getattr(policy.model, '_phase_timings', {}) if hasattr(policy, 'model') else {}
+            logger.info(
+                f"[TIMING] chunk #{inference_step} total={new_latency * 1000:.0f}ms "
+                f"(worker_sum={worker_phase_total_ms:.0f}ms) | "
+                f"obs={t_obs_capture_ms:.1f}ms preprocess={t_preprocess_ms:.1f}ms "
+                f"align={t_align_ms:.1f}ms model={t_model_ms:.0f}ms post={t_postprocess_ms:.1f}ms"
+            )
+            if phase_outer or phase_inner:
+                preprocess_imgs = phase_outer.get('preprocess_images_ms', 0.0)
+                subtask = phase_outer.get('subtask_gen_ms', 0.0)
+                subtask_regen = phase_outer.get('subtask_regenerated', False)
+                sample_actions = phase_outer.get('sample_actions_ms', 0.0)
+                noise_setup = phase_inner.get('noise_setup_ms', 0.0)
+                embed_prefix = phase_inner.get('embed_prefix_ms', 0.0)
+                prefix_fwd = phase_inner.get('prefix_forward_ms', 0.0)
+                denoise_total = phase_inner.get('denoise_total_ms', 0.0)
+                denoise_steps = phase_inner.get('denoise_steps', 0)
+                denoise_first = phase_inner.get('denoise_first_step_ms', 0.0)
+                denoise_avg = phase_inner.get('denoise_per_step_avg_ms', 0.0)
+                denoise_max = phase_inner.get('denoise_per_step_max_ms', 0.0)
+                logger.info(
+                    f"[TIMING] chunk #{inference_step} model breakdown: "
+                    f"images={preprocess_imgs:.1f}ms subtask={subtask:.1f}ms (regen={subtask_regen}) "
+                    f"sample_actions={sample_actions:.0f}ms = "
+                    f"[noise={noise_setup:.1f}ms embed_prefix={embed_prefix:.1f}ms "
+                    f"prefix_fwd={prefix_fwd:.0f}ms denoise={denoise_total:.0f}ms "
+                    f"({denoise_steps} steps; first={denoise_first:.0f}ms avg={denoise_avg:.0f}ms max={denoise_max:.0f}ms)]"
+                )
 
         logger.info("[GET_ACTIONS] Inference thread shutting down smoothly.")
     except Exception as e:
@@ -679,6 +796,20 @@ def env_interaction_worker(
                     # Slice to strictly 6 DoF constraints for Pi05 execution
                     if action.shape[-1] > 6:
                         action = action[..., :6]
+                    # Sample-log every 30th real action to compare against current pose
+                    real_consumed = getattr(env_interaction_worker, '_real_consumed_count', 0) + 1
+                    env_interaction_worker._real_consumed_count = real_consumed
+                    if real_consumed % 30 == 1:
+                        action_list = [round(float(x), 2) for x in action.tolist()]
+                        if hasattr(online_env, 'get_raw_joint_positions') and online_env.get_raw_joint_positions() is not None:
+                            cur = online_env.get_raw_joint_positions()
+                            cur_list = [round(float(cur.get(k, 0.0)), 2) for k in [
+                                'shoulder_pan.pos','shoulder_lift.pos','elbow_flex.pos',
+                                'wrist_flex.pos','wrist_roll.pos','gripper.pos']]
+                            delta = [round(a - c, 2) for a, c in zip(action_list, cur_list, strict=False)]
+                            logger.info(f"[ENV] real action #{real_consumed} | cmd={action_list} cur={cur_list} delta={delta} | qsize={action_queue.qsize()}")
+                        else:
+                            logger.info(f"[ENV] real action #{real_consumed} | cmd={action_list} | qsize={action_queue.qsize()}")
                 else:
                     # Queue starvation
                     if hasattr(online_env, 'get_raw_joint_positions'):
@@ -691,10 +822,27 @@ def env_interaction_worker(
                             'wrist_roll.pos',
                             'gripper.pos',
                         ]
-                        action = torch.tensor([float(raw_joints.get(k, 0.0)) for k in joint_order], dtype=torch.float32, device=cfg.policy.device)
+                        if raw_joints is None:
+                            logger.error("[ENV] STARVATION: get_raw_joint_positions() returned None! Sending zeros (DANGEROUS).")
+                            action = torch.zeros(6, dtype=torch.float32, device=cfg.policy.device)
+                        else:
+                            missing = [k for k in joint_order if k not in raw_joints]
+                            if missing:
+                                logger.error(
+                                    f"[ENV] STARVATION: missing joint keys {missing} in raw_joint_positions; "
+                                    f"defaulting them to 0.0 (DANGEROUS). Available keys: {list(raw_joints.keys())}"
+                                )
+                            action = torch.tensor([float(raw_joints.get(k, 0.0)) for k in joint_order], dtype=torch.float32, device=cfg.policy.device)
                     else:
                         action = torch.zeros(6, dtype=torch.float32, device=cfg.policy.device)
-                    logger.warning("[ENV] Action queue starved. Executing null ops.")
+                    shared_state.add_starved_step()
+                    # Sample-log every 30th starvation step so we can verify hold-position
+                    starved_total = shared_state.starved_steps
+                    if starved_total % 30 == 1:
+                        action_list = [round(float(x), 2) for x in action.tolist()]
+                        logger.warning(f"[ENV] Action queue starved (n={starved_total}). Holding pose: {action_list}")
+                    else:
+                        logger.warning("[ENV] Action queue starved. Executing null ops.")
             
             # Save current transition before stepping for next_state later
             # No deep copy needed: step_env_and_process_transition never mutates transition in-place

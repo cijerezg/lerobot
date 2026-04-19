@@ -1,5 +1,5 @@
 {
-    "output_dir": "outputs/inference_ck_2000_4",
+    "output_dir": "outputs/inference_ck_2000_6",
     "use_rerun": false,
     "job_name": "default",
     "resume": false,
@@ -52,9 +52,9 @@
         "terminal_failure_reward": -16.0,
         "rtc_config": {
             "enabled": true,
-            "execution_horizon": 10,
+            "execution_horizon": 15,
             "prefix_attention_schedule": "LINEAR",
-            "max_guidance_weight": 10.0,
+            "max_guidance_weight": 5.0,
             "debug": false,
             "debug_maxlen": 100
         },
@@ -213,7 +213,7 @@
             "max_gripper_pos": 30
         },
         "name": "real_robot",
-        "fps": 30,
+        "fps": 15,
         "task": "Pick up the orange cube and place it on the black X marker",
         "features": {
             "observation.images.wrist": {

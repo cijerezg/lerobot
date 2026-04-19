@@ -109,6 +109,13 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     policy = policy.eval()
     assert isinstance(policy, nn.Module)
 
+    # Enable per-phase inference timing on the model. The flag is read by
+    # PI05Policy.predict_action_chunk and PI05Pytorch.sample_actions, which
+    # populate `policy.model._phase_timings_outer` and `policy.model._phase_timings`
+    # for the inference worker to consume and log per chunk.
+    if hasattr(policy, 'model'):
+        policy.model._profile_inference = True
+
     # Validate RTC features
     if getattr(policy.config, "rtc_config", None) is None or not policy.config.rtc_config.enabled:
         logger.error("FATAL: RTC configuration is not populated or enabled in the config. Cannot run async inference on synchronous policy!")
@@ -163,9 +170,14 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
         start_time = time.time()
         logger.info("[MAIN] Successfully orchestrated asynchronous context. Awaiting KeyboardInterrupt to exit.")
 
-        # Polling supervisor log loop
+        # Polling supervisor log loop.
+        # Discard the warmup window (process-start through worker spawn) so the first
+        # real window reflects only steady-state activity.
+        shared_state.get_and_reset_metrics()
+        target_fps = cfg.env.fps
+        supervisor_period_s = 5
         while not shutdown_event.is_set():
-            time.sleep(20)
+            time.sleep(supervisor_period_s)
 
             q_size = action_queue.qsize() if action_queue is not None else 0
             teleop_stat = "ON" if shared_state.is_intervening else "OFF"
@@ -174,12 +186,34 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
             inf_wait = metrics['inference_wait_time']
             env_wait = metrics['env_wait_time']
             env_steps = metrics['env_steps']
+            window = metrics['window_elapsed']
+            effective_hz = metrics['effective_hz']
+            starvation_rate = metrics['starvation_rate']
+            starved_steps = metrics['starved_steps']
+            real_steps = env_steps - starved_steps
+            real_hz = real_steps / window if window > 0 else 0.0
+            inf_count = metrics['inference_count']
+            inf_lat_avg = metrics['inference_latency_avg']
+            inf_lat_max = metrics['inference_latency_max']
+            inf_hz = metrics['inference_hz']
 
             avg_env_wait = env_wait / max(1, env_steps)
             avg_env_active = metrics.get('env_active_time', 0.0) / max(1, env_steps)
 
             logger.info(f"[MAIN LOG] Queue Buffer Length: {q_size} | Teleop Intervention: {teleop_stat} | Runtime: {int(time.time() - start_time)}s")
-            logger.info(f"[metrics] Inference sleep time: {inf_wait:.2f}s | Env active (camera/step) avg: {avg_env_active:.4f}s | Env sleep avg: {avg_env_wait:.4f}s")
+            logger.info(
+                f"[control_rate] target={target_fps}Hz | effective={effective_hz:.2f}Hz "
+                f"(real={real_hz:.2f}Hz, starved={starvation_rate * 100:.1f}% of {env_steps} steps over {window:.1f}s)"
+            )
+            logger.info(
+                f"[inference] chunks={inf_count} ({inf_hz:.2f} chunks/s) | "
+                f"latency avg={inf_lat_avg * 1000:.0f}ms max={inf_lat_max * 1000:.0f}ms | "
+                f"sleep={inf_wait:.2f}s (>0 means queue is keeping up)"
+            )
+            logger.info(
+                f"[env_loop] active avg={avg_env_active * 1000:.1f}ms | sleep avg={avg_env_wait * 1000:.1f}ms "
+                f"(target step={1000.0 / target_fps:.1f}ms)"
+            )
 
     except Exception as e:
         logger.error(f"Error in main orchestration thread: {e}")
