@@ -38,7 +38,7 @@
         "pi05_checkpoint": "outputs/pi05_full_offline_recap_20260418_3/checkpoints/002000/pretrained_model",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
-        "num_inference_steps": 5,
+        "num_inference_steps": 3,
         "use_separate_critic": true,
         "knowledge_insulation": true,
         "loss_weight_flow": 1.0,
@@ -52,7 +52,7 @@
         "terminal_failure_reward": -16.0,
         "rtc_config": {
             "enabled": true,
-            "execution_horizon": 15,
+            "execution_horizon": 30,
             "prefix_attention_schedule": "LINEAR",
             "max_guidance_weight": 5.0,
             "debug": false,
@@ -213,7 +213,7 @@
             "max_gripper_pos": 30
         },
         "name": "real_robot",
-        "fps": 15,
+        "fps": 30,
         "task": "Pick up the orange cube and place it on the black X marker",
         "features": {
             "observation.images.wrist": {
