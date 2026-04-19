@@ -476,8 +476,13 @@ def _finalize_episode_log(
                     Image.fromarray(img_np).save(img_path)
 
     # --- 2. Batched critic inference ---
+    # Skip cleanly when the policy was constructed without a critic
+    # (e.g. inference_pi05_async with cfg.policy.use_separate_critic=False).
     critic_values = []
-    if policy is not None:
+    has_critic = policy is not None and getattr(policy, "critic", None) is not None
+    if not has_critic:
+        logger.info("[ENV] No critic on policy; skipping critic inference, plot, and overlay video.")
+    if has_critic:
         task_str = cfg.policy.task
         adv_val = torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
         robot_type = cfg.env.robot.type if hasattr(cfg.env, 'robot') else ""
@@ -514,25 +519,27 @@ def _finalize_episode_log(
                     critic_values.append(critic_val)
 
     # --- 3. Save critic JSON + plot ---
-    with open(os.path.join(log_dir, "critic_values.json"), "w") as f:
-        json.dump(critic_values, f)
+    if has_critic:
+        with open(os.path.join(log_dir, "critic_values.json"), "w") as f:
+            json.dump(critic_values, f)
 
-    if critic_values:
-        plt.figure(figsize=(10, 5))
-        plt.plot(critic_values)
-        plt.title(f"Critic Values - Episode {episode_counter}")
-        plt.xlabel("Step")
-        plt.ylabel("Min Q-Value")
-        plt.grid(True)
-        plt.savefig(os.path.join(log_dir, "critic_plot.png"))
-        plt.close()
+        if critic_values:
+            plt.figure(figsize=(10, 5))
+            plt.plot(critic_values)
+            plt.title(f"Critic Values - Episode {episode_counter}")
+            plt.xlabel("Step")
+            plt.ylabel("Min Q-Value")
+            plt.grid(True)
+            plt.savefig(os.path.join(log_dir, "critic_plot.png"))
+            plt.close()
 
     # --- 4. Generate video ---
-    try:
-        save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras, fps=cfg.env.fps, subtask_texts=subtask_texts)
-        logger.info(f"[ENV] Video generated for episode {episode_counter}")
-    except Exception as e:
-        logger.error(f"[ENV] Failed to generate video: {e}")
+    if has_critic and critic_values:
+        try:
+            save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras, fps=cfg.env.fps, subtask_texts=subtask_texts)
+            logger.info(f"[ENV] Video generated for episode {episode_counter}")
+        except Exception as e:
+            logger.error(f"[ENV] Failed to generate video: {e}")
 
 
 def env_interaction_worker(

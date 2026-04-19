@@ -26,28 +26,27 @@ Usage:
 """
 
 import logging
-import time
-import sys
-import traceback
 import signal
+import sys
+import time
+import traceback
 from threading import Thread
 
 import torch
 from torch import nn
 
+import lerobot.rl.rl_pi05  # noqa: F401  -- Important: registers PI05RLConfig ('pi05_rl') in the choice registry via import side-effects
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.rtc.action_queue import ActionQueue
+from lerobot.rl.buffer import ReplayBuffer
+from lerobot.rl.gym_manipulator import make_processors, make_robot_env
+from lerobot.rl.inference_utils import SharedState, env_interaction_worker, get_actions_worker
+from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
 from lerobot.rl.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import get_safe_torch_device, init_logging
-
-from lerobot.rl.gym_manipulator import make_processors, make_robot_env
-import lerobot.rl.rl_pi05  # Important: Register PI05RLConfig via import side-effects
-from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
-from lerobot.rl.inference_utils import SharedState, get_actions_worker, env_interaction_worker
-from lerobot.rl.buffer import ReplayBuffer
 
 
 @parser.wrap()
@@ -60,14 +59,17 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
 
     # Override configurations for isolated actor running
     # cfg.policy.use_separate_critic = False  # Critic is now needed for logging
+
+    # Need to disable critic metrics so I can run inference on 4070 TI SUPER
+    cfg.policy.use_separate_critic = False
     set_seed(cfg.seed)
 
     device_name = getattr(cfg.policy, "actor_device", None)
     if device_name is None:
         device_name = cfg.policy.device
-        
+
     device = get_safe_torch_device(device_name, log=True)
-    cfg.policy.device = device.type  # Enforce propagation 
+    cfg.policy.device = device.type  # Enforce propagation
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -75,12 +77,12 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     # Setup signal handler for graceful shutdown
     signal_handler = ProcessSignalHandler(use_threads=True, display_pid=False)
     shutdown_event = signal_handler.shutdown_event
-    
+
     # Optional override for debugging/stopping
     def intercept_sigint(sig, frame):
         logger.info("\nCaught SIGINT! Shutting down async inference safely...")
         shutdown_event.set()
-    
+
     signal.signal(signal.SIGINT, intercept_sigint)
 
     if getattr(cfg, "use_rerun", False):
@@ -119,7 +121,7 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     # Instantiate bridging components
     shared_state = SharedState()
     shared_state.running = not shutdown_event.is_set()
-    
+
     shared_state.is_logging_episode = (shared_state.episode_counter % cfg.episode_logging_freq == 0)
 
     # Initialize ReplayBuffer for recording
@@ -155,7 +157,7 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     try:
         environment_thread.start()
         # Give environment thread 1 second to bootstrap the `SharedState` before the inference loop goes wild
-        time.sleep(1.0) 
+        time.sleep(1.0)
         inference_thread.start()
 
         start_time = time.time()
@@ -164,18 +166,18 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
         # Polling supervisor log loop
         while not shutdown_event.is_set():
             time.sleep(20)
-            
+
             q_size = action_queue.qsize() if action_queue is not None else 0
             teleop_stat = "ON" if shared_state.is_intervening else "OFF"
-            
+
             metrics = shared_state.get_and_reset_metrics()
             inf_wait = metrics['inference_wait_time']
             env_wait = metrics['env_wait_time']
             env_steps = metrics['env_steps']
-            
+
             avg_env_wait = env_wait / max(1, env_steps)
             avg_env_active = metrics.get('env_active_time', 0.0) / max(1, env_steps)
-            
+
             logger.info(f"[MAIN LOG] Queue Buffer Length: {q_size} | Teleop Intervention: {teleop_stat} | Runtime: {int(time.time() - start_time)}s")
             logger.info(f"[metrics] Inference sleep time: {inf_wait:.2f}s | Env active (camera/step) avg: {avg_env_active:.4f}s | Env sleep avg: {avg_env_wait:.4f}s")
 
@@ -185,7 +187,7 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     finally:
         shutdown_event.set()
         shared_state.running = False
-        
+
         logger.info("Executing safe un-spool connection teardowns.")
         if inference_thread.is_alive():
             inference_thread.join(timeout=3.0)

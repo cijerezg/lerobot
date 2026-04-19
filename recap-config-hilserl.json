@@ -1,5 +1,5 @@
 {
-    "output_dir": null,
+    "output_dir": "outputs/inference_ck_2000_2",
     "use_rerun": false,
     "job_name": "default",
     "resume": false,
