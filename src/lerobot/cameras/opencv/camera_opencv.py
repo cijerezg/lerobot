@@ -124,6 +124,7 @@ class OpenCVCamera(Camera):
         self.frame_lock: Lock = Lock()
         self.latest_frame: NDArray[Any] | None = None
         self.new_frame_event: Event = Event()
+        self._last_read_log_s: float = 0.0
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
         self.backend: int = get_cv2_backend()
@@ -238,7 +239,13 @@ class OpenCVCamera(Camera):
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
         if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
-            raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}).")
+            logger.warning(
+                f"{self} failed to set fps={self.fps} ({actual_fps=}). "
+                f"Continuing with actual FPS. Consider using MJPEG format (fourcc='MJPG') "
+                f"or reducing resolution to achieve higher FPS."
+            )
+            # Update self.fps to the actual achievable FPS
+            self.fps = actual_fps
 
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
@@ -378,7 +385,11 @@ class OpenCVCamera(Camera):
         processed_frame = self._postprocess_image(frame, color_mode)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
-        logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
+        # Throttle per-frame debug logs; logging is surprisingly expensive under load.
+        now_s = time.perf_counter()
+        if (now_s - self._last_read_log_s) >= 1.0:
+            logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
+            self._last_read_log_s = now_s
 
         return processed_frame
 
@@ -439,13 +450,22 @@ class OpenCVCamera(Camera):
         if self.stop_event is None:
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
+        target_dt_s = (1.0 / float(self.fps)) if self.fps else None
         while not self.stop_event.is_set():
             try:
+                t0 = time.perf_counter()
                 color_image = self.read()
 
                 with self.frame_lock:
                     self.latest_frame = color_image
                 self.new_frame_event.set()
+
+                # Throttle to configured FPS if provided (avoid spinning at max camera throughput).
+                if target_dt_s is not None:
+                    elapsed = time.perf_counter() - t0
+                    sleep_s = max(0.0, target_dt_s - elapsed)
+                    if sleep_s > 0:
+                        time.sleep(sleep_s)
 
             except DeviceNotConnectedError:
                 break
@@ -499,8 +519,20 @@ class OpenCVCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        # Optional on-demand mode: do a single blocking read instead of maintaining a background thread.
+        if not self.config.use_threaded_async_read:
+            return self.read()
+
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
+
+        # If requested, do not wait for a fresh frame; return the latest cached frame immediately.
+        # This avoids control-loop stalls when the camera can't sustain the requested FPS.
+        if self.config.allow_stale_frames:
+            with self.frame_lock:
+                frame = self.latest_frame
+            if frame is not None:
+                return frame
 
         if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
             thread_alive = self.thread is not None and self.thread.is_alive()
@@ -511,7 +543,7 @@ class OpenCVCamera(Camera):
 
         with self.frame_lock:
             frame = self.latest_frame
-            #self.new_frame_event.clear()
+            self.new_frame_event.clear()
 
         if frame is None:
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")

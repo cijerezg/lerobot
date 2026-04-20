@@ -37,13 +37,18 @@ from lerobot.async_inference.utils.simulation import (
     ReorderEvent,
 )
 from lerobot.cameras.opencv import OpenCVCameraConfig
-from lerobot.robots.so100_follower import SO100FollowerConfig
-from lerobot.robots.so101_follower import SO101FollowerConfig
+
+# `lerobot` consolidated SO100Follower/SO101Follower into a single `so_follower`
+# package; SO100FollowerConfig and SO101FollowerConfig are kept as TypeAlias.
+from lerobot.robots.so_follower import SO100FollowerConfig, SO101FollowerConfig
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_SERVER_ADDRESS = "192.168.4.37:8080"
+# Default to loopback because `scripts/run_drtc_experiment.sh` spawns the policy
+# server locally (and `PolicyServerDrtcConfig.host` defaults to "localhost").
+# Override with `--server_address host:port` for a remote/distributed setup.
+DEFAULT_SERVER_ADDRESS = "localhost:8080"
 DEFAULT_ROBOT_PORT = "/dev/ttyACM0"
 DEFAULT_ROBOT_ID = "so101_follower_2026_01_03"
 DEFAULT_CAMERA1_PATH = "/dev/v4l/by-path/platform-xhci-hcd.1-usb-0:2:1.0-video-index0"

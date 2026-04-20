@@ -18,6 +18,7 @@
 #
 # Environment variables:
 #   POLICY_SERVER_DELAY_S   - Seconds to wait for policy server startup (default: 3)
+#   POLICY_SERVER_HOST      - Host the client should connect to (default: localhost)
 #   POLICY_SERVER_PORT      - Port to check / bind (default: 8080)
 #
 # =============================================================================
@@ -36,6 +37,7 @@ done
 set -- "${PASSTHROUGH_ARGS[@]}"
 
 POLICY_SERVER_DELAY_S="${POLICY_SERVER_DELAY_S:-3}"
+POLICY_SERVER_HOST="${POLICY_SERVER_HOST:-localhost}"
 POLICY_SERVER_PORT="${POLICY_SERVER_PORT:-8080}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -94,7 +96,10 @@ fi
 
 echo "[1/2] Starting policy server..."
 echo "      Policy server logs: $LOG_FILE"
-POLICY_SERVER_CMD=(uv run --no-sync python -m lerobot.async_inference.policy_server_drtc)
+POLICY_SERVER_CMD=(uv run --no-sync python -m lerobot.async_inference.policy_server_drtc
+    --host="$POLICY_SERVER_HOST"
+    --port="$POLICY_SERVER_PORT"
+)
 if [ "$ENABLE_VIZ" = true ]; then
     POLICY_SERVER_CMD+=(--trajectory_viz_enabled=true)
 fi
@@ -126,7 +131,15 @@ echo "      Press Ctrl+C to stop."
 echo ""
 echo "----------------------------------------------"
 
-uv run --no-sync python examples/experiments/run_drtc_experiment.py "$@"
+# If the user did not pass --server_address explicitly, point the client at the
+# server we just spawned. This avoids surprises when the runner default and the
+# server's bind address disagree (e.g. server on localhost, runner default LAN IP).
+EXTRA_ARGS=()
+if ! printf '%s\n' "$@" | grep -q -E '^--server_address(=|$)'; then
+    EXTRA_ARGS+=(--server_address "${POLICY_SERVER_HOST}:${POLICY_SERVER_PORT}")
+fi
+
+uv run --no-sync python examples/experiments/run_drtc_experiment.py "${EXTRA_ARGS[@]}" "$@"
 
 # Show server-side diagnostics from the log (if any DIAG_SERVER lines exist)
 if [ -f "$LOG_FILE" ] && grep -q "DIAG_SERVER" "$LOG_FILE"; then

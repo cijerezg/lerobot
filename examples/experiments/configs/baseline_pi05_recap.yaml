@@ -43,7 +43,7 @@ latency_alpha: 0.125
 latency_beta: 0.25
 
 # Timing -- env.fps in recap-config-hilserl.json is 30.
-duration_s: 60.0
+duration_s: 120.0
 fps: 30
 
 # Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config.
