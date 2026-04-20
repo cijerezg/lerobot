@@ -62,7 +62,7 @@ rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 1.0
 rtc_full_trajectory_alignment: false
 
-inference_advantage: 0.0   # forces "Advantage: negative" in the prompt
+inference_advantage: 1.0   # forces "Advantage: negative" in the prompt
 # inference_advantage: 1.0 # forces "Advantage: positive" (current default)
 # omit entirely            # uses policy.config.inference_advantage (1.0)
 
