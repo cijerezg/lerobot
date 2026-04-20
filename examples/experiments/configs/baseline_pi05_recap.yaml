@@ -28,7 +28,7 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: pi05_rl
-pretrained_name_or_path: outputs/pi05_full_offline_recap_20260418_3/checkpoints/002000/pretrained_model
+pretrained_name_or_path: outputs/pi05_full_offline_recap_20260418_3/checkpoints/001000/pretrained_model
 
 # DRTC parameters
 estimator: jk
@@ -38,13 +38,13 @@ epsilon: 1
 # Pi05 supports a long horizon; cap at execution_horizon (30 in recap-config-hilserl.json
 # rtc_config) to keep the chunk reasonable while still leaving slack for guidance.
 actions_per_chunk: 50
-s_min: 20
+s_min: 30
 latency_alpha: 0.125
 latency_beta: 0.25
 
 # Timing -- env.fps in recap-config-hilserl.json is 30.
 duration_s: 120.0
-fps: 30
+fps: 20
 
 # Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config
 # from recap-config-hilserl.json. Keeping these in sync is critical: num_flow_matching_steps
@@ -62,7 +62,7 @@ rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 1.0
 rtc_full_trajectory_alignment: false
 
-inference_advantage: 1.0   # forces "Advantage: negative" in the prompt
+# inference_advantage: 1.0   # forces "Advantage: negative" in the prompt
 # inference_advantage: 1.0 # forces "Advantage: positive" (current default)
 # omit entirely            # uses policy.config.inference_advantage (1.0)
 
@@ -73,10 +73,10 @@ inference_advantage: 1.0   # forces "Advantage: negative" in the prompt
 # (`inference_pi05_async.py`) uses a non-amplifying centered 5-tap moving
 # average instead -- skipping the client-side filter entirely is the closest
 # safe match until that smoother is ported over.
-action_filter_mode: none
-# action_filter_mode: butterworth
-# action_filter_butterworth_cutoff: 3.0
-# action_filter_gain: 1.4
+# action_filter_mode: none
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 3.0
+action_filter_gain: 1.4
 
 # Diagnostics
 full_diagnostics: true
