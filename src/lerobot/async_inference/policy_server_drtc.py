@@ -84,6 +84,11 @@ class ActionChunkCache:
     Used for RTC inpainting: the server caches raw (pre-postprocess) action chunks
     so the client can reference them by source control step + index range instead
     of sending post-processed actions (which have different dimensions).
+
+    For action_encoding in {"anchor", "delta"} we additionally cache the
+    anchor (chunk-start joint state) used to generate each chunk, so the
+    server can re-align cached deltas to the *new* anchor at prefix
+    reconstruction time (see `align_prev_actions`).
     """
 
     def __init__(self, max_size: int = 10):
@@ -93,25 +98,38 @@ class ActionChunkCache:
             max_size: Maximum number of chunks to cache (oldest evicted first).
         """
         self._cache: OrderedDict[int, torch.Tensor] = OrderedDict()
+        self._anchors: OrderedDict[int, torch.Tensor] = OrderedDict()
         self._max_size = max_size
 
-    def put(self, src_step: int, raw_actions: torch.Tensor) -> None:
-        """Store a raw action chunk keyed by source step.
+    def put(
+        self,
+        src_step: int,
+        raw_actions: torch.Tensor,
+        anchor: torch.Tensor | None = None,
+    ) -> None:
+        """Store a raw action chunk (and optional anchor) keyed by source step.
 
         Args:
             src_step: The source step (observation timestep) for this chunk.
             raw_actions: Raw action tensor of shape (B, T, A) or (T, A).
+            anchor: Optional pre-preprocess joint state used as the anchor when
+                this chunk was generated. Required for cross-chunk RTC alignment
+                under `anchor` / `delta` action encodings.
         """
         # If already exists, remove it first so it goes to the end (most recent)
         if src_step in self._cache:
             del self._cache[src_step]
+            self._anchors.pop(src_step, None)
 
         # Evict oldest if at capacity
         while len(self._cache) >= self._max_size:
-            self._cache.popitem(last=False)
+            evicted_step, _ = self._cache.popitem(last=False)
+            self._anchors.pop(evicted_step, None)
 
         # Store a detached clone to avoid holding onto computation graph
         self._cache[src_step] = raw_actions.detach().clone()
+        if anchor is not None:
+            self._anchors[src_step] = anchor.detach().clone()
 
     def get(self, src_step: int) -> torch.Tensor | None:
         """Retrieve a cached chunk by source step.
@@ -124,9 +142,14 @@ class ActionChunkCache:
         """
         return self._cache.get(src_step)
 
+    def get_anchor(self, src_step: int) -> torch.Tensor | None:
+        """Retrieve the anchor (chunk-start state) used for `src_step`'s chunk."""
+        return self._anchors.get(src_step)
+
     def clear(self) -> None:
         """Clear all cached chunks."""
         self._cache.clear()
+        self._anchors.clear()
 
 class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
     """DRTC policy server.
@@ -190,6 +213,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._pi05_task_str: str | None = None
         self._pi05_advantage: float = 1.0
         self._pi05_robot_type: str = ""
+
+        # Cross-chunk RTC anchor alignment (anchor / delta encodings):
+        # the postprocessor's NormalizerProcessorStep is needed to round-trip
+        # cached prefix slices through unnormalize -> shift -> renormalize so
+        # they reference the *current* anchor instead of the stale one used
+        # when the chunk was generated.
+        self._action_normalizer: Any = None
+        self._action_encoding: str = "absolute"
 
         # Client-driven RTC (optional)
         self._rtc_cfg: AsyncRTCConfig | None = None
@@ -401,6 +432,33 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             )
         t_pp_done = time.perf_counter()
         self.logger.info("Built pre/post processors in %.1fs", t_pp_done - t_pp_start)
+
+        # Cache action encoding + locate the preprocessor's NormalizerProcessorStep
+        # so we can renormalize aligned RTC prefix slices. The standalone
+        # `inference_utils.py:386-403` plucks the same step from
+        # `policy.preprocessor.steps` and uses its `_normalize_action`.
+        self._action_encoding = str(
+            getattr(getattr(self.policy, "config", None), "action_encoding", "absolute") or "absolute"
+        )
+        self._action_normalizer = None
+        if self._action_encoding in ("anchor", "delta"):
+            try:
+                from lerobot.processor import NormalizerProcessorStep
+
+                self._action_normalizer = next(
+                    s for s in self.preprocessor.steps if isinstance(s, NormalizerProcessorStep)
+                )
+                self.logger.info(
+                    "RTC anchor alignment enabled (action_encoding=%s) | normalizer found",
+                    self._action_encoding,
+                )
+            except (StopIteration, ImportError) as e:
+                self.logger.warning(
+                    "action_encoding=%s but could not locate NormalizerProcessorStep "
+                    "in preprocessor.steps (%s); RTC prefix anchor alignment will be skipped.",
+                    self._action_encoding,
+                    e,
+                )
         self._metrics.diagnostic.timing_s("policy_load_ms", t_load_done - t_load_start)
         self._metrics.diagnostic.timing_s("policy_to_ms", t_to_done - t_to_start)
         self._metrics.diagnostic.timing_s("policy_processors_ms", t_pp_done - t_pp_start)
@@ -719,6 +777,101 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         }
         return observation
 
+    def _align_prefix_slice(
+        self,
+        slice_norm: torch.Tensor,
+        src_step: int,
+        anchor_now: torch.Tensor | None,
+        start_idx: int,
+    ) -> torch.Tensor:
+        """Re-anchor a single cached prefix slice to the *current* observation state.
+
+        Generalization of `lerobot.rl.actor_pi05_async_utils.align_prev_actions`
+        for arbitrary `(start_idx, end_idx)` slices of a cached chunk. Each slice
+        is treated as having `offset = start_idx` (i.e. its first row was at
+        position `start_idx` in the source chunk's per-timestep stats).
+
+        Returns the (re-normalized, in model space) slice, same shape as input.
+        Falls back to returning `slice_norm` unchanged when alignment is not
+        possible (e.g. absolute encoding, normalizer unavailable, missing
+        anchor in cache).
+        """
+        if self._action_encoding not in ("anchor", "delta"):
+            return slice_norm
+        if anchor_now is None or self._action_normalizer is None:
+            return slice_norm
+        if self.actions_per_chunk is None:
+            return slice_norm
+
+        anchor_old = self._action_cache.get_anchor(int(src_step))
+        if anchor_old is None:
+            return slice_norm
+
+        # delta with offset > 0: only d_0 references s_0; consecutive diffs need no fix.
+        if self._action_encoding == "delta" and start_idx > 0:
+            return slice_norm
+
+        n_seg, action_dim = slice_norm.shape
+        chunk_size = int(self.actions_per_chunk)
+        if start_idx >= chunk_size:
+            return slice_norm
+        n_seg_eff = min(n_seg, chunk_size - start_idx)
+        if n_seg_eff <= 0:
+            return slice_norm
+        end_idx = start_idx + n_seg_eff
+
+        device = slice_norm.device
+        dtype = slice_norm.dtype
+
+        # Right-align so per-timestep postprocessor stats align with original positions
+        right_padded = torch.zeros(chunk_size, action_dim, device=device, dtype=dtype)
+        right_padded[start_idx:end_idx] = slice_norm[:n_seg_eff]
+
+        try:
+            d_abs = self.postprocessor(right_padded)
+        except Exception as e:
+            self.logger.warning("RTC alignment: postprocessor failed (%s); skipping", e)
+            return slice_norm
+
+        # Apply shift in absolute action space, only on the executable joint dims
+        a_old = anchor_old.squeeze(0) if anchor_old.dim() > 1 else anchor_old
+        a_now = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
+        a_old = a_old.to(device=d_abs.device, dtype=d_abs.dtype)
+        a_now = a_now.to(device=d_abs.device, dtype=d_abs.dtype)
+        delta_s = a_old - a_now
+        a_out = d_abs.shape[-1]
+        correct_dim = min(delta_s.shape[-1], a_out)
+        delta_s_use = delta_s[:correct_dim]
+
+        if self._action_encoding == "anchor":
+            d_abs[start_idx:end_idx, :correct_dim] = (
+                d_abs[start_idx:end_idx, :correct_dim] + delta_s_use
+            )
+        else:  # delta with start_idx == 0
+            d_abs[0, :correct_dim] = d_abs[0, :correct_dim] + delta_s_use
+
+        # Left-align for renorm: the model receives prev_chunk_left_over at positions 0..n_seg-1
+        left_padded = torch.zeros(chunk_size, a_out, device=d_abs.device, dtype=d_abs.dtype)
+        left_padded[:n_seg_eff] = d_abs[start_idx:end_idx]
+
+        try:
+            renorm = self._action_normalizer._normalize_action(left_padded, inverse=False)
+        except Exception as e:
+            self.logger.warning("RTC alignment: renormalize failed (%s); skipping", e)
+            return slice_norm
+
+        # Match input shape: cached chunk uses model dim (e.g. 32-dim padded); renorm is
+        # whatever the normalizer returns. Pad/truncate to keep the original action_dim.
+        out = torch.zeros(n_seg_eff, action_dim, device=device, dtype=dtype)
+        copy_dim = min(action_dim, renorm.shape[-1])
+        out[:, :copy_dim] = renorm[:n_seg_eff, :copy_dim].to(device=device, dtype=dtype)
+        # If the input had more rows than chunk_size could absorb, copy the remainder
+        # through unchanged (no per-timestep stats available beyond chunk_size).
+        if n_seg_eff < n_seg:
+            tail = slice_norm[n_seg_eff:]
+            out = torch.cat([out, tail], dim=0)
+        return out
+
     def _predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
         """Run inference on an observation and return dense packed actions (lower jitter)."""
         if self.actions_per_chunk is None:
@@ -790,10 +943,26 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                             if cached_chunk is not None:
                                 # Extract slice from cached chunk (B, T, A) or (T, A)
                                 if cached_chunk.ndim == 2:
-                                    slices.append(cached_chunk[start_idx:end_idx, :])
+                                    raw_slice = cached_chunk[start_idx:end_idx, :]
                                 else:
                                     # Squeeze batch dim for concatenation
-                                    slices.append(cached_chunk[0, start_idx:end_idx, :])
+                                    raw_slice = cached_chunk[0, start_idx:end_idx, :]
+                                # Re-anchor under anchor / delta encodings so the
+                                # cached deltas reference the *current* observation
+                                # state instead of the stale anchor used at
+                                # generation time. (No-op for absolute encoding.)
+                                aligned_slice = self._align_prefix_slice(
+                                    slice_norm=raw_slice,
+                                    src_step=int(control_src_step),
+                                    anchor_now=anchor_state,
+                                    start_idx=int(start_idx),
+                                )
+                                slices.append(aligned_slice)
+                                if (
+                                    self._action_encoding in ("anchor", "delta")
+                                    and aligned_slice is not raw_slice
+                                ):
+                                    self._metrics.diagnostic.counter("rtc_prefix_aligned", 1)
 
                         if slices:
                             # Concatenate all slices along time dimension -> (T_total, A)
@@ -841,10 +1010,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         b, t, a = action_tensor.shape
 
-        # Cache raw action chunk BEFORE postprocessing (for future RTC inpainting)
-        # Key by control_step so RTC action_schedule_spans spans can look up the right chunk.
+        # Cache raw action chunk BEFORE postprocessing (for future RTC inpainting).
+        # Key by control_step so RTC action_schedule_spans spans can look up the
+        # right chunk. We also stash the anchor used to generate this chunk so
+        # cross-chunk RTC prefix slices can be re-anchored to the *current*
+        # observation state (`align_prev_actions`).
         if src_control_step >= 0:
-            self._action_cache.put(src_control_step, action_tensor)
+            self._action_cache.put(src_control_step, action_tensor, anchor=anchor_state)
 
         # 4. Vectorized postprocess: (B, T, A_in) -> (B*T, A_in) -> (B, T, A_out)
         flat = action_tensor.reshape(b * t, a)
