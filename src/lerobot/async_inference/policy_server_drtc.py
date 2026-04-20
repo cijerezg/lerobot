@@ -43,6 +43,7 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
+from lerobot.utils.constants import OBS_STATE
 
 from .configs_drtc import PolicyServerDrtcConfig
 from .constants import SUPPORTED_POLICIES
@@ -327,13 +328,25 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # Load policy
         policy_class = get_policy_class(self.policy_type)
 
+        self.logger.info(
+            "Loading policy weights | type=%s | path=%s | device=%s",
+            self.policy_type,
+            policy_specs.pretrained_name_or_path,
+            self.device,
+        )
         t_load_start = time.perf_counter()
         self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         t_load_done = time.perf_counter()
+        self.logger.info(
+            "Loaded policy weights in %.1fs | moving to %s ...",
+            t_load_done - t_load_start,
+            self.device,
+        )
 
         t_to_start = time.perf_counter()
         self.policy.to(self.device)
         t_to_done = time.perf_counter()
+        self.logger.info("Moved policy to %s in %.1fs", self.device, t_to_done - t_to_start)
 
         inferred_horizon = _infer_model_action_horizon(getattr(self.policy, "config", None))
         if inferred_horizon is not None:
@@ -349,6 +362,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         # Load preprocessor and postprocessor
         device_override = {"device": self.device}
+        self.logger.info("Building pre/post processors ...")
         t_pp_start = time.perf_counter()
         if self.policy_type == "pi05_rl":
             # pi05_rl uses a custom processor pipeline ("runtime upgrade" path) that
@@ -386,6 +400,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 postprocessor_overrides={"device_processor": device_override},
             )
         t_pp_done = time.perf_counter()
+        self.logger.info("Built pre/post processors in %.1fs", t_pp_done - t_pp_start)
         self._metrics.diagnostic.timing_s("policy_load_ms", t_load_done - t_load_start)
         self._metrics.diagnostic.timing_s("policy_to_ms", t_to_done - t_to_start)
         self._metrics.diagnostic.timing_s("policy_processors_ms", t_pp_done - t_pp_start)
@@ -449,6 +464,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._warmup_model(num_passes=self.config.warmup_passes)
 
         self._policy_ready.set()
+        self.logger.info(
+            "Policy READY | type=%s | total_load=%.1fs | accepting observations",
+            self.policy_type,
+            time.perf_counter() - t_total_start,
+        )
 
         # Start producer thread (if needed) to generate actions outside the RPC path (lower jitter).
         if self._producer_thread is None or not self._producer_thread.is_alive():
@@ -726,6 +746,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self.policy_image_features,
         )
 
+        # Capture pre-preprocess raw joint state as the chunk-start anchor
+        # required by `anchor` / `delta` action encodings. The preprocessor
+        # normalizes OBS_STATE in-place, so we must snapshot it first.
+        anchor_state: torch.Tensor | None = None
+        if isinstance(observation, dict) and OBS_STATE in observation:
+            obs_state_raw = observation[OBS_STATE]
+            if isinstance(obs_state_raw, torch.Tensor):
+                anchor_state = obs_state_raw.detach().clone()
+
         # 2. Preprocess (inject pi05_rl complementary_data when applicable)
         observation = self._inject_pi05_complementary_data(observation)
         observation = self.preprocessor(observation)
@@ -824,6 +853,35 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             raise TypeError(f"postprocessor must return torch.Tensor, got {type(flat)}")
         a_out = flat.shape[-1]
         action_tensor = flat.reshape(b, t, a_out)
+
+        # 5. Anchor / delta action-encoding reconstruction.
+        # When the policy is trained with action_encoding="anchor" the model
+        # emits per-step deltas relative to the chunk-start joint state; with
+        # "delta" the deltas are sequential (cumulative). Without adding the
+        # anchor back the robot drives to the unnormalized delta space (e.g.
+        # "stretches out and stays"). This mirrors `inference_utils.py`
+        # `get_actions_worker` PHASE 5 (`unnormalized + anchor` for "anchor",
+        # `cumsum + anchor` for "delta").
+        action_encoding = getattr(getattr(self.policy, "config", None), "action_encoding", "absolute")
+        if action_encoding in ("anchor", "delta") and anchor_state is not None:
+            anchor = anchor_state.to(device=action_tensor.device, dtype=action_tensor.dtype)
+            # anchor shape may be (1, A_state) or (A_state,); broadcast to (1, 1, A_out)
+            if anchor.dim() == 2:
+                anchor = anchor.squeeze(0)
+            anchor_dim = anchor.shape[-1]
+            if anchor_dim != a_out:
+                # Action and state may be padded differently; truncate or pad anchor
+                # to match the postprocessed action dim conservatively.
+                if anchor_dim > a_out:
+                    anchor = anchor[:a_out]
+                else:
+                    pad = torch.zeros(a_out - anchor_dim, device=anchor.device, dtype=anchor.dtype)
+                    anchor = torch.cat([anchor, pad], dim=0)
+            anchor_b = anchor.view(1, 1, a_out)
+            if action_encoding == "anchor":
+                action_tensor = action_tensor + anchor_b
+            else:  # "delta"
+                action_tensor = torch.cumsum(action_tensor, dim=1) + anchor_b
 
         # Drop batch dim and move to CPU once
         actions_cpu = action_tensor.squeeze(0).detach().to("cpu")
