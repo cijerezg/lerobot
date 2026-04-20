@@ -20,6 +20,7 @@ python -m lerobot.async_inference.policy_server_drtc \
 """
 
 import logging
+import os
 import pickle  # nosec
 import threading
 import time
@@ -222,6 +223,17 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._action_normalizer: Any = None
         self._action_encoding: str = "absolute"
 
+        # One-shot debug print of the first few inference chunks. Used to
+        # verify the per-chunk anchor reconstruction (anchor / unnormalized
+        # delta / sum row 0) matches the standalone reference. Reset to 0
+        # by `_reset_server`. Tunable via env LEROBOT_DRTC_DEBUG_CHUNKS.
+        try:
+            self._debug_chunks_remaining = int(
+                os.environ.get("LEROBOT_DRTC_DEBUG_CHUNKS", "5")
+            )
+        except ValueError:
+            self._debug_chunks_remaining = 5
+
         # Client-driven RTC (optional)
         self._rtc_cfg: AsyncRTCConfig | None = None
 
@@ -285,6 +297,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._obs_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
         self._action_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
         self._action_cache.clear()
+
+        try:
+            self._debug_chunks_remaining = int(
+                os.environ.get("LEROBOT_DRTC_DEBUG_CHUNKS", "5")
+            )
+        except ValueError:
+            self._debug_chunks_remaining = 5
 
     # -------------------------------------------------------------------------
     # gRPC Service Methods (called by receiver thread)
@@ -1035,6 +1054,22 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # `get_actions_worker` PHASE 5 (`unnormalized + anchor` for "anchor",
         # `cumsum + anchor` for "delta").
         action_encoding = getattr(getattr(self.policy, "config", None), "action_encoding", "absolute")
+        debug_anchor_dump = (
+            self._debug_chunks_remaining > 0
+            and action_encoding in ("anchor", "delta")
+        )
+        if action_encoding in ("anchor", "delta") and anchor_state is None:
+            # If we got here, the per-chunk reconstruction silently no-ops and
+            # the robot will be commanded to the unnormalized delta directly,
+            # which will look like the arm collapsing to the floor / "stretching
+            # out" pose. Surface it loudly so we don't chase it as a model bug.
+            self.logger.warning(
+                "[DRTC ANCHOR DEBUG] action_encoding=%s but anchor_state is None for "
+                "src_step=%d -- per-chunk anchor add-back will be skipped (this is "
+                "almost certainly the cause of any 'pushing into the ground' behavior).",
+                action_encoding,
+                src_control_step,
+            )
         if action_encoding in ("anchor", "delta") and anchor_state is not None:
             anchor = anchor_state.to(device=action_tensor.device, dtype=action_tensor.dtype)
             # anchor shape may be (1, A_state) or (A_state,); broadcast to (1, 1, A_out)
@@ -1050,6 +1085,31 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     pad = torch.zeros(a_out - anchor_dim, device=anchor.device, dtype=anchor.dtype)
                     anchor = torch.cat([anchor, pad], dim=0)
             anchor_b = anchor.view(1, 1, a_out)
+            if debug_anchor_dump:
+                # One-shot diagnostic: prints chunk_size, encoding, anchor row,
+                # first unnormalized delta, and the reconstructed first action so
+                # we can compare against `inference_utils.py` PHASE 5 by eye.
+                _delta0 = action_tensor[0, 0].detach().to("cpu").float().tolist()
+                _anchor0 = anchor.detach().to("cpu").float().tolist()
+                _sum0 = (action_tensor[0, 0] + anchor).detach().to("cpu").float().tolist()
+                _cfg = getattr(self.policy, "config", None)
+                self.logger.info(
+                    "[DRTC ANCHOR DEBUG] src_step=%d chunk=%dx%d "
+                    "policy.chunk_size=%s action_encoding=%s a_in=%d a_out=%d anchor_dim=%d | "
+                    "delta[0]=%s | anchor=%s | recon[0]=%s",
+                    src_control_step,
+                    t,
+                    a_out,
+                    getattr(_cfg, "chunk_size", "?"),
+                    action_encoding,
+                    a,
+                    a_out,
+                    anchor_dim,
+                    [f"{x:+.4f}" for x in _delta0],
+                    [f"{x:+.4f}" for x in _anchor0],
+                    [f"{x:+.4f}" for x in _sum0],
+                )
+                self._debug_chunks_remaining -= 1
             if action_encoding == "anchor":
                 action_tensor = action_tensor + anchor_b
             else:  # "delta"

@@ -19,8 +19,8 @@ camera1_name: wrist
 camera1_path: /dev/video0
 camera2_name: top
 camera2_path: /dev/video4
-camera_width: 640
-camera_height: 480
+camera_width: 800
+camera_height: 600
 camera_fps: 30
 camera_fourcc: MJPG
 camera_use_threaded_async_read: true
@@ -38,7 +38,7 @@ epsilon: 1
 # Pi05 supports a long horizon; cap at execution_horizon (30 in recap-config-hilserl.json
 # rtc_config) to keep the chunk reasonable while still leaving slack for guidance.
 actions_per_chunk: 50
-s_min: 30
+s_min: 20
 latency_alpha: 0.125
 latency_beta: 0.25
 
@@ -47,17 +47,21 @@ duration_s: 120.0
 fps: 30
 
 # Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config.
-num_flow_matching_steps: 3
+num_flow_matching_steps: 8
 rtc_enabled: true
 rtc_max_guidance_weight: 5.0
 rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 1.0
 rtc_full_trajectory_alignment: false
 
-# Butterworth filter (kept identical to baseline.yaml for fair comparison)
-action_filter_mode: butterworth
-action_filter_butterworth_cutoff: 3.0
-action_filter_gain: 1.4
+# Action filter: disabled for pi05_rl (anchor-encoded). The Butterworth lead
+# filter (gain=1.4) was tuned for the absolute-encoded pi05 baseline; with
+# anchor encoding it amplifies any small per-step delta bias and compounds
+# into the arm pushing into the ground over time. The standalone reference
+# (`inference_pi05_async.py`) uses a non-amplifying centered 5-tap moving
+# average instead -- skipping the client-side filter entirely is the closest
+# safe match until that smoother is ported over.
+action_filter_mode: none
 
 # Diagnostics
 full_diagnostics: true

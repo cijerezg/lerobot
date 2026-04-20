@@ -103,6 +103,12 @@ POLICY_SERVER_CMD=(uv run --no-sync python -m lerobot.async_inference.policy_ser
 if [ "$ENABLE_VIZ" = true ]; then
     POLICY_SERVER_CMD+=(--trajectory_viz_enabled=true)
 fi
+# Verbose diagnostics surface counters like `rtc_prefix_aligned`, anchor add-back
+# warnings, and per-chunk timing breakdowns -- essential for debugging anchor /
+# delta encoding behaviour. Toggle with VERBOSE_DIAGNOSTICS=false to silence.
+if [ "${VERBOSE_DIAGNOSTICS:-true}" = true ]; then
+    POLICY_SERVER_CMD+=(--metrics_diagnostic_verbose=true)
+fi
 "${POLICY_SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
 POLICY_SERVER_PID=$!
 STARTED_SERVER=true
