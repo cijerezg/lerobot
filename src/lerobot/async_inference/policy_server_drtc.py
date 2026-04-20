@@ -385,7 +385,24 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self.device,
         )
         t_load_start = time.perf_counter()
-        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        if self.policy_type == "pi05_rl":
+            # PI05FullPolicy.from_pretrained's state-dict remapper only prepends
+            # `model.` and does not strip the `actor.` / `critic.` prefixes used
+            # by PI05RLPolicy checkpoints. Going through it loads
+            # `models/pi05_base` via __init__'s `pi05_checkpoint` and then
+            # silently drops every `actor.*` key on the second load, leaving the
+            # model with base pi05 weights instead of the RL fine-tune. Mirror
+            # `inference_pi05_async.py`: load the config, point
+            # `pi05_checkpoint` at the RL checkpoint itself, and let
+            # `PI05RLPolicy.__init__`'s actor/critic split loader handle the
+            # safetensors directly.
+            from lerobot.configs.policies import PreTrainedConfig
+
+            cfg_obj = PreTrainedConfig.from_pretrained(policy_specs.pretrained_name_or_path)
+            cfg_obj.pi05_checkpoint = policy_specs.pretrained_name_or_path
+            self.policy = policy_class(cfg_obj)
+        else:
+            self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         t_load_done = time.perf_counter()
         self.logger.info(
             "Loaded policy weights in %.1fs | moving to %s ...",

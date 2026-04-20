@@ -12,7 +12,7 @@ gpu: ""
 client_host: ""
 server_host: ""
 robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
-robot_id: so101_follower_2026_04_16_v2
+robot_id: so101_follower_2026_04_19_v0
 
 # Cameras: pi05_rl expects observation.images.{wrist,top}.
 camera1_name: wrist
@@ -46,8 +46,16 @@ latency_beta: 0.25
 duration_s: 120.0
 fps: 30
 
-# Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config.
-num_flow_matching_steps: 8
+# Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config
+# from recap-config-hilserl.json. Keeping these in sync is critical: num_flow_matching_steps
+# directly drives per-chunk GPU compute. With 8 steps the policy takes ~1.6s/chunk,
+# which is the same as a chunk's wall-time at 30Hz (50/30 = 1.67s). That leaves
+# zero headroom: by the time a new chunk arrives the action schedule has already
+# drained, RTC has no prefix to overlap (rtc_not_applied_empty_prefix dominates),
+# the new chunk re-anchors at a state that is ~1.6s stale, and with anchor
+# encoding that compounds into a slow downward drift ("arm pushes into ground").
+# recap-config-hilserl.json uses 3 steps -- match it exactly.
+num_flow_matching_steps: 3
 rtc_enabled: true
 rtc_max_guidance_weight: 5.0
 rtc_prefix_attention_schedule: linear
