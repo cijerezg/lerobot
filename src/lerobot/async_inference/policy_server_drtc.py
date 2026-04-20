@@ -343,15 +343,35 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # Load preprocessor and postprocessor
         device_override = {"device": self.device}
         t_pp_start = time.perf_counter()
-        self.preprocessor, self.postprocessor = make_pre_post_processors(
-            self.policy.config,
-            pretrained_path=policy_specs.pretrained_name_or_path,
-            preprocessor_overrides={
-                "device_processor": device_override,
-                "rename_observations_processor": {"rename_map": policy_specs.rename_map},
-            },
-            postprocessor_overrides={"device_processor": device_override},
-        )
+        if self.policy_type == "pi05_rl":
+            # pi05_rl uses a custom processor pipeline ("runtime upgrade" path) that
+            # mirrors the standalone `inference_pi05_async.py` setup. We build a
+            # minimal cfg shim so `make_pi05_full_processors_with_upgrade` can read
+            # the fields it needs from `policy.config` without requiring the full
+            # `TrainRLServerPipelineConfig` to be sent over the wire.
+            from types import SimpleNamespace
+
+            from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
+
+            shim_cfg = SimpleNamespace(policy=self.policy.config)
+            self.preprocessor, self.postprocessor = make_pi05_full_processors_with_upgrade(
+                cfg=shim_cfg, dataset=None, is_main_process=True
+            )
+
+            # Force eval mode and disable AMP, mirroring inference_pi05_async.py.
+            with suppress(Exception):
+                self.policy.config.use_amp = False
+            self.policy = self.policy.eval()
+        else:
+            self.preprocessor, self.postprocessor = make_pre_post_processors(
+                self.policy.config,
+                pretrained_path=policy_specs.pretrained_name_or_path,
+                preprocessor_overrides={
+                    "device_processor": device_override,
+                    "rename_observations_processor": {"rename_map": policy_specs.rename_map},
+                },
+                postprocessor_overrides={"device_processor": device_override},
+            )
         t_pp_done = time.perf_counter()
         self._metrics.diagnostic.timing_s("policy_load_ms", t_load_done - t_load_start)
         self._metrics.diagnostic.timing_s("policy_to_ms", t_to_done - t_to_start)

@@ -94,9 +94,9 @@ fi
 
 echo "[1/2] Starting policy server..."
 echo "      Policy server logs: $LOG_FILE"
-POLICY_SERVER_CMD=(uv run --no-sync python examples/tutorial/async-inf/policy_server_drtc.py --verbose-diagnostics)
+POLICY_SERVER_CMD=(uv run --no-sync python -m lerobot.async_inference.policy_server_drtc)
 if [ "$ENABLE_VIZ" = true ]; then
-    POLICY_SERVER_CMD+=(--viz)
+    POLICY_SERVER_CMD+=(--trajectory_viz_enabled=true)
 fi
 "${POLICY_SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
 POLICY_SERVER_PID=$!

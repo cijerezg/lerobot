@@ -75,6 +75,11 @@ class ExperimentConfig:
     robot_id: str = DEFAULT_ROBOT_ID
     camera1_path: str = DEFAULT_CAMERA1_PATH
     camera2_path: str = DEFAULT_CAMERA2_PATH
+    # Names used as keys in the robot's `cameras` dict. Different policies expect
+    # different camera key names (e.g. smolvla expects "camera1"/"camera2", while
+    # pi05_rl expects "wrist"/"top"), so make the names YAML-configurable.
+    camera1_name: str = "camera1"
+    camera2_name: str = "camera2"
     camera_width: int = DEFAULT_CAMERA_WIDTH
     camera_height: int = DEFAULT_CAMERA_HEIGHT
     camera_fps: int = DEFAULT_CAMERA_FPS
@@ -129,6 +134,7 @@ _SCALAR_FIELDS = frozenset({
     "robot_type", "gpu", "client_host", "server_host",
     "robot_port", "robot_id",
     "camera1_path", "camera2_path",
+    "camera1_name", "camera2_name",
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
     "camera_use_threaded_async_read", "camera_allow_stale_frames",
     "policy_type", "pretrained_name_or_path",
@@ -245,7 +251,7 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
         camera_fourcc = None
 
     camera_cfg = {
-        "camera2": OpenCVCameraConfig(
+        config.camera2_name: OpenCVCameraConfig(
             index_or_path=config.camera2_path,
             width=config.camera_width,
             height=config.camera_height,
@@ -254,7 +260,7 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             use_threaded_async_read=config.camera_use_threaded_async_read,
             allow_stale_frames=config.camera_allow_stale_frames,
         ),
-        "camera1": OpenCVCameraConfig(
+        config.camera1_name: OpenCVCameraConfig(
             index_or_path=config.camera1_path,
             width=config.camera_width,
             height=config.camera_height,

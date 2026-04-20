@@ -1,0 +1,64 @@
+# DRTC baseline for the pi05_rl ("Recap") policy.
+#
+# Mirrors the relevant fields from `recap-config-hilserl.json` so that this
+# experiment uses the same policy + robot + camera + RTC setup that
+# `python -m lerobot.rl.inference_pi05_async --config_path=recap-config-hilserl.json`
+# would use, but driven through the DRTC client/server stack.
+name: baseline_pi05_recap
+
+# Hardware
+robot_type: so101_follower
+gpu: ""
+client_host: ""
+server_host: ""
+robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
+robot_id: so101_follower_2026_04_16_v2
+
+# Cameras: pi05_rl expects observation.images.{wrist,top}.
+camera1_name: wrist
+camera1_path: /dev/video0
+camera2_name: top
+camera2_path: /dev/video4
+camera_width: 640
+camera_height: 480
+camera_fps: 30
+camera_fourcc: MJPG
+camera_use_threaded_async_read: true
+camera_allow_stale_frames: true
+
+# Policy
+policy_type: pi05_rl
+pretrained_name_or_path: outputs/pi05_full_offline_recap_20260418_3/checkpoints/002000/pretrained_model
+
+# DRTC parameters
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+# Pi05 supports a long horizon; cap at execution_horizon (30 in recap-config-hilserl.json
+# rtc_config) to keep the chunk reasonable while still leaving slack for guidance.
+actions_per_chunk: 50
+s_min: 30
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing -- env.fps in recap-config-hilserl.json is 30.
+duration_s: 60.0
+fps: 30
+
+# Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config.
+num_flow_matching_steps: 3
+rtc_enabled: true
+rtc_max_guidance_weight: 5.0
+rtc_prefix_attention_schedule: linear
+rtc_sigma_d: 1.0
+rtc_full_trajectory_alignment: false
+
+# Butterworth filter (kept identical to baseline.yaml for fair comparison)
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 3.0
+action_filter_gain: 1.4
+
+# Diagnostics
+full_diagnostics: true
+trajectory_viz_enabled: false
