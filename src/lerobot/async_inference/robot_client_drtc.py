@@ -347,6 +347,7 @@ class RobotClientDrtc:
             num_flow_matching_steps=config.num_flow_matching_steps,
             spikes=config.spikes,
             diagnostics_verbose=config.metrics_diagnostic_verbose,
+            inference_advantage=config.inference_advantage,
         )
 
         self.channel = grpc.insecure_channel(

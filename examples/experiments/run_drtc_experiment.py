@@ -94,6 +94,14 @@ class ExperimentConfig:
     # Policy
     policy_type: str = "smolvla"
     pretrained_name_or_path: str = DEFAULT_MODEL_PATH
+    # pi05_rl-only: scalar advantage value injected into the prompt at inference
+    # time. The pi05_full preprocessor scales by `advantage_scaling`, applies
+    # tanh, and bins it into "Advantage: positive" / "Advantage: negative" in
+    # the language prompt. None = use the value baked into the loaded policy
+    # config (`policy.config.inference_advantage`, default 1.0). Use 0.0 to
+    # force the "negative" label as a diagnostic. Ignored for non-pi05_rl
+    # policies.
+    inference_advantage: float | None = None
     # DRTC parameters
     latency_k: float = 2.0
     epsilon: int = 2
@@ -142,7 +150,7 @@ _SCALAR_FIELDS = frozenset({
     "camera1_name", "camera2_name",
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
     "camera_use_threaded_async_read", "camera_allow_stale_frames",
-    "policy_type", "pretrained_name_or_path",
+    "policy_type", "pretrained_name_or_path", "inference_advantage",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
@@ -305,6 +313,7 @@ def create_client_config(
         policy_device="cuda",
         policy_type=config.policy_type,
         pretrained_name_or_path=config.pretrained_name_or_path,
+        inference_advantage=config.inference_advantage,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
         s_min=config.s_min,
@@ -492,6 +501,17 @@ def main():
         ),
     )
     parser.add_argument("--pause_between_s", type=float, default=10.0)
+    parser.add_argument(
+        "--inference_advantage",
+        type=float,
+        default=None,
+        help=(
+            "pi05_rl-only override for the advantage scalar injected into the "
+            "policy prompt at inference time. Overrides the value in the YAML "
+            "config (and ultimately in the loaded policy config). Use 1.0 to "
+            "force 'positive' in the prompt, 0.0 to force 'negative'."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -508,6 +528,14 @@ def main():
             logger.info(f"{'='*50}")
             logger.info(f"[{i+1}/{len(configs)}] {config.name}")
             logger.info(f"{'='*50}")
+
+        if args.inference_advantage is not None:
+            logger.info(
+                "Overriding inference_advantage from CLI: %s -> %s",
+                config.inference_advantage,
+                args.inference_advantage,
+            )
+            config.inference_advantage = args.inference_advantage
 
         experiment_name = (args.experiment_name or "").strip() or None
         result = run_experiment(

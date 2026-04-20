@@ -456,6 +456,27 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._pi05_task_str = str(getattr(self.policy.config, "task", "") or "")
             self._pi05_advantage = float(getattr(self.policy.config, "inference_advantage", 1.0))
             self._pi05_robot_type = ""
+
+            # Allow the client to override `inference_advantage` per-experiment
+            # (e.g. positive vs negative A/B). Mirror the override onto
+            # `policy.config` so any downstream code that re-reads it stays
+            # consistent.
+            adv_override = getattr(policy_specs, "inference_advantage", None)
+            if adv_override is not None:
+                old_adv = self._pi05_advantage
+                self._pi05_advantage = float(adv_override)
+                with suppress(Exception):
+                    self.policy.config.inference_advantage = self._pi05_advantage
+                self.logger.info(
+                    "pi05_rl inference_advantage overridden by client: %.4f -> %.4f",
+                    old_adv,
+                    self._pi05_advantage,
+                )
+            else:
+                self.logger.info(
+                    "pi05_rl inference_advantage from policy config: %.4f",
+                    self._pi05_advantage,
+                )
         else:
             self.preprocessor, self.postprocessor = make_pre_post_processors(
                 self.policy.config,

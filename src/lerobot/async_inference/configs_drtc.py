@@ -144,6 +144,24 @@ class RobotClientDrtcConfig:
         },
     )
 
+    # pi05_rl-only: scalar advantage value injected into the policy prompt at
+    # inference time. The pi05_full preprocessor reads this from
+    # `complementary_data["advantage"]`, scales it by `advantage_scaling`,
+    # passes it through `tanh`, bins it, and renders it as
+    # "Advantage: positive" or "Advantage: negative" inside the language prompt.
+    # `None` means "use the value baked into the loaded policy config"
+    # (`policy.config.inference_advantage`, default 1.0). Use 0.0 for a
+    # diagnostic A/B that forces the "negative" label, or 1.0 to force
+    # "positive". Has no effect for non-pi05_rl policies.
+    inference_advantage: float | None = field(
+        default=None,
+        metadata={
+            "help": "Override for pi05_rl inference advantage scalar (controls "
+            "the positive/negative label in the prompt). None = use the value "
+            "from the loaded policy's config."
+        },
+    )
+
     # Diagnostic metrics (console output; avg/max only)
     metrics_diagnostic_enabled: bool = field(
         default=True,

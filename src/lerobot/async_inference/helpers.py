@@ -443,6 +443,12 @@ class RemotePolicyConfig:
     spikes: list[dict] = field(default_factory=list)
     # Diagnostics: when True, the server also enables verbose diagnostic output
     diagnostics_verbose: bool = False
+    # pi05_rl: client-side override for the scalar advantage value injected into
+    # `complementary_data["advantage"]` by the server's pi05_full preprocessor.
+    # `None` means "use the value baked into the loaded policy's config"
+    # (`policy.config.inference_advantage`). Set to e.g. 0.0 to force the
+    # "negative" prompt label as a diagnostic A/B, or 1.0 to force "positive".
+    inference_advantage: float | None = None
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC/spike fields existed."""
@@ -456,6 +462,7 @@ class RemotePolicyConfig:
         # Spike injection defaults (new format)
         self.__dict__.setdefault("spikes", [])
         self.__dict__.setdefault("diagnostics_verbose", False)
+        self.__dict__.setdefault("inference_advantage", None)
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

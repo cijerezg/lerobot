@@ -16,9 +16,9 @@ robot_id: so101_follower_2026_04_19_v0
 
 # Cameras: pi05_rl expects observation.images.{wrist,top}.
 camera1_name: wrist
-camera1_path: /dev/video0
+camera1_path: /dev/video4
 camera2_name: top
-camera2_path: /dev/video4
+camera2_path: /dev/video0
 camera_width: 800
 camera_height: 600
 camera_fps: 30
@@ -62,6 +62,10 @@ rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 1.0
 rtc_full_trajectory_alignment: false
 
+inference_advantage: 0.0   # forces "Advantage: negative" in the prompt
+# inference_advantage: 1.0 # forces "Advantage: positive" (current default)
+# omit entirely            # uses policy.config.inference_advantage (1.0)
+
 # Action filter: disabled for pi05_rl (anchor-encoded). The Butterworth lead
 # filter (gain=1.4) was tuned for the absolute-encoded pi05 baseline; with
 # anchor encoding it amplifies any small per-step delta bias and compounds
@@ -70,6 +74,9 @@ rtc_full_trajectory_alignment: false
 # average instead -- skipping the client-side filter entirely is the closest
 # safe match until that smoother is ported over.
 action_filter_mode: none
+# action_filter_mode: butterworth
+# action_filter_butterworth_cutoff: 3.0
+# action_filter_gain: 1.4
 
 # Diagnostics
 full_diagnostics: true
