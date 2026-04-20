@@ -183,6 +183,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self.preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None
         self.postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None
 
+        # pi05_rl-specific: task / advantage / robot_type to populate
+        # `complementary_data` before the pi05_full preprocessor runs. Mirrors
+        # what `lerobot.rl.inference_utils.get_actions_worker` injects.
+        self._pi05_task_str: str | None = None
+        self._pi05_advantage: float = 1.0
+        self._pi05_robot_type: str = ""
+
         # Client-driven RTC (optional)
         self._rtc_cfg: AsyncRTCConfig | None = None
 
@@ -362,6 +369,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             with suppress(Exception):
                 self.policy.config.use_amp = False
             self.policy = self.policy.eval()
+
+            # Cache pi05_rl-only fields needed to populate `complementary_data`
+            # before each call to `self.preprocessor(...)`.
+            self._pi05_task_str = str(getattr(self.policy.config, "task", "") or "")
+            self._pi05_advantage = float(getattr(self.policy.config, "inference_advantage", 1.0))
+            self._pi05_robot_type = ""
         else:
             self.preprocessor, self.postprocessor = make_pre_post_processors(
                 self.policy.config,
@@ -564,8 +577,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             for i in range(num_passes):
                 t_pass_start = time.perf_counter()
 
-                # Preprocess
-                obs = self.preprocessor(dummy_obs)
+                # Preprocess (inject pi05_rl complementary_data when applicable)
+                pass_obs = self._inject_pi05_complementary_data(dict(dummy_obs))
+                obs = self.preprocessor(pass_obs)
 
                 # Inference -- call policy directly (not _get_action_chunk)
                 # to avoid recording warmup timings in diagnostic metrics.
@@ -667,6 +681,24 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         )
         return dense
 
+    def _inject_pi05_complementary_data(self, observation: dict[str, Any]) -> dict[str, Any]:
+        """Add `complementary_data` (task/subtask/advantage) and `robot_type` for pi05_rl.
+
+        Mirrors the per-step injection in `lerobot.rl.inference_utils.get_actions_worker`
+        which is required by the `pi05_full` preprocessor's
+        `Pi05FullPrepareStateTokenizerProcessorStep`. Other policy types do not
+        require this and the dict is returned unchanged.
+        """
+        if self.policy_type != "pi05_rl":
+            return observation
+        observation["robot_type"] = self._pi05_robot_type
+        observation["complementary_data"] = {
+            "task": [self._pi05_task_str or ""],
+            "subtask": [""],
+            "advantage": torch.tensor([[self._pi05_advantage]], dtype=torch.float32),
+        }
+        return observation
+
     def _predict_action_chunk_dense(self, observation_t: TimedObservation) -> services_pb2.ActionsDense:
         """Run inference on an observation and return dense packed actions (lower jitter)."""
         if self.actions_per_chunk is None:
@@ -694,7 +726,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self.policy_image_features,
         )
 
-        # 2. Preprocess
+        # 2. Preprocess (inject pi05_rl complementary_data when applicable)
+        observation = self._inject_pi05_complementary_data(observation)
         observation = self.preprocessor(observation)
 
         # 3. Inference (avoid autograd / reduce variance)
