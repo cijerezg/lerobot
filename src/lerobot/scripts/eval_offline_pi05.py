@@ -238,7 +238,7 @@ def get_frame_data(dataset, global_idx, chunk_size):
             is_pad = is_pad.item()
         if is_pad:
             break
-        gt_actions.append(torch.tensor(f_item["action"]))
+        gt_actions.append(f_item["action"].detach().clone())
 
     if not gt_actions:
         gt_actions = [torch.zeros_like(frame["action"])]

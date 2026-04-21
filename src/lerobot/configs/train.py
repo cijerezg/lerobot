@@ -16,7 +16,7 @@ import datetime as dt
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import draccus
 from huggingface_hub import hf_hub_download
@@ -206,6 +206,43 @@ class TrainPipelineConfig(HubMixin):
             return draccus.parse(cls, config_file, args=cli_args)
 
 
+@dataclass
+class ProbeConfig:
+    """Parameters for the three PI05 probe scripts (actions, representations, attention)."""
+
+    # ── Common ────────────────────────────────────────────────────────────────
+    output_dir: str = "outputs/probe"
+    mode: str = "all"                   # "collect" | "plot" | "all"
+    max_episodes: Optional[int] = 5
+    n_frames_per_episode: int = 128
+    random_seed: int = 42
+
+    # ── Dimensionality reduction (actions + representations) ─────────────────
+    umap_n_neighbors: int = 15
+    umap_min_dist: float = 0.1
+    umap_seed: int = 42
+
+    # ── Diffusion timesteps (representations + attention) ────────────────────
+    timesteps: str = "1.0,0.25"
+
+    # ── Actions-specific ─────────────────────────────────────────────────────
+    ref_max_episodes: int = 40
+    ref_n_frames_per_episode: int = 256
+    pca_dims: int = 50                  # action-manifold PCA
+
+    # ── Representations-specific ─────────────────────────────────────────────
+    repr_pca_dims: int = 100
+    sites: str = "prefix,suffix"
+    ep_3d_a: int = 0
+    ep_3d_b: int = 1
+    subtask_injection: bool = True
+
+    # ── Attention-specific ───────────────────────────────────────────────────
+    attn_batch_size: int = 32
+    attn_eval_episodes: Optional[str] = None
+    attn_eval_subsample: int = 2
+
+
 @dataclass(kw_only=True)
 class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # NOTE: In RL, we don't need an offline dataset
@@ -218,3 +255,9 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     video_logging_cameras: list[str] = field(default_factory=lambda: ["top", "side"])
     episode_logging_freq: int = 4
     episode_save_freq: int = 10
+    probe_parameters: ProbeConfig = field(default_factory=ProbeConfig)
+    
+    # Validation
+    val_dataset_path: str | None = None
+    val_split: float = 0.0
+    val_freq: int = 1000

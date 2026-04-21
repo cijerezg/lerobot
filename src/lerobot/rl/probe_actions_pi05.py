@@ -22,8 +22,8 @@ Computational cost:
   UMAP.transform():         ~50 ms per batch of 1 k frames.
   Model inference:          ~1 s/frame — the bottleneck; keep probe_max_episodes small.
 
-Output layout (all under --probe_output_dir):
-  actions_cache.pt                    reusable cache (--probe_mode plot skips collection)
+Output layout (all under probe_parameters.output_dir/actions/):
+  actions_cache.pt                    reusable cache (--probe_parameters.mode plot skips collection)
   pca_variance/                       PCA scree plot (gt_reference)
   2d/overview.png                     all datasets' GT overlaid on reference manifold
   3d/overview.html                    interactive version of overview
@@ -31,14 +31,14 @@ Output layout (all under --probe_output_dir):
   2d/{ds}/by_frame.png                GT and pred coloured by frame index
   2d/{ds}/by_subtask.png              GT and pred coloured by subtask
   2d/{ds}/episodes/ep{N:04d}.png      per-episode GT vs pred
-  3d/{ds}/by_episode.html             interactive per-episode trajectories
+  3d/{ds}/by_episode.html             interactive per-episode scatter (dark→pale = early→late)
   3d/{ds}/by_frame.html               interactive by frame index
   3d/{ds}/by_subtask.html             interactive by subtask
 
 Usage:
     python probe_actions_pi05.py config-hiserl.json
-    python probe_actions_pi05.py config-hiserl.json --probe_output_dir outputs/probe_actions
-    python probe_actions_pi05.py config-hiserl.json --probe_mode plot
+    python probe_actions_pi05.py config-hiserl.json --probe_parameters.output_dir outputs/probe
+    python probe_actions_pi05.py config-hiserl.json --probe_parameters.mode plot
 """
 
 import logging
@@ -52,22 +52,25 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-import lerobot.rl.rl_pi05  # noqa: F401 — registers PI05RLConfig
-
-from lerobot.cameras import opencv  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.factory import make_dataset
-from lerobot.policies.factory import make_policy
-from lerobot.robots import so_follower  # noqa: F401
-from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
+from lerobot.scripts.eval_offline_pi05 import get_frame_data, run_inference
 from lerobot.utils.utils import get_safe_torch_device, init_logging
 
-from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
-from lerobot.scripts.eval_offline_pi05 import (
-    _build_episode_index,
-    get_frame_data,
-    run_inference,
+from lerobot.rl.probe_utils_pi05 import (
+    DS_COLORS,
+    EP_COLORS,
+    SEQ_CMAPS,
+    ax_style,
+    frame_colors_rgba,
+    load_extra_dataset,
+    load_policy_and_processors,
+    makedirs,
+    plotly_3d_layout,
+    ref_bg_trace_3d,
+    run_pca,
+    sample_episodes_evenly,
+    get_subtask_idx,
 )
 
 
@@ -76,11 +79,11 @@ from lerobot.scripts.eval_offline_pi05 import (
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Phase 1 — reference manifold from root GT (no inference, cheap).
-REF_MAX_EPISODES = 40         # episodes used to fit PCA + UMAP; more → better coverage
-REF_N_FRAMES_PER_EPISODE = 256    # evenly spaced frames per episode
+REF_MAX_EPISODES = 40
+REF_N_FRAMES_PER_EPISODE = 256
 
 # Phase 2 — evaluation with model inference.
-MAX_EPISODES = 5              # per dataset; keep small — inference is the bottleneck
+MAX_EPISODES = 5
 N_FRAMES_PER_EPISODE = 128
 RANDOM_SEED = 42
 
@@ -96,88 +99,14 @@ UMAP_SEED = 42
 
 @dataclass
 class ProbeActionsConfig(TrainRLServerPipelineConfig):
-    """Extends the base training config with action probe parameters."""
+    """Extends the base training config with action probe parameters.
 
-    probe_output_dir: str = "outputs/probe_actions"
-    # "collect" → fit manifold + run inference + save cache
-    # "plot"    → load existing cache and generate all plots
-    # "all"     → collect then plot
-    probe_mode: str = "all"
-
-    # Phase 1 — reference manifold (root dataset GT, no model).
-    probe_ref_max_episodes: int = REF_MAX_EPISODES
-    probe_ref_n_frames_per_episode: int = REF_N_FRAMES_PER_EPISODE
-
-    # Phase 2 — evaluation (model inference, all datasets).
-    probe_max_episodes: Optional[int] = MAX_EPISODES
-    probe_n_frames_per_episode: int = N_FRAMES_PER_EPISODE
-    probe_random_seed: int = RANDOM_SEED
-
-    # Dimensionality reduction
-    probe_pca_dims: int = PCA_DIMS
-    probe_umap_n_neighbors: int = UMAP_N_NEIGHBORS
-    probe_umap_min_dist: float = UMAP_MIN_DIST
-    probe_umap_seed: int = UMAP_SEED
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Policy / dataset loading
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _load_policy_and_processors(cfg, device, dataset=None):
-    if dataset is None:
-        dataset = make_dataset(cfg)
-        dataset.delta_timestamps = None
-        dataset.delta_indices = None
-
-    preprocessor, postprocessor = make_pi05_full_processors_with_upgrade(
-        cfg, dataset=dataset, is_main_process=True
-    )
-
-    original_device = cfg.policy.device
-    cfg.policy.device = device.type
-    policy = make_policy(cfg=cfg.policy, env_cfg=cfg.env)
-    cfg.policy.device = original_device
-
-    policy.preprocessor = preprocessor
-    policy.postprocessor = postprocessor
-    policy.eval()
-    policy.to(device)
-
-    return policy, preprocessor, postprocessor, dataset
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Sampling helpers
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _sample_episodes(dataset, n_per_episode, max_episodes, seed):
-    ep_to_indices = _build_episode_index(dataset)
-    episodes = sorted(ep_to_indices.keys())
-    if max_episodes is not None:
-        rng = np.random.RandomState(seed)
-        episodes = sorted(
-            rng.choice(episodes, size=min(max_episodes, len(episodes)), replace=False).tolist()
-        )
-    samples = []
-    for ep_idx in episodes:
-        indices = ep_to_indices[ep_idx]
-        n = min(n_per_episode, len(indices))
-        chosen = np.linspace(0, len(indices) - 1, n).astype(int)
-        for pos in chosen:
-            global_idx = indices[pos]
-            fr_idx = dataset.hf_dataset[global_idx]["frame_index"].item()
-            samples.append((ep_idx, fr_idx, global_idx))
-    return samples
-
-
-def _get_subtask_idx(dataset, global_idx):
-    frame_row = dataset.hf_dataset[global_idx]
-    for key in ("subtask_index", "complementary_info.subtask_index"):
-        if key in frame_row:
-            val = frame_row[key]
-            return val.item() if isinstance(val, torch.Tensor) else int(val)
-    return -1
+    All probe tunables live under cfg.probe_parameters (ProbeConfig).
+    Relevant fields for this script:
+      output_dir, mode, max_episodes, n_frames_per_episode, random_seed,
+      ref_max_episodes, ref_n_frames_per_episode,
+      pca_dims, umap_n_neighbors, umap_min_dist, umap_seed.
+    """
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -186,7 +115,7 @@ def _get_subtask_idx(dataset, global_idx):
 
 def collect_gt_reference(dataset, samples, chunk_size):
     """
-    Read GT action chunks from root dataset. No model needed.
+    Read GT action chunks from the root dataset (no model needed).
     Returns {"gt": (N, chunk_size*action_dim) tensor, "metadata": list}.
     """
     all_vecs = []
@@ -206,7 +135,7 @@ def collect_gt_reference(dataset, samples, chunk_size):
             "frame_idx":   fr_idx,
             "global_idx":  global_idx,
             "subtask":     gt_subtask,
-            "subtask_idx": _get_subtask_idx(dataset, global_idx),
+            "subtask_idx": get_subtask_idx(dataset, global_idx),
         })
 
     return {"gt": torch.stack(all_vecs), "metadata": metadata}
@@ -215,47 +144,6 @@ def collect_gt_reference(dataset, samples, chunk_size):
 # ──────────────────────────────────────────────────────────────────────────────
 # Manifold fitting — PCA then UMAP on root GT
 # ──────────────────────────────────────────────────────────────────────────────
-
-def run_pca(X, n_components, label, pca_dir):
-    """Fit PCA, save scree plot, return (X_pca tensor, pca object)."""
-    from sklearn.decomposition import PCA
-
-    n_components = min(n_components, X.shape[0], X.shape[1])
-    pca   = PCA(n_components=n_components, random_state=0)
-    X_pca = pca.fit_transform(X.numpy())
-
-    cumvar = np.cumsum(pca.explained_variance_ratio_)
-    comp90 = int(np.searchsorted(cumvar, 0.90)) + 1
-    comp95 = int(np.searchsorted(cumvar, 0.95)) + 1
-
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-    axes[0].bar(range(1, n_components + 1), pca.explained_variance_ratio_,
-                color="steelblue", alpha=0.8)
-    axes[0].set_xlabel("Principal component")
-    axes[0].set_ylabel("Explained variance ratio")
-    axes[0].set_title(f"{label} — per-component variance")
-
-    axes[1].plot(range(1, n_components + 1), cumvar, color="steelblue", linewidth=1.5)
-    axes[1].axhline(0.90, color="#888", linestyle="--", linewidth=0.9, label=f"90% @ {comp90}")
-    axes[1].axhline(0.95, color="orange", linestyle="--", linewidth=0.9, label=f"95% @ {comp95}")
-    axes[1].set_xlabel("Number of components")
-    axes[1].set_ylabel("Cumulative variance")
-    axes[1].set_title(f"{label} — cumulative variance")
-    axes[1].legend(fontsize=8)
-    axes[1].set_ylim(0, 1.02)
-
-    fig.suptitle(
-        f"PCA scree — {label}  ({X.shape[0]} samples, {X.shape[1]} dims → top {n_components})",
-        fontsize=10,
-    )
-    plt.tight_layout()
-    out = os.path.join(pca_dir, f"{label}_pca_scree.png")
-    fig.savefig(out, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    logging.info(f"    PCA scree → {out}  (90% @ {comp90}, 95% @ {comp95})")
-
-    return torch.from_numpy(X_pca.astype(np.float32)), pca
-
 
 def fit_manifold(X_ref, cfg, pca_dir):
     """
@@ -270,16 +158,17 @@ def fit_manifold(X_ref, cfg, pca_dir):
     import warnings
     import umap as umap_lib
 
-    X_pca, pca = run_pca(X_ref, cfg.probe_pca_dims, "gt_reference", pca_dir)
+    p = cfg.probe_parameters
+    X_pca, pca = run_pca(X_ref, p.pca_dims, "gt_reference", pca_dir)
     X_np = X_pca.numpy()
 
     def _fit_umap(n_components, label):
         logging.info(f"  Fitting {label} UMAP on {X_np.shape[0]} reference frames …")
         reducer = umap_lib.UMAP(
             n_components=n_components,
-            n_neighbors=cfg.probe_umap_n_neighbors,
-            min_dist=cfg.probe_umap_min_dist,
-            random_state=cfg.probe_umap_seed,
+            n_neighbors=p.umap_n_neighbors,
+            min_dist=p.umap_min_dist,
+            random_state=p.umap_seed,
         )
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="n_jobs value.*overridden",
@@ -343,13 +232,13 @@ def collect_eval_dataset(policy, preprocessor, postprocessor,
             "frame_idx":   fr_idx,
             "global_idx":  global_idx,
             "subtask":     gt_subtask,
-            "subtask_idx": _get_subtask_idx(dataset, global_idx),
+            "subtask_idx": get_subtask_idx(dataset, global_idx),
             "task":        task_str,
         })
 
     policy.model.suppress_debug_log = False
 
-    gt_pca   = np.stack(gt_pca_rows)    # (N, pca_dims)
+    gt_pca   = np.stack(gt_pca_rows)
     pred_pca = np.stack(pred_pca_rows)
 
     with warnings.catch_warnings():
@@ -361,36 +250,17 @@ def collect_eval_dataset(policy, preprocessor, postprocessor,
         pred_emb3 = reducer3d.transform(pred_pca)
 
     return {
-        "gt_emb2":   gt_emb2,    # (N, 2)
+        "gt_emb2":   gt_emb2,
         "pred_emb2": pred_emb2,
-        "gt_emb3":   gt_emb3,    # (N, 3)
+        "gt_emb3":   gt_emb3,
         "pred_emb3": pred_emb3,
         "metadata":  metadata,
     }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Plot helpers
+# 2D plot helpers (matplotlib)
 # ──────────────────────────────────────────────────────────────────────────────
-
-_EP_COLORS = [
-    "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
-    "#42d4f4", "#f032e6", "#bfef45", "#469990", "#dcbeff",
-    "#9a6324", "#800000", "#aaffc3", "#808000", "#000075",
-    "#a9a9a9", "#ffd8b1", "#fabed4", "#fffac8", "#e0e0e0",
-]
-_SEQ_CMAPS = ["Blues",   "Greens",  "Purples", "GnBu",   "BuGn",
-              "YlGnBu",  "PuBu",    "BuPu",    "GnBu",   "PuRd"]
-
-
-def _ax_style(ax, title):
-    import textwrap
-    ax.set_title(textwrap.fill(title, width=60), fontsize=9)
-    ax.set_xlabel("UMAP-1", fontsize=8)
-    ax.set_ylabel("UMAP-2", fontsize=8)
-    ax.tick_params(labelsize=7)
-    ax.set_aspect("equal", adjustable="datalim")
-
 
 def _draw_ref_bg(ax, ref_emb2):
     """Grey dots for the reference GT manifold (background layer)."""
@@ -420,35 +290,6 @@ def _gradient_path(ax, x, y, cmap_name, linewidth=1.5, alpha=0.85, zorder=2):
     ax.add_collection(lc)
 
 
-def _plotly_3d_layout(title):
-    return dict(
-        title=dict(text=title, font=dict(size=13)),
-        scene=dict(
-            xaxis=dict(title="UMAP-1", showgrid=True, gridcolor="#e0e0e0", gridwidth=1),
-            yaxis=dict(title="UMAP-2", showgrid=True, gridcolor="#e0e0e0", gridwidth=1),
-            zaxis=dict(title="UMAP-3", showgrid=True, gridcolor="#e0e0e0", gridwidth=1),
-            bgcolor="white",
-            aspectmode="auto",
-        ),
-        paper_bgcolor="white",
-        legend=dict(font=dict(size=12), itemsizing="constant",
-                    bgcolor="rgba(255,255,255,0.85)", bordercolor="#cccccc", borderwidth=1),
-        margin=dict(l=0, r=0, b=0, t=55),
-        height=720,
-    )
-
-
-def _ref_bg_trace_3d(ref_emb3):
-    import plotly.graph_objects as go
-    return go.Scatter3d(
-        x=ref_emb3[:, 0], y=ref_emb3[:, 1], z=ref_emb3[:, 2],
-        mode="markers", name="ref GT",
-        marker=dict(size=2, color="#cccccc", opacity=0.30, line=dict(width=0)),
-        hoverinfo="skip",
-        showlegend=True,
-    )
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # 2D plots — per dataset
 # ──────────────────────────────────────────────────────────────────────────────
@@ -457,7 +298,7 @@ def plot_2d_trajectories(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds
     """
     All episodes on the reference manifold.
     GT: thick gradient line (dark→light = early→late).
-    Pred: small semi-transparent dots in the same episode colour — visually tied to their GT line.
+    Pred: small semi-transparent dots in the same episode colour.
     """
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
@@ -476,11 +317,10 @@ def plot_2d_trajectories(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds
         order = np.argsort(fr_ids[idx])
         xs_gt, ys_gt = gt_emb2  [idx[order], 0], gt_emb2  [idx[order], 1]
         xs_pr, ys_pr = pred_emb2[idx[order], 0], pred_emb2[idx[order], 1]
-        cmap_name = _SEQ_CMAPS[i % len(_SEQ_CMAPS)]
-        col       = _EP_COLORS[i % len(_EP_COLORS)]
+        cmap_name = SEQ_CMAPS[i % len(SEQ_CMAPS)]
+        col       = EP_COLORS[i % len(EP_COLORS)]
 
         _gradient_path(ax, xs_gt, ys_gt, cmap_name, linewidth=2.0, zorder=3)
-        # Pred on top so it's visible even when overlapping GT
         ax.scatter(xs_pr, ys_pr, color=col, s=20, alpha=0.75,
                    marker="o", linewidths=0, zorder=4)
         ax.scatter(xs_gt[0],  ys_gt[0],  marker="^", s=70, color=col,
@@ -498,7 +338,7 @@ def plot_2d_trajectories(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds
         ]
         ax.legend(handles=legend_handles + enc, fontsize=7, ncol=2)
     ax.autoscale_view()
-    _ax_style(ax, f"{ds_name}  (line=GT · dots=pred · same colour = same episode · ▲start ■end)")
+    ax_style(ax, f"{ds_name}  (line=GT · dots=pred · same colour = same episode · ▲start ■end)")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -514,7 +354,7 @@ def plot_2d_by_frame(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds_nam
         sc = ax.scatter(emb[:, 0], emb[:, 1], c=fr_ids, cmap="plasma",
                         s=18, alpha=0.85, linewidths=0, zorder=2)
         plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label="Frame index")
-        _ax_style(ax, f"{ds_name} — {label} by frame index  ({n_eps} eps)")
+        ax_style(ax, f"{ds_name} — {label} by frame index  ({n_eps} eps)")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -538,7 +378,7 @@ def plot_2d_by_subtask(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds_n
             ax.scatter(emb[mask, 0], emb[mask, 1], s=18, alpha=0.85, linewidths=0,
                        color=cmap(i % 20), label=f"[{s}] {lbl}", zorder=2)
         ax.legend(fontsize=6, markerscale=2, bbox_to_anchor=(1.01, 1), loc="upper left")
-        _ax_style(ax, f"{ds_name} — {label} by subtask  ({n_eps} eps)")
+        ax_style(ax, f"{ds_name} — {label} by subtask  ({n_eps} eps)")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -546,7 +386,7 @@ def plot_2d_by_subtask(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds_n
 
 def plot_2d_episode(ref_emb2, gt_emb_ep, pred_emb_ep, meta_ep,
                     ep_idx, ds_name, output_path):
-    """Single episode: GT (solid blue gradient) + pred (flat dashed orange)."""
+    """Single episode: GT (solid blue gradient) + pred (orange dots)."""
     from matplotlib.collections import LineCollection
     from matplotlib.lines import Line2D
 
@@ -587,7 +427,7 @@ def plot_2d_episode(ref_emb2, gt_emb_ep, pred_emb_ep, meta_ep,
     ]
     ax.legend(handles=legend_handles, fontsize=8, framealpha=0.85)
     ax.autoscale_view()
-    _ax_style(ax, f"{ds_name} — ep {ep_idx}  ({len(fr)} frames)")
+    ax_style(ax, f"{ds_name} — ep {ep_idx}  ({len(fr)} frames)")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -598,10 +438,6 @@ def plot_2d_episode(ref_emb2, gt_emb_ep, pred_emb_ep, meta_ep,
 # 2D overview — all datasets on the reference manifold
 # ──────────────────────────────────────────────────────────────────────────────
 
-_DS_COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
-              "#42d4f4", "#f032e6", "#bfef45", "#469990"]
-
-
 def plot_2d_overview(ref_emb2, datasets_cache, output_path):
     """All datasets' GT scatter overlaid on reference manifold."""
     from matplotlib.patches import Patch
@@ -611,7 +447,7 @@ def plot_2d_overview(ref_emb2, datasets_cache, output_path):
 
     legend_handles = [Patch(facecolor="#cccccc", label="ref GT")]
     for i, (ds_name, ds_data) in enumerate(datasets_cache.items()):
-        col = _DS_COLORS[i % len(_DS_COLORS)]
+        col = DS_COLORS[i % len(DS_COLORS)]
         emb = ds_data["gt_emb2"]
         ax.scatter(emb[:, 0], emb[:, 1], s=14, color=col,
                    alpha=0.75, linewidths=0, zorder=2 + i)
@@ -619,7 +455,7 @@ def plot_2d_overview(ref_emb2, datasets_cache, output_path):
 
     ax.legend(handles=legend_handles, fontsize=7)
     ax.autoscale_view()
-    _ax_style(ax, "Overview — all datasets GT on reference manifold")
+    ax_style(ax, "Overview — all datasets GT on reference manifold")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -638,17 +474,11 @@ def plot_3d_by_episode(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
     fr_ids     = [m["frame_idx"]   for m in metadata]
     unique_eps = sorted(set(ep_ids))
 
-    traces = [_ref_bg_trace_3d(ref_emb3)]
+    traces = [ref_bg_trace_3d(ref_emb3)]
     for i, ep in enumerate(unique_eps):
         idx    = [j for j, e in enumerate(ep_ids) if e == ep]
         frames = np.array([fr_ids[j] for j in idx])
-        cmap_ep = matplotlib.colormaps.get_cmap(_SEQ_CMAPS[i % len(_SEQ_CMAPS)])
-
-        fmin, fmax = frames.min(), frames.max()
-        norm = 0.9 - (frames - fmin) / max(fmax - fmin, 1) * 0.6  # dark=early, pale=late
-        rgba_colors = cmap_ep(norm)
-        plotly_colors = [f"rgba({int(r*255)},{int(g*255)},{int(b*255)},0.85)"
-                         for r, g, b, _ in rgba_colors]
+        colors = frame_colors_rgba(frames, SEQ_CMAPS[i % len(SEQ_CMAPS)], alpha=0.85)
 
         hover_gt   = [f"GT   ep={ep} fr={fr_ids[j]}<br>{metadata[j]['subtask']}" for j in idx]
         hover_pred = [f"pred ep={ep} fr={fr_ids[j]}<br>{metadata[j]['subtask']}" for j in idx]
@@ -659,7 +489,7 @@ def plot_3d_by_episode(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
             z=[gt_emb3[j, 2] for j in idx],
             mode="markers", name=f"ep {ep}",
             legendgroup=f"ep{ep}", showlegend=True,
-            marker=dict(size=6, symbol="circle", color=plotly_colors, line=dict(width=0)),
+            marker=dict(size=6, symbol="circle", color=colors, line=dict(width=0)),
             text=hover_gt, hovertemplate="%{text}<extra></extra>",
         ))
         traces.append(go.Scatter3d(
@@ -668,12 +498,12 @@ def plot_3d_by_episode(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
             z=[pred_emb3[j, 2] for j in idx],
             mode="markers", name=f"ep {ep} pred",
             legendgroup=f"ep{ep}", showlegend=False,
-            marker=dict(size=4, symbol="cross", color=plotly_colors, line=dict(width=0.5)),
+            marker=dict(size=4, symbol="cross", color=colors, line=dict(width=0.5)),
             text=hover_pred, hovertemplate="%{text}<extra></extra>",
         ))
 
     fig = go.Figure(data=traces)
-    fig.update_layout(**_plotly_3d_layout(
+    fig.update_layout(**plotly_3d_layout(
         f"{ds_name} — by episode  ●=GT  ✕=pred  dark→pale=early→late"
     ))
     fig.write_html(output_path)
@@ -692,7 +522,7 @@ def plot_3d_by_frame(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_nam
                   for m in metadata]
 
     traces = [
-        _ref_bg_trace_3d(ref_emb3),
+        ref_bg_trace_3d(ref_emb3),
         go.Scatter3d(
             x=gt_emb3[:, 0], y=gt_emb3[:, 1], z=gt_emb3[:, 2],
             mode="markers", name="GT",
@@ -712,7 +542,7 @@ def plot_3d_by_frame(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_nam
     ]
 
     fig = go.Figure(data=traces)
-    fig.update_layout(**_plotly_3d_layout(
+    fig.update_layout(**plotly_3d_layout(
         f"{ds_name} — by frame index  (●=GT  ✕=pred)  {n_eps} eps"
     ))
     fig.write_html(output_path)
@@ -728,10 +558,10 @@ def plot_3d_by_subtask(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
     unique_subs = sorted(set(sub_ids))
     n_eps       = len(set(m["episode_idx"] for m in metadata))
 
-    traces = [_ref_bg_trace_3d(ref_emb3)]
+    traces = [ref_bg_trace_3d(ref_emb3)]
     for i, s in enumerate(unique_subs):
         mask = [j for j, sid in enumerate(sub_ids) if sid == s]
-        col  = _EP_COLORS[i % len(_EP_COLORS)]
+        col  = EP_COLORS[i % len(EP_COLORS)]
         lbl  = sub_text.get(s, str(s))
         if len(lbl) > 35:
             lbl = lbl[:33] + "…"
@@ -761,7 +591,7 @@ def plot_3d_by_subtask(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
         ))
 
     fig = go.Figure(data=traces)
-    fig.update_layout(**_plotly_3d_layout(
+    fig.update_layout(**plotly_3d_layout(
         f"{ds_name} — by subtask  (●=GT  ✕=pred)  {n_eps} eps"
     ))
     fig.write_html(output_path)
@@ -775,9 +605,9 @@ def plot_3d_by_subtask(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
 def plot_3d_overview(ref_emb3, datasets_cache, output_path):
     import plotly.graph_objects as go
 
-    traces = [_ref_bg_trace_3d(ref_emb3)]
+    traces = [ref_bg_trace_3d(ref_emb3)]
     for i, (ds_name, ds_data) in enumerate(datasets_cache.items()):
-        col  = _DS_COLORS[i % len(_DS_COLORS)]
+        col  = DS_COLORS[i % len(DS_COLORS)]
         emb3 = ds_data["gt_emb3"]
         meta = ds_data["metadata"]
         hover = [f"{ds_name} | ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}"
@@ -790,7 +620,7 @@ def plot_3d_overview(ref_emb3, datasets_cache, output_path):
         ))
 
     fig = go.Figure(data=traces)
-    fig.update_layout(**_plotly_3d_layout("Overview — all datasets GT on reference manifold"))
+    fig.update_layout(**plotly_3d_layout("Overview — all datasets GT on reference manifold"))
     fig.write_html(output_path)
     logging.info(f"  3D overview → {output_path}")
 
@@ -804,32 +634,25 @@ def compute_nn_distances(query_emb, ref_emb):
     from scipy.spatial import cKDTree
     tree  = cKDTree(ref_emb)
     dists, _ = tree.query(query_emb, k=1, workers=-1)
-    return dists  # (N,)
+    return dists
 
 
 def plot_nn_distances(ref_emb2, gt_emb2, pred_emb2, metadata, output_dir, ds_name):
     """
     Per-episode NN-distance histograms (GT blue vs Pred orange, overlaid).
-    Each subplot = one episode.  GT baseline shows how well the reference covers that region;
-    pred histogram shows whether the model stays on-manifold or drifts off.
-    Also saves a CSV summary.
+    Each subplot = one episode. Also saves a CSV summary.
     """
     import csv
     from matplotlib.patches import Patch
 
     ep_ids     = np.array([m["episode_idx"] for m in metadata])
-    fr_ids     = np.array([m["frame_idx"]   for m in metadata])
     unique_eps = sorted(np.unique(ep_ids).tolist())
 
     gt_nn   = compute_nn_distances(gt_emb2,   ref_emb2)
     pred_nn = compute_nn_distances(pred_emb2, ref_emb2)
 
-    ep_gt_dists   = {}
-    ep_pred_dists = {}
-    for ep in unique_eps:
-        mask = ep_ids == ep
-        ep_gt_dists  [ep] = gt_nn  [mask]
-        ep_pred_dists[ep] = pred_nn[mask]
+    ep_gt_dists   = {ep: gt_nn  [ep_ids == ep] for ep in unique_eps}
+    ep_pred_dists = {ep: pred_nn[ep_ids == ep] for ep in unique_eps}
 
     n_eps  = len(unique_eps)
     ncols  = min(n_eps, 5)
@@ -839,7 +662,7 @@ def plot_nn_distances(ref_emb2, gt_emb2, pred_emb2, metadata, output_dir, ds_nam
                              squeeze=False)
 
     all_vals = np.concatenate(list(ep_gt_dists.values()) + list(ep_pred_dists.values()))
-    x_max    = float(np.percentile(all_vals, 98))  # clip tail for readability
+    x_max    = float(np.percentile(all_vals, 98))
     bins     = np.linspace(0, x_max, 30)
 
     for idx, ep in enumerate(unique_eps):
@@ -853,8 +676,7 @@ def plot_nn_distances(ref_emb2, gt_emb2, pred_emb2, metadata, output_dir, ds_nam
         med_pred = np.median(ep_pred_dists[ep])
         ax.axvline(med_gt,   color="#223366", linewidth=1.2, linestyle="--")
         ax.axvline(med_pred, color="#883300", linewidth=1.2, linestyle="--")
-        ax.set_title(f"ep {ep}   med GT={med_gt:.3f}  pred={med_pred:.3f}",
-                     fontsize=8)
+        ax.set_title(f"ep {ep}   med GT={med_gt:.3f}  pred={med_pred:.3f}", fontsize=8)
         ax.set_xlabel("NN dist (2D UMAP)", fontsize=7)
         ax.tick_params(labelsize=7)
         if c == 0:
@@ -865,36 +687,32 @@ def plot_nn_distances(ref_emb2, gt_emb2, pred_emb2, metadata, output_dir, ds_nam
                 Patch(facecolor="#dd7733", alpha=0.7, label="Pred"),
             ], fontsize=7)
 
-    # hide unused axes
     for idx in range(n_eps, nrows * ncols):
         r, c = divmod(idx, ncols)
         axes[r][c].set_visible(False)
 
-    fig.suptitle(f"{ds_name} — NN distance to reference GT manifold  "
-                 f"(dashed = median)", fontsize=10)
+    fig.suptitle(f"{ds_name} — NN distance to reference GT manifold  (dashed = median)",
+                 fontsize=10)
     fig.tight_layout()
     out_png = os.path.join(output_dir, "nn_distances.png")
     fig.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
     logging.info(f"    NN distances → {out_png}")
 
-    # ── CSV summary ───────────────────────────────────────────────────────────
     out_csv = os.path.join(output_dir, "nn_distances.csv")
     rows = []
     for ep in unique_eps:
         for label, dists in [("gt", ep_gt_dists[ep]), ("pred", ep_pred_dists[ep])]:
             rows.append({
-                "dataset":  ds_name,
-                "episode":  ep,
-                "type":     label,
-                "n":        len(dists),
-                "mean":     float(np.mean(dists)),
-                "median":   float(np.median(dists)),
-                "std":      float(np.std(dists)),
-                "p25":      float(np.percentile(dists, 25)),
-                "p75":      float(np.percentile(dists, 75)),
-                "p95":      float(np.percentile(dists, 95)),
-                "max":      float(np.max(dists)),
+                "dataset": ds_name, "episode": ep, "type": label,
+                "n":       len(dists),
+                "mean":    float(np.mean(dists)),
+                "median":  float(np.median(dists)),
+                "std":     float(np.std(dists)),
+                "p25":     float(np.percentile(dists, 25)),
+                "p75":     float(np.percentile(dists, 75)),
+                "p95":     float(np.percentile(dists, 95)),
+                "max":     float(np.max(dists)),
             })
     with open(out_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=rows[0].keys())
@@ -913,8 +731,7 @@ def run_plotting(cache, cfg, output_dir):
 
     d2 = os.path.join(output_dir, "2d")
     d3 = os.path.join(output_dir, "3d")
-    os.makedirs(d2, exist_ok=True)
-    os.makedirs(d3, exist_ok=True)
+    makedirs(d2, d3)
 
     for ds_name, ds_data in cache["datasets"].items():
         logging.info(f"  Plotting '{ds_name}' …")
@@ -927,8 +744,7 @@ def run_plotting(cache, cfg, output_dir):
         ds_dir2 = os.path.join(d2, ds_name)
         ds_dir3 = os.path.join(d3, ds_name)
         ep_dir  = os.path.join(ds_dir2, "episodes")
-        for p in (ds_dir2, ds_dir3, ep_dir):
-            os.makedirs(p, exist_ok=True)
+        makedirs(ds_dir2, ds_dir3, ep_dir)
 
         plot_2d_trajectories(ref_emb2, gt_emb2, pred_emb2, meta,
                              os.path.join(ds_dir2, "trajectories.png"), ds_name)
@@ -972,28 +788,30 @@ def run_plotting(cache, cfg, output_dir):
 @parser.wrap()
 def probe_cli(cfg: ProbeActionsConfig):
     init_logging()
-    output_dir = cfg.probe_output_dir
-    os.makedirs(output_dir, exist_ok=True)
+    p = cfg.probe_parameters
+    output_dir = os.path.join(p.output_dir, "actions")
+    makedirs(output_dir)
     cache_path = os.path.join(output_dir, "actions_cache.pt")
     cache = None
 
-    if cfg.probe_mode in ("collect", "all"):
-        device = get_safe_torch_device(try_device=cfg.policy.device)
+    if p.mode in ("collect", "all"):
+        device  = get_safe_torch_device(try_device=cfg.policy.device)
         pca_dir = os.path.join(output_dir, "pca_variance")
-        os.makedirs(pca_dir, exist_ok=True)
+        makedirs(pca_dir)
 
         # ── Phase 1: reference manifold from root GT (no model) ───────────────
         logging.info("Loading root dataset …")
+        from lerobot.datasets.factory import make_dataset
         root_dataset = make_dataset(cfg)
         root_dataset.delta_timestamps = None
         root_dataset.delta_indices    = None
         root_name = os.path.basename(os.path.normpath(cfg.dataset.root))
 
-        ref_samples = _sample_episodes(
+        ref_samples = sample_episodes_evenly(
             root_dataset,
-            n_per_episode=cfg.probe_ref_n_frames_per_episode,
-            max_episodes=cfg.probe_ref_max_episodes,
-            seed=cfg.probe_random_seed,
+            n_per_episode=p.ref_n_frames_per_episode,
+            max_episodes=p.ref_max_episodes,
+            seed=p.random_seed,
         )
         logging.info(f"Collecting reference GT: {len(ref_samples)} frames from '{root_name}' …")
         ref_data = collect_gt_reference(root_dataset, ref_samples, cfg.policy.chunk_size)
@@ -1007,32 +825,31 @@ def probe_cli(cfg: ProbeActionsConfig):
             "pca":          pca,
             "reducer2d":    reducer2d,
             "reducer3d":    reducer3d,
-            "ref_emb2":     ref_emb2,     # (N_ref, 2)
-            "ref_emb3":     ref_emb3,     # (N_ref, 3)
+            "ref_emb2":     ref_emb2,
+            "ref_emb3":     ref_emb3,
             "ref_metadata": ref_data["metadata"],
             "datasets":     {},
         }
 
         # ── Phase 2: evaluate all datasets with model ─────────────────────────
         logging.info("Loading policy …")
-        policy, preprocessor, postprocessor, _ = _load_policy_and_processors(
+        policy, preprocessor, postprocessor, _ = load_policy_and_processors(
             cfg, device, dataset=root_dataset
         )
 
         extra_paths = getattr(cfg.dataset, "additional_offline_dataset_paths", None) or []
         all_datasets = [(root_name, root_dataset)] + [
-            (os.path.basename(os.path.normpath(p)),
-             _load_extra_dataset(cfg, p))
-            for p in extra_paths
+            (os.path.basename(os.path.normpath(ep)), load_extra_dataset(cfg, ep))
+            for ep in extra_paths
         ]
 
         for ds_name, dataset in all_datasets:
             logging.info(f"=== Evaluating '{ds_name}' ===")
-            eval_samples = _sample_episodes(
+            eval_samples = sample_episodes_evenly(
                 dataset,
-                n_per_episode=cfg.probe_n_frames_per_episode,
-                max_episodes=cfg.probe_max_episodes,
-                seed=cfg.probe_random_seed,
+                n_per_episode=p.n_frames_per_episode,
+                max_episodes=p.max_episodes,
+                seed=p.random_seed,
             )
             logging.info(f"  {len(eval_samples)} frames")
             cache["datasets"][ds_name] = collect_eval_dataset(
@@ -1044,21 +861,13 @@ def probe_cli(cfg: ProbeActionsConfig):
         torch.save(cache, cache_path)
         logging.info(f"Cache saved → {cache_path}")
 
-    if cfg.probe_mode in ("plot", "all"):
+    if p.mode in ("plot", "all"):
         if cache is None:
             logging.info(f"Loading cache from {cache_path} …")
             cache = torch.load(cache_path, map_location="cpu", weights_only=False)
         logging.info("Generating plots …")
         run_plotting(cache, cfg, output_dir)
         logging.info(f"Done. Plots in {output_dir}/")
-
-
-def _load_extra_dataset(cfg, root):
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    ds = LeRobotDataset(repo_id=cfg.dataset.repo_id, root=root)
-    ds.delta_timestamps = None
-    ds.delta_indices    = None
-    return ds
 
 
 if __name__ == "__main__":
