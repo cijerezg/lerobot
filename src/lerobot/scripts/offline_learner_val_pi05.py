@@ -109,6 +109,7 @@ class OfflineTrainRLServerPipelineConfig(TrainRLServerPipelineConfig):
     val_dataset_path: str | None = None   # path to a separate val LeRobotDataset
     val_split: float = 0.0                # fraction of main-dataset episodes to hold out
     val_freq: int = 1000                  # optimization steps between validation runs
+    val_on_start: bool = False            # run validation before training starts (step 0 baseline)
 
 
 @parser.wrap()
@@ -421,6 +422,25 @@ def run_offline_training(
     # Helper function for bfloat16 casting
     cast_to_bf16_fn = cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None
     
+    # ── Optional step-0 baseline validation ──────────────────────────────────
+    if is_main_process and val_dataset is not None and getattr(cfg, "val_on_start", False):
+        logging.info("[OFFLINE LEARNER] Running step-0 baseline validation …")
+        run_validation(
+            policy=accelerator.unwrap_model(policy),
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            val_dataset=val_dataset,
+            val_ep_indices=val_ep_indices,
+            manifold_cache=manifold_cache,
+            cfg=cfg,
+            step=0,
+            output_dir=cfg.output_dir,
+            wandb_logger=wandb_logger,
+            device=device,
+        )
+        gc.collect()
+        torch.cuda.empty_cache()
+
     if is_main_process:
         logging.info("Starting offline training loop")
     optimization_step = 0

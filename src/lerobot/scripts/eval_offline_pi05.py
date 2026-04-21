@@ -105,11 +105,22 @@ def _load_policy_and_processors(cfg, device, dataset=None):
     Load policy and pre/post-processors.
     Follows the same pattern as offline_learner_pi05.py.
 
-    If `dataset` is not provided, it is loaded from cfg (first call).
-    Pass it in on subsequent calls (e.g. checkpoint B) to avoid reloading.
+    If `dataset` is not provided, it is loaded from cfg.  When
+    ``cfg.val_dataset_path`` is set the dataset is loaded from that path
+    (same logic the probe scripts use via ``offline_val_pi05``).
+    Pass `dataset` in on subsequent calls (e.g. checkpoint B) to avoid reloading.
     """
     if dataset is None:
-        dataset = make_dataset(cfg)
+        val_path = getattr(cfg, "val_dataset_path", None)
+        if val_path:
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+            logging.info(f"Loading eval dataset from val_dataset_path: {val_path}")
+            dataset = LeRobotDataset(
+                repo_id=cfg.dataset.repo_id,
+                root=val_path,
+            )
+        else:
+            dataset = make_dataset(cfg)
         dataset.delta_timestamps = None
         dataset.delta_indices = None
 

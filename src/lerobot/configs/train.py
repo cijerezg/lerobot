@@ -261,3 +261,4 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     val_dataset_path: str | None = None
     val_split: float = 0.0
     val_freq: int = 1000
+    val_on_start: bool = False
