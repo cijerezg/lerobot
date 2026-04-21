@@ -22,6 +22,7 @@ cool-down mechanism, and freshest-observation-wins merging.
 from dataclasses import dataclass, field
 
 from lerobot.robots.config import RobotConfig
+from lerobot.teleoperators.config import TeleoperatorConfig
 
 from .constants import DEFAULT_FPS, DEFAULT_OBS_QUEUE_TIMEOUT
 from .utils.simulation import DisconnectConfig, DropConfig, DuplicateConfig, ReorderConfig, SpikeDelayConfig
@@ -49,6 +50,34 @@ class RobotClientDrtcConfig:
 
     # Actions per chunk (should be <= policy's max action horizon)
     actions_per_chunk: int = field(metadata={"help": "Number of actions per chunk (H in the paper)"})
+
+    # Teleop intervention (mirrors inference_pi05_async behaviour, minimal scope).
+    # When enabled, the client constructs an additional teleop device (e.g. a
+    # leader arm). Per tick it checks IS_INTERVENTION; while engaged the leader's
+    # joint positions override the policy chunk and are sent to the follower.
+    # On disengage the action schedule is flushed so the next inference round
+    # re-anchors at the new pose.
+    teleop_enabled: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable teleop intervention. When True, requires `teleop` to be set."
+        },
+    )
+    teleop: TeleoperatorConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Teleop device configuration (e.g. SOLeaderTeleopConfig). "
+            "Required when teleop_enabled=True."
+        },
+    )
+    teleop_send_feedback: bool = field(
+        default=True,
+        metadata={
+            "help": "When not intervening, push the latest follower pose back to "
+            "the leader via teleop_device.send_feedback(...) so the leader gently "
+            "tracks the follower for a smooth handover."
+        },
+    )
 
     # Hardware metadata (for experiment reports)
     robot_type: str = field(default="", metadata={"help": "Robot type identifier (e.g. so101)"})
@@ -435,6 +464,8 @@ class RobotClientDrtcConfig:
             raise ValueError(f"action_filter_gain must be positive, got {self.action_filter_gain}")
         if self.action_filter_past_buffer_size < 1:
             raise ValueError(f"action_filter_past_buffer_size must be >= 1, got {self.action_filter_past_buffer_size}")
+        if self.teleop_enabled and self.teleop is None:
+            raise ValueError("teleop_enabled=True requires `teleop` to be set")
 
 
 # =============================================================================

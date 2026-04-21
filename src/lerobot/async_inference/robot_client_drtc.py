@@ -13,6 +13,7 @@ import numpy as np
 from sortedcontainers import SortedDict
 
 from lerobot.robots.utils import make_robot_from_config
+from lerobot.teleoperators.utils import TeleopEvents, make_teleoperator_from_config
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -324,6 +325,18 @@ class RobotClientDrtc:
             self.robot.connect()
             lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
 
+        # Optional teleop device for human intervention. Mirrors the minimal
+        # subset of inference_pi05_async.py behaviour: per-tick action override
+        # while engaged, action schedule flush on disengage, and leader feedback
+        # so the leader gently tracks the follower for a smooth handover.
+        self._teleop_device = None
+        self._was_intervening = False
+        self._latest_follower_pos: dict[str, float] = {}
+        if config.teleop_enabled and config.teleop is not None:
+            self.logger.info("Connecting teleop device of type %s", config.teleop.type)
+            self._teleop_device = make_teleoperator_from_config(config.teleop)
+            self._teleop_device.connect()
+
         self._obs_drop_sim = DropSimulator(config=config.drop_obs_config)
         self._action_drop_sim = DropSimulator(config=config.drop_action_config)
         self._obs_dup_sim = DuplicateSimulator(config=config.dup_obs_config)
@@ -460,6 +473,31 @@ class RobotClientDrtc:
         """
         return max(self.action_step, -1)
 
+    def _is_intervening(self) -> bool:
+        """Return True if the teleop device currently reports intervention."""
+        if self._teleop_device is None:
+            return False
+        try:
+            events = self._teleop_device.get_teleop_events()
+            return bool(events.get(TeleopEvents.IS_INTERVENTION, False))
+        except Exception as e:
+            self.logger.error("Teleop event read failed: %s", e)
+            return False
+
+    def _read_teleop_action(self) -> np.ndarray | None:
+        """Read the leader's joint positions ordered to match self.robot.action_features."""
+        if self._teleop_device is None:
+            return None
+        try:
+            action_dict = self._teleop_device.get_action()
+            return np.array(
+                [float(action_dict[k]) for k in self.robot.action_features],
+                dtype=np.float32,
+            )
+        except Exception as e:
+            self.logger.error("Teleop action read failed: %s", e)
+            return None
+
     def _create_action_filter(self) -> ActionFilter:
         """Create the action filter based on configuration.
 
@@ -536,6 +574,12 @@ class RobotClientDrtc:
             self._trajectory_viz_client.stop()
 
         self.robot.disconnect()
+
+        if self._teleop_device is not None:
+            try:
+                self._teleop_device.disconnect()
+            except Exception as e:
+                self.logger.debug("Teleop disconnect failed: %s", e)
 
         self.channel.close()
         self._metrics.diagnostic.stop()
@@ -671,6 +715,10 @@ class RobotClientDrtc:
                     last_good_observation = raw_observation
                     last_good_observation_time = time.time()
                     consecutive_capture_failures = 0
+                    if self._teleop_device is not None:
+                        self._latest_follower_pos = {
+                            k: float(v) for k, v in raw_observation.items() if k.endswith(".pos")
+                        }
                 except Exception as e:
                     consecutive_capture_failures += 1
                     if (
@@ -1052,42 +1100,98 @@ class RobotClientDrtc:
             # Step 1: Execute action if available
             # ---------------------------------------------------------------------
             t_phase1_start = time.perf_counter()
-            if not self.action_schedule.is_empty():
-                result = self.action_schedule.pop_front()
-                if result is not None:
-                    step, action, src_control_step, chunk_start_step = result
+            intervening = self._is_intervening()
 
-                    # Apply action filter to reduce jitter from policy micro-updates
-                    ctx = FilterContext(action=action)
+            if intervening:
+                # Override the policy's action with the leader's joint positions.
+                # The follower follows the leader for the duration of the
+                # intervention. We still drain one slot from the schedule each
+                # tick so policy chunks don't accumulate stale state behind us.
+                self._metrics.diagnostic.counter("intervention_ticks", 1)
+                teleop_action = self._read_teleop_action()
+                if teleop_action is not None:
+                    ctx = FilterContext(action=teleop_action)
                     filtered_action = self._action_filter.apply(ctx)
-
                     t_send_start = time.perf_counter()
                     self.robot.send_action(self._action_array_to_dict(filtered_action))
                     t_send_done = time.perf_counter()
-
-                    # Keep action_step aligned with the schedule's action-step keys.
-                    # Only the main control loop thread writes this.
-                    self.action_step = step
                     self._metrics.diagnostic.timing_s("send_action_ms", t_send_done - t_send_start)
 
-                    # Stream executed action to the visualization server (best-effort).
                     if self._trajectory_viz_client is not None:
                         self._trajectory_viz_client.on_executed_action(
                             EvExecutedAction(
-                                step=step,
+                                step=self.action_step,
                                 action=filtered_action.tolist(),
                                 timestamp=time.time(),
                             )
                         )
 
-                    # Record executed action for experiment trajectory visualization
-                    if self._metrics.experiment is not None:
-                        self._metrics.experiment.record_executed_action(
-                            step=step,
-                            action=filtered_action,
-                            src_control_step=src_control_step,
-                            chunk_start_step=chunk_start_step,
-                        )
+                if not self.action_schedule.is_empty():
+                    self.action_schedule.pop_front()
+            else:
+                if self._was_intervening:
+                    # Falling edge: dump stale chunks queued during intervention
+                    # and reset cooldown so the next inference round re-anchors
+                    # at the new pose.
+                    self.action_schedule.clear()
+                    self.obs_cooldown = 0
+                    self.logger.info("Teleop disengaged, cleared action schedule")
+                    self._metrics.diagnostic.counter("intervention_disengage", 1)
+
+                if not self.action_schedule.is_empty():
+                    result = self.action_schedule.pop_front()
+                    if result is not None:
+                        step, action, src_control_step, chunk_start_step = result
+
+                        # Apply action filter to reduce jitter from policy micro-updates
+                        ctx = FilterContext(action=action)
+                        filtered_action = self._action_filter.apply(ctx)
+
+                        t_send_start = time.perf_counter()
+                        self.robot.send_action(self._action_array_to_dict(filtered_action))
+                        t_send_done = time.perf_counter()
+
+                        # Keep action_step aligned with the schedule's action-step keys.
+                        # Only the main control loop thread writes this.
+                        self.action_step = step
+                        self._metrics.diagnostic.timing_s("send_action_ms", t_send_done - t_send_start)
+
+                        # Stream executed action to the visualization server (best-effort).
+                        if self._trajectory_viz_client is not None:
+                            self._trajectory_viz_client.on_executed_action(
+                                EvExecutedAction(
+                                    step=step,
+                                    action=filtered_action.tolist(),
+                                    timestamp=time.time(),
+                                )
+                            )
+
+                        # Record executed action for experiment trajectory visualization
+                        if self._metrics.experiment is not None:
+                            self._metrics.experiment.record_executed_action(
+                                step=step,
+                                action=filtered_action,
+                                src_control_step=src_control_step,
+                                chunk_start_step=chunk_start_step,
+                            )
+
+            # Send the latest follower pose back to the leader so the leader
+            # gently tracks the follower while the policy is in control. The
+            # SOLeader implementation no-ops while intervening, so this is safe
+            # to call unconditionally, but we gate on `intervening` anyway to
+            # avoid unnecessary serial chatter on the leader bus.
+            if (
+                self._teleop_device is not None
+                and not intervening
+                and self.config.teleop_send_feedback
+                and self._latest_follower_pos
+            ):
+                try:
+                    self._teleop_device.send_feedback(self._latest_follower_pos)
+                except Exception as e:
+                    self.logger.debug("Teleop feedback failed: %s", e)
+
+            self._was_intervening = intervening
 
             t_phase1_end = time.perf_counter()
             _phase_exec_ms = self._ms(t_phase1_end - t_phase1_start)

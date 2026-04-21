@@ -137,6 +137,16 @@ class ExperimentConfig:
     # Diagnostics
     full_diagnostics: bool = False
     trajectory_viz_enabled: bool = False
+    # Teleop intervention (mirrors inference_pi05_async behaviour, minimal scope).
+    # When enabled, the client connects an additional leader arm, swaps in the
+    # leader's joint positions whenever IS_INTERVENTION is true, flushes the
+    # action schedule on disengage, and sends follower-pose feedback to the
+    # leader otherwise.
+    teleop_enabled: bool = False
+    teleop_type: str = ""
+    teleop_port: str = ""
+    teleop_id: str = ""
+    teleop_send_feedback: bool = True
 
 
 # ---- YAML config loading ----
@@ -160,6 +170,7 @@ _SCALAR_FIELDS = frozenset({
     "action_filter_past_buffer_size",
     "full_diagnostics",
     "trajectory_viz_enabled",
+    "teleop_enabled", "teleop_type", "teleop_port", "teleop_id", "teleop_send_feedback",
 })
 
 
@@ -295,6 +306,33 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
     )
 
 
+def create_teleop_config(config: ExperimentConfig):
+    """Build a TeleoperatorConfig from the experiment's teleop_* fields, or None.
+
+    Note: SOLeaderTeleopConfig is registered for both "so100_leader" and
+    "so101_leader" and uses a single underlying SOLeader implementation. The
+    `type` property is derived from the draccus registry, so we only validate
+    that the requested type is one of the supported leader variants and rely on
+    the factory to dispatch correctly.
+    """
+    if not config.teleop_enabled:
+        return None
+    from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig
+
+    teleop_type_norm = config.teleop_type.strip().lower()
+    if teleop_type_norm not in {"so101_leader", "so100_leader"}:
+        raise ValueError(
+            f"Unsupported teleop_type {config.teleop_type!r}. "
+            "Supported values: so101_leader, so100_leader."
+        )
+    if not config.teleop_port:
+        raise ValueError("teleop_port must be set when teleop_enabled=True")
+    return SOLeaderTeleopConfig(
+        port=config.teleop_port,
+        id=config.teleop_id or None,
+    )
+
+
 def create_client_config(
     config: ExperimentConfig,
     metrics_path: Path,
@@ -303,6 +341,7 @@ def create_client_config(
 ) -> RobotClientDrtcConfig:
     """Create a client config for a single experiment."""
     robot_cfg = create_robot_config(config)
+    teleop_cfg = create_teleop_config(config)
     client_kwargs = dict(
         robot=robot_cfg,
         server_address=server_address,
@@ -355,6 +394,10 @@ def create_client_config(
         disconnect_config=config.disconnect_config,
         spikes=config.spikes,
         metrics_path=str(metrics_path),
+        # Teleop intervention
+        teleop_enabled=config.teleop_enabled,
+        teleop=teleop_cfg,
+        teleop_send_feedback=config.teleop_send_feedback,
     )
     if trajectory_viz_ws_url:
         client_kwargs["trajectory_viz_ws_url"] = trajectory_viz_ws_url

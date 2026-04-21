@@ -81,3 +81,15 @@ action_filter_gain: 1.4
 # Diagnostics
 full_diagnostics: true
 trajectory_viz_enabled: false
+
+# Teleop intervention (mirror inference_pi05_async behaviour, minimal scope).
+# Press '5' on the keyboard to toggle intervention; while engaged, the leader's
+# joint positions drive the follower. On disengage the action schedule is
+# flushed so the next inference round re-anchors at the new pose. When not
+# intervening, the leader gently tracks the follower via send_feedback.
+# Port/id mirror the env.teleop block in recap-config-hilserl.json.
+teleop_enabled: true
+teleop_type: so101_leader
+teleop_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00
+teleop_id: so101_leader_2026_04_16_v2
+teleop_send_feedback: true
