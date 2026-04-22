@@ -134,7 +134,7 @@ class PI05RLConfig(PI05FullConfig):
 
     def get_optimizer_preset(self) -> MultiAdamConfig:
         return MultiAdamConfig(
-            weight_decay=0.0,
+            weight_decay=self.optimizer_weight_decay,
             optimizer_groups={
                 "actor": {"lr": self.actor_lr},
                 "critic": {"lr": self.critic_lr},

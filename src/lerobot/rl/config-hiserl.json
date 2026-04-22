@@ -5,15 +5,16 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 32,
+    "batch_size": 8,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 100,
-    "offline_output_dir": "outputs/pi05_full_offline_training_v1_anchor_actions",
+    "offline_output_dir": "outputs/pi05_full_offline_training_v1_anchor_actions_val",
     "offline_save_freq": 400,
-    "val_dataset_path": "outputs/train/2026-04-13/20-47-39_default/inference_dataset_video_annotated",
+    "val_dataset_path": "outputs/annotated_dataset_validation",
     "val_split": 0.0,
-    "val_freq": 1000,
+    "val_freq": 400,
+    "val_on_start": true,
     "episode_logging_freq": 4,
     "episode_save_freq": 10,
     "video_logging_cameras": [
@@ -37,7 +38,7 @@
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the red truck and put it in the bowl",
-        "pi05_checkpoint": "outputs/pi05_full_offline_training_v2_anchor_actions/checkpoints/0016000/pretrained_model",
+        "pi05_checkpoint": "outputs/pi05_base",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
@@ -110,7 +111,7 @@
         "gradient_checkpointing": true,
         "online_steps": 20000,
         "online_buffer_capacity": 5000,
-        "offline_buffer_capacity": 80000,
+        "offline_buffer_capacity": 50000,
         "online_step_before_learning": 10,
         "policy_update_freq": 1,
         "discount": 0.97,
@@ -118,18 +119,19 @@
         "num_critics": 1,
         "critic_lr": 0.00005,
         "actor_lr": 0.00005,
+        "optimizer_weight_decay": 0.01,
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 4,
+        "gradient_accumulation_steps": 16,
         "offline_steps": 10000,
         "trainable_params": {
             "vision_encoder_from_layer": {
-                "vision_tower": null,
-                "multi_modal_projector": false
+                "vision_tower": 5,
+                "multi_modal_projector": true
             },
-            "language_from_layer": 12,
-            "critic_language_from_layer": 4
+            "language_from_layer": 0,
+            "critic_language_from_layer": 1
         },
         "critic_network_kwargs": {
             "hidden_dims": [
@@ -152,7 +154,7 @@
     "probe_parameters": {
         "output_dir": "outputs/probe",
         "mode": "all",
-        "max_episodes": 4,
+        "max_episodes": 5,
         "n_frames_per_episode": 128,
         "random_seed": 42,
         "umap_n_neighbors": 15,
