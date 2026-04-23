@@ -132,6 +132,7 @@ import torch
 
 from lerobot.scripts.eval_offline_pi05 import _build_episode_index, get_frame_data
 from lerobot.rl.probe_utils_pi05 import makedirs
+from lerobot.rl.probe_representations_pi05 import _save_episode_thumbnails
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -705,6 +706,15 @@ def run_validation(
     makedirs(step_dir)
 
     logging.info(f"[VAL] ═══ Validation at step {step} → {step_dir} ═══")
+
+    # ── Episode thumbnails (no model needed) ────────────────────────────────
+    try:
+        ep_to_indices = _build_episode_index(val_dataset)
+        if val_ep_indices is not None:
+            ep_to_indices = {k: v for k, v in ep_to_indices.items() if k in val_ep_indices}
+        _save_episode_thumbnails(val_dataset, ep_to_indices, step_dir)
+    except Exception as exc:
+        logging.warning(f"[VAL] Episode thumbnails failed at step {step}: {exc}", exc_info=True)
 
     policy.eval()
     try:

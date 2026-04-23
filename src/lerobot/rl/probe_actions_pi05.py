@@ -467,7 +467,7 @@ def plot_2d_overview(ref_emb2, datasets_cache, output_path):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def plot_3d_by_episode(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_name):
-    """Per-episode scatter: GT circles, pred crosses; sequential colormap per episode (dark=early, pale=late)."""
+    """Per-episode scatter: pred circles, GT squares; sequential colormap per episode (dark=early, pale=late)."""
     import plotly.graph_objects as go
 
     ep_ids     = [m["episode_idx"] for m in metadata]
@@ -483,28 +483,31 @@ def plot_3d_by_episode(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
         hover_gt   = [f"GT   ep={ep} fr={fr_ids[j]}<br>{metadata[j]['subtask']}" for j in idx]
         hover_pred = [f"pred ep={ep} fr={fr_ids[j]}<br>{metadata[j]['subtask']}" for j in idx]
 
+        # GT → square, smaller
         traces.append(go.Scatter3d(
             x=[gt_emb3[j, 0] for j in idx],
             y=[gt_emb3[j, 1] for j in idx],
             z=[gt_emb3[j, 2] for j in idx],
-            mode="markers", name=f"ep {ep}",
-            legendgroup=f"ep{ep}", showlegend=True,
-            marker=dict(size=6, symbol="circle", color=colors, line=dict(width=0)),
+            mode="markers", name=f"ep {ep} GT",
+            legendgroup=f"ep{ep}", showlegend=False,
+            marker=dict(size=3, symbol="square", color=colors,
+                        opacity=0.85, line=dict(width=0)),
             text=hover_gt, hovertemplate="%{text}<extra></extra>",
         ))
+        # Predicted → circle, main focus
         traces.append(go.Scatter3d(
             x=[pred_emb3[j, 0] for j in idx],
             y=[pred_emb3[j, 1] for j in idx],
             z=[pred_emb3[j, 2] for j in idx],
-            mode="markers", name=f"ep {ep} pred",
-            legendgroup=f"ep{ep}", showlegend=False,
-            marker=dict(size=4, symbol="cross", color=colors, line=dict(width=0.5)),
+            mode="markers", name=f"ep {ep}",
+            legendgroup=f"ep{ep}", showlegend=True,
+            marker=dict(size=6, symbol="circle", color=colors, line=dict(width=0)),
             text=hover_pred, hovertemplate="%{text}<extra></extra>",
         ))
 
     fig = go.Figure(data=traces)
     fig.update_layout(**plotly_3d_layout(
-        f"{ds_name} — by episode  ●=GT  ✕=pred  dark→pale=early→late"
+        f"{ds_name} — by episode  ●=pred  ■=GT  dark→pale=early→late"
     ))
     fig.write_html(output_path)
     logging.info(f"    3D by episode → {output_path}")

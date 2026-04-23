@@ -44,9 +44,9 @@ EP_COLORS = [
     "#a9a9a9", "#ffd8b1", "#fabed4", "#fffac8", "#e0e0e0",
 ]
 
-# Sequential colormaps cycled per episode (avoids warm tones reserved for pred overlays).
-SEQ_CMAPS = ["Blues",  "Greens", "Purples", "GnBu",  "BuGn",
-             "YlGnBu", "PuBu",   "BuPu",   "GnBu",  "PuRd"]
+# Sequential colormaps cycled per episode — maximally distinct hues (up to 10).
+SEQ_CMAPS = ["Reds",   "Blues",   "Greens",  "Oranges", "Purples",
+             "copper", "cool",    "spring",  "winter",  "autumn"]
 
 DS_COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
              "#42d4f4", "#f032e6", "#bfef45", "#469990"]
