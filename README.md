@@ -1,4 +1,7 @@
-# Implementation of a RECAP-like algorithm and other capabilities built on LeRobot
+# LeRobot for Research
+
+This repo started as an effort to implement RECAP on top of LeRobot. Since then, more features have been added, and it is expanding into a more research-oriented repo with different tools to test the models and get a better idea of what's going on.
+
 
 ## What is implemented here:
 
@@ -6,7 +9,37 @@
 - End-to-end implementation of RECAP-like algorithm for offline and online training.
 - Asynchronous inference with RTC that can run at 30Hz with leader guided human intervention. It automatically saves a buffer and creates a video of the episode with the critic values overlaid.
 - Offline eval script to compare actions across checkpoints, subtasks, or advantage labels.
-- Experimental: live inference where a user can manually write subtasks for π0.5 on the fly.
+- Live inference where a user can manually write subtasks for π0.5 on the fly.
+
+
+## Latest additions
+
+- Validation metrics, which include attention maps, a vlm internal representation projection using PCA and umap, and an action representation using PCA and umap.
+- A visualization tool to compare the evolution of metrics over training.
+
+![Visualization tool illustrating attention maps across several training steps](media/readme/viz_tool.png)
+
+
+We recommend that you collect a separate validation set with 5 or so episodes under slightly different conditions from the training set. Pass the path under `val_dataset_path` in the config file (see `rl` folder for an updated config file). The config params to the validation are under `probe_parameters`, but we suggest at first to leave them untouched. 
+
+To obtaine validation metrics run:
+
+```python
+python -m lerobot.scripts.offline_learner_val_pi05 --config config-hiserl.json
+```
+
+The validation results will be saved automatically under the output folder and can be viewed directly or using the visualization tool by running:
+
+```python
+python -m lerobot.scripts.view_validation "path/to/output/folder
+```
+
+The work here was mostly inspired by [this talk](https://www.youtube.com/watch?v=C4NQNeSO2vs) whose main claim is that finetuning under the small data regime (i.e. 50-100 demos) leads to mostly memorization. So far the experiments we have performed using the repo suggest that this is largely the case.
+
+
+## Introduction
+
+
 
 The emphasis of this code is RECAP, but other capabilities were added in the process. Even if you don't intend to use RECAP, the other capabilities might be useful.
 
