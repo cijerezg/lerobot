@@ -152,6 +152,11 @@
         "repo_id": "cijerezg/multi-task-toys-merged-v2"
     },
     "probe_parameters": {
+        "enable_actions": true,
+        "enable_representations": true,
+        "enable_attention": true,
+        "enable_offline_eval": true,
+        "enable_spatial_memorization": true,
         "output_dir": "outputs/probe",
         "mode": "all",
         "max_episodes": 5,
@@ -171,7 +176,11 @@
         "subtask_injection": false,
         "attn_batch_size": 32,
         "attn_eval_episodes": null,
-        "attn_eval_subsample": 2
+        "attn_eval_subsample": 2,
+        "spatial_layers": "0,9,17",
+        "spatial_timestep": 1.0,
+        "spatial_n_frames": 32,
+        "spatial_batch_size": 8
     },
     "env": {
         "type": "gym_manipulator",

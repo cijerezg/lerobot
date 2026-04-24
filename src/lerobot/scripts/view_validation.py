@@ -44,6 +44,40 @@ def discover_offline_eval_frames(val_dir: Path, steps: list[str]) -> list[str]:
     return []
 
 
+def discover_action_drift_jacobian_groups(val_dir: Path, steps: list[str]) -> list[str]:
+    for s in steps:
+        d = val_dir / s / "action_drift_jacobian"
+        if d.exists() and d.is_dir():
+            return sorted(p.name for p in d.iterdir() if p.is_dir())
+    return []
+
+
+def discover_action_drift_jacobian_files(val_dir: Path, steps: list[str], groups: list[str]) -> list[str]:
+    for s in steps:
+        for g in groups:
+            d = val_dir / s / "action_drift_jacobian" / g
+            if d.exists() and d.is_dir():
+                return sorted(p.name for p in d.glob("*.mp4"))
+    return []
+
+
+def discover_spatial_memorization_layers(val_dir: Path, steps: list[str], probe_dir: str) -> list[str]:
+    for s in steps:
+        d = val_dir / s / probe_dir
+        if d.exists() and d.is_dir():
+            return sorted(p.name for p in d.iterdir() if p.is_dir() and p.name.startswith("L"))
+    return []
+
+
+def discover_spatial_memorization_files(val_dir: Path, steps: list[str], probe_dir: str, layers: list[str]) -> list[str]:
+    for s in steps:
+        for l in layers:
+            d = val_dir / s / probe_dir / l
+            if d.exists() and d.is_dir():
+                return sorted(p.name for p in d.glob("*.png"))
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Rendering helpers
 # ---------------------------------------------------------------------------
@@ -210,6 +244,15 @@ def build_app(run_dir: str):
     att_combos = discover_attention_combos(val_dir, all_steps)
     offline_eval_frames = discover_offline_eval_frames(val_dir, all_steps)
 
+    adj_groups = discover_action_drift_jacobian_groups(val_dir, all_steps)
+    adj_files = discover_action_drift_jacobian_files(val_dir, all_steps, adj_groups)
+
+    sm_layers = discover_spatial_memorization_layers(val_dir, all_steps, "spatial_memorization")
+    sm_files = discover_spatial_memorization_files(val_dir, all_steps, "spatial_memorization", sm_layers)
+
+    smj_layers = discover_spatial_memorization_layers(val_dir, all_steps, "spatial_memorization_jacobian")
+    smj_files = discover_spatial_memorization_files(val_dir, all_steps, "spatial_memorization_jacobian", smj_layers)
+
     default_steps = [all_steps[0], all_steps[len(all_steps) // 2], all_steps[-1]]
 
     with gr.Blocks(title="Validation Comparison") as app:
@@ -346,6 +389,85 @@ def build_app(run_dir: str):
                 oe_frame_dd.change(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
                 step_selector.change(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
                 app.load(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+
+        # ---- Action Drift Jacobian tab ----
+        if adj_groups and adj_files:
+            with gr.Tab("Action Drift Jacobian"):
+                with gr.Row():
+                    adj_group_dd = gr.Dropdown(
+                        choices=adj_groups, value=adj_groups[0], label="Episode / timestep"
+                    )
+                    adj_file_dd = gr.Dropdown(
+                        choices=adj_files, value=adj_files[0], label="View"
+                    )
+                adj_html = gr.HTML()
+
+                def render_adj(selected_steps, group, fname):
+                    if not selected_steps or not group or not fname:
+                        return ""
+                    items = [
+                        (val_dir / s / "action_drift_jacobian" / group / fname, step_label(s))
+                        for s in selected_steps
+                    ]
+                    vertical = "summary" in fname
+                    return render_video_grid(items, vertical=vertical)
+
+                adj_group_dd.change(render_adj, [step_selector, adj_group_dd, adj_file_dd], adj_html)
+                adj_file_dd.change(render_adj, [step_selector, adj_group_dd, adj_file_dd], adj_html)
+                step_selector.change(render_adj, [step_selector, adj_group_dd, adj_file_dd], adj_html)
+                app.load(render_adj, [step_selector, adj_group_dd, adj_file_dd], adj_html)
+
+        # ---- Spatial Memorization tab ----
+        if sm_layers and sm_files:
+            with gr.Tab("Spatial Memorization"):
+                with gr.Row():
+                    sm_layer_dd = gr.Dropdown(
+                        choices=sm_layers, value=sm_layers[0], label="Layer"
+                    )
+                    sm_file_dd = gr.Dropdown(
+                        choices=sm_files, value=sm_files[0], label="View"
+                    )
+                sm_html = gr.HTML()
+
+                def render_sm(selected_steps, layer, fname):
+                    if not selected_steps or not layer or not fname:
+                        return ""
+                    items = [
+                        (val_dir / s / "spatial_memorization" / layer / fname, step_label(s))
+                        for s in selected_steps
+                    ]
+                    return render_image_grid(items)
+
+                sm_layer_dd.change(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
+                sm_file_dd.change(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
+                step_selector.change(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
+                app.load(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
+
+        # ---- Spatial Memorization Jacobian tab ----
+        if smj_layers and smj_files:
+            with gr.Tab("Spatial Memorization Jacobian"):
+                with gr.Row():
+                    smj_layer_dd = gr.Dropdown(
+                        choices=smj_layers, value=smj_layers[0], label="Layer"
+                    )
+                    smj_file_dd = gr.Dropdown(
+                        choices=smj_files, value=smj_files[0], label="View"
+                    )
+                smj_html = gr.HTML()
+
+                def render_smj(selected_steps, layer, fname):
+                    if not selected_steps or not layer or not fname:
+                        return ""
+                    items = [
+                        (val_dir / s / "spatial_memorization_jacobian" / layer / fname, step_label(s))
+                        for s in selected_steps
+                    ]
+                    return render_image_grid(items)
+
+                smj_layer_dd.change(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
+                smj_file_dd.change(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
+                step_selector.change(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
+                app.load(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
 
     return app
 

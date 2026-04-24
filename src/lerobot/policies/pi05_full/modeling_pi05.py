@@ -227,23 +227,43 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
 
 
 def capture_attn_weights(layer_idx, query_states, key_states, scaling, attention_mask):
-    """Capture layer-0 softmax attention weights into _PROBING_CAPTURE when probing is enabled."""
+    """Capture softmax attention weights into _PROBING_CAPTURE when probing is enabled.
+
+    When ``_PROBING_CAPTURE["requires_grad"]`` is True the scores stay on-device
+    and in the autograd graph so that a downstream ``loss.backward()`` can populate
+    ``attn.grad`` for Jacobian-based causal analysis.
+    """
     if not _PROBING_CAPTURE.get("enabled"):
         return
     capture_all = _PROBING_CAPTURE.get("all_layers", False)
-    if not capture_all and layer_idx != 0:
-        return
-    with torch.no_grad():
+    target_layer = _PROBING_CAPTURE.get("target_layer", None)
+    if not capture_all:
+        # Single-layer mode: capture target_layer (default: 0)
+        if layer_idx != (target_layer if target_layer is not None else 0):
+            return
+    req_grad = _PROBING_CAPTURE.get("requires_grad", False)
+
+    if req_grad:
+        # Jacobian mode: keep on GPU, keep in autograd graph, retain grad
         scores = torch.matmul(query_states.float(), key_states.float().transpose(-2, -1)) * scaling
         if attention_mask is not None:
             scores = scores + attention_mask.float()
-        attn = torch.softmax(scores, dim=-1).cpu()
-        if capture_all:
-            if "attn_weights_by_layer" not in _PROBING_CAPTURE:
-                _PROBING_CAPTURE["attn_weights_by_layer"] = {}
-            _PROBING_CAPTURE["attn_weights_by_layer"][layer_idx] = attn
-        else:
-            _PROBING_CAPTURE["attn_weights"] = attn
+        attn = torch.softmax(scores, dim=-1)
+        attn.retain_grad()
+    else:
+        # Standard mode: detached, CPU
+        with torch.no_grad():
+            scores = torch.matmul(query_states.float(), key_states.float().transpose(-2, -1)) * scaling
+            if attention_mask is not None:
+                scores = scores + attention_mask.float()
+            attn = torch.softmax(scores, dim=-1).cpu()
+
+    if capture_all:
+        if "attn_weights_by_layer" not in _PROBING_CAPTURE:
+            _PROBING_CAPTURE["attn_weights_by_layer"] = {}
+        _PROBING_CAPTURE["attn_weights_by_layer"][layer_idx] = attn
+    else:
+        _PROBING_CAPTURE["attn_weights"] = attn
 
 
 # Define the complete layer computation function for gradient checkpointing (without knowledge insulation)

@@ -4,8 +4,13 @@ Periodic validation pipeline for offline Pi05 RL training.
 
 This module is designed to be imported from offline_learner_pi05.py (or any
 other training script) without modifying that file. It exposes three public
-functions that together implement periodic validation using the three probe
-scripts (actions, representations, attention).
+functions that together implement periodic validation using seven probe
+scripts (actions, representations, attention, offline_eval, spatial_memorization,
+action_drift_jacobian, spatial_memorization_jacobian).
+
+Each probe can be individually enabled/disabled via ProbeConfig flags
+(enable_actions, enable_representations, etc.). Raw probe data is saved
+as a .pt file at each validation step for post-hoc analysis.
 
 ────────────────────────────────────────────────────────────────────────────────
 Architecture
@@ -38,21 +43,28 @@ Call-graph of run_validation()
 
   run_validation()
     ├─ policy.eval()
-    ├─ _run_probe_actions()          [try/except — does NOT re-fit manifold]
+    ├─ _run_probe_actions()                [if enable_actions]
     │    ├─ _sample_val_episodes()
-    │    ├─ collect_eval_dataset()   [probe_actions_pi05, @no_grad]
-    │    ├─ run_plotting()           [probe_actions_pi05]
-    │    └─ compute_nn_distances()  → WandB scalar
-    ├─ _run_probe_representations()  [try/except — re-fits UMAP each call]
+    │    ├─ collect_eval_dataset()          [probe_actions_pi05, @no_grad]
+    │    ├─ run_plotting()                  [probe_actions_pi05]
+    │    └─ compute_nn_distances()         → WandB scalar + raw embeddings
+    ├─ _run_probe_representations()        [if enable_representations]
     │    ├─ _sample_val_episodes()
-    │    ├─ collect_activations()   [probe_representations_pi05, @no_grad]
-    │    ├─ collect_subtask_injection() [optional, @no_grad]
-    │    └─ run_plotting()           [probe_representations_pi05]
-    ├─ _run_probe_attention()        [try/except — @no_grad wrapper]
+    │    ├─ collect_activations()           [probe_representations_pi05, @no_grad]
+    │    ├─ collect_subtask_injection()     [optional, @no_grad]
+    │    └─ run_plotting()                  [probe_representations_pi05]
+    ├─ _run_probe_attention()              [if enable_attention]
     │    ├─ _build_attn_sample_list()
-    │    └─ per-episode/batch loop:
-    │         preprocessor → embed_probe_prefix → probe_forward
-    │         → render_image_overlays / render_full_matrix → MP4
+    │    └─ per-episode/batch loop → MP4
+    ├─ _run_probe_offline_eval()           [if enable_offline_eval]
+    │    └─ per-frame inference → render + raw pred/GT
+    ├─ _run_probe_spatial_memorization()   [if enable_spatial_memorization]
+    │    └─ 1-per-episode sampling → multi-layer attn → aggregate stats → PNG
+    ├─ _run_probe_action_drift_jacobian()  [if enable_action_drift_jacobian]
+    │    └─ per-frame A*|dA/d(action)| causal maps → MP4
+    ├─ _run_probe_spatial_memorization_jacobian()  [if enable_spatial_memorization_jacobian]
+    │    └─ 1-per-episode → multi-layer Jacobian → aggregate causal stats → PNG
+    ├─ torch.save(raw_data, "probe_raw_data.pt")
     ├─ log_dict() to WandB
     └─ finally: policy.train()
 
@@ -140,6 +152,8 @@ from lerobot.scripts.eval_offline_pi05 import (
 )
 from lerobot.rl.probe_utils_pi05 import makedirs
 from lerobot.rl.probe_representations_pi05 import _save_episode_thumbnails
+
+log = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -449,7 +463,17 @@ def _run_probe_actions(policy, preprocessor, postprocessor,
     pred_nn = compute_nn_distances(ds_cache["pred_emb2"], manifold_cache["ref_emb2"])
     ratio   = float(np.median(pred_nn) / (np.median(gt_nn) + 1e-8))
     logging.info(f"[VAL] probe_actions: median pred/GT NN ratio = {ratio:.4f}")
-    return ratio
+
+    raw = {
+        "gt_emb2":   torch.as_tensor(ds_cache["gt_emb2"]),
+        "pred_emb2": torch.as_tensor(ds_cache["pred_emb2"]),
+        "gt_emb3":   torch.as_tensor(ds_cache["gt_emb3"]),
+        "pred_emb3": torch.as_tensor(ds_cache["pred_emb3"]),
+        "nn_distances_gt":   torch.as_tensor(gt_nn),
+        "nn_distances_pred": torch.as_tensor(pred_nn),
+        "metadata": ds_cache["metadata"],
+    }
+    return ratio, raw
 
 
 def _run_probe_representations(policy, preprocessor,
@@ -494,6 +518,19 @@ def _run_probe_representations(policy, preprocessor,
 
     logging.info("[VAL] probe_representations: running PCA + UMAP + plots ...")
     run_plotting(cache, cfg, output_dir)
+
+    # Build raw data dict for .pt saving
+    raw = {"metadata": cache.get("metadata")}
+    for key in ("prefix", "prefix_gt", "prefix_gen"):
+        if key in cache and cache[key] is not None:
+            raw[key] = cache[key] if isinstance(cache[key], torch.Tensor) else torch.as_tensor(cache[key])
+    for key in ("suffix", "suffix_gt", "suffix_gen"):
+        if key in cache and isinstance(cache[key], dict):
+            raw[key] = {t: (v if isinstance(v, torch.Tensor) else torch.as_tensor(v))
+                        for t, v in cache[key].items()}
+    if "gen_subtask_texts" in cache:
+        raw["gen_subtask_texts"] = cache["gen_subtask_texts"]
+    return raw
 
 
 @torch.no_grad()
@@ -700,6 +737,9 @@ def _run_probe_offline_eval(
 
     action_dim = None
     mse_values: list[float] = []
+    all_pred_unnorm: list[torch.Tensor] = []
+    all_gt_actions: list[torch.Tensor] = []
+    all_metadata: list[dict] = []
 
     for ep_idx, fr_idx, global_idx in samples:
         obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
@@ -716,6 +756,12 @@ def _run_probe_offline_eval(
 
         mse = torch.nn.functional.mse_loss(pred_unnorm, gt_actions.float()).item()
         mse_values.append(mse)
+        all_pred_unnorm.append(pred_unnorm.cpu())
+        all_gt_actions.append(gt_actions.cpu())
+        all_metadata.append({
+            "episode_idx": ep_idx, "frame_idx": fr_idx,
+            "gt_subtask": gt_subtask, "pred_subtask": pred_subtask,
+        })
 
         if action_dim is None:
             action_dim = gt_actions.shape[-1]
@@ -766,7 +812,422 @@ def _run_probe_offline_eval(
     mean_mse = sum(mse_values) / len(mse_values) if mse_values else None
     if mean_mse is not None:
         logging.info(f"  [offline_eval] mean MSE = {mean_mse:.4f}")
-    return mean_mse
+
+    raw = {
+        "pred_unnorm": torch.stack(all_pred_unnorm) if all_pred_unnorm else None,
+        "gt_actions":  torch.stack(all_gt_actions) if all_gt_actions else None,
+        "mse_per_frame": torch.tensor(mse_values) if mse_values else None,
+        "metadata": all_metadata,
+    }
+    return mean_mse, raw
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Probe: spatial memorization of attention heads
+# ──────────────────────────────────────────────────────────────────────────────
+
+@torch.no_grad()
+def _run_probe_spatial_memorization(
+    policy, preprocessor,
+    val_dataset, val_ep_indices,
+    cfg, output_dir, device,
+):
+    """
+    Test whether attention heads memorize fixed spatial patterns.
+
+    Collects attention maps from N frames (1 per unique episode), then computes
+    log-sum, mean, and variance maps per (layer, query_group, key_camera).
+    Renders per-head heatmap PNGs and returns raw stat tensors for .pt saving.
+    """
+    from lerobot.rl.probe_attention_spatial_memorization import (
+        embed_probe_prefix,
+        probe_forward,
+        extract_qk_attn,
+        aggregate_maps,
+        render_all,
+        sample_one_per_episode,
+    )
+    from lerobot.utils.constants import (
+        OBS_LANGUAGE_ATTENTION_MASK,
+        OBS_LANGUAGE_TOKENS,
+    )
+    from lerobot.processor.core import TransitionKey
+
+    makedirs(output_dir)
+    p = cfg.probe_parameters
+    chunk_size = cfg.policy.n_action_steps
+
+    attn_layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
+    timestep = p.spatial_timestep
+    n_frames = p.spatial_n_frames
+    batch_size = p.spatial_batch_size
+
+    # Sample 1 random frame per episode (respecting val_ep_indices)
+    if val_ep_indices is not None:
+        # Filter to val episodes, then use sample_one_per_episode's logic inline
+        ep_to_indices = _build_episode_index(val_dataset)
+        all_eps = sorted(e for e in ep_to_indices.keys() if e in val_ep_indices)
+        import random as random_mod_local
+        rng = random_mod_local.Random(p.random_seed)
+        rng.shuffle(all_eps)
+        selected = all_eps[:n_frames]
+        samples = []
+        for ep_idx in selected:
+            indices = ep_to_indices[ep_idx]
+            global_idx = rng.choice(indices)
+            fr_idx = val_dataset.hf_dataset[global_idx]["frame_index"].item()
+            samples.append((ep_idx, fr_idx, global_idx))
+    else:
+        samples = sample_one_per_episode(val_dataset, n_frames=n_frames, seed=p.random_seed)
+
+    if not samples:
+        logging.warning("[VAL] spatial_memorization: no samples found")
+        return None
+
+    logging.info(
+        f"[VAL] spatial_memorization: {len(samples)} frames × "
+        f"layers {attn_layers} @ t={timestep} ..."
+    )
+
+    collected = {l: {} for l in attn_layers}
+    img_h, img_w = None, None
+    n_heads_global = None
+    n_p_global = None
+
+    for batch_start in range(0, len(samples), batch_size):
+        batch_samples = samples[batch_start : batch_start + batch_size]
+        bs = len(batch_samples)
+
+        b_obs = {}
+        b_task_str = []
+        for ep_idx, fr_idx, global_idx in batch_samples:
+            obs, _, state, gt_subtask, task_str, _, _ = get_frame_data(
+                val_dataset, global_idx, chunk_size
+            )
+            b_task_str.append(task_str)
+            for k, v in obs.items():
+                b_obs.setdefault(k, []).append(v)
+
+        for k in b_obs:
+            b_obs[k] = torch.cat(b_obs[k], dim=0).to(device)
+
+        complementary_data = {
+            "task":      b_task_str,
+            "subtask":   [""] * bs,
+            "advantage": torch.ones((bs, 1), device=device),
+        }
+        dummy_action = torch.zeros(bs, 1, 6, device=device)
+        batch_for_proc = {
+            TransitionKey.ACTION: dummy_action,
+            **b_obs,
+            TransitionKey.COMPLEMENTARY_DATA: complementary_data,
+        }
+        processed = preprocessor(batch_for_proc)
+
+        images, img_masks = policy._preprocess_images(b_obs)
+        task_tokens = processed[OBS_LANGUAGE_TOKENS].to(device)
+        task_masks  = processed[OBS_LANGUAGE_ATTENTION_MASK].to(device)
+
+        subtask_tokens, subtask_masks = policy.model.generate_subtask_tokens(
+            images, img_masks, task_tokens, task_masks
+        )
+
+        prefix_cache = embed_probe_prefix(
+            policy, images, img_masks, task_tokens, task_masks,
+            subtask_tokens, subtask_masks,
+        )
+
+        attn_by_layer, segments, pad_masks, patches_per_cam = probe_forward(
+            prefix_cache, timestep, device,
+        )
+        if not attn_by_layer:
+            logging.warning("  [spatial] No attention captured — skipping batch.")
+            continue
+
+        if img_h is None:
+            img_t = images[0][0].cpu()
+            img_h = img_t.shape[1]
+            img_w = img_t.shape[2]
+            n_p_global = int(patches_per_cam ** 0.5)
+
+        seg_dict = {name: (s, e) for name, s, e in segments}
+        camera_segs = [(name, s, e) for name, s, e in segments if name.startswith("img")]
+        query_groups = [
+            ("all",      0,                  segments[-1][2]),
+            ("language", *seg_dict["language"]),
+            ("subtask",  *seg_dict["subtask"]),
+            ("action",   *seg_dict["action"]),
+        ]
+
+        for layer_idx in attn_layers:
+            if layer_idx not in attn_by_layer:
+                continue
+            attn_weights = attn_by_layer[layer_idx]
+            if n_heads_global is None:
+                n_heads_global = attn_weights.shape[1]
+            for b_idx in range(bs):
+                attn = torch.nan_to_num(attn_weights[b_idx].float().cpu(), nan=0.0)
+                pad  = pad_masks[b_idx].cpu()
+                for q_name, q_s, q_e in query_groups:
+                    for cam_name, cam_s, cam_e in camera_segs:
+                        key = (q_name, cam_name)
+                        vec = extract_qk_attn(attn, q_s, q_e, cam_s, cam_e, pad)
+                        if vec is None:
+                            continue
+                        collected[layer_idx].setdefault(key, []).append(vec)
+
+        del prefix_cache, b_obs, task_tokens, task_masks
+        del subtask_tokens, subtask_masks, images, img_masks
+        torch.cuda.empty_cache()
+
+    # Aggregate stats
+    raw_results = {}
+    for layer_idx in attn_layers:
+        for (q_name, cam_name), maps_list in collected[layer_idx].items():
+            if len(maps_list) < 2:
+                continue
+            raw_results[(layer_idx, q_name, cam_name)] = aggregate_maps(maps_list)
+
+    if not raw_results:
+        logging.warning("[VAL] spatial_memorization: no results to aggregate")
+        return None
+
+    # Render PNGs (reuse standalone render_all but with our output_dir)
+    import lerobot.rl.probe_attention_spatial_memorization as _spatial_mod
+    orig_output_dir = _spatial_mod.OUTPUT_DIR
+    _spatial_mod.OUTPUT_DIR = output_dir
+    try:
+        render_all(raw_results, n_heads_global, n_p_global, img_h, img_w)
+    finally:
+        _spatial_mod.OUTPUT_DIR = orig_output_dir
+
+    # Build raw data for .pt saving
+    raw = {}
+    for (layer_idx, q_name, cam_name), stats in raw_results.items():
+        prefix = f"L{layer_idx}_{q_name}_{cam_name}"
+        for stat_name, tensor in stats.items():
+            raw[f"{prefix}_{stat_name}"] = tensor
+    raw["_layers"] = torch.tensor(attn_layers)
+    raw["_n_frames"] = torch.tensor(len(samples))
+    raw["_img_hw"] = torch.tensor([img_h, img_w])
+    raw["_n_p"] = torch.tensor(n_p_global)
+
+    logging.info(f"[VAL] spatial_memorization: done ({len(raw_results)} combos)")
+    return raw
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Probe: action-drift Jacobian (per-frame causal A*J maps → MP4)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _run_probe_action_drift_jacobian(
+    policy, preprocessor,
+    val_dataset, val_ep_indices,
+    cfg, output_dir, device,
+):
+    """Per-frame causal maps via A * |dA/d(action)|.  Outputs MP4 videos."""
+    from lerobot.rl.probe_action_drift_jacobian import run_action_drift_jacobian
+
+    return run_action_drift_jacobian(
+        policy, preprocessor,
+        val_dataset, val_ep_indices,
+        cfg, output_dir, device,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Probe: spatial memorization with Jacobian signal (aggregated causal stats)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _run_probe_spatial_memorization_jacobian(
+    policy, preprocessor,
+    val_dataset, val_ep_indices,
+    cfg, output_dir, device,
+):
+    """
+    Same as _run_probe_spatial_memorization but uses A*|grad(A)| as the signal.
+    One forward+backward per (layer, batch) — slower but reveals causal patterns.
+    """
+    from lerobot.rl.probe_action_drift_jacobian import (
+        jacobian_probe_forward_multilayer,
+    )
+    from lerobot.rl.probe_attention_pi05 import embed_probe_prefix
+    from lerobot.rl.probe_attention_spatial_memorization import (
+        extract_qk_attn,
+        aggregate_maps,
+        render_all,
+        sample_one_per_episode,
+    )
+    from lerobot.utils.constants import (
+        OBS_LANGUAGE_ATTENTION_MASK,
+        OBS_LANGUAGE_TOKENS,
+    )
+    from lerobot.processor.core import TransitionKey
+
+    makedirs(output_dir)
+    p = cfg.probe_parameters
+    chunk_size = cfg.policy.n_action_steps
+
+    attn_layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
+    timestep = p.jacobian_timestep
+    n_frames = p.spatial_n_frames
+    batch_size = p.jacobian_batch_size  # smaller batches for backward pass
+
+    # Sample 1 random frame per episode (respecting val_ep_indices)
+    if val_ep_indices is not None:
+        ep_to_indices = _build_episode_index(val_dataset)
+        all_eps = sorted(e for e in ep_to_indices.keys() if e in val_ep_indices)
+        import random as random_mod_local
+        rng = random_mod_local.Random(p.random_seed)
+        rng.shuffle(all_eps)
+        selected = all_eps[:n_frames]
+        samples = []
+        for ep_idx in selected:
+            indices = ep_to_indices[ep_idx]
+            global_idx = rng.choice(indices)
+            fr_idx = val_dataset.hf_dataset[global_idx]["frame_index"].item()
+            samples.append((ep_idx, fr_idx, global_idx))
+    else:
+        samples = sample_one_per_episode(val_dataset, n_frames=n_frames, seed=p.random_seed)
+
+    if not samples:
+        logging.warning("[VAL] spatial_memorization_jacobian: no samples found")
+        return None
+
+    logging.info(
+        f"[VAL] spatial_memorization_jacobian: {len(samples)} frames × "
+        f"layers {attn_layers} @ t={timestep} ..."
+    )
+
+    collected = {l: {} for l in attn_layers}
+    img_h, img_w = None, None
+    n_heads_global = None
+    n_p_global = None
+
+    for batch_start in range(0, len(samples), batch_size):
+        batch_samples = samples[batch_start : batch_start + batch_size]
+        bs = len(batch_samples)
+
+        b_obs = {}
+        b_task_str = []
+        for ep_idx, fr_idx, global_idx in batch_samples:
+            obs, _, state, gt_subtask, task_str, _, _ = get_frame_data(
+                val_dataset, global_idx, chunk_size
+            )
+            b_task_str.append(task_str)
+            for k, v in obs.items():
+                b_obs.setdefault(k, []).append(v)
+
+        for k in b_obs:
+            b_obs[k] = torch.cat(b_obs[k], dim=0).to(device)
+
+        complementary_data = {
+            "task":      b_task_str,
+            "subtask":   [""] * bs,
+            "advantage": torch.ones((bs, 1), device=device),
+        }
+        dummy_action = torch.zeros(bs, 1, 6, device=device)
+        batch_for_proc = {
+            TransitionKey.ACTION: dummy_action,
+            **b_obs,
+            TransitionKey.COMPLEMENTARY_DATA: complementary_data,
+        }
+        processed = preprocessor(batch_for_proc)
+
+        images, img_masks = policy._preprocess_images(b_obs)
+        task_tokens = processed[OBS_LANGUAGE_TOKENS].to(device)
+        task_masks  = processed[OBS_LANGUAGE_ATTENTION_MASK].to(device)
+
+        subtask_tokens, subtask_masks = policy.model.generate_subtask_tokens(
+            images, img_masks, task_tokens, task_masks
+        )
+
+        prefix_cache = embed_probe_prefix(
+            policy, images, img_masks, task_tokens, task_masks,
+            subtask_tokens, subtask_masks,
+        )
+
+        # Jacobian multilayer forward — one forward+backward per layer
+        causal_by_layer, segments, pad_masks, patches_per_cam = (
+            jacobian_probe_forward_multilayer(
+                prefix_cache, timestep, device, policy, attn_layers
+            )
+        )
+        if not causal_by_layer:
+            logging.warning("  [spatial_jac] No causal maps — skipping batch.")
+            continue
+
+        if img_h is None:
+            img_t = images[0][0].cpu()
+            img_h = img_t.shape[1]
+            img_w = img_t.shape[2]
+            n_p_global = int(patches_per_cam ** 0.5)
+
+        seg_dict = {name: (s, e) for name, s, e in segments}
+        camera_segs = [(name, s, e) for name, s, e in segments if name.startswith("img")]
+        query_groups = [
+            ("all",      0,                  segments[-1][2]),
+            ("language", *seg_dict["language"]),
+            ("subtask",  *seg_dict["subtask"]),
+            ("action",   *seg_dict["action"]),
+        ]
+
+        for layer_idx in attn_layers:
+            if layer_idx not in causal_by_layer:
+                continue
+            causal_weights = causal_by_layer[layer_idx]
+            if n_heads_global is None:
+                n_heads_global = causal_weights.shape[1]
+            for b_idx in range(bs):
+                attn = torch.nan_to_num(causal_weights[b_idx].float().cpu(), nan=0.0)
+                pad  = pad_masks[b_idx].cpu()
+                for q_name, q_s, q_e in query_groups:
+                    for cam_name, cam_s, cam_e in camera_segs:
+                        key = (q_name, cam_name)
+                        vec = extract_qk_attn(attn, q_s, q_e, cam_s, cam_e, pad)
+                        if vec is None:
+                            continue
+                        collected[layer_idx].setdefault(key, []).append(vec)
+
+        del prefix_cache, b_obs, task_tokens, task_masks
+        del subtask_tokens, subtask_masks, images, img_masks
+        del causal_by_layer
+        torch.cuda.empty_cache()
+
+    # Aggregate stats
+    raw_results = {}
+    for layer_idx in attn_layers:
+        for (q_name, cam_name), maps_list in collected[layer_idx].items():
+            if len(maps_list) < 2:
+                continue
+            raw_results[(layer_idx, q_name, cam_name)] = aggregate_maps(maps_list)
+
+    if not raw_results:
+        logging.warning("[VAL] spatial_memorization_jacobian: no results to aggregate")
+        return None
+
+    # Render PNGs
+    import lerobot.rl.probe_attention_spatial_memorization as _spatial_mod
+    orig_output_dir = _spatial_mod.OUTPUT_DIR
+    _spatial_mod.OUTPUT_DIR = output_dir
+    try:
+        render_all(raw_results, n_heads_global, n_p_global, img_h, img_w)
+    finally:
+        _spatial_mod.OUTPUT_DIR = orig_output_dir
+
+    # Build raw data for .pt saving
+    raw = {}
+    for (layer_idx, q_name, cam_name), stats in raw_results.items():
+        prefix = f"L{layer_idx}_{q_name}_{cam_name}"
+        for stat_name, tensor in stats.items():
+            raw[f"{prefix}_{stat_name}"] = tensor
+    raw["_layers"] = torch.tensor(attn_layers)
+    raw["_n_frames"] = torch.tensor(len(samples))
+    raw["_img_hw"] = torch.tensor([img_h, img_w])
+    raw["_n_p"] = torch.tensor(n_p_global)
+
+    logging.info(f"[VAL] spatial_memorization_jacobian: done ({len(raw_results)} combos)")
+    return raw
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -817,6 +1278,7 @@ def run_validation(
     if val_dataset is None:
         return
 
+    p = cfg.probe_parameters
     step_dir = os.path.join(output_dir, "validation", f"step_{step:08d}")
     makedirs(step_dir)
 
@@ -834,82 +1296,179 @@ def run_validation(
     policy.eval()
     try:
         wandb_scalars: dict[str, float] = {}
+        raw_data: dict[str, dict] = {}  # probe_name → raw tensors for .pt
 
         # ── probe_actions ────────────────────────────────────────────────────
-        if manifold_cache is not None:
-            try:
-                ratio = _run_probe_actions(
-                    policy, preprocessor, postprocessor,
-                    val_dataset, val_ep_indices, manifold_cache,
-                    cfg,
-                    output_dir=os.path.join(step_dir, "actions"),
-                    device=device,
-                )
-                if ratio is not None:
-                    wandb_scalars["action_nn_distance_ratio"] = ratio
-            except Exception as exc:
+        if p.enable_actions:
+            if manifold_cache is not None:
+                try:
+                    ratio, raw = _run_probe_actions(
+                        policy, preprocessor, postprocessor,
+                        val_dataset, val_ep_indices, manifold_cache,
+                        cfg,
+                        output_dir=os.path.join(step_dir, "actions"),
+                        device=device,
+                    )
+                    if ratio is not None:
+                        wandb_scalars["action_nn_distance_ratio"] = ratio
+                    if raw is not None:
+                        raw_data["actions"] = raw
+                except Exception as exc:
+                    logging.warning(
+                        f"[VAL] probe_actions failed at step {step}: {exc}",
+                        exc_info=True,
+                    )
+            else:
                 logging.warning(
-                    f"[VAL] probe_actions failed at step {step}: {exc}",
-                    exc_info=True,
+                    "[VAL] Skipping probe_actions: manifold_cache is None "
+                    "(likely init_action_manifold() was not called or found no samples)."
                 )
         else:
-            logging.warning(
-                "[VAL] Skipping probe_actions: manifold_cache is None "
-                "(likely init_action_manifold() was not called or found no samples)."
-            )
+            logging.info("[VAL] probe_actions: disabled")
         gc.collect()
         torch.cuda.empty_cache()
 
         # ── probe_representations ────────────────────────────────────────────
-        try:
-            _run_probe_representations(
-                policy, preprocessor,
-                val_dataset, val_ep_indices,
-                cfg,
-                output_dir=os.path.join(step_dir, "representations"),
-                device=device,
-            )
-        except Exception as exc:
-            logging.warning(
-                f"[VAL] probe_representations failed at step {step}: {exc}",
-                exc_info=True,
-            )
+        if p.enable_representations:
+            try:
+                raw = _run_probe_representations(
+                    policy, preprocessor,
+                    val_dataset, val_ep_indices,
+                    cfg,
+                    output_dir=os.path.join(step_dir, "representations"),
+                    device=device,
+                )
+                if raw is not None:
+                    raw_data["representations"] = raw
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL] probe_representations failed at step {step}: {exc}",
+                    exc_info=True,
+                )
+        else:
+            logging.info("[VAL] probe_representations: disabled")
         gc.collect()
         torch.cuda.empty_cache()
 
         # ── probe_attention ──────────────────────────────────────────────────
-        try:
-            _run_probe_attention(
-                policy, preprocessor,
-                val_dataset, val_ep_indices,
-                cfg,
-                output_dir=os.path.join(step_dir, "attention"),
-                device=device,
-            )
-        except Exception as exc:
-            logging.warning(
-                f"[VAL] probe_attention failed at step {step}: {exc}",
-                exc_info=True,
-            )
+        if p.enable_attention:
+            try:
+                _run_probe_attention(
+                    policy, preprocessor,
+                    val_dataset, val_ep_indices,
+                    cfg,
+                    output_dir=os.path.join(step_dir, "attention"),
+                    device=device,
+                )
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL] probe_attention failed at step {step}: {exc}",
+                    exc_info=True,
+                )
+        else:
+            logging.info("[VAL] probe_attention: disabled")
         gc.collect()
         torch.cuda.empty_cache()
 
         # ── probe_offline_eval ──────────────────────────────────────────────
-        try:
-            mean_mse = _run_probe_offline_eval(
-                policy, preprocessor, postprocessor,
-                val_dataset, val_ep_indices,
-                cfg,
-                output_dir=os.path.join(step_dir, "offline_eval"),
-                device=device,
-            )
-            if mean_mse is not None:
-                wandb_scalars["offline_eval_mse"] = mean_mse
-        except Exception as exc:
-            logging.warning(
-                f"[VAL] probe_offline_eval failed at step {step}: {exc}",
-                exc_info=True,
-            )
+        if p.enable_offline_eval:
+            try:
+                mean_mse, raw = _run_probe_offline_eval(
+                    policy, preprocessor, postprocessor,
+                    val_dataset, val_ep_indices,
+                    cfg,
+                    output_dir=os.path.join(step_dir, "offline_eval"),
+                    device=device,
+                )
+                if mean_mse is not None:
+                    wandb_scalars["offline_eval_mse"] = mean_mse
+                if raw is not None:
+                    raw_data["offline_eval"] = raw
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL] probe_offline_eval failed at step {step}: {exc}",
+                    exc_info=True,
+                )
+        else:
+            logging.info("[VAL] probe_offline_eval: disabled")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # ── probe_spatial_memorization ───────────────────────────────────────
+        if p.enable_spatial_memorization:
+            try:
+                raw = _run_probe_spatial_memorization(
+                    policy, preprocessor,
+                    val_dataset, val_ep_indices,
+                    cfg,
+                    output_dir=os.path.join(step_dir, "spatial_memorization"),
+                    device=device,
+                )
+                if raw is not None:
+                    raw_data["spatial_memorization"] = raw
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL] probe_spatial_memorization failed at step {step}: {exc}",
+                    exc_info=True,
+                )
+        else:
+            logging.info("[VAL] probe_spatial_memorization: disabled")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # ── probe_action_drift_jacobian ─────────────────────────────────────
+        if p.enable_action_drift_jacobian:
+            try:
+                _run_probe_action_drift_jacobian(
+                    policy, preprocessor,
+                    val_dataset, val_ep_indices,
+                    cfg,
+                    output_dir=os.path.join(step_dir, "action_drift_jacobian"),
+                    device=device,
+                )
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL] probe_action_drift_jacobian failed at step {step}: {exc}",
+                    exc_info=True,
+                )
+        else:
+            logging.info("[VAL] probe_action_drift_jacobian: disabled")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # ── probe_spatial_memorization_jacobian ─────────────────────────────
+        if p.enable_spatial_memorization_jacobian:
+            try:
+                raw = _run_probe_spatial_memorization_jacobian(
+                    policy, preprocessor,
+                    val_dataset, val_ep_indices,
+                    cfg,
+                    output_dir=os.path.join(step_dir, "spatial_memorization_jacobian"),
+                    device=device,
+                )
+                if raw is not None:
+                    raw_data["spatial_memorization_jacobian"] = raw
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL] probe_spatial_memorization_jacobian failed at step {step}: {exc}",
+                    exc_info=True,
+                )
+        else:
+            logging.info("[VAL] probe_spatial_memorization_jacobian: disabled")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # ── Save raw probe data as .pt ───────────────────────────────────────
+        if raw_data:
+            pt_path = os.path.join(step_dir, "probe_raw_data.pt")
+            try:
+                torch.save(raw_data, pt_path)
+                logging.info(
+                    f"[VAL] Raw probe data saved: {pt_path} "
+                    f"(probes: {list(raw_data.keys())})"
+                )
+            except Exception as exc:
+                logging.warning(f"[VAL] Failed to save raw probe data: {exc}")
 
         # ── WandB scalar logging ─────────────────────────────────────────────
         if wandb_logger is not None and wandb_scalars:

@@ -208,7 +208,17 @@ class TrainPipelineConfig(HubMixin):
 
 @dataclass
 class ProbeConfig:
-    """Parameters for the three PI05 probe scripts (actions, representations, attention)."""
+    """Parameters for the PI05 probe scripts (actions, representations, attention,
+    offline eval, spatial memorization)."""
+
+    # ── Enable / disable individual probes ───────────────────────────────────
+    enable_actions: bool = True
+    enable_representations: bool = True
+    enable_attention: bool = True
+    enable_offline_eval: bool = True
+    enable_spatial_memorization: bool = True
+    enable_action_drift_jacobian: bool = False       # per-frame causal A*J maps (needs backward)
+    enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
 
     # ── Common ────────────────────────────────────────────────────────────────
     output_dir: str = "outputs/probe"
@@ -241,6 +251,16 @@ class ProbeConfig:
     attn_batch_size: int = 32
     attn_eval_episodes: Optional[str] = None
     attn_eval_subsample: int = 2
+
+    # ── Spatial memorization-specific ────────────────────────────────────────
+    spatial_layers: str = "0,9,17"
+    spatial_timestep: float = 1.0
+    spatial_n_frames: int = 32          # total frames (1 per unique episode)
+    spatial_batch_size: int = 8
+
+    # ── Action-drift Jacobian-specific ──────────────────────────────────────
+    jacobian_timestep: float = 1.0      # diffusion timestep for Jacobian probes
+    jacobian_batch_size: int = 4        # smaller default (backward pass costs ~3x)
 
 
 @dataclass(kw_only=True)
