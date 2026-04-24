@@ -130,7 +130,14 @@ from typing import Optional
 import numpy as np
 import torch
 
-from lerobot.scripts.eval_offline_pi05 import _build_episode_index, get_frame_data
+from lerobot.scripts.eval_offline_pi05 import (
+    _build_episode_index,
+    get_frame_data,
+    normalize_gt,
+    render_sample,
+    run_inference,
+    SO100_JOINT_NAMES,
+)
 from lerobot.rl.probe_utils_pi05 import makedirs
 from lerobot.rl.probe_representations_pi05 import _save_episode_thumbnails
 
@@ -655,6 +662,114 @@ def _run_probe_attention(policy, preprocessor,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Probe: offline eval (per-frame GT vs predicted action traces)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@torch.no_grad()
+def _run_probe_offline_eval(
+    policy, preprocessor, postprocessor,
+    val_dataset, val_ep_indices,
+    cfg, output_dir, device,
+) -> float | None:
+    """
+    Run per-frame offline evaluation: inference → render GT vs predicted action
+    traces per joint.  Returns mean MSE (unnormalised) for WandB logging.
+
+    Produces two subdirectories under *output_dir*:
+        unnormalized/ep{ep:04d}_fr{fr:04d}.png
+        normalized/ep{ep:04d}_fr{fr:04d}.png
+    """
+    probe_cfg = cfg.probe_parameters
+    chunk_size = cfg.policy.n_action_steps
+    action_encoding = getattr(cfg.policy, "action_encoding", "absolute")
+
+    samples = _sample_val_episodes(
+        val_dataset, val_ep_indices,
+        n_per_episode=getattr(probe_cfg, "n_frames_per_episode", 4),
+        max_episodes=getattr(probe_cfg, "max_episodes", 6),
+        seed=getattr(probe_cfg, "seed", 42),
+    )
+    if not samples:
+        logging.warning("[VAL] offline_eval: no samples selected.")
+        return None
+
+    dir_unnorm = os.path.join(output_dir, "unnormalized")
+    dir_norm = os.path.join(output_dir, "normalized")
+    makedirs(dir_unnorm)
+    makedirs(dir_norm)
+
+    action_dim = None
+    mse_values: list[float] = []
+
+    for ep_idx, fr_idx, global_idx in samples:
+        obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
+            val_dataset, global_idx, chunk_size
+        )
+        gt_actions_norm, _ = normalize_gt(
+            preprocessor, gt_actions, state, device, action_encoding=action_encoding,
+        )
+
+        pred_unnorm, pred_norm, pred_subtask = run_inference(
+            policy, preprocessor, postprocessor, obs, task_str, device,
+            state=state, advantage=1.0,
+        )
+
+        mse = torch.nn.functional.mse_loss(pred_unnorm, gt_actions.float()).item()
+        mse_values.append(mse)
+
+        if action_dim is None:
+            action_dim = gt_actions.shape[-1]
+
+        joint_names = SO100_JOINT_NAMES[:action_dim]
+
+        checkpoints_info = [{
+            "label": "pred",
+            "subtasks": {"pred": pred_subtask},
+            "color_idx": 0,
+        }]
+        pred_traces = [{
+            "actions": pred_unnorm,
+            "label": "pred raw",
+            "color_idx": 0,
+            "kwargs": {"linewidth": 1.2, "linestyle": "-", "alpha": 1.0},
+        }]
+        pred_traces_norm = [{
+            "actions": pred_norm,
+            "label": "pred raw",
+            "color_idx": 0,
+            "kwargs": {"linewidth": 1.2, "linestyle": "-", "alpha": 1.0},
+        }]
+
+        common = dict(
+            obs=obs,
+            gt_subtask=gt_subtask,
+            episode_idx=ep_idx,
+            frame_idx=fr_idx,
+            joint_names=joint_names,
+            checkpoints_info=checkpoints_info,
+        )
+
+        render_sample(
+            **common, gt_actions=gt_actions,
+            pred_traces=pred_traces, output_dir=dir_unnorm, state=state,
+        )
+        render_sample(
+            **common, gt_actions=gt_actions_norm,
+            pred_traces=pred_traces_norm, output_dir=dir_norm, state=None,
+        )
+
+        logging.info(
+            f"  [offline_eval] ep={ep_idx:04d} fr={fr_idx:04d} | "
+            f"mse={mse:.4f} | GT: '{gt_subtask}' | pred: '{pred_subtask}'"
+        )
+
+    mean_mse = sum(mse_values) / len(mse_values) if mse_values else None
+    if mean_mse is not None:
+        logging.info(f"  [offline_eval] mean MSE = {mean_mse:.4f}")
+    return mean_mse
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main entry point — called from the training loop
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -774,6 +889,25 @@ def run_validation(
         except Exception as exc:
             logging.warning(
                 f"[VAL] probe_attention failed at step {step}: {exc}",
+                exc_info=True,
+            )
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # ── probe_offline_eval ──────────────────────────────────────────────
+        try:
+            mean_mse = _run_probe_offline_eval(
+                policy, preprocessor, postprocessor,
+                val_dataset, val_ep_indices,
+                cfg,
+                output_dir=os.path.join(step_dir, "offline_eval"),
+                device=device,
+            )
+            if mean_mse is not None:
+                wandb_scalars["offline_eval_mse"] = mean_mse
+        except Exception as exc:
+            logging.warning(
+                f"[VAL] probe_offline_eval failed at step {step}: {exc}",
                 exc_info=True,
             )
 

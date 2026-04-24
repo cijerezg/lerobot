@@ -35,6 +35,15 @@ def discover_attention_combos(val_dir: Path, steps: list[str]) -> list[str]:
     return sorted(d.name for d in att_dir.iterdir() if d.is_dir())
 
 
+def discover_offline_eval_frames(val_dir: Path, steps: list[str]) -> list[str]:
+    """Discover per-frame PNGs produced by the offline_eval probe."""
+    for s in steps:
+        frame_dir = val_dir / s / "offline_eval" / "unnormalized"
+        if frame_dir.exists():
+            return sorted(p.stem for p in frame_dir.glob("ep*.png"))
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Rendering helpers
 # ---------------------------------------------------------------------------
@@ -199,6 +208,7 @@ def build_app(run_dir: str):
 
     episodes = discover_episodes(val_dir, all_steps)
     att_combos = discover_attention_combos(val_dir, all_steps)
+    offline_eval_frames = discover_offline_eval_frames(val_dir, all_steps)
 
     default_steps = [all_steps[0], all_steps[len(all_steps) // 2], all_steps[-1]]
 
@@ -305,6 +315,37 @@ def build_app(run_dir: str):
             scree_dd.change(render_scree, [step_selector, scree_dd], scree_html)
             step_selector.change(render_scree, [step_selector, scree_dd], scree_html)
             app.load(render_scree, [step_selector, scree_dd], scree_html)
+
+        # ---- Offline Eval tab ----
+        if offline_eval_frames:
+            with gr.Tab("Offline Eval"):
+                with gr.Row():
+                    oe_space_dd = gr.Dropdown(
+                        choices=["Unnormalized", "Normalized"],
+                        value="Unnormalized",
+                        label="Space",
+                    )
+                    oe_frame_dd = gr.Dropdown(
+                        choices=offline_eval_frames,
+                        value=offline_eval_frames[0] if offline_eval_frames else None,
+                        label="Frame",
+                    )
+                oe_html = gr.HTML()
+
+                def render_offline_eval(selected_steps, space, frame):
+                    if not selected_steps or not space or not frame:
+                        return ""
+                    subdir = "unnormalized" if space == "Unnormalized" else "normalized"
+                    items = [
+                        (val_dir / s / "offline_eval" / subdir / f"{frame}.png", step_label(s))
+                        for s in selected_steps
+                    ]
+                    return render_image_grid(items)
+
+                oe_space_dd.change(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                oe_frame_dd.change(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                step_selector.change(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                app.load(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
 
     return app
 

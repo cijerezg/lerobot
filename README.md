@@ -31,7 +31,7 @@ python -m lerobot.scripts.offline_learner_val_pi05 --config config-hiserl.json
 The validation results will be saved automatically under the output folder and can be viewed directly or using the visualization tool by running:
 
 ```python
-python -m lerobot.scripts.view_validation "path/to/output/folder
+python -m lerobot.scripts.view_validation "path/to/output/folder"
 ```
 
 The work here was mostly inspired by [this talk](https://www.youtube.com/watch?v=C4NQNeSO2vs) whose main claim is that finetuning under the small data regime (i.e. 50-100 demos) leads to mostly memorization. So far the experiments we have performed using the repo suggest that this is largely the case.
@@ -288,7 +288,6 @@ A few implementation details worth knowing:
 ### `lerobot_memmap_buffer_cache.py` — Dataset Pre-decoding (credit: [@jackvial](https://github.com/jackvial))
 
 Pre-decodes a LeRobot dataset into a flat memmap cache so the replay buffer can be populated almost instantly on subsequent runs instead of re-decoding video every time. 
-```
 
 
 ### `utils.py`

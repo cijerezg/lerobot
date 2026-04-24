@@ -228,12 +228,22 @@ def resize_with_pad_torch(  # see openpi `resize_with_pad_torch` (exact copy)
 
 def capture_attn_weights(layer_idx, query_states, key_states, scaling, attention_mask):
     """Capture layer-0 softmax attention weights into _PROBING_CAPTURE when probing is enabled."""
-    if layer_idx == 0 and _PROBING_CAPTURE.get("enabled"):
-        with torch.no_grad():
-            scores = torch.matmul(query_states.float(), key_states.float().transpose(-2, -1)) * scaling
-            if attention_mask is not None:
-                scores = scores + attention_mask.float()
-            _PROBING_CAPTURE["attn_weights"] = torch.softmax(scores, dim=-1).cpu()
+    if not _PROBING_CAPTURE.get("enabled"):
+        return
+    capture_all = _PROBING_CAPTURE.get("all_layers", False)
+    if not capture_all and layer_idx != 0:
+        return
+    with torch.no_grad():
+        scores = torch.matmul(query_states.float(), key_states.float().transpose(-2, -1)) * scaling
+        if attention_mask is not None:
+            scores = scores + attention_mask.float()
+        attn = torch.softmax(scores, dim=-1).cpu()
+        if capture_all:
+            if "attn_weights_by_layer" not in _PROBING_CAPTURE:
+                _PROBING_CAPTURE["attn_weights_by_layer"] = {}
+            _PROBING_CAPTURE["attn_weights_by_layer"][layer_idx] = attn
+        else:
+            _PROBING_CAPTURE["attn_weights"] = attn
 
 
 # Define the complete layer computation function for gradient checkpointing (without knowledge insulation)
@@ -1689,9 +1699,9 @@ class PI05FullPolicy(PreTrainedPolicy):
                 original_state_dict = load_file(resolved_file)
                 print("✓ Loaded state dict from model.safetensors")
             except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
+                raise RuntimeError(
+                    f"Failed to load pretrained weights from '{pretrained_model_name_or_path}': {e}"
+                ) from e
 
             # First, fix any key differences # see openpi `model.py, _fix_pytorch_state_dict_keys`
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)

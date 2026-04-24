@@ -694,8 +694,12 @@ class PI05RLPolicy(PI05FullPolicy):
                 else:
                     state_dict = torch.load(checkpoint_path, map_location="cpu")
             else:
-                # Not a local path — treat as HuggingFace Hub repo ID.
-                # The vanilla loading path below (PI05FullPolicy.from_pretrained) handles HF Hub.
+                # Path looks local (contains os.sep or starts with '.') but doesn't exist — error out.
+                if os.sep in checkpoint_path or checkpoint_path.startswith("."):
+                    raise FileNotFoundError(
+                        f"Checkpoint path '{checkpoint_path}' looks like a local path but does not exist."
+                    )
+                # Otherwise treat as HuggingFace Hub repo ID.
                 print(f"'{checkpoint_path}' is not a local path; treating as HF Hub repo ID")
                 state_dict = None
 
