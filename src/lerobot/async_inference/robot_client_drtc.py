@@ -1113,7 +1113,8 @@ class RobotClientDrtc:
                     ctx = FilterContext(action=teleop_action)
                     filtered_action = self._action_filter.apply(ctx)
                     t_send_start = time.perf_counter()
-                    self.robot.send_action(self._action_array_to_dict(filtered_action))
+                    sent_action = self.robot.send_action(self._action_array_to_dict(filtered_action))
+                    self._update_latest_follower_pos_from_action(sent_action)
                     t_send_done = time.perf_counter()
                     self._metrics.diagnostic.timing_s("send_action_ms", t_send_done - t_send_start)
 
@@ -1148,7 +1149,8 @@ class RobotClientDrtc:
                         filtered_action = self._action_filter.apply(ctx)
 
                         t_send_start = time.perf_counter()
-                        self.robot.send_action(self._action_array_to_dict(filtered_action))
+                        sent_action = self.robot.send_action(self._action_array_to_dict(filtered_action))
+                        self._update_latest_follower_pos_from_action(sent_action)
                         t_send_done = time.perf_counter()
 
                         # Keep action_step aligned with the schedule's action-step keys.
@@ -1413,6 +1415,15 @@ class RobotClientDrtc:
     def _action_array_to_dict(self, action_array: np.ndarray) -> dict[str, float]:
         """Convert action array to dictionary keyed by robot action features."""
         return {key: action_array[i].item() for i, key in enumerate(self.robot.action_features)}
+
+    def _update_latest_follower_pos_from_action(self, action: dict[str, Any]) -> None:
+        """Cache the per-tick follower goal used for leader feedback."""
+        if self._teleop_device is None:
+            return
+
+        follower_pos = {k: float(v) for k, v in action.items() if k.endswith(".pos")}
+        if follower_pos:
+            self._latest_follower_pos = follower_pos
 
 
 def async_client_drtc(cfg: RobotClientDrtcConfig) -> None:

@@ -15,7 +15,7 @@ robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
 robot_id: so101_follower_2026_04_19_v0
 
 # Cameras: pi05_rl expects observation.images.{wrist,top}.
-camera1_name: wrist
+camera1_name: side
 camera1_path: /dev/video4
 camera2_name: top
 camera2_path: /dev/video0
@@ -28,7 +28,7 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: pi05_rl
-pretrained_name_or_path: outputs/pi05_full_offline_recap_20260418_3/checkpoints/001000/pretrained_model
+pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/001600/pretrained_model
 
 # DRTC parameters
 estimator: jk
@@ -44,7 +44,7 @@ latency_beta: 0.25
 
 # Timing -- env.fps in recap-config-hilserl.json is 30.
 duration_s: 120.0
-fps: 20
+fps: 30
 
 # Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config
 # from recap-config-hilserl.json. Keeping these in sync is critical: num_flow_matching_steps
