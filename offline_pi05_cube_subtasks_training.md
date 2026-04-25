@@ -166,7 +166,55 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
 
     If using your `rgpu.sh` helper from `cloud-gpu-provisioning`, use it to run the same `aws s3 sync` / `aws s3 cp` commands on the appropriate source or destination host.
 
-    On the EC2 training machine, from the `~/code/lerobot` repo root, restore the same paths expected by `recap-config-hilserl.json`:
+14. On the EC2 training machine, do the one-time auth and asset checks before launching training.
+
+    Hugging Face auth is required because `google/paligemma-3b-pt-224` is gated. Log in with an account that has accepted access to that model:
+
+    ```bash
+    uv run huggingface-cli login
+    uv run huggingface-cli whoami
+    ```
+
+    For non-interactive setup:
+
+    ```bash
+    export HF_TOKEN=hf_...
+    uv run huggingface-cli login --token "$HF_TOKEN"
+    ```
+
+    Prewarm the gated model files before launching 8 ranks, so auth/download issues fail early:
+
+    ```bash
+    uv run python - <<'PY'
+    from transformers import AutoConfig, AutoTokenizer
+
+    repo = "google/paligemma-3b-pt-224"
+    AutoConfig.from_pretrained(repo)
+    AutoTokenizer.from_pretrained(repo)
+    print("OK: loaded", repo)
+    PY
+    ```
+
+    If W&B is enabled, log in or explicitly disable/offline it:
+
+    ```bash
+    uv run wandb login
+    ```
+
+    Or prefix the training command with one of:
+
+    ```bash
+    WANDB_MODE=disabled
+    WANDB_MODE=offline
+    ```
+
+    Confirm the local π0.5 base checkpoint exists because the config points at `models/pi05_base`:
+
+    ```bash
+    ls models/pi05_base
+    ```
+
+15. On the EC2 training machine, from the `~/code/lerobot` repo root, restore the same paths expected by `recap-config-hilserl.json`:
 
     ```bash
     export RECAP_BUCKET=s3://lerobot-recap-024158824539
@@ -194,7 +242,7 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
     outputs/stats/action_stats_anchor_cube-subtasks-e30-base120trim-0-9-101-end-fixed.pt
     ```
 
-14. Start a tmux session on the training machine before launching the long-running job:
+16. Start a tmux session on the training machine before launching the long-running job:
 
     ```bash
     tmux new -s pi05-offline
@@ -206,7 +254,7 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
     tmux attach -t pi05-offline
     ```
 
-15. Run offline training on 8 GPUs with Accelerate:
+17. Run offline training on 8 GPUs with Accelerate:
 
     ```bash
     uv run accelerate launch \
@@ -218,14 +266,14 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
 
     The startup logs should report `num_processes=8`, distinct `local_rank`/CUDA devices, `after_prepare ... is_ddp=True`, and a global effective batch of `128`.
 
-16. Run offline training on a single GPU:
+18. Run offline training on a single GPU:
 
     ```bash
     uv run python -m lerobot.scripts.offline_learner_pi05 \
       --config_path=recap-config-hilserl.json
     ```
 
-17. Monitor logs and checkpoints:
+19. Monitor logs and checkpoints:
 
     ```text
     outputs/pi05_cube_subtasks_offline/logs/
@@ -234,7 +282,7 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
 
     Multi-GPU runs write per-rank logs like `offline_learner_<job>_rank0.log`; rank 0 includes a compact per-rank sanity table for the first few optimization steps.
 
-18. For later online training or inference, point `policy.pi05_checkpoint` at the saved offline checkpoint, usually:
+20. For later online training or inference, point `policy.pi05_checkpoint` at the saved offline checkpoint, usually:
 
     ```text
     outputs/pi05_cube_subtasks_offline/checkpoints/<step>/pretrained_model
