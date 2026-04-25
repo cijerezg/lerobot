@@ -194,7 +194,19 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
     outputs/stats/action_stats_anchor_cube-subtasks-e30-base120trim-0-9-101-end-fixed.pt
     ```
 
-14. Run offline training on 8 GPUs with Accelerate:
+14. Start a tmux session on the training machine before launching the long-running job:
+
+    ```bash
+    tmux new -s pi05-offline
+    ```
+
+    If you disconnect, reattach with:
+
+    ```bash
+    tmux attach -t pi05-offline
+    ```
+
+15. Run offline training on 8 GPUs with Accelerate:
 
     ```bash
     uv run accelerate launch \
@@ -206,14 +218,14 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
 
     The startup logs should report `num_processes=8`, distinct `local_rank`/CUDA devices, `after_prepare ... is_ddp=True`, and a global effective batch of `128`.
 
-15. Run offline training on a single GPU:
+16. Run offline training on a single GPU:
 
     ```bash
     uv run python -m lerobot.scripts.offline_learner_pi05 \
       --config_path=recap-config-hilserl.json
     ```
 
-16. Monitor logs and checkpoints:
+17. Monitor logs and checkpoints:
 
     ```text
     outputs/pi05_cube_subtasks_offline/logs/
@@ -222,7 +234,7 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
 
     Multi-GPU runs write per-rank logs like `offline_learner_<job>_rank0.log`; rank 0 includes a compact per-rank sanity table for the first few optimization steps.
 
-17. For later online training or inference, point `policy.pi05_checkpoint` at the saved offline checkpoint, usually:
+18. For later online training or inference, point `policy.pi05_checkpoint` at the saved offline checkpoint, usually:
 
     ```text
     outputs/pi05_cube_subtasks_offline/checkpoints/<step>/pretrained_model
