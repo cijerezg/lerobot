@@ -37,6 +37,7 @@ from accelerate import Accelerator
 from accelerate.utils import DistributedDataParallelKwargs
 from termcolor import colored
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel
 
 import lerobot.rl.rl_pi05  # noqa: F401  # register PI05RLConfig (pi05_rl policy type)
 from lerobot.cameras import opencv  # noqa: F401
@@ -84,6 +85,121 @@ from lerobot.utils.utils import (
 class OfflineTrainRLServerPipelineConfig(TrainRLServerPipelineConfig):
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
+
+
+def _first_trainable_parameter(policy: nn.Module) -> tuple[str | None, torch.nn.Parameter | None]:
+    unwrapped = getattr(policy, "module", policy)
+    for name, param in unwrapped.named_parameters():
+        if param.requires_grad:
+            return name, param
+    return None, None
+
+
+def _parameter_norm_and_checksum(policy: nn.Module, accelerator: Accelerator) -> tuple[float, float]:
+    _name, param = _first_trainable_parameter(accelerator.unwrap_model(policy))
+    if param is None:
+        return float("nan"), float("nan")
+    param_data = param.detach().float()
+    return float(param_data.norm().item()), float(param_data.sum().item())
+
+
+def _log_accelerator_state(accelerator: Accelerator, cfg: TrainRLServerPipelineConfig) -> None:
+    cuda_current_device = None
+    cuda_device_name = "n/a"
+    if torch.cuda.is_available():
+        cuda_current_device = torch.cuda.current_device()
+        cuda_device_name = torch.cuda.get_device_name(cuda_current_device)
+
+    effective_batch = (
+        cfg.batch_size
+        * accelerator.num_processes
+        * getattr(cfg.policy, "gradient_accumulation_steps", 1)
+    )
+    logging.info(
+        "[DDP] rank=%s local_rank=%s num_processes=%s distributed_type=%s "
+        "accelerator_device=%s cuda_current_device=%s gpu=%s batch_size_per_rank=%s "
+        "gradient_accumulation_steps=%s global_effective_batch=%s",
+        accelerator.process_index,
+        accelerator.local_process_index,
+        accelerator.num_processes,
+        accelerator.distributed_type,
+        accelerator.device,
+        cuda_current_device,
+        cuda_device_name,
+        cfg.batch_size,
+        getattr(cfg.policy, "gradient_accumulation_steps", 1),
+        effective_batch,
+    )
+
+    if accelerator.num_processes == 1:
+        logging.warning(
+            "[DDP] accelerator.num_processes=1. Multi-GPU is not active; "
+            "launch with accelerate/torchrun when you expect 8 GPUs."
+        )
+
+
+def _log_policy_wrap_state(label: str, policy: nn.Module, accelerator: Accelerator) -> None:
+    name, param = _first_trainable_parameter(accelerator.unwrap_model(policy))
+    param_device = param.device if param is not None else "n/a"
+    logging.info(
+        "[DDP] %s rank=%s policy_type=%s is_ddp=%s first_trainable=%s first_trainable_device=%s",
+        label,
+        accelerator.process_index,
+        type(policy).__name__,
+        isinstance(policy, DistributedDataParallel),
+        name,
+        param_device,
+    )
+
+
+def _log_rank_step_summary(
+    accelerator: Accelerator,
+    policy: nn.Module,
+    training_infos: dict,
+    optimization_step: int,
+    step_time_s: float,
+) -> None:
+    loss_critic = float(training_infos.get("loss_critic", float("nan")))
+    loss_actor = float(training_infos.get("loss_actor", float("nan")))
+    critic_grad_norm = float(training_infos.get("critic_grad_norm", float("nan")))
+    actor_grad_norm = float(training_infos.get("actor_grad_norm", float("nan")))
+    param_norm, param_checksum = _parameter_norm_and_checksum(policy, accelerator)
+
+    local = torch.tensor(
+        [
+            float(accelerator.process_index),
+            loss_critic,
+            loss_actor,
+            critic_grad_norm,
+            actor_grad_norm,
+            param_norm,
+            param_checksum,
+            float(step_time_s),
+        ],
+        device=accelerator.device,
+        dtype=torch.float64,
+    )
+    gathered = accelerator.gather(local).view(accelerator.num_processes, -1)
+
+    if accelerator.is_main_process:
+        rows = []
+        for row in gathered.detach().cpu().tolist():
+            rows.append(
+                "rank={rank} loss_critic={loss_critic:.6g} loss_actor={loss_actor:.6g} "
+                "critic_grad={critic_grad:.6g} actor_grad={actor_grad:.6g} "
+                "param_norm={param_norm:.6g} param_checksum={param_checksum:.6g} "
+                "step_time_s={step_time:.3f}".format(
+                    rank=int(row[0]),
+                    loss_critic=row[1],
+                    loss_actor=row[2],
+                    critic_grad=row[3],
+                    actor_grad=row[4],
+                    param_norm=row[5],
+                    param_checksum=row[6],
+                    step_time=row[7],
+                )
+            )
+        logging.info("[DDP] step=%s per-rank summary:\n%s", optimization_step, "\n".join(rows))
 
 
 @parser.wrap()
@@ -139,15 +255,23 @@ def offline_train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None,
     # Create logs directory
     log_dir = os.path.join(output_dir, "logs")
     os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, f"offline_learner_{job_name}.log")
+    rank_suffix = f"_rank{accelerator.process_index}" if accelerator.num_processes > 1 else ""
+    log_file = os.path.join(log_dir, f"offline_learner_{job_name}{rank_suffix}.log")
 
     # Initialize logging with accelerator
-    init_logging(log_file=log_file, display_pid=False, accelerator=accelerator)
+    init_logging(log_file=log_file, display_pid=accelerator.num_processes > 1, accelerator=accelerator)
+    if accelerator.num_processes > 1:
+        # Keep non-main rank file logs at INFO while their console output remains suppressed.
+        logging.getLogger().setLevel(logging.NOTSET)
 
     if is_main_process:
         logging.info(f"Offline learner logging initialized, writing to {log_file}")
         logging.info(f"Output directory: {output_dir}")
+        if accelerator.num_processes > 1:
+            logging.info(f"Per-rank logs are written under {log_dir}/offline_learner_{job_name}_rank*.log")
         logging.info(pformat(cfg.to_dict()))
+
+    _log_accelerator_state(accelerator, cfg)
 
     # Setup WandB logging if enabled (only on main process)
     if cfg.wandb.enable and is_main_process:
@@ -229,7 +353,7 @@ def run_offline_training(
 
     # Override device to ensure policy is created on accelerator's device
     original_device = cfg.policy.device
-    cfg.policy.device = device.type
+    cfg.policy.device = str(device)
 
     policy = make_policy(
         cfg=cfg.policy,
@@ -241,6 +365,7 @@ def run_offline_training(
 
     assert isinstance(policy, nn.Module)
     policy.train()
+    _log_policy_wrap_state("before_prepare", policy, accelerator)
 
     # Enable gradient checkpointing if configured
     if cfg.policy.gradient_checkpointing:
@@ -300,8 +425,15 @@ def run_offline_training(
     # Log training info
     if is_main_process:
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        accumulation_steps = gradient_accumulation_steps
+        effective_bs = cfg.batch_size * num_processes * accumulation_steps
+        logging.info(
+            "Effective batch size: %s per-rank x %s ranks x %s accumulation = %s",
+            cfg.batch_size,
+            num_processes,
+            accumulation_steps,
+            effective_bs,
+        )
         log_training_info(cfg=cfg, policy=policy, offline_steps=offline_steps)
 
     # Initialize offline replay buffer (only on main process first)
@@ -372,6 +504,7 @@ def run_offline_training(
     policy, optimizers["actor"], optimizers["critic"] = accelerator.prepare(
         policy, optimizers["actor"], optimizers["critic"]
     )
+    _log_policy_wrap_state("after_prepare", policy, accelerator)
 
     # Share underlying GPU memory for frozen critic target layers to save VRAM.
     # Must happen AFTER accelerator.prepare, which moves params to GPU (new tensors).
@@ -402,7 +535,7 @@ def run_offline_training(
         # UTD ratio - 1 updates (critic only)
         for _ in range(utd_ratio - 1):
             _update_critic(
-                policy=accelerator.unwrap_model(policy),
+                policy=policy,
                 optimizers=optimizers,
                 online_iterator=offline_iterator,
                 offline_iterator=None,
@@ -413,19 +546,17 @@ def run_offline_training(
                 clip_grad_norm_value=clip_grad_norm_value,
                 cast_to_bf16_fn=cast_to_bf16_fn,
                 use_amp=False,
-                scaler=None
+                scaler=None,
+                accelerator=accelerator,
             )
 
             # Update target networks
-            if hasattr(policy, "module"):
-                policy.module.update_target_networks()
-            else:
-                policy.update_target_networks()
+            accelerator.unwrap_model(policy).update_target_networks()
 
 
         # Shared update step
         training_infos = pi05_update_step(
-            policy=accelerator.unwrap_model(policy),
+            policy=policy,
             optimizers=optimizers,
             online_iterator=offline_iterator,
             offline_iterator=None,
@@ -443,8 +574,18 @@ def run_offline_training(
             use_amp=False,
             scaler=None,
             preprocessor=preprocessor,
+            accelerator=accelerator,
         )
 
+        time_for_one_optimization_step = time.time() - time_for_one_optimization_step
+        if optimization_step < 3:
+            _log_rank_step_summary(
+                accelerator=accelerator,
+                policy=policy,
+                training_infos=training_infos,
+                optimization_step=optimization_step,
+                step_time_s=time_for_one_optimization_step,
+            )
 
         # Log training metrics
         if optimization_step % log_freq == 0:
@@ -460,7 +601,6 @@ def run_offline_training(
             )
 
         # Calculate optimization frequency
-        time_for_one_optimization_step = time.time() - time_for_one_optimization_step
         frequency_for_one_optimization_step = 1 / (time_for_one_optimization_step + 1e-9)
 
         if wandb_logger:

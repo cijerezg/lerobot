@@ -5,18 +5,15 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 14,
+    "batch_size": 16,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/pi05_full_offline_recap_20260418_4",
-    "offline_save_freq": 1000,
+    "offline_output_dir": "outputs/pi05_subtasks_good_dataset_0",
+    "offline_save_freq": 400,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
-    "video_logging_cameras": [
-        "top",
-        "wrist"
-    ],
+    "video_logging_cameras": ["top", "side"],
     "wandb": {
         "enable": true,
         "project": "so101_real-v1",
@@ -25,17 +22,16 @@
     },
     "buffer_cache_dir": "outputs/buffer_cache",
     "dataset": {
-        "root": "outputs/so101_pickplace_success_120_v2_w_subtasks_v2",
-        "repo_id": "jackvial/so101_pickplace_success_120_v2_w_subtasks_v2",
+        "root": "outputs/cube-subtasks-e30-base120trim-0-9-101-end-fixed",
+        "repo_id": "jackvial/cube-subtasks-e30-base120trim-0-9-101-end-fixed",
         "use_imagenet_stats": false,
         "max_episodes": null,
-        "additional_offline_dataset_paths": [
-        ]
+        "additional_offline_dataset_paths": []
     },
     "policy": {
         "type": "pi05_rl",
         "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "outputs/pi05_full_offline_recap_20260418_3/checkpoints/003000/pretrained_model",
+        "pi05_checkpoint": "models/pi05_base",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "num_inference_steps": 5,
@@ -46,7 +42,7 @@
         "loss_weight_subtask_ce": 1.0,
         "inference_advantage": 1.0,
         "subtask_regeneration_interval": 1.5,
-        "advantage_scaling": 0.20,
+        "advantage_scaling": 0.2,
         "n_obs_steps": 1,
         "reward_normalization_constant": 5.0,
         "terminal_failure_reward": -16.0,
@@ -65,37 +61,25 @@
             "ACTION": "QUANTILES"
         },
         "action_encoding": "anchor",
-        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_so101_pickplace_success_120_v2_w_subtasks.pt",
+        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_cube-subtasks-e30-base120trim-0-9-101-end-fixed.pt",
         "input_features": {
-            "observation.images.wrist": {
+            "observation.images.side": {
                 "type": "VISUAL",
-                "shape": [
-                    3,
-                    224,
-                    224
-                ]
+                "shape": [3, 224, 224]
             },
             "observation.images.top": {
                 "type": "VISUAL",
-                "shape": [
-                    3,
-                    224,
-                    224
-                ]
+                "shape": [3, 224, 224]
             },
             "observation.state": {
                 "type": "STATE",
-                "shape": [
-                    6
-                ]
+                "shape": [6]
             }
         },
         "output_features": {
             "action": {
                 "type": "ACTION",
-                "shape": [
-                    6
-                ]
+                "shape": [6]
             }
         },
         "device": "cuda",
@@ -105,7 +89,7 @@
         "dataset_stats": null,
         "storage_device": "cpu",
         "dtype": "bfloat16",
-        "gradient_checkpointing": true,
+        "gradient_checkpointing": false,
         "online_steps": 20000,
         "online_buffer_capacity": 100000,
         "offline_buffer_capacity": 200000,
@@ -119,7 +103,7 @@
         "critic_target_update_weight": 0.005,
         "utd_ratio": 2,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 9,
+        "gradient_accumulation_steps": 1,
         "offline_steps": 5000,
         "trainable_params": {
             "vision_encoder_from_layer": {
@@ -130,10 +114,7 @@
             "critic_language_from_layer": 4
         },
         "critic_network_kwargs": {
-            "hidden_dims": [
-                256,
-                256
-            ],
+            "hidden_dims": [256, 256],
             "activate_final": true
         },
         "actor_learner_config": {
@@ -145,7 +126,7 @@
             "actor": "threads",
             "learner": "threads"
         },
-        "repo_id": "jackvial/so101_pickplace_success_120_v2_w_subtasks_v2"
+        "repo_id": "jackvial/cube-subtasks-e30-base120trim-0-9-101-end-fixed"
     },
     "env": {
         "type": "gym_manipulator",
@@ -154,19 +135,21 @@
             "port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00",
             "id": "so101_follower_2026_04_16_v2",
             "cameras": {
-                "wrist": {
-                    "type": "opencv",
-                    "index_or_path": "/dev/video0",
-                    "height": 480,
-                    "width": 640,
-                    "fps": 30
-                },
                 "top": {
                     "type": "opencv",
+                    "index_or_path": "/dev/video0",
+                    "height": 600,
+                    "width": 800,
+                    "fps": 30,
+                    "fourcc": "MJPG"
+                },
+                "side": {
+                    "type": "opencv",
                     "index_or_path": "/dev/video4",
-                    "height": 480,
-                    "width": 640,
-                    "fps": 30
+                    "height": 600,
+                    "width": 800,
+                    "fps": 30,
+                    "fourcc": "MJPG"
                 }
             }
         },
@@ -183,23 +166,15 @@
                 "add_current_to_observation": false
             },
             "image_preprocessing": {
-                "resize_size": [
-                    224,
-                    224
-                ]
+                "resize_size": [224, 224]
             },
             "gripper": {
                 "use_gripper": true,
-                "gripper_penalty": 0.00
+                "gripper_penalty": 0.0
             },
             "reset": {
                 "fixed_reset_joint_positions": [
-                    0.54,
-                    -90.69,
-                    99.55,
-                    73.70,
-                    -50.23,
-                    42.71
+                    0.54, -90.69, 99.55, 73.7, -50.23, 42.71
                 ],
                 "reset_time_s": 10,
                 "control_time_s": 200.0,
@@ -216,37 +191,25 @@
         "fps": 30,
         "task": "Pick up the orange cube and place it on the black X marker",
         "features": {
-            "observation.images.wrist": {
+            "observation.images.side": {
                 "type": "VISUAL",
-                "shape": [
-                    3,
-                    128,
-                    128
-                ]
+                "shape": [3, 128, 128]
             },
             "observation.images.top": {
                 "type": "VISUAL",
-                "shape": [
-                    3,
-                    128,
-                    128
-                ]
+                "shape": [3, 128, 128]
             },
             "observation.state": {
                 "type": "STATE",
-                "shape": [
-                    6
-                ]
+                "shape": [6]
             },
             "action": {
                 "type": "ACTION",
-                "shape": [
-                    6
-                ]
+                "shape": [6]
             }
         },
         "features_map": {
-            "observation.images.wrist": "observation.images.wrist",
+            "observation.images.side": "observation.images.side",
             "observation.images.top": "observation.images.top",
             "observation.state": "observation.state",
             "action": "action"

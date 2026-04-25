@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms.functional as F_vision
+from contextlib import nullcontext
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.utils.constants import (
@@ -33,6 +34,33 @@ from pathlib import Path
 from typing import Any
 
 from lerobot.processor.core import TransitionKey
+
+
+def _unwrap_policy(policy, accelerator=None):
+    if accelerator is not None:
+        return accelerator.unwrap_model(policy)
+    return getattr(policy, "module", policy)
+
+
+def _maybe_no_sync(policy, accelerator, should_sync: bool):
+    if accelerator is not None and not should_sync:
+        return accelerator.no_sync(policy)
+    return nullcontext()
+
+
+def _backward(loss: torch.Tensor, accelerator=None, scaler=None) -> None:
+    if accelerator is not None:
+        accelerator.backward(loss)
+    elif scaler:
+        scaler.scale(loss).backward()
+    else:
+        loss.backward()
+
+
+def _clip_grad_norm(parameters, max_norm: float, accelerator=None):
+    if accelerator is not None:
+        return accelerator.clip_grad_norm_(parameters, max_norm=max_norm)
+    return torch.nn.utils.clip_grad_norm_(parameters=parameters, max_norm=max_norm)
 
 
 def log_sampled_actions(
@@ -323,7 +351,8 @@ def _update_critic(
     clip_grad_norm_value: float,
     cast_to_bf16_fn,
     use_amp: bool,
-    scaler
+    scaler,
+    accelerator=None,
 ) -> dict:
     accum_loss_critic = 0.0
     critic_values_list = []
@@ -333,40 +362,39 @@ def _update_critic(
     
     optimizers["critic"].zero_grad(set_to_none=True)
     
-    for _ in range(gradient_accumulation_steps):
-        # Sample Batch
-        batch, actions, rewards, observations, next_observations, done = _prepare_batch(
-            online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn
-        )
-        
-        # Preprocess for Critic
-        
-        # Note: No subtask hydration needed here — critic doesn't use subtasks.
-        forward_batch_critic = preprocess_batch_for_pi05(
-            policy=policy,
-            observations=observations,
-            next_observations=next_observations,
-            actions=actions,
-            rewards=rewards,
-            done=done,
-            task=cfg.policy.task,
-        )
+    for accum_step in range(gradient_accumulation_steps):
+        should_sync = accum_step == gradient_accumulation_steps - 1
+        with _maybe_no_sync(policy, accelerator, should_sync):
+            # Sample Batch
+            batch, actions, rewards, observations, next_observations, done = _prepare_batch(
+                online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn
+            )
+            
+            # Preprocess for Critic
+            
+            # Note: No subtask hydration needed here — critic doesn't use subtasks.
+            forward_batch_critic = preprocess_batch_for_pi05(
+                policy=policy,
+                observations=observations,
+                next_observations=next_observations,
+                actions=actions,
+                rewards=rewards,
+                done=done,
+                task=cfg.policy.task,
+            )
 
-        # Forward Critic
+            # Forward Critic
 
-        if use_amp:
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                critic_output = policy.forward(forward_batch_critic, model="critic")
+            if use_amp:
+                with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                    critic_output = policy(forward_batch_critic, model="critic")
+                    loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
+            else:
+                critic_output = policy(forward_batch_critic, model="critic")
                 loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
-        else:
-            critic_output = policy.forward(forward_batch_critic, model="critic")
-            loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
 
-        # Backward
-        if scaler:
-            scaler.scale(loss_critic).backward()
-        else:
-            loss_critic.backward()
+            # Backward
+            _backward(loss_critic, accelerator=accelerator, scaler=scaler)
             
         # Accumulate metrics
         accum_loss_critic += critic_output["loss_critic"].detach().item()
@@ -381,8 +409,10 @@ def _update_critic(
     if scaler:
         scaler.unscale_(optimizers["critic"])
         
-    critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-        parameters=policy.critic_ensemble.parameters(),
+    unwrapped_policy = _unwrap_policy(policy, accelerator)
+    critic_grad_norm = _clip_grad_norm(
+        parameters=unwrapped_policy.critic_ensemble.parameters(),
+        accelerator=accelerator,
         max_norm=clip_grad_norm_value
     ).item()
     
@@ -462,7 +492,7 @@ def _compute_advantage_with_interventions(
     )
     
     with torch.no_grad():
-        critic_out_pass1 = policy.forward(forward_batch_pass1, model="critic")
+        critic_out_pass1 = policy(forward_batch_pass1, model="critic")
         
         target_v = critic_out_pass1["target_values"]
         current_v = critic_out_pass1["critic_values"]
@@ -647,6 +677,7 @@ def _update_actor(
     use_amp: bool = False,
     scaler=None,
     preprocessor=None,
+    accelerator=None,
 ) -> dict:
     actor_infos = {}
     
@@ -670,79 +701,78 @@ def _update_actor(
 
         
         for accum_step in range(gradient_accumulation_steps):
-            # Sample NEW batch for actor update
-            batch, actions, rewards, observations, next_observations, done = _prepare_batch(
-                online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn
-            )
-            
-            # --- Step 1: Calculate Advantage (Pass 1) ---
-            raw_advantage, raw_advantage_flat, current_v, target_v = _compute_advantage_with_interventions(
-                policy=policy,
-                batch=batch,
-                observations=observations,
-                next_observations=next_observations,
-                actions=actions,
-                rewards=rewards,
-                done=done,
-                cfg=cfg
-            )
+            should_sync = accum_step == gradient_accumulation_steps - 1
+            with _maybe_no_sync(policy, accelerator, should_sync):
+                # Sample NEW batch for actor update
+                batch, actions, rewards, observations, next_observations, done = _prepare_batch(
+                    online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn
+                )
+                
+                # --- Step 1: Calculate Advantage (Pass 1) ---
+                raw_advantage, raw_advantage_flat, current_v, target_v = _compute_advantage_with_interventions(
+                    policy=policy,
+                    batch=batch,
+                    observations=observations,
+                    next_observations=next_observations,
+                    actions=actions,
+                    rewards=rewards,
+                    done=done,
+                    cfg=cfg
+                )
 
-            # --- Step 2: Re-tokenize ---
-            processed_batch, subtask_indices = _prepare_actor_batch(
-                batch=batch,
-                observations=observations,
-                actions=actions,
-                raw_advantage_flat=raw_advantage_flat,
-                cfg=cfg,
-                dataset=dataset,
-                preprocessor=preprocessor,
-            )
+                # --- Step 2: Re-tokenize ---
+                processed_batch, subtask_indices = _prepare_actor_batch(
+                    batch=batch,
+                    observations=observations,
+                    actions=actions,
+                    raw_advantage_flat=raw_advantage_flat,
+                    cfg=cfg,
+                    dataset=dataset,
+                    preprocessor=preprocessor,
+                )
 
-            # --- Step 3: Actor Update (Pass 3) ---
-            forward_batch_actor = _construct_actor_forward_batch(
-                processed_batch=processed_batch,
-                observations=observations,
-                actions=actions,
-                rewards=rewards,
-                done=done,
-                raw_advantage=raw_advantage,
-                cfg=cfg,
-                subtask_indices=subtask_indices,
-                device=device,
-                cast_to_bf16_fn=cast_to_bf16_fn
-            )
-            
-            # External Metrics for Efficiency
-            # We calculate squashed advantage here to log consistent with what the model *would* report
-            # But we pass the RAW advantage and values to the model to skip re-computation
-            squashed_advantage = torch.tanh(raw_advantage / cfg.policy.advantage_scaling)
-            
-            external_metrics = {
-                "advantage": squashed_advantage,
-                "critic_values": current_v,
-                "target_values": target_v,
-                "rewards": rewards
-            }
+                # --- Step 3: Actor Update (Pass 3) ---
+                forward_batch_actor = _construct_actor_forward_batch(
+                    processed_batch=processed_batch,
+                    observations=observations,
+                    actions=actions,
+                    rewards=rewards,
+                    done=done,
+                    raw_advantage=raw_advantage,
+                    cfg=cfg,
+                    subtask_indices=subtask_indices,
+                    device=device,
+                    cast_to_bf16_fn=cast_to_bf16_fn
+                )
+                
+                # External Metrics for Efficiency
+                # We calculate squashed advantage here to log consistent with what the model *would* report
+                # But we pass the RAW advantage and values to the model to skip re-computation
+                squashed_advantage = torch.tanh(raw_advantage / cfg.policy.advantage_scaling)
+                
+                external_metrics = {
+                    "advantage": squashed_advantage,
+                    "critic_values": current_v,
+                    "target_values": target_v,
+                    "rewards": rewards
+                }
 
-            # Forward Actor
-            if use_amp:
-                with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                    actor_output = policy.forward(forward_batch_actor, model="actor", external_metrics=external_metrics)
+                # Forward Actor
+                if use_amp:
+                    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                        actor_output = policy(forward_batch_actor, model="actor", external_metrics=external_metrics)
+                        loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
+                else:
+                    actor_output = policy(forward_batch_actor, model="actor", external_metrics=external_metrics)
                     loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
-            else:
-                actor_output = policy.forward(forward_batch_actor, model="actor", external_metrics=external_metrics)
-                loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
-            
-            loss_actor_mean = loss_actor.mean()
-            
-            accum_loss_actor += actor_output["loss_actor"].mean().item()
-            accum_flow_loss += actor_output["flow_mse_loss"].mean().item()
-            
-            if hasattr(loss_actor_mean, "backward"):
-                 if scaler:
-                     scaler.scale(loss_actor_mean).backward()
-                 else:
-                     loss_actor_mean.backward()
+                
+                loss_actor_mean = loss_actor.mean()
+                
+                accum_loss_actor += actor_output["loss_actor"].mean().item()
+                accum_flow_loss += actor_output["flow_mse_loss"].mean().item()
+                
+                if hasattr(loss_actor_mean, "backward"):
+                    _backward(loss_actor_mean, accelerator=accelerator, scaler=scaler)
 
             if "flow_loss_raw" in actor_output:
                 raw_loss = actor_output["flow_loss_raw"]
@@ -787,8 +817,10 @@ def _update_actor(
         if scaler:
             scaler.unscale_(optimizers["actor"])
         
-        actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-            parameters=policy.actor.parameters(),
+        unwrapped_policy = _unwrap_policy(policy, accelerator)
+        actor_grad_norm = _clip_grad_norm(
+            parameters=unwrapped_policy.actor.parameters(),
+            accelerator=accelerator,
             max_norm=clip_grad_norm_value
         ).item()
         
@@ -867,6 +899,7 @@ def pi05_update_step(
     use_amp: bool = False,
     scaler=None,
     preprocessor=None,
+    accelerator=None,
 ):
     """
     Performs one optimization step for PI05 (Learner Critic & Actor).
@@ -890,7 +923,8 @@ def pi05_update_step(
         clip_grad_norm_value=clip_grad_norm_value,
         cast_to_bf16_fn=cast_to_bf16_fn,
         use_amp=use_amp,
-        scaler=scaler
+        scaler=scaler,
+        accelerator=accelerator,
     )
 
     # -------------------------------------------------------------------------
@@ -913,7 +947,8 @@ def pi05_update_step(
             cast_to_bf16_fn=cast_to_bf16_fn,
             use_amp=use_amp,
             scaler=scaler,
-            preprocessor=preprocessor
+            preprocessor=preprocessor,
+            accelerator=accelerator,
         )
 
 
@@ -922,7 +957,7 @@ def pi05_update_step(
     # -------------------------------------------------------------------------
     # 3. Target Network Update & Merge Metrics
     # -------------------------------------------------------------------------
-    policy.update_target_networks()
+    _unwrap_policy(policy, accelerator).update_target_networks()
     
     return training_infos
 
