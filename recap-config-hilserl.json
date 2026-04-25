@@ -9,7 +9,7 @@
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 400,
-    "offline_output_dir": "outputs/pi05_subtasks_good_dataset_2",
+    "offline_output_dir": "outputs/pi05_subtasks_good_dataset_4",
     "offline_save_freq": 400,
     "episode_logging_freq": 4,
     "episode_save_freq": 6,
