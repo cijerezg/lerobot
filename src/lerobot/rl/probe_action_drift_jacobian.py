@@ -19,7 +19,7 @@ Outputs:
 
 Usage:
     python probe_action_drift_jacobian.py config.json \\
-        --probe_parameters.jacobian_timestep 1.0
+        --probe_parameters.timestep 0.5
 """
 
 import csv
@@ -42,7 +42,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import (
     make_att_2d_masks,
 )
 from lerobot.processor.core import TransitionKey
-from lerobot.scripts.eval_offline_pi05 import _build_episode_index, get_frame_data
+from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
@@ -50,7 +50,6 @@ from lerobot.utils.constants import (
 from lerobot.utils.utils import get_safe_torch_device, init_logging
 
 from lerobot.rl.probe_utils_pi05 import (
-    load_extra_dataset,
     load_policy_and_processors,
 )
 
@@ -251,7 +250,14 @@ def jacobian_probe_forward_multilayer(prefix_cache, time_val, device, policy, la
     causal_by_layer = {}
 
     for layer_idx in layers:
-        # Each iteration: fresh forward+backward for one layer
+        # Each iteration: fresh forward+backward for one layer.
+        # Detach shared inputs so each iteration builds an independent graph —
+        # otherwise the first backward() frees saved tensors and later
+        # iterations hit "Trying to backward through the graph a second time".
+        prefix_embs_iter = prefix_embs.detach()
+        suffix_embs_iter = suffix_embs_base.detach()
+        adarms_cond_iter = adarms_cond_base.detach() if adarms_cond_base is not None else None
+
         _PROBING_CAPTURE["enabled"]       = True
         _PROBING_CAPTURE["requires_grad"] = True
         _PROBING_CAPTURE["all_layers"]    = False
@@ -264,9 +270,9 @@ def jacobian_probe_forward_multilayer(prefix_cache, time_val, device, policy, la
                 attention_mask=att_2d_4d,
                 position_ids=position_ids,
                 past_key_values=None,
-                inputs_embeds=[prefix_embs, suffix_embs_base],
+                inputs_embeds=[prefix_embs_iter, suffix_embs_iter],
                 use_cache=False,
-                adarms_cond=[None, adarms_cond_base],
+                adarms_cond=[None, adarms_cond_iter],
             )
 
             attn_weights = _PROBING_CAPTURE["attn_weights"]
@@ -481,8 +487,9 @@ def run_action_drift_jacobian(
     makedirs(output_dir)
     p = cfg.probe_parameters
     chunk_size = cfg.policy.n_action_steps
-    t_val = p.jacobian_timestep
-    batch_sz = p.jacobian_batch_size
+    t_val = p.timestep
+    batch_sz = p.validation_batch_size
+    layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
 
     # Build sample list (reuse attn probe's logic)
     samples = _build_sample_list_from_val(
@@ -496,14 +503,15 @@ def run_action_drift_jacobian(
         return None
 
     logging.info(
-        f"[jacobian] {len(samples)} episodes @ t={t_val}, "
+        f"[jacobian] {len(samples)} episodes × layers {layers} @ t={t_val}, "
         f"batch_size={batch_sz} ..."
     )
 
     fps = getattr(val_dataset, "fps", 30) / p.attn_eval_subsample
 
     for ep_idx, ep_frames in samples:
-        writers = {}
+        # writers[layer_idx][key] = imageio writer
+        writers = {l: {} for l in layers}
 
         for batch_start in range(0, len(ep_frames), batch_sz):
             batch_slice = ep_frames[batch_start : batch_start + batch_sz]
@@ -556,55 +564,67 @@ def run_action_drift_jacobian(
                 subtask_tokens, subtask_masks,
             )
 
-            # ── Jacobian forward ─────────────────────────────────────────────
-            causal_map, segments, pad_masks, patches_per_cam = jacobian_probe_forward(
-                prefix_cache, t_val, device, policy
+            # ── Multi-layer Jacobian forward ─────────────────────────────────
+            causal_by_layer, segments, pad_masks, patches_per_cam = (
+                jacobian_probe_forward_multilayer(
+                    prefix_cache, t_val, device, policy, layers
+                )
             )
-            if causal_map is None:
-                logging.warning(f"    [jacobian] No causal map at t={t_val}; skipping.")
+            if not causal_by_layer:
+                logging.warning(f"    [jacobian] No causal maps at t={t_val}; skipping.")
                 continue
 
-            t_str  = f"{t_val:.2f}".replace(".", "p")
-            ep_dir = os.path.join(output_dir, f"ep{ep_idx:04d}_t{t_str}")
-            os.makedirs(ep_dir, exist_ok=True)
+            t_str = f"{t_val:.2f}".replace(".", "p")
 
-            csv_path = os.path.join(ep_dir, "norm_consts.csv")
-            csv_file  = open(csv_path, "a", newline="")
-            csv_writer = csv.writer(csv_file)
-            if os.path.getsize(csv_path) == 0:
-                csv_writer.writerow(["ep", "fr", "t_val", "panel", "vmax"])
+            for layer_idx in layers:
+                if layer_idx not in causal_by_layer:
+                    continue
+                causal_map = causal_by_layer[layer_idx]
 
-            for b_idx, (fr_idx, _) in enumerate(batch_slice):
-                c_m = causal_map[b_idx : b_idx + 1]
-                p_m = pad_masks[b_idx : b_idx + 1]
-                i_t = [img[b_idx : b_idx + 1] for img in images]
-
-                frames_out, norm_consts = render_disaggregated(
-                    c_m, segments, i_t, p_m, patches_per_cam,
-                    label_prefix="causal",
+                layer_dir = os.path.join(
+                    output_dir, f"ep{ep_idx:04d}_t{t_str}", f"L{layer_idx:02d}"
                 )
+                os.makedirs(layer_dir, exist_ok=True)
 
-                for panel, vmax in norm_consts.items():
-                    csv_writer.writerow(
-                        [ep_idx, fr_idx, t_val, panel, f"{vmax:.6e}"]
+                csv_path = os.path.join(layer_dir, "norm_consts.csv")
+                csv_file  = open(csv_path, "a", newline="")
+                csv_writer = csv.writer(csv_file)
+                if os.path.getsize(csv_path) == 0:
+                    csv_writer.writerow(["ep", "fr", "layer", "t_val", "panel", "vmax"])
+
+                for b_idx, (fr_idx, _) in enumerate(batch_slice):
+                    c_m = causal_map[b_idx : b_idx + 1]
+                    p_m = pad_masks[b_idx : b_idx + 1]
+                    i_t = [img[b_idx : b_idx + 1] for img in images]
+
+                    frames_out, norm_consts = render_disaggregated(
+                        c_m, segments, i_t, p_m, patches_per_cam,
+                        label_prefix=f"causal_L{layer_idx}",
                     )
 
-                for key, frame_np in frames_out.items():
-                    if key not in writers:
-                        mp4_path = os.path.join(ep_dir, f"{key}.mp4")
-                        writers[key] = imageio.get_writer(
-                            mp4_path, fps=fps, macro_block_size=1
+                    for panel, vmax in norm_consts.items():
+                        csv_writer.writerow(
+                            [ep_idx, fr_idx, layer_idx, t_val, panel, f"{vmax:.6e}"]
                         )
-                    writers[key].append_data(frame_np)
 
-            csv_file.close()
-            del causal_map, segments, pad_masks, patches_per_cam
+                    for key, frame_np in frames_out.items():
+                        if key not in writers[layer_idx]:
+                            mp4_path = os.path.join(layer_dir, f"{key}.mp4")
+                            writers[layer_idx][key] = imageio.get_writer(
+                                mp4_path, fps=fps, macro_block_size=1
+                            )
+                        writers[layer_idx][key].append_data(frame_np)
+
+                csv_file.close()
+
+            del causal_by_layer, segments, pad_masks, patches_per_cam
             del prefix_cache, b_obs_batched, task_tokens, task_masks
             del subtask_tokens, subtask_masks, images, img_masks
             torch.cuda.empty_cache()
 
-        for w in writers.values():
-            w.close()
+        for layer_writers in writers.values():
+            for w in layer_writers.values():
+                w.close()
 
     logging.info(f"[jacobian] Done. Output in {output_dir}/")
     return {}
@@ -654,14 +674,16 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
     output_dir = os.path.join(p.output_dir, "action_drift_jacobian")
     os.makedirs(output_dir, exist_ok=True)
 
+    layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
+
     logging.info("Action-Drift Jacobian probe")
-    logging.info(f"  Timestep: {p.jacobian_timestep}")
+    logging.info(f"  Timestep: {p.timestep}")
+    logging.info(f"  Layers:   {layers}")
     logging.info(f"  Output:   {output_dir}")
 
     policy, preprocessor, _, dataset = load_policy_and_processors(cfg, device)
     policy.eval()
 
-    # Use build_sample_list from probe_attention for standalone mode
     samples_raw = build_sample_list(
         dataset,
         episodes_str=p.attn_eval_episodes,
@@ -673,18 +695,13 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
         logging.warning("No samples found, exiting.")
         return
 
-    # Convert to val-style format (already in the right shape)
-    # build_sample_list returns [(ep_idx, [(fr_idx, global_idx), ...]), ...]
-    # which is exactly what run_action_drift_jacobian expects via _build_sample_list_from_val
-    # but we already have the list, so we'll inline the loop.
-
-    t_val = p.jacobian_timestep
-    batch_sz = p.jacobian_batch_size
+    t_val = p.timestep
+    batch_sz = p.validation_batch_size
     chunk_size = cfg.policy.n_action_steps
     fps = getattr(dataset, "fps", 30) / p.attn_eval_subsample
 
     for ep_idx, ep_frames in samples_raw:
-        writers = {}
+        writers = {l: {} for l in layers}
 
         for batch_start in range(0, len(ep_frames), batch_sz):
             batch_slice = ep_frames[batch_start : batch_start + batch_sz]
@@ -733,41 +750,52 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
                 subtask_tokens, subtask_masks,
             )
 
-            causal_map, segments, pad_masks, patches_per_cam = jacobian_probe_forward(
-                prefix_cache, t_val, device, policy
+            causal_by_layer, segments, pad_masks, patches_per_cam = (
+                jacobian_probe_forward_multilayer(
+                    prefix_cache, t_val, device, policy, layers
+                )
             )
-            if causal_map is None:
+            if not causal_by_layer:
                 continue
 
-            t_str  = f"{t_val:.2f}".replace(".", "p")
-            ep_dir = os.path.join(output_dir, f"ep{ep_idx:04d}_t{t_str}")
-            os.makedirs(ep_dir, exist_ok=True)
+            t_str = f"{t_val:.2f}".replace(".", "p")
 
-            for b_idx, (fr_idx, _) in enumerate(batch_slice):
-                c_m = causal_map[b_idx : b_idx + 1]
-                p_m = pad_masks[b_idx : b_idx + 1]
-                i_t = [img[b_idx : b_idx + 1] for img in images]
+            for layer_idx in layers:
+                if layer_idx not in causal_by_layer:
+                    continue
+                causal_map = causal_by_layer[layer_idx]
 
-                frames_out, _ = render_disaggregated(
-                    c_m, segments, i_t, p_m, patches_per_cam,
-                    label_prefix="causal",
+                layer_dir = os.path.join(
+                    output_dir, f"ep{ep_idx:04d}_t{t_str}", f"L{layer_idx:02d}"
                 )
+                os.makedirs(layer_dir, exist_ok=True)
 
-                for key, frame_np in frames_out.items():
-                    if key not in writers:
-                        mp4_path = os.path.join(ep_dir, f"{key}.mp4")
-                        writers[key] = imageio.get_writer(
-                            mp4_path, fps=fps, macro_block_size=1
-                        )
-                    writers[key].append_data(frame_np)
+                for b_idx, (fr_idx, _) in enumerate(batch_slice):
+                    c_m = causal_map[b_idx : b_idx + 1]
+                    p_m = pad_masks[b_idx : b_idx + 1]
+                    i_t = [img[b_idx : b_idx + 1] for img in images]
 
-            del causal_map, segments, pad_masks, patches_per_cam
+                    frames_out, _ = render_disaggregated(
+                        c_m, segments, i_t, p_m, patches_per_cam,
+                        label_prefix=f"causal_L{layer_idx}",
+                    )
+
+                    for key, frame_np in frames_out.items():
+                        if key not in writers[layer_idx]:
+                            mp4_path = os.path.join(layer_dir, f"{key}.mp4")
+                            writers[layer_idx][key] = imageio.get_writer(
+                                mp4_path, fps=fps, macro_block_size=1
+                            )
+                        writers[layer_idx][key].append_data(frame_np)
+
+            del causal_by_layer, segments, pad_masks, patches_per_cam
             del prefix_cache, b_obs_batched, task_tokens, task_masks
             del subtask_tokens, subtask_masks, images, img_masks
             torch.cuda.empty_cache()
 
-        for w in writers.values():
-            w.close()
+        for layer_writers in writers.values():
+            for w in layer_writers.values():
+                w.close()
 
     logging.info(f"Done. Output in {output_dir}/")
 

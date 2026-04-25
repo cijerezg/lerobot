@@ -48,7 +48,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.pi05_full.modeling_pi05 import pad_vector
 from lerobot.processor.core import TransitionKey
-from lerobot.scripts.eval_offline_pi05 import _build_episode_index, get_frame_data
+from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -229,7 +229,7 @@ def collect_activations(policy, preprocessor, dataset, samples, device, cfg):
       "metadata": list of N dicts
     """
     sites      = [s.strip() for s in cfg.probe_parameters.sites.split(",")]
-    t_values   = [float(t.strip()) for t in cfg.probe_parameters.timesteps.split(",")]
+    t_values   = [cfg.probe_parameters.timestep]
     chunk_size = cfg.policy.chunk_size
 
     all_prefix = []
@@ -296,7 +296,7 @@ def collect_subtask_injection(policy, preprocessor, dataset, samples, device, cf
       "suffix_gt", "suffix_gen":    {t_val: (N, 1024)}
       "gen_subtask_texts":          list of N strings
     """
-    t_values   = [float(t.strip()) for t in cfg.probe_parameters.timesteps.split(",")]
+    t_values   = [cfg.probe_parameters.timestep]
     chunk_size = cfg.policy.chunk_size
     tokenizer  = policy.model._paligemma_tokenizer
 
@@ -696,7 +696,7 @@ def run_plotting(cache, cfg, output_dir):
     """Load cached activations, run all PCA+UMAP reductions, save plots."""
     metadata = cache["metadata"]
     sites    = [s.strip() for s in cfg.probe_parameters.sites.split(",")]
-    t_values = [float(t.strip()) for t in cfg.probe_parameters.timesteps.split(",")]
+    t_values = [cfg.probe_parameters.timestep]
     pca_dir  = os.path.join(output_dir, "pca_variance")
     makedirs(pca_dir)
 
@@ -826,7 +826,7 @@ def _probe_one_dataset(policy, preprocessor, dataset, ds_dir, cfg, device):
             cache.update(inj)
 
         torch.save(cache, cache_path)
-        logging.info(f"  Activations saved → {cache_path}")
+        logging.debug(f"  Activations saved → {cache_path}")
 
     if p.mode in ("plot", "all"):
         if cache is None:

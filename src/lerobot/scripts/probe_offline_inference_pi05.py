@@ -693,7 +693,7 @@ def render_sample(
     out_path = os.path.join(output_dir, fname)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logging.info(f"  Saved {out_path}")
+    logging.debug(f"  Saved {out_path}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -963,7 +963,7 @@ def eval_cli(cfg: EvalOfflineConfig):
                 pred_traces=sub_traces_norm, output_dir=dir_sub_norm, state=None,
             )
 
-        logging.info(
+        logging.debug(
             f"Subtask plots saved to {dir_sub_unnorm}/ and {dir_sub_norm}/"
         )
 
@@ -1058,7 +1058,7 @@ def eval_cli(cfg: EvalOfflineConfig):
             pred_traces=traces_norm, output_dir=dir_norm, state=None,
         )
 
-    logging.info(f"Done. {len(samples)} plots saved to {dir_unnorm}/ and {dir_norm}/")
+    logging.debug(f"Done. {len(samples)} plots saved to {dir_unnorm}/ and {dir_norm}/")
 
 
 if __name__ == "__main__":

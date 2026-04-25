@@ -35,10 +35,10 @@ def discover_attention_combos(val_dir: Path, steps: list[str]) -> list[str]:
     return sorted(d.name for d in att_dir.iterdir() if d.is_dir())
 
 
-def discover_offline_eval_frames(val_dir: Path, steps: list[str]) -> list[str]:
-    """Discover per-frame PNGs produced by the offline_eval probe."""
+def discover_offline_inference_frames(val_dir: Path, steps: list[str]) -> list[str]:
+    """Discover per-frame PNGs produced by the offline_inference probe."""
     for s in steps:
-        frame_dir = val_dir / s / "offline_eval" / "unnormalized"
+        frame_dir = val_dir / s / "offline_inference" / "unnormalized"
         if frame_dir.exists():
             return sorted(p.stem for p in frame_dir.glob("ep*.png"))
     return []
@@ -52,12 +52,46 @@ def discover_action_drift_jacobian_groups(val_dir: Path, steps: list[str]) -> li
     return []
 
 
-def discover_action_drift_jacobian_files(val_dir: Path, steps: list[str], groups: list[str]) -> list[str]:
+def discover_action_drift_jacobian_layers(val_dir: Path, steps: list[str], groups: list[str]) -> list[str]:
     for s in steps:
         for g in groups:
             d = val_dir / s / "action_drift_jacobian" / g
             if d.exists() and d.is_dir():
-                return sorted(p.name for p in d.glob("*.mp4"))
+                return sorted(p.name for p in d.iterdir() if p.is_dir() and p.name.startswith("L"))
+    return []
+
+
+def discover_action_drift_jacobian_files(val_dir: Path, steps: list[str], groups: list[str], layers: list[str]) -> list[str]:
+    for s in steps:
+        for g in groups:
+            for l in layers:
+                d = val_dir / s / "action_drift_jacobian" / g / l
+                if d.exists() and d.is_dir():
+                    idx = int(l.replace("L", ""))
+                    prefix = f"causal_L{idx}_"
+                    files = []
+                    for p in d.glob("*.mp4"):
+                        if p.name.startswith(prefix):
+                            files.append(p.name[len(prefix):])
+                        else:
+                            files.append(p.name)
+                    return sorted(files)
+    return []
+
+
+def discover_repr_spaces(val_dir: Path, steps: list[str]) -> list[str]:
+    for s in steps:
+        d = val_dir / s / "representations" / "2d"
+        if d.exists() and d.is_dir():
+            return sorted(p.name for p in d.iterdir() if p.is_dir())
+    return []
+
+
+def discover_scree_files(val_dir: Path, steps: list[str]) -> list[str]:
+    for s in steps:
+        d = val_dir / s / "representations" / "pca_variance"
+        if d.exists() and d.is_dir():
+            return sorted(p.stem.removesuffix("_pca_scree") for p in d.glob("*_pca_scree.png"))
     return []
 
 
@@ -214,17 +248,21 @@ ACTION_VIEWS = {
 }
 
 ATTENTION_FILES = [
-    "img1_mean.mp4", "img2_mean.mp4", "matrix_mean.mp4",
-    "img1_heads.mp4", "img2_heads.mp4", "matrix_heads.mp4",
+    "img1_summary.mp4",
+    "img2_summary.mp4",
+    "matrix_mean.mp4",
+    "img1_all_heads.mp4",
+    "img1_action_heads.mp4",
+    "img1_language_heads.mp4",
+    "img1_subtask_heads.mp4",
+    "img2_all_heads.mp4",
+    "img2_action_heads.mp4",
+    "img2_language_heads.mp4",
+    "img2_subtask_heads.mp4",
+    "matrix_heads.mp4",
 ]
 
-REPR_SPACES = ["prefix", "suffix_t0.25", "suffix_t1.0"]
 REPR_COLORINGS = ["by_episode", "by_frame", "by_subtask"]
-SCREE_FILES = {
-    "prefix": "prefix_pca_scree.png",
-    "suffix_t0.25": "suffix_t0.25_pca_scree.png",
-    "suffix_t1.0": "suffix_t1.0_pca_scree.png",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -242,18 +280,22 @@ def build_app(run_dir: str):
 
     episodes = discover_episodes(val_dir, all_steps)
     att_combos = discover_attention_combos(val_dir, all_steps)
-    offline_eval_frames = discover_offline_eval_frames(val_dir, all_steps)
+    offline_inference_frames = discover_offline_inference_frames(val_dir, all_steps)
 
     adj_groups = discover_action_drift_jacobian_groups(val_dir, all_steps)
-    adj_files = discover_action_drift_jacobian_files(val_dir, all_steps, adj_groups)
+    adj_layers = discover_action_drift_jacobian_layers(val_dir, all_steps, adj_groups)
+    adj_files = discover_action_drift_jacobian_files(val_dir, all_steps, adj_groups, adj_layers)
+
+    repr_spaces = discover_repr_spaces(val_dir, all_steps)
+    scree_spaces = discover_scree_files(val_dir, all_steps)
 
     sm_layers = discover_spatial_memorization_layers(val_dir, all_steps, "spatial_memorization")
     sm_files = discover_spatial_memorization_files(val_dir, all_steps, "spatial_memorization", sm_layers)
 
     smj_layers = discover_spatial_memorization_layers(val_dir, all_steps, "spatial_memorization_jacobian")
     smj_files = discover_spatial_memorization_files(val_dir, all_steps, "spatial_memorization_jacobian", smj_layers)
-
-    default_steps = [all_steps[0], all_steps[len(all_steps) // 2], all_steps[-1]]
+    default_indices = sorted(list({0, len(all_steps) // 2, len(all_steps) - 1}))
+    default_steps = [all_steps[i] for i in default_indices]
 
     with gr.Blocks(title="Validation Comparison") as app:
         gr.Markdown(f"## Validation — {Path(run_dir).name}")
@@ -315,7 +357,7 @@ def build_app(run_dir: str):
                     return ""
                 items = [(val_dir / s / "attention" / combo / fname, step_label(s))
                          for s in selected_steps]
-                vertical = "_mean" in fname
+                vertical = "mean" in fname or "summary" in fname
                 return render_video_grid(items, vertical=vertical)
 
             att_combo_dd.change(render_attention, [step_selector, att_combo_dd, att_file_dd], att_html)
@@ -324,44 +366,46 @@ def build_app(run_dir: str):
             app.load(render_attention, [step_selector, att_combo_dd, att_file_dd], att_html)
 
         # ---- Representations tab ----
-        with gr.Tab("Representations"):
-            with gr.Row():
-                repr_space_dd = gr.Dropdown(choices=REPR_SPACES, value=REPR_SPACES[0], label="Space")
-                repr_color_dd = gr.Dropdown(choices=REPR_COLORINGS, value=REPR_COLORINGS[0], label="Coloring")
-            repr_html = gr.HTML()
+        if repr_spaces:
+            with gr.Tab("Representations"):
+                with gr.Row():
+                    repr_space_dd = gr.Dropdown(choices=repr_spaces, value=repr_spaces[0], label="Space")
+                    repr_color_dd = gr.Dropdown(choices=REPR_COLORINGS, value=REPR_COLORINGS[0], label="Coloring")
+                repr_html = gr.HTML()
 
-            def render_repr(selected_steps, space, coloring):
-                if not selected_steps or not space or not coloring:
-                    return ""
-                items = [(val_dir / s / "representations" / "2d" / space / f"{coloring}.png", step_label(s))
-                         for s in selected_steps]
-                return render_image_grid(items)
+                def render_repr(selected_steps, space, coloring):
+                    if not selected_steps or not space or not coloring:
+                        return ""
+                    items = [(val_dir / s / "representations" / "2d" / space / f"{coloring}.png", step_label(s))
+                             for s in selected_steps]
+                    return render_image_grid(items)
 
-            repr_space_dd.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
-            repr_color_dd.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
-            step_selector.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
-            app.load(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
+                repr_space_dd.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
+                repr_color_dd.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
+                step_selector.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
+                app.load(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
 
-            # PCA scree
-            gr.Markdown("### PCA scree")
-            scree_dd = gr.Dropdown(choices=list(SCREE_FILES.keys()), value="prefix", label="Space")
-            scree_html = gr.HTML()
+                # PCA scree
+                if scree_spaces:
+                    gr.Markdown("### PCA scree")
+                    scree_dd = gr.Dropdown(choices=scree_spaces, value=scree_spaces[0], label="Space")
+                    scree_html = gr.HTML()
 
-            def render_scree(selected_steps, space):
-                if not selected_steps or not space:
-                    return ""
-                fname = SCREE_FILES[space]
-                items = [(val_dir / s / "representations" / "pca_variance" / fname, step_label(s))
-                         for s in selected_steps]
-                return render_image_grid(items)
+                    def render_scree(selected_steps, space):
+                        if not selected_steps or not space:
+                            return ""
+                        fname = f"{space}_pca_scree.png"
+                        items = [(val_dir / s / "representations" / "pca_variance" / fname, step_label(s))
+                                 for s in selected_steps]
+                        return render_image_grid(items)
 
-            scree_dd.change(render_scree, [step_selector, scree_dd], scree_html)
-            step_selector.change(render_scree, [step_selector, scree_dd], scree_html)
-            app.load(render_scree, [step_selector, scree_dd], scree_html)
+                    scree_dd.change(render_scree, [step_selector, scree_dd], scree_html)
+                    step_selector.change(render_scree, [step_selector, scree_dd], scree_html)
+                    app.load(render_scree, [step_selector, scree_dd], scree_html)
 
-        # ---- Offline Eval tab ----
-        if offline_eval_frames:
-            with gr.Tab("Offline Eval"):
+        # ---- Offline Inference tab ----
+        if offline_inference_frames:
+            with gr.Tab("Offline Inference"):
                 with gr.Row():
                     oe_space_dd = gr.Dropdown(
                         choices=["Unnormalized", "Normalized"],
@@ -369,53 +413,60 @@ def build_app(run_dir: str):
                         label="Space",
                     )
                     oe_frame_dd = gr.Dropdown(
-                        choices=offline_eval_frames,
-                        value=offline_eval_frames[0] if offline_eval_frames else None,
+                        choices=offline_inference_frames,
+                        value=offline_inference_frames[0] if offline_inference_frames else None,
                         label="Frame",
                     )
                 oe_html = gr.HTML()
 
-                def render_offline_eval(selected_steps, space, frame):
+                def render_offline_inference(selected_steps, space, frame):
                     if not selected_steps or not space or not frame:
                         return ""
                     subdir = "unnormalized" if space == "Unnormalized" else "normalized"
                     items = [
-                        (val_dir / s / "offline_eval" / subdir / f"{frame}.png", step_label(s))
+                        (val_dir / s / "offline_inference" / subdir / f"{frame}.png", step_label(s))
                         for s in selected_steps
                     ]
                     return render_image_grid(items)
 
-                oe_space_dd.change(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
-                oe_frame_dd.change(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
-                step_selector.change(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
-                app.load(render_offline_eval, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                oe_space_dd.change(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                oe_frame_dd.change(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                step_selector.change(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                app.load(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
 
         # ---- Action Drift Jacobian tab ----
-        if adj_groups and adj_files:
+        if adj_groups and adj_layers and adj_files:
             with gr.Tab("Action Drift Jacobian"):
                 with gr.Row():
                     adj_group_dd = gr.Dropdown(
                         choices=adj_groups, value=adj_groups[0], label="Episode / timestep"
+                    )
+                    adj_layer_dd = gr.Dropdown(
+                        choices=adj_layers, value=adj_layers[0], label="Layer"
                     )
                     adj_file_dd = gr.Dropdown(
                         choices=adj_files, value=adj_files[0], label="View"
                     )
                 adj_html = gr.HTML()
 
-                def render_adj(selected_steps, group, fname):
-                    if not selected_steps or not group or not fname:
+                def render_adj(selected_steps, group, layer, fname):
+                    if not selected_steps or not group or not layer or not fname:
                         return ""
+                    idx = int(layer.replace("L", ""))
+                    prefix = f"causal_L{idx}_"
+                    real_fname = fname if fname.startswith("causal_") else f"{prefix}{fname}"
                     items = [
-                        (val_dir / s / "action_drift_jacobian" / group / fname, step_label(s))
+                        (val_dir / s / "action_drift_jacobian" / group / layer / real_fname, step_label(s))
                         for s in selected_steps
                     ]
                     vertical = "summary" in fname
                     return render_video_grid(items, vertical=vertical)
 
-                adj_group_dd.change(render_adj, [step_selector, adj_group_dd, adj_file_dd], adj_html)
-                adj_file_dd.change(render_adj, [step_selector, adj_group_dd, adj_file_dd], adj_html)
-                step_selector.change(render_adj, [step_selector, adj_group_dd, adj_file_dd], adj_html)
-                app.load(render_adj, [step_selector, adj_group_dd, adj_file_dd], adj_html)
+                adj_group_dd.change(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
+                adj_layer_dd.change(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
+                adj_file_dd.change(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
+                step_selector.change(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
+                app.load(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
 
         # ---- Spatial Memorization tab ----
         if sm_layers and sm_files:
@@ -474,7 +525,7 @@ def build_app(run_dir: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="View validation outputs across training steps.")
-    parser.add_argument("run_dir", help="Path to the training run directory (contains validation/)")
+    parser.add_argument("--run_dir", help="Path to the training run directory (contains validation/)")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--share", action="store_true")
     args = parser.parse_args()

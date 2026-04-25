@@ -43,7 +43,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import (
     make_att_2d_masks,
 )
 from lerobot.processor.core import TransitionKey
-from lerobot.scripts.eval_offline_pi05 import _build_episode_index, get_frame_data
+from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
@@ -61,7 +61,7 @@ from lerobot.rl.probe_utils_pi05 import (
 # ──────────────────────────────────────────────────────────────────────────────
 
 ATTN_LAYERS = [0, 9, 17]
-TIMESTEP = 1.0
+TIMESTEP = 0.5
 MAX_EPISODES = 5
 SUBSAMPLE = 2
 BATCH_SIZE = 32
@@ -617,7 +617,7 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
             for w in dict_l.values():
                 w.close()
 
-    logging.info(f"Done. Output saved to {OUTPUT_DIR}/")
+    logging.debug(f"Done. Output saved to {OUTPUT_DIR}/")
 
 
 if __name__ == "__main__":

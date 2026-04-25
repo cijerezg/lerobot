@@ -54,7 +54,7 @@ import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.scripts.eval_offline_pi05 import get_frame_data, run_inference
+from lerobot.scripts.probe_offline_inference_pi05 import get_frame_data, run_inference
 from lerobot.utils.utils import get_safe_torch_device, init_logging
 
 from lerobot.rl.probe_utils_pi05 import (
@@ -105,7 +105,7 @@ class ProbeActionsConfig(TrainRLServerPipelineConfig):
     Relevant fields for this script:
       output_dir, mode, max_episodes, n_frames_per_episode, random_seed,
       ref_max_episodes, ref_n_frames_per_episode,
-      pca_dims, umap_n_neighbors, umap_min_dist, umap_seed.
+      action_pca_dims, umap_n_neighbors, umap_min_dist, umap_seed.
     """
 
 
@@ -159,7 +159,7 @@ def fit_manifold(X_ref, cfg, pca_dir):
     import umap as umap_lib
 
     p = cfg.probe_parameters
-    X_pca, pca = run_pca(X_ref, p.pca_dims, "gt_reference", pca_dir)
+    X_pca, pca = run_pca(X_ref, p.action_pca_dims, "gt_reference", pca_dir)
     X_np = X_pca.numpy()
 
     def _fit_umap(n_components, label):
@@ -194,7 +194,7 @@ def collect_eval_dataset(policy, preprocessor, postprocessor,
 
     For each frame:
       1. Flatten GT and pred action chunks → (1, chunk_size*action_dim) numpy arrays.
-      2. pca.transform() → (1, pca_dims).
+      2. pca.transform() → (1, action_pca_dims).
       3. Batch all frames, then reducer.transform() → (N, 2) and (N, 3).
 
     Returns dict with "gt_emb2", "pred_emb2", "gt_emb3", "pred_emb3", "metadata".
@@ -862,7 +862,7 @@ def probe_cli(cfg: ProbeActionsConfig):
             )
 
         torch.save(cache, cache_path)
-        logging.info(f"Cache saved → {cache_path}")
+        logging.debug(f"Cache saved → {cache_path}")
 
     if p.mode in ("plot", "all"):
         if cache is None:

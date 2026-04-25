@@ -18,7 +18,7 @@ Usage:
     python probe_attention_pi05.py config.json \\
         --probe_parameters.max_episodes 5 \\
         --probe_parameters.output_dir outputs/probe \\
-        --probe_parameters.timesteps "1.0,0.5,0.25"
+        --probe_parameters.timestep 0.5
 """
 
 import csv
@@ -45,7 +45,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import (
     make_att_2d_masks,
 )
 from lerobot.processor.core import TransitionKey
-from lerobot.scripts.eval_offline_pi05 import _build_episode_index, get_frame_data
+from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
@@ -68,8 +68,8 @@ class ProbeAttentionConfig(TrainRLServerPipelineConfig):
 
     All probe tunables live under cfg.probe_parameters (ProbeConfig).
     Relevant fields for this script:
-      output_dir, timesteps,
-      attn_batch_size, attn_eval_episodes, attn_eval_subsample,
+    # ─ Attention / spatial
+      validation_batch_size, attn_eval_episodes, attn_eval_subsample,
       max_episodes, random_seed.
     """
 
@@ -476,8 +476,8 @@ def probe_cli(cfg: ProbeAttentionConfig):
     output_dir = os.path.join(p.output_dir, "attention")
     os.makedirs(output_dir, exist_ok=True)
 
-    timesteps = [float(t) for t in p.timesteps.split(",")]
-    logging.info(f"Probing timesteps: {timesteps}")
+    timesteps = [p.timestep]
+    logging.info(f"Probing timestep: {p.timestep}")
     logging.info(f"Output dir: {output_dir}")
 
     logging.info("Loading policy …")
@@ -502,7 +502,7 @@ def probe_cli(cfg: ProbeAttentionConfig):
         logging.info(f"  {len(samples)} episodes × {len(timesteps)} timesteps → {ds_output_dir}")
 
         fps      = getattr(ds, "fps", 30) / p.attn_eval_subsample
-        batch_sz = p.attn_batch_size
+        batch_sz = getattr(p, "validation_batch_size", 32)
 
         for ep_idx, ep_frames in samples:
             writers = {t_val: {} for t_val in timesteps}
@@ -616,7 +616,7 @@ def probe_cli(cfg: ProbeAttentionConfig):
         ds_name  = os.path.basename(os.path.normpath(extra_root))
         _probe_dataset(extra_ds, os.path.join(output_dir, ds_name))
 
-    logging.info(f"Done. Output saved to {output_dir}/")
+    logging.debug(f"Done. Output saved to {output_dir}/")
 
 
 if __name__ == "__main__":

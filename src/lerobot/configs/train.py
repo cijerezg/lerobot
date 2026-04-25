@@ -215,7 +215,7 @@ class ProbeConfig:
     enable_actions: bool = True
     enable_representations: bool = True
     enable_attention: bool = True
-    enable_offline_eval: bool = True
+    enable_offline_inference: bool = True
     enable_spatial_memorization: bool = True
     enable_action_drift_jacobian: bool = False       # per-frame causal A*J maps (needs backward)
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
@@ -225,42 +225,31 @@ class ProbeConfig:
     mode: str = "all"                   # "collect" | "plot" | "all"
     max_episodes: Optional[int] = 5
     n_frames_per_episode: int = 128
+    offline_inference_n_frames: int = 5
     random_seed: int = 42
 
-    # ── Dimensionality reduction (actions + representations) ─────────────────
+    # ── Common ────────────────────────────────────────────────────────────────
+    timestep: float = 0.5               # single diffusion timestep used by all probes
+
+    # ── Actions / representations ────────────────────────────────────────────
+    ref_max_episodes: int = 40
+    ref_n_frames_per_episode: int = 256
+    action_pca_dims: int = 50                  # action-manifold PCA
+    repr_pca_dims: int = 100
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1
     umap_seed: int = 42
-
-    # ── Diffusion timesteps (representations + attention) ────────────────────
-    timesteps: str = "1.0,0.25"
-
-    # ── Actions-specific ─────────────────────────────────────────────────────
-    ref_max_episodes: int = 40
-    ref_n_frames_per_episode: int = 256
-    pca_dims: int = 50                  # action-manifold PCA
-
-    # ── Representations-specific ─────────────────────────────────────────────
-    repr_pca_dims: int = 100
     sites: str = "prefix,suffix"
     ep_3d_a: int = 0
     ep_3d_b: int = 1
     subtask_injection: bool = True
 
-    # ── Attention-specific ───────────────────────────────────────────────────
-    attn_batch_size: int = 32
+    # ── Attention / spatial / Jacobian ───────────────────────────────────────
+    validation_batch_size: int = 32
     attn_eval_episodes: Optional[str] = None
     attn_eval_subsample: int = 2
-
-    # ── Spatial memorization-specific ────────────────────────────────────────
     spatial_layers: str = "0,9,17"
-    spatial_timestep: float = 1.0
     spatial_n_frames: int = 32          # total frames (1 per unique episode)
-    spatial_batch_size: int = 8
-
-    # ── Action-drift Jacobian-specific ──────────────────────────────────────
-    jacobian_timestep: float = 1.0      # diffusion timestep for Jacobian probes
-    jacobian_batch_size: int = 4        # smaller default (backward pass costs ~3x)
 
 
 @dataclass(kw_only=True)

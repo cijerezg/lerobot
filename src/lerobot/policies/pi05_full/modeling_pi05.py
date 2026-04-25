@@ -307,14 +307,24 @@ def compute_layer_complete(
     scaling = paligemma.language_model.layers[layer_idx].self_attn.scaling
     capture_attn_weights(layer_idx, query_states, key_states, scaling, attention_mask)
     # Attention computation
-    att_output, _ = modeling_gemma.eager_attention_forward(
-        paligemma.language_model.layers[layer_idx].self_attn,
-        query_states,
-        key_states,
-        value_states,
-        attention_mask,
-        scaling,
-    )
+    if _PROBING_CAPTURE.get("requires_grad") and _PROBING_CAPTURE.get("attn_weights") is not None:
+        # Jacobian mode: use captured attention (on GPU, in autograd graph) so that
+        # loss.backward() computes d(loss)/d(captured_attn).  The captured tensor
+        # replaces eager_attention_forward, putting it on the real computation path.
+        captured_attn = _PROBING_CAPTURE["attn_weights"]
+        num_kv_groups = paligemma.language_model.layers[layer_idx].self_attn.num_key_value_groups
+        v_rep = modeling_gemma.repeat_kv(value_states, num_kv_groups)
+        att_output = torch.matmul(captured_attn.to(query_states.dtype), v_rep)
+        att_output = att_output.transpose(1, 2).contiguous()
+    else:
+        att_output, _ = modeling_gemma.eager_attention_forward(
+            paligemma.language_model.layers[layer_idx].self_attn,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            scaling,
+        )
     # Get head_dim from the current layer, not from the model
     head_dim = paligemma.language_model.layers[layer_idx].self_attn.head_dim
     att_output = att_output.reshape(batch_size, -1, 1 * 8 * head_dim)
@@ -427,60 +437,71 @@ def compute_layer_complete_knowledge_insulation(
     scaling = paligemma.language_model.layers[layer_idx].self_attn.scaling
     capture_attn_weights(layer_idx, query_states, key_states, scaling, attention_mask)
 
-    # KNOWLEDGE INSULATION
-    # split queries into vlm (backbone) and action (expert) parts
-    Q_vlm = query_states[:, :, :vlm_len, :]      # (B, num_heads, vlm_len, head_dim)
-    Q_action = query_states[:, :, vlm_len:, :]   # (B, num_heads, action_len, head_dim)
+    if _PROBING_CAPTURE.get("requires_grad") and _PROBING_CAPTURE.get("attn_weights") is not None:
+        # Jacobian mode: use captured attention (on GPU, in autograd graph) so that
+        # loss.backward() computes d(loss)/d(captured_attn).  Knowledge insulation
+        # only affects gradient flow (via detach), not values, so skipping it here
+        # produces numerically identical output.
+        captured_attn = _PROBING_CAPTURE["attn_weights"]
+        num_kv_groups = paligemma.language_model.layers[layer_idx].self_attn.num_key_value_groups
+        v_rep = modeling_gemma.repeat_kv(value_states, num_kv_groups)
+        att_output = torch.matmul(captured_attn.to(query_states.dtype), v_rep)
+        att_output = att_output.transpose(1, 2).contiguous()
+    else:
+        # KNOWLEDGE INSULATION
+        # split queries into vlm (backbone) and action (expert) parts
+        Q_vlm = query_states[:, :, :vlm_len, :]      # (B, num_heads, vlm_len, head_dim)
+        Q_action = query_states[:, :, vlm_len:, :]   # (B, num_heads, action_len, head_dim)
 
-    # split K/V into vlm and action parts
-    K_vlm = key_states[:, :, :vlm_len, :]        # (B, num_kv_heads, vlm_len, head_dim)
-    K_action = key_states[:, :, vlm_len:, :]     # (B, num_kv_heads, action_len, head_dim)
-    V_vlm = value_states[:, :, :vlm_len, :]      # (B, num_kv_heads, vlm_len, head_dim)
-    V_action = value_states[:, :, vlm_len:, :]   # (B, num_kv_heads, action_len, head_dim)
+        # split K/V into vlm and action parts
+        K_vlm = key_states[:, :, :vlm_len, :]        # (B, num_kv_heads, vlm_len, head_dim)
+        K_action = key_states[:, :, vlm_len:, :]     # (B, num_kv_heads, action_len, head_dim)
+        V_vlm = value_states[:, :, :vlm_len, :]      # (B, num_kv_heads, vlm_len, head_dim)
+        V_action = value_states[:, :, vlm_len:, :]   # (B, num_kv_heads, action_len, head_dim)
 
-    # create detached vlm K/V for action queries
-    # .detach() stops gradient flow: action loss wont backprop into VLM's K/V projections
-    K_vlm_detached = K_vlm.detach()
-    V_vlm_detached = V_vlm.detach()
+        # create detached vlm K/V for action queries
+        # .detach() stops gradient flow: action loss wont backprop into VLM's K/V projections
+        K_vlm_detached = K_vlm.detach()
+        V_vlm_detached = V_vlm.detach()
 
-    # K/V for VLM queries: use original (full gradient flow for VLM self-attention)
-    K_for_vlm = key_states  # [K_vlm, K_action]
-    V_for_vlm = value_states  # [V_vlm, V_action]
+        # K/V for VLM queries: use original (full gradient flow for VLM self-attention)
+        K_for_vlm = key_states  # [K_vlm, K_action]
+        V_for_vlm = value_states  # [V_vlm, V_action]
 
-    # K/V for action queries: detached VLM K/V + normal action K/V
-    # knowledge insulation: action queries can "see" VLM K/V
-    # in forward pass, but gradients are blocked in backward pass
-    K_for_action = torch.cat([K_vlm_detached, K_action], dim=2)
-    V_for_action = torch.cat([V_vlm_detached, V_action], dim=2)
+        # K/V for action queries: detached VLM K/V + normal action K/V
+        # knowledge insulation: action queries can "see" VLM K/V
+        # in forward pass, but gradients are blocked in backward pass
+        K_for_action = torch.cat([K_vlm_detached, K_action], dim=2)
+        V_for_action = torch.cat([V_vlm_detached, V_action], dim=2)
 
-    # split attention mask for vlm and action queries
-    # attention_mask shape: (B, 1, total_len, total_len)
-    mask_for_vlm = attention_mask[:, :, :vlm_len, :]      # (B, 1, vlm_len, total_len)
-    mask_for_action = attention_mask[:, :, vlm_len:, :]   # (B, 1, action_len, total_len)
+        # split attention mask for vlm and action queries
+        # attention_mask shape: (B, 1, total_len, total_len)
+        mask_for_vlm = attention_mask[:, :, :vlm_len, :]      # (B, 1, vlm_len, total_len)
+        mask_for_action = attention_mask[:, :, vlm_len:, :]   # (B, 1, action_len, total_len)
 
-    # compute attention for vlm queries (normal gradient flow)
-    att_output_vlm, _ = modeling_gemma.eager_attention_forward(
-        paligemma.language_model.layers[layer_idx].self_attn,
-        Q_vlm,
-        K_for_vlm,
-        V_for_vlm,
-        mask_for_vlm,
-        scaling,
-    )
+        # compute attention for vlm queries (normal gradient flow)
+        att_output_vlm, _ = modeling_gemma.eager_attention_forward(
+            paligemma.language_model.layers[layer_idx].self_attn,
+            Q_vlm,
+            K_for_vlm,
+            V_for_vlm,
+            mask_for_vlm,
+            scaling,
+        )
 
-    # compute attention for action queries (insulated from vlm K/V gradients)
-    att_output_action, _ = modeling_gemma.eager_attention_forward(
-        paligemma.language_model.layers[layer_idx].self_attn,
-        Q_action,
-        K_for_action,
-        V_for_action,
-        mask_for_action,
-        scaling,
-    )
+        # compute attention for action queries (insulated from vlm K/V gradients)
+        att_output_action, _ = modeling_gemma.eager_attention_forward(
+            paligemma.language_model.layers[layer_idx].self_attn,
+            Q_action,
+            K_for_action,
+            V_for_action,
+            mask_for_action,
+            scaling,
+        )
 
-    # concat attention outputs to match original unified attention output shape
-    # att_output shape after eager_attention_forward: (B, seq_len, num_heads * head_dim)
-    att_output = torch.cat([att_output_vlm, att_output_action], dim=1)
+        # concat attention outputs to match original unified attention output shape
+        # att_output shape after eager_attention_forward: (B, seq_len, num_heads * head_dim)
+        att_output = torch.cat([att_output_vlm, att_output_action], dim=1)
 
     # get head_dim from the current layer, not from the model
     head_dim = paligemma.language_model.layers[layer_idx].self_attn.head_dim

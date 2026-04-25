@@ -5,17 +5,11 @@ Spatial memorization probe for PI05-Full attention maps.
 Tests whether attention heads memorize fixed spatial patterns by collecting
 attention maps from N frames sampled across unique episodes, then computing:
 
-  1. Log-sum map:  sum_i log(attn_i[patch])   for each patch.
-     Equivalent to log of the element-wise product.  Patches that are
-     *consistently* attended to across all frames survive; input-dependent
-     patches decay to large negative values.
+  1. Mean map:          Mean_over_frames(attn[patch]) for each patch.
 
-  2. Variance map: Var_over_frames(attn[patch]) for each patch.
-     Low variance + high mean = memorized spatial position.
-     High variance = input-dependent attention.
-
-  3. Mean map:     Mean_over_frames(attn[patch]) for each patch.
-     Provided alongside variance for interpretation.
+  2. Mean / std map:    Mean / (Std + eps) for each patch.
+     High ratio = high mean + low variance = memorized spatial position.
+     Low ratio  = noisy or rarely attended.
 
 Output: PNG images per (layer, query_group, key_cam) for both mean-head
 and per-head breakdowns, plus raw tensors saved as a .pt file.
@@ -43,7 +37,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import (
     make_att_2d_masks,
 )
 from lerobot.processor.core import TransitionKey
-from lerobot.scripts.eval_offline_pi05 import _build_episode_index, get_frame_data
+from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
@@ -61,11 +55,11 @@ from lerobot.rl.probe_utils_pi05 import (
 # ──────────────────────────────────────────────────────────────────────────────
 
 ATTN_LAYERS = [0, 9, 17]
-TIMESTEP = 1.0
+TIMESTEP = 0.5
 N_FRAMES = 32          # total frames to sample (1 per unique episode)
 BATCH_SIZE = 8         # forward-pass batch size (memory)
 OUTPUT_DIR = os.path.join("outputs", "attention_spatial")
-LOG_EPS = 1e-30        # floor for log to avoid -inf
+STD_EPS = 1e-8         # floor for std in mean/std ratio
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -235,23 +229,19 @@ def extract_qk_attn(attn_heads, q_start, q_end, k_start, k_end, pad_mask):
 def aggregate_maps(all_maps):
     """
     Given a list of [n_heads, n_patches] tensors (one per frame),
-    compute log-sum, mean, and variance maps.
+    compute mean and mean/std maps.
 
-    Returns dict with keys: log_sum, mean, variance — each [n_heads, n_patches].
+    Returns dict with keys: mean, mean_over_std — each [n_heads, n_patches].
     """
     stacked = torch.stack(all_maps, dim=0)  # [N, H, K]
 
-    # Log-sum: sum of log(attn) across frames
-    log_maps = torch.log(stacked.clamp(min=LOG_EPS))
-    log_sum = log_maps.sum(dim=0)           # [H, K]
-
     mean_map = stacked.mean(dim=0)          # [H, K]
-    var_map  = stacked.var(dim=0)           # [H, K]
+    std_map  = stacked.std(dim=0)           # [H, K]
+    mean_over_std = mean_map / (std_map + STD_EPS)
 
     return {
-        "log_sum":  log_sum,
-        "mean":     mean_map,
-        "variance": var_map,
+        "mean":          mean_map,
+        "mean_over_std": mean_over_std,
     }
 
 
@@ -354,8 +344,8 @@ def load_raw_results(pt_path):
     logging.info(f"  {n_frames} frames, layers {layers}, img {img_h}x{img_w}, n_p={n_p}")
 
     # Reconstruct raw_results[(layer, q_name, cam_name)] = {stat: tensor}
-    # Keys look like: L0_action_img1_log_sum
-    stat_names = ["log_sum", "mean", "variance"]
+    # Keys look like: L0_action_img1_mean
+    stat_names = ["mean", "mean_over_std"]
     raw_results = {}
     n_heads = None
 
@@ -397,13 +387,7 @@ def render_all(raw_results, n_heads, n_p, img_h, img_w):
         layer_dir = os.path.join(OUTPUT_DIR, f"L{layer_idx:02d}")
         os.makedirs(layer_dir, exist_ok=True)
 
-        logging.info(
-            f"  L{layer_idx:02d} {q_name:>8s}->{cam_name}: "
-            f"log_sum range [{stats['log_sum'].min():.1f}, {stats['log_sum'].max():.1f}], "
-            f"var range [{stats['variance'].min():.2e}, {stats['variance'].max():.2e}]"
-        )
-
-        for stat_name in ["log_sum", "mean", "variance"]:
+        for stat_name in ["mean", "mean_over_std"]:
             stat_map = stats[stat_name]  # [H, K]
             cmap = cv2.COLORMAP_VIRIDIS
 
@@ -415,8 +399,6 @@ def render_all(raw_results, n_heads, n_p, img_h, img_w):
             fname = f"{stat_name}_{q_name}_to_{cam_name}.png"
             path = os.path.join(layer_dir, fname)
             cv2.imwrite(path, cv2.cvtColor(panel, cv2.COLOR_RGB2BGR))
-
-        logging.info(f"    -> saved 3 PNGs to {layer_dir}/")
 
 
 @parser.wrap()
@@ -580,7 +562,7 @@ def main(cfg: TrainRLServerPipelineConfig):
     save_dict["img_hw"] = torch.tensor([img_h, img_w])
     save_dict["n_p"] = torch.tensor(n_p_global)
     torch.save(save_dict, pt_path)
-    logging.info(f"Raw tensors saved to {pt_path}")
+    logging.debug(f"Raw tensors saved to {pt_path}")
 
     # ── Render ────────────────────────────────────────────────────────────────
     render_all(raw_results, n_heads_global, n_p_global, img_h, img_w)

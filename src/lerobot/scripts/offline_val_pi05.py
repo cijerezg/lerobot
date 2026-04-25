@@ -5,7 +5,7 @@ Periodic validation pipeline for offline Pi05 RL training.
 This module is designed to be imported from offline_learner_pi05.py (or any
 other training script) without modifying that file. It exposes three public
 functions that together implement periodic validation using seven probe
-scripts (actions, representations, attention, offline_eval, spatial_memorization,
+scripts (actions, representations, attention, offline_inference, spatial_memorization,
 action_drift_jacobian, spatial_memorization_jacobian).
 
 Each probe can be individually enabled/disabled via ProbeConfig flags
@@ -56,7 +56,7 @@ Call-graph of run_validation()
     ├─ _run_probe_attention()              [if enable_attention]
     │    ├─ _build_attn_sample_list()
     │    └─ per-episode/batch loop → MP4
-    ├─ _run_probe_offline_eval()           [if enable_offline_eval]
+    ├─ _run_probe_offline_inference()      [if enable_offline_inference]
     │    └─ per-frame inference → render + raw pred/GT
     ├─ _run_probe_spatial_memorization()   [if enable_spatial_memorization]
     │    └─ 1-per-episode sampling → multi-layer attn → aggregate stats → PNG
@@ -142,7 +142,7 @@ from typing import Optional
 import numpy as np
 import torch
 
-from lerobot.scripts.eval_offline_pi05 import (
+from lerobot.scripts.probe_offline_inference_pi05 import (
     _build_episode_index,
     get_frame_data,
     normalize_gt,
@@ -376,18 +376,11 @@ def init_action_manifold(val_dataset, val_ep_indices, cfg, device, output_dir):
         )
         return None
 
-    logging.info(
-        f"[VAL] Collecting {len(ref_samples)} reference GT frames "
-        f"for action manifold (no model) ..."
-    )
     ref_data = collect_gt_reference(val_dataset, ref_samples, cfg.policy.chunk_size)
 
-    logging.info("[VAL] Fitting PCA + UMAP reference manifold ...")
     pca, reducer2d, reducer3d, ref_emb2, ref_emb3 = fit_manifold(
         ref_data["gt"], cfg, pca_dir
     )
-
-    logging.info("[VAL] Reference manifold ready.")
     return {
         "pca":          pca,
         "reducer2d":    reducer2d,
@@ -433,8 +426,6 @@ def _run_probe_actions(policy, preprocessor, postprocessor,
         logging.warning("[VAL] probe_actions: no eval samples found")
         return None
 
-    logging.info(f"[VAL] probe_actions: collecting {len(eval_samples)} frames ...")
-
     ds_cache = collect_eval_dataset(
         policy, preprocessor, postprocessor,
         val_dataset, eval_samples,
@@ -455,14 +446,12 @@ def _run_probe_actions(policy, preprocessor, postprocessor,
         "datasets":     {"val": ds_cache},
     }
 
-    logging.info("[VAL] probe_actions: generating plots ...")
     run_plotting(full_cache, cfg, output_dir)
 
     # Compute NN-distance ratio scalar directly from embeddings (avoids CSV read)
     gt_nn   = compute_nn_distances(ds_cache["gt_emb2"],   manifold_cache["ref_emb2"])
     pred_nn = compute_nn_distances(ds_cache["pred_emb2"], manifold_cache["ref_emb2"])
     ratio   = float(np.median(pred_nn) / (np.median(gt_nn) + 1e-8))
-    logging.info(f"[VAL] probe_actions: median pred/GT NN ratio = {ratio:.4f}")
 
     raw = {
         "gt_emb2":   torch.as_tensor(ds_cache["gt_emb2"]),
@@ -505,18 +494,14 @@ def _run_probe_representations(policy, preprocessor,
         logging.warning("[VAL] probe_representations: no samples found")
         return
 
-    logging.info(f"[VAL] probe_representations: collecting {len(samples)} frames ...")
-
     cache = collect_activations(policy, preprocessor, val_dataset, samples, device, cfg)
 
     if p.subtask_injection:
-        logging.info("[VAL] probe_representations: collecting subtask injection activations ...")
         inj = collect_subtask_injection(
             policy, preprocessor, val_dataset, samples, device, cfg
         )
         cache.update(inj)
 
-    logging.info("[VAL] probe_representations: running PCA + UMAP + plots ...")
     run_plotting(cache, cfg, output_dir)
 
     # Build raw data dict for .pt saving
@@ -565,7 +550,7 @@ def _run_probe_attention(policy, preprocessor,
     makedirs(output_dir)
     p = cfg.probe_parameters
     chunk_size = cfg.policy.n_action_steps
-    timesteps  = [float(t.strip()) for t in p.timesteps.split(",")]
+    timesteps  = [p.timestep]
 
     samples = _build_attn_sample_list(
         val_dataset,
@@ -578,13 +563,8 @@ def _run_probe_attention(policy, preprocessor,
         logging.warning("[VAL] probe_attention: no samples found")
         return
 
-    logging.info(
-        f"[VAL] probe_attention: {len(samples)} episodes × "
-        f"{len(timesteps)} timesteps ..."
-    )
-
     fps      = getattr(val_dataset, "fps", 30) / p.attn_eval_subsample
-    batch_sz = p.attn_batch_size
+    batch_sz = p.validation_batch_size
 
     for ep_idx, ep_frames in samples:
         writers: dict[float, dict] = {t_val: {} for t_val in timesteps}
@@ -602,12 +582,6 @@ def _run_probe_attention(policy, preprocessor,
                 b_task_str.append(task_str)
                 for k, v in obs.items():
                     b_obs.setdefault(k, []).append(v)
-
-            logging.info(
-                f"    [attn] ep={ep_idx:04d} "
-                f"frames {batch_slice[0][0]:04d}..{batch_slice[-1][0]:04d} "
-                f"(batch {len(batch_slice)})"
-            )
 
             # Stack tensors and move to device
             b_obs_batched = {k: torch.cat(v, dim=0).to(device) for k, v in b_obs.items()}
@@ -699,11 +673,11 @@ def _run_probe_attention(policy, preprocessor,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Probe: offline eval (per-frame GT vs predicted action traces)
+# Probe: offline inference (per-frame GT vs predicted action traces)
 # ──────────────────────────────────────────────────────────────────────────────
 
 @torch.no_grad()
-def _run_probe_offline_eval(
+def _run_probe_offline_inference(
     policy, preprocessor, postprocessor,
     val_dataset, val_ep_indices,
     cfg, output_dir, device,
@@ -722,12 +696,12 @@ def _run_probe_offline_eval(
 
     samples = _sample_val_episodes(
         val_dataset, val_ep_indices,
-        n_per_episode=getattr(probe_cfg, "n_frames_per_episode", 4),
+        n_per_episode=getattr(probe_cfg, "offline_inference_n_frames", 5),
         max_episodes=getattr(probe_cfg, "max_episodes", 6),
         seed=getattr(probe_cfg, "seed", 42),
     )
     if not samples:
-        logging.warning("[VAL] offline_eval: no samples selected.")
+        logging.warning("[VAL] offline_inference: no samples selected.")
         return None
 
     dir_unnorm = os.path.join(output_dir, "unnormalized")
@@ -804,14 +778,14 @@ def _run_probe_offline_eval(
             pred_traces=pred_traces_norm, output_dir=dir_norm, state=None,
         )
 
-        logging.info(
-            f"  [offline_eval] ep={ep_idx:04d} fr={fr_idx:04d} | "
+        logging.debug(
+            f"  [offline_inference] ep={ep_idx:04d} fr={fr_idx:04d} | "
             f"mse={mse:.4f} | GT: '{gt_subtask}' | pred: '{pred_subtask}'"
         )
 
     mean_mse = sum(mse_values) / len(mse_values) if mse_values else None
     if mean_mse is not None:
-        logging.info(f"  [offline_eval] mean MSE = {mean_mse:.4f}")
+        logging.info(f"  [offline_inference] mean MSE = {mean_mse:.4f}")
 
     raw = {
         "pred_unnorm": torch.stack(all_pred_unnorm) if all_pred_unnorm else None,
@@ -858,9 +832,9 @@ def _run_probe_spatial_memorization(
     chunk_size = cfg.policy.n_action_steps
 
     attn_layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
-    timestep = p.spatial_timestep
+    timestep = p.timestep
     n_frames = p.spatial_n_frames
-    batch_size = p.spatial_batch_size
+    batch_size = p.validation_batch_size
 
     # Sample 1 random frame per episode (respecting val_ep_indices)
     if val_ep_indices is not None:
@@ -1069,9 +1043,9 @@ def _run_probe_spatial_memorization_jacobian(
     chunk_size = cfg.policy.n_action_steps
 
     attn_layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
-    timestep = p.jacobian_timestep
+    timestep = p.timestep
     n_frames = p.spatial_n_frames
-    batch_size = p.jacobian_batch_size  # smaller batches for backward pass
+    batch_size = p.validation_batch_size  # smaller batches for backward pass
 
     # Sample 1 random frame per episode (respecting val_ep_indices)
     if val_ep_indices is not None:
@@ -1093,11 +1067,6 @@ def _run_probe_spatial_memorization_jacobian(
     if not samples:
         logging.warning("[VAL] spatial_memorization_jacobian: no samples found")
         return None
-
-    logging.info(
-        f"[VAL] spatial_memorization_jacobian: {len(samples)} frames × "
-        f"layers {attn_layers} @ t={timestep} ..."
-    )
 
     collected = {l: {} for l in attn_layers}
     img_h, img_w = None, None
@@ -1205,7 +1174,6 @@ def _run_probe_spatial_memorization_jacobian(
     if not raw_results:
         logging.warning("[VAL] spatial_memorization_jacobian: no results to aggregate")
         return None
-
     # Render PNGs
     import lerobot.rl.probe_attention_spatial_memorization as _spatial_mod
     orig_output_dir = _spatial_mod.OUTPUT_DIR
@@ -1300,6 +1268,7 @@ def run_validation(
 
         # ── probe_actions ────────────────────────────────────────────────────
         if p.enable_actions:
+            logging.info("[VAL] Actions analysis started")
             if manifold_cache is not None:
                 try:
                     ratio, raw = _run_probe_actions(
@@ -1323,13 +1292,13 @@ def run_validation(
                     "[VAL] Skipping probe_actions: manifold_cache is None "
                     "(likely init_action_manifold() was not called or found no samples)."
                 )
-        else:
-            logging.info("[VAL] probe_actions: disabled")
+            logging.info("[VAL] Actions analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 
         # ── probe_representations ────────────────────────────────────────────
         if p.enable_representations:
+            logging.info("[VAL] Representations analysis started")
             try:
                 raw = _run_probe_representations(
                     policy, preprocessor,
@@ -1345,13 +1314,13 @@ def run_validation(
                     f"[VAL] probe_representations failed at step {step}: {exc}",
                     exc_info=True,
                 )
-        else:
-            logging.info("[VAL] probe_representations: disabled")
+            logging.info("[VAL] Representations analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 
         # ── probe_attention ──────────────────────────────────────────────────
         if p.enable_attention:
+            logging.info("[VAL] Attention analysis started")
             try:
                 _run_probe_attention(
                     policy, preprocessor,
@@ -1365,37 +1334,37 @@ def run_validation(
                     f"[VAL] probe_attention failed at step {step}: {exc}",
                     exc_info=True,
                 )
-        else:
-            logging.info("[VAL] probe_attention: disabled")
+            logging.info("[VAL] Attention analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 
-        # ── probe_offline_eval ──────────────────────────────────────────────
-        if p.enable_offline_eval:
+        # ── probe_offline_inference ─────────────────────────────────────────
+        if p.enable_offline_inference:
+            logging.info("[VAL] Offline inference analysis started")
             try:
-                mean_mse, raw = _run_probe_offline_eval(
+                mean_mse, raw = _run_probe_offline_inference(
                     policy, preprocessor, postprocessor,
                     val_dataset, val_ep_indices,
                     cfg,
-                    output_dir=os.path.join(step_dir, "offline_eval"),
+                    output_dir=os.path.join(step_dir, "offline_inference"),
                     device=device,
                 )
                 if mean_mse is not None:
-                    wandb_scalars["offline_eval_mse"] = mean_mse
+                    wandb_scalars["offline_inference_mse"] = mean_mse
                 if raw is not None:
-                    raw_data["offline_eval"] = raw
+                    raw_data["offline_inference"] = raw
             except Exception as exc:
                 logging.warning(
-                    f"[VAL] probe_offline_eval failed at step {step}: {exc}",
+                    f"[VAL] probe_offline_inference failed at step {step}: {exc}",
                     exc_info=True,
                 )
-        else:
-            logging.info("[VAL] probe_offline_eval: disabled")
+            logging.info("[VAL] Offline inference analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 
         # ── probe_spatial_memorization ───────────────────────────────────────
         if p.enable_spatial_memorization:
+            logging.info("[VAL] Spatial memorization analysis started")
             try:
                 raw = _run_probe_spatial_memorization(
                     policy, preprocessor,
@@ -1411,13 +1380,13 @@ def run_validation(
                     f"[VAL] probe_spatial_memorization failed at step {step}: {exc}",
                     exc_info=True,
                 )
-        else:
-            logging.info("[VAL] probe_spatial_memorization: disabled")
+            logging.info("[VAL] Spatial memorization analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 
         # ── probe_action_drift_jacobian ─────────────────────────────────────
         if p.enable_action_drift_jacobian:
+            logging.info("[VAL] Action drift jacobian analysis started")
             try:
                 _run_probe_action_drift_jacobian(
                     policy, preprocessor,
@@ -1431,13 +1400,13 @@ def run_validation(
                     f"[VAL] probe_action_drift_jacobian failed at step {step}: {exc}",
                     exc_info=True,
                 )
-        else:
-            logging.info("[VAL] probe_action_drift_jacobian: disabled")
+            logging.info("[VAL] Action drift jacobian analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 
         # ── probe_spatial_memorization_jacobian ─────────────────────────────
         if p.enable_spatial_memorization_jacobian:
+            logging.info("[VAL] Spatial memorization jacobian analysis started")
             try:
                 raw = _run_probe_spatial_memorization_jacobian(
                     policy, preprocessor,
@@ -1453,8 +1422,7 @@ def run_validation(
                     f"[VAL] probe_spatial_memorization_jacobian failed at step {step}: {exc}",
                     exc_info=True,
                 )
-        else:
-            logging.info("[VAL] probe_spatial_memorization_jacobian: disabled")
+            logging.info("[VAL] Spatial memorization jacobian analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -1463,7 +1431,7 @@ def run_validation(
             pt_path = os.path.join(step_dir, "probe_raw_data.pt")
             try:
                 torch.save(raw_data, pt_path)
-                logging.info(
+                logging.debug(
                     f"[VAL] Raw probe data saved: {pt_path} "
                     f"(probes: {list(raw_data.keys())})"
                 )
