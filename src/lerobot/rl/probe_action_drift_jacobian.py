@@ -488,7 +488,8 @@ def run_action_drift_jacobian(
     p = cfg.probe_parameters
     chunk_size = cfg.policy.n_action_steps
     t_val = p.timestep
-    batch_sz = p.validation_batch_size
+    # Jacobian needs forward+backward per layer — cap batch to avoid OOM
+    batch_sz = min(p.validation_batch_size, 4)
     layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
 
     # Build sample list (reuse attn probe's logic)
@@ -502,7 +503,7 @@ def run_action_drift_jacobian(
         logging.warning("[jacobian] no samples found")
         return None
 
-    logging.info(
+    logging.debug(
         f"[jacobian] {len(samples)} episodes × layers {layers} @ t={t_val}, "
         f"batch_size={batch_sz} ..."
     )
@@ -527,7 +528,7 @@ def run_action_drift_jacobian(
                 for k, v in obs.items():
                     b_obs.setdefault(k, []).append(v)
 
-            logging.info(
+            logging.debug(
                 f"    [jacobian] ep={ep_idx:04d} "
                 f"frames {batch_slice[0][0]:04d}..{batch_slice[-1][0]:04d} "
                 f"(batch {len(batch_slice)})"
@@ -676,10 +677,10 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
 
     layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
 
-    logging.info("Action-Drift Jacobian probe")
-    logging.info(f"  Timestep: {p.timestep}")
-    logging.info(f"  Layers:   {layers}")
-    logging.info(f"  Output:   {output_dir}")
+    logging.debug("Action-Drift Jacobian probe")
+    logging.debug(f"  Timestep: {p.timestep}")
+    logging.debug(f"  Layers:   {layers}")
+    logging.debug(f"  Output:   {output_dir}")
 
     policy, preprocessor, _, dataset = load_policy_and_processors(cfg, device)
     policy.eval()
@@ -696,7 +697,8 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
         return
 
     t_val = p.timestep
-    batch_sz = p.validation_batch_size
+    # Jacobian needs forward+backward per layer — cap batch to avoid OOM
+    batch_sz = min(p.validation_batch_size, 4)
     chunk_size = cfg.policy.n_action_steps
     fps = getattr(dataset, "fps", 30) / p.attn_eval_subsample
 
@@ -716,7 +718,7 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
                 for k, v in obs.items():
                     b_obs.setdefault(k, []).append(v)
 
-            logging.info(
+            logging.debug(
                 f"  ep={ep_idx:04d} "
                 f"frames {batch_slice[0][0]:04d}..{batch_slice[-1][0]:04d}"
             )

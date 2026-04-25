@@ -201,7 +201,6 @@ def run_pca(X, n_components, label, pca_dir):
     out_path = os.path.join(pca_dir, f"{label}_pca_scree.png")
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logging.info(f"    PCA scree → {out_path}  (90% @ {comp90}, 95% @ {comp95})")
 
     return torch.from_numpy(X_pca.astype(np.float32)), pca
 

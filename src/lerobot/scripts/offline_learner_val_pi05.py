@@ -89,6 +89,7 @@ from lerobot.rl.pi05_train_utils import (
     make_pi05_full_processors_with_upgrade,
     load_additional_offline_datasets,
     _update_critic,
+    _update_actor,
     log_pi05_training_metrics,
 )
 
@@ -110,6 +111,7 @@ class OfflineTrainRLServerPipelineConfig(TrainRLServerPipelineConfig):
     val_split: float = 0.0                # fraction of main-dataset episodes to hold out
     val_freq: int = 1000                  # optimization steps between validation runs
     val_on_start: bool = False            # run validation before training starts (step 0 baseline)
+    skip_critic: bool = False             # skip all critic training (forward+backward); actor advantage uses golden bypass
 
 
 @parser.wrap()
@@ -242,6 +244,7 @@ def run_offline_training(
     save_freq = getattr(cfg, "offline_save_freq", None) or cfg.save_freq
     val_freq = getattr(cfg, "val_freq", 1000)
     policy_update_freq = cfg.policy.policy_update_freq
+    skip_critic = getattr(cfg, "skip_critic", False)
     saving_checkpoint = cfg.save_checkpoint
     async_prefetch = cfg.policy.async_prefetch
     
@@ -457,8 +460,33 @@ def run_offline_training(
             print(f'optimization_step: {optimization_step}')
 
         # UTD ratio - 1 updates (critic only)
-        for _ in range(utd_ratio - 1):
-            _update_critic(
+        if not skip_critic:
+            for _ in range(utd_ratio - 1):
+                _update_critic(
+                    policy=accelerator.unwrap_model(policy),
+                    optimizers=optimizers,
+                    online_iterator=offline_iterator,
+                    offline_iterator=None,
+                    device=device,
+                    cfg=cfg,
+                    dataset_repo_id=None,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
+                    clip_grad_norm_value=clip_grad_norm_value,
+                    cast_to_bf16_fn=cast_to_bf16_fn,
+                    use_amp=False,
+                    scaler=None
+                )
+
+                # Update target networks
+                if hasattr(policy, "module"):
+                    policy.module.update_target_networks()
+                else:
+                    policy.update_target_networks()
+
+
+        if skip_critic:
+            # Actor-only: skip critic forward/backward, advantage uses golden bypass
+            training_infos = _update_actor(
                 policy=accelerator.unwrap_model(policy),
                 optimizers=optimizers,
                 online_iterator=offline_iterator,
@@ -467,40 +495,36 @@ def run_offline_training(
                 cfg=cfg,
                 dataset_repo_id=None,
                 gradient_accumulation_steps=gradient_accumulation_steps,
+                policy_update_freq=policy_update_freq,
                 clip_grad_norm_value=clip_grad_norm_value,
+                dataset=offline_dataset,
                 cast_to_bf16_fn=cast_to_bf16_fn,
                 use_amp=False,
-                scaler=None
+                scaler=None,
+                preprocessor=preprocessor,
             )
-            
-            # Update target networks
-            if hasattr(policy, "module"):
-                policy.module.update_target_networks()
-            else:
-                policy.update_target_networks()
-        
-        
-        # Shared update step
-        training_infos = pi05_update_step(
-            policy=accelerator.unwrap_model(policy),
-            optimizers=optimizers,
-            online_iterator=offline_iterator,
-            offline_iterator=None,
-            batch_size=batch_size,
-            device=device,
-            cfg=cfg,
-            optimization_step=optimization_step,
-            dataset_repo_id=None,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            critic_warmup_steps=critic_warmup_steps,
-            policy_update_freq=policy_update_freq,
-            clip_grad_norm_value=clip_grad_norm_value,
-            dataset=offline_dataset,
-            cast_to_bf16_fn=cast_to_bf16_fn,
-            use_amp=False,
-            scaler=None,
-            preprocessor=preprocessor,
-        )
+        else:
+            # Full update: critic + actor
+            training_infos = pi05_update_step(
+                policy=accelerator.unwrap_model(policy),
+                optimizers=optimizers,
+                online_iterator=offline_iterator,
+                offline_iterator=None,
+                batch_size=batch_size,
+                device=device,
+                cfg=cfg,
+                optimization_step=optimization_step,
+                dataset_repo_id=None,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                critic_warmup_steps=critic_warmup_steps,
+                policy_update_freq=policy_update_freq,
+                clip_grad_norm_value=clip_grad_norm_value,
+                dataset=offline_dataset,
+                cast_to_bf16_fn=cast_to_bf16_fn,
+                use_amp=False,
+                scaler=None,
+                preprocessor=preprocessor,
+            )
         
         
         # Log training metrics

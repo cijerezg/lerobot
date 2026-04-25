@@ -123,7 +123,7 @@ def collect_gt_reference(dataset, samples, chunk_size):
 
     for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
         if i % 500 == 0:
-            logging.info(f"  [{i + 1}/{len(samples)}] ref ep={ep_idx:04d} fr={fr_idx:04d}")
+            logging.debug(f"  [{i + 1}/{len(samples)}] ref ep={ep_idx:04d} fr={fr_idx:04d}")
 
         _, gt_actions, _, gt_subtask, task_str, _, _ = get_frame_data(
             dataset, global_idx, chunk_size
@@ -209,7 +209,7 @@ def collect_eval_dataset(policy, preprocessor, postprocessor,
     policy.model.suppress_debug_log = True
     for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
         if i % 100 == 0:
-            logging.info(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
+            logging.debug(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
 
         obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
             dataset, global_idx, chunk_size
@@ -431,7 +431,6 @@ def plot_2d_episode(ref_emb2, gt_emb_ep, pred_emb_ep, meta_ep,
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logging.info(f"    ep {ep_idx:04d}  {len(fr)} frames → {output_path}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -459,7 +458,6 @@ def plot_2d_overview(ref_emb2, datasets_cache, output_path):
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logging.info(f"  2D overview → {output_path}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -510,7 +508,6 @@ def plot_3d_by_episode(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
         f"{ds_name} — by episode  ●=pred  ■=GT  dark→pale=early→late"
     ))
     fig.write_html(output_path)
-    logging.info(f"    3D by episode → {output_path}")
 
 
 def plot_3d_by_frame(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_name):
@@ -549,7 +546,6 @@ def plot_3d_by_frame(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_nam
         f"{ds_name} — by frame index  (●=GT  ✕=pred)  {n_eps} eps"
     ))
     fig.write_html(output_path)
-    logging.info(f"    3D by frame → {output_path}")
 
 
 def plot_3d_by_subtask(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_name):
@@ -598,7 +594,6 @@ def plot_3d_by_subtask(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_n
         f"{ds_name} — by subtask  (●=GT  ✕=pred)  {n_eps} eps"
     ))
     fig.write_html(output_path)
-    logging.info(f"    3D by subtask → {output_path}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -625,7 +620,6 @@ def plot_3d_overview(ref_emb3, datasets_cache, output_path):
     fig = go.Figure(data=traces)
     fig.update_layout(**plotly_3d_layout("Overview — all datasets GT on reference manifold"))
     fig.write_html(output_path)
-    logging.info(f"  3D overview → {output_path}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -700,7 +694,6 @@ def plot_nn_distances(ref_emb2, gt_emb2, pred_emb2, metadata, output_dir, ds_nam
     out_png = os.path.join(output_dir, "nn_distances.png")
     fig.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    logging.info(f"    NN distances → {out_png}")
 
     out_csv = os.path.join(output_dir, "nn_distances.csv")
     rows = []
@@ -721,7 +714,6 @@ def plot_nn_distances(ref_emb2, gt_emb2, pred_emb2, metadata, output_dir, ds_nam
         writer = csv.DictWriter(f, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
-    logging.info(f"    NN distances CSV → {out_csv}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -737,7 +729,6 @@ def run_plotting(cache, cfg, output_dir):
     makedirs(d2, d3)
 
     for ds_name, ds_data in cache["datasets"].items():
-        logging.info(f"  Plotting '{ds_name}' …")
         meta      = ds_data["metadata"]
         gt_emb2   = ds_data["gt_emb2"]
         pred_emb2 = ds_data["pred_emb2"]

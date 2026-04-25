@@ -499,7 +499,6 @@ def probe_cli(cfg: ProbeAttentionConfig):
         if not samples:
             logging.warning(f"  No samples found in {ds_output_dir}, skipping.")
             return
-        logging.info(f"  {len(samples)} episodes × {len(timesteps)} timesteps → {ds_output_dir}")
 
         fps      = getattr(ds, "fps", 30) / p.attn_eval_subsample
         batch_sz = getattr(p, "validation_batch_size", 32)
@@ -522,7 +521,7 @@ def probe_cli(cfg: ProbeAttentionConfig):
                             b_obs[k] = []
                         b_obs[k].append(v)
 
-                logging.info(
+                logging.debug(
                     f"    ep={ep_idx:04d} frames "
                     f"{batch_slice[0][0]:04d}..{batch_slice[-1][0]:04d} "
                     f"(batch size {len(batch_slice)})"

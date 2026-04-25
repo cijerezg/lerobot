@@ -810,7 +810,7 @@ def eval_cli(cfg: EvalOfflineConfig):
                 mse_b[adv_label].append(mse)
                 preds_b[global_idx][adv_label] = (pred_unnorm, pred_norm, pred_subtask)
             mse_str = "  ".join(f"mse_{lbl}={mse_b[lbl][-1]:.4f}" for lbl, _ in adv_conditions)
-            logging.info(f"  [B] ep={ep_idx:04d} fr={fr_idx:04d} | {mse_str}")
+            logging.debug(f"  [B] ep={ep_idx:04d} fr={fr_idx:04d} | {mse_str}")
 
         del policy_b
         torch.cuda.empty_cache()
@@ -882,7 +882,7 @@ def eval_cli(cfg: EvalOfflineConfig):
                     )
                     preds[global_idx]["manual"] = (pred_unnorm, pred_norm, manual_str)
 
-                logging.info(
+                logging.debug(
                     f"  [{label}] ep={ep_idx:04d} fr={fr_idx:04d} | "
                     f"gen='{gen_subtask_text}' | gt='{gt_subtask_str}'"
                 )

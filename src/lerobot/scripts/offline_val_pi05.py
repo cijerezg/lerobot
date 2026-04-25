@@ -785,7 +785,7 @@ def _run_probe_offline_inference(
 
     mean_mse = sum(mse_values) / len(mse_values) if mse_values else None
     if mean_mse is not None:
-        logging.info(f"  [offline_inference] mean MSE = {mean_mse:.4f}")
+        logging.debug(f"  [offline_inference] mean MSE = {mean_mse:.4f}")
 
     raw = {
         "pred_unnorm": torch.stack(all_pred_unnorm) if all_pred_unnorm else None,
@@ -858,7 +858,7 @@ def _run_probe_spatial_memorization(
         logging.warning("[VAL] spatial_memorization: no samples found")
         return None
 
-    logging.info(
+    logging.debug(
         f"[VAL] spatial_memorization: {len(samples)} frames × "
         f"layers {attn_layers} @ t={timestep} ..."
     )

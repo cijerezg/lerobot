@@ -459,7 +459,7 @@ def main(cfg: TrainRLServerPipelineConfig):
                     b_obs[k] = []
                 b_obs[k].append(v)
 
-        logging.info(
+        logging.debug(
             f"  Batch {batch_start // BATCH_SIZE + 1}: "
             f"episodes {[s[0] for s in batch_samples]}"
         )

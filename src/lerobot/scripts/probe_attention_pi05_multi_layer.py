@@ -503,7 +503,6 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
         logging.warning("No samples found, exiting.")
         return
 
-    logging.info(f"{len(samples)} episodes × {len(ATTN_LAYERS)} layers → {OUTPUT_DIR}")
 
     fps      = getattr(dataset, "fps", 30) / SUBSAMPLE
     batch_sz = BATCH_SIZE
@@ -527,7 +526,7 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
                         b_obs[k] = []
                     b_obs[k].append(v)
 
-            logging.info(
+            logging.debug(
                 f"  ep={ep_idx:04d} frames "
                 f"{batch_slice[0][0]:04d}..{batch_slice[-1][0]:04d} "
                 f"(batch size {len(batch_slice)})"

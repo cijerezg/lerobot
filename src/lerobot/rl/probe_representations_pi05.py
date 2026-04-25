@@ -239,7 +239,7 @@ def collect_activations(policy, preprocessor, dataset, samples, device, cfg):
     with _capture_hook(policy.model.paligemma_with_expert) as captured:
         for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
             if i % 100 == 0:
-                logging.info(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
+                logging.debug(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
 
             obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
                 dataset, global_idx, chunk_size
@@ -309,7 +309,7 @@ def collect_subtask_injection(policy, preprocessor, dataset, samples, device, cf
     with _capture_hook(policy.model.paligemma_with_expert) as captured:
         for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
             if i % 100 == 0:
-                logging.info(f"  [injection {i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
+                logging.debug(f"  [injection {i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
 
             obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
                 dataset, global_idx, chunk_size
@@ -485,7 +485,6 @@ def _plotly_scatter3d_single(emb, color_vals, color_label, hover_texts,
     fig = go.Figure(data=traces)
     fig.update_layout(**plotly_3d_layout(title))
     fig.write_html(output_path)
-    logging.info(f"    3D plot → {output_path}")
 
 
 def plot_3d_by_episode(emb, metadata, output_path):
@@ -656,7 +655,6 @@ def _save_episode_thumbnails(dataset, ep_to_indices, output_dir):
     out_path = os.path.join(output_dir, "episode_thumbnails.png")
     fig.savefig(out_path, dpi=100, bbox_inches="tight")
     plt.close(fig)
-    logging.info(f"  Episode thumbnails ({n_eps} episodes) → {out_path}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -738,7 +736,6 @@ def run_plotting(cache, cfg, output_dir):
                     "gt_subtask":  m["subtask"],
                     "gen_subtask": gen_texts_all[i] if i < len(gen_texts_all) else "",
                 })
-        logging.info(f"  Generated subtasks CSV → {csv_path}")
 
     def _injection_plots(tag, X_gt, X_gen):
         inj2 = os.path.join(output_dir, "subtask_injection", tag, "2d")
