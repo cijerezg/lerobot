@@ -3,7 +3,6 @@
 import logging
 import copy
 from dataclasses import dataclass
-from itertools import cycle
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -136,6 +135,11 @@ def _save_checkpoint(policy: PI05RLTPolicy, output_dir: Path, step: int, cfg: Tr
     logging.info("Saved RLT embedding checkpoint to %s", ckpt_path)
 
 
+def _repeat_dataloader(dataloader: DataLoader):
+    while True:
+        yield from dataloader
+
+
 @draccus.wrap()
 def train_pi05_rlt_embedding(cfg: TrainPI05RLTEmbeddingConfig) -> None:
     init_logging()
@@ -161,7 +165,7 @@ def train_pi05_rlt_embedding(cfg: TrainPI05RLTEmbeddingConfig) -> None:
         drop_last=True,
         prefetch_factor=2 if cfg.num_workers > 0 else None,
     )
-    data_iter = cycle(dataloader)
+    data_iter = _repeat_dataloader(dataloader)
 
     policy.rlt_embedding.train()
     policy.model.eval()
