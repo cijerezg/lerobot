@@ -102,6 +102,9 @@ class ExperimentConfig:
     # force the "negative" label as a diagnostic. Ignored for non-pi05_rl
     # policies.
     inference_advantage: float | None = None
+    # pi05_rl/pi05_full-only: optional override for how often generated
+    # subtask tokens are refreshed. None = use the loaded policy config.
+    subtask_regeneration_interval: float | None = None
     # DRTC parameters
     latency_k: float = 2.0
     epsilon: int = 2
@@ -161,6 +164,7 @@ _SCALAR_FIELDS = frozenset({
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
     "camera_use_threaded_async_read", "camera_allow_stale_frames",
     "policy_type", "pretrained_name_or_path", "inference_advantage",
+    "subtask_regeneration_interval",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
@@ -353,6 +357,7 @@ def create_client_config(
         policy_type=config.policy_type,
         pretrained_name_or_path=config.pretrained_name_or_path,
         inference_advantage=config.inference_advantage,
+        subtask_regeneration_interval=config.subtask_regeneration_interval,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
         s_min=config.s_min,
@@ -501,12 +506,13 @@ def run_experiment(
         logger.exception(f"Exception during experiment: {e}")
         return {"success": False, "error": str(e)}
     finally:
-        signal.signal(signal.SIGINT, original_handler)
         # Only disconnect at the very end for standalone experiments
         try:
             client.stop()
         except Exception:
             pass
+        finally:
+            signal.signal(signal.SIGINT, original_handler)
 
 
 def main():

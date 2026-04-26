@@ -361,6 +361,7 @@ class RobotClientDrtc:
             spikes=config.spikes,
             diagnostics_verbose=config.metrics_diagnostic_verbose,
             inference_advantage=config.inference_advantage,
+            subtask_regeneration_interval=config.subtask_regeneration_interval,
         )
 
         self.channel = grpc.insecure_channel(
@@ -573,16 +574,17 @@ class RobotClientDrtc:
         if self._trajectory_viz_client is not None:
             self._trajectory_viz_client.stop()
 
-        self.robot.disconnect()
-
         if self._teleop_device is not None:
             try:
                 self._teleop_device.disconnect()
             except Exception as e:
                 self.logger.debug("Teleop disconnect failed: %s", e)
 
-        self.channel.close()
-        self._metrics.diagnostic.stop()
+        try:
+            self.robot.disconnect()
+        finally:
+            self.channel.close()
+            self._metrics.diagnostic.stop()
 
     def signal_stop(self) -> None:
         """Signal the client to stop without disconnecting the robot.
@@ -651,6 +653,7 @@ class RobotClientDrtc:
             "rtc_prefix_attention_schedule": self.config.rtc_prefix_attention_schedule,
             "rtc_sigma_d": self.config.rtc_sigma_d,
             "rtc_full_trajectory_alignment": self.config.rtc_full_trajectory_alignment,
+            "subtask_regeneration_interval": self.config.subtask_regeneration_interval,
             # Action filter
             "filter_type": self.config.action_filter_mode,
             "filter_cutoff": self.config.action_filter_butterworth_cutoff,
@@ -940,6 +943,8 @@ class RobotClientDrtc:
                                 self._metrics.experiment.record_sim_event("action_duplicated")
 
             except grpc.RpcError as e:
+                if e.code() == grpc.StatusCode.CANCELLED and not self.running:
+                    return
                 if e.code() == grpc.StatusCode.UNIMPLEMENTED:
                     self.logger.error(
                         "Server does not implement StreamActionsDense. "

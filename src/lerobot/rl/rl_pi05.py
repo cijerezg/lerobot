@@ -1080,10 +1080,26 @@ class PI05RLPolicy(PI05FullPolicy):
         the high-frequency inference loop.
         """
         import time as _time
+
+        profile = getattr(self.model, "_profile_inference", False)
+        device_is_cuda = next(self.parameters()).device.type == "cuda"
+
+        def _sync():
+            if profile and device_is_cuda:
+                torch.cuda.synchronize()
+
+        def _now():
+            _sync()
+            return _time.perf_counter()
         
         # Preprocessor has already normalized and tokenized the inputs
         # Advantage is already in the tokens (passed from actor or defaulted)
+        t_imgs_start = _now() if profile else 0.0
         images, img_masks = self._preprocess_images(batch)
+        if profile:
+            self.model._phase_timings_outer = {
+                "preprocess_images_ms": (_now() - t_imgs_start) * 1000.0,
+            }
                
         from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
         tokens = batch[OBS_LANGUAGE_TOKENS]
@@ -1099,6 +1115,7 @@ class PI05RLPolicy(PI05FullPolicy):
             or (current_time - self._last_subtask_time) >= interval
         )
 
+        t_subtask_start = _now() if profile else 0.0
         if should_regenerate:
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
                 images, img_masks, tokens, masks,
@@ -1110,12 +1127,18 @@ class PI05RLPolicy(PI05FullPolicy):
         else:
             subtask_tokens = self._cached_subtask_tokens
             subtask_masks = self._cached_subtask_masks
+        if profile:
+            self.model._phase_timings_outer["subtask_gen_ms"] = (_now() - t_subtask_start) * 1000.0
+            self.model._phase_timings_outer["subtask_regenerated"] = bool(should_regenerate)
 
         # Sample actions with subtask conditioning
+        t_sample_start = _now() if profile else 0.0
         actions = self.model.sample_actions(
             images, img_masks, tokens, masks,
             subtask_tokens, subtask_masks, **kwargs
         )
+        if profile:
+            self.model._phase_timings_outer["sample_actions_ms"] = (_now() - t_sample_start) * 1000.0
         
         # Unpad actions to actual action dimension
         from lerobot.utils.constants import ACTION

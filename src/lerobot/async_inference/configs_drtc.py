@@ -190,6 +190,13 @@ class RobotClientDrtcConfig:
             "from the loaded policy's config."
         },
     )
+    subtask_regeneration_interval: float | None = field(
+        default=None,
+        metadata={
+            "help": "Override for PI05 subtask-token cache refresh interval in seconds. "
+            "None = use the loaded policy's config; 0 = regenerate every chunk."
+        },
+    )
 
     # Diagnostic metrics (console output; avg/max only)
     metrics_diagnostic_enabled: bool = field(
@@ -440,6 +447,11 @@ class RobotClientDrtcConfig:
             raise ValueError(f"rtc_sigma_d must be positive, got {self.rtc_sigma_d}")
         if self.num_flow_matching_steps is not None and self.num_flow_matching_steps <= 0:
             raise ValueError(f"num_flow_matching_steps must be positive or None, got {self.num_flow_matching_steps}")
+        if self.subtask_regeneration_interval is not None and self.subtask_regeneration_interval < 0:
+            raise ValueError(
+                "subtask_regeneration_interval must be non-negative or None, "
+                f"got {self.subtask_regeneration_interval}"
+            )
         if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
             raise ValueError(
                 f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', or 'butterworth', "

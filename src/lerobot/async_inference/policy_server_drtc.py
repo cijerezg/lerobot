@@ -272,6 +272,18 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
     def policy_image_features(self):
         return self.policy.config.image_features
 
+    @staticmethod
+    def _format_timing_parts(timings: dict[str, Any]) -> str:
+        parts: list[str] = []
+        for key, value in timings.items():
+            if isinstance(value, bool):
+                parts.append(f"{key}={value}")
+            elif isinstance(value, int | float):
+                parts.append(f"{key}={float(value):.1f}ms")
+            else:
+                parts.append(f"{key}={value}")
+        return " ".join(parts)
+
     def _reset_server(self) -> None:
         """Reset server state when a new client connects.
 
@@ -490,6 +502,20 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         t_pp_done = time.perf_counter()
         self.logger.info("Built pre/post processors in %.1fs", t_pp_done - t_pp_start)
 
+        subtask_interval = getattr(policy_specs, "subtask_regeneration_interval", None)
+        if subtask_interval is not None:
+            cfg_obj = getattr(self.policy, "config", None)
+            if cfg_obj is not None and hasattr(cfg_obj, "subtask_regeneration_interval"):
+                old_interval = getattr(cfg_obj, "subtask_regeneration_interval")
+                cfg_obj.subtask_regeneration_interval = float(subtask_interval)
+                self.logger.info(
+                    "subtask_regeneration_interval overridden by client: %s -> %.3f",
+                    old_interval,
+                    cfg_obj.subtask_regeneration_interval,
+                )
+            else:
+                self._metrics.diagnostic.counter("subtask_regeneration_interval_override_ignored", 1)
+
         # Cache action encoding + locate the preprocessor's NormalizerProcessorStep
         # so we can renormalize aligned RTC prefix slices. The standalone
         # `inference_utils.py:386-403` plucks the same step from
@@ -534,6 +560,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     cfg_obj.num_steps = num_flow_steps
                 else:
                     self._metrics.diagnostic.counter("num_flow_steps_override_ignored", 1)
+
+        # Enable per-chunk model phase timings. The PI05/PI05-RL model code
+        # synchronizes CUDA around phase boundaries when this flag is set, so
+        # the console breakdown reflects actual GPU time instead of launch time.
+        model_value = getattr(self.policy, "model", None)
+        if model_value is not None:
+            with suppress(Exception):
+                model_value._profile_inference = True
+            self.logger.info("DRTC per-chunk inference timing enabled")
 
         # Optional: enable RTC via client instructions (server-side inpainting)
         if getattr(policy_specs, "rtc_enabled", False):
@@ -936,6 +971,28 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         if self.preprocessor is None or self.postprocessor is None:
             raise RuntimeError("pre/post processors not initialized; did SendPolicyInstructions run?")
 
+        def _sync() -> None:
+            if (
+                isinstance(self.device, str)
+                and self.device.startswith("cuda")
+                and torch.cuda.is_available()
+            ):
+                torch.cuda.synchronize()
+
+        def _now() -> float:
+            _sync()
+            return time.perf_counter()
+
+        server_timings: dict[str, float] = {}
+        t_profile_start = _now()
+        t_last = t_profile_start
+
+        def _mark(name: str) -> None:
+            nonlocal t_last
+            now = _now()
+            server_timings[name] = (now - t_last) * 1000.0
+            t_last = now
+
         # Optional RTC metadata (client-provided hard-mask prefix + estimated delay).
         rtc_meta = None
         raw_obs_any = observation_t.get_observation()
@@ -948,6 +1005,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             raw_obs.pop("__rtc__", None)
         else:
             raw_obs = raw_obs_any
+        _mark("obs_meta")
 
         # 1. Prepare observation
         observation: Observation = raw_observation_to_observation(
@@ -955,6 +1013,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self.lerobot_features,
             self.policy_image_features,
         )
+        _mark("raw_obs_to_observation")
 
         # Capture pre-preprocess raw joint state as the chunk-start anchor
         # required by `anchor` / `delta` action encodings. The preprocessor
@@ -964,10 +1023,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             obs_state_raw = observation[OBS_STATE]
             if isinstance(obs_state_raw, torch.Tensor):
                 anchor_state = obs_state_raw.detach().clone()
+        _mark("anchor_snapshot")
 
         # 2. Preprocess (inject pi05_rl complementary_data when applicable)
         observation = self._inject_pi05_complementary_data(observation)
         observation = self.preprocessor(observation)
+        _mark("preprocess")
 
         # 3. Inference (avoid autograd / reduce variance)
         # NOTE: Do NOT use `torch.inference_mode()` here: RTC guidance needs to temporarily
@@ -978,6 +1039,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         with torch.no_grad():
             rtc_kwargs: dict[str, Any] = {}
+            rtc_prefix_len = 0
             if rtc_meta is not None and self._rtc_cfg is not None and self._rtc_cfg.enabled:
                 try:
                     d = int(rtc_meta.get("latency_steps", 0))
@@ -1026,6 +1088,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                             prefix_tensor = torch.cat(slices, dim=0)
                             prefix_tensor = prefix_tensor.unsqueeze(0)  # (1, T_total, A)
                             T_prefix = prefix_tensor.shape[1]
+                            rtc_prefix_len = int(T_prefix)
 
                             # Clamp overlap_end to what we actually have in the prefix
                             # This allows graceful degradation when cache is incomplete
@@ -1057,8 +1120,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 except Exception:
                     self._metrics.diagnostic.counter("rtc_meta_error", 1)
                     rtc_kwargs = {}
+            _mark("rtc_prefix")
 
             action_tensor = self._get_action_chunk(observation, **rtc_kwargs)
+            _mark("policy_predict")
 
         # Ensure (B, T, A)
         if action_tensor.ndim != 3:
@@ -1074,6 +1139,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # observation state (`align_prev_actions`).
         if src_control_step >= 0:
             self._action_cache.put(src_control_step, action_tensor, anchor=anchor_state)
+        _mark("raw_action_cache")
 
         # 4. Vectorized postprocess: (B, T, A_in) -> (B*T, A_in) -> (B, T, A_out)
         flat = action_tensor.reshape(b * t, a)
@@ -1082,6 +1148,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             raise TypeError(f"postprocessor must return torch.Tensor, got {type(flat)}")
         a_out = flat.shape[-1]
         action_tensor = flat.reshape(b, t, a_out)
+        _mark("postprocess")
 
         # 5. Anchor / delta action-encoding reconstruction.
         # When the policy is trained with action_encoding="anchor" the model
@@ -1152,12 +1219,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 action_tensor = action_tensor + anchor_b
             else:  # "delta"
                 action_tensor = torch.cumsum(action_tensor, dim=1) + anchor_b
+        _mark("anchor_reconstruct")
 
         # Drop batch dim and move to CPU once
         actions_cpu = action_tensor.squeeze(0).detach().to("cpu")
         actions_np = actions_cpu.to(torch.float32).numpy()
 
         payload = np.asarray(actions_np, dtype=np.float32, order="C")
+        _mark("cpu_numpy_payload")
 
         # Emit action chunk to trajectory visualization (if enabled)
         if self._trajectory_viz_server is not None:
@@ -1195,6 +1264,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 prefix_weights=prefix_weights_viz,
             )
             self._trajectory_viz_server.on_chunk(event)
+        _mark("trajectory_viz")
 
         dense_kwargs: dict[str, Any] = dict(
             timestamp=float(observation_t.get_timestamp()),
@@ -1206,6 +1276,24 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             actions_f32=payload.tobytes(order="C"),
         )
         dense = services_pb2.ActionsDense(**dense_kwargs)
+        _mark("dense_proto")
+        server_timings["total"] = (_now() - t_profile_start) * 1000.0
+
+        model_value = getattr(self.policy, "model", None)
+        model_outer = getattr(model_value, "_phase_timings_outer", {}) if model_value is not None else {}
+        model_inner = getattr(model_value, "_phase_timings", {}) if model_value is not None else {}
+        rtc_status = "applied" if rtc_kwargs else ("meta" if rtc_meta is not None else "none")
+        self.logger.info(
+            "[DRTC INFER TIMING] src_step=%d chunk_start=%d rtc=%s prefix_len=%d "
+            "server={%s} model_outer={%s} model_inner={%s}",
+            src_control_step,
+            int(observation_t.chunk_start_step),
+            rtc_status,
+            rtc_prefix_len,
+            self._format_timing_parts(server_timings),
+            self._format_timing_parts(model_outer),
+            self._format_timing_parts(model_inner),
+        )
         return dense
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor], **kwargs: Any) -> torch.Tensor:

@@ -449,6 +449,9 @@ class RemotePolicyConfig:
     # (`policy.config.inference_advantage`). Set to e.g. 0.0 to force the
     # "negative" prompt label as a diagnostic A/B, or 1.0 to force "positive".
     inference_advantage: float | None = None
+    # PI05/PI05-RL: optional override for subtask-token cache refresh interval
+    # in seconds. None = use loaded policy config; 0 = regenerate every chunk.
+    subtask_regeneration_interval: float | None = None
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC/spike fields existed."""
@@ -463,6 +466,7 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("spikes", [])
         self.__dict__.setdefault("diagnostics_verbose", False)
         self.__dict__.setdefault("inference_advantage", None)
+        self.__dict__.setdefault("subtask_regeneration_interval", None)
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

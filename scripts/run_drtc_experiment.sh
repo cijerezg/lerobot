@@ -47,11 +47,17 @@ LOG_FILE="$LOG_DIR/policy_server_${LOG_TIMESTAMP}.log"
 
 # PIDs for cleanup
 POLICY_SERVER_PID=""
+SERVER_TIMING_TAIL_PID=""
 STARTED_SERVER=false
 
 cleanup() {
     echo ""
     echo "Shutting down experiment components..."
+
+    if [ -n "$SERVER_TIMING_TAIL_PID" ] && kill -0 "$SERVER_TIMING_TAIL_PID" 2>/dev/null; then
+        kill -TERM "$SERVER_TIMING_TAIL_PID" 2>/dev/null || true
+        wait "$SERVER_TIMING_TAIL_PID" 2>/dev/null || true
+    fi
 
     if [ "$STARTED_SERVER" = true ] && [ -n "$POLICY_SERVER_PID" ] && kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
         echo "Stopping policy server (PID: $POLICY_SERVER_PID)..."
@@ -115,6 +121,11 @@ STARTED_SERVER=true
 echo "      Policy server started (PID: $POLICY_SERVER_PID)"
 if [ "$ENABLE_VIZ" = true ]; then
     echo "      Trajectory visualization: http://localhost:8088"
+fi
+if [ "${STREAM_SERVER_TIMINGS:-true}" = true ]; then
+    echo "      Streaming server timing lines to console (disable with STREAM_SERVER_TIMINGS=false)."
+    tail -n 0 -F "$LOG_FILE" 2>/dev/null | grep --line-buffered -E "\\[DRTC INFER TIMING\\]|Error in inference producer loop" &
+    SERVER_TIMING_TAIL_PID=$!
 fi
 echo "      Waiting ${POLICY_SERVER_DELAY_S}s for server to initialize..."
 sleep "$POLICY_SERVER_DELAY_S"
