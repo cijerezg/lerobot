@@ -154,7 +154,10 @@ class AsyncRTCProcessor:
             prev = prev[:, :chunk_t, :target_a].to(device=x_t_local.device, dtype=x_t_local.dtype)
 
         # Build weights: frozen [0, d), soft mask [d, overlap_end), fresh [overlap_end, H)
-        weights_1d = self._get_prefix_weights(inference_delay, overlap_end, chunk_t).to(x_t_local.device)
+        weights_1d = self._get_prefix_weights(inference_delay, overlap_end, chunk_t).to(
+            device=x_t_local.device,
+            dtype=x_t_local.dtype,
+        )
         weights = weights_1d.unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
 
         # We need gradients for the correction term (and optional postprocess), but we do NOT want
@@ -191,7 +194,7 @@ class AsyncRTCProcessor:
         max_gw = self.cfg.max_guidance_weight
         if max_gw is None:
             max_gw = float(num_flow_matching_steps) if num_flow_matching_steps is not None else 10.0
-        max_guidance_weight = torch.as_tensor(max_gw, device=x_t_local.device)
+        max_guidance_weight = torch.as_tensor(max_gw, device=x_t_local.device, dtype=x_t_local.dtype)
 
         tau_tensor = torch.as_tensor(tau, device=x_t_local.device, dtype=x_t_local.dtype)
         squared_one_minus_tau = (1 - tau_tensor) ** 2
@@ -209,10 +212,13 @@ class AsyncRTCProcessor:
         guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
         guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
 
-        result = v_t - guidance_weight * correction
+        # Keep the guided velocity in the denoiser dtype. Otherwise float32
+        # guidance terms can promote `x_t` on the next flow step and trip
+        # bfloat16 model matmuls.
+        result = v_t - guidance_weight.to(dtype=v_t.dtype) * correction.to(dtype=v_t.dtype)
         if squeezed:
             result = result.squeeze(0)
-        return result
+        return result.to(dtype=v_t.dtype)
 
     def _get_prefix_weights(self, start: int, end: int, total: int) -> Tensor:
         start = int(start)
