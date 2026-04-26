@@ -1,64 +1,130 @@
-# LeRobot for Research (with RECAP)
+# LeRobot for Research
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/release/python-3120/)
-[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Models-orange)](https://huggingface.co/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-Welcome to the LeRobot research repository, showcasing integration with the generalized RECAP methodology.
 
-## Table of Contents
-- [What is implemented here](#what-is-implemented-here)
-- [Video Introduction](#video-introduction)
-- [Quick Start](#quick-start)
-  - [Installation & Prerequisites](#installation--prerequisites)
-  - [Basic Offline Training](#basic-offline-training)
-  - [Basic Inference](#basic-inference)
-- [Advanced Documentation](#advanced-documentation)
+This repo is a research-oriented version of [LeRobot](https://github.com/huggingface/lerobot). The focus is on having SOTA algorithms (e.g., RECAP) and tooling for examining the model's internals such as attention maps, clustering of internal representations. 
 
-## What is implemented here
+This is an active project and we expect to continually add more features and capabilities. Happy to take requests.
 
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
+<video src="https://github.com/user-attachments/assets/9461ba1e-725b-4ee4-8d32-173fa6a86600" controls width="100%"></video>
 
-- **Feature 1:** Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia.
-- **Feature 2:** Deserunt mollit anim id est laborum sed ut perspiciatis unde omnis.
-- **Feature 3:** Iste natus error sit voluptatem accusantium doloremque laudantium.
 
-## Video Introduction
+## Key features
 
-This section typically contains a demonstration of the policy evaluating in the real world. 
+- The complete version of $\pi_{0.5}$ with subtasks and FAST tokens.All credits to [@jadechoghari](https://github.com/jadechoghari).
+- End-to-end implementation of [RECAP](https://arxiv.org/pdf/2511.14759)-like algorithm for offline and online training
+- Asynchronous inference with RTC that runs up to 30Hz with leader guided human invervention. In addition, a live inference script where a user can write subtasks for $\pi_{0.5}$ on the fly.
+- A suite of metrics and validation tools to examine the model's internals like attention maps, clusters of representation, among others.
 
-<video src="https://github.com/placeholder/video.mp4" controls width="100%"></video>
 
-*Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores eos qui ratione.*
+## How to install
 
-## Quick Start
-
-### Installation & Prerequisites
-
-To begin your journey with RECAP, you must first prepare the environment. Neque porro quisquam est, qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit.
+Clone this repo
 
 ```bash
-git clone https://github.com/example/repo.git
-cd repo
-pip install -e .
+git clone https://github.com/cijerezg/lerobot.git
+cd lerobot
 ```
 
-### Basic Offline Training
+and then follow the same instructions in the LeRobot [$\pi_{0.5}$ page](https://huggingface.co/docs/lerobot/pi05)
 
-Initial offline training is crucial for establishing baseline behavior before online fine-tuning. Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam.
+
+
+## Quick start
+
+### Things to know
+- This repo only supports $\pi_{0.5}$, adding other models is non-trivial.
+- For human intervention, only the follower-leader setup is supported.
+- This repo is geared toward real-robots, so there is no simulation support.
+
+
+### Prerequisites
+
+#### Dataset
+
+At least 50 episodes, annotated with subtasks. The subtask annotation can be done manually using
 
 ```bash
-python scripts/train_offline.py --config configs/base.yaml
+python -m lerobot.policies.pi05_full.annotate.manual_subtask_annotate
 ```
 
-### Basic Inference
+which will launch a web interface to annotate the subtasks. Another tool for manual subtask and general dataset editing is available at [lerobot-data-studio](https://github.com/jackvial/lerobot-data-studio). 
 
-To run the model on your hardware, execute the inference script. Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam nihil molestiae consequatur.
+
+The other option for subtask annotation is to use LLM annotations. We recommend using Gemma 4, and that can be done via this command:
+
 
 ```bash
-python scripts/inference.py --checkpoint checkpoints/latest.pt
+python -m lerobot.policies.pi05_full.annotate.subtask_annotate_gemma_4 \
+    --data-dir /path/to/your/dataset \
+    --video-key observation.images.wrist \
+    --batch-size 5 \
+    --output-dir /output/path
 ```
 
-## Advanced Documentation
-For details on how to use all the scripts (annotation, online training, advanced validation), please refer to the [detailed script usage documentation](docs/pi05_docs/usage.md).
+#### Config file
 
-For mathematics, logic, and deep dives into the codebase architecture (RECAP, action encodings, RTC, and buffer logic), please refer to the [architecture documentation](docs/pi05_docs/architecture.md).
+This is the file used for all the scripts in this repo. An example of the config file can be found in the [`rl/config-hiserl.json`](src/lerobot/rl/config-hiserl.json)
+
+To get started with training, the key fields to change are:
+- `root`: this is the path to your dataset.
+- `task`: this is is the task prompt
+- `pi05_checkpoint`: this is the path to your checkpoint. If starting from scratch, use `lerobot/pi05_base` which loads the weight for base $\pi_{0.5}$.
+
+
+If you are using anchor action or delta actions, please see ADD REFERENCE FOR MORE DETAIL
+
+### Training
+
+We suggest to start with a round of offline training so that the policy has a decent starting point. To run it use:
+
+```bash
+python -m lerobot.scripts.offline_learner_val_pi05 --config path/to/config.json
+```
+
+Once the offline training has run for a while, update the checkpoint in the config and proceed to online training.
+
+First run the learner script:
+
+```bash
+python -m lerobot.rl.learner_pi05 --config path/to/config.json
+```
+
+and then on another terminal run the actor script:
+
+```bash
+python -m lerobot.rl.actor_pi05_async --config path/to/config.json
+```
+
+The learner will automatically save buffers to disk with the online data. After processing, those can be reused for the next round of offline or online training.
+
+Following the suggestions from the RECAP paper, we suggest to retrain every time from the base model, and just include the additional data to avoid drift. 
+
+
+> [!IMPORTANT]
+> While these instructions might get you started, we recommend reading the [full documentation](docs/full_documentation.md) for better results.
+
+
+
+
+### Inference
+
+
+Once you have a trained model, your camera indices and follower and leader ports in the config file, and then you can run inference using:
+
+```bash
+python -m lerobot.rl.inference_pi05_async --config path/to/config.json
+```
+
+
+## Beyond the basics
+
+Many _important_ details were ommitted in this introduction, and as we all know the devil is in the details, especially in a research-oriented repo. For that reason, we really recommend reading the rest of the documentation, which is structure as:
+
+- [Advanced usage](docs/advanced_usage.md): a deep dive on how to use all the features in the repo.
+- [RECAP implementation](doc/recap_implementation.md): an overview of RECAP and details about our implementation.
+- [Validation metrics](docs/metrics.md): explains the metrics that we chose and how they help uncover the inner workings of the model.
+
+
