@@ -32,7 +32,7 @@ policy_type: pi05_rl
 pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/001600/pretrained_model
 # pi05_rl subtask-token cache refresh interval, in seconds.
 # 0.0 = regenerate every chunk; larger values reduce periodic inference spikes.
-subtask_regeneration_interval: 0
+subtask_regeneration_interval: 999999
 
 # DRTC parameters
 estimator: jk
@@ -48,14 +48,14 @@ latency_beta: 0.25
 
 # Timing -- env.fps in recap-config-hilserl.json is 30.
 duration_s: 120.0
-fps: 30
+fps: 20
 
 # Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config
 # from recap-config-hilserl.json, then enables Alex Soare's RTC smoothing
 # (`sigma_d=0.2`). Keep `rtc_max_guidance_weight` equal to
 # `num_flow_matching_steps`; the async policy call sites do not yet pass the
 # step count into AsyncRTCProcessor, so `null` would fall back to 10.0.
-num_flow_matching_steps: 3
+num_flow_matching_steps: 5
 rtc_enabled: true
 rtc_max_guidance_weight: 5.0
 rtc_prefix_attention_schedule: linear
