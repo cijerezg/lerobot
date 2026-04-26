@@ -455,6 +455,14 @@ class RemotePolicyConfig:
     # PI05/PI05-RL: when False, skip runtime subtask generation and condition
     # action sampling on the main task prompt only.
     subtask_generation_enabled: bool = True
+    # PI05-RLT: optional lightweight RLT modules on top of a frozen PI0.5 VLA.
+    rlt_enabled: bool = False
+    rlt_embedding_checkpoint: str | None = None
+    rlt_head_checkpoint: str | None = None
+    rlt_chunk_size: int = 10
+    rlt_token_dim: int = 2048
+    rlt_bc_beta: float = 1.0
+    rlt_reference_dropout_p: float = 0.5
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC/spike fields existed."""
@@ -471,6 +479,13 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("inference_advantage", None)
         self.__dict__.setdefault("subtask_regeneration_interval", None)
         self.__dict__.setdefault("subtask_generation_enabled", True)
+        self.__dict__.setdefault("rlt_enabled", False)
+        self.__dict__.setdefault("rlt_embedding_checkpoint", None)
+        self.__dict__.setdefault("rlt_head_checkpoint", None)
+        self.__dict__.setdefault("rlt_chunk_size", 10)
+        self.__dict__.setdefault("rlt_token_dim", 2048)
+        self.__dict__.setdefault("rlt_bc_beta", 1.0)
+        self.__dict__.setdefault("rlt_reference_dropout_p", 0.5)
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

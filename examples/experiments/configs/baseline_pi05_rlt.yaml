@@ -1,0 +1,79 @@
+# DRTC baseline for the pi05_rlt policy.
+#
+# This uses the subtask-trained PI0.5 checkpoint as a frozen VLA, disables
+# runtime subtask generation, and starts with RTC disabled. Until an RLT head
+# checkpoint is supplied, pi05_rlt pass-throughs the frozen VLA action chunk.
+name: baseline_pi05_rlt
+
+# Hardware
+robot_type: so101_follower
+gpu: ""
+client_host: ""
+server_host: ""
+robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
+robot_id: so101_follower_2026_04_26_v0
+
+# Cameras: pi05_rlt expects observation.images.{side,top} for this checkpoint.
+camera1_name: side
+camera1_path: /dev/video4
+camera2_name: top
+camera2_path: /dev/video0
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc: MJPG
+camera_use_threaded_async_read: true
+camera_allow_stale_frames: true
+
+# Policy
+policy_type: pi05_rlt
+pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/000800/pretrained_model
+subtask_generation_enabled: false
+subtask_regeneration_interval: 0
+
+# RLT modules. Leave the head unset for frozen-VLA pass-through inference.
+rlt_enabled: false
+rlt_embedding_checkpoint:
+rlt_head_checkpoint:
+rlt_chunk_size: 10
+rlt_token_dim: 2048
+rlt_bc_beta: 1.0
+rlt_reference_dropout_p: 0.5
+
+# DRTC parameters
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+actions_per_chunk: 50
+s_min: 10
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing
+duration_s: 120.0
+fps: 30
+
+# Flow matching / RTC
+num_flow_matching_steps: 5
+rtc_enabled: false
+rtc_max_guidance_weight:
+rtc_prefix_attention_schedule: linear
+rtc_sigma_d: 0.2
+rtc_full_trajectory_alignment: false
+
+# Start without extra client-side filtering while establishing RLT parity.
+action_filter_mode: none
+action_filter_butterworth_cutoff: 3.0
+action_filter_gain: 1.0
+
+# Diagnostics
+full_diagnostics: true
+trajectory_viz_enabled: false
+
+# Teleop intervention
+teleop_enabled: true
+teleop_type: so101_leader
+teleop_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00
+teleop_id: so101_leader_2026_04_16_v2
+teleop_send_feedback: true

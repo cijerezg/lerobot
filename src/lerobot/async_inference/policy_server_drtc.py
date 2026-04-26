@@ -416,6 +416,32 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             # the large PI05 backbone footprint and can exhaust VRAM.
             cfg_obj.use_separate_critic = False
             self.policy = policy_class(cfg_obj)
+        elif self.policy_type == "pi05_rlt":
+            from lerobot.configs.policies import PreTrainedConfig
+            from lerobot.rl.rlt_pi05 import PI05RLTConfig
+
+            base_cfg = PreTrainedConfig.from_pretrained(policy_specs.pretrained_name_or_path)
+            cfg_obj = PI05RLTConfig.from_base_config(
+                base_cfg,
+                device=self.device,
+                rlt_enabled=bool(getattr(policy_specs, "rlt_enabled", False)),
+                rlt_embedding_checkpoint=getattr(policy_specs, "rlt_embedding_checkpoint", None),
+                rlt_head_checkpoint=getattr(policy_specs, "rlt_head_checkpoint", None),
+                rlt_chunk_size=int(getattr(policy_specs, "rlt_chunk_size", 10)),
+                rlt_token_dim=int(getattr(policy_specs, "rlt_token_dim", 2048)),
+                rlt_bc_beta=float(getattr(policy_specs, "rlt_bc_beta", 1.0)),
+                rlt_reference_dropout_p=float(getattr(policy_specs, "rlt_reference_dropout_p", 0.5)),
+                subtask_generation_enabled=False,
+                pi05_checkpoint=policy_specs.pretrained_name_or_path,
+                rtc_config=None,
+            )
+            if getattr(policy_specs, "num_flow_matching_steps", None) is not None:
+                cfg_obj.num_inference_steps = int(policy_specs.num_flow_matching_steps)
+            self.policy = policy_class.from_pretrained(
+                policy_specs.pretrained_name_or_path,
+                config=cfg_obj,
+                strict=False,
+            )
         else:
             self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
         t_load_done = time.perf_counter()
@@ -446,7 +472,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         device_override = {"device": self.device}
         self.logger.info("Building pre/post processors ...")
         t_pp_start = time.perf_counter()
-        if self.policy_type == "pi05_rl":
+        if self.policy_type in ("pi05_rl", "pi05_rlt"):
             # pi05_rl uses a custom processor pipeline ("runtime upgrade" path) that
             # mirrors the standalone `inference_pi05_async.py` setup. We build a
             # minimal cfg shim so `make_pi05_full_processors_with_upgrade` can read
@@ -466,7 +492,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 self.policy.config.use_amp = False
             self.policy = self.policy.eval()
 
-            # Cache pi05_rl-only fields needed to populate `complementary_data`
+            # Cache pi05-only fields needed to populate `complementary_data`
             # before each call to `self.preprocessor(...)`.
             self._pi05_task_str = str(getattr(self.policy.config, "task", "") or "")
             self._pi05_advantage = float(getattr(self.policy.config, "inference_advantage", 1.0))
@@ -489,8 +515,18 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 )
             else:
                 self.logger.info(
-                    "pi05_rl inference_advantage from policy config: %.4f",
+                    "%s inference_advantage from policy config: %.4f",
+                    self.policy_type,
                     self._pi05_advantage,
+                )
+            if self.policy_type == "pi05_rlt":
+                self.logger.info(
+                    "pi05_rlt configured | rlt_enabled=%s | embedding=%s | head=%s | "
+                    "subtask_generation_enabled=%s",
+                    getattr(self.policy.config, "rlt_enabled", False),
+                    getattr(self.policy.config, "rlt_embedding_checkpoint", None),
+                    getattr(self.policy.config, "rlt_head_checkpoint", None),
+                    getattr(self.policy.config, "subtask_generation_enabled", False),
                 )
         else:
             self.preprocessor, self.postprocessor = make_pre_post_processors(
@@ -588,7 +624,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self.logger.info("DRTC per-chunk inference timing enabled")
 
         # Optional: enable RTC via client instructions (server-side inpainting)
-        if getattr(policy_specs, "rtc_enabled", False):
+        if getattr(policy_specs, "rtc_enabled", False) and self.policy_type != "pi05_rlt":
             # Handle optional max_guidance_weight (None = use num_flow_matching_steps, Alex Soare opt)
             max_gw_raw = getattr(policy_specs, "rtc_max_guidance_weight", None)
             max_gw = float(max_gw_raw) if max_gw_raw is not None else None
@@ -876,14 +912,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         `Pi05FullPrepareStateTokenizerProcessorStep`. Other policy types do not
         require this and the dict is returned unchanged.
         """
-        if self.policy_type != "pi05_rl":
+        if self.policy_type not in ("pi05_rl", "pi05_rlt"):
             return observation
         observation["robot_type"] = self._pi05_robot_type
-        observation["complementary_data"] = {
+        complementary_data = {
             "task": [self._pi05_task_str or ""],
             "subtask": [""],
-            "advantage": torch.tensor([[self._pi05_advantage]], dtype=torch.float32),
         }
+        if self.policy_type == "pi05_rl":
+            complementary_data["advantage"] = torch.tensor([[self._pi05_advantage]], dtype=torch.float32)
+        observation["complementary_data"] = complementary_data
         return observation
 
     def _align_prefix_slice(

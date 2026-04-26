@@ -204,6 +204,34 @@ class RobotClientDrtcConfig:
             "conditions on the main task prompt without an explicit subtask segment."
         },
     )
+    rlt_enabled: bool = field(
+        default=False,
+        metadata={"help": "Enable the PI05 RLT actor head when using policy_type='pi05_rlt'."},
+    )
+    rlt_embedding_checkpoint: str | None = field(
+        default=None,
+        metadata={"help": "Path to an offline-trained RLT embedding checkpoint for policy_type='pi05_rlt'."},
+    )
+    rlt_head_checkpoint: str | None = field(
+        default=None,
+        metadata={"help": "Path to an online-trained RLT actor/critic checkpoint for policy_type='pi05_rlt'."},
+    )
+    rlt_chunk_size: int = field(
+        default=10,
+        metadata={"help": "Number of leading action steps refined by the RLT actor head."},
+    )
+    rlt_token_dim: int = field(
+        default=2048,
+        metadata={"help": "Dimensionality of the compact RLT token."},
+    )
+    rlt_bc_beta: float = field(
+        default=1.0,
+        metadata={"help": "BC/reference-action regularization coefficient for RLT training."},
+    )
+    rlt_reference_dropout_p: float = field(
+        default=0.5,
+        metadata={"help": "Reference action dropout probability for RLT actor training."},
+    )
 
     # Diagnostic metrics (console output; avg/max only)
     metrics_diagnostic_enabled: bool = field(
@@ -458,6 +486,17 @@ class RobotClientDrtcConfig:
             raise ValueError(
                 "subtask_regeneration_interval must be non-negative or None, "
                 f"got {self.subtask_regeneration_interval}"
+            )
+        if self.rlt_chunk_size <= 0:
+            raise ValueError(f"rlt_chunk_size must be positive, got {self.rlt_chunk_size}")
+        if self.rlt_token_dim <= 0:
+            raise ValueError(f"rlt_token_dim must be positive, got {self.rlt_token_dim}")
+        if self.rlt_bc_beta < 0:
+            raise ValueError(f"rlt_bc_beta must be non-negative, got {self.rlt_bc_beta}")
+        if not 0 <= self.rlt_reference_dropout_p <= 1:
+            raise ValueError(
+                "rlt_reference_dropout_p must be in [0, 1], "
+                f"got {self.rlt_reference_dropout_p}"
             )
         if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
             raise ValueError(

@@ -43,7 +43,7 @@ epsilon: 1
 # Pi05 supports a long horizon; cap at execution_horizon (30 in recap-config-hilserl.json
 # rtc_config) to keep the chunk reasonable while still leaving slack for guidance.
 actions_per_chunk: 50
-s_min: 20
+s_min: 10
 latency_alpha: 0.125
 latency_beta: 0.25
 
@@ -56,7 +56,7 @@ fps: 30
 # (`sigma_d=0.2`). Keep `rtc_max_guidance_weight` equal to
 # `num_flow_matching_steps`; the async policy call sites do not yet pass the
 # step count into AsyncRTCProcessor, so `null` would fall back to 10.0.
-num_flow_matching_steps: 8
+num_flow_matching_steps: 5
 rtc_enabled: true
 rtc_max_guidance_weight: 5.0
 rtc_prefix_attention_schedule: linear

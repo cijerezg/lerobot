@@ -108,6 +108,14 @@ class ExperimentConfig:
     # pi05_rl/pi05_full-only: when False, skip runtime subtask generation and
     # condition action sampling on the main task prompt only.
     subtask_generation_enabled: bool = True
+    # pi05_rlt-only: lightweight RLT modules on top of frozen PI0.5.
+    rlt_enabled: bool = False
+    rlt_embedding_checkpoint: str | None = None
+    rlt_head_checkpoint: str | None = None
+    rlt_chunk_size: int = 10
+    rlt_token_dim: int = 2048
+    rlt_bc_beta: float = 1.0
+    rlt_reference_dropout_p: float = 0.5
     # DRTC parameters
     latency_k: float = 2.0
     epsilon: int = 2
@@ -168,6 +176,8 @@ _SCALAR_FIELDS = frozenset({
     "camera_use_threaded_async_read", "camera_allow_stale_frames",
     "policy_type", "pretrained_name_or_path", "inference_advantage",
     "subtask_regeneration_interval", "subtask_generation_enabled",
+    "rlt_enabled", "rlt_embedding_checkpoint", "rlt_head_checkpoint",
+    "rlt_chunk_size", "rlt_token_dim", "rlt_bc_beta", "rlt_reference_dropout_p",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
@@ -362,6 +372,13 @@ def create_client_config(
         inference_advantage=config.inference_advantage,
         subtask_regeneration_interval=config.subtask_regeneration_interval,
         subtask_generation_enabled=config.subtask_generation_enabled,
+        rlt_enabled=config.rlt_enabled,
+        rlt_embedding_checkpoint=config.rlt_embedding_checkpoint,
+        rlt_head_checkpoint=config.rlt_head_checkpoint,
+        rlt_chunk_size=config.rlt_chunk_size,
+        rlt_token_dim=config.rlt_token_dim,
+        rlt_bc_beta=config.rlt_bc_beta,
+        rlt_reference_dropout_p=config.rlt_reference_dropout_p,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
         s_min=config.s_min,

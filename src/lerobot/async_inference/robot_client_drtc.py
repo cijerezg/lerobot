@@ -363,6 +363,13 @@ class RobotClientDrtc:
             inference_advantage=config.inference_advantage,
             subtask_regeneration_interval=config.subtask_regeneration_interval,
             subtask_generation_enabled=config.subtask_generation_enabled,
+            rlt_enabled=config.rlt_enabled,
+            rlt_embedding_checkpoint=config.rlt_embedding_checkpoint,
+            rlt_head_checkpoint=config.rlt_head_checkpoint,
+            rlt_chunk_size=config.rlt_chunk_size,
+            rlt_token_dim=config.rlt_token_dim,
+            rlt_bc_beta=config.rlt_bc_beta,
+            rlt_reference_dropout_p=config.rlt_reference_dropout_p,
         )
 
         self.channel = grpc.insecure_channel(
