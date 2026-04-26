@@ -105,6 +105,9 @@ class ExperimentConfig:
     # pi05_rl/pi05_full-only: optional override for how often generated
     # subtask tokens are refreshed. None = use the loaded policy config.
     subtask_regeneration_interval: float | None = None
+    # pi05_rl/pi05_full-only: when False, skip runtime subtask generation and
+    # condition action sampling on the main task prompt only.
+    subtask_generation_enabled: bool = True
     # DRTC parameters
     latency_k: float = 2.0
     epsilon: int = 2
@@ -164,7 +167,7 @@ _SCALAR_FIELDS = frozenset({
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
     "camera_use_threaded_async_read", "camera_allow_stale_frames",
     "policy_type", "pretrained_name_or_path", "inference_advantage",
-    "subtask_regeneration_interval",
+    "subtask_regeneration_interval", "subtask_generation_enabled",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
@@ -358,6 +361,7 @@ def create_client_config(
         pretrained_name_or_path=config.pretrained_name_or_path,
         inference_advantage=config.inference_advantage,
         subtask_regeneration_interval=config.subtask_regeneration_interval,
+        subtask_generation_enabled=config.subtask_generation_enabled,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
         s_min=config.s_min,

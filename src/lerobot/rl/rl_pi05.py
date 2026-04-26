@@ -105,6 +105,7 @@ class PI05RLConfig(PI05FullConfig):
 
     # Inference parameters
     num_inference_steps: int = 5
+    subtask_generation_enabled: bool = True
     
     # Advantage parameters
     inference_advantage: float = 1.0
@@ -1108,15 +1109,21 @@ class PI05RLPolicy(PI05FullPolicy):
         # --- Subtask Token Generation with Time-Based Caching ---
         current_time = _time.time()
         interval = self.config.subtask_regeneration_interval
-        should_regenerate = (
-            self._cached_subtask_tokens is None
-            or self._last_subtask_time is None
-            or interval <= 0  # 0 means regenerate every call
-            or (current_time - self._last_subtask_time) >= interval
-        )
+        subtask_generation_enabled = bool(getattr(self.config, "subtask_generation_enabled", True))
+        should_regenerate = False
+        if subtask_generation_enabled:
+            should_regenerate = (
+                self._cached_subtask_tokens is None
+                or self._last_subtask_time is None
+                or interval <= 0  # 0 means regenerate every call
+                or (current_time - self._last_subtask_time) >= interval
+            )
 
         t_subtask_start = _now() if profile else 0.0
-        if should_regenerate:
+        if not subtask_generation_enabled:
+            subtask_tokens = None
+            subtask_masks = None
+        elif should_regenerate:
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
                 images, img_masks, tokens, masks,
                 max_decoding_steps=self.config.tokenizer_max_length

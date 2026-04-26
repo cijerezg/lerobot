@@ -197,6 +197,13 @@ class RobotClientDrtcConfig:
             "None = use the loaded policy's config; 0 = regenerate every chunk."
         },
     )
+    subtask_generation_enabled: bool = field(
+        default=True,
+        metadata={
+            "help": "Enable runtime PI05 subtask generation. If False, action sampling "
+            "conditions on the main task prompt without an explicit subtask segment."
+        },
+    )
 
     # Diagnostic metrics (console output; avg/max only)
     metrics_diagnostic_enabled: bool = field(

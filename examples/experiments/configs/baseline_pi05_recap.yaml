@@ -13,7 +13,7 @@ client_host: ""
 server_host: ""
 robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
 # robot_id: so101_follower_2026_04_19_v0
-robot_id: so101_follower_2026_04_25_v0
+robot_id: so101_follower_2026_04_26_v0
 
 # Cameras: pi05_rl expects observation.images.{wrist,top}.
 camera1_name: side
@@ -29,10 +29,10 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: pi05_rl
-pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/001600/pretrained_model
+pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/000800/pretrained_model
 # pi05_rl subtask-token cache refresh interval, in seconds.
 # 0.0 = regenerate every chunk; larger values reduce periodic inference spikes.
-subtask_regeneration_interval: 999999
+subtask_regeneration_interval: 0
 
 # DRTC parameters
 estimator: jk
@@ -42,25 +42,25 @@ epsilon: 1
 # Pi05 supports a long horizon; cap at execution_horizon (30 in recap-config-hilserl.json
 # rtc_config) to keep the chunk reasonable while still leaving slack for guidance.
 actions_per_chunk: 50
-s_min: 10
+s_min: 20
 latency_alpha: 0.125
 latency_beta: 0.25
 
 # Timing -- env.fps in recap-config-hilserl.json is 30.
 duration_s: 120.0
-fps: 20
+fps: 30
 
 # Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config
 # from recap-config-hilserl.json, then enables Alex Soare's RTC smoothing
 # (`sigma_d=0.2`). Keep `rtc_max_guidance_weight` equal to
 # `num_flow_matching_steps`; the async policy call sites do not yet pass the
 # step count into AsyncRTCProcessor, so `null` would fall back to 10.0.
-num_flow_matching_steps: 5
+num_flow_matching_steps: 8
 rtc_enabled: true
 rtc_max_guidance_weight: 5.0
 rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 0.2
-rtc_full_trajectory_alignment: true
+rtc_full_trajectory_alignment: false
 
 # inference_advantage: 1.0   # forces "Advantage: negative" in the prompt
 # inference_advantage: 1.0 # forces "Advantage: positive" (current default)

@@ -412,6 +412,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             cfg_obj = PreTrainedConfig.from_pretrained(policy_specs.pretrained_name_or_path)
             cfg_obj.pi05_checkpoint = policy_specs.pretrained_name_or_path
+            # DRTC inference only uses the actor; constructing the critic doubles
+            # the large PI05 backbone footprint and can exhaust VRAM.
+            cfg_obj.use_separate_critic = False
             self.policy = policy_class(cfg_obj)
         else:
             self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
@@ -515,6 +518,20 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 )
             else:
                 self._metrics.diagnostic.counter("subtask_regeneration_interval_override_ignored", 1)
+
+        subtask_generation_enabled = getattr(policy_specs, "subtask_generation_enabled", None)
+        if subtask_generation_enabled is not None:
+            cfg_obj = getattr(self.policy, "config", None)
+            if cfg_obj is not None and hasattr(cfg_obj, "subtask_generation_enabled"):
+                old_enabled = getattr(cfg_obj, "subtask_generation_enabled")
+                cfg_obj.subtask_generation_enabled = bool(subtask_generation_enabled)
+                self.logger.info(
+                    "subtask_generation_enabled overridden by client: %s -> %s",
+                    old_enabled,
+                    cfg_obj.subtask_generation_enabled,
+                )
+            else:
+                self._metrics.diagnostic.counter("subtask_generation_enabled_override_ignored", 1)
 
         # Cache action encoding + locate the preprocessor's NormalizerProcessorStep
         # so we can renormalize aligned RTC prefix slices. The standalone

@@ -362,6 +362,7 @@ class RobotClientDrtc:
             diagnostics_verbose=config.metrics_diagnostic_verbose,
             inference_advantage=config.inference_advantage,
             subtask_regeneration_interval=config.subtask_regeneration_interval,
+            subtask_generation_enabled=config.subtask_generation_enabled,
         )
 
         self.channel = grpc.insecure_channel(
@@ -654,6 +655,7 @@ class RobotClientDrtc:
             "rtc_sigma_d": self.config.rtc_sigma_d,
             "rtc_full_trajectory_alignment": self.config.rtc_full_trajectory_alignment,
             "subtask_regeneration_interval": self.config.subtask_regeneration_interval,
+            "subtask_generation_enabled": self.config.subtask_generation_enabled,
             # Action filter
             "filter_type": self.config.action_filter_mode,
             "filter_cutoff": self.config.action_filter_butterworth_cutoff,
