@@ -828,6 +828,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         t_to_start = time.perf_counter()
         self.policy.to(self.device)
+        if self.policy_type == "pi05_rlt":
+            cfg_dtype = str(getattr(getattr(self.policy, "config", None), "dtype", ""))
+            if cfg_dtype in {"bfloat16", "bf16"}:
+                self.policy.model.to(dtype=torch.bfloat16)
+                self.logger.info("Converted frozen PI05 RLT backbone to bfloat16")
+            elif cfg_dtype in {"float16", "fp16"}:
+                self.policy.model.to(dtype=torch.float16)
+                self.logger.info("Converted frozen PI05 RLT backbone to float16")
         t_to_done = time.perf_counter()
         self.logger.info("Moved policy to %s in %.1fs", self.device, t_to_done - t_to_start)
 

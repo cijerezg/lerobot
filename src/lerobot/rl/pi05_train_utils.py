@@ -1170,6 +1170,14 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
             if dataset_stats is None:
                 dataset_stats = {}
             dataset_stats[ACTION] = disp_stats
+        elif dataset_stats is not None and ACTION in dataset_stats:
+            if is_main_process:
+                logging.warning(
+                    "action_encoding is %s but action_encoding_stats_path %r is invalid; "
+                    "using action stats embedded in the checkpoint preprocessor.",
+                    action_encoding,
+                    stats_path,
+                )
         else:
             raise ValueError(
                 f"action_encoding is {action_encoding} but action_encoding_stats_path "
