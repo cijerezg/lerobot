@@ -47,7 +47,7 @@ rlt_reference_dropout_p: 0.5
 # Online RLT collection/training. Start collect-only; enable training after
 # confirming transition counters and control-loop timing on hardware.
 rlt_online_collection_enabled: true
-rlt_online_training_enabled: false
+rlt_online_training_enabled: true
 rlt_warmup_episodes: 1
 rlt_warmup_transitions: 128
 rlt_replay_capacity: 10000
