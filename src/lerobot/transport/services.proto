@@ -46,6 +46,8 @@ service AsyncInference {
   rpc Ready(Empty) returns (Empty);
   // Robot -> Policy to send trajectory data for visualization
   rpc SendTrajectoryChunk(TrajectoryChunk) returns (Empty);
+  // Robot -> Policy to send compact online RLT transition chunks.
+  rpc SendRLTTransitions(stream RLTTransitionChunk) returns (Empty);
 }
 
 enum TransferState {
@@ -101,6 +103,12 @@ message ActionsDense {
   double server_obs_received_ts = 8;
   // Timestamp when the server finished inference and is about to send (Unix time, seconds).
   double server_action_sent_ts = 9;
+  // Server-owned key for the RLT source context behind this action chunk.
+  uint64 rlt_context_id = 10;
+  // RLT policy mode used to produce this chunk: warmup, vla_passthrough, rlt_actor, mock.
+  string policy_mode = 11;
+  // Whether the client should collect executed actions for this chunk.
+  bool rlt_collectable = 12;
 }
 
 message PolicySetup {
@@ -116,6 +124,26 @@ message TrajectoryChunk {
   bytes actions_f32 = 4; // Packed row-major float32 actions, length = T*A*4 bytes
   int32 frozen_len = 5; // Number of frozen actions in this chunk
   double timestamp = 6; // Arrival time (Unix time, seconds)
+}
+
+message RLTTransitionChunk {
+  // Client episode identifier. Zero is allowed for legacy/no-explicit-start collection.
+  int64 episode_id = 1;
+  // Server-owned source context ID from ActionsDense.rlt_context_id.
+  uint64 source_rlt_context_id = 2;
+  // Next source context ID for bootstrapping. Zero means terminal or unknown.
+  uint64 next_rlt_context_id = 3;
+  // Action step n_k at which the executed transition window starts.
+  int64 chunk_start_step = 4;
+  int32 num_actions = 5;
+  int32 action_dim = 6;
+  // Packed row-major float32 executed robot actions, length = num_actions*action_dim*4 bytes.
+  bytes executed_actions_f32 = 7;
+  float reward = 8;
+  bool done = 9;
+  bool is_intervention = 10;
+  bool success = 11;
+  bool failure = 12;
 }
 
 message Empty {}

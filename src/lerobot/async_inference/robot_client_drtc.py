@@ -294,6 +294,25 @@ class ReceivedActionChunk:
     server_obs_received_ts: float | None = None
     server_action_sent_ts: float | None = None
     action_received_ts: float | None = None
+    rlt_context_id: int = 0
+    policy_mode: str = ""
+    rlt_collectable: bool = False
+
+
+@dataclass
+class RLTExecutedAction:
+    action: np.ndarray
+    is_intervention: bool
+
+
+@dataclass
+class RLTPendingChunk:
+    rlt_context_id: int
+    chunk_start_step: int
+    num_actions: int
+    action_dim: int
+    policy_mode: str
+    next_rlt_context_id: int | None = None
 
 class RobotClientDrtc:
     prefix = "robot_client_drtc"
@@ -370,6 +389,23 @@ class RobotClientDrtc:
             rlt_token_dim=config.rlt_token_dim,
             rlt_bc_beta=config.rlt_bc_beta,
             rlt_reference_dropout_p=config.rlt_reference_dropout_p,
+            rlt_online_collection_enabled=config.rlt_online_collection_enabled,
+            rlt_online_training_enabled=config.rlt_online_training_enabled,
+            rlt_warmup_episodes=config.rlt_warmup_episodes,
+            rlt_warmup_transitions=config.rlt_warmup_transitions,
+            rlt_replay_capacity=config.rlt_replay_capacity,
+            rlt_batch_size=config.rlt_batch_size,
+            rlt_utd_ratio=config.rlt_utd_ratio,
+            rlt_train_freq_s=config.rlt_train_freq_s,
+            rlt_save_freq_steps=config.rlt_save_freq_steps,
+            rlt_output_dir=config.rlt_output_dir,
+            rlt_actor_lr=config.rlt_actor_lr,
+            rlt_critic_lr=config.rlt_critic_lr,
+            rlt_discount=config.rlt_discount,
+            rlt_target_update_tau=config.rlt_target_update_tau,
+            rlt_execute_after_train_steps=config.rlt_execute_after_train_steps,
+            rlt_context_cache_size=config.rlt_context_cache_size,
+            rlt_transition_queue_size=config.rlt_transition_queue_size,
         )
 
         self.channel = grpc.insecure_channel(
@@ -467,6 +503,25 @@ class RobotClientDrtc:
             self._trajectory_viz_client = TrajectoryVizClient(ws_url=config.trajectory_viz_ws_url)
             self._trajectory_viz_client.start()
 
+        # Online RLT collector state. All hot-path work is bounded; gRPC upload
+        # happens on a daemon thread so control ticks never wait on the learner path.
+        self._rlt_transition_queue: Queue[services_pb2.RLTTransitionChunk] = Queue(
+            maxsize=config.rlt_transition_queue_size
+        )
+        self._rlt_transition_sender_thread: threading.Thread | None = None
+        self._rlt_executed_actions: dict[int, RLTExecutedAction] = {}
+        self._rlt_pending_chunks: dict[int, RLTPendingChunk] = {}
+        self._rlt_emitted_context_ids: set[int] = set()
+        self._rlt_episode_id = 0
+        self._rlt_episode_open = False
+        if config.rlt_online_collection_enabled:
+            self._rlt_transition_sender_thread = threading.Thread(
+                target=self._rlt_transition_sender,
+                name="rlt_transition_sender",
+                daemon=True,
+            )
+            self._rlt_transition_sender_thread.start()
+
         # Action filter (class-based, with optional hard-mask lookahead)
         self._action_filter: ActionFilter = self._create_action_filter()
 
@@ -482,16 +537,25 @@ class RobotClientDrtc:
         """
         return max(self.action_step, -1)
 
+    def _poll_teleop_events(self) -> dict[Any, Any]:
+        """Poll teleop events once for a control tick."""
+        if self._teleop_device is None:
+            return {}
+        try:
+            return dict(self._teleop_device.get_teleop_events())
+        except Exception as e:
+            self.logger.error("Teleop event read failed: %s", e)
+            return {}
+
+    @staticmethod
+    def _teleop_event(events: dict[Any, Any], event: TeleopEvents) -> bool:
+        return bool(events.get(event, events.get(event.value, False)))
+
     def _is_intervening(self) -> bool:
         """Return True if the teleop device currently reports intervention."""
         if self._teleop_device is None:
             return False
-        try:
-            events = self._teleop_device.get_teleop_events()
-            return bool(events.get(TeleopEvents.IS_INTERVENTION, False))
-        except Exception as e:
-            self.logger.error("Teleop event read failed: %s", e)
-            return False
+        return self._teleop_event(self._poll_teleop_events(), TeleopEvents.IS_INTERVENTION)
 
     def _read_teleop_action(self) -> np.ndarray | None:
         """Read the leader's joint positions ordered to match self.robot.action_features."""
@@ -897,6 +961,149 @@ class RobotClientDrtc:
                 self._trajectory_chunk_queue.put_nowait(chunk)
 
     # -------------------------------------------------------------------------
+    # RLT Transition Sender Thread
+    # -------------------------------------------------------------------------
+
+    def _rlt_transition_sender(self) -> None:
+        """Background sender for compact RLT transitions."""
+        while self.running:
+            try:
+                try:
+                    first = self._rlt_transition_queue.get(timeout=0.1)
+                except Empty:
+                    continue
+                batch = [first]
+                while len(batch) < 16:
+                    try:
+                        batch.append(self._rlt_transition_queue.get_nowait())
+                    except Empty:
+                        break
+                try:
+                    self.stub.SendRLTTransitions(iter(batch))
+                    self._metrics.diagnostic.counter("rlt_transition_sent", len(batch))
+                except grpc.RpcError as e:
+                    self.logger.debug("RLT transition send failed: %s", e)
+                    self._metrics.diagnostic.counter("rlt_transition_send_rpc_error", 1)
+            except Exception as e:
+                self.logger.error("Error in RLT transition sender: %s", e, exc_info=True)
+                self._metrics.diagnostic.counter("rlt_transition_sender_error", 1)
+
+    def _rlt_handle_episode_events(
+        self, teleop_events: dict[Any, Any]
+    ) -> tuple[float, bool, bool, bool]:
+        if self._teleop_event(teleop_events, TeleopEvents.START_EPISODE):
+            self._rlt_episode_id += 1
+            self._rlt_episode_open = True
+            self._rlt_executed_actions.clear()
+            self._rlt_pending_chunks.clear()
+            self._rlt_emitted_context_ids.clear()
+            self._metrics.diagnostic.counter("rlt_episode_started", 1)
+
+        success = self._teleop_event(teleop_events, TeleopEvents.SUCCESS)
+        terminate = self._teleop_event(teleop_events, TeleopEvents.TERMINATE_EPISODE)
+        failure = self._teleop_event(teleop_events, TeleopEvents.FAILURE) or (terminate and not success)
+        done = success or failure
+        reward = 1.0 if success else 0.0
+        return reward, done, success, failure
+
+    def _rlt_note_collectable_chunk(self, chunk: ReceivedActionChunk) -> None:
+        if not self.config.rlt_online_collection_enabled or not chunk.rlt_collectable:
+            return
+        if chunk.rlt_context_id <= 0 or chunk.rlt_context_id in self._rlt_emitted_context_ids:
+            return
+
+        window_len = min(len(chunk.actions), self.config.rlt_chunk_size)
+        if window_len <= 0:
+            return
+
+        pending = RLTPendingChunk(
+            rlt_context_id=chunk.rlt_context_id,
+            chunk_start_step=chunk.chunk_start_step,
+            num_actions=window_len,
+            action_dim=int(chunk.actions[0].get_action().shape[0]),
+            policy_mode=chunk.policy_mode,
+        )
+        for old in self._rlt_pending_chunks.values():
+            if old.next_rlt_context_id is None and old.rlt_context_id != pending.rlt_context_id:
+                old.next_rlt_context_id = pending.rlt_context_id
+        self._rlt_pending_chunks[pending.rlt_context_id] = pending
+        self._metrics.diagnostic.counter("rlt_collectable_chunk", 1)
+        self._rlt_maybe_emit_transitions()
+
+    def _rlt_record_executed_action(
+        self,
+        step: int,
+        action: np.ndarray,
+        *,
+        is_intervention: bool,
+    ) -> None:
+        if not self.config.rlt_online_collection_enabled:
+            return
+        self._rlt_executed_actions[int(step)] = RLTExecutedAction(
+            action=np.asarray(action, dtype=np.float32).copy(),
+            is_intervention=bool(is_intervention),
+        )
+        # Keep bounded history around pending windows.
+        if self._rlt_pending_chunks:
+            min_pending = min(p.chunk_start_step for p in self._rlt_pending_chunks.values())
+            stale_steps = [s for s in self._rlt_executed_actions if s < min_pending - self.config.rlt_chunk_size]
+            for stale_step in stale_steps:
+                self._rlt_executed_actions.pop(stale_step, None)
+
+    def _rlt_maybe_emit_transitions(
+        self,
+        *,
+        reward: float = 0.0,
+        done: bool = False,
+        success: bool = False,
+        failure: bool = False,
+    ) -> None:
+        if not self.config.rlt_online_collection_enabled:
+            return
+        emitted_ids: list[int] = []
+        for context_id, pending in sorted(
+            self._rlt_pending_chunks.items(), key=lambda item: item[1].chunk_start_step
+        ):
+            if context_id in self._rlt_emitted_context_ids:
+                emitted_ids.append(context_id)
+                continue
+            steps = range(pending.chunk_start_step, pending.chunk_start_step + pending.num_actions)
+            executed = [self._rlt_executed_actions.get(step) for step in steps]
+            if any(item is None for item in executed):
+                continue
+            if not done and pending.next_rlt_context_id is None:
+                continue
+
+            actions = np.stack([item.action for item in executed if item is not None], axis=0)
+            transition = services_pb2.RLTTransitionChunk(
+                episode_id=int(self._rlt_episode_id),
+                source_rlt_context_id=int(pending.rlt_context_id),
+                next_rlt_context_id=int(pending.next_rlt_context_id or 0),
+                chunk_start_step=int(pending.chunk_start_step),
+                num_actions=int(actions.shape[0]),
+                action_dim=int(actions.shape[1]),
+                executed_actions_f32=np.asarray(actions, dtype=np.float32, order="C").tobytes(order="C"),
+                reward=float(reward) if done else 0.0,
+                done=bool(done),
+                is_intervention=any(item.is_intervention for item in executed if item is not None),
+                success=bool(success),
+                failure=bool(failure),
+            )
+            try:
+                self._rlt_transition_queue.put_nowait(transition)
+            except Full:
+                self._metrics.diagnostic.counter("rlt_transition_dropped_queue_full", 1)
+            self._rlt_emitted_context_ids.add(context_id)
+            emitted_ids.append(context_id)
+
+        for context_id in emitted_ids:
+            self._rlt_pending_chunks.pop(context_id, None)
+        if done:
+            self._rlt_episode_open = False
+            self._rlt_pending_chunks.clear()
+            self._rlt_executed_actions.clear()
+
+    # -------------------------------------------------------------------------
     # Action Receiver Thread
     # -------------------------------------------------------------------------
 
@@ -1030,6 +1237,9 @@ class RobotClientDrtc:
             server_obs_received_ts=server_obs_received_ts,
             server_action_sent_ts=server_action_sent_ts,
             action_received_ts=action_received_ts,
+            rlt_context_id=int(dense.rlt_context_id),
+            policy_mode=str(dense.policy_mode),
+            rlt_collectable=bool(dense.rlt_collectable),
         )
 
     def _publish_received_actions(
@@ -1043,6 +1253,9 @@ class RobotClientDrtc:
         server_obs_received_ts: float | None = None,
         server_action_sent_ts: float | None = None,
         action_received_ts: float | None = None,
+        rlt_context_id: int = 0,
+        policy_mode: str = "",
+        rlt_collectable: bool = False,
     ) -> None:
         chunk = ReceivedActionChunk(
             actions=timed_actions,
@@ -1053,8 +1266,13 @@ class RobotClientDrtc:
             server_obs_received_ts=server_obs_received_ts,
             server_action_sent_ts=server_action_sent_ts,
             action_received_ts=action_received_ts,
+            rlt_context_id=rlt_context_id,
+            policy_mode=policy_mode,
+            rlt_collectable=rlt_collectable,
         )
         _, accepted = self._action_reg.update_if_newer(control_step=src_control_step, value=chunk)
+        if accepted:
+            self._rlt_note_collectable_chunk(chunk)
 
         if self._metrics.experiment is not None:
             self._metrics.experiment.record_register_event(
@@ -1114,7 +1332,11 @@ class RobotClientDrtc:
             # Step 1: Execute action if available
             # ---------------------------------------------------------------------
             t_phase1_start = time.perf_counter()
-            intervening = self._is_intervening()
+            teleop_events = self._poll_teleop_events()
+            rlt_terminal_reward, rlt_done, rlt_success, rlt_failure = self._rlt_handle_episode_events(
+                teleop_events
+            )
+            intervening = self._teleop_event(teleop_events, TeleopEvents.IS_INTERVENTION)
 
             if intervening:
                 # Override the policy's action with the leader's joint positions.
@@ -1141,8 +1363,17 @@ class RobotClientDrtc:
                             )
                         )
 
+                executed_step = self.current_action_step + 1
                 if not self.action_schedule.is_empty():
-                    self.action_schedule.pop_front()
+                    drained = self.action_schedule.pop_front()
+                    if drained is not None:
+                        executed_step = drained[0]
+                if teleop_action is not None:
+                    self._rlt_record_executed_action(
+                        executed_step,
+                        filtered_action,
+                        is_intervention=True,
+                    )
             else:
                 if self._was_intervening:
                     # Falling edge: dump stale chunks queued during intervention
@@ -1190,6 +1421,11 @@ class RobotClientDrtc:
                                 src_control_step=src_control_step,
                                 chunk_start_step=chunk_start_step,
                             )
+                        self._rlt_record_executed_action(
+                            step,
+                            filtered_action,
+                            is_intervention=False,
+                        )
 
             # Send the latest follower pose back to the leader so the leader
             # gently tracks the follower while the policy is in control. The
@@ -1208,6 +1444,12 @@ class RobotClientDrtc:
                     self.logger.debug("Teleop feedback failed: %s", e)
 
             self._was_intervening = intervening
+            self._rlt_maybe_emit_transitions(
+                reward=rlt_terminal_reward,
+                done=rlt_done,
+                success=rlt_success,
+                failure=rlt_failure,
+            )
 
             t_phase1_end = time.perf_counter()
             _phase_exec_ms = self._ms(t_phase1_end - t_phase1_start)

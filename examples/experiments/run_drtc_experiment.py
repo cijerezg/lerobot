@@ -116,6 +116,23 @@ class ExperimentConfig:
     rlt_token_dim: int = 2048
     rlt_bc_beta: float = 1.0
     rlt_reference_dropout_p: float = 0.5
+    rlt_online_collection_enabled: bool = False
+    rlt_online_training_enabled: bool = False
+    rlt_warmup_episodes: int = 1
+    rlt_warmup_transitions: int = 128
+    rlt_replay_capacity: int = 10000
+    rlt_batch_size: int = 64
+    rlt_utd_ratio: int = 1
+    rlt_train_freq_s: float = 1.0
+    rlt_save_freq_steps: int = 500
+    rlt_output_dir: str = "outputs/rlt_online"
+    rlt_actor_lr: float = 3e-4
+    rlt_critic_lr: float = 3e-4
+    rlt_discount: float = 0.99
+    rlt_target_update_tau: float = 0.005
+    rlt_execute_after_train_steps: int = 1000000
+    rlt_context_cache_size: int = 256
+    rlt_transition_queue_size: int = 256
     # DRTC parameters
     latency_k: float = 2.0
     epsilon: int = 2
@@ -178,6 +195,12 @@ _SCALAR_FIELDS = frozenset({
     "subtask_regeneration_interval", "subtask_generation_enabled",
     "rlt_enabled", "rlt_embedding_checkpoint", "rlt_head_checkpoint",
     "rlt_chunk_size", "rlt_token_dim", "rlt_bc_beta", "rlt_reference_dropout_p",
+    "rlt_online_collection_enabled", "rlt_online_training_enabled",
+    "rlt_warmup_episodes", "rlt_warmup_transitions", "rlt_replay_capacity",
+    "rlt_batch_size", "rlt_utd_ratio", "rlt_train_freq_s", "rlt_save_freq_steps",
+    "rlt_output_dir", "rlt_actor_lr", "rlt_critic_lr", "rlt_discount",
+    "rlt_target_update_tau", "rlt_execute_after_train_steps",
+    "rlt_context_cache_size", "rlt_transition_queue_size",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
@@ -379,6 +402,23 @@ def create_client_config(
         rlt_token_dim=config.rlt_token_dim,
         rlt_bc_beta=config.rlt_bc_beta,
         rlt_reference_dropout_p=config.rlt_reference_dropout_p,
+        rlt_online_collection_enabled=config.rlt_online_collection_enabled,
+        rlt_online_training_enabled=config.rlt_online_training_enabled,
+        rlt_warmup_episodes=config.rlt_warmup_episodes,
+        rlt_warmup_transitions=config.rlt_warmup_transitions,
+        rlt_replay_capacity=config.rlt_replay_capacity,
+        rlt_batch_size=config.rlt_batch_size,
+        rlt_utd_ratio=config.rlt_utd_ratio,
+        rlt_train_freq_s=config.rlt_train_freq_s,
+        rlt_save_freq_steps=config.rlt_save_freq_steps,
+        rlt_output_dir=config.rlt_output_dir,
+        rlt_actor_lr=config.rlt_actor_lr,
+        rlt_critic_lr=config.rlt_critic_lr,
+        rlt_discount=config.rlt_discount,
+        rlt_target_update_tau=config.rlt_target_update_tau,
+        rlt_execute_after_train_steps=config.rlt_execute_after_train_steps,
+        rlt_context_cache_size=config.rlt_context_cache_size,
+        rlt_transition_queue_size=config.rlt_transition_queue_size,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
         s_min=config.s_min,

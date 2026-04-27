@@ -27,6 +27,8 @@ import time
 from collections import OrderedDict
 from concurrent import futures
 from contextlib import suppress
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import draccus
@@ -38,6 +40,13 @@ from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.processor import (
     PolicyAction,
     PolicyProcessorPipeline,
+)
+from lerobot.rl.rlt_buffer import RLTReplayBuffer, RLTReplaySample
+from lerobot.rl.rlt_pi05 import (
+    rlt_actor_loss,
+    rlt_critic_loss,
+    save_rlt_head_checkpoint,
+    soft_update_rlt_target,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore
@@ -152,6 +161,38 @@ class ActionChunkCache:
         self._cache.clear()
         self._anchors.clear()
 
+
+@dataclass
+class RLTSourceContext:
+    context_id: int
+    source_control_step: int
+    chunk_start_step: int
+    rl_token: torch.Tensor
+    proprio: torch.Tensor
+    reference_chunk: torch.Tensor
+    anchor_state: torch.Tensor | None
+
+
+class RLTSourceContextCache:
+    def __init__(self, max_size: int = 256):
+        self._cache: OrderedDict[int, RLTSourceContext] = OrderedDict()
+        self._max_size = max_size
+
+    def put(self, context: RLTSourceContext) -> None:
+        context_id = int(context.context_id)
+        if context_id in self._cache:
+            del self._cache[context_id]
+        while len(self._cache) >= self._max_size:
+            self._cache.popitem(last=False)
+        self._cache[context_id] = context
+
+    def get(self, context_id: int) -> RLTSourceContext | None:
+        return self._cache.get(int(context_id))
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+
 class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
     """DRTC policy server.
 
@@ -241,6 +282,33 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # Placeholder; resized to match actions_per_chunk in SendPolicyInstructions.
         self._action_cache = ActionChunkCache(max_size=10)
 
+        # Online RLT state. Config is supplied by the client via RemotePolicyConfig.
+        self._rlt_online_collection_enabled = False
+        self._rlt_online_training_enabled = False
+        self._rlt_warmup_episodes = 1
+        self._rlt_warmup_transitions = 128
+        self._rlt_replay_capacity = 10000
+        self._rlt_batch_size = 64
+        self._rlt_utd_ratio = 1
+        self._rlt_train_freq_s = 1.0
+        self._rlt_save_freq_steps = 500
+        self._rlt_output_dir = "outputs/rlt_online"
+        self._rlt_actor_lr = 3e-4
+        self._rlt_critic_lr = 3e-4
+        self._rlt_discount = 0.99
+        self._rlt_target_update_tau = 0.005
+        self._rlt_execute_after_train_steps = 1000000
+        self._rlt_next_context_id = 1
+        self._rlt_train_step = 0
+        self._rlt_completed_episodes: set[int] = set()
+        self._rlt_context_cache = RLTSourceContextCache(max_size=256)
+        self._rlt_replay = RLTReplayBuffer(capacity=10000)
+        self._rlt_replay_lock = threading.Lock()
+        self._rlt_model_lock = threading.RLock()
+        self._rlt_trainer_thread: threading.Thread | None = None
+        self._rlt_actor_optimizer: torch.optim.Optimizer | None = None
+        self._rlt_critic_optimizer: torch.optim.Optimizer | None = None
+
         # Spike delay simulator for experiments
         self._delay_simulator = SpikeDelaySimulator(config=config.mock_spike_config)
 
@@ -284,6 +352,290 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 parts.append(f"{key}={value}")
         return " ".join(parts)
 
+    def _configure_rlt_online(self, policy_specs: RemotePolicyConfig) -> None:
+        self._rlt_online_collection_enabled = bool(
+            getattr(policy_specs, "rlt_online_collection_enabled", False)
+        )
+        self._rlt_online_training_enabled = bool(getattr(policy_specs, "rlt_online_training_enabled", False))
+        self._rlt_warmup_episodes = int(getattr(policy_specs, "rlt_warmup_episodes", 1))
+        self._rlt_warmup_transitions = int(getattr(policy_specs, "rlt_warmup_transitions", 128))
+        self._rlt_replay_capacity = int(getattr(policy_specs, "rlt_replay_capacity", 10000))
+        self._rlt_batch_size = int(getattr(policy_specs, "rlt_batch_size", 64))
+        self._rlt_utd_ratio = int(getattr(policy_specs, "rlt_utd_ratio", 1))
+        self._rlt_train_freq_s = float(getattr(policy_specs, "rlt_train_freq_s", 1.0))
+        self._rlt_save_freq_steps = int(getattr(policy_specs, "rlt_save_freq_steps", 500))
+        self._rlt_output_dir = str(getattr(policy_specs, "rlt_output_dir", "outputs/rlt_online"))
+        self._rlt_actor_lr = float(getattr(policy_specs, "rlt_actor_lr", 3e-4))
+        self._rlt_critic_lr = float(getattr(policy_specs, "rlt_critic_lr", 3e-4))
+        self._rlt_discount = float(getattr(policy_specs, "rlt_discount", 0.99))
+        self._rlt_target_update_tau = float(getattr(policy_specs, "rlt_target_update_tau", 0.005))
+        self._rlt_execute_after_train_steps = int(
+            getattr(policy_specs, "rlt_execute_after_train_steps", 1000000)
+        )
+        context_cache_size = int(getattr(policy_specs, "rlt_context_cache_size", 256))
+        self._rlt_context_cache = RLTSourceContextCache(max_size=context_cache_size)
+        with self._rlt_replay_lock:
+            self._rlt_replay = RLTReplayBuffer(capacity=self._rlt_replay_capacity)
+        self._rlt_completed_episodes.clear()
+        self._rlt_next_context_id = 1
+        self._rlt_train_step = 0
+
+        if self._rlt_online_training_enabled and self.policy_type == "pi05_rlt" and self.policy is not None:
+            self._rlt_actor_optimizer = torch.optim.AdamW(
+                self.policy.rlt_actor.parameters(), lr=self._rlt_actor_lr
+            )
+            self._rlt_critic_optimizer = torch.optim.AdamW(
+                self.policy.rlt_critic.parameters(), lr=self._rlt_critic_lr
+            )
+        else:
+            self._rlt_actor_optimizer = None
+            self._rlt_critic_optimizer = None
+
+    def _next_rlt_context_id_value(self) -> int:
+        context_id = self._rlt_next_context_id
+        self._rlt_next_context_id += 1
+        return context_id
+
+    def _rlt_source_collectable(self) -> bool:
+        if not self._rlt_online_collection_enabled:
+            return False
+        if self.config.mock_policy or self.policy_type != "pi05_rlt":
+            return False
+        cfg = getattr(self.policy, "config", None)
+        return bool(getattr(cfg, "rlt_embedding_checkpoint", None))
+
+    def _rlt_should_execute_actor(self) -> bool:
+        if self.policy_type != "pi05_rlt" or self.policy is None:
+            return False
+        cfg = getattr(self.policy, "config", None)
+        if not bool(getattr(cfg, "rlt_enabled", False)):
+            return False
+        actor_loaded = bool(getattr(self.policy, "_rlt_actor_loaded", False))
+        return actor_loaded or self._rlt_train_step >= self._rlt_execute_after_train_steps
+
+    def _predict_pi05_rlt_with_context(
+        self,
+        observation: dict[str, torch.Tensor],
+        rtc_kwargs: dict[str, Any],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, str]:
+        if self.policy is None:
+            raise RuntimeError("policy is not loaded")
+        with self._rlt_model_lock:
+            reference = self.policy.predict_vla_reference_chunk(observation, **rtc_kwargs)
+            rl_token = self.policy.extract_rl_token(observation)
+            proprio = observation[OBS_STATE].to(dtype=rl_token.dtype, device=rl_token.device)
+            if self._rlt_should_execute_actor():
+                actor_ref = reference[:, : self.policy.config.rlt_chunk_size].to(
+                    dtype=rl_token.dtype,
+                    device=rl_token.device,
+                )
+                refined_prefix = self.policy.rlt_actor(rl_token, proprio, actor_ref)
+                action_tensor = torch.cat(
+                    [refined_prefix, reference[:, self.policy.config.rlt_chunk_size :]], dim=1
+                )
+                policy_mode = "rlt_actor"
+            else:
+                action_tensor = reference
+                policy_mode = (
+                    "warmup"
+                    if self._rlt_online_training_enabled
+                    and self._rlt_train_step < self._rlt_execute_after_train_steps
+                    else "vla_passthrough"
+                )
+        return action_tensor, reference, rl_token, proprio, policy_mode
+
+    def _cache_rlt_source_context(
+        self,
+        *,
+        source_control_step: int,
+        chunk_start_step: int,
+        reference: torch.Tensor,
+        rl_token: torch.Tensor,
+        proprio: torch.Tensor,
+        anchor_state: torch.Tensor | None,
+    ) -> int:
+        context_id = self._next_rlt_context_id_value()
+        rlt_window = min(int(getattr(self.policy.config, "rlt_chunk_size", reference.shape[1])), reference.shape[1])
+        context = RLTSourceContext(
+            context_id=context_id,
+            source_control_step=source_control_step,
+            chunk_start_step=chunk_start_step,
+            rl_token=rl_token.squeeze(0).detach().cpu(),
+            proprio=proprio.squeeze(0).detach().cpu(),
+            reference_chunk=reference[:, :rlt_window].squeeze(0).detach().cpu(),
+            anchor_state=anchor_state.squeeze(0).detach().cpu()
+            if isinstance(anchor_state, torch.Tensor) and anchor_state.dim() == 2
+            else (anchor_state.detach().cpu() if isinstance(anchor_state, torch.Tensor) else None),
+        )
+        self._rlt_context_cache.put(context)
+        self._metrics.diagnostic.counter("rlt_context_cached", 1)
+        return context_id
+
+    def _executed_actions_to_model_space(
+        self,
+        actions_np: np.ndarray,
+        context: RLTSourceContext,
+    ) -> torch.Tensor:
+        target_shape = context.reference_chunk.shape
+        chunk_len, action_dim = int(target_shape[0]), int(target_shape[1])
+        actions = torch.as_tensor(actions_np[:chunk_len], dtype=context.reference_chunk.dtype)
+        if actions.shape[0] != chunk_len:
+            raise ValueError(f"executed chunk too short: {actions.shape[0]} < {chunk_len}")
+
+        if actions.shape[-1] != action_dim:
+            adjusted = torch.zeros(chunk_len, action_dim, dtype=actions.dtype)
+            copy_dim = min(actions.shape[-1], action_dim)
+            adjusted[:, :copy_dim] = actions[:, :copy_dim]
+            actions = adjusted
+
+        model_actions = actions
+        if self._action_encoding in ("anchor", "delta") and context.anchor_state is not None:
+            anchor = context.anchor_state.to(dtype=actions.dtype)
+            if anchor.dim() == 2:
+                anchor = anchor.squeeze(0)
+            if anchor.shape[-1] != action_dim:
+                adjusted_anchor = torch.zeros(action_dim, dtype=actions.dtype)
+                copy_dim = min(anchor.shape[-1], action_dim)
+                adjusted_anchor[:copy_dim] = anchor[:copy_dim]
+                anchor = adjusted_anchor
+            if self._action_encoding == "anchor":
+                model_actions = actions - anchor.view(1, -1)
+            else:
+                prev = torch.cat([anchor.view(1, -1), actions[:-1]], dim=0)
+                model_actions = actions - prev
+
+        if self._action_normalizer is not None:
+            try:
+                norm_len = max(int(self.actions_per_chunk or chunk_len), chunk_len)
+                padded = torch.zeros(norm_len, model_actions.shape[-1], dtype=model_actions.dtype)
+                padded[:chunk_len] = model_actions
+                model_actions = self._action_normalizer._normalize_action(padded, inverse=False)[:chunk_len]
+            except Exception as e:
+                self.logger.debug("RLT executed action renormalization failed: %s", e)
+
+        if model_actions.shape[-1] != action_dim:
+            adjusted = torch.zeros(chunk_len, action_dim, dtype=context.reference_chunk.dtype)
+            copy_dim = min(model_actions.shape[-1], action_dim)
+            adjusted[:, :copy_dim] = model_actions[:, :copy_dim].to(dtype=adjusted.dtype)
+            model_actions = adjusted
+        return model_actions.to(dtype=context.reference_chunk.dtype)
+
+    def _accept_rlt_transition(self, transition: services_pb2.RLTTransitionChunk) -> None:
+        source = self._rlt_context_cache.get(int(transition.source_rlt_context_id))
+        if source is None:
+            self._metrics.diagnostic.counter("rlt_transition_missing_source", 1)
+            return
+        next_context = None
+        if int(transition.next_rlt_context_id) != 0:
+            next_context = self._rlt_context_cache.get(int(transition.next_rlt_context_id))
+            if next_context is None and not transition.done:
+                self._metrics.diagnostic.counter("rlt_transition_missing_next", 1)
+                return
+        if next_context is None:
+            next_context = source
+
+        num_actions = int(transition.num_actions)
+        action_dim = int(transition.action_dim)
+        actions_flat = np.frombuffer(transition.executed_actions_f32, dtype=np.float32)
+        if num_actions <= 0 or action_dim <= 0 or actions_flat.size != num_actions * action_dim:
+            raise ValueError(
+                f"invalid executed action payload: size={actions_flat.size}, shape=({num_actions}, {action_dim})"
+            )
+        executed_np = actions_flat.reshape(num_actions, action_dim)
+        executed_model = self._executed_actions_to_model_space(executed_np, source)
+
+        sample = RLTReplaySample(
+            rl_token=source.rl_token,
+            proprio=source.proprio,
+            reference_chunk=source.reference_chunk,
+            executed_chunk=executed_model,
+            next_rl_token=next_context.rl_token,
+            next_proprio=next_context.proprio,
+            next_reference_chunk=next_context.reference_chunk,
+            reward=float(transition.reward),
+            done=bool(transition.done),
+            is_intervention=bool(transition.is_intervention),
+        )
+        with self._rlt_replay_lock:
+            self._rlt_replay.add(sample)
+            replay_size = len(self._rlt_replay)
+        if transition.done:
+            self._rlt_completed_episodes.add(int(transition.episode_id))
+        self._metrics.diagnostic.counter("rlt_transition_accepted", 1)
+        self._metrics.diagnostic.set_context(rlt_replay_size=replay_size)
+
+    def _start_rlt_trainer_if_needed(self) -> None:
+        if not self._rlt_online_training_enabled or self.policy_type != "pi05_rlt":
+            return
+        if self._rlt_trainer_thread is not None and self._rlt_trainer_thread.is_alive():
+            return
+        self._rlt_trainer_thread = threading.Thread(
+            target=self._rlt_trainer_loop,
+            name="policy_server_drtc_rlt_trainer",
+            daemon=True,
+        )
+        self._rlt_trainer_thread.start()
+
+    def _rlt_trainer_loop(self) -> None:
+        while self.running:
+            time.sleep(self._rlt_train_freq_s)
+            if self.policy is None or self._rlt_actor_optimizer is None or self._rlt_critic_optimizer is None:
+                continue
+            with self._rlt_replay_lock:
+                replay_size = len(self._rlt_replay)
+            if replay_size < max(self._rlt_batch_size, self._rlt_warmup_transitions):
+                continue
+            if len(self._rlt_completed_episodes) < self._rlt_warmup_episodes:
+                continue
+
+            for _ in range(self._rlt_utd_ratio):
+                try:
+                    with self._rlt_replay_lock:
+                        batch = self._rlt_replay.sample(self._rlt_batch_size, device=self.device or "cpu")
+                    with self._rlt_model_lock:
+                        self.policy.rlt_actor.train()
+                        self.policy.rlt_critic.train()
+                        critic_loss = rlt_critic_loss(self.policy, batch, self._rlt_discount)
+                        self._rlt_critic_optimizer.zero_grad(set_to_none=True)
+                        critic_loss.backward()
+                        self._rlt_critic_optimizer.step()
+
+                        actor_loss = rlt_actor_loss(self.policy, batch)
+                        self._rlt_actor_optimizer.zero_grad(set_to_none=True)
+                        actor_loss.backward()
+                        self._rlt_actor_optimizer.step()
+                        soft_update_rlt_target(self.policy, self._rlt_target_update_tau)
+                        self.policy.eval()
+                        self._rlt_train_step += 1
+
+                    self._metrics.diagnostic.timing_ms(
+                        "rlt_critic_loss", float(critic_loss.detach().cpu())
+                    )
+                    self._metrics.diagnostic.timing_ms(
+                        "rlt_actor_loss", float(actor_loss.detach().cpu())
+                    )
+                    self._metrics.diagnostic.set_context(rlt_train_step=self._rlt_train_step)
+                    if self._rlt_train_step % self._rlt_save_freq_steps == 0:
+                        self._save_rlt_head_checkpoint()
+                except Exception as e:
+                    self.logger.warning("RLT trainer step failed: %s", e, exc_info=True)
+                    self._metrics.diagnostic.counter("rlt_train_error", 1)
+
+    def _save_rlt_head_checkpoint(self) -> None:
+        if self.policy is None:
+            return
+        path = Path(self._rlt_output_dir) / f"rlt_head_step_{self._rlt_train_step:06d}.pt"
+        latest_path = Path(self._rlt_output_dir) / "rlt_head_latest.pt"
+        config = {
+            "rlt_actor_lr": self._rlt_actor_lr,
+            "rlt_critic_lr": self._rlt_critic_lr,
+            "rlt_discount": self._rlt_discount,
+            "rlt_target_update_tau": self._rlt_target_update_tau,
+        }
+        save_rlt_head_checkpoint(self.policy, path, step=self._rlt_train_step, config=config)
+        save_rlt_head_checkpoint(self.policy, latest_path, step=self._rlt_train_step, config=config)
+        self.logger.info("Saved online RLT head checkpoint to %s", path)
+
     def _reset_server(self) -> None:
         """Reset server state when a new client connects.
 
@@ -304,11 +656,22 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     "a new thread will be started anyway."
                 )
         self._producer_thread = None
+        if self._rlt_trainer_thread is not None and self._rlt_trainer_thread.is_alive():
+            self._rlt_trainer_thread.join(timeout=5.0)
+            if self._rlt_trainer_thread.is_alive():
+                self.logger.warning("RLT trainer thread did not exit within 5s during reset.")
+        self._rlt_trainer_thread = None
 
         # Reset registers (avoid leaking prior session values)
         self._obs_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
         self._action_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
         self._action_cache.clear()
+        self._rlt_context_cache.clear()
+        with self._rlt_replay_lock:
+            self._rlt_replay = RLTReplayBuffer(capacity=self._rlt_replay_capacity)
+        self._rlt_next_context_id = 1
+        self._rlt_train_step = 0
+        self._rlt_completed_episodes.clear()
 
         try:
             self._debug_chunks_remaining = int(
@@ -351,6 +714,18 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         )
         self._trajectory_viz_server.on_chunk(event)
 
+        return services_pb2.Empty()
+
+    def SendRLTTransitions(self, request_iterator, context):  # noqa: N802
+        """Receive compact online RLT transitions from the DRTC client."""
+        for transition in request_iterator:
+            if not self.running:
+                break
+            try:
+                self._accept_rlt_transition(transition)
+            except Exception as e:
+                self.logger.warning("Dropping invalid RLT transition: %s", e, exc_info=True)
+                self._metrics.diagnostic.counter("rlt_transition_error", 1)
         return services_pb2.Empty()
 
     def SendPolicyInstructions(self, request, context):  # noqa: N802
@@ -577,24 +952,27 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             getattr(getattr(self.policy, "config", None), "action_encoding", "absolute") or "absolute"
         )
         self._action_normalizer = None
-        if self._action_encoding in ("anchor", "delta"):
-            try:
-                from lerobot.processor import NormalizerProcessorStep
+        try:
+            from lerobot.processor import NormalizerProcessorStep
 
-                self._action_normalizer = next(
-                    s for s in self.preprocessor.steps if isinstance(s, NormalizerProcessorStep)
-                )
-                self.logger.info(
-                    "RTC anchor alignment enabled (action_encoding=%s) | normalizer found",
-                    self._action_encoding,
-                )
-            except (StopIteration, ImportError) as e:
+            self._action_normalizer = next(
+                s for s in self.preprocessor.steps if isinstance(s, NormalizerProcessorStep)
+            )
+            self.logger.info(
+                "Action normalizer found for RTC/RLT (action_encoding=%s)",
+                self._action_encoding,
+            )
+        except (StopIteration, ImportError, AttributeError) as e:
+            if self._action_encoding in ("anchor", "delta"):
                 self.logger.warning(
                     "action_encoding=%s but could not locate NormalizerProcessorStep "
-                    "in preprocessor.steps (%s); RTC prefix anchor alignment will be skipped.",
+                    "in preprocessor.steps (%s); RTC/RLT action renormalization will be skipped.",
                     self._action_encoding,
                     e,
                 )
+            else:
+                self.logger.info("No action normalizer found for RLT action conversion (%s)", e)
+        self._configure_rlt_online(policy_specs)
         self._metrics.diagnostic.timing_s("policy_load_ms", t_load_done - t_load_start)
         self._metrics.diagnostic.timing_s("policy_to_ms", t_to_done - t_to_start)
         self._metrics.diagnostic.timing_s("policy_processors_ms", t_pp_done - t_pp_start)
@@ -681,6 +1059,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 daemon=True,
             )
             self._producer_thread.start()
+        self._start_rlt_trainer_if_needed()
 
         return services_pb2.Empty()
 
@@ -901,6 +1280,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             num_actions=int(payload.shape[0]),
             action_dim=int(payload.shape[1]),
             actions_f32=payload.tobytes(order="C"),
+            policy_mode="mock",
+            rlt_collectable=False,
         )
         return dense
 
@@ -1091,6 +1472,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # overridden. `torch.no_grad()` keeps the normal path efficient while still allowing
         # nested `torch.enable_grad()` for RTC.
         src_control_step = int(observation_t.get_control_step())
+        rlt_reference: torch.Tensor | None = None
+        rlt_rl_token: torch.Tensor | None = None
+        rlt_proprio: torch.Tensor | None = None
+        rlt_context_id = 0
+        rlt_policy_mode = ""
+        rlt_collectable = False
 
         with torch.no_grad():
             rtc_kwargs: dict[str, Any] = {}
@@ -1177,13 +1564,26 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     rtc_kwargs = {}
             _mark("rtc_prefix")
 
-            action_tensor = self._get_action_chunk(observation, **rtc_kwargs)
+            if self.policy_type == "pi05_rlt" and (
+                self._rlt_online_collection_enabled or self._rlt_online_training_enabled
+            ):
+                (
+                    action_tensor,
+                    rlt_reference,
+                    rlt_rl_token,
+                    rlt_proprio,
+                    rlt_policy_mode,
+                ) = self._predict_pi05_rlt_with_context(observation, rtc_kwargs)
+            else:
+                action_tensor = self._get_action_chunk(observation, **rtc_kwargs)
             _mark("policy_predict")
 
         # Ensure (B, T, A)
         if action_tensor.ndim != 3:
             action_tensor = action_tensor.unsqueeze(0)
         action_tensor = action_tensor[:, : self.actions_per_chunk, :]
+        if rlt_reference is not None:
+            rlt_reference = rlt_reference[:, : self.actions_per_chunk, :]
 
         b, t, a = action_tensor.shape
 
@@ -1194,6 +1594,22 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # observation state (`align_prev_actions`).
         if src_control_step >= 0:
             self._action_cache.put(src_control_step, action_tensor, anchor=anchor_state)
+        if (
+            src_control_step >= 0
+            and rlt_reference is not None
+            and rlt_rl_token is not None
+            and rlt_proprio is not None
+            and self._rlt_source_collectable()
+        ):
+            rlt_context_id = self._cache_rlt_source_context(
+                source_control_step=src_control_step,
+                chunk_start_step=int(observation_t.chunk_start_step),
+                reference=rlt_reference,
+                rl_token=rlt_rl_token,
+                proprio=rlt_proprio,
+                anchor_state=anchor_state,
+            )
+            rlt_collectable = True
         _mark("raw_action_cache")
 
         # 4. Vectorized postprocess: (B, T, A_in) -> (B*T, A_in) -> (B, T, A_out)
@@ -1329,6 +1745,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             num_actions=int(payload.shape[0]),
             action_dim=int(payload.shape[1]),
             actions_f32=payload.tobytes(order="C"),
+            rlt_context_id=int(rlt_context_id),
+            policy_mode=rlt_policy_mode,
+            rlt_collectable=bool(rlt_collectable),
         )
         dense = services_pb2.ActionsDense(**dense_kwargs)
         _mark("dense_proto")

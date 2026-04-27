@@ -125,6 +125,43 @@ def test_send_bytes_in_chunks_large_data_with_exact_chunk_size():
 
 
 @require_package("grpcio", "grpc")
+def test_rlt_action_metadata_and_transition_chunk_roundtrip():
+    from lerobot.transport import services_pb2
+
+    dense = services_pb2.ActionsDense(
+        timestamp=1.0,
+        source_control_step=2,
+        dt=0.1,
+        num_actions=1,
+        action_dim=2,
+        actions_f32=b"12345678",
+        chunk_start_step=3,
+        rlt_context_id=42,
+        policy_mode="vla_passthrough",
+        rlt_collectable=True,
+    )
+    assert dense.rlt_context_id == 42
+    assert dense.policy_mode == "vla_passthrough"
+    assert dense.rlt_collectable
+
+    transition = services_pb2.RLTTransitionChunk(
+        episode_id=5,
+        source_rlt_context_id=42,
+        next_rlt_context_id=43,
+        chunk_start_step=3,
+        num_actions=1,
+        action_dim=2,
+        executed_actions_f32=b"12345678",
+        reward=1.0,
+        done=True,
+        is_intervention=True,
+        success=True,
+    )
+    assert transition.source_rlt_context_id == dense.rlt_context_id
+    assert transition.executed_actions_f32 == dense.actions_f32
+
+
+@require_package("grpcio", "grpc")
 def test_receive_bytes_in_chunks_empty_data():
     from lerobot.transport.utils import receive_bytes_in_chunks
 

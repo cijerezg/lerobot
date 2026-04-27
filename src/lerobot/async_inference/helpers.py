@@ -463,6 +463,23 @@ class RemotePolicyConfig:
     rlt_token_dim: int = 2048
     rlt_bc_beta: float = 1.0
     rlt_reference_dropout_p: float = 0.5
+    rlt_online_collection_enabled: bool = False
+    rlt_online_training_enabled: bool = False
+    rlt_warmup_episodes: int = 1
+    rlt_warmup_transitions: int = 128
+    rlt_replay_capacity: int = 10000
+    rlt_batch_size: int = 64
+    rlt_utd_ratio: int = 1
+    rlt_train_freq_s: float = 1.0
+    rlt_save_freq_steps: int = 500
+    rlt_output_dir: str = "outputs/rlt_online"
+    rlt_actor_lr: float = 3e-4
+    rlt_critic_lr: float = 3e-4
+    rlt_discount: float = 0.99
+    rlt_target_update_tau: float = 0.005
+    rlt_execute_after_train_steps: int = 1000000
+    rlt_context_cache_size: int = 256
+    rlt_transition_queue_size: int = 256
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC/spike fields existed."""
@@ -486,6 +503,23 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_token_dim", 2048)
         self.__dict__.setdefault("rlt_bc_beta", 1.0)
         self.__dict__.setdefault("rlt_reference_dropout_p", 0.5)
+        self.__dict__.setdefault("rlt_online_collection_enabled", False)
+        self.__dict__.setdefault("rlt_online_training_enabled", False)
+        self.__dict__.setdefault("rlt_warmup_episodes", 1)
+        self.__dict__.setdefault("rlt_warmup_transitions", 128)
+        self.__dict__.setdefault("rlt_replay_capacity", 10000)
+        self.__dict__.setdefault("rlt_batch_size", 64)
+        self.__dict__.setdefault("rlt_utd_ratio", 1)
+        self.__dict__.setdefault("rlt_train_freq_s", 1.0)
+        self.__dict__.setdefault("rlt_save_freq_steps", 500)
+        self.__dict__.setdefault("rlt_output_dir", "outputs/rlt_online")
+        self.__dict__.setdefault("rlt_actor_lr", 3e-4)
+        self.__dict__.setdefault("rlt_critic_lr", 3e-4)
+        self.__dict__.setdefault("rlt_discount", 0.99)
+        self.__dict__.setdefault("rlt_target_update_tau", 0.005)
+        self.__dict__.setdefault("rlt_execute_after_train_steps", 1000000)
+        self.__dict__.setdefault("rlt_context_cache_size", 256)
+        self.__dict__.setdefault("rlt_transition_queue_size", 256)
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

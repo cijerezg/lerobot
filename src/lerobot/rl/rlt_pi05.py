@@ -182,6 +182,83 @@ class RLTCriticHead(nn.Module):
         return self.net(torch.cat([rl_token, proprio, flat_action], dim=-1))
 
 
+def rlt_critic_loss(policy: "PI05RLTPolicy", batch: dict[str, Tensor], discount: float) -> Tensor:
+    """TD critic loss for compact chunk-level RLT transitions."""
+    rewards = batch["reward"].to(dtype=batch["rl_token"].dtype)
+    dones = batch["done"].to(dtype=batch["rl_token"].dtype)
+    with torch.no_grad():
+        next_actions = policy.rlt_actor(
+            batch["next_rl_token"],
+            batch["next_proprio"],
+            batch["next_reference_chunk"],
+        )
+        next_q = policy.rlt_critic_target(
+            batch["next_rl_token"],
+            batch["next_proprio"],
+            next_actions,
+        )
+        target_q = rewards + float(discount) * (1.0 - dones) * next_q
+    pred_q = policy.rlt_critic(batch["rl_token"], batch["proprio"], batch["executed_chunk"])
+    return F.mse_loss(pred_q, target_q)
+
+
+def rlt_actor_loss(
+    policy: "PI05RLTPolicy",
+    batch: dict[str, Tensor],
+    *,
+    beta: float | None = None,
+    reference_dropout_p: float | None = None,
+) -> Tensor:
+    """Actor objective with conservative BC/reference regularization."""
+    ref_input = batch["reference_chunk"]
+    p = policy.config.rlt_reference_dropout_p if reference_dropout_p is None else float(reference_dropout_p)
+    if p > 0:
+        keep = (torch.rand(ref_input.shape[0], 1, 1, device=ref_input.device) >= p).to(ref_input.dtype)
+        ref_input = ref_input * keep
+
+    actor_actions = policy.rlt_actor(batch["rl_token"], batch["proprio"], ref_input)
+    q_value = policy.rlt_critic(batch["rl_token"], batch["proprio"], actor_actions)
+    intervention_mask = batch["is_intervention"].to(dtype=actor_actions.dtype, device=actor_actions.device)
+    bc_target = torch.where(
+        intervention_mask > 0.5,
+        batch["executed_chunk"].to(dtype=actor_actions.dtype),
+        batch["reference_chunk"].to(dtype=actor_actions.dtype),
+    )
+    bc_beta = policy.config.rlt_bc_beta if beta is None else float(beta)
+    return -q_value.mean() + bc_beta * F.mse_loss(actor_actions, bc_target)
+
+
+def soft_update_rlt_target(policy: "PI05RLTPolicy", tau: float) -> None:
+    """Soft-update `rlt_critic_target` toward `rlt_critic`."""
+    tau = float(tau)
+    with torch.no_grad():
+        for target_param, source_param in zip(
+            policy.rlt_critic_target.parameters(), policy.rlt_critic.parameters(), strict=True
+        ):
+            target_param.mul_(1.0 - tau).add_(source_param, alpha=tau)
+
+
+def save_rlt_head_checkpoint(
+    policy: "PI05RLTPolicy",
+    path: str | Path,
+    *,
+    step: int,
+    config: dict[str, Any] | None = None,
+) -> None:
+    """Save only the online-trainable RLT heads."""
+    checkpoint = {
+        "rlt_actor": policy.rlt_actor.state_dict(),
+        "rlt_critic": policy.rlt_critic.state_dict(),
+        "rlt_critic_target": policy.rlt_critic_target.state_dict(),
+        "step": int(step),
+    }
+    if config is not None:
+        checkpoint["config"] = dict(config)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(checkpoint, path)
+
+
 @PreTrainedConfig.register_subclass("pi05_rlt")
 @dataclass
 class PI05RLTConfig(PI05FullConfig):

@@ -232,6 +232,65 @@ class RobotClientDrtcConfig:
         default=0.5,
         metadata={"help": "Reference action dropout probability for RLT actor training."},
     )
+    rlt_online_collection_enabled: bool = field(
+        default=False,
+        metadata={"help": "Collect compact online RLT transitions on the DRTC client."},
+    )
+    rlt_online_training_enabled: bool = field(
+        default=False,
+        metadata={"help": "Train PI05 RLT actor/critic heads online on the DRTC server."},
+    )
+    rlt_warmup_episodes: int = field(
+        default=1,
+        metadata={"help": "Minimum completed episodes before online RLT training can update heads."},
+    )
+    rlt_warmup_transitions: int = field(
+        default=128,
+        metadata={"help": "Minimum replay transitions before online RLT training can update heads."},
+    )
+    rlt_replay_capacity: int = field(
+        default=10000,
+        metadata={"help": "Maximum number of compact RLT transitions kept in server replay."},
+    )
+    rlt_batch_size: int = field(
+        default=64,
+        metadata={"help": "RLT online training batch size."},
+    )
+    rlt_utd_ratio: int = field(
+        default=1,
+        metadata={"help": "RLT online updates per trainer tick."},
+    )
+    rlt_train_freq_s: float = field(
+        default=1.0,
+        metadata={"help": "Seconds between online RLT trainer ticks."},
+    )
+    rlt_save_freq_steps: int = field(
+        default=500,
+        metadata={"help": "Save an RLT head checkpoint every N online training steps."},
+    )
+    rlt_output_dir: str = field(
+        default="outputs/rlt_online",
+        metadata={"help": "Directory for online RLT head checkpoints."},
+    )
+    rlt_actor_lr: float = field(default=3e-4, metadata={"help": "Online RLT actor learning rate."})
+    rlt_critic_lr: float = field(default=3e-4, metadata={"help": "Online RLT critic learning rate."})
+    rlt_discount: float = field(default=0.99, metadata={"help": "Online RLT critic discount factor."})
+    rlt_target_update_tau: float = field(
+        default=0.005,
+        metadata={"help": "Soft-update coefficient for the RLT target critic."},
+    )
+    rlt_execute_after_train_steps: int = field(
+        default=1000000,
+        metadata={"help": "Do not execute the online RLT actor until this many training steps have completed."},
+    )
+    rlt_context_cache_size: int = field(
+        default=256,
+        metadata={"help": "Maximum server-side RLT source contexts retained for transition resolution."},
+    )
+    rlt_transition_queue_size: int = field(
+        default=256,
+        metadata={"help": "Maximum queued client-side RLT transitions before dropping."},
+    )
 
     # Diagnostic metrics (console output; avg/max only)
     metrics_diagnostic_enabled: bool = field(
@@ -497,6 +556,41 @@ class RobotClientDrtcConfig:
             raise ValueError(
                 "rlt_reference_dropout_p must be in [0, 1], "
                 f"got {self.rlt_reference_dropout_p}"
+            )
+        if self.rlt_warmup_episodes < 0:
+            raise ValueError(f"rlt_warmup_episodes must be non-negative, got {self.rlt_warmup_episodes}")
+        if self.rlt_warmup_transitions < 0:
+            raise ValueError(f"rlt_warmup_transitions must be non-negative, got {self.rlt_warmup_transitions}")
+        if self.rlt_replay_capacity <= 0:
+            raise ValueError(f"rlt_replay_capacity must be positive, got {self.rlt_replay_capacity}")
+        if self.rlt_batch_size <= 0:
+            raise ValueError(f"rlt_batch_size must be positive, got {self.rlt_batch_size}")
+        if self.rlt_utd_ratio <= 0:
+            raise ValueError(f"rlt_utd_ratio must be positive, got {self.rlt_utd_ratio}")
+        if self.rlt_train_freq_s <= 0:
+            raise ValueError(f"rlt_train_freq_s must be positive, got {self.rlt_train_freq_s}")
+        if self.rlt_save_freq_steps <= 0:
+            raise ValueError(f"rlt_save_freq_steps must be positive, got {self.rlt_save_freq_steps}")
+        if self.rlt_actor_lr <= 0:
+            raise ValueError(f"rlt_actor_lr must be positive, got {self.rlt_actor_lr}")
+        if self.rlt_critic_lr <= 0:
+            raise ValueError(f"rlt_critic_lr must be positive, got {self.rlt_critic_lr}")
+        if not 0 <= self.rlt_discount <= 1:
+            raise ValueError(f"rlt_discount must be in [0, 1], got {self.rlt_discount}")
+        if not 0 < self.rlt_target_update_tau <= 1:
+            raise ValueError(
+                f"rlt_target_update_tau must be in (0, 1], got {self.rlt_target_update_tau}"
+            )
+        if self.rlt_execute_after_train_steps < 0:
+            raise ValueError(
+                "rlt_execute_after_train_steps must be non-negative, "
+                f"got {self.rlt_execute_after_train_steps}"
+            )
+        if self.rlt_context_cache_size <= 0:
+            raise ValueError(f"rlt_context_cache_size must be positive, got {self.rlt_context_cache_size}")
+        if self.rlt_transition_queue_size <= 0:
+            raise ValueError(
+                f"rlt_transition_queue_size must be positive, got {self.rlt_transition_queue_size}"
             )
         if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
             raise ValueError(

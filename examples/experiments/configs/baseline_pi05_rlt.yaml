@@ -33,12 +33,36 @@ subtask_regeneration_interval: 0
 
 # RLT modules. Leave the head unset for frozen-VLA pass-through inference.
 rlt_enabled: false
-rlt_embedding_checkpoint:
+
+# Always set this
+rlt_embedding_checkpoint: outputs/pi05_rlt_embedding_cube_subtasks_3/rlt_embedding_step_004200.pt
+
+# Optionally set the head checkpoint for fine tuning
 rlt_head_checkpoint:
 rlt_chunk_size: 10
 rlt_token_dim: 2048
 rlt_bc_beta: 1.0
 rlt_reference_dropout_p: 0.5
+
+# Online RLT collection/training. Start collect-only; enable training after
+# confirming transition counters and control-loop timing on hardware.
+rlt_online_collection_enabled: true
+rlt_online_training_enabled: false
+rlt_warmup_episodes: 1
+rlt_warmup_transitions: 128
+rlt_replay_capacity: 10000
+rlt_batch_size: 64
+rlt_utd_ratio: 1
+rlt_train_freq_s: 1.0
+rlt_save_freq_steps: 500
+rlt_output_dir: outputs/rlt_online
+rlt_actor_lr: 0.0003
+rlt_critic_lr: 0.0003
+rlt_discount: 0.99
+rlt_target_update_tau: 0.005
+rlt_execute_after_train_steps: 1000000
+rlt_context_cache_size: 256
+rlt_transition_queue_size: 256
 
 # DRTC parameters
 estimator: jk

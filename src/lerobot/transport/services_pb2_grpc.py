@@ -5,7 +5,7 @@ import warnings
 
 from lerobot.transport import services_pb2 as lerobot_dot_transport_dot_services__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.73.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in lerobot/transport/services_pb2_grpc.py depends on'
+        + f' but the generated code in lerobot/transport/services_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -274,6 +274,11 @@ class AsyncInferenceStub(object):
                 request_serializer=lerobot_dot_transport_dot_services__pb2.TrajectoryChunk.SerializeToString,
                 response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
                 _registered_method=True)
+        self.SendRLTTransitions = channel.stream_unary(
+                '/transport.AsyncInference/SendRLTTransitions',
+                request_serializer=lerobot_dot_transport_dot_services__pb2.RLTTransitionChunk.SerializeToString,
+                response_deserializer=lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+                _registered_method=True)
 
 
 class AsyncInferenceServicer(object):
@@ -321,6 +326,13 @@ class AsyncInferenceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SendRLTTransitions(self, request_iterator, context):
+        """Robot -> Policy to send compact online RLT transition chunks.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AsyncInferenceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -352,6 +364,11 @@ def add_AsyncInferenceServicer_to_server(servicer, server):
             'SendTrajectoryChunk': grpc.unary_unary_rpc_method_handler(
                     servicer.SendTrajectoryChunk,
                     request_deserializer=lerobot_dot_transport_dot_services__pb2.TrajectoryChunk.FromString,
+                    response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
+            ),
+            'SendRLTTransitions': grpc.stream_unary_rpc_method_handler(
+                    servicer.SendRLTTransitions,
+                    request_deserializer=lerobot_dot_transport_dot_services__pb2.RLTTransitionChunk.FromString,
                     response_serializer=lerobot_dot_transport_dot_services__pb2.Empty.SerializeToString,
             ),
     }
@@ -518,6 +535,33 @@ class AsyncInference(object):
             target,
             '/transport.AsyncInference/SendTrajectoryChunk',
             lerobot_dot_transport_dot_services__pb2.TrajectoryChunk.SerializeToString,
+            lerobot_dot_transport_dot_services__pb2.Empty.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SendRLTTransitions(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/transport.AsyncInference/SendRLTTransitions',
+            lerobot_dot_transport_dot_services__pb2.RLTTransitionChunk.SerializeToString,
             lerobot_dot_transport_dot_services__pb2.Empty.FromString,
             options,
             channel_credentials,
