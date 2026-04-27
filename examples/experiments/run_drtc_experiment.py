@@ -141,6 +141,7 @@ class ExperimentConfig:
     latency_beta: float = 0.25
     # Timing
     duration_s: float = 60.0
+    run_until_interrupt: bool = False
     fps: int = 60
     actions_per_chunk: int = 50
     # Flow matching / RTC
@@ -202,7 +203,7 @@ _SCALAR_FIELDS = frozenset({
     "rlt_target_update_tau", "rlt_execute_after_train_steps",
     "rlt_context_cache_size", "rlt_transition_queue_size",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
-    "duration_s", "fps", "actions_per_chunk",
+    "duration_s", "run_until_interrupt", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
     "rtc_prefix_attention_schedule", "rtc_sigma_d", "rtc_full_trajectory_alignment",
     "action_filter_mode", "action_filter_butterworth_cutoff",
@@ -520,13 +521,17 @@ def run_experiment(
     client = RobotClientDrtc(client_cfg)
 
     def stop_after_duration():
+        if config.duration_s <= 0:
+            return
         time.sleep(config.duration_s)
         client.signal_stop()
 
     def signal_handler(sig, frame):
         client.signal_stop()
 
-    timer_thread = threading.Thread(target=stop_after_duration, daemon=True)
+    timer_thread: threading.Thread | None = None
+    if not config.run_until_interrupt:
+        timer_thread = threading.Thread(target=stop_after_duration, daemon=True)
     original_handler = signal.signal(signal.SIGINT, signal_handler)
 
     try:
@@ -537,14 +542,18 @@ def run_experiment(
             action_thread = threading.Thread(target=client.action_receiver, daemon=True)
             obs_thread.start()
             action_thread.start()
-            timer_thread.start()
-            logger.info(f"Running for {config.duration_s}s...")
+            if timer_thread is not None:
+                timer_thread.start()
+                logger.info(f"Running for {config.duration_s}s...")
+            else:
+                logger.info("Running until user interrupt (Ctrl+C)...")
             try:
                 client.control_loop(task=task)
             except Exception as e:
                 logger.exception(f"Control loop error: {e}")
             # Wait for the timer thread to finish (it calls signal_stop which flushes)
-            timer_thread.join(timeout=5.0)
+            if timer_thread is not None:
+                timer_thread.join(timeout=5.0)
             # Ensure metrics are flushed from the main thread in case signal_stop
             # hasn't finished or was never called (e.g. control loop exited early).
             if client._metrics.experiment is not None and client.config.metrics_path:
@@ -612,6 +621,11 @@ def main():
     )
     parser.add_argument("--pause_between_s", type=float, default=10.0)
     parser.add_argument(
+        "--run_until_interrupt",
+        action="store_true",
+        help="Override YAML duration_s and run the experiment until Ctrl+C.",
+    )
+    parser.add_argument(
         "--inference_advantage",
         type=float,
         default=None,
@@ -646,6 +660,9 @@ def main():
                 args.inference_advantage,
             )
             config.inference_advantage = args.inference_advantage
+        if args.run_until_interrupt:
+            logger.info("Overriding YAML duration: running until Ctrl+C")
+            config.run_until_interrupt = True
 
         experiment_name = (args.experiment_name or "").strip() or None
         result = run_experiment(

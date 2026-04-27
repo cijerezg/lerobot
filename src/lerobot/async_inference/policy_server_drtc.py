@@ -1009,8 +1009,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 model_value._profile_inference = True
             self.logger.info("DRTC per-chunk inference timing enabled")
 
-        # Optional: enable RTC via client instructions (server-side inpainting)
-        if getattr(policy_specs, "rtc_enabled", False) and self.policy_type != "pi05_rlt":
+        # Optional: enable RTC via client instructions (server-side inpainting).
+        # `pi05_rlt` reuses the same frozen PI0.5 action sampler, so the RTC
+        # processor can be attached before the RLT head/ref collection path.
+        if getattr(policy_specs, "rtc_enabled", False):
             # Handle optional max_guidance_weight (None = use num_flow_matching_steps, Alex Soare opt)
             max_gw_raw = getattr(policy_specs, "rtc_max_guidance_weight", None)
             max_gw = float(max_gw_raw) if max_gw_raw is not None else None

@@ -76,11 +76,12 @@ latency_beta: 0.25
 
 # Timing
 duration_s: 120.0
+run_until_interrupt: true
 fps: 30
 
 # Flow matching / RTC
 num_flow_matching_steps: 5
-rtc_enabled: false
+rtc_enabled: true
 rtc_max_guidance_weight:
 rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 0.2
