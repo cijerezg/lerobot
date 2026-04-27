@@ -163,7 +163,7 @@ def _add_line(stdscr: curses.window, y: int, x: int, text: str, width: int, attr
 
 def _draw_tabs(stdscr: curses.window, active_tab: int, title: str) -> int:
     _, width = stdscr.getmaxyx()
-    tab_text = "[1 Main] [2 Logs] [Tab switch] [q quit]"
+    tab_text = "[Left/Right: switch tabs] [q: quit and stop experiment]"
     _add_line(stdscr, 0, 0, title, width, curses.A_BOLD)
     _add_line(stdscr, 1, 0, tab_text, width, curses.A_REVERSE)
     marker = "Active: Main" if active_tab == 0 else "Active: Logs"
@@ -212,6 +212,29 @@ def _draw_main(stdscr: curses.window, state: TuiState, start_y: int, closing: bo
         _add_line(stdscr, y, 0, "Experiment process exited; closing TUI...", width, curses.A_BOLD)
         y += 2
 
+    robot_controls = [
+        "2: start episode",
+        "5: toggle intervention",
+        "1: mark success/pass",
+        "0: mark failure/terminate",
+    ]
+    tui_controls = [
+        "Left/Right: switch tabs",
+        "q: quit and stop experiment",
+    ]
+    _add_line(stdscr, y, 0, "Robot Controls", width, curses.A_BOLD)
+    y += 1
+    _add_line(stdscr, y, 0, "  " + "   ".join(robot_controls), width)
+    y += 2
+    if y >= height:
+        return
+    _add_line(stdscr, y, 0, "TUI Controls", width, curses.A_BOLD)
+    y += 1
+    _add_line(stdscr, y, 0, "  " + "   ".join(tui_controls), width)
+    y += 2
+    if y >= height:
+        return
+
     _add_line(stdscr, y, 0, "Recent status events", width, curses.A_BOLD)
     y += 1
     for line in list(state.status_events)[-(height - y - 1) :]:
@@ -241,6 +264,7 @@ def _run_curses(
 ) -> int:
     with suppress(curses.error):
         curses.curs_set(0)
+    stdscr.keypad(True)
     stdscr.nodelay(True)
     stdscr.timeout(200)
 
@@ -272,12 +296,10 @@ def _run_curses(
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):
             return 130
-        if key in (ord("1"),):
+        if key == curses.KEY_LEFT:
             active_tab = 0
-        elif key in (ord("2"),):
+        elif key == curses.KEY_RIGHT:
             active_tab = 1
-        elif key == 9:
-            active_tab = 1 - active_tab
 
 
 def _run_smoke(status_file: Path, client_log_file: Path, server_log_file: Path) -> int:
