@@ -514,7 +514,12 @@ class RobotClientDrtc:
         self._rlt_emitted_context_ids: set[int] = set()
         self._rlt_episode_id = 0
         self._rlt_episode_open = False
+        self._rlt_current_episode_transitions = 0
         if config.rlt_online_collection_enabled:
+            self.logger.info(
+                "RLT collector phase: waiting_to_start_episode | "
+                "press 2=start, 5=toggle intervention, 1=success, 0=failure"
+            )
             self._rlt_transition_sender_thread = threading.Thread(
                 target=self._rlt_transition_sender,
                 name="rlt_transition_sender",
@@ -997,6 +1002,12 @@ class RobotClientDrtc:
             self._rlt_executed_actions.clear()
             self._rlt_pending_chunks.clear()
             self._rlt_emitted_context_ids.clear()
+            self._rlt_current_episode_transitions = 0
+            self.logger.info(
+                "RLT collector phase: recording_episode | episode_id=%d | "
+                "press 5 for interventions, 1=success, 0=failure",
+                self._rlt_episode_id,
+            )
             self._metrics.diagnostic.counter("rlt_episode_started", 1)
 
         success = self._teleop_event(teleop_events, TeleopEvents.SUCCESS)
@@ -1008,6 +1019,8 @@ class RobotClientDrtc:
 
     def _rlt_note_collectable_chunk(self, chunk: ReceivedActionChunk) -> None:
         if not self.config.rlt_online_collection_enabled or not chunk.rlt_collectable:
+            return
+        if not self._rlt_episode_open:
             return
         if chunk.rlt_context_id <= 0 or chunk.rlt_context_id in self._rlt_emitted_context_ids:
             return
@@ -1037,7 +1050,7 @@ class RobotClientDrtc:
         *,
         is_intervention: bool,
     ) -> None:
-        if not self.config.rlt_online_collection_enabled:
+        if not self.config.rlt_online_collection_enabled or not self._rlt_episode_open:
             return
         self._rlt_executed_actions[int(step)] = RLTExecutedAction(
             action=np.asarray(action, dtype=np.float32).copy(),
@@ -1091,6 +1104,7 @@ class RobotClientDrtc:
             )
             try:
                 self._rlt_transition_queue.put_nowait(transition)
+                self._rlt_current_episode_transitions += 1
             except Full:
                 self._metrics.diagnostic.counter("rlt_transition_dropped_queue_full", 1)
             self._rlt_emitted_context_ids.add(context_id)
@@ -1099,9 +1113,22 @@ class RobotClientDrtc:
         for context_id in emitted_ids:
             self._rlt_pending_chunks.pop(context_id, None)
         if done:
+            label = "success" if success else "failure"
+            self.logger.info(
+                "RLT collector phase: episode_labeled | episode_id=%d | label=%s | "
+                "reward=%.1f | queued_transitions=%d",
+                self._rlt_episode_id,
+                label,
+                float(reward),
+                self._rlt_current_episode_transitions,
+            )
             self._rlt_episode_open = False
             self._rlt_pending_chunks.clear()
             self._rlt_executed_actions.clear()
+            self.logger.info(
+                "RLT collector phase: waiting_to_start_episode | "
+                "press 2=start, 5=toggle intervention, 1=success, 0=failure"
+            )
 
     # -------------------------------------------------------------------------
     # Action Receiver Thread
