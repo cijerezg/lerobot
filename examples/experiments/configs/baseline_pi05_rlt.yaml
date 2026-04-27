@@ -32,7 +32,7 @@ subtask_generation_enabled: false
 subtask_regeneration_interval: 0
 
 # RLT modules. Leave the head unset for frozen-VLA pass-through inference.
-rlt_enabled: false
+rlt_enabled: true
 
 # Always set this
 rlt_embedding_checkpoint: outputs/pi05_rlt_embedding_cube_subtasks_3/rlt_embedding_step_004200.pt
@@ -88,7 +88,7 @@ rtc_sigma_d: 0.2
 rtc_full_trajectory_alignment: false
 
 # Start without extra client-side filtering while establishing RLT parity.
-action_filter_mode: none
+action_filter_mode: butterworth
 action_filter_butterworth_cutoff: 3.0
 action_filter_gain: 1.0
 
