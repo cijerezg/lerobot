@@ -67,6 +67,7 @@ from .helpers import (
 from .lww_register import LWWRegister
 from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
 from .utils.compression import decode_images_from_transport
+from .utils.drtc_status import emit_status
 from .utils.metrics import DiagnosticMetrics, EvActionChunk, Metrics
 from .utils.simulation import SpikeDelaySimulator
 from .utils.trajectory_viz import TrajectoryVizServer
@@ -308,6 +309,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_trainer_thread: threading.Thread | None = None
         self._rlt_actor_optimizer: torch.optim.Optimizer | None = None
         self._rlt_critic_optimizer: torch.optim.Optimizer | None = None
+        self._rlt_training_head = "disabled"
 
         # Spike delay simulator for experiments
         self._delay_simulator = SpikeDelaySimulator(config=config.mock_spike_config)
@@ -352,6 +354,30 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 parts.append(f"{key}={value}")
         return " ".join(parts)
 
+    def _emit_rlt_status(self, event: str, **fields: Any) -> None:
+        with self._rlt_replay_lock:
+            replay_size = len(self._rlt_replay)
+        emit_status(
+            "policy_server",
+            event,
+            rlt_replay_size=replay_size,
+            rlt_replay_capacity=self._rlt_replay_capacity,
+            rlt_completed_episodes=len(self._rlt_completed_episodes),
+            rlt_train_step=self._rlt_train_step,
+            rlt_online_collection_enabled=self._rlt_online_collection_enabled,
+            rlt_online_training_enabled=self._rlt_online_training_enabled,
+            rlt_training_head=self._rlt_training_head,
+            rlt_actor_training=self._rlt_training_head == "actor",
+            rlt_critic_training=self._rlt_training_head == "critic",
+            **fields,
+        )
+
+    def _set_rlt_training_head(self, head: str) -> None:
+        if head == self._rlt_training_head:
+            return
+        self._rlt_training_head = head
+        self._emit_rlt_status("rlt_training_state")
+
     def _configure_rlt_online(self, policy_specs: RemotePolicyConfig) -> None:
         self._rlt_online_collection_enabled = bool(
             getattr(policy_specs, "rlt_online_collection_enabled", False)
@@ -387,9 +413,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._rlt_critic_optimizer = torch.optim.AdamW(
                 self.policy.rlt_critic.parameters(), lr=self._rlt_critic_lr
             )
+            self._rlt_training_head = "idle"
         else:
             self._rlt_actor_optimizer = None
             self._rlt_critic_optimizer = None
+            self._rlt_training_head = "disabled"
+        self._emit_rlt_status("rlt_configured")
 
     def _next_rlt_context_id_value(self) -> int:
         context_id = self._rlt_next_context_id
@@ -563,6 +592,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._rlt_completed_episodes.add(int(transition.episode_id))
         self._metrics.diagnostic.counter("rlt_transition_accepted", 1)
         self._metrics.diagnostic.set_context(rlt_replay_size=replay_size)
+        self._emit_rlt_status(
+            "rlt_transition_accepted",
+            transition_done=bool(transition.done),
+            transition_success=bool(transition.success),
+            transition_failure=bool(transition.failure),
+            transition_intervention=bool(transition.is_intervention),
+            episode_id=int(transition.episode_id),
+        )
 
     def _start_rlt_trainer_if_needed(self) -> None:
         if not self._rlt_online_training_enabled or self.policy_type != "pi05_rlt":
@@ -580,12 +617,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         while self.running:
             time.sleep(self._rlt_train_freq_s)
             if self.policy is None or self._rlt_actor_optimizer is None or self._rlt_critic_optimizer is None:
+                self._set_rlt_training_head("disabled")
                 continue
             with self._rlt_replay_lock:
                 replay_size = len(self._rlt_replay)
             if replay_size < max(self._rlt_batch_size, self._rlt_warmup_transitions):
+                self._set_rlt_training_head("warmup_replay")
                 continue
             if len(self._rlt_completed_episodes) < self._rlt_warmup_episodes:
+                self._set_rlt_training_head("warmup_episodes")
                 continue
 
             for _ in range(self._rlt_utd_ratio):
@@ -595,11 +635,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     with self._rlt_model_lock:
                         self.policy.rlt_actor.train()
                         self.policy.rlt_critic.train()
+                        self._set_rlt_training_head("critic")
                         critic_loss = rlt_critic_loss(self.policy, batch, self._rlt_discount)
                         self._rlt_critic_optimizer.zero_grad(set_to_none=True)
                         critic_loss.backward()
                         self._rlt_critic_optimizer.step()
 
+                        self._set_rlt_training_head("actor")
                         actor_loss = rlt_actor_loss(self.policy, batch)
                         self._rlt_actor_optimizer.zero_grad(set_to_none=True)
                         actor_loss.backward()
@@ -615,9 +657,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                         "rlt_actor_loss", float(actor_loss.detach().cpu())
                     )
                     self._metrics.diagnostic.set_context(rlt_train_step=self._rlt_train_step)
+                    self._rlt_training_head = "idle"
+                    self._emit_rlt_status(
+                        "rlt_training_step",
+                        rlt_actor_loss=float(actor_loss.detach().cpu()),
+                        rlt_critic_loss=float(critic_loss.detach().cpu()),
+                    )
                     if self._rlt_train_step % self._rlt_save_freq_steps == 0:
                         self._save_rlt_head_checkpoint()
                 except Exception as e:
+                    self._set_rlt_training_head("error")
                     self.logger.warning("RLT trainer step failed: %s", e, exc_info=True)
                     self._metrics.diagnostic.counter("rlt_train_error", 1)
 

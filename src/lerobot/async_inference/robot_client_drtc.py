@@ -39,6 +39,7 @@ from .utils.action_filter import (
     NoFilter,
 )
 from .utils.compression import encode_images_for_transport
+from .utils.drtc_status import emit_status
 from .utils.latency_estimation import make_latency_estimator
 from .utils.metrics import DiagnosticMetrics, EvExecutedAction, ExperimentMetricsWriter, Metrics
 from .utils.simulation import (
@@ -515,11 +516,16 @@ class RobotClientDrtc:
         self._rlt_episode_id = 0
         self._rlt_episode_open = False
         self._rlt_current_episode_transitions = 0
+        self._rlt_completed_episodes_count = 0
+        self._rlt_last_episode_label: str | None = None
+        self._rlt_phase = "reset"
+        self._rlt_phase_intervening = False
         if config.rlt_online_collection_enabled:
             self.logger.info(
                 "RLT collector phase: waiting_to_start_episode | "
                 "press 2=start, 5=toggle intervention, 1=success, 0=failure"
             )
+            self._emit_rlt_status("rlt_phase", phase="reset")
             self._rlt_transition_sender_thread = threading.Thread(
                 target=self._rlt_transition_sender,
                 name="rlt_transition_sender",
@@ -541,6 +547,32 @@ class RobotClientDrtc:
         Note: Only the main control loop thread should access this property.
         """
         return max(self.action_step, -1)
+
+    def _emit_rlt_status(self, event: str, *, phase: str | None = None, **fields: Any) -> None:
+        if phase is not None:
+            self._rlt_phase = phase
+        emit_status(
+            "robot_client",
+            event,
+            phase=self._rlt_phase,
+            episode_id=self._rlt_episode_id,
+            episode_open=self._rlt_episode_open,
+            episodes_recorded=self._rlt_completed_episodes_count,
+            current_episode_transitions=self._rlt_current_episode_transitions,
+            last_label=self._rlt_last_episode_label,
+            intervention=self._rlt_phase_intervening,
+            rlt_online_collection_enabled=self.config.rlt_online_collection_enabled,
+            **fields,
+        )
+
+    def _set_rlt_recording_phase(self, intervening: bool) -> None:
+        if not self.config.rlt_online_collection_enabled or not self._rlt_episode_open:
+            return
+        phase = "recording_with_intervention" if intervening else "recording"
+        if phase == self._rlt_phase and intervening == self._rlt_phase_intervening:
+            return
+        self._rlt_phase_intervening = intervening
+        self._emit_rlt_status("rlt_phase", phase=phase)
 
     def _poll_teleop_events(self) -> dict[Any, Any]:
         """Poll teleop events once for a control tick."""
@@ -1003,11 +1035,14 @@ class RobotClientDrtc:
             self._rlt_pending_chunks.clear()
             self._rlt_emitted_context_ids.clear()
             self._rlt_current_episode_transitions = 0
+            self._rlt_last_episode_label = None
+            self._rlt_phase_intervening = False
             self.logger.info(
                 "RLT collector phase: recording_episode | episode_id=%d | "
                 "press 5 for interventions, 1=success, 0=failure",
                 self._rlt_episode_id,
             )
+            self._emit_rlt_status("rlt_episode_started", phase="recording")
             self._metrics.diagnostic.counter("rlt_episode_started", 1)
 
         success = self._teleop_event(teleop_events, TeleopEvents.SUCCESS)
@@ -1105,6 +1140,11 @@ class RobotClientDrtc:
             try:
                 self._rlt_transition_queue.put_nowait(transition)
                 self._rlt_current_episode_transitions += 1
+                self._emit_rlt_status(
+                    "rlt_transition_queued",
+                    queued_transition_done=bool(done),
+                    queued_transition_intervention=bool(transition.is_intervention),
+                )
             except Full:
                 self._metrics.diagnostic.counter("rlt_transition_dropped_queue_full", 1)
             self._rlt_emitted_context_ids.add(context_id)
@@ -1114,6 +1154,9 @@ class RobotClientDrtc:
             self._rlt_pending_chunks.pop(context_id, None)
         if done:
             label = "success" if success else "failure"
+            self._rlt_completed_episodes_count += 1
+            self._rlt_last_episode_label = label
+            self._rlt_phase_intervening = False
             self.logger.info(
                 "RLT collector phase: episode_labeled | episode_id=%d | label=%s | "
                 "reward=%.1f | queued_transitions=%d",
@@ -1122,6 +1165,14 @@ class RobotClientDrtc:
                 float(reward),
                 self._rlt_current_episode_transitions,
             )
+            self._emit_rlt_status(
+                "rlt_episode_labeled",
+                phase="reset",
+                label=label,
+                reward=float(reward),
+                success=bool(success),
+                failure=bool(failure),
+            )
             self._rlt_episode_open = False
             self._rlt_pending_chunks.clear()
             self._rlt_executed_actions.clear()
@@ -1129,6 +1180,7 @@ class RobotClientDrtc:
                 "RLT collector phase: waiting_to_start_episode | "
                 "press 2=start, 5=toggle intervention, 1=success, 0=failure"
             )
+            self._emit_rlt_status("rlt_phase", phase="reset")
 
     # -------------------------------------------------------------------------
     # Action Receiver Thread
@@ -1364,6 +1416,7 @@ class RobotClientDrtc:
                 teleop_events
             )
             intervening = self._teleop_event(teleop_events, TeleopEvents.IS_INTERVENTION)
+            self._set_rlt_recording_phase(intervening)
 
             if intervening:
                 # Override the policy's action with the leader's joint positions.
