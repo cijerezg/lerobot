@@ -103,6 +103,11 @@ class SOLeader(Teleoperator):
         # Prefer pynput (global desktop hotkeys), fall back to a stdin/TTY listener
         # for headless machines (e.g. SSH sessions without X11 forwarding).
         # Force terminal mode by exporting LEROBOT_TELEOP_TERMINAL_KEYS=1.
+        if os.environ.get("LEROBOT_DRTC_CONTROL_FILE"):
+            logger.info("Skipping SO leader keyboard listener; DRTC TUI controls are active.")
+            logger.info(f"{self} connected.")
+            return
+
         force_terminal = os.environ.get("LEROBOT_TELEOP_TERMINAL_KEYS", "").lower() in ("1", "true", "yes")
         pynput_started = False
         if not force_terminal:

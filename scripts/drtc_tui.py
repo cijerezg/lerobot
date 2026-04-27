@@ -15,6 +15,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+ROBOT_KEY_COMMANDS = {
+    ord("2"): "start_episode",
+    ord("5"): "toggle_intervention",
+    ord("1"): "success",
+    ord("0"): "failure",
+}
+
 
 @dataclass
 class TailedTextFile:
@@ -98,6 +105,7 @@ def _status_event_detail(event: dict[str, Any]) -> str:
 
 def _phase_label(phase: Any) -> str:
     mapping = {
+        "model_loading": "Model loading",
         "recording": "Recording",
         "recording_with_intervention": "Recording with intervention",
         "reset": "Episode complete/reset",
@@ -146,6 +154,27 @@ def _update_from_files(
     for tail in log_tails:
         for line in tail.read_new_lines():
             state.log_lines.append(f"[{tail.label}] {line}")
+
+
+def _write_control_command(control_file: Path | None, command: str, state: TuiState) -> None:
+    label = command.replace("_", " ")
+    if control_file is None:
+        state.status_events.append(f"{_format_time(time.time())} tui: control disabled ({label})")
+        return
+
+    payload = {
+        "ts": time.time(),
+        "source": "drtc_tui",
+        "command": command,
+    }
+    try:
+        control_file.parent.mkdir(parents=True, exist_ok=True)
+        with control_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except OSError as e:
+        state.status_events.append(f"{_format_time(time.time())} tui: failed to send {label}: {e}")
+        return
+    state.status_events.append(f"{_format_time(payload['ts'])} tui: sent {label}")
 
 
 def _add_line(stdscr: curses.window, y: int, x: int, text: str, width: int, attr: int = 0) -> None:
@@ -258,6 +287,7 @@ def _run_curses(
     stdscr: curses.window,
     *,
     status_file: Path,
+    control_file: Path | None,
     client_log_file: Path,
     server_log_file: Path,
     watch_pid: int | None,
@@ -296,7 +326,9 @@ def _run_curses(
         key = stdscr.getch()
         if key in (ord("q"), ord("Q")):
             return 130
-        if key == curses.KEY_LEFT:
+        if key in ROBOT_KEY_COMMANDS:
+            _write_control_command(control_file, ROBOT_KEY_COMMANDS[key], state)
+        elif key == curses.KEY_LEFT:
             active_tab = 0
         elif key == curses.KEY_RIGHT:
             active_tab = 1
@@ -325,6 +357,7 @@ def _run_smoke(status_file: Path, client_log_file: Path, server_log_file: Path) 
 def main() -> int:
     parser = argparse.ArgumentParser(description="DRTC experiment TUI")
     parser.add_argument("--status-file", required=True, type=Path)
+    parser.add_argument("--control-file", type=Path, default=None)
     parser.add_argument("--client-log-file", required=True, type=Path)
     parser.add_argument("--server-log-file", required=True, type=Path)
     parser.add_argument("--watch-pid", type=int, default=None)
@@ -337,6 +370,7 @@ def main() -> int:
     return int(curses.wrapper(
         _run_curses,
         status_file=args.status_file,
+        control_file=args.control_file,
         client_log_file=args.client_log_file,
         server_log_file=args.server_log_file,
         watch_pid=args.watch_pid,

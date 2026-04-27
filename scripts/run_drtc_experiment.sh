@@ -55,6 +55,7 @@ LOG_TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 LOG_FILE="$LOG_DIR/policy_server_${LOG_TIMESTAMP}.log"
 CLIENT_LOG_FILE="$LOG_DIR/drtc_experiment_${LOG_TIMESTAMP}.log"
 STATUS_FILE="$LOG_DIR/drtc_status_${LOG_TIMESTAMP}.jsonl"
+CONTROL_FILE="$LOG_DIR/drtc_controls_${LOG_TIMESTAMP}.jsonl"
 
 # PIDs for cleanup
 POLICY_SERVER_PID=""
@@ -111,6 +112,7 @@ echo ""
 mkdir -p "$LOG_DIR"
 : >"$CLIENT_LOG_FILE"
 : >"$STATUS_FILE"
+: >"$CONTROL_FILE"
 
 if ss -tlnp 2>/dev/null | grep -q ":${POLICY_SERVER_PORT} " || \
    lsof -iTCP:"${POLICY_SERVER_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
@@ -175,6 +177,7 @@ echo "      Press Ctrl+C to stop."
 if [ "$ENABLE_TUI" = true ]; then
     echo "      Client logs: $CLIENT_LOG_FILE"
     echo "      Status file: $STATUS_FILE"
+    echo "      Control file: $CONTROL_FILE"
 fi
 echo ""
 echo "----------------------------------------------"
@@ -189,6 +192,7 @@ fi
 
 if [ "$ENABLE_TUI" = true ]; then
     LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE" \
+    LEROBOT_DRTC_CONTROL_FILE="$CONTROL_FILE" \
         uv run --no-sync python examples/experiments/run_drtc_experiment.py "${EXTRA_ARGS[@]}" "$@" \
         >"$CLIENT_LOG_FILE" 2>&1 &
     EXPERIMENT_PID=$!
@@ -196,6 +200,7 @@ if [ "$ENABLE_TUI" = true ]; then
     set +e
     uv run --no-sync python scripts/drtc_tui.py \
         --status-file "$STATUS_FILE" \
+        --control-file "$CONTROL_FILE" \
         --client-log-file "$CLIENT_LOG_FILE" \
         --server-log-file "$LOG_FILE" \
         --watch-pid "$EXPERIMENT_PID"

@@ -39,7 +39,7 @@ from .utils.action_filter import (
     NoFilter,
 )
 from .utils.compression import encode_images_for_transport
-from .utils.drtc_status import emit_status
+from .utils.drtc_status import DrtcControlReader, emit_status
 from .utils.latency_estimation import make_latency_estimator
 from .utils.metrics import DiagnosticMetrics, EvExecutedAction, ExperimentMetricsWriter, Metrics
 from .utils.simulation import (
@@ -352,6 +352,8 @@ class RobotClientDrtc:
         self._teleop_device = None
         self._was_intervening = False
         self._latest_follower_pos: dict[str, float] = {}
+        self._tui_control_reader = DrtcControlReader()
+        self._tui_intervention_enabled = False
         if config.teleop_enabled and config.teleop is not None:
             self.logger.info("Connecting teleop device of type %s", config.teleop.type)
             self._teleop_device = make_teleoperator_from_config(config.teleop)
@@ -576,13 +578,63 @@ class RobotClientDrtc:
 
     def _poll_teleop_events(self) -> dict[Any, Any]:
         """Poll teleop events once for a control tick."""
+        commands = self._tui_control_reader.read_commands()
+        fallback_commands: list[str] = []
+        key_handler = getattr(self._teleop_device, "_handle_key_char", None)
+        key_chars = {
+            "toggle_intervention": "5",
+            "start_episode": "2",
+            "success": "1",
+            "failure": "0",
+        }
+        for command in commands:
+            char = key_chars.get(command)
+            if callable(key_handler) and char is not None:
+                try:
+                    key_handler(char)
+                    self._emit_rlt_status("tui_control", command=command)
+                except Exception as e:
+                    self.logger.error("TUI teleop command failed: %s", e)
+            else:
+                fallback_commands.append(command)
+
+        events: dict[Any, Any] = {}
         if self._teleop_device is None:
-            return {}
-        try:
-            return dict(self._teleop_device.get_teleop_events())
-        except Exception as e:
-            self.logger.error("Teleop event read failed: %s", e)
-            return {}
+            pass
+        else:
+            try:
+                events.update(dict(self._teleop_device.get_teleop_events()))
+            except Exception as e:
+                self.logger.error("Teleop event read failed: %s", e)
+
+        for command in fallback_commands:
+            if command == "toggle_intervention":
+                self._tui_intervention_enabled = not self._tui_intervention_enabled
+                self._emit_rlt_status(
+                    "tui_control",
+                    command=command,
+                    tui_intervention_enabled=self._tui_intervention_enabled,
+                )
+            elif command == "start_episode":
+                events[TeleopEvents.START_EPISODE] = True
+                events[TeleopEvents.START_EPISODE.value] = True
+                self._emit_rlt_status("tui_control", command=command)
+            elif command == "success":
+                events[TeleopEvents.SUCCESS] = True
+                events[TeleopEvents.SUCCESS.value] = True
+                self._emit_rlt_status("tui_control", command=command)
+            elif command == "failure":
+                events[TeleopEvents.TERMINATE_EPISODE] = True
+                events[TeleopEvents.TERMINATE_EPISODE.value] = True
+                events[TeleopEvents.FAILURE] = True
+                events[TeleopEvents.FAILURE.value] = True
+                self._emit_rlt_status("tui_control", command=command)
+
+        if self._tui_intervention_enabled:
+            events[TeleopEvents.IS_INTERVENTION] = True
+            events[TeleopEvents.IS_INTERVENTION.value] = True
+
+        return events
 
     @staticmethod
     def _teleop_event(events: dict[Any, Any], event: TeleopEvents) -> bool:
@@ -646,9 +698,15 @@ class RobotClientDrtc:
             policy_setup = services_pb2.PolicySetup(data=policy_config_bytes)
 
             t_policy_rpc_start = time.perf_counter()
+            self._emit_rlt_status("model_loading", phase="model_loading")
             self.stub.SendPolicyInstructions(policy_setup)
             t_policy_rpc_done = time.perf_counter()
             self._metrics.diagnostic.timing_s("policy_rpc_ms", t_policy_rpc_done - t_policy_rpc_start)
+            self._emit_rlt_status(
+                "model_ready",
+                phase="reset",
+                model_load_ms=self._ms(t_policy_rpc_done - t_policy_rpc_start),
+            )
 
             self.shutdown_event.clear()
 
