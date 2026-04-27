@@ -27,7 +27,7 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: pi05_rlt
-pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/000800/pretrained_model
+pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/last/pretrained_model
 subtask_generation_enabled: false
 subtask_regeneration_interval: 0
 
