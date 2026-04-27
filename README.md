@@ -104,7 +104,7 @@ Following the suggestions from the RECAP paper, we suggest to retrain every time
 
 
 > [!IMPORTANT]
-> While these instructions might get you started, we recommend reading the [full documentation](docs/full_documentation.md) for better results.
+> While these instructions might get you started, we recommend reading the [advanced usage guide](docs/pi05_docs/advanced_usage.md) for better results.
 
 
 
@@ -123,8 +123,8 @@ python -m lerobot.rl.inference_pi05_async --config path/to/config.json
 
 Many _important_ details were ommitted in this introduction, and as we all know the devil is in the details, especially in a research-oriented repo. For that reason, we really recommend reading the rest of the documentation, which is structure as:
 
-- [Advanced usage](docs/advanced_usage.md): a deep dive on how to use all the features in the repo.
-- [RECAP implementation](doc/recap_implementation.md): an overview of RECAP and details about our implementation.
-- [Validation metrics](docs/metrics.md): explains the metrics that we chose and how they help uncover the inner workings of the model.
+- [Advanced usage](docs/pi05_docs/advanced_usage.md): a deep dive on how to use all the features in the repo.
+- [RECAP implementation](docs/pi05_docs/recap_implementation.md): an overview of RECAP and details about our implementation.
+- [Validation metrics](docs/pi05_docs/metrics.md): explains the metrics that we chose and how they help uncover the inner workings of the model.
 
 
