@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import io
 import json
+import math
 import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from queue import Empty, Full, Queue
 from typing import Any
 
 ROBOT_KEY_COMMANDS = {
@@ -19,6 +23,34 @@ ROBOT_KEY_COMMANDS = {
     "1": "success",
     "0": "failure",
 }
+LOSS_HISTORY_SAMPLES = 240
+LOSS_CHART_WIDTH = 56
+LOSS_CHART_HEIGHT = 3
+LOSS_AXIS_WIDTH = 10
+TRAJECTORY_CHUNKS = 10
+TRAJECTORY_EXECUTED_ACTIONS = 500
+TRAJECTORY_CHART_WIDTH = 72
+TRAJECTORY_CHART_HEIGHT = 3
+TRAJECTORY_MAX_DIMS = 6
+TRAJECTORY_QUEUE_SIZE = 1000
+TRAJECTORY_CHUNK_MARKERS = "0123456789"
+
+
+@dataclass
+class TrajectoryChunk:
+    source_step: int
+    actions: list[list[float]]
+    frozen_len: int
+    timestamp: float
+    rtc_params: dict[str, Any] | None = None
+    prefix_weights: list[float] | None = None
+
+
+@dataclass
+class ExecutedAction:
+    step: int
+    action: list[float]
+    timestamp: float
 
 
 @dataclass
@@ -68,8 +100,14 @@ class TuiState:
     server: dict[str, Any] = field(default_factory=dict)
     status_events: deque[str] = field(default_factory=lambda: deque(maxlen=16))
     log_lines: deque[str] = field(default_factory=lambda: deque(maxlen=1000))
-    actor_loss_history: deque[float] = field(default_factory=lambda: deque(maxlen=180))
-    critic_loss_history: deque[float] = field(default_factory=lambda: deque(maxlen=180))
+    actor_loss_history: deque[float] = field(default_factory=lambda: deque(maxlen=LOSS_HISTORY_SAMPLES))
+    critic_loss_history: deque[float] = field(default_factory=lambda: deque(maxlen=LOSS_HISTORY_SAMPLES))
+    trajectory_chunks: deque[TrajectoryChunk] = field(default_factory=lambda: deque(maxlen=TRAJECTORY_CHUNKS))
+    executed_actions: deque[ExecutedAction] = field(
+        default_factory=lambda: deque(maxlen=TRAJECTORY_EXECUTED_ACTIONS)
+    )
+    trajectory_status: str = "disabled"
+    trajectory_error: str = ""
 
     def apply_status_event(self, event: dict[str, Any]) -> None:
         source = str(event.get("source", "unknown"))
@@ -88,16 +126,50 @@ class TuiState:
         stamp = _format_time(float(event.get("ts", time.time())))
         self.status_events.append(f"{stamp} {source}: {event_name}{detail}")
 
+    def apply_trajectory_event(self, event: dict[str, Any]) -> None:
+        event_type = str(event.get("type", ""))
+        if event_type == "trajectory_status":
+            self.trajectory_status = str(event.get("status", "unknown"))
+            self.trajectory_error = str(event.get("error", ""))
+            return
+
+        if event_type == "action_chunk":
+            chunk = _parse_trajectory_chunk(event)
+            if chunk is not None:
+                self.trajectory_chunks.append(chunk)
+            return
+
+        if event_type == "executed_action":
+            action = _parse_executed_action(event)
+            if action is not None:
+                self.executed_actions.append(action)
+
 
 def _format_time(ts: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(ts))
+
+
+def _plain_text(value: Any) -> str:
+    return str(value).replace("[", "(").replace("]", ")")
 
 
 def _to_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
     try:
-        return float(value)
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def _to_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return None
 
@@ -136,6 +208,63 @@ def _phase_label(phase: Any) -> str:
         "waiting_to_start_next_episode": "Waiting to start next episode/reset (press 2)",
     }
     return mapping.get(str(phase or "reset"), str(phase or "Episode complete/reset"))
+
+
+def _coerce_float_list(value: Any) -> list[float] | None:
+    if not isinstance(value, list):
+        return None
+
+    parsed: list[float] = []
+    for item in value:
+        numeric = _to_float(item)
+        if numeric is None:
+            return None
+        parsed.append(numeric)
+    return parsed
+
+
+def _parse_trajectory_chunk(event: dict[str, Any]) -> TrajectoryChunk | None:
+    source_step = _to_int(event.get("source_step"))
+    if source_step is None:
+        return None
+
+    raw_actions = event.get("actions")
+    if not isinstance(raw_actions, list):
+        return None
+
+    actions: list[list[float]] = []
+    for raw_action in raw_actions:
+        action = _coerce_float_list(raw_action)
+        if action:
+            actions.append(action)
+    if not actions:
+        return None
+
+    frozen_len = _to_int(event.get("frozen_len")) or 0
+    timestamp = _to_float(event.get("timestamp"))
+    if timestamp is None:
+        timestamp = time.time()
+    rtc_params = event.get("rtc_params") if isinstance(event.get("rtc_params"), dict) else None
+    prefix_weights = _coerce_float_list(event.get("prefix_weights"))
+    return TrajectoryChunk(
+        source_step=source_step,
+        actions=actions,
+        frozen_len=frozen_len,
+        timestamp=timestamp,
+        rtc_params=rtc_params,
+        prefix_weights=prefix_weights,
+    )
+
+
+def _parse_executed_action(event: dict[str, Any]) -> ExecutedAction | None:
+    step = _to_int(event.get("step"))
+    action = _coerce_float_list(event.get("action"))
+    if step is None or not action:
+        return None
+    timestamp = _to_float(event.get("timestamp"))
+    if timestamp is None:
+        timestamp = time.time()
+    return ExecutedAction(step=step, action=action, timestamp=timestamp)
 
 
 def _yes_no(value: Any) -> str:
@@ -184,6 +313,87 @@ def _update_from_files(
     return new_log_lines
 
 
+def _put_latest(queue: Queue[dict[str, Any]], event: dict[str, Any]) -> None:
+    try:
+        queue.put_nowait(event)
+    except Full:
+        try:
+            queue.get_nowait()
+        except Empty:
+            pass
+        try:
+            queue.put_nowait(event)
+        except Full:
+            pass
+
+
+def _drain_queue(queue: Queue[dict[str, Any]]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    while True:
+        try:
+            events.append(queue.get_nowait())
+        except Empty:
+            return events
+
+
+async def _trajectory_listener_loop(
+    ws_url: str,
+    event_queue: Queue[dict[str, Any]],
+    stop_event: threading.Event,
+) -> None:
+    try:
+        import websockets
+    except ImportError:
+        _put_latest(
+            event_queue,
+            {
+                "type": "trajectory_status",
+                "status": "disabled",
+                "error": "websockets package is not installed",
+            },
+        )
+        return
+
+    while not stop_event.is_set():
+        _put_latest(event_queue, {"type": "trajectory_status", "status": "connecting", "error": ""})
+        try:
+            async with websockets.connect(ws_url) as websocket:
+                _put_latest(event_queue, {"type": "trajectory_status", "status": "connected", "error": ""})
+                while not stop_event.is_set():
+                    try:
+                        message = await asyncio.wait_for(websocket.recv(), timeout=0.2)
+                    except asyncio.TimeoutError:
+                        continue
+
+                    try:
+                        event = json.loads(message)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict):
+                        _put_latest(event_queue, event)
+        except Exception as e:
+            if not stop_event.is_set():
+                _put_latest(
+                    event_queue,
+                    {
+                        "type": "trajectory_status",
+                        "status": "disconnected",
+                        "error": str(e),
+                    },
+                )
+                await asyncio.sleep(1.0)
+
+    _put_latest(event_queue, {"type": "trajectory_status", "status": "stopped", "error": ""})
+
+
+def _run_trajectory_listener(
+    ws_url: str,
+    event_queue: Queue[dict[str, Any]],
+    stop_event: threading.Event,
+) -> None:
+    asyncio.run(_trajectory_listener_loop(ws_url, event_queue, stop_event))
+
+
 def _write_control_command(control_file: Path | None, command: str, state: TuiState) -> None:
     label = command.replace("_", " ")
     if control_file is None:
@@ -205,25 +415,261 @@ def _write_control_command(control_file: Path | None, command: str, state: TuiSt
     state.status_events.append(f"{_format_time(payload['ts'])} tui: sent {label}")
 
 
-def _sparkline(values: deque[float], *, width: int = 64) -> str:
+def _line_chart(
+    values: deque[float],
+    *,
+    width: int = LOSS_CHART_WIDTH,
+    height: int = LOSS_CHART_HEIGHT,
+) -> list[str]:
     if not values:
-        return "no samples yet"
+        return [" " * (LOSS_AXIS_WIDTH + 2) + "no samples yet"]
 
-    ticks = "▁▂▃▄▅▆▇█"
     selected = list(values)[-width:]
     low = min(selected)
     high = max(selected)
+    rows = [[" "] * len(selected) for _ in range(height)]
+
     if high == low:
-        return ticks[0] * len(selected)
-    scale = (len(ticks) - 1) / (high - low)
-    return "".join(ticks[int((value - low) * scale)] for value in selected)
+        row_indices = [height // 2] * len(selected)
+    else:
+        span = high - low
+        row_indices = [
+            height - 1 - int(round((value - low) / span * (height - 1)))
+            for value in selected
+        ]
+
+    for column, row in enumerate(row_indices):
+        rows[row][column] = "•"
+
+    lines: list[str] = []
+    for row, cells in enumerate(rows):
+        if height == 1:
+            axis_value = selected[-1]
+        else:
+            axis_value = high - ((high - low) * row / (height - 1))
+        lines.append(f"{axis_value:>{LOSS_AXIS_WIDTH}.4g} ┤{''.join(cells).rstrip()}")
+    return lines
 
 
 def _history_summary(values: deque[float]) -> str:
     if not values:
-        return "latest=n/a min=n/a max=n/a"
+        return "samples=0 latest=n/a min=n/a max=n/a"
     selected = list(values)
-    return f"latest={selected[-1]:.6f} min={min(selected):.6f} max={max(selected):.6f}"
+    return (
+        f"samples={len(selected)} latest={selected[-1]:.6f} "
+        f"min={min(selected):.6f} max={max(selected):.6f}"
+    )
+
+
+def _format_loss_series(label: str, values: deque[float]) -> str:
+    chart = "\n".join(_line_chart(values))
+    return f"[b]{label}[/b] {_history_summary(values)}\n{chart}"
+
+
+def _format_loss_chart(actor_values: deque[float], critic_values: deque[float]) -> str:
+    return (
+        "[b]RLT Loss Chart[/b]\n"
+        f"{_format_loss_series('Actor', actor_values)}\n"
+        f"{_format_loss_series('Critic', critic_values)}"
+    )
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _resample_values(values: list[float], width: int) -> list[float]:
+    if width <= 0:
+        return []
+    if len(values) <= width:
+        return values
+    if width == 1:
+        return [values[-1]]
+
+    sampled: list[float] = []
+    last_index = len(values) - 1
+    for column in range(width):
+        source_index = round(column * last_index / (width - 1))
+        sampled.append(values[source_index])
+    return sampled
+
+
+def _barline(values: list[float], *, width: int = TRAJECTORY_CHART_WIDTH) -> str:
+    if not values:
+        return "n/a"
+
+    ticks = "▁▂▃▄▅▆▇█"
+    selected = _resample_values(values, width)
+    low = min(selected)
+    high = max(selected)
+    if high == low:
+        return ticks[0] * len(selected)
+
+    scale = (len(ticks) - 1) / (high - low)
+    return "".join(ticks[int((value - low) * scale)] for value in selected)
+
+
+def _format_rtc_params(chunk: TrajectoryChunk | None) -> str:
+    if chunk is None:
+        return "RTC: no chunks yet"
+    if not chunk.rtc_params:
+        return f"RTC: frozen_len={chunk.frozen_len} params=n/a"
+
+    params = chunk.rtc_params
+    h_value = params.get("H", len(chunk.actions))
+    delay = params.get("d", chunk.frozen_len)
+    overlap_end = params.get("overlap_end", h_value)
+    schedule = params.get("schedule", "unknown")
+    sigma_d = params.get("sigma_d", "auto")
+    max_guidance_weight = params.get("max_guidance_weight", "auto")
+    return (
+        "RTC: "
+        f"H={h_value} d={delay} overlap_end={overlap_end} "
+        f"schedule={schedule} sigma_d={sigma_d} max_beta={max_guidance_weight}"
+    )
+
+
+def _format_prefix_weights(chunk: TrajectoryChunk | None) -> str:
+    if chunk is None or not chunk.prefix_weights:
+        return "Prefix weights: n/a"
+    return f"Prefix weights: {_barline(chunk.prefix_weights)}"
+
+
+def _trajectory_dim_count(chunks: deque[TrajectoryChunk], executed_actions: deque[ExecutedAction]) -> int:
+    for chunk in reversed(chunks):
+        if chunk.actions:
+            return min(len(chunk.actions[0]), TRAJECTORY_MAX_DIMS)
+    for executed in reversed(executed_actions):
+        if executed.action:
+            return min(len(executed.action), TRAJECTORY_MAX_DIMS)
+    return 0
+
+
+def _trajectory_step_window(
+    chunks: deque[TrajectoryChunk],
+    executed_actions: deque[ExecutedAction],
+) -> tuple[int, int] | None:
+    starts: list[int] = []
+    ends: list[int] = []
+    for chunk in chunks:
+        starts.append(chunk.source_step)
+        ends.append(chunk.source_step + len(chunk.actions) - 1)
+    for executed in executed_actions:
+        starts.append(executed.step)
+        ends.append(executed.step)
+
+    if not starts or not ends:
+        return None
+    return min(starts), max(ends)
+
+
+def _step_to_column(step: int, start_step: int, end_step: int, width: int) -> int:
+    if end_step <= start_step:
+        return 0
+    return int(round((step - start_step) / (end_step - start_step) * (width - 1)))
+
+
+def _value_to_row(value: float, low: float, high: float, height: int) -> int:
+    if high == low:
+        return height // 2
+    row = height - 1 - int(round((value - low) / (high - low) * (height - 1)))
+    return max(0, min(height - 1, row))
+
+
+def _format_trajectory_dimension(
+    chunks: deque[TrajectoryChunk],
+    executed_actions: deque[ExecutedAction],
+    dim: int,
+    *,
+    width: int = TRAJECTORY_CHART_WIDTH,
+    height: int = TRAJECTORY_CHART_HEIGHT,
+) -> str:
+    window = _trajectory_step_window(chunks, executed_actions)
+    if window is None:
+        return f"joint {dim}: no trajectory samples"
+
+    start_step, end_step = window
+    values: list[float] = []
+    for chunk in chunks:
+        for action in chunk.actions:
+            if dim < len(action):
+                values.append(action[dim])
+    for executed in executed_actions:
+        if dim < len(executed.action):
+            values.append(executed.action[dim])
+    if not values:
+        return f"joint {dim}: no trajectory samples"
+
+    low = min(values)
+    high = max(values)
+    rows = [[" "] * width for _ in range(height)]
+
+    for chunk_index, chunk in enumerate(chunks):
+        marker = TRAJECTORY_CHUNK_MARKERS[chunk_index % len(TRAJECTORY_CHUNK_MARKERS)]
+        for offset, action in enumerate(chunk.actions):
+            if dim >= len(action):
+                continue
+            step = chunk.source_step + offset
+            column = _step_to_column(step, start_step, end_step, width)
+            row = _value_to_row(action[dim], low, high, height)
+            rows[row][column] = marker
+
+    for executed in executed_actions:
+        if dim >= len(executed.action):
+            continue
+        column = _step_to_column(executed.step, start_step, end_step, width)
+        row = _value_to_row(executed.action[dim], low, high, height)
+        rows[row][column] = "*"
+
+    lines = [f"joint {dim} latest={values[-1]:.4g} min={low:.4g} max={high:.4g}"]
+    for row, cells in enumerate(rows):
+        axis_value = high - ((high - low) * row / (height - 1)) if height > 1 else values[-1]
+        lines.append(f"{axis_value:>9.4g} ┤{''.join(cells).rstrip()}")
+    return "\n".join(lines)
+
+
+def _format_trajectory_legend(chunks: deque[TrajectoryChunk]) -> str:
+    if not chunks:
+        return "Chunks: none"
+
+    parts: list[str] = []
+    for index, chunk in enumerate(chunks):
+        marker = TRAJECTORY_CHUNK_MARKERS[index % len(TRAJECTORY_CHUNK_MARKERS)]
+        end_step = chunk.source_step + len(chunk.actions) - 1
+        parts.append(f"{marker}:src={chunk.source_step} steps={chunk.source_step}-{end_step}")
+    return "Chunks: " + "  ".join(parts[-TRAJECTORY_CHUNKS:])
+
+
+def _format_trajectory_summary(state: TuiState) -> str:
+    latest = state.trajectory_chunks[-1] if state.trajectory_chunks else None
+    dim_count = _trajectory_dim_count(state.trajectory_chunks, state.executed_actions)
+    latest_age = "n/a" if latest is None else f"{max(0.0, time.time() - latest.timestamp):.1f}s"
+    error = f" error={_plain_text(state.trajectory_error)}" if state.trajectory_error else ""
+    return (
+        f"WebSocket: {state.trajectory_status}{error}\n"
+        f"Chunks={len(state.trajectory_chunks)} executed={len(state.executed_actions)} "
+        f"dims={dim_count or 'n/a'} latest_age={latest_age}"
+    )
+
+
+def _format_trajectory_panel(state: TuiState) -> str:
+    dim_count = _trajectory_dim_count(state.trajectory_chunks, state.executed_actions)
+    latest = state.trajectory_chunks[-1] if state.trajectory_chunks else None
+    lines = [
+        "[b]Trajectory[/b]",
+        _format_trajectory_summary(state),
+        _format_rtc_params(latest),
+        _format_prefix_weights(latest),
+        _format_trajectory_legend(state.trajectory_chunks),
+    ]
+    if dim_count == 0:
+        lines.append("\nWaiting for action_chunk or executed_action messages...")
+        return "\n".join(lines)
+
+    lines.append("\nPer-joint trajectories. chunk markers=0-9, executed=*")
+    for dim in range(dim_count):
+        lines.append(_format_trajectory_dimension(state.trajectory_chunks, state.executed_actions, dim))
+    return "\n".join(lines)
 
 
 def _build_smoke_state(status_file: Path, client_log_file: Path, server_log_file: Path) -> TuiState:
@@ -261,6 +707,7 @@ def _run_textual(
     client_log_file: Path,
     server_log_file: Path,
     watch_pid: int | None,
+    trajectory_ws_url: str | None,
 ) -> int:
     try:
         from textual.app import App, ComposeResult
@@ -297,7 +744,7 @@ def _run_textual(
         #loss_panel {
             border: round $secondary;
             padding: 0 1;
-            height: 9;
+            height: 12;
             margin: 0 1 1 1;
         }
 
@@ -306,6 +753,11 @@ def _run_textual(
             padding: 0 1;
             height: 1fr;
             margin: 0 1 1 1;
+        }
+
+        #trajectory_panel {
+            height: 1fr;
+            padding: 1 1;
         }
 
         #logs {
@@ -317,6 +769,7 @@ def _run_textual(
         BINDINGS = [
             ("left", "show_main", "Main"),
             ("right", "show_logs", "Logs"),
+            ("t", "show_trajectory", "Trajectory"),
             ("q", "quit_app", "Quit"),
             ("2", "robot_start", "Start episode"),
             ("5", "robot_intervention", "Toggle intervention"),
@@ -333,6 +786,20 @@ def _run_textual(
                 TailedTextFile(server_log_file, "server"),
             ]
             self.dead_since: float | None = None
+            self.trajectory_events: Queue[dict[str, Any]] | None = None
+            self.trajectory_stop_event: threading.Event | None = None
+            self.trajectory_thread: threading.Thread | None = None
+            if trajectory_ws_url:
+                self.state.trajectory_status = "connecting"
+                self.trajectory_events = Queue(maxsize=TRAJECTORY_QUEUE_SIZE)
+                self.trajectory_stop_event = threading.Event()
+                self.trajectory_thread = threading.Thread(
+                    target=_run_trajectory_listener,
+                    args=(trajectory_ws_url, self.trajectory_events, self.trajectory_stop_event),
+                    name="drtc_tui_trajectory_listener",
+                    daemon=True,
+                )
+                self.trajectory_thread.start()
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
@@ -346,6 +813,8 @@ def _run_textual(
                             yield Static(id="controls_card", classes="card")
                         yield Static(id="loss_panel")
                         yield Static(id="recent_panel")
+                with TabPane("Trajectory", id="trajectory"):
+                    yield Static(id="trajectory_panel")
                 with TabPane("Logs", id="logs_tab"):
                     yield RichLog(id="logs", wrap=True, markup=False, highlight=False)
             yield Footer()
@@ -357,6 +826,10 @@ def _run_textual(
         def refresh_from_files(self) -> None:
             for line in _update_from_files(self.state, self.status_tail, self.log_tails):
                 self.query_one("#logs", RichLog).write(line)
+
+            if self.trajectory_events is not None:
+                for event in _drain_queue(self.trajectory_events):
+                    self.state.apply_trajectory_event(event)
 
             alive = _pid_alive(watch_pid)
             if not alive and self.dead_since is None:
@@ -411,14 +884,11 @@ def _run_textual(
                 "Left/Right: tabs   q: quit"
             )
             self.query_one("#loss_panel", Static).update(
-                "[b]RLT Loss[/b]\n"
-                f"Actor  {_history_summary(self.state.actor_loss_history)}\n"
-                f"{_sparkline(self.state.actor_loss_history)}\n"
-                f"Critic {_history_summary(self.state.critic_loss_history)}\n"
-                f"{_sparkline(self.state.critic_loss_history)}"
+                _format_loss_chart(self.state.actor_loss_history, self.state.critic_loss_history)
             )
             recent = "\n".join(self.state.status_events) or "No status events yet"
             self.query_one("#recent_panel", Static).update("[b]Recent Status[/b]\n" + recent)
+            self.query_one("#trajectory_panel", Static).update(_format_trajectory_panel(self.state))
 
         def action_show_main(self) -> None:
             self.query_one("#tabs", TabbedContent).active = "main"
@@ -426,8 +896,15 @@ def _run_textual(
         def action_show_logs(self) -> None:
             self.query_one("#tabs", TabbedContent).active = "logs_tab"
 
+        def action_show_trajectory(self) -> None:
+            self.query_one("#tabs", TabbedContent).active = "trajectory"
+
         def action_quit_app(self) -> None:
             self.exit(130)
+
+        def on_unmount(self) -> None:
+            if self.trajectory_stop_event is not None:
+                self.trajectory_stop_event.set()
 
         def _send_robot_command(self, command: str) -> None:
             _write_control_command(control_file, command, self.state)
@@ -455,6 +932,11 @@ def main() -> int:
     parser.add_argument("--client-log-file", required=True, type=Path)
     parser.add_argument("--server-log-file", required=True, type=Path)
     parser.add_argument("--watch-pid", type=int, default=None)
+    parser.add_argument(
+        "--trajectory-ws-url",
+        default=None,
+        help="Optional trajectory visualization WebSocket URL, for example ws://localhost:8089",
+    )
     parser.add_argument("--smoke", action="store_true", help="Parse inputs once and print a summary")
     args = parser.parse_args()
 
@@ -467,6 +949,7 @@ def main() -> int:
         client_log_file=args.client_log_file,
         server_log_file=args.server_log_file,
         watch_pid=args.watch_pid,
+        trajectory_ws_url=args.trajectory_ws_url,
     )
 
 

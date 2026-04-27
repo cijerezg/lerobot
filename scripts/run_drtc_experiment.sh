@@ -21,6 +21,7 @@
 #   POLICY_SERVER_DELAY_S   - Seconds to wait for policy server startup (default: 3)
 #   POLICY_SERVER_HOST      - Host the client should connect to (default: localhost)
 #   POLICY_SERVER_PORT      - Port to check / bind (default: 8080)
+#   DRTC_TRAJECTORY_WS_URL  - Trajectory viz WebSocket URL for TUI/client (default: ws://localhost:8089)
 #   DRTC_TUI                - Set false/0/no/off to disable the TUI (default: true)
 #
 # =============================================================================
@@ -48,6 +49,18 @@ set -- "${PASSTHROUGH_ARGS[@]}"
 POLICY_SERVER_DELAY_S="${POLICY_SERVER_DELAY_S:-3}"
 POLICY_SERVER_HOST="${POLICY_SERVER_HOST:-localhost}"
 POLICY_SERVER_PORT="${POLICY_SERVER_PORT:-8080}"
+TRAJECTORY_WS_URL="${DRTC_TRAJECTORY_WS_URL:-ws://localhost:8089}"
+ARGS=("$@")
+for ((i = 0; i < ${#ARGS[@]}; i++)); do
+    case "${ARGS[$i]}" in
+        --trajectory_viz_ws_url=*) TRAJECTORY_WS_URL="${ARGS[$i]#*=}" ;;
+        --trajectory_viz_ws_url)
+            if ((i + 1 < ${#ARGS[@]})); then
+                TRAJECTORY_WS_URL="${ARGS[$((i + 1))]}"
+            fi
+            ;;
+    esac
+done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$PROJECT_ROOT/logs"
@@ -150,6 +163,7 @@ STARTED_SERVER=true
 echo "      Policy server started (PID: $POLICY_SERVER_PID)"
 if [ "$ENABLE_VIZ" = true ]; then
     echo "      Trajectory visualization: http://localhost:8088"
+    echo "      Trajectory WebSocket: $TRAJECTORY_WS_URL"
 fi
 if [ "$ENABLE_TUI" != true ] && [ "${STREAM_SERVER_TIMINGS:-true}" = true ]; then
     echo "      Streaming server timing lines to console (disable with STREAM_SERVER_TIMINGS=false)."
@@ -189,13 +203,23 @@ EXTRA_ARGS=()
 if ! printf '%s\n' "$@" | grep -q -E '^--server_address(=|$)'; then
     EXTRA_ARGS+=(--server_address "${POLICY_SERVER_HOST}:${POLICY_SERVER_PORT}")
 fi
+CLIENT_TRAJECTORY_ARGS=()
+if [ "$ENABLE_VIZ" = true ] && ! printf '%s\n' "$@" | grep -q -E '^--trajectory_viz_ws_url(=|$)'; then
+    CLIENT_TRAJECTORY_ARGS+=(--trajectory_viz_ws_url "$TRAJECTORY_WS_URL")
+fi
 
 if [ "$ENABLE_TUI" = true ]; then
     LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE" \
     LEROBOT_DRTC_CONTROL_FILE="$CONTROL_FILE" \
-        uv run --no-sync python examples/experiments/run_drtc_experiment.py "${EXTRA_ARGS[@]}" "$@" \
+        uv run --no-sync python examples/experiments/run_drtc_experiment.py \
+        "${EXTRA_ARGS[@]}" "$@" "${CLIENT_TRAJECTORY_ARGS[@]}" \
         >"$CLIENT_LOG_FILE" 2>&1 &
     EXPERIMENT_PID=$!
+
+    TUI_TRAJECTORY_ARGS=()
+    if [ "$ENABLE_VIZ" = true ]; then
+        TUI_TRAJECTORY_ARGS+=(--trajectory-ws-url "$TRAJECTORY_WS_URL")
+    fi
 
     set +e
     uv run --no-sync python scripts/drtc_tui.py \
@@ -203,7 +227,8 @@ if [ "$ENABLE_TUI" = true ]; then
         --control-file "$CONTROL_FILE" \
         --client-log-file "$CLIENT_LOG_FILE" \
         --server-log-file "$LOG_FILE" \
-        --watch-pid "$EXPERIMENT_PID"
+        --watch-pid "$EXPERIMENT_PID" \
+        "${TUI_TRAJECTORY_ARGS[@]}"
     TUI_EXIT_CODE=$?
     set -e
 
@@ -216,7 +241,8 @@ if [ "$ENABLE_TUI" = true ]; then
     EXPERIMENT_PID=""
 else
     LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE" \
-        uv run --no-sync python examples/experiments/run_drtc_experiment.py "${EXTRA_ARGS[@]}" "$@"
+        uv run --no-sync python examples/experiments/run_drtc_experiment.py \
+        "${EXTRA_ARGS[@]}" "$@" "${CLIENT_TRAJECTORY_ARGS[@]}"
 fi
 
 # Show server-side diagnostics from the log (if any DIAG_SERVER lines exist)
