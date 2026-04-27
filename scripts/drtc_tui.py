@@ -110,6 +110,7 @@ def _phase_label(phase: Any) -> str:
         "recording_with_intervention": "Recording with intervention",
         "reset": "Episode complete/reset",
         "waiting_to_start_episode": "Episode complete/reset",
+        "waiting_to_start_next_episode": "Waiting to start next episode/reset (press 2)",
     }
     return mapping.get(str(phase or "reset"), str(phase or "Episode complete/reset"))
 

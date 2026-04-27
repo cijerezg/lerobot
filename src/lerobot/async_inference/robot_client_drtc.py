@@ -520,14 +520,14 @@ class RobotClientDrtc:
         self._rlt_current_episode_transitions = 0
         self._rlt_completed_episodes_count = 0
         self._rlt_last_episode_label: str | None = None
-        self._rlt_phase = "reset"
+        self._rlt_phase = "waiting_to_start_next_episode"
         self._rlt_phase_intervening = False
         if config.rlt_online_collection_enabled:
             self.logger.info(
                 "RLT collector phase: waiting_to_start_episode | "
                 "press 2=start, 5=toggle intervention, 1=success, 0=failure"
             )
-            self._emit_rlt_status("rlt_phase", phase="reset")
+            self._emit_rlt_status("rlt_phase", phase="waiting_to_start_next_episode")
             self._rlt_transition_sender_thread = threading.Thread(
                 target=self._rlt_transition_sender,
                 name="rlt_transition_sender",
@@ -575,6 +575,19 @@ class RobotClientDrtc:
             return
         self._rlt_phase_intervening = intervening
         self._emit_rlt_status("rlt_phase", phase=phase)
+
+    def _waiting_for_rlt_episode_start(self) -> bool:
+        return self.config.rlt_online_collection_enabled and not self._rlt_episode_open
+
+    def _disable_teleop_intervention_for_episode_start(self) -> None:
+        self._tui_intervention_enabled = False
+        key_handler = getattr(self._teleop_device, "_handle_key_char", None)
+        if callable(key_handler) and bool(getattr(self._teleop_device, "is_intervening", False)):
+            try:
+                key_handler("5")
+            except Exception as e:
+                self.logger.error("Failed to disable teleop intervention for episode start: %s", e)
+        self._rlt_phase_intervening = False
 
     def _poll_teleop_events(self) -> dict[Any, Any]:
         """Poll teleop events once for a control tick."""
@@ -704,7 +717,7 @@ class RobotClientDrtc:
             self._metrics.diagnostic.timing_s("policy_rpc_ms", t_policy_rpc_done - t_policy_rpc_start)
             self._emit_rlt_status(
                 "model_ready",
-                phase="reset",
+                phase="waiting_to_start_next_episode",
                 model_load_ms=self._ms(t_policy_rpc_done - t_policy_rpc_start),
             )
 
@@ -1087,6 +1100,11 @@ class RobotClientDrtc:
         self, teleop_events: dict[Any, Any]
     ) -> tuple[float, bool, bool, bool]:
         if self._teleop_event(teleop_events, TeleopEvents.START_EPISODE):
+            self._disable_teleop_intervention_for_episode_start()
+            teleop_events[TeleopEvents.IS_INTERVENTION] = False
+            teleop_events[TeleopEvents.IS_INTERVENTION.value] = False
+            self.action_schedule.clear()
+            self.obs_cooldown = 0
             self._rlt_episode_id += 1
             self._rlt_episode_open = True
             self._rlt_executed_actions.clear()
@@ -1103,9 +1121,10 @@ class RobotClientDrtc:
             self._emit_rlt_status("rlt_episode_started", phase="recording")
             self._metrics.diagnostic.counter("rlt_episode_started", 1)
 
-        success = self._teleop_event(teleop_events, TeleopEvents.SUCCESS)
-        terminate = self._teleop_event(teleop_events, TeleopEvents.TERMINATE_EPISODE)
+        success = self._rlt_episode_open and self._teleop_event(teleop_events, TeleopEvents.SUCCESS)
+        terminate = self._rlt_episode_open and self._teleop_event(teleop_events, TeleopEvents.TERMINATE_EPISODE)
         failure = self._teleop_event(teleop_events, TeleopEvents.FAILURE) or (terminate and not success)
+        failure = self._rlt_episode_open and failure
         done = success or failure
         reward = 1.0 if success else 0.0
         return reward, done, success, failure
@@ -1238,7 +1257,7 @@ class RobotClientDrtc:
                 "RLT collector phase: waiting_to_start_episode | "
                 "press 2=start, 5=toggle intervention, 1=success, 0=failure"
             )
-            self._emit_rlt_status("rlt_phase", phase="reset")
+            self._emit_rlt_status("rlt_phase", phase="waiting_to_start_next_episode")
 
     # -------------------------------------------------------------------------
     # Action Receiver Thread
@@ -1475,6 +1494,10 @@ class RobotClientDrtc:
             )
             intervening = self._teleop_event(teleop_events, TeleopEvents.IS_INTERVENTION)
             self._set_rlt_recording_phase(intervening)
+            waiting_for_episode_start = self._waiting_for_rlt_episode_start() or rlt_done
+            if waiting_for_episode_start:
+                self.action_schedule.clear()
+                self.obs_cooldown = 0
 
             if intervening:
                 # Override the policy's action with the leader's joint positions.
@@ -1512,7 +1535,7 @@ class RobotClientDrtc:
                         filtered_action,
                         is_intervention=True,
                     )
-            else:
+            elif not waiting_for_episode_start:
                 if self._was_intervening:
                     # Falling edge: dump stale chunks queued during intervention
                     # and reset cooldown so the next inference round re-anchors
@@ -1573,6 +1596,7 @@ class RobotClientDrtc:
             if (
                 self._teleop_device is not None
                 and not intervening
+                and not waiting_for_episode_start
                 and self.config.teleop_send_feedback
                 and self._latest_follower_pos
             ):
@@ -1610,7 +1634,9 @@ class RobotClientDrtc:
 
 
             trigger_threshold = H - s_min
-            if self.config.cooldown_enabled:
+            if waiting_for_episode_start:
+                should_trigger = False
+            elif self.config.cooldown_enabled:
                 should_trigger = schedule_size <= trigger_threshold and self.obs_cooldown == 0
             else:
                 # Classic async baseline: always trigger when schedule is low
@@ -1690,7 +1716,7 @@ class RobotClientDrtc:
             t_phase3_start = time.perf_counter()
             state, _, is_new = self._action_reader.read_if_newer()
             chunk = state.value
-            if is_new and chunk is not None:
+            if is_new and chunk is not None and not waiting_for_episode_start:
 
                 current_step = self.current_action_step
                 latency_steps = self.latency_estimator.estimate_steps
