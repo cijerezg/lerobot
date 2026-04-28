@@ -1,13 +1,24 @@
 # Validation Metrics & Probes
 
+This repo includes a suite of probes that automatically run during offline training or can be used as standalone scripts. All of them are configured via the `probe_parameters` section in the config file, and run at every validation step (`val_freq`). Results are logged to WandB and saved to `{output_dir}/validation/step_{N}/`.
 
-This repo includes a suite of probes that automatically run during offline training or can be used as standalone scripts. All of them configured via the `probe_parameters` section in the config file. Additionally, we provide a tool for visualizing the results across training steps, which can be used by calling
+To launch training with validation probes:
+
+```bash
+python -m lerobot.scripts.offline_learner_val_pi05 --config path/to/config.json
+```
+
+Additionally, we provide a tool for visualizing the results across training steps:
 
 ```bash
 python -m lerobot.scripts.view_validation "path/to/output_dir"
 ```
 
-The following sections detail what each probe computes and the specific questions are addressed.
+<p align="center">
+  <em>[PLACEHOLDER: screenshot of the view_validation Gradio interface]</em>
+</p>
+
+The following sections detail what each probe computes and the specific questions it addresses.
 
 
 ## $\pi_{0.5}$ architecture overview
@@ -19,18 +30,18 @@ $\pi_{0.5}$ processes images, language instructions, and proprioception using a 
 
 
 
+
 ## 1. Attention Maps
 
 We compute the following attention maps from layer 0 across all images:
-- Actions: Highlights image regions targeted by action queries.
-- Language: Highlights image regions targeted by language queries.
-- Subtask: Highlights image regions targeted by subtask queries.
-- All: The average of all attentions, including image-to-image interactions.
-
+- **Actions**: highlights image regions targeted by action queries.
+- **Language**: highlights image regions targeted by language queries.
+- **Subtask**: highlights image regions targeted by subtask queries.
+- **All**: the average of all attentions, including image-to-image interactions.
 
 Attention maps are computed per head, with the final summary representing the average across all heads. The output of this probe is a video visualizing these maps over the validation set.
 
-If the vision encoder or the first layer of the VLM is frozen, then the attention maps will not change during training. 
+If the vision encoder or the first layer of the VLM is frozen, then the attention maps will not change during training.
 
 <p align="center">
   <img src="../../media/readme/img2_all_heads.webp" alt="All heads attention tracking" width="600">
@@ -38,13 +49,28 @@ If the vision encoder or the first layer of the VLM is frozen, then the attentio
   <em>Visualization of "all" attention heads for trained model.</em>
 </p>
 
-
 If the model is consistently not paying attention to the key objects in the scene, that means the weights have become corrupted and you should retrain the model. Just keep in mind that attention maps come with all sorts of artifacts.
 
+### Standalone
 
-## 2. Spatial memorization probe
+```bash
+python -m lerobot.rl.probe_attention_pi05 --config path/to/config.json
+```
 
-In this probe, the computation is the same as the attention maps, but now the idea is to compute them from random frames from different episodes and then aggregate them. Since all the frames are different, one would expect that the attention maps aggregated over all frames would not have peaks. However, if there is spatial memorization, e.g., the model learns the bowl is often on the lower right and just memorizes that, then there will patches of a high attention persistent across frames.
+### Config
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_attention` | `true` | Enable this probe |
+| `timestep` | `0.5` | Diffusion timestep at which to capture attention |
+| `attn_eval_subsample` | `2` | Sample every Nth frame |
+| `attn_eval_episodes` | `null` | Specific episodes (null = all sampled) |
+
+---
+
+## 2. Spatial Memorization Probe
+
+The computation here is the same as the attention maps, but now the idea is to compute them from random frames across different episodes and aggregate. Since the frames are all different, you would expect the aggregated maps to be roughly flat. However, if there is spatial memorization — e.g., the model learns the bowl is often in the lower right and just memorizes that — there will be patches of high attention persistent across frames.
 
 This is what the attention looks like for a trained model:
 
@@ -54,250 +80,13 @@ This is what the attention looks like for a trained model:
   <em>Spatial memorization over actions.</em>
 </p>
 
-We do observe there is a degree of spatial memorization, and it is more pronounced in certain heads. This image in a vacuum is not very informative, but when compared to other checkpoints, then we can get a sense of the degree.
+We do observe a degree of spatial memorization, and it is more pronounced in certain heads. This image in a vacuum is not very informative, but compared across checkpoints we can get a sense of how it evolves. The probe also reports a per-patch signal-to-noise ratio (mean attention divided by its standard deviation across frames): high SNR points to a memorized location, while low SNR points to dynamic, input-dependent attention.
 
-
-## 3. Action drift jacobian probe
-
-
-
-**What it does**: Uses gradient backpropagation to identify which image regions **causally influence** action generation, beyond just being attended to.
-
-**Why it matters**: Attention shows where the model *looks*, but not whether those regions actually *matter* for the output. A head may attend strongly to a region that has zero effect on the predicted action. The Jacobian probe disentangles attention from causal influence.
-
-### Computation
-
-For a given input, run a forward pass with gradients enabled through the attention mechanism. Let $\mathbf{A} \in \mathbb{R}^{H \times S \times S}$ be the softmax attention weights and $\hat{\mathbf{a}}$ be the predicted action.
-
-1. Compute a scalar loss: $\mathcal{L} = \|\hat{\mathbf{a}}\|_2$
-2. Backpropagate: $\nabla_{\mathbf{A}} \mathcal{L}$
-3. Compute the **causal map**:
-
-$$\mathbf{C} = \mathbf{A} \odot |\nabla_{\mathbf{A}} \mathcal{L}|$$
-
-**Interpretation**:
-- $\mathbf{A}$: which patches are attended to (includes attention sinks that may not matter).
-- $|\nabla_{\mathbf{A}} \mathcal{L}|$: how much a change in attention at each position would affect the action.
-- $\mathbf{C} = \mathbf{A} \odot |\nabla_{\mathbf{A}} \mathcal{L}|$: patches that are **both** attended to **and** causally connected to the action output.
-
-
-
-
-
-
-
-**What it does**: Extracts attention maps from the VLM and visualizes them to show where the model is looking.
-
-
-
-
-
-
-
-
-
-
-
- to examine the model's internals. Rather than relying solely on loss curves, these probes reveal *what* the model has learned: where it looks, how it clusters actions, whether it memorizes spatial positions, and which image regions causally drive action generation.
-
-All probes are configured via the `probe_parameters` section in the config file and run at every validation step (`val_freq`). Results are logged to WandB and saved to `{output_dir}/validation/step_{N}/`.
-
-To launch training with validation probes:
+### Standalone
 
 ```bash
-python -m lerobot.scripts.offline_learner_val_pi05 --config path/to/config.json
+python -m lerobot.rl.probe_attention_spatial_memorization --config path/to/config.json
 ```
-
-To visualize results across training steps:
-
-```bash
-python -m lerobot.scripts.view_validation "path/to/output_dir"
-```
-
----
-
-## 1. Action Manifold Probe
-
-**What it does**: Projects predicted and ground-truth action chunks onto a learned low-dimensional manifold (PCA + UMAP) and measures how far predicted actions deviate from the ground-truth distribution.
-
-**Why it matters**: Loss alone doesn't tell you if the model is generating plausible actions. A model can have low loss on average but produce actions that lie outside the manifold of physically meaningful motions. This probe catches that.
-
-### Construction
-
-**Phase 1 — Reference manifold (runs once at startup)**:
-
-1. Collect ground-truth action chunks from the validation dataset. Each chunk is a matrix $\mathbf{A} \in \mathbb{R}^{T \times d}$ where $T$ is the chunk size and $d$ is the action dimension.
-2. Flatten each chunk to a vector $\mathbf{a} = \text{vec}(\mathbf{A}) \in \mathbb{R}^{Td}$.
-3. Fit PCA on all flattened vectors: $\mathbf{z} = W_{\text{PCA}}^\top (\mathbf{a} - \boldsymbol{\mu})$, producing $\mathbf{z} \in \mathbb{R}^{k}$ where $k$ = `action_pca_dims` (default: 50).
-4. Fit UMAP on the PCA-reduced vectors to obtain 2D and 3D embeddings for visualization.
-
-The PCA and UMAP transforms are **frozen** after this step — they are never re-fit during training. This ensures that changes in the embedding reflect changes in the model, not the projection.
-
-**Phase 2 — Evaluation (runs at each validation step)**:
-
-For each sampled validation frame, run inference to get predicted actions, then project both predicted and ground-truth actions through the **frozen** PCA and UMAP.
-
-### Metrics
-
-**Nearest-Neighbor Distance to Reference Manifold**
-
-For each projected point $\mathbf{q}$ (either predicted or ground-truth), find the closest point in the reference set $\mathcal{R}$:
-
-$$d_{\text{NN}}(\mathbf{q}) = \min_{\mathbf{r} \in \mathcal{R}} \|\mathbf{q} - \mathbf{r}\|_2$$
-
-Computed using a k-d tree (`scipy.spatial.cKDTree`) in 2D UMAP space.
-
-**Reported statistics** per episode: mean, median, std, 25th/75th/95th percentiles, max.
-
-**Scalar logged to WandB**:
-
-$$\text{nn\_distance\_ratio} = \frac{\text{median}(d_{\text{NN}}^{\text{pred}})}{\text{median}(d_{\text{NN}}^{\text{gt}}) + 10^{-8}}$$
-
-- Ratio $\approx 1.0$: predicted actions lie on the GT manifold.
-- Ratio $\gg 1.0$: predicted actions are drifting off-manifold.
-
-**PCA Explained Variance**
-
-The probe also outputs a scree plot showing per-component explained variance and cumulative variance (marking the 90% and 95% thresholds). This reveals the intrinsic dimensionality of the action space — a useful diagnostic for understanding task complexity.
-
-### Outputs
-
-| File | Description |
-|------|-------------|
-| `2d/trajectories.png` | GT paths (gradient lines) + predicted points on reference manifold |
-| `2d/by_frame.png` | GT and predicted colored by frame index |
-| `2d/by_subtask.png` | GT and predicted colored by subtask label |
-| `2d/episodes/ep{N}.png` | Per-episode detailed comparison |
-| `3d/by_episode.html` | Interactive 3D scatter (Plotly) |
-| `nn_distances.csv` | Raw NN distance statistics |
-
-### Config
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `enable_actions` | `true` | Enable this probe |
-| `action_pca_dims` | `50` | Number of PCA components |
-| `ref_max_episodes` | `20` | Episodes for reference manifold |
-| `ref_n_frames_per_episode` | `256` | Frames per episode for reference |
-| `umap_n_neighbors` | `15` | UMAP neighborhood size |
-| `umap_min_dist` | `0.1` | UMAP minimum distance |
-
----
-
-## 2. Representation Probe
-
-**What it does**: Captures internal hidden states from the VLM (prefix) and the action expert (suffix), applies PCA + UMAP, and visualizes how representations cluster by episode, frame, and subtask.
-
-**Why it matters**: Reveals whether the model has learned meaningful internal structure — e.g., do different subtasks form distinct clusters? Do representations drift over training? Is the model using the same internal representation regardless of input (a sign of collapse)?
-
-### Activation Capture
-
-Two activation sites are captured via forward hooks:
-
-1. **Prefix (VLM)**: Hidden states after processing images + language tokens. Shape: $(B, L_{\text{prefix}}, 2048)$, mean-pooled to $(B, 2048)$:
-
-$$\mathbf{h}_{\text{prefix}} = \frac{1}{L_{\text{prefix}}} \sum_{i=1}^{L_{\text{prefix}}} \mathbf{h}_i$$
-
-2. **Suffix (Expert)**: Hidden states from the action expert at a chosen diffusion timestep $t$. The last `chunk_size` tokens are sliced and mean-pooled to $(B, 1024)$:
-
-$$\mathbf{h}_{\text{suffix}} = \frac{1}{T} \sum_{i=1}^{T} \mathbf{h}_{L-T+i}$$
-
-### Dimensionality Reduction
-
-For each site:
-1. PCA: $\mathbf{z} = W_{\text{PCA}}^\top (\mathbf{h} - \boldsymbol{\mu}), \quad \mathbf{z} \in \mathbb{R}^{k}$ where $k$ = `repr_pca_dims` (default: 100).
-2. UMAP: fitted on $\mathbf{z}$ to produce 2D and 3D embeddings.
-
-Unlike the action manifold, PCA and UMAP are **re-fit at each validation step**. This is intentional: it tracks how the representation space itself evolves over training.
-
-### Subtask Injection Analysis
-
-For each frame, two forward passes are run:
-1. With **ground-truth subtask tokens**
-2. With **model-generated subtask tokens**
-
-Both are projected into the same UMAP space. The Euclidean distance between GT and generated points reveals whether the model grounds subtask understanding reliably or if generated subtasks produce drifted representations.
-
-### Config
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `enable_representations` | `true` | Enable this probe |
-| `repr_pca_dims` | `100` | PCA components |
-| `sites` | `"prefix,suffix"` | Which activation sites to probe |
-| `subtask_injection` | `false` | Compare GT vs generated subtasks |
-| `timestep` | `0.5` | Diffusion timestep for capture |
-
----
-
-## 3. Attention Probe
-
-**What it does**: Captures self-attention weights from the joint VLM+Expert forward pass and visualizes where the model attends across images, language, subtask, and action tokens.
-
-**Why it matters**: Attention maps show whether the model is actually looking at task-relevant image regions or relying on shortcuts. For example, a model that ignores the object and only attends to the gripper may still have low loss but will fail on novel object placements.
-
-### Computation
-
-Attention weights are captured from layer 0 of `paligemma_with_expert` at diffusion timestep $t$ (default 0.5). Shape: $(B, H, S, S)$ where $H=8$ heads and $S$ is the full sequence length.
-
-**Heatmap extraction**: For a query segment $[q_s, q_e)$ and key segment $[k_s, k_e)$:
-
-$$\mathbf{m}_h = \frac{1}{|\mathcal{V}|} \sum_{q \in \mathcal{V}} \mathbf{A}_{h, q, k_s:k_e}$$
-
-where $\mathcal{V}$ is the set of valid (non-padding) query positions and $\mathbf{A}$ is the softmax attention tensor. The key dimension is reshaped from a 1D patch sequence to a 2D spatial grid and upsampled via bicubic interpolation to the original image resolution.
-
-### Segments
-
-The sequence is divided into segments:
-- **Image patches**: one group per camera (e.g., wrist, top)
-- **Language tokens**: task description
-- **Subtask tokens**: subtask description
-- **Action tokens**: denoising action positions
-
-The probe generates heatmaps for every (query_group, key_camera) pair, showing which image regions each type of token attends to.
-
-### Outputs
-
-| File | Description |
-|------|-------------|
-| Summary strip (MP4) | Original image + 4 mean-head heatmaps per camera |
-| Per-head grid (MP4) | $2 \times 4$ grid showing all 8 attention heads |
-| Full matrix (MP4) | Mean-head and per-head attention matrices with segment boundaries |
-
-### Config
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `enable_attention` | `true` | Enable this probe |
-| `timestep` | `0.5` | Diffusion timestep |
-| `attn_eval_subsample` | `2` | Sample every Nth frame |
-| `attn_eval_episodes` | `null` | Specific episodes (null = all sampled) |
-
----
-
-## 4. Spatial Memorization Probe
-
-**What it does**: Tests whether attention heads have memorized fixed spatial patterns by averaging attention heatmaps across many different frames and episodes.
-
-**Why it matters**: If a head's mean attention map has high values and low variance at specific patch locations regardless of input, that head is memorizing a fixed spatial pattern rather than dynamically attending to task-relevant regions.
-
-### Computation
-
-Sample $N = 32$ frames (1 per unique episode) at diffusion timestep $t = 0.5$. For layers $\ell \in \{0, 9, 17\}$, collect per-head attention maps $\mathbf{A}_h^{(n)} \in \mathbb{R}^{K}$ (where $K$ is the number of key patches for a given camera).
-
-**Mean attention**:
-
-$$\bar{\mathbf{A}}_h = \frac{1}{N} \sum_{n=1}^{N} \mathbf{A}_h^{(n)}$$
-
-**Stability ratio** (signal-to-noise):
-
-$$\text{SNR}_h = \frac{\bar{\mathbf{A}}_h}{\sigma_h + \epsilon}, \quad \epsilon = 10^{-8}$$
-
-where $\sigma_h$ is the per-patch standard deviation across the $N$ frames.
-
-**Interpretation**:
-- High $\bar{\mathbf{A}}_h$ + low $\sigma_h$ (high SNR) $\Rightarrow$ **memorized spatial position** (the head always looks there regardless of input).
-- Low $\bar{\mathbf{A}}_h$ or high $\sigma_h$ (low SNR) $\Rightarrow$ dynamic or noisy attention.
 
 ### Config
 
@@ -305,11 +94,11 @@ where $\sigma_h$ is the per-patch standard deviation across the $N$ frames.
 |-----------|---------|-------------|
 | `enable_spatial_memorization` | `true` | Enable this probe |
 | `spatial_layers` | `"0,9,17"` | Layers to analyze |
-| `spatial_n_frames` | `32` | Frames to aggregate |
+| `spatial_n_frames` | `32` | Number of frames to aggregate |
 
 ---
 
-## 5. Action Drift Jacobian Probe
+## 3. Action Drift Jacobian Probe
 
 **What it does**: Uses gradient backpropagation to identify which image regions **causally influence** action generation, beyond just being attended to.
 
@@ -330,13 +119,19 @@ $$\mathbf{C} = \mathbf{A} \odot |\nabla_{\mathbf{A}} \mathcal{L}|$$
 - $|\nabla_{\mathbf{A}} \mathcal{L}|$: how much a change in attention at each position would affect the action.
 - $\mathbf{C} = \mathbf{A} \odot |\nabla_{\mathbf{A}} \mathcal{L}|$: patches that are **both** attended to **and** causally connected to the action output.
 
-### Multi-Layer Variant
+The probe also exposes a multi-layer variant (`jacobian_probe_forward_multilayer()`) that runs one forward+backward pass per layer, and a spatial-memorization variant that aggregates causal maps across frames the same way the spatial memorization probe does — revealing which memorized positions actively steer actions vs. those that are merely attended.
 
-The `jacobian_probe_forward_multilayer()` function runs one forward+backward pass per layer, detaching shared inputs between iterations to avoid graph reuse errors. This produces a causal map per layer.
+<p align="center">
+  <img src="../../media/readme/causal_L9_img1_action_heads.webp" alt="Action drift jacobian attention map" width="600">
+  <br>
+  <em>Action drift jacobian attention map. We can see the model is roughly learning to detect the bounding box of the truck.</em>
+</p>
 
-### Spatial Memorization with Jacobian
+### Standalone
 
-Combines the Jacobian causal maps with the spatial memorization aggregation (mean and mean/std across frames). This reveals which memorized spatial positions **actively steer actions** vs. those that are attended but irrelevant.
+```bash
+python -m lerobot.rl.probe_action_drift_jacobian --config path/to/config.json
+```
 
 ### Config
 
@@ -348,19 +143,100 @@ Combines the Jacobian causal maps with the spatial memorization aggregation (mea
 
 ---
 
+## 4. Action Manifold Probe
+
+This probe checks whether predicted action chunks lie on the same manifold as the ground-truth actions. The motivation is that loss alone doesn't tell you if the model is generating plausible actions — a model can have low average loss but still produce action chunks that drift outside the distribution of physically meaningful motions.
+
+The probe runs in two phases. **First**, at startup, it builds a reference manifold: ground-truth action chunks from the validation set are flattened, reduced with PCA (down to `action_pca_dims` components), and then UMAP'd to 2D and 3D. The PCA and UMAP transforms are **frozen** after this step so that any change in the embedding reflects changes in the model, not the projection.
+
+**Second**, at every validation step, predicted and ground-truth actions are projected through the frozen transforms. For each predicted point, the probe finds its nearest neighbor in the reference set and reports the distance. The headline scalar logged to WandB is the ratio of the median predicted nearest-neighbor distance to the median ground-truth nearest-neighbor distance — a value near 1.0 means predictions sit on the manifold; much larger than 1.0 means they're drifting off it.
+
+The probe also outputs a PCA scree plot, which is a useful sanity check on the intrinsic dimensionality of the action space.
+
+<p align="center">
+  <img src="../../media/readme/ep0000.png" alt="Spatial memorization" width="500">
+  <br>
+  <em>Action manifold of root dataset (grey paths) and validation episode with ground truth and prediction projection. Red square is starting point and green triangle is end point Interestingly, the validation ground truth nor the prediction follow a smooth path in the root dataset manifold. Might be worth exploring further.</em>
+</p>
+
+### Outputs
+
+| File | Description |
+|------|-------------|
+| `2d/trajectories.png` | GT paths + predicted points on reference manifold |
+| `2d/by_frame.png` | Colored by frame index |
+| `2d/by_subtask.png` | Colored by subtask label |
+| `3d/by_episode.html` | Interactive 3D Plotly scatter |
+| `nn_distances.csv` | Raw NN distance statistics |
+
+### Standalone
+
+```bash
+python -m lerobot.rl.probe_actions_pi05 --config path/to/config.json
+```
+
+### Config
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_actions` | `true` | Enable this probe |
+| `action_pca_dims` | `50` | Number of PCA components |
+| `ref_max_episodes` | `20` | Episodes used to build the reference manifold |
+| `ref_n_frames_per_episode` | `256` | Frames per episode for reference |
+| `umap_n_neighbors` | `15` | UMAP neighborhood size |
+| `umap_min_dist` | `0.1` | UMAP minimum distance |
+
+---
+
+## 5. Representation Probe
+
+This probe captures internal hidden states from two sites — the **prefix** (VLM, after processing images and language) and the **suffix** (action expert, at a chosen diffusion timestep) — and visualizes how those representations cluster. It's useful for catching cases where the model has collapsed to a generic representation, or for confirming that distinct subtasks actually live in distinct regions of the hidden space.
+
+For each site, hidden states are mean-pooled over the relevant tokens and then passed through PCA and UMAP. Unlike the action manifold, here the PCA and UMAP are **re-fit at every validation step** — the goal is to track how the representation space itself evolves, not to compare against a fixed reference.
+
+The probe optionally runs a **subtask injection** analysis: it does two forward passes for each frame, one with the ground-truth subtask tokens and one with the model's generated subtask tokens, and projects both into the same UMAP. The distance between the two reveals whether the model's subtask understanding is consistent with what it actually generates.
+
+<p align="center">
+  <img src="../../media/readme/by_episode.png" alt="Representation UMAP colored by subtask" width="500">
+  <br>
+  <em>Representation UMAP colored by episode. Several episodes have similar representations. This can happen because 1. the model is memorizing, 2. the episodes are legitimately similar that a similar representation is reasonable. We suspect it's a combination of both.</em>
+</p>
+
+### Standalone
+
+```bash
+python -m lerobot.rl.probe_representations_pi05 --config path/to/config.json
+```
+
+### Config
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_representations` | `true` | Enable this probe |
+| `repr_pca_dims` | `100` | PCA components |
+| `sites` | `"prefix,suffix"` | Which activation sites to probe |
+| `subtask_injection` | `false` | Compare GT vs generated subtasks |
+| `timestep` | `0.5` | Diffusion timestep for suffix capture |
+
+---
+
 ## 6. Offline Inference Probe
 
-**What it does**: Runs inference on sampled validation frames and compares predicted actions to ground truth using MSE.
+The most direct measure of action prediction quality: this probe runs inference on sampled validation frames and reports the MSE between predicted and ground-truth action chunks. Flow-matching loss measures the velocity-field error during training, but MSE on the final denoised actions measures the actual output error the robot will experience.
 
-**Why it matters**: The most direct measure of action prediction quality. While flow matching loss measures the velocity field error, MSE on the final denoised actions measures the actual output error that the robot will experience.
+Per-frame plots show predicted vs. GT action traces for each joint, in both unnormalized and normalized representations, which is the easiest way to spot systematic biases (a gripper that's always slightly closed, a joint that consistently lags, etc.). The `mean_mse` across all sampled frames is logged to WandB.
 
-### Metric
+<p align="center">
+  <img src="../../media/readme/ep0000_fr0143.png" alt="Predicted vs GT action traces for episode 0000 frame 0143" width="500">
+  <br>
+  <em>Predicted vs GT action traces for episode 0000 frame 0143.</em>
+</p>
 
-$$\text{MSE} = \frac{1}{Td} \sum_{t=1}^{T} \sum_{j=1}^{d} \left(\hat{a}_{t,j} - a_{t,j}^{\text{gt}}\right)^2$$
+### Standalone
 
-where $\hat{\mathbf{a}} \in \mathbb{R}^{T \times d}$ is the predicted action chunk (unnormalized) and $\mathbf{a}^{\text{gt}}$ is the ground truth.
-
-The `mean_mse` across all sampled frames is logged to WandB. Per-frame plots show predicted vs. GT action traces for each joint, in both unnormalized and normalized representations.
+```bash
+python -m lerobot.scripts.probe_offline_inference_pi05 --config path/to/config.json
+```
 
 ### Config
 
@@ -372,38 +248,4 @@ The `mean_mse` across all sampled frames is logged to WandB. Per-frame plots sho
 
 ---
 
-## Visualization Interface
 
-The Gradio-based viewer (`view_validation`) enables side-by-side comparison of all probe outputs across training steps. It discovers validation checkpoints automatically and provides:
-
-- Synchronized browsing across steps for any probe type
-- Interactive episode/layer selection
-- 3D Plotly embeddings for action and representation manifolds
-
-```bash
-python -m lerobot.scripts.view_validation "path/to/output_dir"
-```
-
----
-
-## Output Directory Structure
-
-```
-{output_dir}/validation/
-├── manifold/                           # Reference manifold (created once)
-│   └── pca_variance/
-├── step_{N}/                           # Per validation step
-│   ├── actions/                        # Action manifold probe
-│   │   ├── 2d/
-│   │   ├── 3d/
-│   │   └── nn_distances.csv
-│   ├── representations/                # Representation probe
-│   │   ├── {dataset}/2d/{site}/
-│   │   ├── {dataset}/3d/{site}/
-│   │   └── {dataset}/subtask_injection/
-│   ├── attention/                      # Attention probe (MP4s)
-│   ├── offline_inference/              # Per-frame MSE plots
-│   ├── spatial_memorization/           # Mean/SNR heatmaps
-│   ├── action_drift_jacobian/          # Causal heatmaps
-│   └── probe_raw_data.pt              # Raw tensors for custom analysis
-```
