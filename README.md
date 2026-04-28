@@ -74,7 +74,15 @@ To get started with training, the key fields to change are:
 - `pi05_checkpoint`: this is the path to your checkpoint. If starting from scratch, use `lerobot/pi05_base` which loads the weight for base $\pi_{0.5}$.
 
 
-If you are using anchor action or delta actions, please see ADD REFERENCE FOR MORE DETAIL
+#### Action encoding
+
+Before launching any training, decide how actions are represented. The same encoding has to be used end-to-end — switching it later means recomputing statistics and retraining from base. Three options:
+
+- `absolute` — raw joint positions. Simplest, but does not generalize across starting configurations.
+- `anchor` (recommended) — offsets from the chunk's initial state. Translation-invariant, generalizes well.
+- `delta` — first-order differences between consecutive actions. Compact, but errors can accumulate.
+
+Set the choice via `policy.action_encoding` in the config. `anchor` and `delta` also require precomputed normalization statistics — see the [advanced usage guide](docs/pi05_docs/advanced_usage.md#action-encodings) for details and the script that generates them.
 
 ### Training
 

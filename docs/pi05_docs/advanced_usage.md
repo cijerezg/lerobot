@@ -1,19 +1,60 @@
 # Advanced Usage Guide
 
-This guide covers the full training pipeline, configuration reference, action encodings, the iterative RL loop, intervention mechanics, and async inference — everything beyond the quick start in the README.
+This guide covers action encodings, the full training pipeline, the iterative RL loop, intervention mechanics, async inference, and the standalone inference scripts.
 
 ---
 
 ## Table of Contents
 
-1. [Training Pipeline](#training-pipeline)
-2. [Configuration Reference](#configuration-reference)
-3. [Action Encodings](#action-encodings)
+1. [Action Encodings](#action-encodings)
+2. [Training Pipeline](#training-pipeline)
+3. [Configuration Reference](#configuration-reference)
 4. [The Iterative RL Loop](#the-iterative-rl-loop)
-5. [Interventions and Real-Time Control](#interventions-and-real-time-control)
-6. [Async Inference Architecture](#async-inference-architecture)
-7. [Buffer Caching](#buffer-caching)
-8. [Frozen Parameters & Memory Optimization](#frozen-parameters--memory-optimization)
+5. [Dataset Preparation & Annotation](#dataset-preparation--annotation)
+6. [Interventions and Real-Time Control](#interventions-and-real-time-control)
+7. [Async Inference Architecture](#async-inference-architecture)
+8. [Inference Scripts](#inference-scripts)
+9. [Buffer Caching](#buffer-caching)
+
+---
+
+## Action Encodings
+
+This is the first decision to make — it is set in the config and applies to **all** subsequent training, online and offline. Switching encodings later means recomputing statistics and retraining from base.
+
+The pipeline supports three action representations.
+
+### Anchor (recommended)
+
+Each action is encoded as an offset from the initial state $\mathbf{s}_0$ of the current chunk:
+
+$$\mathbf{d}_t = \mathbf{a}_t - \mathbf{s}_0$$
+
+This provides **translation invariance**: the same reaching motion produces the same encoded action regardless of the arm's starting position. Recommended for most use cases — it generalizes far better than absolute and is more stable than delta.
+
+### Absolute
+
+Actions are raw joint positions: $\mathbf{a}_t \in \mathbb{R}^d$. No transformation applied. Simplest, but does not generalize across different starting configurations.
+
+### Delta
+
+First-order differences:
+
+$$\mathbf{d}_0 = \mathbf{a}_0 - \mathbf{s}_0, \quad \mathbf{d}_t = \mathbf{a}_t - \mathbf{a}_{t-1} \text{ for } t > 0$$
+
+More compact than anchor, but accumulated errors can drift.
+
+### Computing Statistics
+
+Anchor and delta encodings require precomputed normalization statistics. Generate them with:
+
+```bash
+python -m lerobot.scripts.compute_delta_stats \
+    --data-dir /path/to/dataset \
+    --encoding anchor
+```
+
+This iterates over all episodes, computes anchor (or delta) representations for every action chunk, and saves per-timestep statistics (min, max, mean, std, quantiles) to a `.pt` file. Set `policy.action_encoding_stats_path` to point to this file.
 
 ---
 
@@ -32,7 +73,7 @@ This script:
 - Loads pretrained $\pi_{0.5}$ weights from `policy.pi05_checkpoint`
 - Trains for `offline_steps` steps (default: 10,000) with gradient accumulation
 - Runs validation probes every `val_freq` steps if `val_dataset_path` is set
-- Saves checkpoints every `save_freq` steps to `offline_output_dir`
+- Saves checkpoints every `offline_save_freq` steps to `offline_output_dir`
 - Uses `accelerate` for multi-GPU support
 
 There is also a variant without validation probes for faster iteration:
@@ -55,74 +96,52 @@ python -m lerobot.rl.learner_pi05 --config path/to/config.json
 python -m lerobot.rl.actor_pi05_async --config path/to/config.json
 ```
 
-The actor collects transitions at 30Hz and streams them to the learner via gRPC. The learner mixes online and offline data 50/50 per batch. Updated policy weights are pushed back to the actor every `policy_parameters_push_frequency` steps (default: 180).
+The actor collects transitions at 30Hz and streams them to the learner. The learner mixes online and offline data 50/50 per batch. Updated policy weights are pushed back to the actor every `policy_parameters_push_frequency` steps (default: 180).
 
-### Inference Only
-
-```bash
-python -m lerobot.rl.inference_pi05_async --config path/to/config.json
-```
-
-Same async architecture as the actor but without gRPC communication or data collection. Useful for evaluation.
+The learner writes an episode video to `output_dir` every `episode_logging_freq` episodes with the **predicted critic value overlaid frame-by-frame** — this is the same style of clip shown at the top of the main [README](../../README.md), so you can see when the critic thinks the policy is doing well versus when it expects failure. The online replay buffer is also dumped to disk every `episode_save_freq` episodes, so a crashed run can be resumed and recent episodes inspected or fed back into the next iteration of the loop.
 
 ---
 
 ## Configuration Reference
 
-The config file (`config-hiserl.json`) drives all scripts. Below is a reference for every field, organized by section.
+The config file (`config-hiserl.json`) drives all scripts. The fields below are the ones worth tuning — the rest of the config is either self-explanatory or rarely needs changing from the defaults.
 
 ### Top-Level
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `output_dir` | str\|null | `null` | Output directory. Null = auto-generate timestamped dir. |
-| `offline_output_dir` | str | — | Separate output dir for offline training. |
-| `job_name` | str | `"default"` | Run identifier for logging. |
-| `resume` | bool | `false` | Resume from existing checkpoint in `output_dir`. |
-| `seed` | int | `42` | Random seed. |
-| `num_workers` | int | `4` | DataLoader workers. |
-| `batch_size` | int | `8` | Replay buffer sampling batch size. |
-| `log_freq` | int | `20` | Log metrics every N steps. |
-| `save_checkpoint` | bool | `true` | Save model checkpoints. |
-| `save_freq` | int | `100` | Checkpoint frequency (steps). |
-| `offline_save_freq` | int | `400` | Checkpoint frequency for offline training. |
-| `use_rerun` | bool | `true` | Enable Rerun.io live visualization. |
+| `output_dir` | str\|null | `null` | Output directory for the **online** run (checkpoints, videos, buffer dumps). Null = auto-generated timestamped dir. |
+| `offline_output_dir` | str | — | Separate output dir for offline training. Keep it distinct from `output_dir` so offline and online artifacts don't overwrite each other. |
+| `batch_size` | int | `8` | Replay buffer sampling batch size. Multiplied by `gradient_accumulation_steps` to get the effective batch. |
+| `log_freq` | int | `20` | WandB logging frequency, in optimization steps. |
+| `save_freq` | int | `100` | Online checkpoint frequency (steps). |
+| `offline_save_freq` | int | `400` | Offline checkpoint frequency (steps). |
 
 ### Validation
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `val_dataset_path` | str\|null | `null` | Path to separate validation dataset. |
-| `val_split` | float | `0.0` | Fraction of training data for validation (if no separate val dataset). |
+| `val_dataset_path` | str\|null | `null` | Path to a separate validation dataset. Strongly preferred. You can instead split the main dataset via `val_split`, but this reduces training data and is not recommended unless you have no held-out demos. |
+| `val_split` | float | `0.0` | Fraction of training data carved off for validation when no separate val dataset is provided. |
 | `val_freq` | int | `400` | Run validation every N steps. |
-| `val_on_start` | bool | `true` | Run validation at step 0 (baseline). |
-
-### WandB
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `wandb.enable` | bool | `true` | Enable Weights & Biases logging. |
-| `wandb.project` | str | — | W&B project for online training. |
-| `wandb.offline_project` | str | — | W&B project for offline training. |
-| `wandb.disable_artifact` | bool | `true` | Don't upload model artifacts. |
+| `val_on_start` | bool | `true` | Run validation at step 0 to record a baseline. |
 
 ### Episode Logging
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `episode_logging_freq` | int | `4` | Log video every N episodes. |
-| `episode_save_freq` | int | `10` | Save episode data every N episodes. |
+| `episode_save_freq` | int | `10` | Save episode data (buffer dump) every N episodes. |
 | `video_logging_cameras` | list | `["top", "wrist"]` | Cameras to include in logged videos. |
 
 ### Dataset
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `dataset.root` | str | — | Local path to the annotated dataset. |
-| `dataset.repo_id` | str | — | HuggingFace Hub repo ID (fallback if local path missing). |
-| `dataset.use_imagenet_stats` | bool | `false` | Use ImageNet stats for image normalization. |
-| `dataset.max_episodes` | int\|null | `null` | Limit to N episodes (null = all). |
-| `dataset.additional_offline_dataset_paths` | list | `[]` | Extra dataset paths to merge. Subtask indices are auto-remapped to avoid collisions. |
+| `dataset.root` | str | — | Local path to the annotated dataset. The dataset **must** be available locally at this path. |
+| `dataset.repo_id` | str | — | HuggingFace Hub repo ID. Hub-only loading is not reliable — keep the dataset locally and rely on `dataset.root`. |
+| `dataset.max_episodes` | int\|null | `null` | Cap the number of episodes loaded. Useful when the dataset is large enough to blow up RAM during the initial decode/cache step; lower it until the loader fits in memory. |
+| `dataset.additional_offline_dataset_paths` | list | `[]` | Extra dataset paths to merge alongside `dataset.root`. These are typically **online buffers collected by the policy in earlier RL iterations** that have since been converted to video format and annotated with subtasks. Folding them back in is what gives the iterative loop its compounding effect — each retrain sees more diverse experience without forgetting earlier coverage. Subtask indices are auto-remapped across paths to avoid collisions. |
 
 ### Policy
 
@@ -130,12 +149,13 @@ The config file (`config-hiserl.json`) drives all scripts. Below is a reference 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `policy.type` | str | `"pi05_rl"` | Policy type. |
+| `policy.type` | str | `"pi05_rl"` | The only supported value; this field has no other effect. |
 | `policy.task` | str | — | Task prompt (e.g., "Pick up the red truck and put it in the bowl"). |
-| `policy.pi05_checkpoint` | str | — | Path or HF repo to pretrained weights. Use `lerobot/pi05_base` for base model. |
-| `policy.tokenizer_max_length` | int | `64` | Max tokenizer length. |
+| `policy.pi05_checkpoint` | str | — | Path or HF repo to pretrained weights. Use `lerobot/pi05_base` for the base model. |
+| `policy.tokenizer_max_length` | int | `64` | Token budget for the prompt, which packs **task description + state + advantage**. For a 6-DoF arm, 64 is enough. For bimanual setups (more state tokens), bump to 96 or 128. Keeping this tight saves VRAM, since attention scales with sequence length. |
 | `policy.max_state_dim` | int | `6` | State vector dimension. |
 | `policy.num_inference_steps` | int | `5` | Diffusion denoising steps. |
+| `policy.subtask_regeneration_interval` | float | `2` | How often (seconds) the policy regenerates its high-level subtask tokens during inference. Lower values track scene changes more responsively but cost more compute; higher values give more stable subtasks. Set to `0` to regenerate every call (will overwrite any operator-injected subtask in the interactive inference script — see [Inference Scripts](#inference-scripts)). |
 
 **RL Parameters:**
 
@@ -149,8 +169,8 @@ The config file (`config-hiserl.json`) drives all scripts. Below is a reference 
 | `policy.discount` | float | `0.97` | Temporal discount $\gamma$. |
 | `policy.critic_target_update_weight` | float | `0.005` | Polyak averaging $\tau$. |
 | `policy.utd_ratio` | int | `2` | Critic updates per actor update. |
-| `policy.reward_normalization_constant` | float | `5.0` | Divide rewards by this constant. |
-| `policy.terminal_failure_reward` | float | `-16.0` | Penalty on episode failure/timeout. |
+| `policy.reward_normalization_constant` | float | `5.0` | All rewards (positive and negative) are divided by this value before being fed to the critic. It keeps the value targets in a numerically stable range and, together with `discount`, sets the effective scale of the advantage. If rewards are very sparse or very dense in your task, retune this — too small and the critic saturates, too large and the learning signal vanishes. |
+| `policy.terminal_failure_reward` | float | `-16.0` | Penalty applied when an episode ends in failure or timeout (before normalization). The magnitude should be large enough to dominate the discounted sum of any positive shaping rewards leading up to a failure, otherwise the policy can learn to "milk" partial credit and avoid commitment to the success state. |
 
 **Loss Weights:**
 
@@ -168,7 +188,7 @@ The config file (`config-hiserl.json`) drives all scripts. Below is a reference 
 | `policy.actor_lr` | float | `5e-5` | Actor learning rate. |
 | `policy.optimizer_weight_decay` | float | `0.01` | L2 regularization. |
 | `policy.grad_clip_norm` | float | `2.0` | Max gradient norm. |
-| `policy.gradient_accumulation_steps` | int | `16` | Accumulate gradients before stepping. |
+| `policy.gradient_accumulation_steps` | int | `16` | **Important for low-VRAM setups.** Combined with `batch_size`, this sets the effective batch size (e.g., 8 × 16 = 128) while only `batch_size` samples ever sit on the GPU at once. Raise this on smaller GPUs to keep the effective batch large without OOM-ing. |
 | `policy.policy_update_freq` | int | `1` | Update actor every N critic updates. |
 
 **Buffer:**
@@ -183,9 +203,11 @@ The config file (`config-hiserl.json`) drives all scripts. Below is a reference 
 
 **Action Encoding:**
 
+See [Action Encodings](#action-encodings) — this is set once and propagates through the entire pipeline, so make the choice before kicking off offline training.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `policy.action_encoding` | str | `"anchor"` | `"absolute"`, `"anchor"`, or `"delta"`. See [Action Encodings](#action-encodings). |
+| `policy.action_encoding` | str | `"anchor"` | `"absolute"`, `"anchor"`, or `"delta"`. |
 | `policy.action_encoding_stats_path` | str\|null | — | Path to precomputed stats `.pt` file. Required for anchor/delta. |
 
 **Device & Precision:**
@@ -293,71 +315,81 @@ See [Validation Metrics](metrics.md) for detailed descriptions of each probe. Be
 
 ---
 
-## Action Encodings
-
-The pipeline supports three action representations. The choice affects how the model sees and predicts actions.
-
-### Absolute
-
-Actions are raw joint positions: $\mathbf{a}_t \in \mathbb{R}^d$. No transformation applied. This is the simplest but doesn't generalize well across different starting configurations.
-
-### Anchor
-
-Each action is encoded as an offset from the initial state $\mathbf{s}_0$ of the current chunk:
-
-$$\mathbf{d}_t = \mathbf{a}_t - \mathbf{s}_0$$
-
-This provides **translation invariance**: the same reaching motion produces the same encoded action regardless of the arm's starting position. Recommended for most use cases.
-
-### Delta
-
-First-order differences:
-
-$$\mathbf{d}_0 = \mathbf{a}_0 - \mathbf{s}_0, \quad \mathbf{d}_t = \mathbf{a}_t - \mathbf{a}_{t-1} \text{ for } t > 0$$
-
-More compact than anchor but accumulated errors can drift.
-
-### Computing Statistics
-
-Anchor and delta encodings require precomputed normalization statistics. Generate them with:
-
-```bash
-python -m lerobot.scripts.compute_delta_stats \
-    --data-dir /path/to/dataset \
-    --encoding anchor
-```
-
-This iterates over all episodes, computes anchor (or delta) representations for every action chunk, and saves per-timestep statistics (min, max, mean, std, quantiles) to a `.pt` file. Set `policy.action_encoding_stats_path` to point to this file.
-
-### Anchor Alignment During RTC
-
-When a new action chunk is generated during real-time inference, leftover actions from the previous chunk reference the old anchor state $\mathbf{s}_0^{\text{old}}$. If the robot has moved, these need re-alignment:
-
-$$\mathbf{d}_t^{\text{new}} = \mathbf{d}_t^{\text{old}} + (\mathbf{s}_0^{\text{old}} - \mathbf{s}_0^{\text{new}})$$
-
-This correction is applied automatically in the action queue merging logic.
-
----
-
 ## The Iterative RL Loop
 
 Following RECAP's recommendation, we retrain from the base model each iteration, including all accumulated data to avoid policy drift.
 
 ### Cycle
 
-1. **Offline training** on existing demonstrations
-2. **Online training** (actor + learner) to collect new experience
-3. **Convert** online buffer to video format:
-   ```bash
-   python -m lerobot.policies.pi05_full.annotate.online_buffer_to_video \
-       --data-dir /path/to/online_buffer \
-       --output-dir /path/to/online_buffer_video
-   ```
-4. **Annotate** the new data with subtasks (Gemma 4 or manual)
-5. **Merge** by adding the path to `dataset.additional_offline_dataset_paths`
-6. **Retrain from base model** with all data combined
+1. **Offline training** on existing demonstrations.
+2. **Online training** (actor + learner) to collect new experience. The learner periodically dumps the online replay buffer to disk under `output_dir`.
+3. **Convert** the dumped buffer into a video-format LeRobot dataset.
+4. **Annotate** the converted dataset with subtasks (manually via web UI, or automatically with an LLM).
+5. **Merge** by adding the annotated path to `dataset.additional_offline_dataset_paths`.
+6. **Retrain from the base $\pi_{0.5}$ model** with all data combined — old demos, prior cycles' on-policy data, and the new annotated buffer.
 
-Each cycle adds more diverse experience. The `additional_offline_dataset_paths` field supports multiple paths — subtask indices are automatically remapped to avoid collisions when merging datasets.
+Each cycle adds more diverse experience. The `additional_offline_dataset_paths` field supports multiple paths — subtask indices are automatically remapped across paths to avoid collisions when merging.
+
+Steps 3 and 4 are covered in detail in [Dataset Preparation & Annotation](#dataset-preparation--annotation).
+
+---
+
+## Dataset Preparation & Annotation
+
+The same scripts produce both the initial annotated dataset required by the quick start (≥50 episodes with subtask labels) and the per-iteration data folded in via `additional_offline_dataset_paths`.
+
+### Convert the online buffer to a video dataset
+
+The learner saves online transitions with raw images. Convert them to a video-format LeRobot dataset before annotating:
+
+```bash
+python -m lerobot.policies.pi05_full.annotate.online_buffer_to_video \
+    --data-dir /path/to/output_dir/dataset \
+    --output-dir /path/to/output_dir/dataset_video
+```
+
+`--data-dir` is the buffer dump written by the learner under its `output_dir`. Datasets recorded with `lerobot_record` are already in video format and skip this step.
+
+### Annotate with subtasks
+
+Two options, same on-disk result.
+
+**Manual (web UI):**
+
+```bash
+python -m lerobot.policies.pi05_full.annotate.manual_subtask_annotate
+```
+
+Launches a Gradio app where you scrub through episodes and assign skills from a palette defined in [`skills.yaml`](../../src/lerobot/policies/pi05_full/annotate/skills.yaml). Edit that file to match your task vocabulary before annotating. An external alternative is [lerobot-data-studio](https://github.com/jackvial/lerobot-data-studio).
+
+**LLM (Gemma 4):**
+
+```bash
+python -m lerobot.policies.pi05_full.annotate.subtask_annotate_gemma_4 \
+    --data-dir /path/to/your/dataset \
+    --video-key observation.images.wrist \
+    --batch-size 5 \
+    --output-dir /output/path
+```
+
+`--video-key` picks the camera the model sees; the wrist view usually works best for manipulation. `--batch-size` controls VRAM.
+
+### Inspect the result
+
+Before training on freshly annotated data, render one episode with labels burned in:
+
+```bash
+python -m lerobot.policies.pi05_full.annotate.visualize_annotations \
+    --dataset /path/to/annotated_dataset \
+    --output  /path/to/visualization_ep0.mp4 \
+    --episode 0
+```
+
+If the segmentation looks off, fix it in the web UI or rerun Gemma 4 with a different `--video-key` before committing to a training run.
+
+### Wire it in
+
+Point `dataset.root` at the annotated dataset for a fresh run, or append the path to `dataset.additional_offline_dataset_paths` to merge it with existing data. Subtask indices are remapped across paths automatically.
 
 ---
 
@@ -387,7 +419,7 @@ During the actor update, transitions marked as interventions get their advantage
 
 ### Re-engagement
 
-When the human releases control (presses `5` again), the inference thread resumes immediately with a fresh action queue. The action queue is cleared to prevent jerky transitions from stale predictions.
+When the human releases control (presses `5` again), the inference thread resumes immediately with a fresh action queue, preventing jerky transitions from stale predictions.
 
 ---
 
@@ -395,59 +427,37 @@ When the human releases control (presses `5` again), the inference thread resume
 
 The async pipeline decouples neural network inference (slow, variable latency) from robot control (strict 30Hz).
 
-### Threading Model
-
-Two daemon threads run concurrently:
-
-**Environment thread** (`env_interaction_worker`):
-- Maintains a strict 30Hz loop using high-resolution sleep
-- Pops one action per step from the `ActionQueue`
-- Sends the action to the robot
-- Records transitions
-- Handles episode boundaries, resets, and interventions
-
-**Inference thread** (`get_actions_worker`):
-- Runs asynchronously with no timing constraints
-- Pulls the latest observation from `SharedStateActor` (thread-safe)
-- Runs policy inference to generate an action chunk ($T$ actions)
-- Pushes the chunk to the `ActionQueue` with latency compensation
-- Sleeps when the queue is full (backpressure)
-
-### Action Queue and RTC
-
-The `ActionQueue` bridges the timing gap:
-
-- The policy generates chunks of $T$ actions (default: 50) at irregular intervals
-- The environment consumes 1 action per step at fixed 30Hz
-- RTC mode: when a new chunk arrives, the first `delay` actions are discarded (they've already been executed while inference was running). The delay is estimated using a sliding window p95 latency tracker.
-- Non-RTC mode: new chunks are appended to the existing queue.
+Two daemon threads run concurrently: an **environment thread** that maintains the 30Hz control loop, pops one action at a time from the `ActionQueue`, sends it to the robot, and handles episode boundaries; and an **inference thread** that pulls the latest observation, runs the policy to generate a chunk of $T$ actions, and pushes the chunk into the queue. The two threads share state through a thread-safe `SharedStateActor`. The queue absorbs the timing mismatch — chunks arrive irregularly, but the environment always has a smooth stream of actions to consume.
 
 ### Action Smoothing
 
-A centered moving average (window size 5) is applied to reduce jitter:
+A centered moving average (window size 5) is applied to the absolute action values after anchor/delta reconstruction:
 
 $$\hat{a}_t = \frac{1}{5}\sum_{k=-2}^{2} a_{t+k}$$
 
-with edge padding. Applied after anchor/delta reconstruction on the absolute action values.
+with edge padding. Smoothing matters more here than in standard imitation learning because the policy is continuously generating its own training data. Jittery actions produce jittery trajectories, the next round of online data inherits that noise, and the policy progressively learns from a worse and worse distribution. A small amount of low-pass filtering breaks that feedback loop and keeps the on-policy data clean.
 
-### Latency Tracking
+---
 
-The `LatencyTracker` maintains a sliding window (last 100 inference times) and reports the **p95 percentile** (not max) to avoid single spikes causing excessive lookahead. The inference thread uses this to:
-- Discard already-executed actions when merging chunks
-- Sleep when the queue has enough actions buffered
+## Inference Scripts
 
-### gRPC Protocol
+Two standalone scripts run the policy without any learner or gRPC connection — useful for evaluation, deployment, and debugging a checkpoint in isolation.
 
-The actor and learner communicate via gRPC (HTTP/2):
+**Standard async inference:**
+```bash
+python -m lerobot.rl.inference_pi05_async --config path/to/config.json
+```
 
-| RPC | Direction | Purpose |
-|-----|-----------|---------|
-| `StreamParameters` | Learner -> Actor | Push updated policy weights |
-| `SendTransitions` | Actor -> Learner | Stream collected transitions |
-| `SendInteractions` | Actor -> Learner | Episode statistics (reward, intervention rate) |
-| `Ready` | Actor -> Learner | Handshake at startup |
+Same threading model and action queue as the actor, but no transitions are streamed anywhere. The script still writes episode videos every `episode_logging_freq` episodes and dumps the buffer every `episode_save_freq` episodes, so a session can be reviewed afterward.
 
-Transitions are serialized with PyTorch pickle and sent in chunks to avoid gRPC message size limits. The actor retries connection up to 30 times at startup.
+**Interactive subtask injection:**
+```bash
+python -m lerobot.rl.inference_pi05_async_interactive --config path/to/config.json
+```
+
+Identical to the standard script, except the operator can type a subtask string into the terminal at any time. The text is tokenized and injected into the policy's subtask token cache, taking effect on the very next action chunk; the model's normal time-based subtask cache then resumes. Requires `subtask_regeneration_interval > 0` (e.g. 30) — otherwise the model regenerates subtask tokens every cycle and the override is overwritten before it takes effect.
+
+Both scripts expect the same config used for online training and load weights from `policy.pi05_checkpoint`.
 
 ---
 
@@ -464,21 +474,3 @@ python -m lerobot.scripts.lerobot_memmap_buffer_cache \
 This creates memory-mapped `.bin` files (one per tensor: images, actions, states, etc.) with a `metadata.json` recording shapes and dtypes. The OS virtual memory system manages paging, so 50GB+ datasets work on machines with much less free RAM.
 
 Set `buffer_cache_dir` in the config to enable automatic cache detection via fingerprint matching.
-
----
-
-## Frozen Parameters & Memory Optimization
-
-Training the full $\pi_{0.5}$ + critic requires substantial VRAM. Several strategies reduce memory usage:
-
-1. **Selective layer freezing**: Only upper transformer layers are trained (configurable via `trainable_params`). The action expert is always fully trained.
-
-2. **Gradient checkpointing**: When `gradient_checkpointing: true`, intermediate activations are recomputed during the backward pass instead of stored, trading compute for memory.
-
-3. **Gradient accumulation**: With `gradient_accumulation_steps: 16` and `batch_size: 8`, the effective batch size is 128 while only 8 samples are in GPU memory at once.
-
-4. **CPU storage**: Setting `storage_device: "cpu"` keeps the replay buffer in system RAM, freeing GPU memory for the model.
-
-5. **bfloat16**: Using `dtype: "bfloat16"` halves the memory footprint of model weights and activations.
-
-The default config trains SigLIP layers 5-26, all Gemma language layers, the full action expert, and critic layers 1-5. Adjust the `trainable_params` section to freeze more layers if running on smaller GPUs.
