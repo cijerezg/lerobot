@@ -224,9 +224,33 @@ class RobotClientDrtcConfig:
         default=2048,
         metadata={"help": "Dimensionality of the compact RLT token."},
     )
+    rlt_actor_hidden_dims: list[int] | None = field(
+        default=None,
+        metadata={"help": "Hidden layer sizes for the RLT actor MLP. None preserves the policy default."},
+    )
+    rlt_critic_hidden_dims: list[int] | None = field(
+        default=None,
+        metadata={"help": "Hidden layer sizes for the RLT critic MLP. None preserves the policy default."},
+    )
+    rlt_actor_residual_scale: float = field(
+        default=0.25,
+        metadata={"help": "Maximum residual action scale added by the RLT actor head."},
+    )
+    rlt_num_critics: int = field(
+        default=1,
+        metadata={"help": "Number of RLT critics. Values >1 use clipped-min critic targets."},
+    )
     rlt_bc_beta: float = field(
         default=1.0,
         metadata={"help": "BC/reference-action regularization coefficient for RLT training."},
+    )
+    rlt_bc_action_weights: list[float] | None = field(
+        default=None,
+        metadata={"help": "Optional per-action BC weights. Length must match RLT action dimension."},
+    )
+    rlt_jerk_beta: float = field(
+        default=0.0,
+        metadata={"help": "Optional smoothness penalty on second differences of actor action chunks."},
     )
     rlt_reference_dropout_p: float = field(
         default=0.5,
@@ -272,6 +296,22 @@ class RobotClientDrtcConfig:
         default="outputs/rlt_online",
         metadata={"help": "Directory for online RLT head checkpoints."},
     )
+    rlt_demo_buffer_path: str | None = field(
+        default=None,
+        metadata={"help": "Optional persisted replay buffer used to seed online RLT training."},
+    )
+    rlt_online_buffer_path: str | None = field(
+        default=None,
+        metadata={"help": "Optional persisted online replay buffer to load and update during collection."},
+    )
+    rlt_online_buffer_save_freq_transitions: int = field(
+        default=100,
+        metadata={"help": "Save the online RLT buffer every N accepted transitions. 0 disables periodic saves."},
+    )
+    rlt_persist_buffer_on_shutdown: bool = field(
+        default=True,
+        metadata={"help": "Persist the online RLT buffer when the policy server resets or stops."},
+    )
     rlt_actor_lr: float = field(default=3e-4, metadata={"help": "Online RLT actor learning rate."})
     rlt_critic_lr: float = field(default=3e-4, metadata={"help": "Online RLT critic learning rate."})
     rlt_discount: float = field(default=0.99, metadata={"help": "Online RLT critic discount factor."})
@@ -290,6 +330,26 @@ class RobotClientDrtcConfig:
     rlt_transition_queue_size: int = field(
         default=256,
         metadata={"help": "Maximum queued client-side RLT transitions before dropping."},
+    )
+    rlt_grad_clip_norm: float | None = field(
+        default=None,
+        metadata={"help": "Optional gradient norm clipping value for online RLT actor and critic updates."},
+    )
+    rlt_q_abs_max: float | None = field(
+        default=None,
+        metadata={"help": "Disable actor execution if observed absolute Q values exceed this threshold."},
+    )
+    rlt_action_deviation_abs_max: float | None = field(
+        default=None,
+        metadata={"help": "Disable actor execution if actor-reference absolute deviation exceeds this threshold."},
+    )
+    rlt_loss_abs_max: float | None = field(
+        default=None,
+        metadata={"help": "Disable actor execution if actor or critic loss magnitude exceeds this threshold."},
+    )
+    rlt_safety_patience: int = field(
+        default=3,
+        metadata={"help": "Number of consecutive unsafe RLT updates before actor execution is disabled."},
     )
 
     # Diagnostic metrics (console output; avg/max only)
@@ -550,8 +610,26 @@ class RobotClientDrtcConfig:
             raise ValueError(f"rlt_chunk_size must be positive, got {self.rlt_chunk_size}")
         if self.rlt_token_dim <= 0:
             raise ValueError(f"rlt_token_dim must be positive, got {self.rlt_token_dim}")
+        for name, dims in (
+            ("rlt_actor_hidden_dims", self.rlt_actor_hidden_dims),
+            ("rlt_critic_hidden_dims", self.rlt_critic_hidden_dims),
+        ):
+            if dims is not None and (not dims or any(dim <= 0 for dim in dims)):
+                raise ValueError(f"{name} must contain positive dimensions, got {dims}")
+        if self.rlt_actor_residual_scale <= 0:
+            raise ValueError(
+                f"rlt_actor_residual_scale must be positive, got {self.rlt_actor_residual_scale}"
+            )
+        if self.rlt_num_critics <= 0:
+            raise ValueError(f"rlt_num_critics must be positive, got {self.rlt_num_critics}")
         if self.rlt_bc_beta < 0:
             raise ValueError(f"rlt_bc_beta must be non-negative, got {self.rlt_bc_beta}")
+        if self.rlt_bc_action_weights is not None and any(weight < 0 for weight in self.rlt_bc_action_weights):
+            raise ValueError(
+                f"rlt_bc_action_weights must be non-negative, got {self.rlt_bc_action_weights}"
+            )
+        if self.rlt_jerk_beta < 0:
+            raise ValueError(f"rlt_jerk_beta must be non-negative, got {self.rlt_jerk_beta}")
         if not 0 <= self.rlt_reference_dropout_p <= 1:
             raise ValueError(
                 "rlt_reference_dropout_p must be in [0, 1], "
@@ -571,6 +649,11 @@ class RobotClientDrtcConfig:
             raise ValueError(f"rlt_train_freq_s must be positive, got {self.rlt_train_freq_s}")
         if self.rlt_save_freq_steps <= 0:
             raise ValueError(f"rlt_save_freq_steps must be positive, got {self.rlt_save_freq_steps}")
+        if self.rlt_online_buffer_save_freq_transitions < 0:
+            raise ValueError(
+                "rlt_online_buffer_save_freq_transitions must be non-negative, "
+                f"got {self.rlt_online_buffer_save_freq_transitions}"
+            )
         if self.rlt_actor_lr <= 0:
             raise ValueError(f"rlt_actor_lr must be positive, got {self.rlt_actor_lr}")
         if self.rlt_critic_lr <= 0:
@@ -592,6 +675,17 @@ class RobotClientDrtcConfig:
             raise ValueError(
                 f"rlt_transition_queue_size must be positive, got {self.rlt_transition_queue_size}"
             )
+        if self.rlt_grad_clip_norm is not None and self.rlt_grad_clip_norm <= 0:
+            raise ValueError(f"rlt_grad_clip_norm must be positive or None, got {self.rlt_grad_clip_norm}")
+        for name, value in (
+            ("rlt_q_abs_max", self.rlt_q_abs_max),
+            ("rlt_action_deviation_abs_max", self.rlt_action_deviation_abs_max),
+            ("rlt_loss_abs_max", self.rlt_loss_abs_max),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive or None, got {value}")
+        if self.rlt_safety_patience <= 0:
+            raise ValueError(f"rlt_safety_patience must be positive, got {self.rlt_safety_patience}")
         if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
             raise ValueError(
                 f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', or 'butterworth', "

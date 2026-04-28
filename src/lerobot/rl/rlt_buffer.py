@@ -3,6 +3,8 @@ from __future__ import annotations
 import random
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -32,6 +34,10 @@ class RLTReplayBuffer:
 
     def __len__(self) -> int:
         return len(self._samples)
+
+    @property
+    def capacity(self) -> int:
+        return int(self._samples.maxlen or 0)
 
     def add(self, sample: RLTReplaySample) -> None:
         self._samples.append(
@@ -73,3 +79,64 @@ class RLTReplayBuffer:
         if device is not None:
             out = {key: value.to(device) for key, value in out.items()}
         return out
+
+    def samples(self) -> list[RLTReplaySample]:
+        """Return a CPU snapshot of the stored samples in replay order."""
+        return list(self._samples)
+
+    def extend(self, samples: list[RLTReplaySample]) -> None:
+        for sample in samples:
+            self.add(sample)
+
+    def state_dict(self) -> dict[str, Any]:
+        def _sample_state(sample: RLTReplaySample) -> dict[str, Any]:
+            return {
+                "rl_token": sample.rl_token.detach().cpu(),
+                "proprio": sample.proprio.detach().cpu(),
+                "reference_chunk": sample.reference_chunk.detach().cpu(),
+                "executed_chunk": sample.executed_chunk.detach().cpu(),
+                "next_rl_token": sample.next_rl_token.detach().cpu(),
+                "next_proprio": sample.next_proprio.detach().cpu(),
+                "next_reference_chunk": sample.next_reference_chunk.detach().cpu(),
+                "reward": float(sample.reward),
+                "done": bool(sample.done),
+                "is_intervention": bool(sample.is_intervention),
+            }
+
+        return {
+            "version": 1,
+            "capacity": self.capacity,
+            "samples": [_sample_state(sample) for sample in self._samples],
+        }
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        samples = state_dict.get("samples", [])
+        self._samples.clear()
+        for sample in samples:
+            self.add(
+                RLTReplaySample(
+                    rl_token=sample["rl_token"],
+                    proprio=sample["proprio"],
+                    reference_chunk=sample["reference_chunk"],
+                    executed_chunk=sample["executed_chunk"],
+                    next_rl_token=sample["next_rl_token"],
+                    next_proprio=sample["next_proprio"],
+                    next_reference_chunk=sample["next_reference_chunk"],
+                    reward=float(sample["reward"]),
+                    done=bool(sample["done"]),
+                    is_intervention=bool(sample["is_intervention"]),
+                )
+            )
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self.state_dict(), path)
+
+    @classmethod
+    def load(cls, path: str | Path, *, capacity: int | None = None) -> "RLTReplayBuffer":
+        state_dict = torch.load(Path(path), map_location="cpu", weights_only=True)
+        replay_capacity = int(capacity or state_dict.get("capacity", 1))
+        replay = cls(capacity=replay_capacity)
+        replay.load_state_dict(state_dict)
+        return replay

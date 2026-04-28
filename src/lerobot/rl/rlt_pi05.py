@@ -29,6 +29,29 @@ import lerobot.rl.rl_pi05  # noqa: F401  # Register pi05_rl configs used by exis
 logger = logging.getLogger(__name__)
 
 
+def _hidden_dims(value: int | list[int] | tuple[int, ...] | None, *, default: int = 256) -> list[int]:
+    if value is None:
+        return [default, default]
+    if isinstance(value, int):
+        if value <= 0:
+            raise ValueError(f"hidden_dim must be positive, got {value}")
+        return [value, value]
+    dims = [int(dim) for dim in value]
+    if not dims or any(dim <= 0 for dim in dims):
+        raise ValueError(f"hidden dimensions must be positive, got {value}")
+    return dims
+
+
+def _make_mlp(in_dim: int, hidden_dims: list[int], out_dim: int) -> nn.Sequential:
+    layers: list[nn.Module] = []
+    prev_dim = in_dim
+    for hidden_dim in hidden_dims:
+        layers.extend([nn.Linear(prev_dim, hidden_dim), nn.SiLU()])
+        prev_dim = hidden_dim
+    layers.append(nn.Linear(prev_dim, out_dim))
+    return nn.Sequential(*layers)
+
+
 class RLTokenAutoencoder(nn.Module):
     """Compact bottleneck readout trained to reconstruct frozen VLA prefix embeddings."""
 
@@ -131,7 +154,7 @@ class RLTActorHead(nn.Module):
         proprio_dim: int,
         action_dim: int,
         chunk_size: int,
-        hidden_dim: int = 256,
+        hidden_dim: int | list[int] | tuple[int, ...] = 256,
         residual_scale: float = 0.25,
     ):
         super().__init__()
@@ -140,13 +163,8 @@ class RLTActorHead(nn.Module):
         self.residual_scale = residual_scale
         in_dim = token_dim + proprio_dim + chunk_size * action_dim
         out_dim = chunk_size * action_dim
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, out_dim),
-        )
+        self.hidden_dims = _hidden_dims(hidden_dim)
+        self.net = _make_mlp(in_dim, self.hidden_dims, out_dim)
 
     def forward(self, rl_token: Tensor, proprio: Tensor, reference_chunk: Tensor) -> Tensor:
         flat_ref = reference_chunk.reshape(reference_chunk.shape[0], -1)
@@ -165,24 +183,70 @@ class RLTCriticHead(nn.Module):
         proprio_dim: int,
         action_dim: int,
         chunk_size: int,
-        hidden_dim: int = 256,
+        hidden_dim: int | list[int] | tuple[int, ...] = 256,
     ):
         super().__init__()
         in_dim = token_dim + proprio_dim + chunk_size * action_dim
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, 1),
-        )
+        self.hidden_dims = _hidden_dims(hidden_dim)
+        self.net = _make_mlp(in_dim, self.hidden_dims, 1)
 
     def forward(self, rl_token: Tensor, proprio: Tensor, action_chunk: Tensor) -> Tensor:
         flat_action = action_chunk.reshape(action_chunk.shape[0], -1)
         return self.net(torch.cat([rl_token, proprio, flat_action], dim=-1))
 
 
-def rlt_critic_loss(policy: "PI05RLTPolicy", batch: dict[str, Tensor], discount: float) -> Tensor:
+class RLTCriticEnsemble(nn.Module):
+    """Critic ensemble using clipped-min values for conservative actor updates."""
+
+    def __init__(
+        self,
+        *,
+        num_critics: int,
+        token_dim: int,
+        proprio_dim: int,
+        action_dim: int,
+        chunk_size: int,
+        hidden_dim: int | list[int] | tuple[int, ...] = 256,
+    ):
+        super().__init__()
+        if num_critics <= 0:
+            raise ValueError(f"num_critics must be positive, got {num_critics}")
+        self.critics = nn.ModuleList(
+            [
+                RLTCriticHead(
+                    token_dim=token_dim,
+                    proprio_dim=proprio_dim,
+                    action_dim=action_dim,
+                    chunk_size=chunk_size,
+                    hidden_dim=hidden_dim,
+                )
+                for _ in range(num_critics)
+            ]
+        )
+
+    def values(self, rl_token: Tensor, proprio: Tensor, action_chunk: Tensor) -> Tensor:
+        return torch.stack(
+            [critic(rl_token, proprio, action_chunk) for critic in self.critics],
+            dim=0,
+        )
+
+    def forward(self, rl_token: Tensor, proprio: Tensor, action_chunk: Tensor) -> Tensor:
+        return self.values(rl_token, proprio, action_chunk).min(dim=0).values
+
+
+def _critic_values(critic: nn.Module, rl_token: Tensor, proprio: Tensor, action_chunk: Tensor) -> Tensor:
+    if isinstance(critic, RLTCriticEnsemble):
+        return critic.values(rl_token, proprio, action_chunk)
+    return critic(rl_token, proprio, action_chunk).unsqueeze(0)
+
+
+def rlt_critic_loss(
+    policy: "PI05RLTPolicy",
+    batch: dict[str, Tensor],
+    discount: float,
+    *,
+    return_stats: bool = False,
+) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
     """TD critic loss for compact chunk-level RLT transitions."""
     rewards = batch["reward"].to(dtype=batch["rl_token"].dtype)
     dones = batch["done"].to(dtype=batch["rl_token"].dtype)
@@ -192,14 +256,25 @@ def rlt_critic_loss(policy: "PI05RLTPolicy", batch: dict[str, Tensor], discount:
             batch["next_proprio"],
             batch["next_reference_chunk"],
         )
-        next_q = policy.rlt_critic_target(
+        next_q_values = _critic_values(
+            policy.rlt_critic_target,
             batch["next_rl_token"],
             batch["next_proprio"],
             next_actions,
         )
+        next_q = next_q_values.min(dim=0).values
         target_q = rewards + float(discount) * (1.0 - dones) * next_q
-    pred_q = policy.rlt_critic(batch["rl_token"], batch["proprio"], batch["executed_chunk"])
-    return F.mse_loss(pred_q, target_q)
+    pred_q_values = _critic_values(policy.rlt_critic, batch["rl_token"], batch["proprio"], batch["executed_chunk"])
+    loss = F.mse_loss(pred_q_values, target_q.unsqueeze(0).expand_as(pred_q_values))
+    if not return_stats:
+        return loss
+    return loss, {
+        "critic_loss": loss.detach(),
+        "pred_q_mean": pred_q_values.detach().mean(),
+        "pred_q_abs_max": pred_q_values.detach().abs().max(),
+        "target_q_mean": target_q.detach().mean(),
+        "target_q_abs_max": target_q.detach().abs().max(),
+    }
 
 
 def rlt_actor_loss(
@@ -208,7 +283,8 @@ def rlt_actor_loss(
     *,
     beta: float | None = None,
     reference_dropout_p: float | None = None,
-) -> Tensor:
+    return_stats: bool = False,
+) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
     """Actor objective with conservative BC/reference regularization."""
     ref_input = batch["reference_chunk"]
     p = policy.config.rlt_reference_dropout_p if reference_dropout_p is None else float(reference_dropout_p)
@@ -217,7 +293,8 @@ def rlt_actor_loss(
         ref_input = ref_input * keep
 
     actor_actions = policy.rlt_actor(batch["rl_token"], batch["proprio"], ref_input)
-    q_value = policy.rlt_critic(batch["rl_token"], batch["proprio"], actor_actions)
+    q_values = _critic_values(policy.rlt_critic, batch["rl_token"], batch["proprio"], actor_actions)
+    q_value = q_values.min(dim=0).values
     intervention_mask = batch["is_intervention"].to(dtype=actor_actions.dtype, device=actor_actions.device)
     bc_target = torch.where(
         intervention_mask > 0.5,
@@ -225,7 +302,38 @@ def rlt_actor_loss(
         batch["reference_chunk"].to(dtype=actor_actions.dtype),
     )
     bc_beta = policy.config.rlt_bc_beta if beta is None else float(beta)
-    return -q_value.mean() + bc_beta * F.mse_loss(actor_actions, bc_target)
+    bc_error = (actor_actions - bc_target).pow(2)
+    bc_action_weights = getattr(policy.config, "rlt_bc_action_weights", None)
+    if bc_action_weights:
+        weights = torch.as_tensor(bc_action_weights, dtype=bc_error.dtype, device=bc_error.device)
+        if weights.numel() != bc_error.shape[-1]:
+            raise ValueError(
+                f"rlt_bc_action_weights has {weights.numel()} entries, expected {bc_error.shape[-1]}"
+            )
+        bc_error = bc_error * weights.view(1, 1, -1)
+    bc_loss = bc_error.mean()
+
+    jerk_loss = torch.zeros((), dtype=actor_actions.dtype, device=actor_actions.device)
+    if actor_actions.shape[1] >= 3:
+        jerk = actor_actions[:, 2:] - 2.0 * actor_actions[:, 1:-1] + actor_actions[:, :-2]
+        jerk_loss = jerk.pow(2).mean()
+    jerk_beta = float(getattr(policy.config, "rlt_jerk_beta", 0.0) or 0.0)
+
+    q_loss = -q_value.mean()
+    loss = q_loss + bc_beta * bc_loss + jerk_beta * jerk_loss
+    if not return_stats:
+        return loss
+
+    action_deviation = actor_actions - batch["reference_chunk"].to(dtype=actor_actions.dtype)
+    return loss, {
+        "actor_loss": loss.detach(),
+        "actor_q_mean": q_value.detach().mean(),
+        "actor_q_abs_max": q_values.detach().abs().max(),
+        "actor_bc_loss": bc_loss.detach(),
+        "actor_jerk_loss": jerk_loss.detach(),
+        "action_deviation_rms": action_deviation.detach().pow(2).mean().sqrt(),
+        "action_deviation_abs_max": action_deviation.detach().abs().max(),
+    }
 
 
 def soft_update_rlt_target(policy: "PI05RLTPolicy", tau: float) -> None:
@@ -275,8 +383,13 @@ class PI05RLTConfig(PI05FullConfig):
     rlt_token_num_heads: int = 8
     rlt_actor_hidden_dim: int = 256
     rlt_critic_hidden_dim: int = 256
+    rlt_actor_hidden_dims: list[int] | None = None
+    rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
+    rlt_num_critics: int = 1
     rlt_bc_beta: float = 1.0
+    rlt_bc_action_weights: list[float] | None = None
+    rlt_jerk_beta: float = 0.0
     rlt_reference_dropout_p: float = 0.5
     subtask_generation_enabled: bool = False
     advantage_scaling: float = 1.0
@@ -435,20 +548,25 @@ class PI05RLTPolicy(PI05FullPolicy):
             proprio_dim=proprio_dim,
             action_dim=action_dim,
             chunk_size=config.rlt_chunk_size,
-            hidden_dim=config.rlt_actor_hidden_dim,
+            hidden_dim=config.rlt_actor_hidden_dims or config.rlt_actor_hidden_dim,
             residual_scale=config.rlt_actor_residual_scale,
         )
-        self.rlt_critic = RLTCriticHead(
-            token_dim=config.rlt_token_dim,
-            proprio_dim=proprio_dim,
-            action_dim=action_dim,
-            chunk_size=config.rlt_chunk_size,
-            hidden_dim=config.rlt_critic_hidden_dim,
-        )
+        critic_kwargs = {
+            "token_dim": config.rlt_token_dim,
+            "proprio_dim": proprio_dim,
+            "action_dim": action_dim,
+            "chunk_size": config.rlt_chunk_size,
+            "hidden_dim": config.rlt_critic_hidden_dims or config.rlt_critic_hidden_dim,
+        }
+        if config.rlt_num_critics > 1:
+            self.rlt_critic = RLTCriticEnsemble(num_critics=config.rlt_num_critics, **critic_kwargs)
+        else:
+            self.rlt_critic = RLTCriticHead(**critic_kwargs)
         self.rlt_critic_target = copy.deepcopy(self.rlt_critic)
 
         self._freeze_vla()
         self._rlt_actor_loaded = False
+        self._rlt_loaded_head_step = 0
         self._load_rlt_checkpoints()
 
     def _freeze_vla(self) -> None:
@@ -465,16 +583,31 @@ class PI05RLTPolicy(PI05FullPolicy):
         if self.config.rlt_head_checkpoint:
             checkpoint = torch.load(self.config.rlt_head_checkpoint, map_location="cpu")
             self.rlt_actor.load_state_dict(checkpoint["rlt_actor"], strict=True)
-            self.rlt_critic.load_state_dict(checkpoint["rlt_critic"], strict=False)
+            self._load_critic_state(self.rlt_critic, checkpoint["rlt_critic"], strict=False)
             if "rlt_critic_target" in checkpoint:
-                self.rlt_critic_target.load_state_dict(checkpoint["rlt_critic_target"], strict=False)
+                self._load_critic_state(
+                    self.rlt_critic_target,
+                    checkpoint["rlt_critic_target"],
+                    strict=False,
+                )
             else:
                 self.rlt_critic_target.load_state_dict(self.rlt_critic.state_dict())
+            self._rlt_loaded_head_step = int(checkpoint.get("step", 0))
             self._rlt_actor_loaded = True
             logger.info("Loaded RLT actor/critic checkpoint from %s", self.config.rlt_head_checkpoint)
 
         self.rlt_critic_target.requires_grad_(False)
         self.rlt_critic_target.eval()
+
+    @staticmethod
+    def _load_critic_state(critic: nn.Module, state_dict: dict[str, Tensor], *, strict: bool) -> None:
+        if isinstance(critic, RLTCriticEnsemble) and not any(
+            key.startswith("critics.") for key in state_dict
+        ):
+            for head in critic.critics:
+                head.load_state_dict(state_dict, strict=strict)
+            return
+        critic.load_state_dict(state_dict, strict=strict)
 
     def get_optim_params(self) -> dict[str, Any]:
         return {

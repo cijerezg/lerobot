@@ -294,13 +294,29 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_train_freq_s = 1.0
         self._rlt_save_freq_steps = 500
         self._rlt_output_dir = "outputs/rlt_online"
+        self._rlt_demo_buffer_path: str | None = None
+        self._rlt_online_buffer_path: str | None = None
+        self._rlt_online_buffer_save_freq_transitions = 100
+        self._rlt_persist_buffer_on_shutdown = True
         self._rlt_actor_lr = 3e-4
         self._rlt_critic_lr = 3e-4
         self._rlt_discount = 0.99
         self._rlt_target_update_tau = 0.005
         self._rlt_execute_after_train_steps = 1000000
+        self._rlt_grad_clip_norm: float | None = None
+        self._rlt_q_abs_max: float | None = None
+        self._rlt_action_deviation_abs_max: float | None = None
+        self._rlt_loss_abs_max: float | None = None
+        self._rlt_safety_patience = 3
+        self._rlt_safety_violation_count = 0
+        self._rlt_actor_disabled_by_safety = False
         self._rlt_next_context_id = 1
         self._rlt_train_step = 0
+        self._rlt_loaded_head_step = 0
+        self._rlt_accepted_transitions = 0
+        self._rlt_buffer_dirty = False
+        self._rlt_demo_replay_size = 0
+        self._rlt_online_replay_size = 0
         self._rlt_completed_episodes: set[int] = set()
         self._rlt_context_cache = RLTSourceContextCache(max_size=256)
         self._rlt_replay = RLTReplayBuffer(capacity=10000)
@@ -369,6 +385,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             rlt_training_head=self._rlt_training_head,
             rlt_actor_training=self._rlt_training_head == "actor",
             rlt_critic_training=self._rlt_training_head == "critic",
+            rlt_actor_disabled_by_safety=self._rlt_actor_disabled_by_safety,
+            rlt_demo_replay_size=self._rlt_demo_replay_size,
+            rlt_online_replay_size=self._rlt_online_replay_size,
+            rlt_accepted_transitions=self._rlt_accepted_transitions,
             **fields,
         )
 
@@ -377,6 +397,60 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             return
         self._rlt_training_head = head
         self._emit_rlt_status("rlt_training_state")
+
+    def _load_rlt_replay_file(self, path: str | None, *, source: str) -> int:
+        if not path:
+            return 0
+        replay_path = Path(path)
+        if not replay_path.exists():
+            self._emit_rlt_status("rlt_replay_load_skipped", replay_source=source, replay_path=str(replay_path))
+            return 0
+        loaded = RLTReplayBuffer.load(replay_path, capacity=self._rlt_replay_capacity)
+        with self._rlt_replay_lock:
+            self._rlt_replay.extend(loaded.samples())
+            replay_size = len(self._rlt_replay)
+        loaded_size = len(loaded)
+        self.logger.info("Loaded %d RLT %s replay samples from %s", loaded_size, source, replay_path)
+        self._emit_rlt_status(
+            "rlt_replay_loaded",
+            replay_source=source,
+            replay_path=str(replay_path),
+            replay_loaded_size=loaded_size,
+            rlt_replay_size=replay_size,
+        )
+        return loaded_size
+
+    def _persist_rlt_replay(self, *, reason: str) -> None:
+        if not self._rlt_online_buffer_path or not self._rlt_buffer_dirty:
+            return
+        with self._rlt_replay_lock:
+            samples = self._rlt_replay.samples()
+            online_count = min(max(self._rlt_online_replay_size, 0), len(samples))
+            online_samples = samples[-online_count:] if online_count > 0 else []
+            replay = RLTReplayBuffer(capacity=self._rlt_replay_capacity)
+            replay.extend(online_samples)
+            replay_size = len(replay)
+            replay.save(self._rlt_online_buffer_path)
+        self._rlt_buffer_dirty = False
+        self.logger.info(
+            "Saved %d RLT replay samples to %s (%s)",
+            replay_size,
+            self._rlt_online_buffer_path,
+            reason,
+        )
+        self._emit_rlt_status(
+            "rlt_replay_saved",
+            replay_path=self._rlt_online_buffer_path,
+            replay_save_reason=reason,
+            replay_saved_size=replay_size,
+        )
+
+    def _maybe_persist_rlt_replay(self) -> None:
+        if self._rlt_online_buffer_save_freq_transitions <= 0:
+            return
+        if self._rlt_accepted_transitions % self._rlt_online_buffer_save_freq_transitions != 0:
+            return
+        self._persist_rlt_replay(reason="periodic")
 
     def _configure_rlt_online(self, policy_specs: RemotePolicyConfig) -> None:
         self._rlt_online_collection_enabled = bool(
@@ -391,6 +465,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_train_freq_s = float(getattr(policy_specs, "rlt_train_freq_s", 1.0))
         self._rlt_save_freq_steps = int(getattr(policy_specs, "rlt_save_freq_steps", 500))
         self._rlt_output_dir = str(getattr(policy_specs, "rlt_output_dir", "outputs/rlt_online"))
+        self._rlt_demo_buffer_path = getattr(policy_specs, "rlt_demo_buffer_path", None)
+        self._rlt_online_buffer_path = getattr(policy_specs, "rlt_online_buffer_path", None)
+        self._rlt_online_buffer_save_freq_transitions = int(
+            getattr(policy_specs, "rlt_online_buffer_save_freq_transitions", 100)
+        )
+        self._rlt_persist_buffer_on_shutdown = bool(
+            getattr(policy_specs, "rlt_persist_buffer_on_shutdown", True)
+        )
         self._rlt_actor_lr = float(getattr(policy_specs, "rlt_actor_lr", 3e-4))
         self._rlt_critic_lr = float(getattr(policy_specs, "rlt_critic_lr", 3e-4))
         self._rlt_discount = float(getattr(policy_specs, "rlt_discount", 0.99))
@@ -398,13 +480,28 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_execute_after_train_steps = int(
             getattr(policy_specs, "rlt_execute_after_train_steps", 1000000)
         )
+        self._rlt_grad_clip_norm = getattr(policy_specs, "rlt_grad_clip_norm", None)
+        self._rlt_q_abs_max = getattr(policy_specs, "rlt_q_abs_max", None)
+        self._rlt_action_deviation_abs_max = getattr(policy_specs, "rlt_action_deviation_abs_max", None)
+        self._rlt_loss_abs_max = getattr(policy_specs, "rlt_loss_abs_max", None)
+        self._rlt_safety_patience = int(getattr(policy_specs, "rlt_safety_patience", 3))
+        self._rlt_safety_violation_count = 0
+        self._rlt_actor_disabled_by_safety = False
         context_cache_size = int(getattr(policy_specs, "rlt_context_cache_size", 256))
         self._rlt_context_cache = RLTSourceContextCache(max_size=context_cache_size)
         with self._rlt_replay_lock:
             self._rlt_replay = RLTReplayBuffer(capacity=self._rlt_replay_capacity)
+        self._rlt_demo_replay_size = self._load_rlt_replay_file(self._rlt_demo_buffer_path, source="demo")
+        self._rlt_online_replay_size = self._load_rlt_replay_file(
+            self._rlt_online_buffer_path,
+            source="online",
+        )
+        self._rlt_buffer_dirty = False
+        self._rlt_accepted_transitions = 0
         self._rlt_completed_episodes.clear()
         self._rlt_next_context_id = 1
-        self._rlt_train_step = 0
+        self._rlt_loaded_head_step = int(getattr(self.policy, "_rlt_loaded_head_step", 0) or 0)
+        self._rlt_train_step = self._rlt_loaded_head_step
 
         if self._rlt_online_training_enabled and self.policy_type == "pi05_rlt" and self.policy is not None:
             self._rlt_actor_optimizer = torch.optim.AdamW(
@@ -438,6 +535,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             return False
         cfg = getattr(self.policy, "config", None)
         if not bool(getattr(cfg, "rlt_enabled", False)):
+            return False
+        if self._rlt_actor_disabled_by_safety:
             return False
         actor_loaded = bool(getattr(self.policy, "_rlt_actor_loaded", False))
         return actor_loaded or self._rlt_train_step >= self._rlt_execute_after_train_steps
@@ -588,6 +687,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         with self._rlt_replay_lock:
             self._rlt_replay.add(sample)
             replay_size = len(self._rlt_replay)
+        self._rlt_accepted_transitions += 1
+        self._rlt_online_replay_size += 1
+        self._rlt_buffer_dirty = True
         if transition.done:
             self._rlt_completed_episodes.add(int(transition.episode_id))
         self._metrics.diagnostic.counter("rlt_transition_accepted", 1)
@@ -600,6 +702,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             transition_intervention=bool(transition.is_intervention),
             episode_id=int(transition.episode_id),
         )
+        self._maybe_persist_rlt_replay()
 
     def _start_rlt_trainer_if_needed(self) -> None:
         if not self._rlt_online_training_enabled or self.policy_type != "pi05_rlt":
@@ -612,6 +715,59 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             daemon=True,
         )
         self._rlt_trainer_thread.start()
+
+    def _clip_rlt_grad_norm(self, parameters: Any) -> float:
+        if self._rlt_grad_clip_norm is None:
+            return 0.0
+        grad_norm = torch.nn.utils.clip_grad_norm_(parameters, max_norm=float(self._rlt_grad_clip_norm))
+        return float(grad_norm.detach().cpu()) if isinstance(grad_norm, torch.Tensor) else float(grad_norm)
+
+    @staticmethod
+    def _rlt_float_stats(stats: dict[str, torch.Tensor]) -> dict[str, float]:
+        return {
+            key: float(value.detach().cpu())
+            for key, value in stats.items()
+            if isinstance(value, torch.Tensor) and value.numel() == 1
+        }
+
+    def _check_rlt_safety(self, stats: dict[str, float]) -> None:
+        if self._rlt_actor_disabled_by_safety:
+            return
+        violations: list[str] = []
+        q_abs = max(
+            abs(stats.get("actor_q_abs_max", 0.0)),
+            abs(stats.get("pred_q_abs_max", 0.0)),
+            abs(stats.get("target_q_abs_max", 0.0)),
+        )
+        if self._rlt_q_abs_max is not None and q_abs > float(self._rlt_q_abs_max):
+            violations.append(f"q_abs={q_abs:.4f}")
+        action_dev = abs(stats.get("action_deviation_abs_max", 0.0))
+        if (
+            self._rlt_action_deviation_abs_max is not None
+            and action_dev > float(self._rlt_action_deviation_abs_max)
+        ):
+            violations.append(f"action_deviation_abs={action_dev:.4f}")
+        loss_abs = max(abs(stats.get("actor_loss", 0.0)), abs(stats.get("critic_loss", 0.0)))
+        if self._rlt_loss_abs_max is not None and loss_abs > float(self._rlt_loss_abs_max):
+            violations.append(f"loss_abs={loss_abs:.4f}")
+
+        if not violations:
+            self._rlt_safety_violation_count = 0
+            return
+
+        self._rlt_safety_violation_count += 1
+        self._emit_rlt_status(
+            "rlt_safety_violation",
+            rlt_safety_violations=",".join(violations),
+            rlt_safety_violation_count=self._rlt_safety_violation_count,
+        )
+        if self._rlt_safety_violation_count >= self._rlt_safety_patience:
+            self._rlt_actor_disabled_by_safety = True
+            self._emit_rlt_status(
+                "rlt_actor_disabled_by_safety",
+                rlt_safety_violations=",".join(violations),
+                rlt_safety_violation_count=self._rlt_safety_violation_count,
+            )
 
     def _rlt_trainer_loop(self) -> None:
         while self.running:
@@ -636,19 +792,33 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                         self.policy.rlt_actor.train()
                         self.policy.rlt_critic.train()
                         self._set_rlt_training_head("critic")
-                        critic_loss = rlt_critic_loss(self.policy, batch, self._rlt_discount)
+                        critic_loss, critic_stats = rlt_critic_loss(
+                            self.policy,
+                            batch,
+                            self._rlt_discount,
+                            return_stats=True,
+                        )
                         self._rlt_critic_optimizer.zero_grad(set_to_none=True)
                         critic_loss.backward()
+                        critic_grad_norm = self._clip_rlt_grad_norm(self.policy.rlt_critic.parameters())
                         self._rlt_critic_optimizer.step()
 
                         self._set_rlt_training_head("actor")
-                        actor_loss = rlt_actor_loss(self.policy, batch)
+                        actor_loss, actor_stats = rlt_actor_loss(self.policy, batch, return_stats=True)
                         self._rlt_actor_optimizer.zero_grad(set_to_none=True)
                         actor_loss.backward()
+                        actor_grad_norm = self._clip_rlt_grad_norm(self.policy.rlt_actor.parameters())
                         self._rlt_actor_optimizer.step()
                         soft_update_rlt_target(self.policy, self._rlt_target_update_tau)
                         self.policy.eval()
                         self._rlt_train_step += 1
+                        rlt_stats = {
+                            **self._rlt_float_stats(critic_stats),
+                            **self._rlt_float_stats(actor_stats),
+                            "rlt_critic_grad_norm": critic_grad_norm,
+                            "rlt_actor_grad_norm": actor_grad_norm,
+                        }
+                        self._check_rlt_safety(rlt_stats)
 
                     self._metrics.diagnostic.timing_ms(
                         "rlt_critic_loss", float(critic_loss.detach().cpu())
@@ -662,6 +832,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                         "rlt_training_step",
                         rlt_actor_loss=float(actor_loss.detach().cpu()),
                         rlt_critic_loss=float(critic_loss.detach().cpu()),
+                        **rlt_stats,
                     )
                     if self._rlt_train_step % self._rlt_save_freq_steps == 0:
                         self._save_rlt_head_checkpoint()
@@ -680,6 +851,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_critic_lr": self._rlt_critic_lr,
             "rlt_discount": self._rlt_discount,
             "rlt_target_update_tau": self._rlt_target_update_tau,
+            "rlt_demo_buffer_path": self._rlt_demo_buffer_path,
+            "rlt_online_buffer_path": self._rlt_online_buffer_path,
+            "rlt_replay_size": len(self._rlt_replay),
+            "rlt_demo_replay_size": self._rlt_demo_replay_size,
+            "rlt_online_replay_size": self._rlt_online_replay_size,
+            "rlt_grad_clip_norm": self._rlt_grad_clip_norm,
+            "rlt_q_abs_max": self._rlt_q_abs_max,
+            "rlt_action_deviation_abs_max": self._rlt_action_deviation_abs_max,
+            "rlt_loss_abs_max": self._rlt_loss_abs_max,
         }
         save_rlt_head_checkpoint(self.policy, path, step=self._rlt_train_step, config=config)
         save_rlt_head_checkpoint(self.policy, latest_path, step=self._rlt_train_step, config=config)
@@ -693,6 +873,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         """
         self.shutdown_event.set()
         self._policy_ready.clear()
+        if self._rlt_persist_buffer_on_shutdown:
+            self._persist_rlt_replay(reason="reset")
 
         # Wait for the old producer thread to observe shutdown and exit
         # before replacing registers, so it doesn't loop forever on the
@@ -720,6 +902,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._rlt_replay = RLTReplayBuffer(capacity=self._rlt_replay_capacity)
         self._rlt_next_context_id = 1
         self._rlt_train_step = 0
+        self._rlt_loaded_head_step = 0
+        self._rlt_accepted_transitions = 0
+        self._rlt_buffer_dirty = False
+        self._rlt_demo_replay_size = 0
+        self._rlt_online_replay_size = 0
+        self._rlt_safety_violation_count = 0
+        self._rlt_actor_disabled_by_safety = False
         self._rlt_completed_episodes.clear()
 
         try:
@@ -853,7 +1042,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 rlt_head_checkpoint=getattr(policy_specs, "rlt_head_checkpoint", None),
                 rlt_chunk_size=int(getattr(policy_specs, "rlt_chunk_size", 10)),
                 rlt_token_dim=int(getattr(policy_specs, "rlt_token_dim", 2048)),
+                rlt_actor_hidden_dims=getattr(policy_specs, "rlt_actor_hidden_dims", None),
+                rlt_critic_hidden_dims=getattr(policy_specs, "rlt_critic_hidden_dims", None),
+                rlt_actor_residual_scale=float(getattr(policy_specs, "rlt_actor_residual_scale", 0.25)),
+                rlt_num_critics=int(getattr(policy_specs, "rlt_num_critics", 1)),
                 rlt_bc_beta=float(getattr(policy_specs, "rlt_bc_beta", 1.0)),
+                rlt_bc_action_weights=getattr(policy_specs, "rlt_bc_action_weights", None),
+                rlt_jerk_beta=float(getattr(policy_specs, "rlt_jerk_beta", 0.0)),
                 rlt_reference_dropout_p=float(getattr(policy_specs, "rlt_reference_dropout_p", 0.5)),
                 subtask_generation_enabled=False,
                 pi05_checkpoint=policy_specs.pretrained_name_or_path,
