@@ -533,14 +533,16 @@ class RobotClientDrtc:
         self._rlt_episode_id = 0
         self._rlt_episode_open = False
         self._rlt_current_episode_transitions = 0
+        self._rlt_current_episode_transition_buffer: list[services_pb2.RLTTransitionChunk] = []
         self._rlt_completed_episodes_count = 0
+        self._rlt_discarded_episodes_count = 0
         self._rlt_last_episode_label: str | None = None
         self._rlt_phase = "waiting_to_start_next_episode"
         self._rlt_phase_intervening = False
         if config.rlt_online_collection_enabled:
             self.logger.info(
                 "RLT collector phase: waiting_to_start_episode | "
-                "press 2=start, 5=toggle intervention, 1=success, 0=failure"
+                "press 2=start, 5=toggle intervention, 1=success, 0=failure, 9=discard"
             )
             self._emit_rlt_status("rlt_phase", phase="waiting_to_start_next_episode")
             self._rlt_transition_sender_thread = threading.Thread(
@@ -575,6 +577,7 @@ class RobotClientDrtc:
             episode_id=self._rlt_episode_id,
             episode_open=self._rlt_episode_open,
             episodes_recorded=self._rlt_completed_episodes_count,
+            episodes_discarded=self._rlt_discarded_episodes_count,
             current_episode_transitions=self._rlt_current_episode_transitions,
             last_label=self._rlt_last_episode_label,
             intervention=self._rlt_phase_intervening,
@@ -656,6 +659,10 @@ class RobotClientDrtc:
                 events[TeleopEvents.TERMINATE_EPISODE.value] = True
                 events[TeleopEvents.FAILURE] = True
                 events[TeleopEvents.FAILURE.value] = True
+                self._emit_rlt_status("tui_control", command=command)
+            elif command == "discard_episode":
+                events[TeleopEvents.DISCARD_EPISODE] = True
+                events[TeleopEvents.DISCARD_EPISODE.value] = True
                 self._emit_rlt_status("tui_control", command=command)
 
         if self._tui_intervention_enabled:
@@ -1126,15 +1133,20 @@ class RobotClientDrtc:
             self._rlt_pending_chunks.clear()
             self._rlt_emitted_context_ids.clear()
             self._rlt_current_episode_transitions = 0
+            self._rlt_current_episode_transition_buffer.clear()
             self._rlt_last_episode_label = None
             self._rlt_phase_intervening = False
             self.logger.info(
                 "RLT collector phase: recording_episode | episode_id=%d | "
-                "press 5 for interventions, 1=success, 0=failure",
+                "press 5 for interventions, 1=success, 0=failure, 9=discard",
                 self._rlt_episode_id,
             )
             self._emit_rlt_status("rlt_episode_started", phase="recording")
             self._metrics.diagnostic.counter("rlt_episode_started", 1)
+
+        if self._rlt_episode_open and self._teleop_event(teleop_events, TeleopEvents.DISCARD_EPISODE):
+            self._rlt_discard_current_episode()
+            return 0.0, False, False, False
 
         success = self._rlt_episode_open and self._teleop_event(teleop_events, TeleopEvents.SUCCESS)
         terminate = self._rlt_episode_open and self._teleop_event(teleop_events, TeleopEvents.TERMINATE_EPISODE)
@@ -1143,6 +1155,38 @@ class RobotClientDrtc:
         done = success or failure
         reward = 1.0 if success else 0.0
         return reward, done, success, failure
+
+    def _rlt_discard_current_episode(self) -> None:
+        episode_id = self._rlt_episode_id
+        dropped_transitions = self._rlt_current_episode_transitions
+        self._disable_teleop_intervention_for_episode_start()
+        self.action_schedule.clear()
+        self.obs_cooldown = 0
+        self._rlt_episode_open = False
+        self._rlt_pending_chunks.clear()
+        self._rlt_executed_actions.clear()
+        self._rlt_emitted_context_ids.clear()
+        self._rlt_current_episode_transition_buffer.clear()
+        self._rlt_current_episode_transitions = 0
+        self._rlt_discarded_episodes_count += 1
+        self._rlt_last_episode_label = "discarded"
+        self._rlt_phase_intervening = False
+        self.logger.info(
+            "RLT collector phase: rollout_discarded | episode_id=%d | buffered_transitions_dropped=%d",
+            episode_id,
+            dropped_transitions,
+        )
+        self._emit_rlt_status(
+            "rlt_episode_discarded",
+            phase="waiting_to_start_next_episode",
+            label="discarded",
+            buffered_transitions_dropped=dropped_transitions,
+        )
+        self._metrics.diagnostic.counter("rlt_episode_discarded", 1)
+        self.logger.info(
+            "RLT collector phase: waiting_to_start_episode | "
+            "press 2=start, 5=toggle intervention, 1=success, 0=failure, 9=discard"
+        )
 
     def _rlt_note_collectable_chunk(self, chunk: ReceivedActionChunk) -> None:
         if not self.config.rlt_online_collection_enabled or not chunk.rlt_collectable:
@@ -1190,6 +1234,20 @@ class RobotClientDrtc:
             for stale_step in stale_steps:
                 self._rlt_executed_actions.pop(stale_step, None)
 
+    def _rlt_flush_current_episode_transitions(self) -> int:
+        queued = 0
+        for transition in self._rlt_current_episode_transition_buffer:
+            try:
+                self._rlt_transition_queue.put_nowait(transition)
+                queued += 1
+            except Full:
+                self._metrics.diagnostic.counter("rlt_transition_dropped_queue_full", 1)
+        if queued:
+            self._metrics.diagnostic.counter("rlt_transition_queued", queued)
+            self._emit_rlt_status("rlt_episode_transitions_queued", queued_transitions=queued)
+        self._rlt_current_episode_transition_buffer.clear()
+        return queued
+
     def _rlt_maybe_emit_transitions(
         self,
         *,
@@ -1229,16 +1287,13 @@ class RobotClientDrtc:
                 success=bool(success),
                 failure=bool(failure),
             )
-            try:
-                self._rlt_transition_queue.put_nowait(transition)
-                self._rlt_current_episode_transitions += 1
-                self._emit_rlt_status(
-                    "rlt_transition_queued",
-                    queued_transition_done=bool(done),
-                    queued_transition_intervention=bool(transition.is_intervention),
-                )
-            except Full:
-                self._metrics.diagnostic.counter("rlt_transition_dropped_queue_full", 1)
+            self._rlt_current_episode_transition_buffer.append(transition)
+            self._rlt_current_episode_transitions += 1
+            self._emit_rlt_status(
+                "rlt_transition_buffered",
+                buffered_transition_done=bool(done),
+                buffered_transition_intervention=bool(transition.is_intervention),
+            )
             self._rlt_emitted_context_ids.add(context_id)
             emitted_ids.append(context_id)
 
@@ -1246,6 +1301,7 @@ class RobotClientDrtc:
             self._rlt_pending_chunks.pop(context_id, None)
         if done:
             label = "success" if success else "failure"
+            queued_transitions = self._rlt_flush_current_episode_transitions()
             self._rlt_completed_episodes_count += 1
             self._rlt_last_episode_label = label
             self._rlt_phase_intervening = False
@@ -1255,7 +1311,7 @@ class RobotClientDrtc:
                 self._rlt_episode_id,
                 label,
                 float(reward),
-                self._rlt_current_episode_transitions,
+                queued_transitions,
             )
             self._emit_rlt_status(
                 "rlt_episode_labeled",
@@ -1268,9 +1324,10 @@ class RobotClientDrtc:
             self._rlt_episode_open = False
             self._rlt_pending_chunks.clear()
             self._rlt_executed_actions.clear()
+            self._rlt_current_episode_transition_buffer.clear()
             self.logger.info(
                 "RLT collector phase: waiting_to_start_episode | "
-                "press 2=start, 5=toggle intervention, 1=success, 0=failure"
+                "press 2=start, 5=toggle intervention, 1=success, 0=failure, 9=discard"
             )
             self._emit_rlt_status("rlt_phase", phase="waiting_to_start_next_episode")
 

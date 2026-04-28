@@ -18,6 +18,7 @@ from .groot.configuration_groot import GrootConfig as GrootConfig
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
+from .pistar06.configuration_pistar06 import PiStar06Config as PiStar06Config
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .smolvla.processor_smolvla import SmolVLANewLineProcessor
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
@@ -31,6 +32,7 @@ __all__ = [
     "PI0Config",
     "PI05Config",
     "PI0FastConfig",
+    "PiStar06Config",
     "SmolVLAConfig",
     "SARMConfig",
     "TDMPCConfig",

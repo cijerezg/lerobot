@@ -35,6 +35,7 @@ from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
+from lerobot.policies.pistar06.configuration_pistar06 import PiStar06Config
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.sac.configuration_sac import SACConfig
 from lerobot.policies.sac.reward_model.configuration_classifier import RewardClassifierConfig
@@ -104,6 +105,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
+    elif name == "pistar06":
+        from lerobot.policies.pistar06.modeling_pistar06 import PiStar06Policy
+
+        return PiStar06Policy
     elif name == "pi05_rl":
         # Importing rl_pi05 has the side effect of registering PI05RLConfig
         # ('pi05_rl') with PreTrainedConfig.register_subclass(...).
@@ -184,6 +189,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi05":
         return PI05Config(**kwargs)
+    elif policy_type == "pistar06":
+        return PiStar06Config(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":

@@ -69,6 +69,7 @@ class SOLeader(Teleoperator):
         self.is_success = False
         self.terminate_episode = False
         self.start_episode = False
+        self.discard_episode = False
         self.listener = None
         self.event_queue = Queue()
         self.bus_lock = Lock()
@@ -161,12 +162,15 @@ class SOLeader(Teleoperator):
         elif char == "2":
             self.start_episode = True
             logger.info("Start Episode triggered manually.")
+        elif char == "9":
+            self.discard_episode = True
+            logger.info("Discard Episode triggered manually.")
 
     def _start_terminal_listener(self) -> None:
         """Headless fallback: read single keys from this process' controlling TTY in cbreak mode.
 
         Works over SSH without X. The same keys as the pynput path are honored:
-        5 = toggle intervention, 1 = success, 0 = terminate/failure, 2 = start episode.
+        5 = toggle intervention, 1 = success, 0 = terminate/failure, 2 = start episode, 9 = discard episode.
         Press Ctrl+C to send SIGINT (forwarded normally) to shut down.
         """
         if not sys.stdin.isatty():
@@ -190,7 +194,7 @@ class SOLeader(Teleoperator):
                 tty.setcbreak(fd)
                 logger.info(
                     "Terminal keyboard listener active. Press 5=toggle intervention, "
-                    "1=success, 0=fail/terminate, 2=start episode. Ctrl+C to quit."
+                    "1=success, 0=fail/terminate, 2=start episode, 9=discard episode. Ctrl+C to quit."
                 )
                 while self._terminal_listener_running:
                     rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
@@ -292,6 +296,7 @@ class SOLeader(Teleoperator):
             TeleopEvents.SUCCESS: self.is_success,
             TeleopEvents.START_EPISODE: self.start_episode,
             TeleopEvents.RERECORD_EPISODE: False,
+            TeleopEvents.DISCARD_EPISODE: self.discard_episode,
         }
 
         # Reset triggers
@@ -301,6 +306,8 @@ class SOLeader(Teleoperator):
             self.terminate_episode = False
         if self.start_episode:
             self.start_episode = False
+        if self.discard_episode:
+            self.discard_episode = False
 
         return events
 

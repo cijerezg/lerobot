@@ -53,6 +53,7 @@ What to look for:
 - [ ] Start with collection enabled.
 - [ ] Keep training disabled for the first data pass if you want a clean seed buffer.
 - [ ] Label every episode as success or failure.
+- [ ] Press `9` in the DRTC TUI to discard a bad rollout before it reaches the replay buffer.
 - [ ] Use teleop intervention when needed, but remember intervention transitions train toward the executed intervention action.
 - [ ] Confirm the replay file is being written.
 

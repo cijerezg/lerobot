@@ -27,6 +27,7 @@ class TeleopEvents(Enum):
     SUCCESS = "success"
     FAILURE = "failure"
     RERECORD_EPISODE = "rerecord_episode"
+    DISCARD_EPISODE = "discard_episode"
     IS_INTERVENTION = "is_intervention"
     TERMINATE_EPISODE = "terminate_episode"
     START_EPISODE = "start_episode"

@@ -22,6 +22,7 @@ ROBOT_KEY_COMMANDS = {
     "5": "toggle_intervention",
     "1": "success",
     "0": "failure",
+    "9": "discard_episode",
 }
 LOSS_HISTORY_SAMPLES = 240
 LOSS_CHART_WIDTH = 56
@@ -190,6 +191,7 @@ def _status_event_detail(event: dict[str, Any]) -> str:
         "rlt_training_head",
         "rlt_train_step",
         "episode_id",
+        "buffered_transitions_dropped",
     ):
         if key in event and event[key] not in (None, ""):
             fields.append(f"{key}={event[key]}")
@@ -775,6 +777,7 @@ def _run_textual(
             ("5", "robot_intervention", "Toggle intervention"),
             ("1", "robot_success", "Success"),
             ("0", "robot_failure", "Failure"),
+            ("9", "robot_discard", "Discard rollout"),
         ]
 
         def __init__(self) -> None:
@@ -849,6 +852,7 @@ def _run_textual(
                 int(client.get("episodes_recorded") or 0),
                 int(server.get("rlt_completed_episodes") or 0),
             )
+            episodes_discarded = int(client.get("episodes_discarded") or 0)
             replay_size = server.get("rlt_replay_size", "n/a")
             replay_capacity = server.get("rlt_replay_capacity", "n/a")
             train_head = server.get("rlt_training_head", "unknown")
@@ -864,6 +868,7 @@ def _run_textual(
                 "[b]Episode[/b]\n"
                 f"ID: {client.get('episode_id', 'n/a')}\n"
                 f"Recorded: {episodes_recorded}\n"
+                f"Discarded: {episodes_discarded}\n"
                 f"Last label: {last_label}\n"
                 f"Current transitions: {client.get('current_episode_transitions', 'n/a')}"
             )
@@ -880,7 +885,8 @@ def _run_textual(
                 "2: start episode\n"
                 "5: toggle intervention\n"
                 "1: mark success/pass\n"
-                "0: mark failure/terminate\n\n"
+                "0: mark failure/terminate\n"
+                "9: discard rollout\n\n"
                 "Left/Right: tabs   q: quit"
             )
             self.query_one("#loss_panel", Static).update(
@@ -921,6 +927,9 @@ def _run_textual(
 
         def action_robot_failure(self) -> None:
             self._send_robot_command("failure")
+
+        def action_robot_discard(self) -> None:
+            self._send_robot_command("discard_episode")
 
     return int(DrtcTuiApp().run())
 
