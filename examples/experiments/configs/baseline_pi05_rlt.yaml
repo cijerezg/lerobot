@@ -50,10 +50,11 @@ rlt_bc_beta: 0.1
 rlt_jerk_beta: 0.001
 rlt_reference_dropout_p: 0.5
 
-# Online RLT collection/training. Start collect-only; enable training after
-# confirming transition counters and control-loop timing on hardware.
+# Collect-only RLT rollouts for offline head training. With no RLT head loaded
+# and online training disabled, actions stay frozen-VLA pass-through while
+# compact RLT transitions are persisted to rlt_online_buffer_path.
 rlt_online_collection_enabled: true
-rlt_online_training_enabled: true
+rlt_online_training_enabled: false
 rlt_warmup_episodes: 1
 rlt_warmup_transitions: 2000
 rlt_replay_capacity: 50000

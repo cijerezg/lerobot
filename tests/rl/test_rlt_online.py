@@ -11,6 +11,7 @@ from lerobot.rl.rlt_pi05 import (
     save_rlt_head_checkpoint,
     soft_update_rlt_target,
 )
+from lerobot.rl.train_pi05_rlt_head_offline import gaussian_kl_to_reference
 
 
 def _sample(offset: float = 0.0) -> RLTReplaySample:
@@ -87,6 +88,15 @@ def test_rlt_heads_support_configurable_depth_and_critic_ensemble():
     assert actor.hidden_dims == [16, 12, 8]
     assert actor_actions.shape == (1, 3, 2)
     assert critic_values.shape == (4, 1, 1)
+
+
+def test_rlt_gaussian_kl_to_reference_matches_fixed_variance_formula():
+    actor_actions = torch.tensor([[[1.0, 3.0]]])
+    reference_actions = torch.tensor([[[0.0, 1.0]]])
+
+    kl = gaussian_kl_to_reference(actor_actions, reference_actions, sigma=2.0)
+
+    assert torch.allclose(kl, torch.tensor(0.3125))
 
 
 def test_rlt_losses_and_checkpoint_helpers(tmp_path):

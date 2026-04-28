@@ -1,6 +1,13 @@
-# Offline π0.5 RECAP Training Checklist
+# Offline π0.5 RECAP And RLT Training Checklist
 
 Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the annotated dataset `jackvial/cube-subtasks-e30-base120trim-0-9-101-end-fixed`.
+
+There are two different offline paths in this repo:
+
+- Full RECAP / `pi05_rl` offline training uses a LeRobot dataset with images, state, actions, rewards, language/subtask metadata, and the normal `lerobot.rl.buffer.ReplayBuffer`.
+- RLT-head offline training uses the compact persisted RLT replay from DRTC rollouts. It stores precomputed `rl_token`, proprio, VLA reference chunks, executed chunks, next context, reward, done, and intervention flags. It is for training only the lightweight RLT actor/critic heads on top of a frozen VLA checkpoint.
+
+The first checklist below is for full RECAP training. The final section covers collect-rollouts-then-train-RLT-head offline.
 
 1. Pick or copy a config, for example `recap-config-hilserl.json`.
 
@@ -287,3 +294,116 @@ Use this checklist to train `src/lerobot/scripts/offline_learner_pi05.py` on the
     ```text
     outputs/pi05_cube_subtasks_offline/checkpoints/<step>/pretrained_model
     ```
+
+## Offline RLT Head Training From Collected Rollouts
+
+Use this path when you want to:
+
+- Run the frozen VLA on the robot.
+- Collect compact RLT transitions from those rollouts.
+- Train only the RLT actor/critic heads offline.
+- Keep the frozen VLA backbone fixed, matching the RL Token paper's post-training setup.
+
+This does not replace full RECAP offline training. It does not train the VLA backbone and it does not consume a normal LeRobot dataset.
+
+1. Configure `examples/experiments/configs/baseline_pi05_rlt.yaml` for collect-only rollout recording:
+
+   ```yaml
+   policy_type: pi05_rlt
+   pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/last/pretrained_model
+   rlt_enabled: true
+   rlt_embedding_checkpoint: outputs/pi05_rlt_embedding_cube_subtasks_3/rlt_embedding_step_004200.pt
+   rlt_head_checkpoint:
+
+   rlt_online_collection_enabled: true
+   rlt_online_training_enabled: false
+   rlt_online_buffer_path: outputs/rlt_online/rlt_online_replay.pt
+   rlt_online_buffer_save_freq_transitions: 100
+   rlt_persist_buffer_on_shutdown: true
+   ```
+
+   With no `rlt_head_checkpoint` and online training disabled, the robot executes frozen-VLA pass-through actions while the client/server records compact RLT transitions.
+
+2. Run fixed-task rollouts first.
+
+   - [ ] Keep object poses and robot start pose low-variance.
+   - [ ] Label each episode success or failure.
+   - [ ] Use teleop intervention only when needed.
+   - [ ] Confirm the replay file exists at `outputs/rlt_online/rlt_online_replay.pt`.
+   - [ ] Keep note of the exact frozen VLA checkpoint and RLT embedding checkpoint used for collection.
+
+3. Log in to W&B if training should upload metrics:
+
+   ```bash
+   uv run wandb login
+   ```
+
+   For offline W&B sync later:
+
+   ```bash
+   export WANDB_MODE=offline
+   ```
+
+4. Train the RLT head offline from the compact replay:
+
+   ```bash
+   uv run python -m lerobot.rl.train_pi05_rlt_head_offline \
+     --policy_path=outputs/pi05_subtasks_good_dataset_4/checkpoints/last/pretrained_model \
+     --replay_buffer_path=outputs/rlt_online/rlt_online_replay.pt \
+     --output_dir=outputs/rlt_offline_head \
+     --rlt_embedding_checkpoint=outputs/pi05_rlt_embedding_cube_subtasks_3/rlt_embedding_step_004200.pt \
+     --steps=10000 \
+     --batch_size=256 \
+     --rlt_actor_hidden_dims='[512, 512, 512]' \
+     --rlt_critic_hidden_dims='[512, 512, 512]' \
+     --rlt_num_critics=4 \
+     --rlt_bc_beta=0.1 \
+     --rlt_jerk_beta=0.001 \
+     --discount=0.985 \
+     --grad_clip_norm=20.0 \
+     --wandb_project=lerobot-rlt
+   ```
+
+   The script instantiates `PI05RLTPolicy` from the frozen VLA checkpoint/config for paper-aligned head construction, but the training loop updates only `rlt_actor` and `rlt_critic` from the persisted RLT replay.
+
+5. Watch console and W&B metrics.
+
+   Key metrics:
+
+   - `train/actor_loss`
+   - `train/critic_loss`
+   - `train/kl_to_reference`
+   - `train/actor_q_mean`
+   - `train/pred_q_mean`
+   - `train/target_q_mean`
+   - `train/action_deviation_rms`
+   - `train/action_deviation_abs_max`
+   - `train/actor_grad_norm`
+   - `train/critic_grad_norm`
+
+   If `kl_to_reference`, action deviation, critic loss, or Q magnitudes spike, stop and retry with higher `rlt_bc_beta`, lower learning rates, or more conservative replay.
+
+6. Checkpoints are written to:
+
+   ```text
+   outputs/rlt_offline_head/rlt_head_step_<step>.pt
+   outputs/rlt_offline_head/rlt_head_latest.pt
+   ```
+
+7. Evaluate the trained RLT head by pointing the DRTC config at the checkpoint:
+
+   ```yaml
+   rlt_head_checkpoint: outputs/rlt_offline_head/rlt_head_latest.pt
+   rlt_online_collection_enabled: false
+   rlt_online_training_enabled: false
+   ```
+
+   Evaluate on the exact same fixed setup before adding variance.
+
+8. Resume or extend the offline RLT run by reusing the same replay and setting:
+
+   ```bash
+   --rlt_head_checkpoint=outputs/rlt_offline_head/rlt_head_latest.pt
+   ```
+
+   Keep `rlt_chunk_size`, hidden dimensions, critic count, and token dimension compatible with the checkpoint.

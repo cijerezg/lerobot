@@ -29,7 +29,7 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: pi05_rl
-pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/000800/pretrained_model
+pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/001600/pretrained_model
 # pi05_rl subtask-token cache refresh interval, in seconds.
 # 0.0 = regenerate every chunk; larger values reduce periodic inference spikes.
 subtask_generation_enabled: False

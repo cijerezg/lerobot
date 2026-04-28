@@ -6,11 +6,11 @@ Use it as a runbook: start with low-variance collection, persist the replay buff
 
 ## 1. Define A Low-Variance Task
 
-- [ ] Pick one task where the frozen pi0.5 policy is close but unreliable, such as a fixed block placement or a repeated precision alignment task.
-- [ ] Fix object poses as tightly as practical for the first runs.
-- [ ] Fix robot start pose and camera positions.
-- [ ] Use one clear success criterion that can be labeled quickly at episode end.
-- [ ] Avoid broad object randomization until the RLT head can improve a fixed setup.
+- [x] Pick one task where the frozen pi0.5 policy is close but unreliable, such as a fixed block placement or a repeated precision alignment task.
+- [x] Fix object poses as tightly as practical for the first runs.
+- [x] Fix robot start pose and camera positions.
+- [x] Use one clear success criterion that can be labeled quickly at episode end.
+- [x] Avoid broad object randomization until the RLT head can improve a fixed setup.
 
 Notes:
 - RLT is best treated as action refinement, not as a way to invent a completely new behavior.
@@ -81,7 +81,71 @@ rlt_online_buffer_path: outputs/rlt_online/rlt_online_replay.pt
 
 Important: this compact RLT buffer is for RLT-head training. It is not a full RECAP offline dataset because it does not store raw images, language tokens, and full transition metadata.
 
-## 5. Start Conservative Online Training
+## 5. Train The RLT Head Offline
+
+- [ ] Confirm `outputs/rlt_online/rlt_online_replay.pt` exists and has enough transitions for your batch size.
+- [ ] Use the same frozen VLA checkpoint that produced the collected reference chunks.
+- [ ] Use the same RLT embedding checkpoint that produced the collected `rl_token` tensors.
+- [ ] Train only the RLT actor/critic heads from the compact replay.
+- [ ] Log both console metrics and W&B metrics.
+
+Log in to W&B first if you want online tracking:
+
+```bash
+uv run wandb login
+```
+
+For offline sync later:
+
+```bash
+export WANDB_MODE=offline
+```
+
+Run offline RLT-head training:
+
+```bash
+uv run python -m lerobot.rl.train_pi05_rlt_head_offline \
+  --policy_path=outputs/pi05_subtasks_good_dataset_4/checkpoints/last/pretrained_model \
+  --replay_buffer_path=outputs/rlt_online/rlt_online_replay.pt \
+  --output_dir=outputs/rlt_offline_head \
+  --rlt_embedding_checkpoint=outputs/pi05_rlt_embedding_cube_subtasks_3/rlt_embedding_step_004200.pt \
+  --steps=10000 \
+  --batch_size=256 \
+  --rlt_actor_hidden_dims='[512, 512, 512]' \
+  --rlt_critic_hidden_dims='[512, 512, 512]' \
+  --rlt_num_critics=4 \
+  --rlt_bc_beta=0.1 \
+  --rlt_jerk_beta=0.001 \
+  --discount=0.985 \
+  --grad_clip_norm=20.0 \
+  --wandb_project=lerobot-rlt
+```
+
+The script instantiates `PI05RLTPolicy` from the frozen VLA checkpoint/config for paper-aligned head construction. The hot loop updates only `rlt_actor` and `rlt_critic`; the VLA backbone stays frozen.
+
+Watch these metrics:
+
+- `train/actor_loss`
+- `train/critic_loss`
+- `train/kl_to_reference`
+- `train/actor_q_mean`
+- `train/pred_q_mean`
+- `train/target_q_mean`
+- `train/action_deviation_rms`
+- `train/action_deviation_abs_max`
+- `train/actor_grad_norm`
+- `train/critic_grad_norm`
+
+Checkpoints are written to:
+
+```text
+outputs/rlt_offline_head/rlt_head_step_<step>.pt
+outputs/rlt_offline_head/rlt_head_latest.pt
+```
+
+If `kl_to_reference`, action deviation, critic loss, or Q magnitudes spike, stop and retry with higher `rlt_bc_beta`, lower learning rates, lower `rlt_num_critics`/head size, or a cleaner replay buffer.
+
+## 6. Start Conservative Online Training
 
 - [ ] Use a delayed actor execution gate.
 - [ ] Warm up with enough replay before any online updates.
@@ -105,7 +169,7 @@ rlt_num_critics: 4
 
 Once timing and stability are confirmed, sweep `rlt_utd_ratio` toward `5-10`.
 
-## 6. Tune Regularization
+## 7. Tune Regularization
 
 - [ ] Start with `rlt_bc_beta: 0.1` if hardware safety is uncertain.
 - [ ] Try `rlt_bc_beta: 0.05` once Q/action-deviation metrics are stable.
@@ -127,7 +191,7 @@ Discount notes:
 - Lower discount, such as `0.985`, encourages faster completion for short manipulation episodes.
 - Higher control frequencies usually require a higher discount for the same wall-clock horizon.
 
-## 7. Use Larger Heads Carefully
+## 8. Use Larger Heads Carefully
 
 - [ ] Start with article-style `[512, 512, 512]` heads for better learning speed.
 - [ ] Keep critic count above 1 when using larger heads.
@@ -146,7 +210,7 @@ rlt_chunk_size: 10
 
 Try `rlt_chunk_size: 20` only for a fresh head and after confirming action latency and RTC behavior remain acceptable.
 
-## 8. Watch For Reward Hacking
+## 9. Watch For Reward Hacking
 
 - [ ] Stop or disable actor execution if Q values spike.
 - [ ] Stop if action deviation from the VLA reference grows suddenly.
@@ -171,9 +235,11 @@ If a tripwire fires:
 - [ ] Check whether bad labels or unsafe intervention transitions entered replay.
 - [ ] Consider collecting more fixed-task successes before resuming.
 
-## 9. Evaluate Before Adding Variance
+## 10. Evaluate Before Adding Variance
 
 - [ ] Evaluate a saved RLT head on the exact fixed setup.
+- [ ] Point `rlt_head_checkpoint` at `outputs/rlt_offline_head/rlt_head_latest.pt`.
+- [ ] Keep `rlt_online_collection_enabled: false` and `rlt_online_training_enabled: false` for offline-head evaluation.
 - [ ] Run at least 20 episodes if hardware time allows.
 - [ ] Compare success rate against frozen VLA pass-through.
 - [ ] Compare mean completion time and visible smoothness.
@@ -185,24 +251,32 @@ Only after fixed-task performance is reliable:
 - [ ] Add one variance source at a time.
 - [ ] Keep separate replay/checkpoint folders for each task distribution.
 
-## 10. Suggested Run Sequence
+Eval config:
+
+```yaml
+rlt_head_checkpoint: outputs/rlt_offline_head/rlt_head_latest.pt
+rlt_online_collection_enabled: false
+rlt_online_training_enabled: false
+```
+
+## 11. Suggested Run Sequence
 
 - [ ] Run frozen VLA pass-through and record baseline success rate.
 - [ ] Run collect-only RLT for 20-50 episodes on a fixed task.
 - [ ] Inspect token structure from the persisted replay.
-- [ ] Train with actor execution delayed.
-- [ ] Enable actor execution after warmup and watch diagnostics closely.
-- [ ] Save checkpoint and replay after the first stable improvement.
-- [ ] Evaluate the checkpoint without further online updates.
-- [ ] Resume from checkpoint plus persisted replay only after the eval is stable.
+- [ ] Train the RLT head offline from `outputs/rlt_online/rlt_online_replay.pt`.
+- [ ] Watch console and W&B metrics, especially KL-to-reference and action deviation.
+- [ ] Evaluate `outputs/rlt_offline_head/rlt_head_latest.pt` without online updates.
+- [ ] Resume offline training from the latest head only after eval is stable.
+- [ ] Optionally move to online fine-tuning with actor execution delayed.
 - [ ] Sweep one hyperparameter at a time.
 - [ ] Add variance only after fixed-task performance is repeatable.
 
-## 11. Files To Know
+## 12. Files To Know
 
 - `examples/experiments/configs/baseline_pi05_rlt.yaml`: main DRTC experiment config.
 - `src/lerobot/async_inference/policy_server_drtc.py`: online RLT training, replay loading/saving, safety tripwires.
 - `src/lerobot/async_inference/robot_client_drtc.py`: episode collection and transition upload.
+- `src/lerobot/rl/train_pi05_rlt_head_offline.py`: standalone offline RLT-head trainer with console and W&B metrics.
 - `src/lerobot/rl/rlt_buffer.py`: compact persisted RLT replay format.
 - `src/lerobot/rl/rlt_pi05.py`: RLT token model, actor/critic heads, losses, and checkpoint helpers.
-
