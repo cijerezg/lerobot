@@ -1472,6 +1472,12 @@ class PiStar06Policy(PreTrainedPolicy):
         if pretrained_name_or_path is None:
             raise ValueError("pretrained_name_or_path is required")
 
+        checkpoint_path = kwargs.pop("checkpoint_path", None)
+        if checkpoint_path is None:
+            local_path = Path(pretrained_name_or_path)
+            if local_path.is_file() and local_path.suffix in {".pt", ".pth"}:
+                checkpoint_path = local_path
+
         if config is None:
             config = PreTrainedConfig.from_pretrained(
                 pretrained_name_or_path=pretrained_name_or_path,
@@ -1488,30 +1494,90 @@ class PiStar06Policy(PreTrainedPolicy):
         model = cls(config, **kwargs)
         _log_mem("from_pretrained: after model construction")
 
+        def _log_load(message: str) -> None:
+            logging.info("[PISTAR06 LOAD] %s", message)
+            print(f"[PISTAR06 LOAD] {message}")
+
+        def _fingerprint_tensor(tensor: torch.Tensor) -> str:
+            sample = tensor.detach().flatten()[:4096].to(device="cpu", dtype=torch.float32)
+            return (
+                f"shape={tuple(tensor.shape)} "
+                f"mean={sample.mean().item():.6g} "
+                f"std={sample.std(unbiased=False).item():.6g} "
+                f"norm={sample.norm().item():.6g}"
+            )
+
+        def _select_probe_keys(state_dict: dict[str, torch.Tensor]) -> list[str]:
+            preferred_keys = [
+                "model.action_in_proj.weight",
+                "model.action_out_proj.weight",
+                "model.paligemma_with_expert.gemma_expert.model.layers.0.self_attn.q_proj.weight",
+                "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight",
+            ]
+            selected = [key for key in preferred_keys if key in state_dict]
+            if selected:
+                return selected
+            return [key for key, value in state_dict.items() if torch.is_tensor(value)][:4]
+
+        def _fingerprint_state_dict(state_dict: dict[str, torch.Tensor], keys: list[str]) -> dict[str, str]:
+            return {key: _fingerprint_tensor(state_dict[key]) for key in keys if key in state_dict}
+
         try:
-            print(f"Loading model from: {pretrained_name_or_path}")
+            weights_source = checkpoint_path or pretrained_name_or_path
+            _log_load(f"Loading model from {weights_source}")
             try:
-                from transformers.utils import cached_file
+                if checkpoint_path is not None:
+                    resolved_file = Path(checkpoint_path)
+                    checkpoint = torch.load(
+                        resolved_file,
+                        map_location="cpu",
+                        mmap=True,
+                        weights_only=False,
+                    )
+                    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                        original_state_dict = checkpoint["model_state_dict"]
+                        _log_load(
+                            f"Resolved PyTorch checkpoint at {resolved_file} "
+                            f"epoch={checkpoint.get('epoch', '?')} "
+                            f"global_step={checkpoint.get('global_train_step', '?')} "
+                            f"with {len(original_state_dict)} model tensors"
+                        )
+                    elif isinstance(checkpoint, dict):
+                        original_state_dict = checkpoint
+                        _log_load(
+                            f"Resolved PyTorch state dict at {resolved_file} "
+                            f"with {len(original_state_dict)} tensors"
+                        )
+                    else:
+                        raise TypeError(
+                            f"Unsupported checkpoint type {type(checkpoint)} from {resolved_file}"
+                        )
+                    _log_mem("from_pretrained: after loading torch checkpoint")
+                else:
+                    from transformers.utils import cached_file
 
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
-                )
-                from safetensors.torch import load_file
+                    resolved_file = cached_file(
+                        pretrained_name_or_path,
+                        "model.safetensors",
+                        cache_dir=kwargs.get("cache_dir"),
+                        force_download=kwargs.get("force_download", False),
+                        resume_download=kwargs.get("resume_download"),
+                        proxies=kwargs.get("proxies"),
+                        token=kwargs.get("token"),
+                        revision=kwargs.get("revision"),
+                        local_files_only=kwargs.get("local_files_only", False),
+                    )
+                    from safetensors.torch import load_file
 
-                original_state_dict = load_file(resolved_file)
-                _log_mem("from_pretrained: after loading safetensors")
-                print("Loaded state dict from model.safetensors")
+                    original_state_dict = load_file(resolved_file)
+                    _log_mem("from_pretrained: after loading safetensors")
+                    _log_load(
+                        f"Resolved model.safetensors at {resolved_file} "
+                        f"with {len(original_state_dict)} tensors"
+                    )
             except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
+                _log_load(f"Could not load state dict from remote files: {e}")
+                _log_load("Returning model without loading pretrained weights")
                 return model
 
             fixed_state_dict = model._fix_pytorch_state_dict_keys(
@@ -1529,36 +1595,73 @@ class PiStar06Policy(PreTrainedPolicy):
                     remapped_state_dict[key] = value
 
             if remap_count > 0:
-                print(f"Remapped {remap_count} state dict keys")
+                _log_load(f"Remapped {remap_count} state dict keys")
+
+            model_state_before = model.state_dict()
+            matched_keys = [
+                key
+                for key, value in remapped_state_dict.items()
+                if key in model_state_before and tuple(value.shape) == tuple(model_state_before[key].shape)
+            ]
+            shape_mismatch_keys = [
+                key
+                for key, value in remapped_state_dict.items()
+                if key in model_state_before and tuple(value.shape) != tuple(model_state_before[key].shape)
+            ]
+            probe_keys = _select_probe_keys(model_state_before)
+            before_fingerprints = _fingerprint_state_dict(model_state_before, probe_keys)
+            checkpoint_fingerprints = _fingerprint_state_dict(remapped_state_dict, probe_keys)
+            _log_load(
+                "Checkpoint coverage: "
+                f"matched={len(matched_keys)}/{len(model_state_before)} model tensors, "
+                f"unexpected_candidates={len(set(remapped_state_dict) - set(model_state_before))}, "
+                f"shape_mismatches={len(shape_mismatch_keys)}"
+            )
+            for key in probe_keys:
+                if key in checkpoint_fingerprints:
+                    _log_load(f"checkpoint probe {key}: {checkpoint_fingerprints[key]}")
+                else:
+                    _log_load(f"checkpoint probe {key}: MISSING")
 
             missing_keys, unexpected_keys = model.load_state_dict(
                 remapped_state_dict, strict=strict
             )
             _log_mem("from_pretrained: after load_state_dict")
 
+            model_state_after = model.state_dict()
+            after_fingerprints = _fingerprint_state_dict(model_state_after, probe_keys)
+            for key in probe_keys:
+                before = before_fingerprints.get(key)
+                after = after_fingerprints.get(key)
+                changed = before != after
+                _log_load(
+                    f"loaded probe {key}: changed={changed} "
+                    f"before=({before}) after=({after})"
+                )
+
             if missing_keys:
-                print(
+                _log_load(
                     f"Missing keys when loading state dict: {len(missing_keys)} keys"
                 )
                 for key in missing_keys[:5]:
-                    print(f"  - {key}")
+                    _log_load(f"  - {key}")
                 if len(missing_keys) > 5:
-                    print(f"  ... and {len(missing_keys) - 5} more")
+                    _log_load(f"  ... and {len(missing_keys) - 5} more")
 
             if unexpected_keys:
-                print(
+                _log_load(
                     f"Unexpected keys when loading state dict: {len(unexpected_keys)} keys"
                 )
                 for key in unexpected_keys[:5]:
-                    print(f"  - {key}")
+                    _log_load(f"  - {key}")
                 if len(unexpected_keys) > 5:
-                    print(f"  ... and {len(unexpected_keys) - 5} more")
+                    _log_load(f"  ... and {len(unexpected_keys) - 5} more")
 
             if not missing_keys and not unexpected_keys:
-                print("All keys loaded successfully!")
+                _log_load("All keys loaded successfully")
 
         except Exception as e:
-            print(f"Warning: Could not load state dict: {e}")
+            _log_load(f"Warning: Could not load state dict: {e}")
 
         return model
 

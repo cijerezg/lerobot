@@ -344,6 +344,17 @@ class RobotClientDrtc:
             self.robot = make_robot_from_config(config.robot)
             self.robot.connect()
             lerobot_features = map_robot_keys_to_lerobot_features(self.robot)
+        obs_state_features = lerobot_features.get("observation.state") or {}
+        obs_state_order = (
+            obs_state_features.get("names")
+            if isinstance(obs_state_features, dict)
+            else obs_state_features
+        )
+        self.logger.info(
+            "[DRTC NORM CONFIG] robot observation.state order=%s action order=%s",
+            obs_state_order,
+            list(getattr(self.robot, "action_features", {}).keys()),
+        )
 
         # Optional teleop device for human intervention. Mirrors the minimal
         # subset of inference_pi05_async.py behaviour: per-tick action override

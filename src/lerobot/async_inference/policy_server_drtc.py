@@ -89,6 +89,39 @@ def _infer_model_action_horizon(policy_config: Any) -> tuple[str, int] | None:
     return None
 
 
+def _format_vector(values: torch.Tensor, max_items: int = 8) -> str:
+    flat = values.detach().flatten().to(device="cpu", dtype=torch.float32)
+    shown = [f"{float(x):+.4f}" for x in flat[:max_items]]
+    suffix = ", ..." if flat.numel() > max_items else ""
+    return "[" + ", ".join(shown) + suffix + "]"
+
+
+def _tensor_summary(values: torch.Tensor, max_items: int = 8) -> str:
+    tensor = values.detach().to(device="cpu", dtype=torch.float32)
+    flat = tensor.flatten()
+    if flat.numel() == 0:
+        return f"shape={tuple(tensor.shape)} empty"
+    return (
+        f"shape={tuple(tensor.shape)} "
+        f"min={float(flat.min()):+.4f} max={float(flat.max()):+.4f} "
+        f"mean={float(flat.mean()):+.4f} row0={_format_vector(tensor.reshape(-1, tensor.shape[-1])[0], max_items)}"
+    )
+
+
+def _processor_stats_summary(processor_step: Any, key: str, max_items: int = 8) -> str:
+    tensor_stats = getattr(processor_step, "_tensor_stats", {}) or {}
+    stats = tensor_stats.get(key)
+    if not stats:
+        return f"{key}: missing"
+
+    parts = []
+    for name in ("q01", "q99", "mean", "std", "min", "max"):
+        value = stats.get(name)
+        if torch.is_tensor(value):
+            parts.append(f"{name}={_format_vector(value, max_items)}")
+    return f"{key}: " + " ".join(parts)
+
+
 class ActionChunkCache:
     """LRU cache for raw action chunks, keyed by source control step (t).
 
@@ -275,6 +308,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             )
         except ValueError:
             self._debug_chunks_remaining = 5
+        try:
+            self._norm_debug_chunks_remaining = int(
+                os.environ.get("LEROBOT_DRTC_NORM_DEBUG_CHUNKS", "5")
+            )
+        except ValueError:
+            self._norm_debug_chunks_remaining = 5
 
         # Client-driven RTC (optional)
         self._rtc_cfg: AsyncRTCConfig | None = None
@@ -917,6 +956,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             )
         except ValueError:
             self._debug_chunks_remaining = 5
+        try:
+            self._norm_debug_chunks_remaining = int(
+                os.environ.get("LEROBOT_DRTC_NORM_DEBUG_CHUNKS", "5")
+            )
+        except ValueError:
+            self._norm_debug_chunks_remaining = 5
 
     # -------------------------------------------------------------------------
     # gRPC Service Methods (called by receiver thread)
@@ -1002,11 +1047,38 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         # Load policy
         policy_class = get_policy_class(self.policy_type)
+        policy_load_path = str(policy_specs.pretrained_name_or_path)
+        policy_processor_path = policy_load_path
+        policy_checkpoint_path: str | None = None
+        local_policy_path = Path(policy_load_path)
+        if (
+            self.policy_type == "pistar06"
+            and local_policy_path.is_file()
+            and local_policy_path.suffix in {".pt", ".pth"}
+        ):
+            policy_checkpoint_path = str(local_policy_path)
+            run_root = (
+                local_policy_path.parent.parent
+                if local_policy_path.parent.name == "checkpoints"
+                else local_policy_path.parent
+            )
+            pretrained_dir = run_root / "pretrained"
+            if not pretrained_dir.exists():
+                raise FileNotFoundError(
+                    "pistar06 .pt checkpoints require adjacent pretrained metadata at "
+                    f"{pretrained_dir}"
+                )
+            policy_processor_path = str(pretrained_dir)
+            self.logger.info(
+                "Resolved pistar06 checkpoint path=%s with metadata/processors=%s",
+                policy_checkpoint_path,
+                policy_processor_path,
+            )
 
         self.logger.info(
             "Loading policy weights | type=%s | path=%s | device=%s",
             self.policy_type,
-            policy_specs.pretrained_name_or_path,
+            policy_load_path,
             self.device,
         )
         t_load_start = time.perf_counter()
@@ -1023,8 +1095,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             # safetensors directly.
             from lerobot.configs.policies import PreTrainedConfig
 
-            cfg_obj = PreTrainedConfig.from_pretrained(policy_specs.pretrained_name_or_path)
-            cfg_obj.pi05_checkpoint = policy_specs.pretrained_name_or_path
+            cfg_obj = PreTrainedConfig.from_pretrained(policy_processor_path)
+            cfg_obj.pi05_checkpoint = policy_processor_path
             # DRTC inference only uses the actor; constructing the critic doubles
             # the large PI05 backbone footprint and can exhaust VRAM.
             cfg_obj.use_separate_critic = False
@@ -1033,7 +1105,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             from lerobot.configs.policies import PreTrainedConfig
             from lerobot.rl.rlt_pi05 import PI05RLTConfig
 
-            base_cfg = PreTrainedConfig.from_pretrained(policy_specs.pretrained_name_or_path)
+            base_cfg = PreTrainedConfig.from_pretrained(policy_processor_path)
             cfg_obj = PI05RLTConfig.from_base_config(
                 base_cfg,
                 device=self.device,
@@ -1051,18 +1123,28 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 rlt_jerk_beta=float(getattr(policy_specs, "rlt_jerk_beta", 0.0)),
                 rlt_reference_dropout_p=float(getattr(policy_specs, "rlt_reference_dropout_p", 0.5)),
                 subtask_generation_enabled=False,
-                pi05_checkpoint=policy_specs.pretrained_name_or_path,
+                pi05_checkpoint=policy_processor_path,
                 rtc_config=None,
             )
             if getattr(policy_specs, "num_flow_matching_steps", None) is not None:
                 cfg_obj.num_inference_steps = int(policy_specs.num_flow_matching_steps)
             self.policy = policy_class.from_pretrained(
-                policy_specs.pretrained_name_or_path,
+                policy_processor_path,
                 config=cfg_obj,
                 strict=False,
             )
+        elif self.policy_type == "pistar06" and policy_checkpoint_path is not None:
+            from lerobot.configs.policies import PreTrainedConfig
+
+            cfg_obj = PreTrainedConfig.from_pretrained(policy_processor_path)
+            self.policy = policy_class.from_pretrained(
+                policy_processor_path,
+                config=cfg_obj,
+                checkpoint_path=policy_checkpoint_path,
+                strict=False,
+            )
         else:
-            self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+            self.policy = policy_class.from_pretrained(policy_processor_path)
         t_load_done = time.perf_counter()
         self.logger.info(
             "Loaded policy weights in %.1fs | moving to %s ...",
@@ -1091,7 +1173,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     "Requested actions_per_chunk "
                     f"({self.actions_per_chunk}) exceeds model-supported horizon "
                     f"({model_horizon}, from policy config field '{horizon_field}') "
-                    f"for checkpoint '{policy_specs.pretrained_name_or_path}'. "
+                    f"for checkpoint '{policy_load_path}'. "
                     f"Set actions_per_chunk <= {model_horizon}."
                 )
 
@@ -1158,7 +1240,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         else:
             self.preprocessor, self.postprocessor = make_pre_post_processors(
                 self.policy.config,
-                pretrained_path=policy_specs.pretrained_name_or_path,
+                pretrained_path=policy_processor_path,
                 preprocessor_overrides={
                     "device_processor": device_override,
                     "rename_observations_processor": {"rename_map": policy_specs.rename_map},
@@ -1205,7 +1287,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         )
         self._action_normalizer = None
         try:
-            from lerobot.processor import NormalizerProcessorStep
+            from lerobot.processor import NormalizerProcessorStep, UnnormalizerProcessorStep
 
             self._action_normalizer = next(
                 s for s in self.preprocessor.steps if isinstance(s, NormalizerProcessorStep)
@@ -1213,6 +1295,18 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self.logger.info(
                 "Action normalizer found for RTC/RLT (action_encoding=%s)",
                 self._action_encoding,
+            )
+            self.logger.info(
+                "[DRTC NORM CONFIG] pre %s | %s",
+                _processor_stats_summary(self._action_normalizer, OBS_STATE),
+                _processor_stats_summary(self._action_normalizer, "action"),
+            )
+            action_unnormalizer = next(
+                s for s in self.postprocessor.steps if isinstance(s, UnnormalizerProcessorStep)
+            )
+            self.logger.info(
+                "[DRTC NORM CONFIG] post %s",
+                _processor_stats_summary(action_unnormalizer, "action"),
             )
         except (StopIteration, ImportError, AttributeError) as e:
             if self._action_encoding in ("anchor", "delta"):
@@ -1696,6 +1790,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         else:
             raw_obs = raw_obs_any
         _mark("obs_meta")
+        norm_debug = self._norm_debug_chunks_remaining > 0
 
         # 1. Prepare observation
         observation: Observation = raw_observation_to_observation(
@@ -1709,15 +1804,23 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # required by `anchor` / `delta` action encodings. The preprocessor
         # normalizes OBS_STATE in-place, so we must snapshot it first.
         anchor_state: torch.Tensor | None = None
+        raw_state_debug: torch.Tensor | None = None
         if isinstance(observation, dict) and OBS_STATE in observation:
             obs_state_raw = observation[OBS_STATE]
             if isinstance(obs_state_raw, torch.Tensor):
                 anchor_state = obs_state_raw.detach().clone()
+                if norm_debug:
+                    raw_state_debug = anchor_state.detach().clone()
         _mark("anchor_snapshot")
 
         # 2. Preprocess (inject pi05_rl complementary_data when applicable)
         observation = self._inject_pi05_complementary_data(observation)
         observation = self.preprocessor(observation)
+        norm_state_debug: torch.Tensor | None = None
+        if norm_debug and isinstance(observation, dict):
+            obs_state_norm = observation.get(OBS_STATE)
+            if isinstance(obs_state_norm, torch.Tensor):
+                norm_state_debug = obs_state_norm.detach().clone()
         _mark("preprocess")
 
         # 3. Inference (avoid autograd / reduce variance)
@@ -1840,6 +1943,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             rlt_reference = rlt_reference[:, : self.actions_per_chunk, :]
 
         b, t, a = action_tensor.shape
+        norm_action_debug = action_tensor.detach().clone() if norm_debug else None
 
         # Cache raw action chunk BEFORE postprocessing (for future RTC inpainting).
         # Key by control_step so RTC action_schedule_spans spans can look up the
@@ -1873,6 +1977,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             raise TypeError(f"postprocessor must return torch.Tensor, got {type(flat)}")
         a_out = flat.shape[-1]
         action_tensor = flat.reshape(b, t, a_out)
+        post_action_debug = action_tensor.detach().clone() if norm_debug else None
         _mark("postprocess")
 
         # 5. Anchor / delta action-encoding reconstruction.
@@ -1883,7 +1988,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # "stretches out and stays"). This mirrors `inference_utils.py`
         # `get_actions_worker` PHASE 5 (`unnormalized + anchor` for "anchor",
         # `cumsum + anchor` for "delta").
-        action_encoding = getattr(getattr(self.policy, "config", None), "action_encoding", "absolute")
+        action_encoding = self._action_encoding
         debug_anchor_dump = (
             self._debug_chunks_remaining > 0
             and action_encoding in ("anchor", "delta")
@@ -1945,6 +2050,31 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             else:  # "delta"
                 action_tensor = torch.cumsum(action_tensor, dim=1) + anchor_b
         _mark("anchor_reconstruct")
+
+        if norm_debug:
+            try:
+                first_delta = (
+                    action_tensor[:, 1:, :] - action_tensor[:, :-1, :]
+                    if action_tensor.shape[1] > 1
+                    else torch.zeros_like(action_tensor[:, :1, :])
+                )
+                delta_l2 = first_delta.detach().to(dtype=torch.float32).norm(dim=-1)
+                self.logger.info(
+                    "[DRTC NORM DEBUG] src_step=%d action_encoding=%s "
+                    "state_raw={%s} state_norm={%s} action_norm={%s} "
+                    "post_unnorm={%s} final={%s} step_delta_l2(mean/max)=%.4f/%.4f",
+                    src_control_step,
+                    action_encoding,
+                    _tensor_summary(raw_state_debug) if raw_state_debug is not None else "missing",
+                    _tensor_summary(norm_state_debug) if norm_state_debug is not None else "missing",
+                    _tensor_summary(norm_action_debug) if norm_action_debug is not None else "missing",
+                    _tensor_summary(post_action_debug) if post_action_debug is not None else "missing",
+                    _tensor_summary(action_tensor),
+                    float(delta_l2.mean().item()) if delta_l2.numel() else 0.0,
+                    float(delta_l2.max().item()) if delta_l2.numel() else 0.0,
+                )
+            finally:
+                self._norm_debug_chunks_remaining -= 1
 
         # Drop batch dim and move to CPU once
         actions_cpu = action_tensor.squeeze(0).detach().to("cpu")

@@ -11,9 +11,9 @@ robot_id: so101_follower_2026_04_26_v0
 
 # Cameras: jackvial/recap_baseline_120_v2 expects observation.images.{side,top}.
 camera1_name: side
-camera1_path: /dev/video4
+camera1_path: /dev/video0
 camera2_name: top
-camera2_path: /dev/video0
+camera2_path: /dev/video4
 camera_width: 800
 camera_height: 600
 camera_fps: 30
@@ -40,7 +40,7 @@ duration_s: 120.0
 fps: 30
 
 # Flow matching / RTC
-num_flow_matching_steps: 5
+num_flow_matching_steps: 8
 rtc_enabled: true
 rtc_max_guidance_weight: 5.0
 rtc_prefix_attention_schedule: linear
