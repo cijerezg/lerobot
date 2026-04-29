@@ -222,8 +222,66 @@ class TrainPipelineConfig(HubMixin):
             return draccus.parse(cls, config_file, args=cli_args)
 
 
+@dataclass
+class ProbeConfig:
+    """Parameters for the PI05 probe scripts (actions, representations, attention,
+    offline eval, spatial memorization)."""
+
+    # Enable / disable individual probes
+    enable_actions: bool = True
+    enable_representations: bool = True
+    enable_attention: bool = True
+    enable_offline_inference: bool = True
+    enable_spatial_memorization: bool = True
+    enable_action_drift_jacobian: bool = False  # per-frame causal A*J maps (needs backward)
+    enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
+
+    # Common
+    output_dir: str = "outputs/probe"
+    mode: str = "all"  # "collect" | "plot" | "all"
+    max_episodes: int | None = 5
+    n_frames_per_episode: int = 128
+    offline_inference_n_frames: int = 5
+    random_seed: int = 42
+    timestep: float = 0.5  # single diffusion timestep used by all probes
+
+    # Actions / representations
+    ref_max_episodes: int = 40
+    ref_n_frames_per_episode: int = 256
+    action_pca_dims: int = 50  # action-manifold PCA
+    repr_pca_dims: int = 100
+    umap_n_neighbors: int = 15
+    umap_min_dist: float = 0.1
+    umap_seed: int = 42
+    sites: str = "prefix,suffix"
+    ep_3d_a: int = 0
+    ep_3d_b: int = 1
+    subtask_injection: bool = True
+
+    # Attention / spatial / Jacobian
+    validation_batch_size: int = 32
+    attn_eval_episodes: str | None = None
+    attn_eval_subsample: int = 2
+    spatial_layers: str = "0,9,17"
+    spatial_n_frames: int = 32  # total frames (1 per unique episode)
+
+
 @dataclass(kw_only=True)
 class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # NOTE: In RL, we don't need an offline dataset
     # TODO: Make `TrainPipelineConfig.dataset` optional
     dataset: DatasetConfig | None = None  # type: ignore[assignment] # because the parent class has made it's type non-optional
+    offline_output_dir: str | None = None
+    offline_save_freq: int | None = None
+    buffer_cache_dir: str | None = None
+    use_rerun: bool = True
+    video_logging_cameras: list[str] = field(default_factory=lambda: ["top", "side"])
+    episode_logging_freq: int = 4
+    episode_save_freq: int = 10
+    probe_parameters: ProbeConfig = field(default_factory=ProbeConfig)
+
+    # Validation
+    val_dataset_path: str | None = None
+    val_split: float = 0.0
+    val_freq: int = 1000
+    val_on_start: bool = False

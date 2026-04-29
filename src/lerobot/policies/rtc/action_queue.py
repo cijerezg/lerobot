@@ -63,6 +63,7 @@ class ActionQueue:
         self.lock = Lock()
         self.last_index = 0
         self.cfg = cfg
+        self.anchor_state = None  # Anchor state (s_0) for the current chunk
 
     def get(self) -> Tensor | None:
         """Get the next action from the queue.
@@ -150,6 +151,7 @@ class ActionQueue:
         processed_actions: Tensor,
         real_delay: int,
         action_index_before_inference: int | None = None,
+        anchor_state: Tensor | None = None,
     ):
         """Merge new actions into the queue.
 
@@ -162,17 +164,25 @@ class ActionQueue:
             processed_actions: Post-processed actions for robot (time_steps, action_dim).
             real_delay: Number of time steps of inference delay.
             action_index_before_inference: Index before inference started, for validation.
+            anchor_state: State used as s_0 for this chunk (RTC only). Stored on the
+                queue so callers can read it back later via ``self.anchor_state``.
         """
         with self.lock:
             delay = self._check_and_resolve_delays(real_delay, action_index_before_inference)
 
             if self.cfg.enabled:
-                self._replace_actions_queue(original_actions, processed_actions, delay)
+                self._replace_actions_queue(original_actions, processed_actions, delay, anchor_state)
                 return
 
             self._append_actions_queue(original_actions, processed_actions)
 
-    def _replace_actions_queue(self, original_actions: Tensor, processed_actions: Tensor, real_delay: int):
+    def _replace_actions_queue(
+        self,
+        original_actions: Tensor,
+        processed_actions: Tensor,
+        real_delay: int,
+        anchor_state: Tensor | None = None,
+    ):
         """Replace the queue with new actions (RTC mode).
 
         Discards the first `real_delay` actions since they correspond to the time
@@ -182,10 +192,12 @@ class ActionQueue:
             original_actions: Unprocessed actions from policy.
             processed_actions: Post-processed actions for robot.
             real_delay: Number of time steps to skip due to inference delay.
+            anchor_state: The new anchor state (s_0) for this chunk.
         """
         clamped_delay = max(0, min(real_delay, len(original_actions), len(processed_actions)))
         self.original_queue = original_actions[clamped_delay:].clone()
         self.queue = processed_actions[clamped_delay:].clone()
+        self.anchor_state = anchor_state.clone() if anchor_state is not None else None
 
         logger.debug(f"original_actions shape: {self.original_queue.shape}")
         logger.debug(f"processed_actions shape: {self.queue.shape}")
