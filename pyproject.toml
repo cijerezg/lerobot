@@ -98,6 +98,7 @@ pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
 transformers-dep = ["transformers>=4.57.1,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
+scipy-dep = ["scipy>=1.11.0,<2.0.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0"]
@@ -147,8 +148,10 @@ hilserl = ["lerobot[transformers-dep]", "gym-hil>=0.1.13,<0.2.0", "lerobot[grpci
 # Features
 async = [
     "lerobot[grpcio-dep]",
+    "lerobot[scipy-dep]",
     "matplotlib>=3.10.3,<4.0.0",
     "textual",
+    "sortedcontainers>=2.4.0,<3.0.0",
 ]
 peft = ["lerobot[transformers-dep]", "peft>=0.18.0,<1.0.0"]
 

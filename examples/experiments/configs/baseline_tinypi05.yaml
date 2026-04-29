@@ -14,9 +14,9 @@ robot_id: so101_follower_2026_04_26_v0
 
 # TinyPI05 checkpoints trained on the cube dataset expect observation.images.{side,top}.
 camera1_name: side
-camera1_path: /dev/video4
+camera1_path: /dev/video0
 camera2_name: top
-camera2_path: /dev/video0
+camera2_path: /dev/video4
 camera_width: 800
 camera_height: 600
 camera_fps: 30
@@ -26,7 +26,7 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: tinypi05
-pretrained_name_or_path: outputs/train/2026-04-29/12-58-09_tinypi05_cube_tiny300m_50k_v5/checkpoints/035000/pretrained_model
+pretrained_name_or_path: outputs/train/2026-04-29/12-58-09_tinypi05_cube_tiny300m_50k_v5/checkpoints/040000/pretrained_model
 
 # DRTC parameters
 estimator: jk
@@ -34,7 +34,7 @@ cooldown: true
 latency_k: 1.5
 epsilon: 1
 actions_per_chunk: 50
-s_min: 10
+s_min: 25
 latency_alpha: 0.125
 latency_beta: 0.25
 
@@ -43,12 +43,12 @@ duration_s: 120.0
 fps: 30
 
 # Flow matching / RTC
-num_flow_matching_steps: 8
+num_flow_matching_steps: 5
 rtc_enabled: true
-rtc_max_guidance_weight: 8.0
+rtc_max_guidance_weight: null
 rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 0.2
-rtc_full_trajectory_alignment: false
+rtc_full_trajectory_alignment: true
 
 # Action filter
 action_filter_mode: butterworth

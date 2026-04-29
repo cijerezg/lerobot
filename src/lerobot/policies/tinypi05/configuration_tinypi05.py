@@ -107,6 +107,32 @@ TINYPi05_ARCHITECTURE_PRESETS: dict[str, TinyPI05Architecture] = {
         vision_num_attention_heads=12,
         vision_patch_size=16,
     ),
+    # Width-compatible with google/gemma-3-270m's hidden_size=640 so its
+    # embed_tokens can be loaded directly into our (still-random) Gemma-1-style
+    # transformer blocks.  vlm_head_dim=80 keeps num_heads*head_dim == width
+    # while obeying the joint-attention kernel's `num_heads == 8` constraint.
+    # All other Gemma3-only features (q/k norm, sliding window, per-layer
+    # rotary, pre/post-FF norms) are intentionally NOT used -- only the token
+    # embedding matrix is bootstrapped from the pretrained checkpoint.
+    "gemma3_270m_emb": TinyPI05Architecture(
+        vlm_width=640,
+        vlm_depth=10,
+        vlm_mlp_dim=2560,
+        vlm_num_heads=8,
+        vlm_num_kv_heads=1,
+        vlm_head_dim=80,
+        expert_width=640,
+        expert_depth=10,
+        expert_mlp_dim=2560,
+        expert_num_heads=8,
+        expert_num_kv_heads=1,
+        expert_head_dim=80,
+        vision_hidden_size=768,
+        vision_intermediate_size=3072,
+        vision_num_hidden_layers=10,
+        vision_num_attention_heads=12,
+        vision_patch_size=16,
+    ),
 }
 
 
@@ -180,7 +206,32 @@ class TinyPI05Config(PreTrainedConfig):
     freeze_vision_encoder: bool = False
     train_expert_only: bool = False
 
+    # When set, the PaliGemma vision_tower slot is replaced at construction time
+    # with `SiglipVisionModel.from_pretrained(pretrained_vision_model)` and the
+    # multi_modal_projector is rebuilt to map the loaded SigLIP hidden size to
+    # `vlm_width`. None preserves the legacy from-scratch random init (only
+    # useful for arch experiments; the action expert tends to ignore vision in
+    # that regime, see `train_tinypi05_cube.py` notes).
+    pretrained_vision_model: str | None = "google/siglip-base-patch16-224"
+
+    # When set, the random `paligemma.model.language_model.embed_tokens` matrix
+    # is replaced with the matching matrix from the named HF causal-LM
+    # checkpoint (e.g. "google/gemma-3-270m").  The transformer blocks remain
+    # random -- only the token embedding priors are bootstrapped, so the
+    # joint-attention kernel does not need to know anything about the source
+    # architecture.  Requires the source `hidden_size == vlm_width`; use the
+    # `gemma3_270m_emb` preset when sourcing from gemma-3-270m.
+    pretrained_language_embeddings: str | None = None
+
     optimizer_lr: float = 2.5e-5
+    # Separate LR for the (large, pretrained) vision tower so fine-tuning does
+    # not blow away the SigLIP weights (mirrors ACT's `optimizer_lr_backbone`).
+    # None falls back to `optimizer_lr` for the vision tower as well.
+    optimizer_lr_vision: float | None = 2.5e-6
+    # Separate LR for the pretrained `embed_tokens` matrix (only used when
+    # `pretrained_language_embeddings` is set).  None falls back to
+    # `optimizer_lr`.
+    optimizer_lr_language_embeddings: float | None = 2.5e-6
     optimizer_betas: tuple[float, float] = (0.9, 0.95)
     optimizer_eps: float = 1e-8
     optimizer_weight_decay: float = 0.01
@@ -206,6 +257,16 @@ class TinyPI05Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        # When sourcing pretrained embed_tokens from an HF causal-LM, the
+        # source's tokenizer is the only one whose IDs map to those rows.  If
+        # the user left tokenizer_name at the PaliGemma default, auto-pair it
+        # to the embedding source so encoded prompts hit the right rows.
+        if (
+            self.pretrained_language_embeddings is not None
+            and self.tokenizer_name == "google/paligemma-3b-pt-224"
+        ):
+            self.tokenizer_name = self.pretrained_language_embeddings
 
         arch = self.resolved_architecture()
         if arch.vlm_depth != arch.expert_depth:

@@ -77,6 +77,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", choices=["bfloat16", "float32"], default="bfloat16")
     parser.add_argument("--no-gradient-checkpointing", action="store_true")
     parser.add_argument("--optimizer-lr", type=float, default=2.5e-5)
+    parser.add_argument(
+        "--optimizer-lr-vision",
+        type=float,
+        default=2.5e-6,
+        help=(
+            "Learning rate for the (pretrained) vision tower. Lower than --optimizer-lr "
+            "so SigLIP weights are gently fine-tuned instead of clobbered. "
+            "Pass a value <= 0 to disable per-group LRs and use --optimizer-lr for everything."
+        ),
+    )
+    parser.add_argument(
+        "--pretrained-vision-model",
+        default="google/siglip-base-patch16-224",
+        help=(
+            "HF id of a SigLIP checkpoint to load into the vision_tower slot. "
+            "Pass 'none' (or empty) to keep the legacy random-init vision tower."
+        ),
+    )
+    parser.add_argument(
+        "--pretrained-language-embeddings",
+        default=None,
+        help=(
+            "HF id of a causal-LM checkpoint whose `embed_tokens` matrix should "
+            "bootstrap the random VLM (e.g. 'google/gemma-3-270m'). Requires the "
+            "source hidden_size to match vlm_width; when set without an explicit "
+            "--architecture-preset, the script auto-selects 'gemma3_270m_emb'. "
+            "The source's tokenizer is also auto-paired."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer-lr-language-embeddings",
+        type=float,
+        default=2.5e-6,
+        help=(
+            "Learning rate for the pretrained `embed_tokens` matrix. Lower than "
+            "--optimizer-lr so the embedding priors are gently fine-tuned. "
+            "Pass <= 0 to use --optimizer-lr for the embeddings as well."
+        ),
+    )
     parser.add_argument("--scheduler-warmup-steps", type=int, default=1_000)
     parser.add_argument("--scheduler-decay-steps", type=int, default=30_000)
     parser.add_argument("--scheduler-decay-lr", type=float, default=2.5e-6)
@@ -111,14 +150,47 @@ def main() -> None:
     register_third_party_plugins()
     args = parse_args()
 
+    pretrained_vision_model: str | None = args.pretrained_vision_model
+    if pretrained_vision_model is not None:
+        normalized = pretrained_vision_model.strip().lower()
+        if normalized in {"", "none", "null"}:
+            pretrained_vision_model = None
+
+    optimizer_lr_vision: str | float | None = args.optimizer_lr_vision
+    if optimizer_lr_vision is not None and optimizer_lr_vision <= 0:
+        optimizer_lr_vision = None
+
+    pretrained_language_embeddings: str | None = args.pretrained_language_embeddings
+    if pretrained_language_embeddings is not None:
+        normalized = pretrained_language_embeddings.strip().lower()
+        if normalized in {"", "none", "null"}:
+            pretrained_language_embeddings = None
+
+    optimizer_lr_language_embeddings: float | None = args.optimizer_lr_language_embeddings
+    if optimizer_lr_language_embeddings is not None and optimizer_lr_language_embeddings <= 0:
+        optimizer_lr_language_embeddings = None
+
+    architecture_preset = args.architecture_preset
+    # Auto-pair gemma-3-270m embeddings with the width-compatible preset when
+    # the user did not explicitly override --architecture-preset.
+    if (
+        pretrained_language_embeddings == "google/gemma-3-270m"
+        and architecture_preset == "small_500m"
+    ):
+        architecture_preset = "gemma3_270m_emb"
+
     policy = TinyPI05Config(
-        architecture_preset=args.architecture_preset,
+        architecture_preset=architecture_preset,
         image_resolution=(args.image_size, args.image_size),
         dtype=args.dtype,
         gradient_checkpointing=not args.no_gradient_checkpointing,
         freeze_vision_encoder=False,
         train_expert_only=False,
+        pretrained_vision_model=pretrained_vision_model,
+        pretrained_language_embeddings=pretrained_language_embeddings,
         optimizer_lr=args.optimizer_lr,
+        optimizer_lr_vision=optimizer_lr_vision,
+        optimizer_lr_language_embeddings=optimizer_lr_language_embeddings,
         scheduler_warmup_steps=args.scheduler_warmup_steps,
         scheduler_decay_steps=args.scheduler_decay_steps,
         scheduler_decay_lr=args.scheduler_decay_lr,

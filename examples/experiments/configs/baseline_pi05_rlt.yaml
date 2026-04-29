@@ -15,9 +15,9 @@ robot_id: so101_follower_2026_04_26_v0
 
 # Cameras: pi05_rlt expects observation.images.{side,top} for this checkpoint.
 camera1_name: side
-camera1_path: /dev/video4
+camera1_path: /dev/video0
 camera2_name: top
-camera2_path: /dev/video0
+camera2_path: /dev/video4
 camera_width: 800
 camera_height: 600
 camera_fps: 30

@@ -33,6 +33,14 @@ from lerobot.policies.pistar06.modeling_pistar06 import (
 )
 from lerobot.policies.tinypi05.configuration_tinypi05 import TinyPI05Architecture, TinyPI05Config
 
+try:
+    from transformers import AutoModelForCausalLM, SiglipVisionModel
+    from transformers.models.paligemma.modeling_paligemma import PaliGemmaMultiModalProjector
+except ImportError:  # transformers may be unavailable in some test envs
+    SiglipVisionModel = None
+    PaliGemmaMultiModalProjector = None
+    AutoModelForCausalLM = None
+
 
 def _format_param_count(num_params: int) -> str:
     if num_params >= 1_000_000_000:
@@ -64,7 +72,16 @@ def _to_gemma_variant(
 
 
 class TinyPaliGemmaWithExpertModel(PaliGemmaWithExpertModel):
-    """PaliGemma + action expert with configurable tiny dimensions."""
+    """PaliGemma + action expert with configurable tiny dimensions.
+
+    When ``pretrained_vision_model`` is provided, the random PaliGemma vision
+    tower is replaced after construction with ``SiglipVisionModel.from_pretrained(...)``
+    and the multi_modal_projector is rebuilt to map the loaded SigLIP hidden
+    size to ``vlm_width``.  This is the recommended path -- training the vision
+    tower from scratch on a small robotics dataset (~10k frames) almost always
+    converges to a proprio-only local optimum that ignores vision entirely
+    (see commit notes).
+    """
 
     def __init__(
         self,
@@ -76,14 +93,28 @@ class TinyPaliGemmaWithExpertModel(PaliGemmaWithExpertModel):
         image_size: int = 224,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
+        pretrained_vision_model: str | None = None,
+        pretrained_language_embeddings: str | None = None,
     ):
         if CONFIG_MAPPING is None:
             raise ImportError("transformers is required to instantiate TinyPI05")
+        if pretrained_vision_model is not None and SiglipVisionModel is None:
+            raise ImportError(
+                "transformers.SiglipVisionModel is required when "
+                "pretrained_vision_model is set; please install/upgrade transformers."
+            )
+        if pretrained_language_embeddings is not None and AutoModelForCausalLM is None:
+            raise ImportError(
+                "transformers.AutoModelForCausalLM is required when "
+                "pretrained_language_embeddings is set; please install/upgrade transformers."
+            )
         if use_adarms is None:
             use_adarms = [False, False]
         nn.Module.__init__(self)
         self.freeze_vision_encoder = freeze_vision_encoder
         self.train_expert_only = train_expert_only
+        self.pretrained_vision_model = pretrained_vision_model
+        self.pretrained_language_embeddings = pretrained_language_embeddings
 
         vlm_config_hf = CONFIG_MAPPING["paligemma"]()
         vlm_config_hf._vocab_size = 257152  # noqa: SLF001
@@ -128,12 +159,129 @@ class TinyPaliGemmaWithExpertModel(PaliGemmaWithExpertModel):
         _log_mem("TinyPaliGemmaWithExpert: before paligemma init")
         self.paligemma = PaliGemmaDirect(config=vlm_config_hf)
         _log_mem("TinyPaliGemmaWithExpert: after paligemma init")
+
+        if pretrained_vision_model is not None:
+            self._swap_in_pretrained_vision_tower(
+                vlm_config_hf=vlm_config_hf,
+                pretrained_vision_model=pretrained_vision_model,
+                expected_image_size=image_size,
+            )
+            _log_mem(
+                f"TinyPaliGemmaWithExpert: after pretrained vision swap ({pretrained_vision_model})"
+            )
+
+        if pretrained_language_embeddings is not None:
+            self._swap_in_pretrained_language_embeddings(
+                vlm_config_hf=vlm_config_hf,
+                pretrained_language_embeddings=pretrained_language_embeddings,
+            )
+            _log_mem(
+                f"TinyPaliGemmaWithExpert: after pretrained embed_tokens swap "
+                f"({pretrained_language_embeddings})"
+            )
+
         self.gemma_expert = ActionExpertDirect(config=action_expert_config_hf)
         _log_mem("TinyPaliGemmaWithExpert: after gemma_expert init")
         self.gemma_expert.model.embed_tokens = None
 
         self.to_bfloat16_for_selected_params(precision)
         self._set_requires_grad()
+
+    def _swap_in_pretrained_vision_tower(
+        self,
+        *,
+        vlm_config_hf,
+        pretrained_vision_model: str,
+        expected_image_size: int,
+    ) -> None:
+        """Replace the random vision tower with a pretrained SigLIP and rebuild the projector.
+
+        The PaliGemma vision_tower slot is API-compatible with HF's
+        ``SiglipVisionModel`` (same ``last_hidden_state`` semantics), so the only
+        downstream change required is swapping the linear projector to accept
+        the pretrained SigLIP's ``hidden_size`` instead of the random tower's.
+        """
+        loaded = SiglipVisionModel.from_pretrained(pretrained_vision_model)
+        loaded_cfg = loaded.config
+
+        if loaded_cfg.image_size != expected_image_size:
+            raise ValueError(
+                f"pretrained_vision_model={pretrained_vision_model!r} expects "
+                f"image_size={loaded_cfg.image_size}, but TinyPI05Config.image_resolution "
+                f"is {expected_image_size}. Either change the checkpoint or update "
+                f"image_resolution to match."
+            )
+
+        self.paligemma.model.vision_tower = loaded
+
+        # Update vision_config in-place so the rebuilt projector picks the right
+        # input dim (projection_dim was already set to vlm_width above).
+        vlm_config_hf.vision_config.hidden_size = loaded_cfg.hidden_size
+        vlm_config_hf.vision_config.intermediate_size = loaded_cfg.intermediate_size
+        vlm_config_hf.vision_config.num_hidden_layers = loaded_cfg.num_hidden_layers
+        vlm_config_hf.vision_config.num_attention_heads = loaded_cfg.num_attention_heads
+        vlm_config_hf.vision_config.image_size = loaded_cfg.image_size
+        vlm_config_hf.vision_config.patch_size = loaded_cfg.patch_size
+
+        self.paligemma.model.multi_modal_projector = PaliGemmaMultiModalProjector(vlm_config_hf)
+
+    def _swap_in_pretrained_language_embeddings(
+        self,
+        *,
+        vlm_config_hf,
+        pretrained_language_embeddings: str,
+    ) -> None:
+        """Replace the random `embed_tokens` matrix with one from a pretrained CausalLM.
+
+        Only the token embedding matrix is bootstrapped -- the transformer
+        blocks remain random.  This is the cheap variant of "load a small LLM"
+        described in the configuration docstring: the joint-attention kernel
+        does not need to know anything about the source architecture, but the
+        source's ``hidden_size`` must equal the random transformer's
+        ``vlm_width`` (so the embedding output dim matches the rest of the
+        random VLM stack).
+
+        We also resize the language model's effective vocab to the source's so
+        that the matched HF tokenizer (typically the source repo's) can encode
+        the full ID range.
+        """
+        loaded = AutoModelForCausalLM.from_pretrained(pretrained_language_embeddings)
+        # Walk the loaded model to find its `embed_tokens` regardless of wrapper class.
+        loaded_inner = getattr(loaded, "model", loaded)
+        loaded_embed = getattr(loaded_inner, "embed_tokens", None)
+        if loaded_embed is None:
+            raise ValueError(
+                f"Could not locate `embed_tokens` on {pretrained_language_embeddings!r} "
+                f"({type(loaded).__name__}); unsupported architecture."
+            )
+
+        loaded_vocab, loaded_hidden = loaded_embed.weight.shape
+        expected_hidden = vlm_config_hf.text_config.hidden_size
+        if loaded_hidden != expected_hidden:
+            raise ValueError(
+                f"pretrained_language_embeddings={pretrained_language_embeddings!r} has "
+                f"hidden_size={loaded_hidden}, but vlm_width is {expected_hidden}. "
+                f"Use an architecture preset whose vlm_width matches the source "
+                f"hidden_size (e.g. `gemma3_270m_emb` for google/gemma-3-270m)."
+            )
+
+        # Detach the embed module from the source model so we don't keep the
+        # rest of its weights resident in memory.
+        loaded_embed_module = nn.Embedding(
+            num_embeddings=loaded_vocab,
+            embedding_dim=loaded_hidden,
+            padding_idx=loaded_embed.padding_idx,
+        )
+        with torch.no_grad():
+            loaded_embed_module.weight.copy_(loaded_embed.weight)
+        loaded_embed_module.weight.requires_grad = True
+
+        self.paligemma.model.language_model.embed_tokens = loaded_embed_module
+        vlm_config_hf.text_config.vocab_size = loaded_vocab
+
+        del loaded
+        del loaded_inner
+        del loaded_embed
 
 
 class TinyPI05Pytorch(PiStar06Pytorch):
@@ -171,6 +319,8 @@ class TinyPI05Pytorch(PiStar06Pytorch):
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
+            pretrained_vision_model=config.pretrained_vision_model,
+            pretrained_language_embeddings=config.pretrained_language_embeddings,
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
@@ -246,6 +396,57 @@ class TinyPI05Policy(PI05Policy):
                 _format_param_count(component_trainable),
                 component_trainable,
             )
+
+    def get_optim_params(self) -> list[dict]:
+        """Per-group learning rates so pretrained components aren't blown away.
+
+        Mirrors ACT's `optimizer_lr_backbone` pattern, generalized to
+        independently slice off the (pretrained) vision tower and the
+        (pretrained) language embed_tokens, each with its own LR.  Anything
+        that does not need a custom LR falls into the "default" group.
+
+        Falls back to a single flat list when no custom LR is requested.
+        """
+        vision_prefix = "model.paligemma_with_expert.paligemma.model.vision_tower"
+        embed_prefix = (
+            "model.paligemma_with_expert.paligemma.model.language_model.embed_tokens"
+        )
+
+        use_vision_lr = (
+            self.config.optimizer_lr_vision is not None
+            and not self.config.freeze_vision_encoder
+            and not self.config.train_expert_only
+        )
+        use_embed_lr = (
+            self.config.optimizer_lr_language_embeddings is not None
+            and self.config.pretrained_language_embeddings is not None
+            and not self.config.train_expert_only
+        )
+
+        if not use_vision_lr and not use_embed_lr:
+            return list(self.parameters())
+
+        vision_params: list[nn.Parameter] = []
+        embed_params: list[nn.Parameter] = []
+        other_params: list[nn.Parameter] = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if use_embed_lr and name.startswith(embed_prefix):
+                embed_params.append(param)
+            elif use_vision_lr and name.startswith(vision_prefix):
+                vision_params.append(param)
+            else:
+                other_params.append(param)
+
+        groups: list[dict] = [{"params": other_params}]
+        if use_vision_lr and vision_params:
+            groups.append({"params": vision_params, "lr": self.config.optimizer_lr_vision})
+        if use_embed_lr and embed_params:
+            groups.append(
+                {"params": embed_params, "lr": self.config.optimizer_lr_language_embeddings}
+            )
+        return groups
 
     def _verify_trainable_components(self) -> None:
         if self.config.freeze_vision_encoder or self.config.train_expert_only:
