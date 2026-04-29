@@ -38,6 +38,8 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
     OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_TOKENS,
+    OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK,
+    OBS_LANGUAGE_USER_PROMPT_TOKENS,
 )
 from lerobot.utils.import_utils import _transformers_available
 
@@ -167,6 +169,40 @@ class TokenizerProcessorStep(ObservationProcessorStep):
 
         return None
 
+    def get_user_prompt(self, transition: EnvTransition) -> list[str] | None:
+        """Extracts the user_prompt from the transition's complementary data."""
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return None
+
+        user_prompt = complementary_data.get("user_prompt")
+        if user_prompt is None:
+            return None
+
+        if isinstance(user_prompt, str):
+            return [user_prompt]
+        elif isinstance(user_prompt, list) and all(isinstance(t, str) for t in user_prompt):
+            return user_prompt
+
+        return None
+
+    def get_critic_prompt(self, transition: EnvTransition) -> list[str] | None:
+        """Extracts the critic_prompt from the transition's complementary data."""
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if complementary_data is None:
+            return None
+
+        critic_prompt = complementary_data.get("critic_prompt")
+        if critic_prompt is None:
+            return None
+
+        if isinstance(critic_prompt, str):
+            return [critic_prompt]
+        elif isinstance(critic_prompt, list) and all(isinstance(t, str) for t in critic_prompt):
+            return critic_prompt
+
+        return None
+
     def observation(self, observation: RobotObservation) -> RobotObservation:
         """
         Tokenizes the task description and adds it to the observation dictionary.
@@ -204,19 +240,65 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         new_observation[OBS_LANGUAGE_TOKENS] = tokenized_prompt["input_ids"]
         new_observation[OBS_LANGUAGE_ATTENTION_MASK] = tokenized_prompt["attention_mask"].to(dtype=torch.bool)
 
-        # Tokenize subtask if available
+        # Tokenize user_prompt if available
+        user_prompt = self.get_user_prompt(self.transition)
+        if user_prompt is not None:
+            tokenized_user_prompt = self._tokenize_text(user_prompt)
+
+            if target_device is not None:
+                tokenized_user_prompt = {
+                    k: v.to(target_device) if isinstance(v, torch.Tensor) else v
+                    for k, v in tokenized_user_prompt.items()
+                }
+
+            new_observation[OBS_LANGUAGE_USER_PROMPT_TOKENS] = tokenized_user_prompt["input_ids"]
+            new_observation[OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK] = tokenized_user_prompt[
+                "attention_mask"
+            ].to(dtype=torch.bool)
+
+        # Tokenize critic_prompt if available
+        critic_prompt = self.get_critic_prompt(self.transition)
+        if critic_prompt is not None:
+            tokenized_critic_prompt = self._tokenize_text(critic_prompt)
+
+            if target_device is not None:
+                tokenized_critic_prompt = {
+                    k: v.to(target_device) if isinstance(v, torch.Tensor) else v
+                    for k, v in tokenized_critic_prompt.items()
+                }
+
+            new_observation["critic_tokens"] = tokenized_critic_prompt["input_ids"]
+            new_observation["critic_pad_mask"] = tokenized_critic_prompt["attention_mask"].to(
+                dtype=torch.bool
+            )
+
+        # Tokenize subtask if available — pi05_full requires an EOS token
+        # appended at the end of each sequence (before padding) so the
+        # autoregressive decoder learns where subtask generation should stop.
         subtask = self.get_subtask(self.transition)
         if subtask is not None:
             tokenized_subtask = self._tokenize_text(subtask)
 
-            # Move new tokenized tensors to the detected device
+            eos_token_id = self.input_tokenizer.eos_token_id
+            input_ids = tokenized_subtask["input_ids"]
+            attention_mask = tokenized_subtask["attention_mask"]
+            for i in range(input_ids.size(0)):
+                seq_len = attention_mask[i].sum().item()
+                max_len = input_ids.size(1)
+                if seq_len >= max_len:
+                    raise ValueError(
+                        f"No room to append EOS: seq_len={seq_len} equals max_length={max_len}. "
+                        "Increase max_length or tokenize with padding=False then pad after adding EOS."
+                    )
+                input_ids[i, seq_len] = eos_token_id
+                attention_mask[i, seq_len] = 1
+
             if target_device is not None:
                 tokenized_subtask = {
                     k: v.to(target_device) if isinstance(v, torch.Tensor) else v
                     for k, v in tokenized_subtask.items()
                 }
 
-            # Add tokenized subtask to the observation
             new_observation[OBS_LANGUAGE_SUBTASK_TOKENS] = tokenized_subtask["input_ids"]
             new_observation[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = tokenized_subtask["attention_mask"].to(
                 dtype=torch.bool
@@ -317,6 +399,36 @@ class TokenizerProcessorStep(ObservationProcessorStep):
         # Add a feature for the attention mask if it doesn't already exist
         if OBS_LANGUAGE_ATTENTION_MASK not in features[PipelineFeatureType.OBSERVATION]:
             features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_ATTENTION_MASK] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
+        # user_prompt token features
+        if OBS_LANGUAGE_USER_PROMPT_TOKENS not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_USER_PROMPT_TOKENS] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+        if OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_USER_PROMPT_ATTENTION_MASK] = (
+                PolicyFeature(type=FeatureType.LANGUAGE, shape=(self.max_length,))
+            )
+
+        # subtask token features
+        if OBS_LANGUAGE_SUBTASK_TOKENS not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_SUBTASK_TOKENS] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+        if OBS_LANGUAGE_SUBTASK_ATTENTION_MASK not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION][OBS_LANGUAGE_SUBTASK_ATTENTION_MASK] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+
+        # critic_prompt token features
+        if "critic_tokens" not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION]["critic_tokens"] = PolicyFeature(
+                type=FeatureType.LANGUAGE, shape=(self.max_length,)
+            )
+        if "critic_pad_mask" not in features[PipelineFeatureType.OBSERVATION]:
+            features[PipelineFeatureType.OBSERVATION]["critic_pad_mask"] = PolicyFeature(
                 type=FeatureType.LANGUAGE, shape=(self.max_length,)
             )
 
@@ -462,7 +574,7 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
 
         for i in range(batch_size):
             # Tokenize single action (move to CPU first as tokenizer uses scipy which requires numpy)
-            action_cpu = action[i : i + 1].cpu()
+            action_cpu = action[i : i + 1].cpu().float()
             tokens = self.action_tokenizer(action_cpu)
 
             # Convert to numpy array if it's a list

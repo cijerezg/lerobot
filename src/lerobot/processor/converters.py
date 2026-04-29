@@ -168,11 +168,20 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
     task_key = {"task": batch["task"]} if "task" in batch else {}
     subtask_key = {"subtask": batch["subtask"]} if "subtask" in batch else {}
+    user_prompt_key = {"user_prompt": batch["user_prompt"]} if "user_prompt" in batch else {}
     index_key = {"index": batch["index"]} if "index" in batch else {}
     task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
     episode_index_key = {"episode_index": batch["episode_index"]} if "episode_index" in batch else {}
 
-    return {**pad_keys, **task_key, **subtask_key, **index_key, **task_index_key, **episode_index_key}
+    return {
+        **pad_keys,
+        **task_key,
+        **subtask_key,
+        **user_prompt_key,
+        **index_key,
+        **task_index_key,
+        **episode_index_key,
+    }
 
 
 def create_transition(
@@ -352,6 +361,14 @@ def batch_to_transition(batch: dict[str, Any]) -> EnvTransition:
     # Extract observation and complementary data keys.
     observation_keys = {k: v for k, v in batch.items() if k.startswith(OBS_PREFIX)}
     complementary_data = _extract_complementary_data(batch)
+
+    # If the batch already carries a nested COMPLEMENTARY_DATA dict (e.g. when
+    # round-tripping a transition through batch form), merge it in so we don't
+    # silently drop those fields. Nested values take precedence on key conflict.
+    if TransitionKey.COMPLEMENTARY_DATA in batch:
+        nested_comp_data = batch[TransitionKey.COMPLEMENTARY_DATA]
+        if nested_comp_data and isinstance(nested_comp_data, dict):
+            complementary_data.update(nested_comp_data)
 
     return create_transition(
         observation=observation_keys if observation_keys else None,
