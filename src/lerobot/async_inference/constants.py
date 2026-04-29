@@ -31,6 +31,7 @@ SUPPORTED_POLICIES = [
     "vqbet",
     "pi0",
     "pi05",
+    "tinypi05",
     "pistar06",
     "pi05_rl",
     "pi05_rlt",

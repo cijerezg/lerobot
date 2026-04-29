@@ -195,7 +195,9 @@ class TinyPI05Config(PreTrainedConfig):
 
         if self.architecture_preset not in TINYPi05_ARCHITECTURE_PRESETS:
             valid = ", ".join(sorted(TINYPi05_ARCHITECTURE_PRESETS))
-            raise ValueError(f"Invalid architecture_preset={self.architecture_preset!r}. Valid presets: {valid}")
+            raise ValueError(
+                f"Invalid architecture_preset={self.architecture_preset!r}. Valid presets: {valid}"
+            )
 
         if self.n_action_steps > self.chunk_size:
             raise ValueError(

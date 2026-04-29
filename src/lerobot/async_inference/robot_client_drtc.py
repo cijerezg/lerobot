@@ -21,7 +21,7 @@ from lerobot.transport import (
 from lerobot.transport.utils import grpc_channel_options, send_bytes_in_chunks
 
 from .configs_drtc import RobotClientDrtcConfig
-from .constants import SUPPORTED_ROBOTS
+from .constants import SUPPORTED_POLICIES, SUPPORTED_ROBOTS
 from .helpers import (
     RawObservation,
     RemotePolicyConfig,
@@ -330,6 +330,10 @@ class RobotClientDrtc:
             config: Configuration for the robot client.
         """
         self.config = config
+        if config.policy_type not in SUPPORTED_POLICIES:
+            raise ValueError(
+                f"Policy type {config.policy_type} not supported. Supported policies: {SUPPORTED_POLICIES}"
+            )
 
         # Use mock robot when no physical robot is available
         if config.use_mock_robot:
