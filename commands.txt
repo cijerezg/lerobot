@@ -1,0 +1,276 @@
+## Teleoperate
+python lerobot/src/lerobot/scripts/lerobot_teleoperate.py\
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower_arm_v1 \
+    --robot.cameras="{ wrist: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=leader_arm_v1 \
+    --display_data=true
+
+
+
+
+## Collect data with teleoperation
+
+python lerobot/src/lerobot/scripts/lerobot_record.py \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower_arm_v1 \
+    --robot.cameras="{ wrist: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=leader_arm_v1 \
+    --display_data=true \
+    --dataset.repo_id=cijerezg/yellow-car-task-v1 \
+    --dataset.num_episodes=50 \
+    --dataset.single_task="Pick the yellow car and put it in the bowl" \
+    --dataset.episode_time_s=240 \
+    --dataset.reset_time_s=240
+
+
+Toy tasks:
+- Pick up the dental floss and put it in the bowl
+- Pick up the yellow car and put it in the bowl
+- Pick up the skateboard and put it in the bowl
+- Pick the red truck and put it in the bowl
+- Pick up the white car and put it in the bowl
+
+- Pick up all the vehicles and put them in the bowl
+
+
+
+# Merge datasets
+# Merge all pick-place-task datasets into one dataset
+lerobot-edit-dataset \
+    --repo_id cijerezg/yellow-car-merged-v1 \
+    --operation.type merge \
+    --operation.repo_ids "['cijerezg/yellow-car-task-v1', \
+                           'cijerezg/yellow-car-task-v2', \
+                           ]" \
+    --push_to_hub true
+
+
+
+vars for config.json pi05
+"optimizer_lr": 2.5e-05,
+    "optimizer_betas": [0.9, 0.95],
+    "optimizer_eps": 1e-08,
+    "optimizer_weight_decay": 0.01,
+    "optimizer_grad_clip_norm": 1.0,
+    "scheduler_warmup_steps": 1000,
+    "scheduler_decay_steps": 30000,
+    "scheduler_decay_lr": 2.5e-06
+
+
+
+## Run policy
+
+python -m lerobot.scripts.lerobot_record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower_arm_v1 \
+    --robot.cameras="{ wrist: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --dataset.single_task="Pick up the yellow car and put it in the bowl" \
+    --dataset.repo_id=cijerezg/eval_multitask-toys-v1.103 \
+    --dataset.episode_time_s=240 \
+    --dataset.num_episodes=1 \
+    --display_data=true \
+    --policy.path=outputs/pi05_multi-task-toys-v1.01/checkpoints/016000/pretrained_model \
+    --policy.n_action_steps=50
+
+
+
+## Run policy with RTC
+
+uv run lerobot/examples/rtc/eval_with_real_robot.py \
+    --policy.path=outputs/pi05_multi-task-toys-v1.01/checkpoints/016000/pretrained_model \
+    --policy.device=cuda \
+    --rtc.enabled=true \
+    --rtc.execution_horizon=20 \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=my_awesome_follower_arm \
+    --robot.cameras="{ wrist: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}, side: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --task="Pick up all the red truck and put it in the bowl" \
+    --duration=120
+
+
+
+TORCH_COMPILE_DISABLE=1
+
+
+python lerobot/src/lerobot/scripts/lerobot_train.py\
+    --dataset.repo_id=cijerezg/pick-up-train-v2.1 \
+    --policy.type=pi05 \
+    --output_dir=./outputs/pi05_training_vtest-v1 \
+    --job_name=pi05_training \
+    --policy.repo_id=cijerezg/pick-up-policy-pi0.5-v1 \
+    --policy.pretrained_path=lerobot/pi05_base \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --wandb.enable=true \
+    --policy.dtype=bfloat16 \
+    --steps=3000 \
+    --policy.device=cuda \
+    --batch_size=4 \
+    --log_freq=200 \
+    --save_freq=1000
+
+
+accelerate launch \
+  --multi_gpu \
+  --num_processes=2 \
+  lerobot/src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=cijerezg/multi-task-toys-merged-v2  \
+  --policy.type=pi05 \
+  --output_dir=./outputs/pi05_multi-task-toys-v1.01 \
+  --job_name=pi05_training \
+  --policy.repo_id=cijerezg/pi05-pick-place-policy-v3 \
+  --policy.pretrained_path=lerobot/pi05_base \
+  --policy.compile_model=true \
+  --policy.gradient_checkpointing=true \
+  --wandb.enable=true \
+  --policy.dtype=bfloat16 \
+  --steps=8000 \
+  --batch_size=42 \
+  --log_freq=50 \
+  --save_freq=2000 \
+  --wandb.disable_artifact=true
+
+
+
+
+accelerate launch \
+  --multi_gpu \
+  --num_processes=2 \
+  lerobot/src/lerobot/scripts/lerobot_train.py \
+  --dataset.repo_id=cijerezg/multi-task-toys-merged-v2 \
+  --resume=true \
+  --config_path=./outputs/pi05_multi-task-toys-v1.01/checkpoints/008000/pretrained_model/train_config.json \
+  --policy.type=pi05 \
+  --output_dir=./outputs/pi05_multi-task-toys-v1.01\
+  --job_name=pi05_training \
+  --policy.repo_id=cijerezg/pi05-pick-place-policy-v2 \
+  --policy.pretrained_path=lerobot/pi05_base \
+  --policy.compile_model=true \
+  --policy.gradient_checkpointing=true \
+  --wandb.enable=true \
+  --policy.dtype=bfloat16 \
+  --steps=16000 \
+  --batch_size=42 \
+  --log_freq=50 \
+  --save_freq=2000 \
+  --wandb.disable_artifact=true
+
+
+
+python lerobot/src/lerobot/scripts/lerobot_train.py\
+    --config_path=./outputs/pi05_training_v3/checkpoints/006000/pretrained_model/train_config.json \
+    --resume=true \
+    --dataset.repo_id=cijerezg/pick-up-train-v2.1 \
+    --policy.type=pi05 \
+    --output_dir=./outputs/pi05_training_vtest \
+    --job_name=pi05_training \
+    --policy.repo_id=cijerezg/pick-up-policy-pi0.5-v3 \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --wandb.enable=true \
+    --policy.dtype=bfloat16 \
+    --steps=10000 \
+    --policy.device=cuda \
+    --batch_size=1 \
+    --log_freq=200 \
+    --save_freq=4000 \
+    --wandb.disable_artifact=true
+
+
+# Save raw policy for study
+python lerobot/src/lerobot/scripts/lerobot_train.py\
+    --dataset.repo_id=cijerezg/pick-place-single-task-v1 \
+    --policy.type=pi05 \
+    --output_dir=./outputs/pi05_training_raw_policy_v1 \
+    --job_name=pi05_training \
+    --policy.repo_id=cijerezg/pick-up-policy-pi0.5-v3 \
+    --policy.compile_model=true \
+    --policy.gradient_checkpointing=true \
+    --wandb.enable=true \
+    --policy.dtype=bfloat16 \
+    --steps=10000 \
+    --policy.device=cuda \
+    --batch_size=3 \
+    --log_freq=200 \
+    --save_freq=4000 \
+    --wandb.disable_artifact=true
+
+
+
+
+lerobot-edit-dataset \
+    --repo_id cijerezg/pick-place-single-task-v1 \
+    --new_repo_id cijerezg/pick-place-single-task-v1_only_left_side \
+    --operation.type delete_episodes \
+    --operation.episode_indices "[51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99]"
+
+
+    for name, param in policy.named_parameters():
+        param.requires_grad = (
+            "gemma_expert" in name or 
+        )
+
+
+
+uv run lerobot/examples/rtc/eval
+
+
+
+# Train models offline
+accelerate launch --num_processes=2 --multi_gpu -m lerobot.scripts.offline_learner_pi05 --config_path config-hiserl.json
+
+
+cijerezg/multi-task-toys-merged-v2
+"cijerezg/multi-task-only-ep0"
+
+
+
+"outputs/pi05_multi-task-toys-v1.01/checkpoints/016000/pretrained_model",
+
+"outputs/pi05_offline_training_v2/checkpoints/000100/pretrained_model",
+# Offline Learner
+
+accelerate launch --num_processes=2 --multi_gpu -m lerobot.scripts.offline_learner_pi05 --config_path config-hiserl.json
+
+# Online Learner
+python -m lerobot.rl.learner_pi05 --config_path config-hiserl.json
+
+# Actor
+python -m lerobot.rl.actor_pi05 --config_path config-hiserl.json
+
+# Inference
+python -m lerobot.rl.inference_pi05_async --config_path config-hiserl.json
+
+
+
+# Command to annotate dataset
+python lerobot/src/lerobot/policies/pi05_full/annotate/subtask_annotate.py \
+    --repo-id cijerezg/yellow-car-merged-v1 --video-key observation.images.side \
+    --batch-size 4 --output-dir outputs/annotated_dataset-v1 \
+    --model Qwen/Qwen3-VL-30B-A3B-Instruct
+
+
+
+
+        "additional_offline_dataset_paths": [
+            "outputs/train/2026-01-18/20-23-32_default/online_buffer",
+            "outputs/train/2026-01-24/13-38-57_default/online_buffer"
+        ]
+
+
+# Script for annotation
+
+python lerobot/src/lerobot/policies/pi05_full/annotate/subtask_annotate.py --repo-id cijerezg/yellow-car-merged-v1 --video-key observation.images.side --batch-size 1 --output-dir outputs/yellow-car-annotated_dataset-v1
+
+
+In README.md
+Add that if from scratch, pass lerobot/pi05_base as pi05_checkpoint so that stats are loaded from dataset.

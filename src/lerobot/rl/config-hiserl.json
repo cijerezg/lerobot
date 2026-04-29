@@ -1,0 +1,290 @@
+{
+    "output_dir": null,
+    "use_rerun": true,
+    "job_name": "default",
+    "resume": false,
+    "seed": 42,
+    "num_workers": 4,
+    "batch_size": 8,
+    "log_freq": 20,
+    "save_checkpoint": true,
+    "save_freq": 100,
+    "offline_output_dir": "outputs/pi05_full_offline_training_v1_anchor_actions_val",
+    "offline_save_freq": 400,
+    "val_dataset_path": "outputs/annotated_dataset_validation",
+    "val_split": 0.0,
+    "val_freq": 400,
+    "val_on_start": true,
+    "episode_logging_freq": 4,
+    "episode_save_freq": 10,
+    "video_logging_cameras": [
+        "top",
+        "wrist"
+    ],
+    "wandb": {
+        "enable": true,
+        "project": "so101_real-v1",
+        "offline_project": "so101_real_offline-v1",
+        "disable_artifact": true
+    },
+    "buffer_cache_dir": "outputs/buffer_cache",
+    "dataset": {
+        "root": "outputs/annotated_dataset-v4-correct-cams",
+        "repo_id": "cijerezg/yellow-car-offline-training-v2",
+        "use_imagenet_stats": false,
+        "max_episodes": null,
+        "additional_offline_dataset_paths": []
+    },
+    "policy": {
+        "type": "pi05_rl",
+        "task": "Pick up the red truck and put it in the bowl",
+        "pi05_checkpoint": "outputs/pi05_base",
+        "tokenizer_max_length": 64,
+        "max_state_dim": 6,
+        "num_inference_steps": 5,
+        "use_separate_critic": true,
+        "knowledge_insulation": true,
+        "loss_weight_flow": 1.0,
+        "loss_weight_action_ce": 1.0,
+        "loss_weight_subtask_ce": 1.0,
+        "inference_advantage": 1.0,
+        "subtask_regeneration_interval": 1.5,
+        "advantage_scaling": 0.20,
+        "n_obs_steps": 1,
+        "reward_normalization_constant": 5.0,
+        "terminal_failure_reward": -16.0,
+        "rtc_config": {
+            "enabled": true,
+            "execution_horizon": 10,
+            "prefix_attention_schedule": "LINEAR",
+            "max_guidance_weight": 10.0,
+            "debug": false,
+            "debug_maxlen": 100
+        },
+        "normalization_mapping": {
+            "VISUAL": "IDENTITY",
+            "STATE": "MIN_MAX",
+            "ENV": "MIN_MAX",
+            "ACTION": "QUANTILES"
+        },
+        "action_encoding": "anchor",
+        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_annotated_dataset-v4.pt",
+        "input_features": {
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            },
+            "observation.images.top": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    224,
+                    224
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "output_features": {
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "device": "cuda",
+        "actor_device": "cuda:0",
+        "learner_device": "cuda:0",
+        "use_amp": false,
+        "dataset_stats": null,
+        "storage_device": "cpu",
+        "dtype": "bfloat16",
+        "gradient_checkpointing": true,
+        "online_steps": 20000,
+        "online_buffer_capacity": 5000,
+        "offline_buffer_capacity": 50000,
+        "online_step_before_learning": 10,
+        "policy_update_freq": 1,
+        "discount": 0.97,
+        "async_prefetch": false,
+        "num_critics": 1,
+        "critic_lr": 0.00005,
+        "actor_lr": 0.00005,
+        "optimizer_weight_decay": 0.01,
+        "critic_target_update_weight": 0.005,
+        "utd_ratio": 2,
+        "grad_clip_norm": 2.0,
+        "gradient_accumulation_steps": 16,
+        "offline_steps": 10000,
+        "trainable_params": {
+            "vision_encoder_from_layer": {
+                "vision_tower": 5,
+                "multi_modal_projector": true
+            },
+            "language_from_layer": 0,
+            "critic_language_from_layer": 1
+        },
+        "critic_network_kwargs": {
+            "hidden_dims": [
+                256,
+                256
+            ],
+            "activate_final": true
+        },
+        "actor_learner_config": {
+            "learner_host": "192.168.50.1",
+            "learner_port": 50051,
+            "policy_parameters_push_frequency": 180
+        },
+        "concurrency": {
+            "actor": "threads",
+            "learner": "threads"
+        },
+        "repo_id": "cijerezg/multi-task-toys-merged-v2"
+    },
+    "probe_parameters": {
+        "enable_actions": true,
+        "enable_representations": true,
+        "enable_attention": true,
+        "enable_offline_eval": true,
+        "enable_spatial_memorization": true,
+        "enable_action_drift_jacobian": true,
+        "enable_spatial_memorization_jacobian": false,
+        "output_dir": "outputs/probe",
+        "mode": "all",
+        "max_episodes": 5,
+        "n_frames_per_episode": 128,
+        "random_seed": 42,
+        "timestep": 0.5,
+        "ref_max_episodes": 20,
+        "ref_n_frames_per_episode": 256,
+        "action_pca_dims": 50,
+        "repr_pca_dims": 100,
+        "umap_n_neighbors": 15,
+        "umap_min_dist": 0.1,
+        "umap_seed": 42,
+        "sites": "prefix,suffix",
+        "ep_3d_a": 0,
+        "ep_3d_b": 1,
+        "subtask_injection": false,
+        "validation_batch_size": 32,
+        "attn_eval_episodes": null,
+        "attn_eval_subsample": 2,
+        "spatial_layers": "0,9,17",
+        "spatial_n_frames": 32
+    },
+    "env": {
+        "type": "gym_manipulator",
+        "robot": {
+            "type": "so101_follower",
+            "port": "/dev/ttyACM0",
+            "id": "follower_arm_v2",
+            "cameras": {
+                "wrist": {
+                    "type": "opencv",
+                    "index_or_path": 0,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                },
+                "top": {
+                    "type": "opencv",
+                    "index_or_path": 2,
+                    "height": 480,
+                    "width": 640,
+                    "fps": 30
+                }
+            }
+        },
+        "teleop": {
+            "type": "so101_leader",
+            "port": "/dev/ttyACM1",
+            "id": "leader_arm_v2"
+        },
+        "processor": {
+            "control_mode": "leader",
+            "observation": {
+                "display_cameras": false,
+                "add_joint_velocity_to_observation": false,
+                "add_current_to_observation": false
+            },
+            "image_preprocessing": {
+                "resize_size": [
+                    224,
+                    224
+                ]
+            },
+            "gripper": {
+                "use_gripper": true,
+                "gripper_penalty": 0.00
+            },
+            "reset": {
+                "fixed_reset_joint_positions": [
+                    0.54,
+                    -90.69,
+                    99.55,
+                    73.70,
+                    -50.23,
+                    42.71
+                ],
+                "reset_time_s": 10,
+                "control_time_s": 200.0,
+                "terminate_on_success": true
+            },
+            "reward_classifier": {
+                "pretrained_path": null,
+                "success_threshold": 0.5,
+                "success_reward": 1.0
+            },
+            "max_gripper_pos": 30
+        },
+        "name": "real_robot",
+        "fps": 30,
+        "task": "Pick up the red truck and put it in the bowl",
+        "features": {
+            "observation.images.wrist": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.images.top": {
+                "type": "VISUAL",
+                "shape": [
+                    3,
+                    128,
+                    128
+                ]
+            },
+            "observation.state": {
+                "type": "STATE",
+                "shape": [
+                    6
+                ]
+            },
+            "action": {
+                "type": "ACTION",
+                "shape": [
+                    6
+                ]
+            }
+        },
+        "features_map": {
+            "observation.images.wrist": "observation.images.wrist",
+            "observation.images.top": "observation.images.top",
+            "observation.state": "observation.state",
+            "action": "action"
+        }
+    }
+}

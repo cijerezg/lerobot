@@ -1,0 +1,242 @@
+#!/usr/bin/env python
+
+# Copyright 2025 Physical Intelligence and The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+import torch
+
+from lerobot.configs.types import PipelineFeatureType, PolicyFeature
+from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
+from lerobot.policies.pi05_full.modeling_pi05 import pad_vector
+from lerobot.processor import (
+    ActionTokenizerProcessorStep,
+    AddBatchDimensionProcessorStep,
+    DeviceProcessorStep,
+    NormalizerProcessorStep,
+    PolicyAction,
+    PolicyProcessorPipeline,
+    ProcessorStep,
+    ProcessorStepRegistry,
+    RenameObservationsProcessorStep,
+    TokenizerProcessorStep,
+    UnnormalizerProcessorStep,
+)
+from lerobot.processor.converters import policy_action_to_transition, transition_to_policy_action
+from lerobot.processor.core import EnvTransition, TransitionKey
+from lerobot.utils.constants import (
+    OBS_STATE,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+)
+
+
+@ProcessorStepRegistry.register(name="pi05_full_prepare_state_tokenizer_processor_step")
+@dataclass
+class Pi05FullPrepareStateTokenizerProcessorStep(ProcessorStep):
+    """
+    Processor step to prepare the state and tokenize the language input.
+    """
+
+    max_state_dim: int = 32
+    user_prompt_key: str = "task"
+    command_key: str = "subtask"
+    advantage_scaling: float = 1.0
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        transition = transition.copy()
+
+        state = transition.get(TransitionKey.OBSERVATION, {}).get(OBS_STATE)
+        if state is None:
+            raise ValueError("State is required for PI05")
+        
+        # DEBUG: Check complementary data
+        comp_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+
+        user_prompts = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.user_prompt_key)
+        if user_prompts is None:
+            raise ValueError("No user prompts found in complementary data")
+        commands = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get(self.command_key)
+        if commands is None:
+            comp_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {})
+            raise ValueError(
+                "No commands found in complementary data. "
+                "Ensure 'subtask' is present in batch['complementary_data']."
+            )
+        
+        # Check for advantage
+        advantages = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}).get("advantage")
+        if advantages is not None and isinstance(advantages, torch.Tensor):
+            advantages = advantages.cpu().float().numpy().flatten()
+
+        # TODO: check if this necessary
+        state = deepcopy(state)
+
+        # Prepare state (pad to max_state_dim)
+        state = pad_vector(state, self.max_state_dim)
+
+        # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
+        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+        state_np = state.cpu().float().numpy()
+        discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
+
+        full_prompts = []
+        critic_prompts = []
+        for i, user_prompt in enumerate(user_prompts):
+            cleaned_text = user_prompt.strip().replace("_", " ").replace("\n", " ")
+            cleaned_text = cleaned_text.lower()   # all lowercase # NOTE: added by (jadechoghari)
+            state_str = " ".join(map(str, discretized_states[i]))
+            
+            # Add advantage if present
+            advantage_str = ""
+            if advantages is not None:
+                # Scale and bin advantage
+                adv = advantages[i] / self.advantage_scaling
+                adv = np.tanh(adv)
+                
+                bins = np.array([-1.0, 0.35, 1.0])
+                # Clip to range
+                adv = np.clip(adv, -1.0, 1.0)
+                # digitize
+                adv_bin = np.digitize(adv, bins) - 1 # 0 to 3
+                # Clamp to 0-2 (3 bins)
+                adv_bin = max(0, min(1, adv_bin))
+                
+                # Map bin index to string label
+                labels = ["negative", "positive"]
+                adv_label = labels[adv_bin]
+                
+                # Format: "Advantage: <label>"
+                advantage_str = f", Advantage: {adv_label}"
+
+            full_prompt = f"Task: {cleaned_text}, State: {state_str}{advantage_str};\n"
+            full_prompts.append(full_prompt)
+            
+            critic_prompt = f"Task: {cleaned_text}, State: {state_str};\n"
+            critic_prompts.append(critic_prompt)
+        
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.user_prompt_key] = full_prompts
+        transition[TransitionKey.COMPLEMENTARY_DATA]["critic_prompt"] = critic_prompts
+        
+        # process commands
+        full_commands = []
+        for i, command in enumerate(commands):
+            cleaned_text = command.strip().replace("_", " ").replace("\n", " ")
+            cleaned_text = cleaned_text.lower()   # all lowercase # NOTE: added by (jadechoghari)
+            full_command = f"Subtask: {cleaned_text};\n"
+            full_commands.append(full_command)
+
+        
+        transition[TransitionKey.COMPLEMENTARY_DATA][self.command_key] = full_commands
+
+        # note: action tokens will be processed in the ActionTokenizerProcessorStep
+        # Normalize state to [-1, 1] range if needed (assuming it's already normalized by normalizer processor step!!)
+        # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """
+        This step does not alter the feature definitions.
+        """
+        return features
+
+
+def make_pi05_full_pre_post_processors(
+    config: PI05FullConfig,
+    dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
+    preprocessor_overrides: dict[str, Any] | None = None,
+) -> tuple[
+    PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
+    PolicyProcessorPipeline[PolicyAction, PolicyAction],
+]:
+    """
+    Constructs pre-processor and post-processor pipelines for the PI0 policy.
+
+    The pre-processing pipeline prepares input data for the model by:
+    1. Renaming features to match pretrained configurations.
+    2. Normalizing input and output features based on dataset statistics.
+    3. Adding a batch dimension.
+    4. Appending a newline character to the task description for tokenizer compatibility.
+    5. Tokenizing the text prompt using the PaliGemma tokenizer.
+    6. Moving all data to the specified device.
+
+    The post-processing pipeline handles the model's output by:
+    1. Moving data to the CPU.
+    2. Unnormalizing the output features to their original scale.
+
+    Args:
+        config: The configuration object for the PI0 policy.
+        dataset_stats: A dictionary of statistics for normalization.
+        preprocessor_kwargs: Additional arguments for the pre-processor pipeline.
+        postprocessor_kwargs: Additional arguments for the post-processor pipeline.
+
+    Returns:
+        A tuple containing the configured pre-processor and post-processor pipelines.
+    """
+
+    # Add remaining processors
+    input_steps: list[ProcessorStep] = [
+        RenameObservationsProcessorStep(rename_map={}),  # To mimic the same processor as pretrained one
+        AddBatchDimensionProcessorStep(),
+        # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
+        # because the tokenizer step expects normalized state in [-1, 1] range for discretization
+        NormalizerProcessorStep(
+            features={**config.input_features, **config.output_features},
+            norm_map=config.normalization_mapping,
+            stats=dataset_stats,
+        ),
+        Pi05FullPrepareStateTokenizerProcessorStep(
+            max_state_dim=config.max_state_dim,
+            **(preprocessor_overrides.get("pi05_full_prepare_state_tokenizer_processor_step", {}) if preprocessor_overrides else {})
+        ),
+        TokenizerProcessorStep(
+            tokenizer_name=config.text_tokenizer_name,
+            max_length=config.tokenizer_max_length,
+            padding_side="right",
+            padding="max_length",
+        ),
+        ActionTokenizerProcessorStep(
+            action_tokenizer_name=config.action_tokenizer_name,
+            max_action_tokens=config.max_action_tokens,
+            fast_skip_tokens=config.fast_skip_tokens,
+            paligemma_tokenizer_name=config.text_tokenizer_name,
+        ),
+        DeviceProcessorStep(device=config.device),
+    ]
+
+    output_steps: list[ProcessorStep] = [
+        UnnormalizerProcessorStep(
+            features=config.output_features, norm_map=config.normalization_mapping, stats=dataset_stats
+        ),
+        DeviceProcessorStep(device="cpu"),
+    ]
+
+    return (
+        PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
+            steps=input_steps,
+            name=POLICY_PREPROCESSOR_DEFAULT_NAME,
+        ),
+        PolicyProcessorPipeline[PolicyAction, PolicyAction](
+            steps=output_steps,
+            name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
+            to_transition=policy_action_to_transition,
+            to_output=transition_to_policy_action,
+        ),
+    )
