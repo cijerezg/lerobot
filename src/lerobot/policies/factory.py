@@ -50,6 +50,7 @@ from .groot.configuration_groot import GrootConfig
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
 from .pi0.configuration_pi0 import PI0Config
 from .pi05.configuration_pi05 import PI05Config
+from .pi05_full.configuration_pi05 import PI05FullConfig
 from .pretrained import PreTrainedPolicy
 from .sac.configuration_sac import SACConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig
@@ -126,6 +127,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .pi05.modeling_pi05 import PI05Policy
 
         return PI05Policy
+    elif name == "pi05_full":
+        from .pi05_full.modeling_pi05 import PI05FullPolicy
+
+        return PI05FullPolicy
     elif name == "sac":
         from .sac.modeling_sac import SACPolicy
 
@@ -186,6 +191,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI0Config(**kwargs)
     elif policy_type == "pi05":
         return PI05Config(**kwargs)
+    elif policy_type == "pi05_full":
+        return PI05FullConfig(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
@@ -356,6 +363,15 @@ def make_pre_post_processors(
         processors = make_pi05_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, PI05FullConfig):
+        from .pi05_full.processor_pi05 import make_pi05_full_pre_post_processors
+
+        processors = make_pi05_full_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+            preprocessor_overrides=kwargs.get("preprocessor_overrides"),
         )
 
     elif isinstance(policy_cfg, SACConfig):
