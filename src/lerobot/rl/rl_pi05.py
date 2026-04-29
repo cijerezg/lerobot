@@ -16,7 +16,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import PI05FullPolicy, PI05Pytorch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05_full.processor_pi05 import Pi05FullPrepareStateTokenizerProcessorStep
 from lerobot.processor import TokenizerProcessorStep
-from lerobot.processor.core import EnvTransition, TransitionKey
+from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_STATE, 
     OBS_LANGUAGE_TOKENS, 

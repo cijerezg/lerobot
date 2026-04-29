@@ -44,7 +44,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.factory import make_policy
 from lerobot.policies.rtc.action_queue import ActionQueue
-from lerobot.rl.process import ProcessSignalHandler
+from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import get_safe_torch_device, init_logging
 

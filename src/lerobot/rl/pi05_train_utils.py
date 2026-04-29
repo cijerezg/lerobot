@@ -32,7 +32,7 @@ from lerobot.processor import PolicyProcessorPipeline, NormalizerProcessorStep
 from pathlib import Path
 from typing import Any
 
-from lerobot.processor.core import TransitionKey
+from lerobot.types import TransitionKey
 
 
 def log_sampled_actions(

@@ -545,7 +545,7 @@ def _run_probe_attention(policy, preprocessor,
         OBS_LANGUAGE_ATTENTION_MASK,
         OBS_LANGUAGE_TOKENS,
     )
-    from lerobot.processor.core import TransitionKey
+    from lerobot.types import TransitionKey
 
     makedirs(output_dir)
     p = cfg.probe_parameters
@@ -825,7 +825,7 @@ def _run_probe_spatial_memorization(
         OBS_LANGUAGE_ATTENTION_MASK,
         OBS_LANGUAGE_TOKENS,
     )
-    from lerobot.processor.core import TransitionKey
+    from lerobot.types import TransitionKey
 
     makedirs(output_dir)
     p = cfg.probe_parameters
@@ -1036,7 +1036,7 @@ def _run_probe_spatial_memorization_jacobian(
         OBS_LANGUAGE_ATTENTION_MASK,
         OBS_LANGUAGE_TOKENS,
     )
-    from lerobot.processor.core import TransitionKey
+    from lerobot.types import TransitionKey
 
     makedirs(output_dir)
     p = cfg.probe_parameters

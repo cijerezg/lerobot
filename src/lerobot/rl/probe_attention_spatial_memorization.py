@@ -36,7 +36,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import (
     _PROBING_CAPTURE,
     make_att_2d_masks,
 )
-from lerobot.processor.core import TransitionKey
+from lerobot.types import TransitionKey
 from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,

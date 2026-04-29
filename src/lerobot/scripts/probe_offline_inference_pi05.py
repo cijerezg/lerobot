@@ -46,7 +46,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.policies.factory import make_policy
-from lerobot.processor.core import TransitionKey
+from lerobot.types import TransitionKey
 from lerobot.rl.pi05_train_utils import (
     hydrate_subtasks,
     make_pi05_full_processors_with_upgrade,

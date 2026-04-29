@@ -47,7 +47,7 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.pi05_full.modeling_pi05 import pad_vector
-from lerobot.processor.core import TransitionKey
+from lerobot.types import TransitionKey
 from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     ACTION,

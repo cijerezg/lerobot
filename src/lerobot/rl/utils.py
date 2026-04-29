@@ -17,7 +17,7 @@ from lerobot.utils.constants import (
     ACTION_TOKEN_MASK,
     OBS_STATE,
 )
-from lerobot.processor.core import TransitionKey
+from lerobot.types import TransitionKey
 
 def preprocess_batch_for_pi05(
     policy: nn.Module,

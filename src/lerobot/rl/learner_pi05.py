@@ -56,8 +56,8 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
-from lerobot.rl.process import ProcessSignalHandler
-from lerobot.rl.wandb_utils import WandBLogger
+from lerobot.utils.process import ProcessSignalHandler
+from lerobot.common.wandb_utils import WandBLogger
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
@@ -77,7 +77,7 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
 )
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
+from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     load_training_state as utils_load_training_state,
     save_checkpoint,
