@@ -220,7 +220,7 @@ class ImageCropResizeProcessorStep(ObservationProcessorStep):
                 crop_params = self.crop_params_dict[key]
                 image = F.crop(image, *crop_params)
             if self.resize_size is not None:
-                image = F.resize(image, self.resize_size)
+                image = F.resize(image, self.resize_size, antialias=True)
                 image = image.clamp(0.0, 1.0)
             new_observation[key] = image.to(device)
 
@@ -474,14 +474,20 @@ class InterventionActionProcessorStep(ProcessorStep):
         # Override action if intervention is active
         if is_intervention and teleop_action is not None:
             if isinstance(teleop_action, dict):
-                # Convert teleop_action dict to tensor format
-                action_list = [
-                    teleop_action.get("delta_x", 0.0),
-                    teleop_action.get("delta_y", 0.0),
-                    teleop_action.get("delta_z", 0.0),
-                ]
-                if self.use_gripper:
-                    action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                if "delta_x" in teleop_action:
+                    # End-effector control: convert delta-x/y/z dict to tensor
+                    action_list = [
+                        teleop_action.get("delta_x", 0.0),
+                        teleop_action.get("delta_y", 0.0),
+                        teleop_action.get("delta_z", 0.0),
+                    ]
+                    if self.use_gripper:
+                        action_list.append(teleop_action.get(GRIPPER_KEY, 1.0))
+                else:
+                    # Joint control: prefer keys ending in ".pos", fall back to all values
+                    action_list = [v for k, v in teleop_action.items() if k.endswith(".pos")]
+                    if not action_list:
+                        action_list = list(teleop_action.values())
             elif isinstance(teleop_action, np.ndarray):
                 action_list = teleop_action.tolist()
             else:

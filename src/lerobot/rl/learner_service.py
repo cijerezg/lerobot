@@ -65,13 +65,14 @@ class LearnerService(services_pb2_grpc.LearnerServiceServicer):
                 # and it's checked in the while loop
                 continue
 
-            logging.info("[LEARNER] Push parameters to the Actor")
             buffer = get_last_item_from_queue(
                 self.parameters_queue, block=True, timeout=self.queue_get_timeout
             )
 
             if buffer is None:
                 continue
+
+            logging.info("[LEARNER] Push parameters to the Actor")
 
             yield from send_bytes_in_chunks(
                 buffer,

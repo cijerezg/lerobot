@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import time
 from dataclasses import dataclass
@@ -537,12 +538,13 @@ def step_env_and_process_transition(
         Processed transition with updated state.
     """
 
-    # Create action transition
-    transition[TransitionKey.ACTION] = action
-    transition[TransitionKey.OBSERVATION] = (
+    # Create action transition on a shallow copy so we don't mutate the input.
+    aux_transition = copy.copy(transition)
+    aux_transition[TransitionKey.ACTION] = action
+    aux_transition[TransitionKey.OBSERVATION] = (
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
     )
-    processed_action_transition = action_processor(transition)
+    processed_action_transition = action_processor(aux_transition)
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
     obs, reward, terminated, truncated, info = env.step(processed_action)
