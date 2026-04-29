@@ -88,6 +88,10 @@ dependencies = [
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
     "setuptools>=71.0.0,<81.0.0",
+
+    # Custom analysis (research fork)
+    "scikit-learn",
+    "umap-learn",
 ]
 
 # Optional dependencies

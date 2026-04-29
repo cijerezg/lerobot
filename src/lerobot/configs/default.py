@@ -31,6 +31,7 @@ class DatasetConfig:
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     root: str | None = None
     episodes: list[int] | None = None
+    max_episodes: int | None = None
     image_transforms: ImageTransformsConfig = field(default_factory=ImageTransformsConfig)
     revision: str | None = None
     use_imagenet_stats: bool = True
@@ -39,6 +40,8 @@ class DatasetConfig:
     # This reduces memory and speeds up DataLoader IPC. The training pipeline handles the conversion.
     return_uint8: bool = False
     streaming: bool = False
+    # Paths to additional offline datasets to merge with the primary dataset
+    additional_offline_dataset_paths: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.episodes is not None:
@@ -61,6 +64,7 @@ class WandBConfig:
     notes: str | None = None
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    offline_project: str | None = None
     add_tags: bool = True  # If True, save configuration as tags in the WandB run.
 
 
