@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import Any, ClassVar
+from urllib.parse import urlparse
 
 import av
 import fsspec
@@ -31,6 +32,20 @@ import torch
 import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
+
+
+_LOCAL_URL_SCHEMES = ("", "file")
+
+
+def _is_local_path(video_path: str) -> bool:
+    """True if `video_path` references a path on the local filesystem.
+
+    Recent torchcodec releases require ``str | Path | bytes | Tensor`` and no
+    longer accept arbitrary file-like objects, so we want to hand them the
+    local filesystem path directly when possible (avoids both an unnecessary
+    fsspec round-trip and the slow pyav fallback).
+    """
+    return urlparse(video_path).scheme in _LOCAL_URL_SCHEMES
 
 
 def get_safe_default_codec():
@@ -179,7 +194,16 @@ class VideoDecoderCache:
         self._lock = Lock()
 
     def get_decoder(self, video_path: str):
-        """Get a cached decoder or create a new one."""
+        """Get a cached decoder or create a new one.
+
+        Local filesystem paths are passed directly to torchcodec (which only
+        accepts ``str | Path | bytes | Tensor``); remote paths (e.g. ``s3://``,
+        ``hf://``, ``http://``) are streamed in via fsspec and decoded from
+        bytes.  Going through fsspec for local paths used to work with older
+        torchcodec releases that accepted file-like objects, but raises
+        ``Unknown source type: ... LocalFileOpener`` on current versions and
+        forces the slow pyav fallback.
+        """
         if importlib.util.find_spec("torchcodec"):
             from torchcodec.decoders import VideoDecoder
         else:
@@ -189,8 +213,18 @@ class VideoDecoderCache:
 
         with self._lock:
             if video_path not in self._cache:
-                file_handle = fsspec.open(video_path).__enter__()
-                decoder = VideoDecoder(file_handle, seek_mode="approximate")
+                if _is_local_path(video_path):
+                    decoder = VideoDecoder(video_path, seek_mode="approximate")
+                    file_handle = None
+                else:
+                    file_handle = fsspec.open(video_path, "rb").__enter__()
+                    try:
+                        decoder = VideoDecoder(
+                            file_handle.read(), seek_mode="approximate"
+                        )
+                    finally:
+                        file_handle.close()
+                        file_handle = None
                 self._cache[video_path] = (decoder, file_handle)
 
             return self._cache[video_path][0]
@@ -199,7 +233,8 @@ class VideoDecoderCache:
         """Clear the cache and close file handles."""
         with self._lock:
             for _, file_handle in self._cache.values():
-                file_handle.close()
+                if file_handle is not None:
+                    file_handle.close()
             self._cache.clear()
 
     def size(self) -> int:
