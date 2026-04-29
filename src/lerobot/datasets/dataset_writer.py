@@ -149,6 +149,8 @@ class DatasetWriter:
     ) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
+                if image.dtype == torch.bfloat16:
+                    image = image.float()
                 image = image.cpu().numpy()
             write_image(image, fpath, compress_level=compress_level)
         else:
@@ -168,6 +170,8 @@ class DatasetWriter:
         # Convert torch to numpy if needed
         for name in frame:
             if isinstance(frame[name], torch.Tensor):
+                if frame[name].dtype == torch.bfloat16:
+                    frame[name] = frame[name].float()
                 frame[name] = frame[name].numpy()
 
         validate_frame(frame, self._meta.features)
@@ -220,6 +224,21 @@ class DatasetWriter:
     ) -> None:
         """Save the current episode in self.episode_buffer to disk."""
         episode_buffer = episode_data if episode_data is not None else self.episode_buffer
+
+        # When the caller passes a pre-built episode_data dict, values may still
+        # be torch tensors (incl. bfloat16 from RL pipelines). Convert to numpy
+        # so the downstream writer sees the same shape as add_frame's output.
+        if episode_data is not None:
+            for key, val in episode_buffer.items():
+                if isinstance(val, torch.Tensor):
+                    if val.dtype == torch.bfloat16:
+                        val = val.float()
+                    episode_buffer[key] = val.numpy()
+                elif isinstance(val, list) and len(val) > 0 and isinstance(val[0], torch.Tensor):
+                    episode_buffer[key] = [
+                        v.float().numpy() if v.dtype == torch.bfloat16 else v.numpy()
+                        for v in val
+                    ]
 
         validate_episode_buffer(episode_buffer, self._meta.total_episodes, self._meta.features)
 
