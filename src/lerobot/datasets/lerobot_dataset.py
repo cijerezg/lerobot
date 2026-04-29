@@ -1009,7 +1009,48 @@ class LeRobotDataset(torch.utils.data.Dataset):
             shifted_query_ts = [from_timestamp + ts for ts in query_ts]
 
             video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames(video_path, shifted_query_ts, self.tolerance_s, self.video_backend)
+            try:
+                frames = decode_video_frames(video_path, shifted_query_ts, self.tolerance_s, self.video_backend)
+            except Exception as first_error:
+                fallback_backend = "pyav" if self.video_backend == "torchcodec" else "torchcodec"
+                try:
+                    frames = decode_video_frames(video_path, shifted_query_ts, self.tolerance_s, fallback_backend)
+                    logging.warning(
+                        "Video decode failed with backend=%s but recovered with backend=%s "
+                        "(ep=%s, key=%s, timestamps=%s, path=%s): %s",
+                        self.video_backend,
+                        fallback_backend,
+                        ep_idx,
+                        vid_key,
+                        shifted_query_ts,
+                        video_path,
+                        first_error,
+                    )
+                except Exception as fallback_error:
+                    logging.warning(
+                        "Video decode failed with both backend=%s and fallback=%s; "
+                        "using zero frames to keep training running "
+                        "(ep=%s, key=%s, timestamps=%s, path=%s): first=%s fallback=%s",
+                        self.video_backend,
+                        fallback_backend,
+                        ep_idx,
+                        vid_key,
+                        shifted_query_ts,
+                        video_path,
+                        first_error,
+                        fallback_error,
+                    )
+                    feature_shape = self.features[vid_key]["shape"]
+                    if len(feature_shape) != 3:
+                        raise ValueError(f"Expected 3D video feature shape for {vid_key}, got {feature_shape}")
+                    if feature_shape[0] in (1, 3, 4):
+                        channels, height, width = feature_shape
+                    else:
+                        height, width, channels = feature_shape
+                    frames = torch.zeros(
+                        (len(shifted_query_ts), channels, height, width),
+                        dtype=torch.float32,
+                    )
             item[vid_key] = frames.squeeze(0)
 
         return item
@@ -1044,17 +1085,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            try:
-                video_frames = self._query_videos(query_timestamps, ep_idx)
-            except Exception as e:
-                print("\n" + "=" * 120)
-                print("[VIDEO DECODE FAILURE]")
-                print(f"item={item}")
-                print(f"query_indices={query_indices}")
-                print(f"query_timestamps={query_timestamps}")
-                print(f"ep_idx={ep_idx}")
-                print("=" * 120 + "\n")
-                raise
+            video_frames = self._query_videos(query_timestamps, ep_idx)
             item = {**video_frames, **item}
 
         if self.image_transforms is not None:
