@@ -54,7 +54,8 @@ from lerobot.rl.pi05_train_utils import (
 from lerobot.robots import so_follower  # noqa: F401
 from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
 from lerobot.utils.constants import ACTION, OBS_LANGUAGE_ATTENTION_MASK, OBS_LANGUAGE_TOKENS
-from lerobot.utils.utils import get_safe_torch_device, init_logging
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.utils import init_logging
 
 
 # SO100 joint names in action-vector order (matches so_follower motor bus definition).

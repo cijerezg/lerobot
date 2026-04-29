@@ -30,7 +30,8 @@ from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import make_policy
 from lerobot.rl.pi05_train_utils import make_pi05_full_processors_with_upgrade
-from lerobot.utils.utils import get_safe_torch_device, init_logging  # noqa: F401 — re-exported
+from lerobot.utils.device_utils import get_safe_torch_device  # noqa: F401 — re-exported
+from lerobot.utils.utils import init_logging  # noqa: F401 — re-exported
 
 
 # ──────────────────────────────────────────────────────────────────────────────

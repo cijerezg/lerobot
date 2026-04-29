@@ -77,9 +77,9 @@ from lerobot.common.train_utils import (
     update_last_checkpoint,
 )
 from lerobot.utils.transition import move_transition_to_device
+from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import (
     format_big_number,
-    get_safe_torch_device,
     init_logging,
 )
 from lerobot.rl.utils import preprocess_batch_for_pi05, cast_to_bf16

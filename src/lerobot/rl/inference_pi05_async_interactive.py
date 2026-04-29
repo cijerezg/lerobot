@@ -46,7 +46,8 @@ from lerobot.policies.factory import make_policy
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
-from lerobot.utils.utils import get_safe_torch_device, init_logging
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.utils import init_logging
 
 from lerobot.rl.gym_manipulator import make_processors, make_robot_env
 import lerobot.rl.rl_pi05  # Important: Register PI05RLConfig via import side-effects

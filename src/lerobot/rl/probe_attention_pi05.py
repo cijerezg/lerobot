@@ -50,7 +50,8 @@ from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
 )
-from lerobot.utils.utils import get_safe_torch_device, init_logging
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.utils import init_logging
 
 from lerobot.rl.probe_utils_pi05 import (
     load_extra_dataset,

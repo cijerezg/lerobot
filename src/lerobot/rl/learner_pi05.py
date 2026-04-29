@@ -84,9 +84,9 @@ from lerobot.common.train_utils import (
     update_last_checkpoint,
 )
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
+from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import (
     format_big_number,
-    get_safe_torch_device,
     init_logging,
 )
 

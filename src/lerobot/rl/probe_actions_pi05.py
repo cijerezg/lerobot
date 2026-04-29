@@ -55,7 +55,8 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.scripts.probe_offline_inference_pi05 import get_frame_data, run_inference
-from lerobot.utils.utils import get_safe_torch_device, init_logging
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.utils import init_logging
 
 from lerobot.rl.probe_utils_pi05 import (
     DS_COLORS,
