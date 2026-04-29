@@ -103,6 +103,14 @@ class WandBLogger:
         logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")
         self._wandb = wandb
 
+    @staticmethod
+    def _flatten_log_value(key: str, value) -> dict[str, int | float | str] | None:
+        if isinstance(value, (int | float | str)):
+            return {key: value}
+        if isinstance(value, (list | tuple)) and all(isinstance(item, (int | float)) for item in value):
+            return {f"{key}/{idx}": item for idx, item in enumerate(value)}
+        return None
+
     def log_policy(self, checkpoint_dir: Path):
         """Checkpoints the policy to wandb."""
         if self.cfg.disable_artifact:
@@ -162,7 +170,8 @@ class WandBLogger:
                 self._wandb.define_metric(new_custom_key, hidden=True)
 
         for k, v in d.items():
-            if not isinstance(v, (int | float | str)):
+            log_values = self._flatten_log_value(k, v)
+            if log_values is None:
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
                 )
@@ -172,13 +181,14 @@ class WandBLogger:
             if self._wandb_custom_step_key is not None and k in self._wandb_custom_step_key:
                 continue
 
-            if custom_step_key is not None:
-                value_custom_step = d[custom_step_key]
-                data = {f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step}
-                self._wandb.log(data)
-                continue
+            for log_key, log_value in log_values.items():
+                if custom_step_key is not None:
+                    value_custom_step = d[custom_step_key]
+                    data = {f"{mode}/{log_key}": log_value, f"{mode}/{custom_step_key}": value_custom_step}
+                    self._wandb.log(data)
+                    continue
 
-            self._wandb.log(data={f"{mode}/{k}": v}, step=step)
+                self._wandb.log(data={f"{mode}/{log_key}": log_value}, step=step)
 
     def log_video(self, video_path: str, step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:
