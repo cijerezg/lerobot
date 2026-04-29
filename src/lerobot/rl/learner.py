@@ -99,6 +99,7 @@ from lerobot.utils.utils import (
 )
 
 from .buffer import ReplayBuffer, concatenate_batch_transitions
+from .utils import cast_to_bf16
 from .learner_service import MAX_WORKERS, SHUTDOWN_TIMEOUT, LearnerService
 
 
@@ -313,6 +314,11 @@ def add_actor_information_and_train(
         env_cfg=cfg.env,
     )
 
+    if cfg.policy.dtype == "bfloat16":
+        policy.to(dtype=torch.bfloat16)
+    elif cfg.policy.dtype == "float16":
+        policy.to(dtype=torch.float16)
+
     assert isinstance(policy, nn.Module)
 
     policy.train()
@@ -403,6 +409,14 @@ def add_actor_information_and_train(
                     left_batch_transitions=batch, right_batch_transition=batch_offline
                 )
 
+            batch = move_transition_to_device(batch, device)
+            if cfg.policy.dtype == "bfloat16":
+                if isinstance(batch, dict):
+                    batch = {k: cast_to_bf16(v) for k, v in batch.items()}
+                else:
+                    new_batch_data = {field: cast_to_bf16(getattr(batch, field)) for field in batch._fields}
+                    batch = type(batch)(**new_batch_data)
+
             actions = batch[ACTION]
             rewards = batch["reward"]
             observations = batch["state"]
@@ -460,6 +474,14 @@ def add_actor_information_and_train(
             batch = concatenate_batch_transitions(
                 left_batch_transitions=batch, right_batch_transition=batch_offline
             )
+
+        batch = move_transition_to_device(batch, device)
+        if cfg.policy.dtype == "bfloat16":
+            if isinstance(batch, dict):
+                batch = {k: cast_to_bf16(v) for k, v in batch.items()}
+            else:
+                new_batch_data = {field: cast_to_bf16(getattr(batch, field)) for field in batch._fields}
+                batch = type(batch)(**new_batch_data)
 
         actions = batch[ACTION]
         rewards = batch["reward"]
@@ -601,6 +623,10 @@ def add_actor_information_and_train(
                 dataset_repo_id=dataset_repo_id,
                 fps=fps,
             )
+
+        if optimization_step >= online_steps:
+            logging.info("[LEARNER] Reached maximum online steps. Stopping training.")
+            break
 
 
 def start_learner(
@@ -745,17 +771,6 @@ def save_training_checkpoint(
     # eg. RL training without demonstrations data
     repo_id_buffer_save = cfg.env.task if dataset_repo_id is None else dataset_repo_id
     replay_buffer.to_lerobot_dataset(repo_id=repo_id_buffer_save, fps=fps, root=dataset_dir)
-
-    if offline_replay_buffer is not None:
-        dataset_offline_dir = os.path.join(cfg.output_dir, "dataset_offline")
-        if os.path.exists(dataset_offline_dir) and os.path.isdir(dataset_offline_dir):
-            shutil.rmtree(dataset_offline_dir)
-
-        offline_replay_buffer.to_lerobot_dataset(
-            cfg.dataset.repo_id,
-            fps=fps,
-            root=dataset_offline_dir,
-        )
 
     logging.info("Resume training")
 
@@ -1010,6 +1025,7 @@ def initialize_offline_replay_buffer(
         optimize_memory=True,
         capacity=cfg.policy.offline_buffer_capacity,
     )
+    offline_replay_buffer.dataset = offline_dataset
     return offline_replay_buffer
 
 
