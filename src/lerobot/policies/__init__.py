@@ -22,6 +22,7 @@ from .pistar06.configuration_pistar06 import PiStar06Config as PiStar06Config
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .smolvla.processor_smolvla import SmolVLANewLineProcessor
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
+from .tinypi05.configuration_tinypi05 import TinyPI05Config as TinyPI05Config
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
@@ -36,6 +37,7 @@ __all__ = [
     "SmolVLAConfig",
     "SARMConfig",
     "TDMPCConfig",
+    "TinyPI05Config",
     "VQBeTConfig",
     "GrootConfig",
     "XVLAConfig",

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 Nvidia and The HuggingFace Inc. team. All rights reserved.
+# Copyright 2026 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,18 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .configuration_groot import GrootConfig
+from .configuration_tinypi05 import TinyPI05Config
+from .modeling_tinypi05 import TinyPI05Policy
+from .processor_tinypi05 import make_tinypi05_pre_post_processors
 
-
-def __getattr__(name: str):
-    if name == "GrootPolicy":
-        from .modeling_groot import GrootPolicy
-
-        return GrootPolicy
-    if name == "make_groot_pre_post_processors":
-        from .processor_groot import make_groot_pre_post_processors
-
-        return make_groot_pre_post_processors
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-__all__ = ["GrootConfig", "GrootPolicy", "make_groot_pre_post_processors"]
+__all__ = ["TinyPI05Config", "TinyPI05Policy", "make_tinypi05_pre_post_processors"]
