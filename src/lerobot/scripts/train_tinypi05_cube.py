@@ -245,12 +245,16 @@ def _finetune_training(args: argparse.Namespace) -> None:
             f"Expected a tinypi05 checkpoint, got policy type {type(policy).__name__}."
         )
 
-    # Skip re-loading SigLIP / external embedding weights at construction time:
-    # the checkpoint's safetensors already contains the (possibly fine-tuned)
-    # vision tower and embed_tokens, and they would just be overwritten when
-    # the checkpoint weights are loaded on top.
-    policy.pretrained_vision_model = None
-    policy.pretrained_language_embeddings = None
+    # NOTE: keep `pretrained_vision_model` and `pretrained_language_embeddings`
+    # as they appear in the checkpoint's config -- they do double duty as
+    # architecture switches at construction time (e.g. SigLIP-base adds 2 extra
+    # vision layers + an attention-pooling `head` module that the raw preset
+    # does NOT have, and gemma-3-270m has vocab=262144 vs the PaliGemma default
+    # 257152).  If we nulled them out, the rebuilt model would have the wrong
+    # number of layers / vocab and the checkpoint state_dict load would fail
+    # with "Unexpected key" errors and embed_tokens shape mismatches.  The HF
+    # download here is wasteful (the checkpoint weights overwrite both) but
+    # required for the shapes to match.
 
     # Tell make_policy() to load the checkpoint weights into the freshly
     # constructed model.
