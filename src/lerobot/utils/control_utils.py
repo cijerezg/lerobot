@@ -18,7 +18,7 @@
 
 
 import logging
-import traceback
+import os
 from contextlib import nullcontext
 from copy import copy
 from functools import cache
@@ -36,6 +36,14 @@ from lerobot.processor import PolicyAction, PolicyProcessorPipeline
 from lerobot.robots import Robot
 
 
+_KEYBOARD_LISTENER_DISABLED_ENV = "LEROBOT_DISABLE_KEYBOARD_LISTENER"
+
+
+def _keyboard_listener_disabled() -> bool:
+    """Return True when the user has explicitly opted out of the global keyboard listener."""
+    return os.environ.get(_KEYBOARD_LISTENER_DISABLED_ENV, "").lower() in ("1", "true", "yes")
+
+
 @cache
 def is_headless():
     """
@@ -43,24 +51,28 @@ def is_headless():
 
     This function attempts to import `pynput`, a library that requires a graphical environment.
     If the import fails, it assumes the environment is headless. The result is cached to avoid
-    re-running the check.
+    re-running the check. When run over SSH or otherwise without a usable display, a single
+    concise warning is logged instead of a full traceback.
 
     Returns:
         True if the environment is determined to be headless, False otherwise.
     """
+    if _keyboard_listener_disabled():
+        return True
+
     try:
         import pynput  # noqa
 
         return False
-    except Exception:
-        print(
-            "Error trying to import pynput. Switching to headless mode. "
-            "As a result, the video stream from the cameras won't be shown, "
-            "and you won't be able to change the control flow with keyboards. "
-            "For more info, see traceback below.\n"
+    except Exception as e:
+        logging.warning(
+            "pynput unavailable (%s: %s); running in headless mode. "
+            "On-screen camera display and global keyboard hotkeys (arrow keys / esc) "
+            "will be disabled. Set %s=1 to silence this message.",
+            e.__class__.__name__,
+            e,
+            _KEYBOARD_LISTENER_DISABLED_ENV,
         )
-        traceback.print_exc()
-        print()
         return True
 
 
@@ -136,12 +148,21 @@ def init_keyboard_listener():
     events["rerecord_episode"] = False
     events["stop_recording"] = False
 
+    if _keyboard_listener_disabled():
+        logging.info(
+            "Global keyboard listener disabled via %s. "
+            "Use your teleoperator's terminal keys (e.g. SO leader) or Ctrl+C to control recording.",
+            _KEYBOARD_LISTENER_DISABLED_ENV,
+        )
+        return None, events
+
     if is_headless():
         logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
+            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available. "
+            "Set %s=1 to silence the headless warning.",
+            _KEYBOARD_LISTENER_DISABLED_ENV,
         )
-        listener = None
-        return listener, events
+        return None, events
 
     # Only import pynput if not in a headless environment
     from pynput import keyboard

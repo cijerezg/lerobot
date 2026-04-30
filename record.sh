@@ -1,5 +1,8 @@
 #!/bin/bash
 
+
+LEROBOT_DISABLE_KEYBOARD_LISTENER=1
+
 # Record a short SO-101 teleop dataset using the same setup as `teleoperate.sh`.
 # Configured for a 3-episode "smoke test".
 
