@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from lerobot.configs.default import DatasetConfig, WandBConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.policies.tinypi05.configuration_tinypi05 import TinyPI05Config
 from lerobot.scripts.lerobot_train import train
@@ -236,7 +237,13 @@ def _finetune_training(args: argparse.Namespace) -> None:
 
     # Load the policy config (architecture, dtype, freeze flags, etc.) from the
     # checkpoint so the model we instantiate matches the saved weights exactly.
-    policy = TinyPI05Config.from_pretrained(pretrained_model_dir)
+    # Dispatch through the base class so the `type` field in config.json picks
+    # the right subclass via the draccus choice registry.
+    policy = PreTrainedConfig.from_pretrained(pretrained_model_dir)
+    if not isinstance(policy, TinyPI05Config):
+        raise SystemExit(
+            f"Expected a tinypi05 checkpoint, got policy type {type(policy).__name__}."
+        )
 
     # Skip re-loading SigLIP / external embedding weights at construction time:
     # the checkpoint's safetensors already contains the (possibly fine-tuned)
