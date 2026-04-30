@@ -26,7 +26,7 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: tinypi05
-pretrained_name_or_path: outputs/train/2026-04-29/12-58-09_tinypi05_cube_tiny300m_50k_v5/checkpoints/040000/pretrained_model
+pretrained_name_or_path: outputs/train/2026-04-29/19-31-23_tinypi05_cube/checkpoints/005000/pretrained_model
 
 # DRTC parameters
 estimator: jk
@@ -34,7 +34,7 @@ cooldown: true
 latency_k: 1.5
 epsilon: 1
 actions_per_chunk: 50
-s_min: 25
+s_min: 15
 latency_alpha: 0.125
 latency_beta: 0.25
 
@@ -43,7 +43,7 @@ duration_s: 120.0
 fps: 30
 
 # Flow matching / RTC
-num_flow_matching_steps: 5
+num_flow_matching_steps: 8
 rtc_enabled: true
 rtc_max_guidance_weight: null
 rtc_prefix_attention_schedule: linear

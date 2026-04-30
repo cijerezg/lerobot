@@ -17,10 +17,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from lerobot.configs.default import DatasetConfig, WandBConfig
-from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.policies.tinypi05.configuration_tinypi05 import TinyPI05Config
 from lerobot.scripts.lerobot_train import train
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -121,6 +122,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scheduler-decay-lr", type=float, default=2.5e-6)
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", default="lerobot")
+    parser.add_argument(
+        "--resume-from",
+        type=Path,
+        default=None,
+        help=(
+            "Resume a previous run. Pass either a `pretrained_model` directory "
+            "(e.g. `outputs/train/<run>/checkpoints/005000/pretrained_model`) "
+            "or its parent step directory. The saved train config is loaded so "
+            "the policy/dataset/optimizer settings exactly match the original run; "
+            "only operational flags (--steps, --save-freq, --log-freq, --num-workers, "
+            "--wandb, --wandb-project) are overridden from the CLI."
+        ),
+    )
 
     for field in [
         "vlm-width",
@@ -146,9 +160,65 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _resolve_resume_paths(resume_from: Path) -> tuple[Path, Path, Path]:
+    """Return (pretrained_model_dir, step_dir, run_dir) from a user-supplied path.
+
+    Accepts either the `pretrained_model` directory (containing `train_config.json`)
+    or the parent step directory (containing a `pretrained_model/` subdir).
+    """
+    candidate = resume_from.expanduser().resolve()
+    if (candidate / TRAIN_CONFIG_NAME).is_file():
+        pretrained_model_dir = candidate
+    elif (candidate / "pretrained_model" / TRAIN_CONFIG_NAME).is_file():
+        pretrained_model_dir = candidate / "pretrained_model"
+    else:
+        raise FileNotFoundError(
+            f"Could not find {TRAIN_CONFIG_NAME} under {candidate}. Pass either a "
+            "`pretrained_model` directory or its parent step directory."
+        )
+
+    step_dir = pretrained_model_dir.parent
+    # step_dir layout: <run_dir>/checkpoints/<step>
+    if step_dir.parent.name != "checkpoints":
+        raise ValueError(
+            f"Unexpected checkpoint layout: {step_dir} is not inside a `checkpoints/` dir."
+        )
+    run_dir = step_dir.parent.parent
+    return pretrained_model_dir, step_dir, run_dir
+
+
+def _resume_training(args: argparse.Namespace) -> None:
+    pretrained_model_dir, _step_dir, run_dir = _resolve_resume_paths(args.resume_from)
+
+    cfg = TrainPipelineConfig.from_pretrained(pretrained_model_dir)
+    cfg.resume = True
+    cfg.output_dir = run_dir
+
+    cfg.steps = args.steps
+    cfg.save_freq = args.save_freq
+    cfg.log_freq = args.log_freq
+    cfg.num_workers = args.num_workers
+    # Preserve the original wandb run_id (saved in cfg.wandb) so the resumed run
+    # continues the same wandb run, but let the CLI flip enable/project on/off.
+    cfg.wandb.enable = args.wandb
+    cfg.wandb.project = args.wandb_project
+
+    # `TrainPipelineConfig.validate()` reads `--config_path` from sys.argv to
+    # populate `policy.pretrained_path` and `checkpoint_path` when resuming.
+    config_path_arg = f"--config_path={pretrained_model_dir / TRAIN_CONFIG_NAME}"
+    if config_path_arg not in sys.argv:
+        sys.argv.append(config_path_arg)
+
+    train(cfg)
+
+
 def main() -> None:
     register_third_party_plugins()
     args = parse_args()
+
+    if args.resume_from is not None:
+        _resume_training(args)
+        return
 
     pretrained_vision_model: str | None = args.pretrained_vision_model
     if pretrained_vision_model is not None:
