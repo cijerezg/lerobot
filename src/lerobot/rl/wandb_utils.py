@@ -26,6 +26,30 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
 
 
+_WANDB_TAG_LIMIT = 64
+
+
+def _truncate_wandb_tag(tag: str, limit: int = _WANDB_TAG_LIMIT) -> str:
+    """Truncate a tag so it fits WandB's per-tag character limit.
+
+    WandB rejects tags longer than 64 characters with a pydantic ValidationError.
+    Long dataset repo_ids (e.g. `dataset:org/very_long_dataset_name`) routinely
+    exceed this. We drop characters from the middle so both the tag's key
+    (e.g. `dataset:`) and its discriminating suffix remain readable.
+
+    The marker character is `-` (not `~` or `…`) because the same string is
+    re-used as a WandB *artifact* name in `WandBLogger.log_policy`, and artifact
+    names only accept alphanumerics, dashes, underscores, and dots (after the
+    `:`/`/` -> `_` substitution in `get_safe_wandb_artifact_name`).
+    """
+    if len(tag) <= limit:
+        return tag
+    # Reserve 1 char for the `-` marker; bias the cut towards keeping the suffix.
+    keep_prefix = (limit - 1) // 2
+    keep_suffix = limit - 1 - keep_prefix
+    return f"{tag[:keep_prefix]}-{tag[-keep_suffix:]}"
+
+
 def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
     lst = [
@@ -36,6 +60,7 @@ def cfg_to_group(cfg: TrainPipelineConfig, return_list: bool = False) -> list[st
         lst.append(f"dataset:{cfg.dataset.repo_id}")
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")
+    lst = [_truncate_wandb_tag(tag) for tag in lst]
     return lst if return_list else "-".join(lst)
 
 

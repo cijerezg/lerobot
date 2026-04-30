@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import sys
 from pathlib import Path
 
@@ -26,6 +28,79 @@ from lerobot.configs.train import TRAIN_CONFIG_NAME, TrainPipelineConfig
 from lerobot.policies.tinypi05.configuration_tinypi05 import TinyPI05Config
 from lerobot.scripts.lerobot_train import train
 from lerobot.utils.import_utils import register_third_party_plugins
+
+
+_PI05_SWALLOWED_LOAD_WARNING = "Warning: Could not remap state dict keys:"
+
+
+class _TeeStream:
+    """File-like wrapper that writes to two underlying streams."""
+
+    def __init__(self, primary, secondary):
+        self._primary = primary
+        self._secondary = secondary
+
+    def write(self, data):
+        self._primary.write(data)
+        self._secondary.write(data)
+        return len(data)
+
+    def flush(self):
+        self._primary.flush()
+        self._secondary.flush()
+
+    def isatty(self):
+        return getattr(self._primary, "isatty", lambda: False)()
+
+
+@contextlib.contextmanager
+def _strict_pi05_state_dict_load():
+    """Escalate `pi05.modeling_pi05.PI05Policy.from_pretrained` mismatches to a hard error.
+
+    The upstream loader catches every exception raised by
+    ``model.load_state_dict(remapped_state_dict, strict=True)`` and only prints
+    ``Warning: Could not remap state dict keys: <err>`` before returning a model
+    with random-init weights in the affected layers.  When fine-tuning that's a
+    silent footgun: training continues against partially-loaded weights and the
+    user only finds out when eval results are nonsense.  We tee stdout, look
+    for the marker, and ``SystemExit`` so training never starts with a corrupt
+    load.
+    """
+    from lerobot.policies.pi05 import modeling_pi05
+
+    original = modeling_pi05.PI05Policy.from_pretrained
+
+    @classmethod
+    def wrapped(cls, pretrained_name_or_path, *args, **kwargs):
+        buf = io.StringIO()
+        tee = _TeeStream(sys.stdout, buf)
+        with contextlib.redirect_stdout(tee):
+            model = original.__func__(cls, pretrained_name_or_path, *args, **kwargs)
+        captured = buf.getvalue()
+        if _PI05_SWALLOWED_LOAD_WARNING in captured:
+            tail = captured.split(_PI05_SWALLOWED_LOAD_WARNING, 1)[1].strip()
+            raise SystemExit(
+                "\n"
+                f"Refusing to fine-tune from {pretrained_name_or_path}: the "
+                f"checkpoint did not load cleanly into the reconstructed "
+                f"TinyPI05 model. The PI05 loader swallowed the following "
+                f"strict-load error and would have continued with random-init "
+                f"weights in the affected layers:\n\n"
+                f"{_PI05_SWALLOWED_LOAD_WARNING} {tail}\n\n"
+                "Common causes:\n"
+                "  * `pretrained_vision_model` / `pretrained_language_embeddings` in "
+                "the checkpoint config do not match what was used to build the model "
+                "(they double as architecture switches: vision layer count, presence "
+                "of the SigLIP attention-pooling head, embed_tokens vocab size).\n"
+                "  * Architecture preset / overrides differ from the original run.\n"
+            )
+        return model
+
+    modeling_pi05.PI05Policy.from_pretrained = wrapped
+    try:
+        yield
+    finally:
+        modeling_pi05.PI05Policy.from_pretrained = original
 
 
 DEFAULT_DATASET = "jackvial/cube-subtasks-e30-base120trim-0-9-101-end-fixed"
@@ -296,7 +371,8 @@ def _finetune_training(args: argparse.Namespace) -> None:
         save_freq=args.save_freq,
         wandb=WandBConfig(enable=args.wandb, project=args.wandb_project),
     )
-    train(cfg)
+    with _strict_pi05_state_dict_load():
+        train(cfg)
 
 
 def main() -> None:
