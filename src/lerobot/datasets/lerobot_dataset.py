@@ -1323,6 +1323,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             f"Batch encoding {self.batch_encoding_size} videos for episodes {start_episode} to {end_episode - 1}"
         )
 
+        # ``meta.episodes`` is loaded once at dataset construction time and only
+        # refreshed at the END of this method. For the very first batch (and
+        # whenever the in-memory cache is stale because we just flushed new rows
+        # to the parquet writer), we need to reload from disk before indexing
+        # into it — otherwise we would either dereference ``None`` (brand-new
+        # dataset) or read stale rows.
+        if self.meta.episodes is None or len(self.meta.episodes) < end_episode:
+            self.meta._close_writer()
+            self.meta.episodes = load_episodes(self.root)
+
         chunk_idx = self.meta.episodes[start_episode]["data/chunk_index"]
         file_idx = self.meta.episodes[start_episode]["data/file_index"]
         episode_df_path = self.root / DEFAULT_EPISODES_PATH.format(chunk_index=chunk_idx, file_index=file_idx)
@@ -1476,7 +1486,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ):
             # Initialize indices for a new dataset made of the first episode data
             chunk_idx, file_idx = 0, 0
-            if self.meta.episodes is not None and len(self.meta.episodes) > 0:
+            if (
+                self.meta.episodes is not None
+                and len(self.meta.episodes) > 0
+                and f"videos/{video_key}/chunk_index" in self.meta.episodes.column_names
+                and self.meta.episodes[-1][f"videos/{video_key}/chunk_index"] is not None
+            ):
                 # It means we are resuming recording, so we need to load the latest episode
                 # Update the indices to avoid overwriting the latest episode
                 old_chunk_idx = self.meta.episodes[-1][f"videos/{video_key}/chunk_index"]

@@ -135,6 +135,25 @@ def parse_args() -> argparse.Namespace:
             "--wandb, --wandb-project) are overridden from the CLI."
         ),
     )
+    parser.add_argument(
+        "--finetune-from",
+        type=Path,
+        default=None,
+        help=(
+            "Fine-tune from a previous checkpoint. Pass either a `pretrained_model` "
+            "directory (e.g. `outputs/train/<run>/checkpoints/005000/pretrained_model`) "
+            "or its parent step directory. The policy *architecture* (preset, dtype, "
+            "freeze flags, vision/embedding presence) is loaded from the checkpoint and "
+            "its weights are loaded into the model, but everything else is fresh: new "
+            "dataset, new batch size, new output dir, new optimizer/scheduler (driven by "
+            "--optimizer-lr / --scheduler-* CLI flags), and `cfg.resume=False`. "
+            "Architecture override flags (--architecture-preset, --vlm-*, --expert-*, "
+            "--vision-*, --image-size, --dtype, --no-gradient-checkpointing, "
+            "--pretrained-vision-model, --pretrained-language-embeddings) are ignored "
+            "because the architecture is fixed by the checkpoint. Mutually exclusive "
+            "with --resume-from."
+        ),
+    )
 
     for field in [
         "vlm-width",
@@ -212,12 +231,76 @@ def _resume_training(args: argparse.Namespace) -> None:
     train(cfg)
 
 
+def _finetune_training(args: argparse.Namespace) -> None:
+    pretrained_model_dir, _step_dir, _run_dir = _resolve_resume_paths(args.finetune_from)
+
+    # Load the policy config (architecture, dtype, freeze flags, etc.) from the
+    # checkpoint so the model we instantiate matches the saved weights exactly.
+    policy = TinyPI05Config.from_pretrained(pretrained_model_dir)
+
+    # Skip re-loading SigLIP / external embedding weights at construction time:
+    # the checkpoint's safetensors already contains the (possibly fine-tuned)
+    # vision tower and embed_tokens, and they would just be overwritten when
+    # the checkpoint weights are loaded on top.
+    policy.pretrained_vision_model = None
+    policy.pretrained_language_embeddings = None
+
+    # Tell make_policy() to load the checkpoint weights into the freshly
+    # constructed model.
+    policy.pretrained_path = pretrained_model_dir
+
+    # Override LR / scheduler from CLI so the user controls the fine-tune
+    # schedule (the saved values are appropriate for the original run, not for
+    # a fresh fine-tune which usually wants its own warmup / decay horizon).
+    optimizer_lr_vision: float | None = args.optimizer_lr_vision
+    if optimizer_lr_vision is not None and optimizer_lr_vision <= 0:
+        optimizer_lr_vision = None
+    optimizer_lr_language_embeddings: float | None = args.optimizer_lr_language_embeddings
+    if optimizer_lr_language_embeddings is not None and optimizer_lr_language_embeddings <= 0:
+        optimizer_lr_language_embeddings = None
+
+    policy.optimizer_lr = args.optimizer_lr
+    policy.optimizer_lr_vision = optimizer_lr_vision
+    policy.optimizer_lr_language_embeddings = optimizer_lr_language_embeddings
+    policy.scheduler_warmup_steps = args.scheduler_warmup_steps
+    policy.scheduler_decay_steps = args.scheduler_decay_steps
+    policy.scheduler_decay_lr = args.scheduler_decay_lr
+    policy.push_to_hub = False
+
+    cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(
+            repo_id=args.dataset_repo_id,
+            root=args.dataset_root,
+            use_imagenet_stats=False,
+        ),
+        policy=policy,
+        output_dir=args.output_dir,
+        job_name=args.job_name,
+        seed=args.seed,
+        num_workers=args.num_workers,
+        batch_size=args.batch_size,
+        steps=args.steps,
+        eval_freq=0,
+        log_freq=args.log_freq,
+        save_freq=args.save_freq,
+        wandb=WandBConfig(enable=args.wandb, project=args.wandb_project),
+    )
+    train(cfg)
+
+
 def main() -> None:
     register_third_party_plugins()
     args = parse_args()
 
+    if args.resume_from is not None and args.finetune_from is not None:
+        raise SystemExit("--resume-from and --finetune-from are mutually exclusive.")
+
     if args.resume_from is not None:
         _resume_training(args)
+        return
+
+    if args.finetune_from is not None:
+        _finetune_training(args)
         return
 
     pretrained_vision_model: str | None = args.pretrained_vision_model
