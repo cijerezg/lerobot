@@ -839,8 +839,18 @@ class PI05RLPolicy(PI05FullPolicy):
             self.critic_target.load_state_dict(self.critic.state_dict())
 
     def _share_critic_embeddings(self):
-        """Share embeddings between actor and critic to save memory."""
-        pass
+        """Re-tie actor's embed_tokens.weight to lm_head.weight after loading.
+
+        Why: PI05RLPolicy bypasses PI05FullPolicy.from_pretrained and copies
+        weights via state_dict, which leaves embed_tokens and lm_head as two
+        separate Parameter objects (~526M counted twice).
+        """
+        paligemma = self.model.paligemma_with_expert.paligemma
+        if not PI05FullPolicy._tie_or_copy_language_embeddings(paligemma):
+            raise RuntimeError(
+                "Failed to tie embed_tokens.weight to lm_head.weight in PI05RLPolicy. "
+                "Inspect PaliGemmaForConditionalGenerationWithPiGemma construction."
+            )
 
     def get_optim_params(self) -> dict:
         params = {

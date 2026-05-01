@@ -11,7 +11,7 @@ from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.transport.utils import bytes_to_state_dict
 from lerobot.utils.transition import move_state_dict_to_device
-from lerobot.rl.inference_utils import convert_env_obs_to_policy_format
+from lerobot.rl.inference_utils import convert_env_obs_to_policy_format, apply_butterworth_filter
 
 logger = logging.getLogger(__name__)
 
@@ -333,11 +333,8 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 else:
                     processed_actions = original_actions.clone()
                 
-                # --- Apply Centered Moving Average (Window Size 5) ---
-                if processed_actions.shape[0] >= 5:
-                    padded = torch.cat([processed_actions[0:1]] * 2 + [processed_actions] + [processed_actions[-1:]] * 2, dim=0)
-                    smoothed = (padded[:-4] + padded[1:-3] + padded[2:-2] + padded[3:-1] + padded[4:]) / 5.0
-                    processed_actions = smoothed
+                # --- Zero-phase Butterworth low-pass filter ---
+                processed_actions = apply_butterworth_filter(processed_actions)
                 
             new_latency = time.perf_counter() - current_time
             new_delay = math.ceil(new_latency / time_per_chunk)

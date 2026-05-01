@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import cv2
 from tqdm import tqdm
+from scipy.signal import butter, filtfilt
 
 import torch
 from lerobot.utils.robot_utils import precise_sleep
@@ -22,6 +23,19 @@ from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.rl.utils import save_video_with_critic_overlay
 
 logger = logging.getLogger(__name__)
+
+_BUTTER_B, _BUTTER_A = butter(N=2, Wn=0.2, btype='low')
+
+
+def apply_butterworth_filter(actions: torch.Tensor) -> torch.Tensor:
+    """Zero-phase low-pass Butterworth filter along the time axis of an [T, D]
+    action chunk. Returns input unchanged when T is too short for filtfilt's
+    default padlen (3 * max(len(a), len(b)) = 9)."""
+    if actions.shape[0] <= 9:
+        return actions
+    arr = actions.detach().to(torch.float32).cpu().numpy()
+    smoothed = filtfilt(_BUTTER_B, _BUTTER_A, arr, axis=0)
+    return torch.as_tensor(smoothed.copy(), dtype=actions.dtype, device=actions.device)
 
 class SharedState:
     """Thread-safe state manager for passing observations from the environment 
@@ -398,11 +412,8 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 else:
                     processed_actions = unnormalized_actions
 
-                # --- Centered moving average (window = 5) ---
-                if processed_actions.shape[0] >= 5:
-                    padded    = torch.cat([processed_actions[0:1]] * 2 + [processed_actions] + [processed_actions[-1:]] * 2, dim=0)
-                    smoothed  = (padded[:-4] + padded[1:-3] + padded[2:-2] + padded[3:-1] + padded[4:]) / 5.0
-                    processed_actions = smoothed
+                # --- Zero-phase Butterworth low-pass filter ---
+                processed_actions = apply_butterworth_filter(processed_actions)
 
                 if not hasattr(policy, '_chunk_plot_counter'):
                     policy._chunk_plot_counter = 0

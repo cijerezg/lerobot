@@ -102,20 +102,10 @@ from lerobot.scripts.offline_val_pi05 import (
 )
 
 
-@dataclass
-class OfflineTrainRLServerPipelineConfig(TrainRLServerPipelineConfig):
-    offline_output_dir: str | None = None
-    offline_save_freq: int | None = None
-    # Validation
-    val_dataset_path: str | None = None   # path to a separate val LeRobotDataset
-    val_split: float = 0.0                # fraction of main-dataset episodes to hold out
-    val_freq: int = 1000                  # optimization steps between validation runs
-    val_on_start: bool = False            # run validation before training starts (step 0 baseline)
-    skip_critic: bool = False             # skip all critic training (forward+backward); actor advantage uses golden bypass
 
 
 @parser.wrap()
-def offline_train_cli(cfg: OfflineTrainRLServerPipelineConfig):
+def offline_train_cli(cfg: TrainRLServerPipelineConfig):
     """CLI entry point for offline training."""
     # Create Accelerator for multi-GPU support
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
