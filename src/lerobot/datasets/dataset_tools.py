@@ -236,6 +236,8 @@ def merge_datasets(
     datasets: list[LeRobotDataset],
     output_repo_id: str,
     output_dir: str | Path | None = None,
+    robot_type: str | None = None,
+    concatenate_videos: bool = False,
 ) -> LeRobotDataset:
     """Merge multiple LeRobotDatasets into a single dataset.
 
@@ -245,6 +247,8 @@ def merge_datasets(
         datasets: List of LeRobotDatasets to merge.
         output_repo_id: Repository ID for the merged dataset.
         output_dir: Directory to save the merged dataset. If None, uses default location.
+        robot_type: Optional robot type to use for the merged dataset.
+        concatenate_videos: Whether to concatenate source video files into larger destination files.
     """
     if not datasets:
         raise ValueError("No datasets to merge")
@@ -259,6 +263,8 @@ def merge_datasets(
         aggr_repo_id=output_repo_id,
         roots=roots,
         aggr_root=output_dir,
+        robot_type=robot_type,
+        concatenate_videos=concatenate_videos,
     )
 
     merged_dataset = LeRobotDataset(

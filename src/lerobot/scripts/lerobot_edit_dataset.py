@@ -124,6 +124,8 @@ class SplitConfig:
 class MergeConfig:
     type: str = "merge"
     repo_ids: list[str] | None = None
+    robot_type: str | None = None
+    concatenate_videos: bool = False
 
 
 @dataclass
@@ -253,6 +255,8 @@ def handle_merge(cfg: EditDatasetConfig) -> None:
         datasets,
         output_repo_id=cfg.repo_id,
         output_dir=output_dir,
+        robot_type=cfg.operation.robot_type,
+        concatenate_videos=cfg.operation.concatenate_videos,
     )
 
     logging.info(f"Merged dataset saved to {output_dir}")

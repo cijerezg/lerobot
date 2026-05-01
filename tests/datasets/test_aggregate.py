@@ -280,6 +280,41 @@ def test_aggregate_datasets(tmp_path, lerobot_dataset_factory):
     assert_dataset_iteration_works(aggr_ds)
 
 
+def test_aggregate_datasets_with_robot_type_override(tmp_path, lerobot_dataset_factory, info_factory):
+    """Test aggregation can use an explicit output robot type when source metadata differs."""
+    ds_0_info = info_factory(
+        total_episodes=2, total_frames=20, total_tasks=1, robot_type="so101_follower"
+    )
+    ds_1_info = info_factory(
+        total_episodes=2, total_frames=20, total_tasks=1, robot_type="so_follower"
+    )
+    ds_0 = lerobot_dataset_factory(
+        root=tmp_path / "robot_0", repo_id=f"{DUMMY_REPO_ID}_robot_0", info=ds_0_info
+    )
+    ds_1 = lerobot_dataset_factory(
+        root=tmp_path / "robot_1", repo_id=f"{DUMMY_REPO_ID}_robot_1", info=ds_1_info
+    )
+
+    aggregate_datasets(
+        repo_ids=[ds_0.repo_id, ds_1.repo_id],
+        roots=[ds_0.root, ds_1.root],
+        aggr_repo_id=f"{DUMMY_REPO_ID}_robot_aggr",
+        aggr_root=tmp_path / "robot_aggr",
+        robot_type="so_follower",
+    )
+
+    with (
+        patch("lerobot.datasets.lerobot_dataset.get_safe_version") as mock_get_safe_version,
+        patch("lerobot.datasets.lerobot_dataset.snapshot_download") as mock_snapshot_download,
+    ):
+        mock_get_safe_version.return_value = "v3.0"
+        mock_snapshot_download.return_value = str(tmp_path / "robot_aggr")
+        aggr_ds = LeRobotDataset(f"{DUMMY_REPO_ID}_robot_aggr", root=tmp_path / "robot_aggr")
+
+    assert aggr_ds.meta.robot_type == "so_follower"
+    assert_episode_and_frame_counts(aggr_ds, 4, 40)
+
+
 def test_aggregate_with_low_threshold(tmp_path, lerobot_dataset_factory):
     """Test aggregation with small file size limits to force file rotation/sharding."""
     ds_0_num_episodes = ds_1_num_episodes = 10

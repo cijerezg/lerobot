@@ -1,8 +1,8 @@
-# DRTC config for tinypi05_rlt VLA rollouts with async RLT-head training.
+# DRTC config for deterministic tinypi05_rlt head inference tests.
 #
-# This keeps execution on frozen-VLA passthrough while the server trains the
-# RLT actor/critic head asynchronously from collected rollout transitions.
-name: baseline_tinypi05_rlt_async_train
+# This loads a trained RLT head and disables online collection/training so
+# evaluation rollouts do not enter the replay buffer.
+name: baseline_tinypi05_rlt_eval
 
 # Hardware
 robot_type: so101_follower
@@ -30,15 +30,10 @@ pretrained_name_or_path: outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickpl
 subtask_generation_enabled: false
 subtask_regeneration_interval: 0
 
-# RLT modules. Leave the head unset so rollouts stay frozen-VLA passthrough.
+# RLT modules. Point this at the latest async-trained head checkpoint.
 rlt_enabled: true
-
-# Always set this
 rlt_embedding_checkpoint: outputs/tinypi05_rlt_embedding/rlt_embedding_step_005000.pt
-
-# Leave unset for this config. If a head checkpoint is loaded, the RLT actor is
-# considered available and may execute instead of pure VLA passthrough.
-rlt_head_checkpoint:
+rlt_head_checkpoint: outputs/rlt_tinypi_online/rlt_head_latest.pt
 rlt_chunk_size: 10
 # Leave unset for tinypi05_rlt so it matches the TinyPI05 VLM width.
 rlt_token_dim:
@@ -50,12 +45,11 @@ rlt_bc_beta: 0.1
 rlt_jerk_beta: 0.001
 rlt_reference_dropout_p: 0.5
 
-# VLA rollouts with async online RLT-head training. Actor execution is held off
-# by rlt_execute_after_train_steps so collection remains VLA passthrough.
-rlt_online_collection_enabled: true
-rlt_online_training_enabled: true
-rlt_warmup_episodes: 1
-rlt_warmup_transitions: 256
+# Evaluation mode: no replay recording and no online updates.
+rlt_online_collection_enabled: false
+rlt_online_training_enabled: false
+rlt_warmup_episodes: 0
+rlt_warmup_transitions: 0
 rlt_replay_capacity: 50000
 rlt_batch_size: 256
 rlt_utd_ratio: 1
@@ -63,14 +57,14 @@ rlt_train_freq_s: 1.0
 rlt_save_freq_steps: 100
 rlt_output_dir: outputs/rlt_tinypi_online
 rlt_demo_buffer_path:
-rlt_online_buffer_path: outputs/rlt_tinypi_online/rlt_online_replay.pt
-rlt_online_buffer_save_freq_transitions: 100
-rlt_persist_buffer_on_shutdown: true
+rlt_online_buffer_path:
+rlt_online_buffer_save_freq_transitions: 0
+rlt_persist_buffer_on_shutdown: false
 rlt_actor_lr: 0.0003
 rlt_critic_lr: 0.0003
 rlt_discount: 0.985
 rlt_target_update_tau: 0.005
-rlt_execute_after_train_steps: 1000000
+rlt_execute_after_train_steps: 0
 rlt_context_cache_size: 256
 rlt_transition_queue_size: 256
 rlt_grad_clip_norm: 20.0
@@ -111,7 +105,7 @@ action_filter_gain: 1.0
 full_diagnostics: true
 trajectory_viz_enabled: false
 
-# Teleop intervention
+# Teleop intervention remains available as a safety override during eval.
 teleop_enabled: true
 teleop_type: so101_leader
 teleop_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00

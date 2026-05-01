@@ -44,40 +44,53 @@ from lerobot.datasets.utils import (
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
 
 
-def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata]):
+def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata], robot_type: str | None = None):
     """Validates that all dataset metadata have consistent properties.
 
-    Ensures all datasets have the same fps, robot_type, and features to guarantee
-    compatibility when aggregating them into a single dataset.
+    Ensures all datasets have the same fps and features to guarantee compatibility when aggregating them
+    into a single dataset. By default, robot_type must also match. If robot_type is provided, it is used
+    for the aggregated dataset and source robot_type differences are allowed.
 
     Args:
         all_metadata: List of LeRobotDatasetMetadata objects to validate.
+        robot_type: Optional robot type to use for the aggregated dataset.
 
     Returns:
-        tuple: A tuple containing (fps, robot_type, features) from the first metadata.
+        tuple: A tuple containing (fps, output robot_type, features).
 
     Raises:
-        ValueError: If any metadata has different fps, robot_type, or features
-                   than the first metadata in the list.
+        ValueError: If any metadata has different fps or features than the first metadata in the list, or
+                   if any metadata has a different robot_type and no output robot_type was provided.
     """
 
     fps = all_metadata[0].fps
-    robot_type = all_metadata[0].robot_type
+    source_robot_type = all_metadata[0].robot_type
+    output_robot_type = robot_type if robot_type is not None else source_robot_type
     features = all_metadata[0].features
 
     for meta in tqdm.tqdm(all_metadata, desc="Validate all meta data"):
         if fps != meta.fps:
             raise ValueError(f"Same fps is expected, but got fps={meta.fps} instead of {fps}.")
-        if robot_type != meta.robot_type:
+        if robot_type is None and source_robot_type != meta.robot_type:
             raise ValueError(
-                f"Same robot_type is expected, but got robot_type={meta.robot_type} instead of {robot_type}."
+                f"Same robot_type is expected, but got robot_type={meta.robot_type} instead of "
+                f"{source_robot_type}."
             )
         if features != meta.features:
             raise ValueError(
                 f"Same features is expected, but got features={meta.features} instead of {features}."
             )
 
-    return fps, robot_type, features
+    if robot_type is not None:
+        source_robot_types = sorted({meta.robot_type for meta in all_metadata}, key=str)
+        if len(source_robot_types) > 1:
+            logging.warning(
+                "Using robot_type=%s for aggregated dataset with source robot types: %s",
+                robot_type,
+                source_robot_types,
+            )
+
+    return fps, output_robot_type, features
 
 
 def update_data_df(df, src_meta, dst_meta):
@@ -192,6 +205,8 @@ def aggregate_datasets(
     aggr_repo_id: str,
     roots: list[Path] | None = None,
     aggr_root: Path | None = None,
+    robot_type: str | None = None,
+    concatenate_videos: bool = True,
     data_files_size_in_mb: float | None = None,
     video_files_size_in_mb: float | None = None,
     chunk_size: int | None = None,
@@ -209,6 +224,8 @@ def aggregate_datasets(
         aggr_repo_id: Repository ID for the aggregated output dataset.
         roots: Optional list of root paths for the source datasets.
         aggr_root: Optional root path for the aggregated dataset.
+        robot_type: Optional robot type to use for the aggregated output dataset.
+        concatenate_videos: Whether to concatenate source video files into larger destination files.
         data_files_size_in_mb: Maximum size for data files in MB (defaults to DEFAULT_DATA_FILE_SIZE_IN_MB)
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
         chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
@@ -229,7 +246,7 @@ def aggregate_datasets(
             LeRobotDatasetMetadata(repo_id, root=root) for repo_id, root in zip(repo_ids, roots, strict=False)
         ]
     )
-    fps, robot_type, features = validate_all_metadata(all_metadata)
+    fps, robot_type, features = validate_all_metadata(all_metadata, robot_type=robot_type)
     video_keys = [key for key in features if features[key]["dtype"] == "video"]
 
     dst_meta = LeRobotDatasetMetadata.create(
@@ -257,7 +274,14 @@ def aggregate_datasets(
     dst_meta.episodes = {}
 
     for src_meta in tqdm.tqdm(all_metadata, desc="Copy data and videos"):
-        videos_idx = aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size)
+        videos_idx = aggregate_videos(
+            src_meta,
+            dst_meta,
+            videos_idx,
+            video_files_size_in_mb,
+            chunk_size,
+            concatenate_videos=concatenate_videos,
+        )
         data_idx = aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_size)
 
         meta_idx = aggregate_metadata(src_meta, dst_meta, meta_idx, data_idx, videos_idx)
@@ -269,7 +293,14 @@ def aggregate_datasets(
     logging.info("Aggregation complete.")
 
 
-def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chunk_size):
+def aggregate_videos(
+    src_meta,
+    dst_meta,
+    videos_idx,
+    video_files_size_in_mb,
+    chunk_size,
+    concatenate_videos: bool = True,
+):
     """Aggregates video chunks from a source dataset into the destination dataset.
 
     Handles video file concatenation and rotation based on file size limits.
@@ -281,6 +312,7 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
         videos_idx: Dictionary tracking video chunk and file indices.
         video_files_size_in_mb: Maximum size for video files in MB (defaults to DEFAULT_VIDEO_FILE_SIZE_IN_MB)
         chunk_size: Maximum number of files per chunk (defaults to DEFAULT_CHUNK_SIZE)
+        concatenate_videos: Whether to concatenate source video files into larger destination files.
 
     Returns:
         dict: Updated videos_idx with current chunk and file indices.
@@ -342,11 +374,12 @@ def aggregate_videos(src_meta, dst_meta, videos_idx, video_files_size_in_mb, chu
                 videos_idx[key]["episode_duration"] += src_duration
                 continue
 
-            # Check file sizes before appending
+            # Check file sizes before appending. Some datasets use video files that are valid on their
+            # own but do not remux cleanly together, so callers can force shard-preserving copies.
             src_size = get_file_size_in_mb(src_path)
             dst_size = get_file_size_in_mb(dst_path)
 
-            if dst_size + src_size >= video_files_size_in_mb:
+            if not concatenate_videos or dst_size + src_size >= video_files_size_in_mb:
                 # Rotate to a new file - offset is 0
                 chunk_idx, file_idx = update_chunk_file_indices(chunk_idx, file_idx, chunk_size)
                 dst_key = (chunk_idx, file_idx)
