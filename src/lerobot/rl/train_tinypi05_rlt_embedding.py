@@ -21,8 +21,6 @@ tinypi05 backbone produces prefix embeddings; the autoencoder is trained to
 compress them into a single RL-token and reconstruct the prefix sequence.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from pathlib import Path

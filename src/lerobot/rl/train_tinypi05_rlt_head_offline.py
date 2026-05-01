@@ -22,8 +22,6 @@ already-encoded `rl_token`, proprio, reference_chunk, executed_chunk and
 next-state counterparts, so the loop only touches the tiny actor/critic heads.
 """
 
-from __future__ import annotations
-
 import logging
 import random
 from dataclasses import asdict, dataclass

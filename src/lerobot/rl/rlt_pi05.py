@@ -145,7 +145,19 @@ class RLTokenAutoencoder(nn.Module):
 
 
 class RLTActorHead(nn.Module):
-    """Small residual chunk policy conditioned on the VLA reference action chunk."""
+    """Chunk policy conditioned on the RL token, proprio, and the VLA reference chunk.
+
+    Two parameterizations are supported:
+
+    * ``actor_mode="gaussian"`` (paper-aligned, default) — the MLP directly predicts
+      the mean ``μθ(x, ã)`` of a Gaussian over action chunks, ``π(a|x,ã) =
+      N(μθ, σ² I)``. The fixed exploration std ``action_std`` is applied via
+      :meth:`sample` during data collection only; ``forward`` returns the mean and
+      is used both for the actor loss and for the critic's bootstrap target.
+    * ``actor_mode="residual"`` (legacy) — the MLP outputs a residual that is added
+      to ``ã`` after a ``tanh`` non-linearity scaled by ``residual_scale``.
+      Retained for backward compatibility with older ``pi05_rlt`` checkpoints.
+    """
 
     def __init__(
         self,
@@ -156,11 +168,19 @@ class RLTActorHead(nn.Module):
         chunk_size: int,
         hidden_dim: int | list[int] | tuple[int, ...] = 256,
         residual_scale: float = 0.25,
+        actor_mode: Literal["gaussian", "residual"] = "gaussian",
+        action_std: float = 0.0,
     ):
         super().__init__()
+        if actor_mode not in ("gaussian", "residual"):
+            raise ValueError(
+                f"actor_mode must be 'gaussian' or 'residual', got {actor_mode!r}"
+            )
         self.action_dim = action_dim
         self.chunk_size = chunk_size
-        self.residual_scale = residual_scale
+        self.actor_mode = actor_mode
+        self.residual_scale = float(residual_scale)
+        self.action_std = float(action_std)
         in_dim = token_dim + proprio_dim + chunk_size * action_dim
         out_dim = chunk_size * action_dim
         self.hidden_dims = _hidden_dims(hidden_dim)
@@ -169,8 +189,32 @@ class RLTActorHead(nn.Module):
     def forward(self, rl_token: Tensor, proprio: Tensor, reference_chunk: Tensor) -> Tensor:
         flat_ref = reference_chunk.reshape(reference_chunk.shape[0], -1)
         x = torch.cat([rl_token, proprio, flat_ref], dim=-1)
-        residual = torch.tanh(self.net(x)).reshape_as(reference_chunk)
-        return reference_chunk + self.residual_scale * residual
+        raw = self.net(x).reshape_as(reference_chunk)
+        if self.actor_mode == "residual":
+            return reference_chunk + self.residual_scale * torch.tanh(raw)
+        return raw
+
+    @torch.no_grad()
+    def sample(
+        self,
+        rl_token: Tensor,
+        proprio: Tensor,
+        reference_chunk: Tensor,
+        *,
+        std: float | None = None,
+    ) -> Tensor:
+        """Sample an action chunk with fixed Gaussian exploration noise.
+
+        For ``actor_mode="residual"`` the residual policy is deterministic, so this
+        is equivalent to :meth:`forward` and the ``std`` argument is ignored.
+        """
+        mean = self.forward(rl_token, proprio, reference_chunk)
+        if self.actor_mode == "residual":
+            return mean
+        sigma = self.action_std if std is None else float(std)
+        if sigma <= 0:
+            return mean
+        return mean + sigma * torch.randn_like(mean)
 
 
 class RLTCriticHead(nn.Module):
@@ -263,7 +307,13 @@ def rlt_critic_loss(
             next_actions,
         )
         next_q = next_q_values.min(dim=0).values
-        target_q = rewards + float(discount) * (1.0 - dones) * next_q
+        # Paper Eq. (3): the bootstrap is discounted by gamma^C where C is the
+        # action-chunk length, since one chunk-level transition advances time by
+        # C control steps. Sparse intra-chunk rewards are already accumulated
+        # into `rewards` upstream by the replay buffer.
+        chunk_size = int(getattr(policy.config, "rlt_chunk_size", 1))
+        bootstrap = float(discount) ** max(chunk_size, 1)
+        target_q = rewards + bootstrap * (1.0 - dones) * next_q
     pred_q_values = _critic_values(policy.rlt_critic, batch["rl_token"], batch["proprio"], batch["executed_chunk"])
     loss = F.mse_loss(pred_q_values, target_q.unsqueeze(0).expand_as(pred_q_values))
     if not return_stats:
@@ -386,6 +436,12 @@ class PI05RLTConfig(PI05FullConfig):
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
+    # Paper Eq. (4): pi(a|x, ã) = N(mu_theta(x, ã), sigma^2 I). "gaussian" matches
+    # the paper; "residual" preserves the legacy ã + scale*tanh(MLP(...)) head.
+    rlt_actor_mode: Literal["gaussian", "residual"] = "gaussian"
+    # Fixed exploration std used when sampling actions during online data
+    # collection. Set 0 to disable noise (pure mean).
+    rlt_action_std: float = 0.05
     rlt_num_critics: int = 1
     rlt_bc_beta: float = 1.0
     rlt_bc_action_weights: list[float] | None = None
@@ -550,6 +606,8 @@ class PI05RLTPolicy(PI05FullPolicy):
             chunk_size=config.rlt_chunk_size,
             hidden_dim=config.rlt_actor_hidden_dims or config.rlt_actor_hidden_dim,
             residual_scale=config.rlt_actor_residual_scale,
+            actor_mode=config.rlt_actor_mode,
+            action_std=config.rlt_action_std,
         )
         critic_kwargs = {
             "token_dim": config.rlt_token_dim,

@@ -85,6 +85,12 @@ class TinyPI05RLTConfig(TinyPI05Config):
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
+    # Paper Eq. (4): pi(a|x, ã) = N(mu_theta(x, ã), sigma^2 I). "gaussian" matches
+    # the paper; "residual" preserves the legacy ã + scale*tanh(MLP(...)) head.
+    rlt_actor_mode: Literal["gaussian", "residual"] = "gaussian"
+    # Fixed exploration std used when sampling actions during online data
+    # collection. Set 0 to disable noise (pure mean).
+    rlt_action_std: float = 0.05
     rlt_num_critics: int = 1
     rlt_bc_beta: float = 1.0
     rlt_bc_action_weights: list[float] | None = None
@@ -151,6 +157,8 @@ class TinyPI05RLTPolicy(TinyPI05Policy):
             chunk_size=config.rlt_chunk_size,
             hidden_dim=config.rlt_actor_hidden_dims or config.rlt_actor_hidden_dim,
             residual_scale=config.rlt_actor_residual_scale,
+            actor_mode=config.rlt_actor_mode,
+            action_std=config.rlt_action_std,
         )
         critic_kwargs = {
             "token_dim": token_dim,

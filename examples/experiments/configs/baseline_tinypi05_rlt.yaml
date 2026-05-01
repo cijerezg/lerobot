@@ -1,0 +1,120 @@
+# DRTC baseline for the pi05_rlt policy.
+#
+# This uses the subtask-trained PI0.5 checkpoint as a frozen VLA, disables
+# runtime subtask generation, and starts with RTC disabled. Until an RLT head
+# checkpoint is supplied, pi05_rlt pass-throughs the frozen VLA action chunk.
+name: baseline_pi05_rlt
+
+# Hardware
+robot_type: so101_follower
+gpu: ""
+client_host: ""
+server_host: ""
+robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
+robot_id: so101_follower_2026_04_26_v0
+
+# Cameras: pi05_rlt expects observation.images.{side,top} for this checkpoint.
+camera1_name: side
+camera1_path: /dev/video0
+camera2_name: top
+camera2_path: /dev/video4
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc: MJPG
+camera_use_threaded_async_read: true
+camera_allow_stale_frames: true
+
+# Policy
+policy_type: tinypi05_rlt
+pretrained_name_or_path: outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model
+subtask_generation_enabled: false
+subtask_regeneration_interval: 0
+
+# RLT modules. Leave the head unset for frozen-VLA pass-through inference.
+rlt_enabled: true
+
+# Always set this
+rlt_embedding_checkpoint: outputs/tinypi05_rlt_embedding/rlt_embedding_step_005000.pt
+
+# Optionally set a known-good head checkpoint when resuming. Leave unset for
+# collect-then-train runs so actor execution waits for rlt_execute_after_train_steps.
+rlt_head_checkpoint:
+rlt_chunk_size: 10
+rlt_token_dim: 2048
+rlt_actor_hidden_dims: [512, 512, 512]
+rlt_critic_hidden_dims: [512, 512, 512]
+rlt_actor_residual_scale: 0.25
+rlt_num_critics: 4
+rlt_bc_beta: 0.1
+rlt_jerk_beta: 0.001
+rlt_reference_dropout_p: 0.5
+
+# Collect-only RLT rollouts for offline head training. With no RLT head loaded
+# and online training disabled, actions stay frozen-VLA pass-through while
+# compact RLT transitions are persisted to rlt_online_buffer_path.
+rlt_online_collection_enabled: true
+rlt_online_training_enabled: false
+rlt_warmup_episodes: 1
+rlt_warmup_transitions: 2000
+rlt_replay_capacity: 50000
+rlt_batch_size: 256
+rlt_utd_ratio: 3
+rlt_train_freq_s: 1.0
+rlt_save_freq_steps: 500
+rlt_output_dir: outputs/rlt_tinypi_online
+rlt_demo_buffer_path:
+rlt_online_buffer_path: outputs/rlt_tinypi_online/rlt_online_replay.pt
+rlt_online_buffer_save_freq_transitions: 100
+rlt_persist_buffer_on_shutdown: true
+rlt_actor_lr: 0.0003
+rlt_critic_lr: 0.0003
+rlt_discount: 0.985
+rlt_target_update_tau: 0.005
+rlt_execute_after_train_steps: 1000
+rlt_context_cache_size: 256
+rlt_transition_queue_size: 256
+rlt_grad_clip_norm: 20.0
+rlt_q_abs_max: 100.0
+rlt_action_deviation_abs_max: 2.0
+rlt_loss_abs_max: 1000.0
+rlt_safety_patience: 3
+
+# DRTC parameters
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+actions_per_chunk: 50
+s_min: 10
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing
+duration_s: 120.0
+run_until_interrupt: true
+fps: 30
+
+# Flow matching / RTC
+num_flow_matching_steps: 5
+rtc_enabled: true
+rtc_max_guidance_weight:
+rtc_prefix_attention_schedule: linear
+rtc_sigma_d: 0.2
+rtc_full_trajectory_alignment: false
+
+# Start without extra client-side filtering while establishing RLT parity.
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 3.0
+action_filter_gain: 1.0
+
+# Diagnostics
+full_diagnostics: true
+trajectory_viz_enabled: false
+
+# Teleop intervention
+teleop_enabled: true
+teleop_type: so101_leader
+teleop_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00
+teleop_id: so101_leader_2026_04_16_v2
+teleop_send_feedback: true

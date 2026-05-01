@@ -600,7 +600,17 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     dtype=rl_token.dtype,
                     device=rl_token.device,
                 )
-                refined_prefix = self.policy.rlt_actor(rl_token, proprio, actor_ref)
+                # Paper Eq. (4): the actor is a Gaussian over chunks. During
+                # online data collection we sample with the fixed exploration
+                # std so the replay buffer sees diverse actions; at evaluation
+                # time (collection disabled) we use the deterministic mean.
+                actor_std = float(getattr(self.policy.rlt_actor, "action_std", 0.0))
+                if self._rlt_online_collection_enabled and actor_std > 0:
+                    refined_prefix = self.policy.rlt_actor.sample(
+                        rl_token, proprio, actor_ref
+                    )
+                else:
+                    refined_prefix = self.policy.rlt_actor(rl_token, proprio, actor_ref)
                 action_tensor = torch.cat(
                     [refined_prefix, reference[:, self.policy.config.rlt_chunk_size :]], dim=1
                 )
@@ -1120,6 +1130,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 rlt_actor_hidden_dims=getattr(policy_specs, "rlt_actor_hidden_dims", None),
                 rlt_critic_hidden_dims=getattr(policy_specs, "rlt_critic_hidden_dims", None),
                 rlt_actor_residual_scale=float(getattr(policy_specs, "rlt_actor_residual_scale", 0.25)),
+                rlt_actor_mode=str(getattr(policy_specs, "rlt_actor_mode", "gaussian")),
+                rlt_action_std=float(getattr(policy_specs, "rlt_action_std", 0.05)),
                 rlt_num_critics=int(getattr(policy_specs, "rlt_num_critics", 1)),
                 rlt_bc_beta=float(getattr(policy_specs, "rlt_bc_beta", 1.0)),
                 rlt_bc_action_weights=getattr(policy_specs, "rlt_bc_action_weights", None),
