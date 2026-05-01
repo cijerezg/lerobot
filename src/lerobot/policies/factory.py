@@ -128,6 +128,13 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.rl.rlt_pi05 import PI05RLTPolicy
 
         return PI05RLTPolicy
+    elif name == "tinypi05_rlt":
+        # Importing rlt_tinypi05 registers TinyPI05RLTConfig ('tinypi05_rlt')
+        # with PreTrainedConfig.register_subclass(...).
+        import lerobot.rl.rlt_tinypi05  # noqa: F401
+        from lerobot.rl.rlt_tinypi05 import TinyPI05RLTPolicy
+
+        return TinyPI05RLTPolicy
     elif name == "sac":
         from lerobot.policies.sac.modeling_sac import SACPolicy
 

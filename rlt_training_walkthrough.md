@@ -1,8 +1,28 @@
 # RLT Training Walkthrough
 
-This checklist adapts the practical lessons from the RL Token reproduction article to this repo's `pi05_rlt` DRTC workflow.
+This checklist adapts the practical lessons from the RL Token reproduction article to this repo's RLT DRTC workflow.
 
 Use it as a runbook: start with low-variance collection, persist the replay buffer, train cautiously, and only widen task variance after the RLT head is stable.
+
+## 0. Pick A Policy Variant
+
+Two RLT wrappers ship in this repo. They share the same online/offline pipeline and replay format; only the frozen VLA backbone (and its processor) differ.
+
+| variant | `policy_type` | base policy | typical use |
+| --- | --- | --- | --- |
+| full PI0.5 | `pi05_rlt` | `lerobot.policies.pi05_full.PI05FullPolicy` (subtasks + FAST head + ~3B VLA) | large-scale finetunes / multi-task |
+| tiny PI0.5 | `tinypi05_rlt` | `lerobot.policies.tinypi05.TinyPI05Policy` (no subtasks, no FAST, hundreds-of-M VLA) | small per-robot finetunes (e.g. SO101 pick-place) |
+
+The runbook below uses the variant-agnostic terms `<policy_type>`, `<rlt_module>`, `<embedding_trainer>`, and `<offline_trainer>`. Substitute according to the variant you picked:
+
+| placeholder | `pi05_rlt` value | `tinypi05_rlt` value |
+| --- | --- | --- |
+| `<rlt_module>` | `lerobot.rl.rlt_pi05` | `lerobot.rl.rlt_tinypi05` |
+| `<embedding_trainer>` | `lerobot.rl.train_pi05_rlt_embedding` | `lerobot.rl.train_tinypi05_rlt_embedding` |
+| `<offline_trainer>` | `lerobot.rl.train_pi05_rlt_head_offline` | `lerobot.rl.train_tinypi05_rlt_head_offline` |
+| default `rlt_token_dim` | `2048` (= `gemma_2b` width) | `None` (defaults to `vlm_width`, e.g. `768` for `small_500m`) |
+
+DRTC server, replay buffer, safety tripwires, and the tuning advice in sections 6-11 apply identically to both variants.
 
 ## 1. Define A Low-Variance Task
 
@@ -27,13 +47,46 @@ Notes:
 Config pointers:
 
 ```yaml
+# pi05_rlt
 policy_type: pi05_rlt
 rlt_enabled: true
 rlt_embedding_checkpoint: outputs/pi05_rlt_embedding_cube_subtasks_3/rlt_embedding_step_004200.pt
 rlt_head_checkpoint:
 ```
 
+```yaml
+# tinypi05_rlt
+policy_type: tinypi05_rlt
+rlt_enabled: true
+rlt_embedding_checkpoint: outputs/tinypi05_rlt_embedding/rlt_embedding_latest.pt
+rlt_head_checkpoint:
+```
+
 Leaving `rlt_head_checkpoint` empty lets the policy collect RLT context while passing through the frozen VLA until online training reaches `rlt_execute_after_train_steps`.
+
+### Training the RLT embedding (prerequisite for both variants)
+
+Before any DRTC collection, train the RL-token autoencoder on top of your frozen VLA checkpoint. The autoencoder learns to compress the VLA prefix embeddings into a single token; the rest of the RLT pipeline conditions on that token.
+
+```bash
+# pi05_rlt
+uv run python -m lerobot.rl.train_pi05_rlt_embedding \
+  --policy_path=outputs/pi05_subtasks_good_dataset_4/checkpoints/last/pretrained_model \
+  --dataset_repo_id=<your_repo_id> \
+  --output_dir=outputs/pi05_rlt_embedding \
+  --batch_size=8 --steps=5000
+```
+
+```bash
+# tinypi05_rlt
+uv run python -m lerobot.rl.train_tinypi05_rlt_embedding \
+  --policy_path=outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model \
+  --dataset_repo_id=<your_repo_id> \
+  --output_dir=outputs/tinypi05_rlt_embedding \
+  --batch_size=8 --steps=5000
+```
+
+`tinypi05` defaults the RL-token width to `vlm_width` (e.g. 768 for the `small_500m` preset, 640 for `gemma3_270m_emb`). Override `--rlt_token_dim=...` only if you need a wider/narrower bottleneck; the value is persisted into the checkpoint config.
 
 ## 3. Validate The RLT Token
 
@@ -105,6 +158,7 @@ export WANDB_MODE=offline
 Run offline RLT-head training:
 
 ```bash
+# pi05_rlt
 uv run python -m lerobot.rl.train_pi05_rlt_head_offline \
   --policy_path=outputs/pi05_subtasks_good_dataset_4/checkpoints/last/pretrained_model \
   --replay_buffer_path=outputs/rlt_online/rlt_online_replay.pt \
@@ -122,7 +176,26 @@ uv run python -m lerobot.rl.train_pi05_rlt_head_offline \
   --wandb_project=lerobot-rlt
 ```
 
-The script instantiates `PI05RLTPolicy` from the frozen VLA checkpoint/config for paper-aligned head construction. The hot loop updates only `rlt_actor` and `rlt_critic`; the VLA backbone stays frozen.
+```bash
+# tinypi05_rlt
+uv run python -m lerobot.rl.train_tinypi05_rlt_head_offline \
+  --policy_path=outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model \
+  --replay_buffer_path=outputs/rlt_online/rlt_online_replay.pt \
+  --output_dir=outputs/tinypi05_rlt_offline_head \
+  --rlt_embedding_checkpoint=outputs/tinypi05_rlt_embedding/rlt_embedding_latest.pt \
+  --steps=10000 \
+  --batch_size=256 \
+  --rlt_actor_hidden_dims='[512, 512, 512]' \
+  --rlt_critic_hidden_dims='[512, 512, 512]' \
+  --rlt_num_critics=4 \
+  --rlt_bc_beta=0.1 \
+  --rlt_jerk_beta=0.001 \
+  --discount=0.985 \
+  --grad_clip_norm=20.0 \
+  --wandb_project=lerobot-rlt
+```
+
+The script instantiates the matching policy class (`PI05RLTPolicy` / `TinyPI05RLTPolicy`) from the frozen VLA checkpoint/config for paper-aligned head construction. The hot loop updates only `rlt_actor` and `rlt_critic`; the VLA backbone stays frozen. The replay buffer format is shared, so a buffer collected with `tinypi05_rlt` must be replayed against the *same* embedding checkpoint that produced its `rl_token` tensors (the script reads `rl_token.shape[-1]` to size the heads, but the encoder weights still need to match).
 
 Watch these metrics:
 
@@ -275,9 +348,11 @@ rlt_online_training_enabled: false
 
 ## 12. Files To Know
 
-- `examples/experiments/configs/baseline_pi05_rlt.yaml`: main DRTC experiment config.
-- `src/lerobot/async_inference/policy_server_drtc.py`: online RLT training, replay loading/saving, safety tripwires.
+- `examples/experiments/configs/baseline_pi05_rlt.yaml`: example DRTC experiment config (clone + change `policy_type` to `tinypi05_rlt` and swap the checkpoint paths to drive the tiny variant).
+- `src/lerobot/async_inference/policy_server_drtc.py`: online RLT training, replay loading/saving, safety tripwires; routes both `pi05_rlt` and `tinypi05_rlt` through the same RLT call paths via `_is_rlt_policy()`.
 - `src/lerobot/async_inference/robot_client_drtc.py`: episode collection and transition upload.
-- `src/lerobot/rl/train_pi05_rlt_head_offline.py`: standalone offline RLT-head trainer with console and W&B metrics.
-- `src/lerobot/rl/rlt_buffer.py`: compact persisted RLT replay format.
-- `src/lerobot/rl/rlt_pi05.py`: RLT token model, actor/critic heads, losses, and checkpoint helpers.
+- `src/lerobot/rl/rlt_buffer.py`: compact persisted RLT replay format (variant-agnostic).
+- `src/lerobot/rl/rlt_pi05.py`: full PI0.5 RLT wrapper plus the reusable `RLTokenAutoencoder`, `RLTActorHead`, `RLTCriticEnsemble`, losses, and checkpoint helpers.
+- `src/lerobot/rl/rlt_tinypi05.py`: tinypi05 RLT wrapper (registered as `tinypi05_rlt`); imports the heads/losses/helpers from `rlt_pi05` and reuses them verbatim.
+- `src/lerobot/rl/train_pi05_rlt_embedding.py` / `src/lerobot/rl/train_tinypi05_rlt_embedding.py`: standalone RL-token autoencoder trainers (one per variant).
+- `src/lerobot/rl/train_pi05_rlt_head_offline.py` / `src/lerobot/rl/train_tinypi05_rlt_head_offline.py`: standalone offline RLT-head trainers with console and W&B metrics.

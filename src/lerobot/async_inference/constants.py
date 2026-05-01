@@ -35,6 +35,7 @@ SUPPORTED_POLICIES = [
     "pistar06",
     "pi05_rl",
     "pi05_rlt",
+    "tinypi05_rlt",
     "groot",
 ]
 

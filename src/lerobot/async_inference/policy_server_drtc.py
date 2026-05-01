@@ -542,7 +542,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_loaded_head_step = int(getattr(self.policy, "_rlt_loaded_head_step", 0) or 0)
         self._rlt_train_step = self._rlt_loaded_head_step
 
-        if self._rlt_online_training_enabled and self.policy_type == "pi05_rlt" and self.policy is not None:
+        if self._rlt_online_training_enabled and self._is_rlt_policy() and self.policy is not None:
             self._rlt_actor_optimizer = torch.optim.AdamW(
                 self.policy.rlt_actor.parameters(), lr=self._rlt_actor_lr
             )
@@ -561,16 +561,20 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_next_context_id += 1
         return context_id
 
+    def _is_rlt_policy(self) -> bool:
+        """Return True for any RLT-style wrapper policy (pi05 + tinypi05 variants)."""
+        return self.policy_type in ("pi05_rlt", "tinypi05_rlt")
+
     def _rlt_source_collectable(self) -> bool:
         if not self._rlt_online_collection_enabled:
             return False
-        if self.config.mock_policy or self.policy_type != "pi05_rlt":
+        if self.config.mock_policy or not self._is_rlt_policy():
             return False
         cfg = getattr(self.policy, "config", None)
         return bool(getattr(cfg, "rlt_embedding_checkpoint", None))
 
     def _rlt_should_execute_actor(self) -> bool:
-        if self.policy_type != "pi05_rlt" or self.policy is None:
+        if not self._is_rlt_policy() or self.policy is None:
             return False
         cfg = getattr(self.policy, "config", None)
         if not bool(getattr(cfg, "rlt_enabled", False)):
@@ -744,7 +748,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._maybe_persist_rlt_replay()
 
     def _start_rlt_trainer_if_needed(self) -> None:
-        if not self._rlt_online_training_enabled or self.policy_type != "pi05_rlt":
+        if not self._rlt_online_training_enabled or not self._is_rlt_policy():
             return
         if self._rlt_trainer_thread is not None and self._rlt_trainer_thread.is_alive():
             return
@@ -1101,19 +1105,18 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             # the large PI05 backbone footprint and can exhaust VRAM.
             cfg_obj.use_separate_critic = False
             self.policy = policy_class(cfg_obj)
-        elif self.policy_type == "pi05_rlt":
+        elif self._is_rlt_policy():
             from lerobot.configs.policies import PreTrainedConfig
-            from lerobot.rl.rlt_pi05 import PI05RLTConfig
 
             base_cfg = PreTrainedConfig.from_pretrained(policy_processor_path)
-            cfg_obj = PI05RLTConfig.from_base_config(
-                base_cfg,
+
+            # Common RLT keyword arguments shared by both wrappers.
+            rlt_kwargs: dict[str, Any] = dict(
                 device=self.device,
                 rlt_enabled=bool(getattr(policy_specs, "rlt_enabled", False)),
                 rlt_embedding_checkpoint=getattr(policy_specs, "rlt_embedding_checkpoint", None),
                 rlt_head_checkpoint=getattr(policy_specs, "rlt_head_checkpoint", None),
                 rlt_chunk_size=int(getattr(policy_specs, "rlt_chunk_size", 10)),
-                rlt_token_dim=int(getattr(policy_specs, "rlt_token_dim", 2048)),
                 rlt_actor_hidden_dims=getattr(policy_specs, "rlt_actor_hidden_dims", None),
                 rlt_critic_hidden_dims=getattr(policy_specs, "rlt_critic_hidden_dims", None),
                 rlt_actor_residual_scale=float(getattr(policy_specs, "rlt_actor_residual_scale", 0.25)),
@@ -1122,10 +1125,29 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 rlt_bc_action_weights=getattr(policy_specs, "rlt_bc_action_weights", None),
                 rlt_jerk_beta=float(getattr(policy_specs, "rlt_jerk_beta", 0.0)),
                 rlt_reference_dropout_p=float(getattr(policy_specs, "rlt_reference_dropout_p", 0.5)),
-                subtask_generation_enabled=False,
                 pi05_checkpoint=policy_processor_path,
                 rtc_config=None,
             )
+
+            if self.policy_type == "pi05_rlt":
+                from lerobot.rl.rlt_pi05 import PI05RLTConfig
+
+                cfg_obj = PI05RLTConfig.from_base_config(
+                    base_cfg,
+                    rlt_token_dim=int(getattr(policy_specs, "rlt_token_dim", 2048)),
+                    subtask_generation_enabled=False,
+                    **rlt_kwargs,
+                )
+            else:  # tinypi05_rlt
+                from lerobot.rl.rlt_tinypi05 import TinyPI05RLTConfig
+
+                token_dim_raw = getattr(policy_specs, "rlt_token_dim", None)
+                cfg_obj = TinyPI05RLTConfig.from_base_config(
+                    base_cfg,
+                    rlt_token_dim=int(token_dim_raw) if token_dim_raw is not None else None,
+                    **rlt_kwargs,
+                )
+
             if getattr(policy_specs, "num_flow_matching_steps", None) is not None:
                 cfg_obj.num_inference_steps = int(policy_specs.num_flow_matching_steps)
             self.policy = policy_class.from_pretrained(
@@ -1154,7 +1176,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         t_to_start = time.perf_counter()
         self.policy.to(self.device)
-        if self.policy_type in ("pi05_rlt", "tinypi05"):
+        if self.policy_type in ("pi05_rlt", "tinypi05", "tinypi05_rlt"):
             cfg_dtype = str(getattr(getattr(self.policy, "config", None), "dtype", ""))
             if cfg_dtype in {"bfloat16", "bf16"}:
                 self.policy.model.to(dtype=torch.bfloat16)
@@ -1247,6 +1269,21 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 },
                 postprocessor_overrides={"device_processor": device_override},
             )
+            if self.policy_type == "tinypi05_rlt":
+                # tinypi05_rlt uses the standard tinypi05 processor pipeline (no
+                # subtask hydration / advantage scaling). Log the RLT-specific
+                # config so the operator can confirm the head wiring.
+                self.policy = self.policy.eval()
+                self.logger.info(
+                    "tinypi05_rlt configured | rlt_enabled=%s | embedding=%s | head=%s | "
+                    "rlt_chunk_size=%s | rlt_token_dim=%s | rlt_num_critics=%s",
+                    getattr(self.policy.config, "rlt_enabled", False),
+                    getattr(self.policy.config, "rlt_embedding_checkpoint", None),
+                    getattr(self.policy.config, "rlt_head_checkpoint", None),
+                    getattr(self.policy.config, "rlt_chunk_size", None),
+                    getattr(self.policy.config, "rlt_token_dim", None),
+                    getattr(self.policy.config, "rlt_num_critics", None),
+                )
         t_pp_done = time.perf_counter()
         self.logger.info("Built pre/post processors in %.1fs", t_pp_done - t_pp_start)
 
@@ -1921,7 +1958,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     rtc_kwargs = {}
             _mark("rtc_prefix")
 
-            if self.policy_type == "pi05_rlt" and (
+            if self._is_rlt_policy() and (
                 self._rlt_online_collection_enabled or self._rlt_online_training_enabled
             ):
                 (
