@@ -15,7 +15,7 @@ Output: PNG images per (layer, query_group, key_cam) for both mean-head
 and per-head breakdowns, plus raw tensors saved as a .pt file.
 
 Usage:
-    python probe_attention_spatial_memorization.py config.json
+    python attention_spatial_memorization.py config.json
 """
 
 import logging
@@ -37,7 +37,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import (
     make_att_2d_masks,
 )
 from lerobot.types import TransitionKey
-from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
+from lerobot.probes.offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
@@ -45,7 +45,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
-from lerobot.rl.probe_utils_pi05 import (
+from lerobot.probes.utils_pi05 import (
     load_extra_dataset,
     load_policy_and_processors,
 )

@@ -36,9 +36,9 @@ Output layout (all under probe_parameters.output_dir/actions/):
   3d/{ds}/by_subtask.html             interactive by subtask
 
 Usage:
-    python probe_actions_pi05.py config-hiserl.json
-    python probe_actions_pi05.py config-hiserl.json --probe_parameters.output_dir outputs/probe
-    python probe_actions_pi05.py config-hiserl.json --probe_parameters.mode plot
+    python actions_pi05.py config-hiserl.json
+    python actions_pi05.py config-hiserl.json --probe_parameters.output_dir outputs/probe
+    python actions_pi05.py config-hiserl.json --probe_parameters.mode plot
 """
 
 import logging
@@ -54,11 +54,11 @@ import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.scripts.probe_offline_inference_pi05 import get_frame_data, run_inference
+from lerobot.probes.offline_inference_pi05 import get_frame_data, run_inference
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
-from lerobot.rl.probe_utils_pi05 import (
+from lerobot.probes.utils_pi05 import (
     DS_COLORS,
     EP_COLORS,
     SEQ_CMAPS,

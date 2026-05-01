@@ -1096,7 +1096,9 @@ def guess_feature_info(t, name: str):
 
 
 def concatenate_batch_transitions(
-    left_batch_transitions: BatchTransition, right_batch_transition: BatchTransition
+    left_batch_transitions: BatchTransition,
+    right_batch_transition: BatchTransition,
+    action_dim: int = 6,
 ) -> BatchTransition:
     """
     Concatenates two BatchTransition objects into one.
@@ -1109,6 +1111,9 @@ def concatenate_batch_transitions(
         left_batch_transitions (BatchTransition): The first batch to concatenate and the one
             that will be modified in place.
         right_batch_transition (BatchTransition): The second batch to append to the first one.
+        action_dim (int): Active (unpadded) action dimension. The left batch's action
+            tensor is sliced to this width before concatenation so it matches the right
+            batch, which is assumed to already be at action_dim.
 
     Returns:
         BatchTransition: The concatenated batch (same object as left_batch_transitions).
@@ -1125,13 +1130,8 @@ def concatenate_batch_transitions(
         for key in left_batch_transitions["state"]
     }
 
-    # Concatenate basic fields
-    # FIXME(merge): action_dim is hardcoded to 6 (SO-101 has 6 DoF). This needs
-    # to be propagated from the policy/dataset config rather than hardcoded
-    # here. Tracked in migration/upstream_merge_plan.md (Phase 5 follow-up).
-    _PLACEHOLDER_ACTION_DIM = 6
     left_batch_transitions[ACTION] = torch.cat(
-        [left_batch_transitions[ACTION][:, :, :_PLACEHOLDER_ACTION_DIM], right_batch_transition[ACTION]],
+        [left_batch_transitions[ACTION][:, :, :action_dim], right_batch_transition[ACTION]],
         dim=0,
     )
     left_batch_transitions["reward"] = torch.cat(

@@ -45,14 +45,14 @@ Call-graph of run_validation()
     ├─ policy.eval()
     ├─ _run_probe_actions()                [if enable_actions]
     │    ├─ _sample_val_episodes()
-    │    ├─ collect_eval_dataset()          [probe_actions_pi05, @no_grad]
-    │    ├─ run_plotting()                  [probe_actions_pi05]
+    │    ├─ collect_eval_dataset()          [actions_pi05, @no_grad]
+    │    ├─ run_plotting()                  [actions_pi05]
     │    └─ compute_nn_distances()         → WandB scalar + raw embeddings
     ├─ _run_probe_representations()        [if enable_representations]
     │    ├─ _sample_val_episodes()
-    │    ├─ collect_activations()           [probe_representations_pi05, @no_grad]
+    │    ├─ collect_activations()           [representations_pi05, @no_grad]
     │    ├─ collect_subtask_injection()     [optional, @no_grad]
-    │    └─ run_plotting()                  [probe_representations_pi05]
+    │    └─ run_plotting()                  [representations_pi05]
     ├─ _run_probe_attention()              [if enable_attention]
     │    ├─ _build_attn_sample_list()
     │    └─ per-episode/batch loop → MP4
@@ -142,7 +142,7 @@ from typing import Optional
 import numpy as np
 import torch
 
-from lerobot.scripts.probe_offline_inference_pi05 import (
+from lerobot.probes.offline_inference_pi05 import (
     _build_episode_index,
     get_frame_data,
     normalize_gt,
@@ -150,8 +150,8 @@ from lerobot.scripts.probe_offline_inference_pi05 import (
     run_inference,
     SO100_JOINT_NAMES,
 )
-from lerobot.rl.probe_utils_pi05 import makedirs
-from lerobot.rl.probe_representations_pi05 import _save_episode_thumbnails
+from lerobot.probes.utils_pi05 import makedirs
+from lerobot.probes.representations_pi05 import _save_episode_thumbnails
 
 log = logging.getLogger(__name__)
 
@@ -295,7 +295,7 @@ def _build_attn_sample_list(val_dataset, val_ep_indices, random_n, subsample, se
     """
     Build per-episode sample lists for the attention probe.
 
-    Similar to build_sample_list in probe_attention_pi05 but respects
+    Similar to build_sample_list in attention_pi05 but respects
     val_ep_indices and does not require an external import of that function.
 
     Returns [(ep_idx, [(fr_idx, global_idx), ...]), ...].
@@ -355,7 +355,7 @@ def init_action_manifold(val_dataset, val_ep_indices, cfg, device, output_dir):
     if val_dataset is None:
         return None
 
-    from lerobot.rl.probe_actions_pi05 import collect_gt_reference, fit_manifold
+    from lerobot.probes.actions_pi05 import collect_gt_reference, fit_manifold
 
     p = cfg.probe_parameters
     manifold_dir = os.path.join(output_dir, "validation", "manifold")
@@ -407,7 +407,7 @@ def _run_probe_actions(policy, preprocessor, postprocessor,
 
     Returns median_pred_nn / median_gt_nn ratio (float) or None on failure.
     """
-    from lerobot.rl.probe_actions_pi05 import (
+    from lerobot.probes.actions_pi05 import (
         collect_eval_dataset,
         run_plotting,
         compute_nn_distances,
@@ -475,7 +475,7 @@ def _run_probe_representations(policy, preprocessor,
     multiple denoising timesteps via forward hooks, then PCA + UMAP + plots.
     UMAP is re-fit here at every val step (intentional — tracks drift).
     """
-    from lerobot.rl.probe_representations_pi05 import (
+    from lerobot.probes.representations_pi05 import (
         collect_activations,
         collect_subtask_injection,
         run_plotting,
@@ -525,17 +525,18 @@ def _run_probe_attention(policy, preprocessor,
     """
     Run probe_attention at a single validation step.
 
-    Captures layer-0 attention weights at one or more diffusion timesteps and
-    writes MP4 videos of attention overlays and full attention matrices.
+    Captures attention weights from multiple layers at the configured timestep
+    and writes MP4 videos of attention overlays (layer 0) or standalone
+    heatmaps (deeper layers) plus full attention matrices.
 
     This function replicates the _probe_dataset inner loop from
-    probe_attention_pi05.probe_cli, filtered to val_ep_indices.
+    attention_pi05.probe_cli, filtered to val_ep_indices.
 
     The @torch.no_grad() decorator ensures all forward passes inside are safe
     even though the individual called functions also manage this.
     """
     import imageio
-    from lerobot.rl.probe_attention_pi05 import (
+    from lerobot.probes.attention_pi05 import (
         embed_probe_prefix,
         probe_forward,
         render_image_overlays,
@@ -550,7 +551,7 @@ def _run_probe_attention(policy, preprocessor,
     makedirs(output_dir)
     p = cfg.probe_parameters
     chunk_size = cfg.policy.n_action_steps
-    timesteps  = [p.timestep]
+    attn_layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
 
     samples = _build_attn_sample_list(
         val_dataset,
@@ -567,7 +568,8 @@ def _run_probe_attention(policy, preprocessor,
     batch_sz = p.validation_batch_size
 
     for ep_idx, ep_frames in samples:
-        writers: dict[float, dict] = {t_val: {} for t_val in timesteps}
+        # writers[layer_idx][video_key] = imageio writer
+        writers = {l: {} for l in attn_layers}
 
         for batch_start in range(0, len(ep_frames), batch_sz):
             batch_slice = ep_frames[batch_start : batch_start + batch_sz]
@@ -615,62 +617,67 @@ def _run_probe_attention(policy, preprocessor,
                 subtask_tokens, subtask_masks,
             )
 
-            # ── Per-timestep forward + render ────────────────────────────────
-            for t_val in timesteps:
-                attn_weights, segments, pad_masks, patches_per_cam = probe_forward(
-                    prefix_cache, t_val, device
+            # ── Forward + per-layer render ────────────────────────────────────
+            attn_by_layer, segments, pad_masks, patches_per_cam = probe_forward(
+                prefix_cache, p.timestep, device
+            )
+            if not attn_by_layer:
+                logging.warning(
+                    f"    [attn] No attention captured at t={p.timestep}; skipping."
                 )
-                if attn_weights is None:
-                    logging.warning(
-                        f"    [attn] No attention captured at t={t_val}; skipping."
-                    )
+                continue
+
+            for layer_idx in attn_layers:
+                if layer_idx not in attn_by_layer:
                     continue
 
-                t_str  = f"{t_val:.2f}".replace(".", "p")
-                ep_dir = os.path.join(output_dir, f"ep{ep_idx:04d}_t{t_str}")
+                attn_weights = attn_by_layer[layer_idx]
+                use_overlay = (layer_idx == 0)
+
+                ep_dir = os.path.join(output_dir, f"ep{ep_idx:04d}_L{layer_idx:02d}")
                 makedirs(ep_dir)
 
                 csv_path = os.path.join(ep_dir, "norm_consts.csv")
                 csv_file  = open(csv_path, "a", newline="")
                 csv_writer = csv.writer(csv_file)
                 if os.path.getsize(csv_path) == 0:
-                    csv_writer.writerow(["ep", "fr", "t_val", "panel", "vmax"])
+                    csv_writer.writerow(["ep", "fr", "layer", "panel", "vmax"])
 
                 for b_idx, (fr_idx, _) in enumerate(batch_slice):
                     a_w = attn_weights[b_idx : b_idx + 1]
                     p_m = pad_masks[b_idx : b_idx + 1]
                     i_t = [img[b_idx : b_idx + 1] for img in images]
 
-                    overlay_frames, norm_consts = render_image_overlays(
-                        a_w, segments, i_t, p_m, patches_per_cam
+                    heatmap_frames, norm_consts = render_image_overlays(
+                        a_w, segments, i_t, p_m, patches_per_cam,
+                        overlay=use_overlay,
                     )
-                    frames_out = dict(overlay_frames)
+                    frames_out = dict(heatmap_frames)
                     frames_out.update(render_full_matrix(a_w, segments, p_m))
 
                     for panel, vmax in norm_consts.items():
                         csv_writer.writerow(
-                            [ep_idx, fr_idx, t_val, panel, f"{vmax:.6e}"]
+                            [ep_idx, fr_idx, layer_idx, panel, f"{vmax:.6e}"]
                         )
 
                     for key, frame_np in frames_out.items():
-                        if key not in writers[t_val]:
+                        if key not in writers[layer_idx]:
                             mp4_path = os.path.join(ep_dir, f"{key}.mp4")
-                            writers[t_val][key] = imageio.get_writer(
+                            writers[layer_idx][key] = imageio.get_writer(
                                 mp4_path, fps=fps, macro_block_size=1
                             )
-                        writers[t_val][key].append_data(frame_np)
+                        writers[layer_idx][key].append_data(frame_np)
 
                 csv_file.close()
-                del attn_weights, segments, pad_masks, patches_per_cam
 
+            del attn_by_layer, segments, pad_masks, patches_per_cam
             del prefix_cache, b_obs_batched, task_tokens, task_masks
             del subtask_tokens, subtask_masks, images, img_masks
             torch.cuda.empty_cache()
 
-        for writers_t in writers.values():
-            for w in writers_t.values():
+        for layer_writers in writers.values():
+            for w in layer_writers.values():
                 w.close()
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Probe: offline inference (per-frame GT vs predicted action traces)
@@ -813,7 +820,7 @@ def _run_probe_spatial_memorization(
     log-sum, mean, and variance maps per (layer, query_group, key_camera).
     Renders per-head heatmap PNGs and returns raw stat tensors for .pt saving.
     """
-    from lerobot.rl.probe_attention_spatial_memorization import (
+    from lerobot.probes.attention_spatial_memorization import (
         embed_probe_prefix,
         probe_forward,
         extract_qk_attn,
@@ -967,7 +974,7 @@ def _run_probe_spatial_memorization(
         return None
 
     # Render PNGs (reuse standalone render_all but with our output_dir)
-    import lerobot.rl.probe_attention_spatial_memorization as _spatial_mod
+    import lerobot.probes.attention_spatial_memorization as _spatial_mod
     orig_output_dir = _spatial_mod.OUTPUT_DIR
     _spatial_mod.OUTPUT_DIR = output_dir
     try:
@@ -1000,7 +1007,7 @@ def _run_probe_action_drift_jacobian(
     cfg, output_dir, device,
 ):
     """Per-frame causal maps via A * |dA/d(action)|.  Outputs MP4 videos."""
-    from lerobot.rl.probe_action_drift_jacobian import run_action_drift_jacobian
+    from lerobot.probes.action_drift_jacobian import run_action_drift_jacobian
 
     return run_action_drift_jacobian(
         policy, preprocessor,
@@ -1022,11 +1029,11 @@ def _run_probe_spatial_memorization_jacobian(
     Same as _run_probe_spatial_memorization but uses A*|grad(A)| as the signal.
     One forward+backward per (layer, batch) — slower but reveals causal patterns.
     """
-    from lerobot.rl.probe_action_drift_jacobian import (
+    from lerobot.probes.action_drift_jacobian import (
         jacobian_probe_forward_multilayer,
     )
-    from lerobot.rl.probe_attention_pi05 import embed_probe_prefix
-    from lerobot.rl.probe_attention_spatial_memorization import (
+    from lerobot.probes.attention_pi05 import embed_probe_prefix
+    from lerobot.probes.attention_spatial_memorization import (
         extract_qk_attn,
         aggregate_maps,
         render_all,
@@ -1175,7 +1182,7 @@ def _run_probe_spatial_memorization_jacobian(
         logging.warning("[VAL] spatial_memorization_jacobian: no results to aggregate")
         return None
     # Render PNGs
-    import lerobot.rl.probe_attention_spatial_memorization as _spatial_mod
+    import lerobot.probes.attention_spatial_memorization as _spatial_mod
     orig_output_dir = _spatial_mod.OUTPUT_DIR
     _spatial_mod.OUTPUT_DIR = output_dir
     try:
@@ -1384,7 +1391,7 @@ def run_validation(
         gc.collect()
         torch.cuda.empty_cache()
 
-        # ── probe_action_drift_jacobian ─────────────────────────────────────
+        # ── action_drift_jacobian ────────────────────────────────────────
         if p.enable_action_drift_jacobian:
             logging.info("[VAL] Action drift jacobian analysis started")
             try:
@@ -1397,7 +1404,7 @@ def run_validation(
                 )
             except Exception as exc:
                 logging.warning(
-                    f"[VAL] probe_action_drift_jacobian failed at step {step}: {exc}",
+                    f"[VAL] action_drift_jacobian failed at step {step}: {exc}",
                     exc_info=True,
                 )
             logging.info("[VAL] Action drift jacobian analysis completed")

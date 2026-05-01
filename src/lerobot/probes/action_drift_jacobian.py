@@ -18,7 +18,7 @@ Outputs:
   Per cam: summary strip  (mean over heads, columns = query groups)
 
 Usage:
-    python probe_action_drift_jacobian.py config.json \\
+    python action_drift_jacobian.py config.json \\
         --probe_parameters.timestep 0.5
 """
 
@@ -42,7 +42,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import (
     make_att_2d_masks,
 )
 from lerobot.types import TransitionKey
-from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
+from lerobot.probes.offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
@@ -50,16 +50,16 @@ from lerobot.utils.constants import (
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
-from lerobot.rl.probe_utils_pi05 import (
+from lerobot.probes.utils_pi05 import (
     load_policy_and_processors,
 )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Reuse from probe_attention_pi05
+# Reuse from attention_pi05
 # ──────────────────────────────────────────────────────────────────────────────
 
-from lerobot.rl.probe_attention_pi05 import (
+from lerobot.probes.attention_pi05 import (
     embed_probe_prefix,
     build_sample_list,
 )
@@ -483,7 +483,7 @@ def run_action_drift_jacobian(
     Called from ``_run_probe_action_drift_jacobian`` in offline_val_pi05.py
     or from the standalone CLI below.
     """
-    from lerobot.rl.probe_utils_pi05 import makedirs
+    from lerobot.probes.utils_pi05 import makedirs
 
     makedirs(output_dir)
     p = cfg.probe_parameters

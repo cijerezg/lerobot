@@ -89,7 +89,7 @@ Set the choice via `policy.action_encoding` in the config. `anchor` and `delta` 
 We suggest to start with a round of offline training so that the policy has a decent starting point. To run it use:
 
 ```bash
-python -m lerobot.scripts.offline_learner_val_pi05 --config path/to/config.json
+python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.json
 ```
 
 Once the offline training has run for a while, update the checkpoint in the config and proceed to online training.

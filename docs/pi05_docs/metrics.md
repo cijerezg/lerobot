@@ -5,7 +5,7 @@ This repo includes a suite of probes that automatically run during offline train
 To launch training with validation probes:
 
 ```bash
-python -m lerobot.scripts.offline_learner_val_pi05 --config path/to/config.json
+python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.json
 ```
 
 Additionally, we provide a tool for visualizing the results across training steps:
@@ -54,7 +54,7 @@ If the model is consistently not paying attention to the key objects in the scen
 ### Standalone
 
 ```bash
-python -m lerobot.rl.probe_attention_pi05 --config path/to/config.json
+python -m lerobot.probes.attention_pi05 --config path/to/config.json
 ```
 
 ### Config
@@ -85,7 +85,7 @@ We do observe a degree of spatial memorization, and it is more pronounced in cer
 ### Standalone
 
 ```bash
-python -m lerobot.rl.probe_attention_spatial_memorization --config path/to/config.json
+python -m lerobot.probes.attention_spatial_memorization --config path/to/config.json
 ```
 
 ### Config
@@ -130,7 +130,7 @@ The probe also exposes a multi-layer variant (`jacobian_probe_forward_multilayer
 ### Standalone
 
 ```bash
-python -m lerobot.rl.probe_action_drift_jacobian --config path/to/config.json
+python -m lerobot.probes.action_drift_jacobian --config path/to/config.json
 ```
 
 ### Config
@@ -172,7 +172,7 @@ The probe also outputs a PCA scree plot, which is a useful sanity check on the i
 ### Standalone
 
 ```bash
-python -m lerobot.rl.probe_actions_pi05 --config path/to/config.json
+python -m lerobot.probes.actions_pi05 --config path/to/config.json
 ```
 
 ### Config
@@ -205,7 +205,7 @@ The probe optionally runs a **subtask injection** analysis: it does two forward 
 ### Standalone
 
 ```bash
-python -m lerobot.rl.probe_representations_pi05 --config path/to/config.json
+python -m lerobot.probes.representations_pi05 --config path/to/config.json
 ```
 
 ### Config
@@ -235,7 +235,7 @@ Per-frame plots show predicted vs. GT action traces for each joint, in both unno
 ### Standalone
 
 ```bash
-python -m lerobot.scripts.probe_offline_inference_pi05 --config path/to/config.json
+python -m lerobot.probes.offline_inference_pi05 --config path/to/config.json
 ```
 
 ### Config

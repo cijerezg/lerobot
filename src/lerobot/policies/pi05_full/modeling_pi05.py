@@ -37,13 +37,20 @@ from lerobot.utils.import_utils import _transformers_available
 if TYPE_CHECKING or _transformers_available:
     from transformers.models.auto import CONFIG_MAPPING
     from transformers.models.gemma import modeling_gemma
-    from transformers.models.gemma.modeling_gemma import GemmaForCausalLM
-    from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
+
+    from ..pi_gemma import (
+        PaliGemmaForConditionalGenerationWithPiGemma,
+        PiGemmaForCausalLM,
+        _gated_residual,
+        layernorm_forward,
+    )
 else:
     CONFIG_MAPPING = None
     modeling_gemma = None
-    GemmaForCausalLM = None
-    PaliGemmaForConditionalGeneration = None
+    PiGemmaForCausalLM = None
+    PaliGemmaForConditionalGenerationWithPiGemma = None
+    _gated_residual = None
+    layernorm_forward = None
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05_full.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05FullConfig
@@ -338,7 +345,7 @@ def compute_layer_complete(
             att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
         out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
         # first residual
-        out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gates[i])  # noqa: SLF001
+        out_emb = _gated_residual(hidden_states, out_emb, gates[i])
         after_first_residual = out_emb.clone()
         out_emb, gate = layer.post_attention_layernorm(out_emb, cond=adarms_cond[i])
         # Convert to bfloat16 if the next layer (mlp) uses bfloat16
@@ -346,7 +353,7 @@ def compute_layer_complete(
             out_emb = out_emb.to(dtype=torch.bfloat16)
         out_emb = layer.mlp(out_emb)
         # second residual
-        out_emb = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)  # noqa: SLF001
+        out_emb = _gated_residual(after_first_residual, out_emb, gate)
         outputs_embeds.append(out_emb)
         start_pos = end_pos
     return outputs_embeds
@@ -517,7 +524,7 @@ def compute_layer_complete_knowledge_insulation(
             att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
         out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
         # first residual
-        out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gates[i])  # noqa: SLF001
+        out_emb = _gated_residual(hidden_states, out_emb, gates[i])
         after_first_residual = out_emb.clone()
         out_emb, gate = layer.post_attention_layernorm(out_emb.clone(), cond=adarms_cond[i])
         # convert to bfloat16 if the next layer (mlp) uses bfloat16
@@ -525,7 +532,7 @@ def compute_layer_complete_knowledge_insulation(
             out_emb = out_emb.to(dtype=torch.bfloat16)
         out_emb = layer.mlp(out_emb)
         # second residual
-        out_emb = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)  # noqa: SLF001
+        out_emb = _gated_residual(after_first_residual, out_emb, gate)
         outputs_embeds.append(out_emb)
         start_pos = end_pos
     return outputs_embeds
@@ -600,7 +607,7 @@ class PaliGemmaWithExpertModel(
         vlm_config_hf.text_config.num_hidden_layers = vlm_config.depth
         vlm_config_hf.text_config.num_key_value_heads = vlm_config.num_kv_heads
         vlm_config_hf.text_config.hidden_activation = "gelu_pytorch_tanh"
-        vlm_config_hf.text_config.torch_dtype = "float32"
+        vlm_config_hf.text_config.dtype = "float32"
         vlm_config_hf.text_config.vocab_size = 257152
         vlm_config_hf.text_config.use_adarms = use_adarms[0]
         vlm_config_hf.text_config.adarms_cond_dim = vlm_config.width if use_adarms[0] else None
@@ -608,7 +615,7 @@ class PaliGemmaWithExpertModel(
         vlm_config_hf.vision_config.intermediate_size = 4304
         vlm_config_hf.vision_config.projection_dim = 2048
         vlm_config_hf.vision_config.projector_hidden_act = "gelu_fast"
-        vlm_config_hf.vision_config.torch_dtype = "float32"
+        vlm_config_hf.vision_config.dtype = "float32"
 
         action_expert_config_hf = CONFIG_MAPPING["gemma"](
             head_dim=action_expert_config.head_dim,
@@ -619,13 +626,13 @@ class PaliGemmaWithExpertModel(
             num_key_value_heads=action_expert_config.num_kv_heads,
             vocab_size=257152,
             hidden_activation="gelu_pytorch_tanh",
-            torch_dtype="float32",
+            dtype="float32",
             use_adarms=use_adarms[1],
             adarms_cond_dim=action_expert_config.width if use_adarms[1] else None,
         )
 
-        self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)
-        self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)
+        self.paligemma = PaliGemmaForConditionalGenerationWithPiGemma(config=vlm_config_hf)
+        self.gemma_expert = PiGemmaForCausalLM(config=action_expert_config_hf)
         self.gemma_expert.model.embed_tokens = None
         
         # lm_head is not used in the action_expert
@@ -659,8 +666,8 @@ class PaliGemmaWithExpertModel(
 
     def _set_requires_grad(self):
         if self.freeze_vision_encoder:
-            self.paligemma.vision_tower.eval()
-            for param in self.paligemma.vision_tower.parameters():
+            self.paligemma.model.vision_tower.eval()
+            for param in self.paligemma.model.vision_tower.parameters():
                 param.requires_grad = False
         if self.train_expert_only:
             self.paligemma.eval()
@@ -670,12 +677,13 @@ class PaliGemmaWithExpertModel(
     def train(self, mode: bool = True):
         super().train(mode)
         if self.freeze_vision_encoder:
-            self.paligemma.vision_tower.eval()
+            self.paligemma.model.vision_tower.eval()
         if self.train_expert_only:
             self.paligemma.eval()
 
     def embed_image(self, image: torch.Tensor):
-        return self.paligemma.model.get_image_features(image)
+        image_outputs = self.paligemma.model.get_image_features(image)
+        return image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.language_model.embed_tokens(tokens)
@@ -840,16 +848,16 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""
         self.gradient_checkpointing_enabled = True
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = True
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = True
+        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = True
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = True
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = True
         logging.info("Enabled gradient checkpointing for PI05Pytorch model")
 
     def gradient_checkpointing_disable(self):
         """Disable gradient checkpointing."""
         self.gradient_checkpointing_enabled = False
-        self.paligemma_with_expert.paligemma.language_model.gradient_checkpointing = False
-        self.paligemma_with_expert.paligemma.vision_tower.gradient_checkpointing = False
+        self.paligemma_with_expert.paligemma.model.language_model.gradient_checkpointing = False
+        self.paligemma_with_expert.paligemma.model.vision_tower.gradient_checkpointing = False
         self.paligemma_with_expert.gemma_expert.model.gradient_checkpointing = False
         logging.info("Disabled gradient checkpointing for PI05Pytorch model")
 
@@ -1582,6 +1590,11 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
         self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
 
+        # HF attention layers append new K/V to a Cache object even when use_cache=False,
+        # so the prefill cache would grow by suffix_len each denoise iteration. Snapshot
+        # the prefix length and crop back after the forward to keep the cache stable.
+        prefix_cache_len = past_key_values.get_seq_length()
+
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -1590,6 +1603,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=False,
             adarms_cond=[None, adarms_cond],
         )
+        past_key_values.crop(prefix_cache_len)
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
@@ -1661,17 +1675,13 @@ class PI05FullPolicy(PreTrainedPolicy):
         if embed_weight is None or embed_weight.shape != lm_head_weight.shape:
             return False
         
-        # Copy the lm_head weights to embed_tokens
-        with torch.no_grad():
-            embed_weight.copy_(lm_head_weight)
-        
-        # Call tie_weights if available to establish memory sharing
-        if hasattr(paligemma, "tie_weights"):
-            paligemma.tie_weights()
-        
-        # Verify that the weights now share the same memory
-        tied_embed = getattr(language_model.embed_tokens, "weight", None)
-        return tied_embed is not None and tied_embed.data_ptr() == lm_head_weight.data_ptr()
+        # Bind the same Parameter object so embed_tokens.weight IS lm_head.weight.
+        # tie_weights() can't re-share storage in this construction path (WithPiGemma
+        # rebuilds .model after super().__init__() ties; later dtype conversions
+        # rewrite .data on individual params). Direct assignment is what HF does
+        # internally and survives later .data mutations.
+        language_model.embed_tokens.weight = lm_head.weight
+        return language_model.embed_tokens.weight is lm_head.weight
 
     @classmethod
     def from_pretrained(
@@ -1776,7 +1786,11 @@ class PI05FullPolicy(PreTrainedPolicy):
                     print("✓ Tied language embeddings to lm_head weight")
                     missing_keys = [key for key in missing_keys if key != tie_key]
                 else:
-                    print("⚠ Warning: Failed to tie language embeddings")
+                    raise RuntimeError(
+                        "Failed to tie embed_tokens.weight to lm_head.weight. "
+                        "Training with these untied will silently drift the input/output embeddings. "
+                        "Inspect PaliGemmaForConditionalGenerationWithPiGemma construction."
+                    )
 
             # ADDED: Re-enforce strictness if requested by caller
             if strict and (missing_keys or unexpected_keys):

@@ -22,12 +22,18 @@ without spawning actors or handling online data collection. It's designed
 to create a good initialization before online RL training begins.
 
 Usage:
-    python offline_learner_pi05.py config-hiserl.json --offline-steps 10000
+    python offline_learner_val_pi05.py config-hiserl.json --offline-steps 10000
+
+Adds periodic validation (actions, representations, attention)
+on top of offline_learner_pi05.py. Config fields: val_dataset_path, val_split,
+val_freq. See offline_val_pi05.py for full documentation.
 """
 
+import gc
 import logging
 import os
 
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import time
 from pathlib import Path
@@ -83,17 +89,29 @@ from lerobot.rl.pi05_train_utils import (
     make_pi05_full_processors_with_upgrade,
     load_additional_offline_datasets,
     _update_critic,
+    _update_actor,
     log_pi05_training_metrics,
 )
 
 import wandb
 
+from lerobot.scripts.offline_val_pi05 import (
+    load_val_dataset,
+    init_action_manifold,
+    run_validation,
+)
 
 
 @dataclass
 class OfflineTrainRLServerPipelineConfig(TrainRLServerPipelineConfig):
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
+    # Validation
+    val_dataset_path: str | None = None   # path to a separate val LeRobotDataset
+    val_split: float = 0.0                # fraction of main-dataset episodes to hold out
+    val_freq: int = 1000                  # optimization steps between validation runs
+    val_on_start: bool = False            # run validation before training starts (step 0 baseline)
+    skip_critic: bool = False             # skip all critic training (forward+backward); actor advantage uses golden bypass
 
 
 @parser.wrap()
@@ -224,7 +242,9 @@ def run_offline_training(
     fps = cfg.env.fps
     log_freq = cfg.log_freq
     save_freq = getattr(cfg, "offline_save_freq", None) or cfg.save_freq
+    val_freq = getattr(cfg, "val_freq", 1000)
     policy_update_freq = cfg.policy.policy_update_freq
+    skip_critic = getattr(cfg, "skip_critic", False)
     saving_checkpoint = cfg.save_checkpoint
     async_prefetch = cfg.policy.async_prefetch
     
@@ -365,6 +385,17 @@ def run_offline_training(
 
     if is_main_process:
         logging.info(f"Offline buffer initialized with {len(offline_replay_buffer)} samples")
+
+    # ── Validation dataset + action manifold (rank-0 only) ────────────────────
+    val_dataset = None
+    val_ep_indices = None
+    manifold_cache = None
+    if is_main_process:
+        val_dataset, val_ep_indices = load_val_dataset(cfg, main_dataset=offline_dataset)
+        if val_dataset is not None:
+            manifold_cache = init_action_manifold(
+                offline_dataset, None, cfg, device, output_dir=cfg.output_dir
+            )
     
     # Get batch size (no splitting needed since offline only)
     batch_size = cfg.batch_size
@@ -394,6 +425,25 @@ def run_offline_training(
     # Helper function for bfloat16 casting
     cast_to_bf16_fn = cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None
     
+    # ── Optional step-0 baseline validation ──────────────────────────────────
+    if is_main_process and val_dataset is not None and getattr(cfg, "val_on_start", False):
+        logging.info("[OFFLINE LEARNER] Running step-0 baseline validation …")
+        run_validation(
+            policy=accelerator.unwrap_model(policy),
+            preprocessor=preprocessor,
+            postprocessor=postprocessor,
+            val_dataset=val_dataset,
+            val_ep_indices=val_ep_indices,
+            manifold_cache=manifold_cache,
+            cfg=cfg,
+            step=0,
+            output_dir=cfg.output_dir,
+            wandb_logger=wandb_logger,
+            device=device,
+        )
+        gc.collect()
+        torch.cuda.empty_cache()
+
     if is_main_process:
         logging.info("Starting offline training loop")
     optimization_step = 0
@@ -410,8 +460,33 @@ def run_offline_training(
             print(f'optimization_step: {optimization_step}')
 
         # UTD ratio - 1 updates (critic only)
-        for _ in range(utd_ratio - 1):
-            _update_critic(
+        if not skip_critic:
+            for _ in range(utd_ratio - 1):
+                _update_critic(
+                    policy=accelerator.unwrap_model(policy),
+                    optimizers=optimizers,
+                    online_iterator=offline_iterator,
+                    offline_iterator=None,
+                    device=device,
+                    cfg=cfg,
+                    dataset_repo_id=None,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
+                    clip_grad_norm_value=clip_grad_norm_value,
+                    cast_to_bf16_fn=cast_to_bf16_fn,
+                    use_amp=False,
+                    scaler=None
+                )
+
+                # Update target networks
+                if hasattr(policy, "module"):
+                    policy.module.update_target_networks()
+                else:
+                    policy.update_target_networks()
+
+
+        if skip_critic:
+            # Actor-only: skip critic forward/backward, advantage uses golden bypass
+            training_infos = _update_actor(
                 policy=accelerator.unwrap_model(policy),
                 optimizers=optimizers,
                 online_iterator=offline_iterator,
@@ -420,40 +495,36 @@ def run_offline_training(
                 cfg=cfg,
                 dataset_repo_id=None,
                 gradient_accumulation_steps=gradient_accumulation_steps,
+                policy_update_freq=policy_update_freq,
                 clip_grad_norm_value=clip_grad_norm_value,
+                dataset=offline_dataset,
                 cast_to_bf16_fn=cast_to_bf16_fn,
                 use_amp=False,
-                scaler=None
+                scaler=None,
+                preprocessor=preprocessor,
             )
-            
-            # Update target networks
-            if hasattr(policy, "module"):
-                policy.module.update_target_networks()
-            else:
-                policy.update_target_networks()
-        
-        
-        # Shared update step
-        training_infos = pi05_update_step(
-            policy=accelerator.unwrap_model(policy),
-            optimizers=optimizers,
-            online_iterator=offline_iterator,
-            offline_iterator=None,
-            batch_size=batch_size,
-            device=device,
-            cfg=cfg,
-            optimization_step=optimization_step,
-            dataset_repo_id=None,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            critic_warmup_steps=critic_warmup_steps,
-            policy_update_freq=policy_update_freq,
-            clip_grad_norm_value=clip_grad_norm_value,
-            dataset=offline_dataset,
-            cast_to_bf16_fn=cast_to_bf16_fn,
-            use_amp=False,
-            scaler=None,
-            preprocessor=preprocessor,
-        )
+        else:
+            # Full update: critic + actor
+            training_infos = pi05_update_step(
+                policy=accelerator.unwrap_model(policy),
+                optimizers=optimizers,
+                online_iterator=offline_iterator,
+                offline_iterator=None,
+                batch_size=batch_size,
+                device=device,
+                cfg=cfg,
+                optimization_step=optimization_step,
+                dataset_repo_id=None,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                critic_warmup_steps=critic_warmup_steps,
+                policy_update_freq=policy_update_freq,
+                clip_grad_norm_value=clip_grad_norm_value,
+                dataset=offline_dataset,
+                cast_to_bf16_fn=cast_to_bf16_fn,
+                use_amp=False,
+                scaler=None,
+                preprocessor=preprocessor,
+            )
         
         
         # Log training metrics
@@ -486,7 +557,41 @@ def run_offline_training(
         optimization_step += 1
         if optimization_step % log_freq == 0 and is_main_process:
             logging.info(f"[OFFLINE LEARNER] Optimization step: {optimization_step}/{offline_steps}")
-        
+
+        # Periodic validation (rank-0 only)
+        if is_main_process and val_dataset is not None and optimization_step % val_freq == 0:
+            # Offload optimizer states to CPU to free VRAM for validation
+            for _opt in optimizers.values():
+                for _state in _opt.state.values():
+                    for _k, _v in _state.items():
+                        if isinstance(_v, torch.Tensor):
+                            _state[_k] = _v.cpu()
+            gc.collect()
+            torch.cuda.empty_cache()
+
+            run_validation(
+                policy=accelerator.unwrap_model(policy),
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                val_dataset=val_dataset,
+                val_ep_indices=val_ep_indices,
+                manifold_cache=manifold_cache,
+                cfg=cfg,
+                step=optimization_step,
+                output_dir=cfg.output_dir,
+                wandb_logger=wandb_logger,
+                device=device,
+            )
+
+            # Restore optimizer states to GPU and reclaim validation VRAM
+            for _opt in optimizers.values():
+                for _state in _opt.state.values():
+                    for _k, _v in _state.items():
+                        if isinstance(_v, torch.Tensor):
+                            _state[_k] = _v.to(device)
+            gc.collect()
+            torch.cuda.empty_cache()
+
         # Save checkpoint (only on main process)
         if saving_checkpoint and (optimization_step % save_freq == 0 or optimization_step == offline_steps):
             if is_main_process:

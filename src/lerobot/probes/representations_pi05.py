@@ -27,9 +27,9 @@ Output layout (all under probe_parameters.output_dir/representations/):
   {dataset}/subtask_injection/generated_subtasks.csv  per-frame GT and model-generated subtask text
 
 Usage:
-    python probe_representations_pi05.py config-hiserl.json
-    python probe_representations_pi05.py config-hiserl.json --probe_parameters.output_dir outputs/probe
-    python probe_representations_pi05.py config-hiserl.json --probe_parameters.mode plot
+    python representations_pi05.py config-hiserl.json
+    python representations_pi05.py config-hiserl.json --probe_parameters.output_dir outputs/probe
+    python representations_pi05.py config-hiserl.json --probe_parameters.mode plot
 """
 
 import logging
@@ -48,7 +48,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.pi05_full.modeling_pi05 import pad_vector
 from lerobot.types import TransitionKey
-from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
+from lerobot.probes.offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     ACTION,
     ACTION_TOKEN_MASK,
@@ -61,7 +61,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
-from lerobot.rl.probe_utils_pi05 import (
+from lerobot.probes.utils_pi05 import (
     EP_COLORS,
     SEQ_CMAPS,
     ax_style,

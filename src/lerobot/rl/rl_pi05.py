@@ -8,6 +8,11 @@ import math
 import copy
 from transformers.models.gemma import modeling_gemma
 
+from lerobot.policies.pi_gemma import (
+    PiGemmaRMSNorm,
+    _gated_residual,
+    _get_pi_gemma_decoder_layer_base,
+)
 from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
 from lerobot.optim.optimizers import AdamWConfig, MultiAdamConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
@@ -61,6 +66,9 @@ class TrainableParamsConfig:
 class PI05RLConfig(PI05FullConfig):
     # RL parameters
     task: str = ""
+    # Active action dimension (unpadded). Used to slice replay-buffer actions
+    # back down from `max_action_dim` (e.g. 32) to the robot's true DoF.
+    action_dim: int = 6
     drop_n_last_frames: int = 2  # Drop the last n frames from the replay buffer
     critic_target_update_weight: float = 0.005
     num_critics: int = 1
@@ -145,7 +153,7 @@ class PI05RLConfig(PI05FullConfig):
         return None
 
 from transformers import CONFIG_MAPPING
-from transformers.models.gemma.modeling_gemma import GemmaDecoderLayer, GemmaRMSNorm, GemmaRotaryEmbedding
+from transformers.models.gemma.modeling_gemma import GemmaRotaryEmbedding
 from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE
 
 # Hardcoded vocabulary size matching PaliGemmaWithExpertModel in modeling_pi05.py
@@ -191,7 +199,7 @@ class Pi05TransformerCritic(nn.Module):
             num_key_value_heads=1,
             vocab_size=vocab_size,
             hidden_activation="gelu_pytorch_tanh",
-            torch_dtype=self.dtype,
+            dtype=self.dtype,
             use_adarms=False,
         )
         self.critic_gemma_config = critic_gemma_config
@@ -208,15 +216,17 @@ class Pi05TransformerCritic(nn.Module):
         
         # Rotary Embeddings
         self.rotary_emb = GemmaRotaryEmbedding(critic_gemma_config)
-        
-        # Transformer layers
+
+        # Transformer layers — PiGemma so the bare init stays compatible with the actor's
+        # adaRMS / gated-residual layers that initialize_weights_from_actor copies in.
+        pi_gemma_decoder_layer_base = _get_pi_gemma_decoder_layer_base()
         self.layers = nn.ModuleList([
-            GemmaDecoderLayer(critic_gemma_config, layer_idx=i)
+            pi_gemma_decoder_layer_base(critic_gemma_config, layer_idx=i)
             for i in range(num_layers)
         ])
-        
+
         # Final normalization
-        self.norm = GemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
+        self.norm = PiGemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
         
         # Token-wise projection to reduce dimensionality before flattening
         self.token_proj = nn.Linear(hidden_dim, 512)
@@ -325,7 +335,7 @@ class Pi05TransformerCritic(nn.Module):
             
             # First Residual (Gated)
             if gate is not None:
-                out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gate)
+                out_emb = _gated_residual(hidden_states, out_emb, gate)
             else:
                 out_emb = hidden_states + out_emb
                 
@@ -343,7 +353,7 @@ class Pi05TransformerCritic(nn.Module):
             
             # Second Residual (Gated)
             if gate is not None:
-                hidden_states = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)
+                hidden_states = _gated_residual(after_first_residual, out_emb, gate)
             else:
                 hidden_states = after_first_residual + out_emb
             
@@ -508,9 +518,10 @@ class PI05RLPytorch(PI05Pytorch):
             return self.action_out_proj(suffix_out)
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
-        
-        # Only consider first 6 vals; they are actions without padding
-        flow_loss = F.mse_loss(u_t[:, :, :6], v_t[:, :, :6], reduction="none") 
+
+        # Only consider the unpadded action_dim entries; the rest are zero-padding.
+        action_dim = self.config.action_dim
+        flow_loss = F.mse_loss(u_t[:, :, :action_dim], v_t[:, :, :action_dim], reduction="none")
 
         flow_loss_mean = flow_loss.mean()
         
@@ -525,18 +536,12 @@ class PI05RLPytorch(PI05Pytorch):
 
         # Check if we need to compute logits (if either subtask or action tokens are present)
         if subtask_tokens is not None or action_tokens is not None:
-            # Run VLM forward to get logits
-            # We use the prefix embeddings as input
-            # Ensure correct precision for mask
-            dtype = self.paligemma_with_expert.paligemma.model.dtype
-            prefix_att_4d_masks = self._prepare_attention_masks_4d(prefix_att_masks, dtype=dtype)
-            
-            outputs = self.paligemma_with_expert.paligemma.model(
-                inputs_embeds=prefix_embs,
-                attention_mask=prefix_att_4d_masks,
-                return_dict=True,
-            )
-            logits = self.paligemma_with_expert.paligemma.lm_head(outputs[0])
+            # Reuse prefix_out from the joint forward above. The prefix block of
+            # combined_att_2d_masks is exactly prefix_att_masks (top-left quadrant in
+            # lines 464-467), so prefix_out is mathematically equivalent to running the
+            # prefix alone through the language model. Mirrors pi05_full at
+            # policies/pi05_full/modeling_pi05.py:1213.
+            logits = self.paligemma_with_expert.paligemma.lm_head(prefix_out)
             # Calculate Subtask Loss
             if subtask_tokens is not None:
                 task_len = high_level_task_tokens.shape[1]

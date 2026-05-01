@@ -512,8 +512,9 @@ def env_interaction_worker_actor(
             else:
                 action = action_queue.get()
                 if action is not None:
-                    if action.shape[-1] > 6:
-                        action = action[..., :6]
+                    action_dim = cfg.policy.action_dim
+                    if action.shape[-1] > action_dim:
+                        action = action[..., :action_dim]
                     # IF recursive deltas are used, the queue ALREADY contains unnormalized absolute actions.
                     # Otherwise, we unnormalize here as usual.
                     if postprocessor is not None and getattr(cfg.policy, "action_encoding", "absolute") == "absolute":
@@ -609,7 +610,7 @@ def env_interaction_worker_actor(
 
             transition_to_send = Transition(
                 state=observation,
-                action=executed_action[:6],
+                action=executed_action[:cfg.policy.action_dim],
                 reward=reward,
                 next_state=next_observation,
                 done=done,

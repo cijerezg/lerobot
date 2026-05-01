@@ -669,9 +669,9 @@ def env_interaction_worker(
             else:
                 action = action_queue.get()
                 if action is not None:
-                    # Slice to strictly 6 DoF constraints for Pi05 execution
-                    if action.shape[-1] > 6:
-                        action = action[..., :6]
+                    action_dim = cfg.policy.action_dim
+                    if action.shape[-1] > action_dim:
+                        action = action[..., :action_dim]
                 else:
                     # Queue starvation
                     if hasattr(online_env, 'get_raw_joint_positions'):

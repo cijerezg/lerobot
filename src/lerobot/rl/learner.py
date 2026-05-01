@@ -406,7 +406,9 @@ def add_actor_information_and_train(
             if dataset_repo_id is not None:
                 batch_offline = next(offline_iterator)
                 batch = concatenate_batch_transitions(
-                    left_batch_transitions=batch, right_batch_transition=batch_offline
+                    left_batch_transitions=batch,
+                    right_batch_transition=batch_offline,
+                    action_dim=cfg.policy.action_dim,
                 )
 
             batch = move_transition_to_device(batch, device)
@@ -472,7 +474,9 @@ def add_actor_information_and_train(
         if dataset_repo_id is not None:
             batch_offline = next(offline_iterator)
             batch = concatenate_batch_transitions(
-                left_batch_transitions=batch, right_batch_transition=batch_offline
+                left_batch_transitions=batch,
+                right_batch_transition=batch_offline,
+                action_dim=cfg.policy.action_dim,
             )
 
         batch = move_transition_to_device(batch, device)

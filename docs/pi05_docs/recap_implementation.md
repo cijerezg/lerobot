@@ -218,11 +218,11 @@ The critic and actor each get their own batch sample so the critic's MSE doesn't
 
 ### Online vs offline
 
-**Offline training** (`offline_learner_pi05.py`, `offline_learner_val_pi05.py`):
+**Offline training** (`offline_learner_pi05.py`):
 - Trains on a fixed dataset with no actor in the loop.
 - Uses `accelerate` for multi-GPU distributed training.
 - All advantage values are still computed live by the critic during the actor update (the `inference_advantage` config field is *not* used as a training-time fallback — it's only for deployment).
-- `offline_learner_val_pi05.py` additionally runs validation probes at `val_freq` intervals (attention maps, VLM PCA/UMAP projections, action representation analysis).
+- Runs validation probes at `val_freq` intervals (attention maps, VLM PCA/UMAP projections, action representation analysis) when `val_dataset_path` is set.
 - Typical run: 8,000–10,000 steps to give the policy and critic a sensible initialization before going online.
 
 **Online training** (`learner_pi05.py` + `actor_pi05_async.py`):
@@ -303,8 +303,7 @@ These are the values used in the default `config-hiserl.json`. The dataclass def
 | `rl/rl_pi05.py` | `PI05RLConfig`, `Pi05TransformerCritic`, `PI05RLPolicy` — the core RL policy and critic; also handles checkpoint detection (base $\pi_{0.5}$ vs RL checkpoint) and target-network updates. |
 | `rl/pi05_train_utils.py` | `pi05_update_step`, `_update_critic`, `_update_actor`, `_compute_advantage_with_interventions` — shared training logic used by both offline and online learners. |
 | `rl/utils.py` | `preprocess_batch_for_pi05` — preprocessing entry point for the offline path; also where the placeholder `inference_advantage` is filled in (later overwritten for the actor update). |
-| `scripts/offline_learner_pi05.py` | Offline training without validation probes. |
-| `scripts/offline_learner_val_pi05.py` | Offline training with validation probes (attention maps, PCA/UMAP). |
+| `scripts/offline_learner_pi05.py` | Offline training with validation probes (attention maps, PCA/UMAP). |
 | `rl/learner_pi05.py` | Online learner (gRPC server, online + offline buffer mixing, weight pushes). |
 | `rl/actor_pi05_async.py` | Online actor (gRPC client + RTC robot control at 30 Hz + leader-arm interventions). |
 | `rl/inference_pi05_async.py` | Inference-only equivalent of the actor (no learner connection, saves an episode buffer + critic-overlay videos). |

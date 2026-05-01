@@ -109,7 +109,7 @@ def sample_episodes_evenly(dataset, n_per_episode, max_episodes, seed):
 
     Returns list of (episode_idx, frame_idx_in_episode, global_idx).
     """
-    from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index
+    from lerobot.probes.offline_inference_pi05 import _build_episode_index
 
     ep_to_indices = _build_episode_index(dataset)
     episodes = sorted(ep_to_indices.keys())

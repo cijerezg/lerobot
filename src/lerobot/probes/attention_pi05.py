@@ -3,23 +3,22 @@
 Attention probing script for PI05-Full policy.
 
 Loads a dataset, runs a single joint forward pass (no denoising loop) per sample
-at diffusion timestep t=1.0, captures attention matrices from layers 0, 9, and 17,
-and produces video outputs per (episode, layer):
+at one or more diffusion timesteps, captures the layer-0 attention matrix, and
+produces two output types per (sample, timestep):
 
-  Layer 0:
-    - overlay_<cam>_mean.mp4: camera image overlaid with mean-head heatmaps
-      for each query group (all / language / subtask / action).
-    - overlay_<cam>_heads.mp4: per-head overlays on the camera image.
-    - matrix_mean.mp4 / matrix_heads.mp4: full [seq x seq] attention matrix.
+  1. overlay_<ep>_<fr>_t<T>.mp4
+       For each camera: mean-head overlays (all / language / subtask / action queries)
+       + per-head breakdown for the "all queries" view.
 
-  Deeper layers (9, 17):
-    - heatmap_<cam>_mean.mp4: standalone heatmaps (no camera overlay) for each
-      query group, with bicubic interpolation.
-    - heatmap_<cam>_heads.mp4: per-head standalone heatmaps.
-    - matrix_mean.mp4 / matrix_heads.mp4: full [seq x seq] attention matrix.
+  2. matrix_<ep>_<fr>_t<T>.mp4
+       Full [seq × seq] attention matrix (mean across heads) with labeled sections
+       and per-head grid.
 
 Usage:
-    python probe_attention_pi05.py config.json
+    python attention_pi05.py config.json \\
+        --probe_parameters.max_episodes 5 \\
+        --probe_parameters.output_dir outputs/probe \\
+        --probe_parameters.timestep 0.5
 """
 
 import csv
@@ -29,6 +28,8 @@ import random
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+from dataclasses import dataclass
+
 import cv2
 import imageio
 import numpy as np
@@ -37,13 +38,12 @@ import torch.nn.functional as F
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.pi05_full.modeling_pi05 import (
     _PROBING_CAPTURE,
     make_att_2d_masks,
 )
 from lerobot.types import TransitionKey
-from lerobot.scripts.probe_offline_inference_pi05 import _build_episode_index, get_frame_data
+from lerobot.probes.offline_inference_pi05 import _build_episode_index, get_frame_data
 from lerobot.utils.constants import (
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
@@ -51,45 +51,61 @@ from lerobot.utils.constants import (
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
-from lerobot.rl.probe_utils_pi05 import (
+from lerobot.probes.utils_pi05 import (
     load_extra_dataset,
     load_policy_and_processors,
 )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Hardcoded settings
+# Config
 # ──────────────────────────────────────────────────────────────────────────────
 
-ATTN_LAYERS = [0, 9, 17]
-TIMESTEP = 0.5
-MAX_EPISODES = 5
-SUBSAMPLE = 2
-BATCH_SIZE = 32
-OUTPUT_DIR = os.path.join("outputs", "attention")
+@dataclass
+class ProbeAttentionConfig(TrainRLServerPipelineConfig):
+    """Extends the base training config with attention probe parameters.
+
+    All probe tunables live under cfg.probe_parameters (ProbeConfig).
+    Relevant fields for this script:
+    # ─ Attention / spatial
+      validation_batch_size, attn_eval_episodes, attn_eval_subsample,
+      max_episodes, random_seed.
+    """
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Sample selection
 # ──────────────────────────────────────────────────────────────────────────────
 
-def build_sample_list(dataset, random_n, subsample, seed=None):
+def build_sample_list(dataset, episodes_str, random_n, subsample, seed=None):
     """
     Build per-episode sample lists.
 
     Returns [(ep_idx, [(fr_idx, global_idx), ...]), ...].
-    Subsamples frames by a fixed stride and picks random episodes.
+    Unlike sample_episodes_evenly (which returns a flat list of evenly spaced frames),
+    this function subsamples by a fixed stride and optionally picks random episodes.
     """
     ep_to_indices = _build_episode_index(dataset)
+    selected_eps  = []
 
-    rng = random.Random(seed)
-    all_eps = list(ep_to_indices.keys())
-    rng.shuffle(all_eps)
-    selected_eps = all_eps[:random_n]
+    if episodes_str:
+        for ep_idx in [int(e) for e in episodes_str.split(",")]:
+            if ep_idx in ep_to_indices:
+                selected_eps.append(ep_idx)
+
+    if random_n:
+        rng      = random.Random(seed)
+        all_eps  = list(ep_to_indices.keys())
+        rng.shuffle(all_eps)
+        for ep_idx in all_eps:
+            if len(selected_eps) >= random_n:
+                break
+            if ep_idx not in selected_eps:
+                selected_eps.append(ep_idx)
 
     samples = []
     for ep_idx in selected_eps:
-        indices = ep_to_indices[ep_idx]
+        indices   = ep_to_indices[ep_idx]
         ep_frames = [
             (fr_idx, indices[fr_idx])
             for fr_idx in range(0, len(indices), subsample)
@@ -101,7 +117,7 @@ def build_sample_list(dataset, random_n, subsample, seed=None):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Probing forward — no FAST tokens, no loss, all requested layers
+# Probing forward — no FAST tokens, no loss, one timestep
 # ──────────────────────────────────────────────────────────────────────────────
 
 @torch.no_grad()
@@ -145,7 +161,7 @@ def embed_probe_prefix(policy, images, img_masks, task_tokens, task_masks,
         "w_dtype":           w_dtype,
         "bsize":             task_tokens.shape[0],
         "patches_per_cam":   patches_per_cam,
-        "segments_prefix":   segments_prefix,
+        "segments_prefix":   segments_prefix,   # without "action" segment
     }
 
 
@@ -171,6 +187,7 @@ def probe_forward(prefix_cache, time_val, device):
     patches_per_cam   = prefix_cache["patches_per_cam"]
     segments_prefix   = prefix_cache["segments_prefix"]
 
+    # ── Embed suffix (pure noise at time_val) ─────────────────────────────────
     noise = model.sample_noise(
         (bsize, model.config.chunk_size, model.config.max_action_dim), device
     )
@@ -187,6 +204,7 @@ def probe_forward(prefix_cache, time_val, device):
     if w_dtype == torch.bfloat16:
         suffix_embs = suffix_embs.to(torch.bfloat16)
 
+    # ── Combined attention mask ────────────────────────────────────────────────
     prefix_len = prefix_pad_masks.shape[1]
     suffix_len = suffix_pad_masks.shape[1]
     total_len  = prefix_len + suffix_len
@@ -196,7 +214,7 @@ def probe_forward(prefix_cache, time_val, device):
     combined = torch.zeros(bsize, total_len, total_len, dtype=torch.bool, device=device)
     combined[:, :prefix_len, :prefix_len] = prefix_att_masks
     combined[:, prefix_len:, prefix_len:] = suffix_att_2d
-    combined[:, prefix_len:, :prefix_len] = True
+    combined[:, prefix_len:, :prefix_len] = True   # suffix sees all prefix
 
     combined_pad = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
     pad_2d       = combined_pad[:, None, :] & combined_pad[:, :, None]
@@ -205,6 +223,7 @@ def probe_forward(prefix_cache, time_val, device):
     position_ids = torch.cumsum(combined_pad, dim=1) - 1
     att_2d_4d    = model._prepare_attention_masks_4d(att_2d)
 
+    # ── Enable capture (all layers) and run ────────────────────────────────────
     _PROBING_CAPTURE["enabled"]               = True
     _PROBING_CAPTURE["all_layers"]            = True
     _PROBING_CAPTURE["attn_weights_by_layer"] = {}
@@ -223,14 +242,15 @@ def probe_forward(prefix_cache, time_val, device):
 
     attn_by_layer = _PROBING_CAPTURE["attn_weights_by_layer"]
 
-    action_start = segments_prefix[-1][2]
+    # ── Append "action" segment ───────────────────────────────────────────────
+    action_start = segments_prefix[-1][2]  # end of "subtask"
     segments = segments_prefix + [("action", action_start, action_start + suffix_embs.shape[1])]
 
     return attn_by_layer, segments, combined_pad, patches_per_cam
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Attention -> spatial heatmap helpers
+# Attention → spatial heatmap helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _attn_to_heatmap(attn_heads, q_start, q_end, k_start, k_end,
@@ -238,7 +258,7 @@ def _attn_to_heatmap(attn_heads, q_start, q_end, k_start, k_end,
     """
     Average attention from query rows [q_start:q_end] to key cols [k_start:k_end],
     weighted by valid (non-padding) queries. Returns per-head heatmaps and the
-    head-mean heatmap, both upsampled to (img_h, img_w) with bicubic interpolation.
+    head-mean heatmap, both upsampled to (img_h, img_w).
 
     attn_heads : [n_heads, seq_len, seq_len]  float32
     pad_masks  : [seq_len]  bool
@@ -272,7 +292,6 @@ def _attn_to_heatmap(attn_heads, q_start, q_end, k_start, k_end,
 # ──────────────────────────────────────────────────────────────────────────────
 
 def cv2_overlay(img_np, heatmap, title, alpha=0.55, vmax=None):
-    """Blend a heatmap onto a camera image."""
     if vmax is None:
         vmax = heatmap.max().item()
     h_norm  = heatmap / (vmax + 1e-8)
@@ -290,7 +309,11 @@ def cv2_overlay(img_np, heatmap, title, alpha=0.55, vmax=None):
 
 
 def cv2_heatmap(heatmap, title, img_h, img_w, vmax=None):
-    """Render a standalone heatmap (no camera image overlay)."""
+    """Render a standalone heatmap (no camera image overlay).
+
+    Used by deeper-layer captures where blending onto the input image is
+    misleading because attention has already mixed across positions.
+    """
     if vmax is None:
         vmax = heatmap.max().item()
     h_norm = heatmap / (vmax + 1e-8)
@@ -321,8 +344,8 @@ def render_image_overlays(attn_weights, segments, image_tensors, pad_masks,
 
     Returns
     -------
-    frames_out  : dict  key -> np.ndarray  (video frames)
-    norm_consts : dict  key -> float  (raw peak attention value used as vmax per panel)
+    frames_out  : dict  key → np.ndarray  (video frames)
+    norm_consts : dict  key → float  (raw peak attention value used as vmax per panel)
     """
     frames_out  = {}
     norm_consts = {}
@@ -401,6 +424,7 @@ def render_image_overlays(attn_weights, segments, image_tensors, pad_masks,
                         row_imgs.append(np.zeros_like(img_np))
                 head_rows.append(np.hstack(row_imgs))
             frames_out[f"{prefix}_{cam_name}_{qname}_heads"] = np.vstack(head_rows)
+
 
     return frames_out, norm_consts
 
@@ -483,14 +507,17 @@ def render_full_matrix(attn_weights, segments, pad_masks):
 # ──────────────────────────────────────────────────────────────────────────────
 
 @parser.wrap()
-def probe_cli(cfg: TrainRLServerPipelineConfig):
+def probe_cli(cfg: ProbeAttentionConfig):
     init_logging()
-    device = get_safe_torch_device(try_device=cfg.policy.device)
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    p          = cfg.probe_parameters
+    device     = get_safe_torch_device(try_device=cfg.policy.device)
+    output_dir = os.path.join(p.output_dir, "attention")
+    os.makedirs(output_dir, exist_ok=True)
 
-    logging.info(f"Probing layers: {ATTN_LAYERS}")
-    logging.info(f"Timestep: {TIMESTEP}")
-    logging.info(f"Output dir: {OUTPUT_DIR}")
+    attn_layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
+    logging.info(f"Probing layers: {attn_layers}")
+    logging.info(f"Timestep: {p.timestep}")
+    logging.info(f"Output dir: {output_dir}")
 
     logging.info("Loading policy …")
     policy, preprocessor, _, dataset = load_policy_and_processors(cfg, device)
@@ -498,126 +525,146 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
 
     chunk_size = cfg.policy.n_action_steps
 
-    samples = build_sample_list(dataset, random_n=MAX_EPISODES,
-                                subsample=SUBSAMPLE, seed=42)
-    if not samples:
-        logging.warning("No samples found, exiting.")
-        return
+    def _probe_dataset(ds, ds_output_dir):
+        os.makedirs(ds_output_dir, exist_ok=True)
+        samples = build_sample_list(
+            ds,
+            episodes_str=p.attn_eval_episodes,
+            random_n=p.max_episodes,
+            subsample=p.attn_eval_subsample,
+            seed=p.random_seed,
+        )
+        if not samples:
+            logging.warning(f"  No samples found in {ds_output_dir}, skipping.")
+            return
 
+        fps      = getattr(ds, "fps", 30) / p.attn_eval_subsample
+        batch_sz = getattr(p, "validation_batch_size", 32)
 
-    fps      = getattr(dataset, "fps", 30) / SUBSAMPLE
-    batch_sz = BATCH_SIZE
+        for ep_idx, ep_frames in samples:
+            # writers[layer_idx][video_key] = imageio writer
+            writers = {l: {} for l in attn_layers}
 
-    for ep_idx, ep_frames in samples:
-        # writers[layer_idx][video_key] = imageio writer
-        writers = {l: {} for l in ATTN_LAYERS}
+            for i in range(0, len(ep_frames), batch_sz):
+                batch_slice = ep_frames[i : i + batch_sz]
 
-        for i in range(0, len(ep_frames), batch_sz):
-            batch_slice = ep_frames[i : i + batch_sz]
+                b_obs      = {}
+                b_task_str = []
+                for fr_idx, global_idx in batch_slice:
+                    obs, _, state, gt_subtask, task_str, _, _ = get_frame_data(
+                        ds, global_idx, chunk_size
+                    )
+                    b_task_str.append(task_str)
+                    for k, v in obs.items():
+                        if k not in b_obs:
+                            b_obs[k] = []
+                        b_obs[k].append(v)
 
-            b_obs      = {}
-            b_task_str = []
-            for fr_idx, global_idx in batch_slice:
-                obs, _, state, gt_subtask, task_str, _, _ = get_frame_data(
-                    dataset, global_idx, chunk_size
+                logging.debug(
+                    f"    ep={ep_idx:04d} frames "
+                    f"{batch_slice[0][0]:04d}..{batch_slice[-1][0]:04d} "
+                    f"(batch size {len(batch_slice)})"
                 )
-                b_task_str.append(task_str)
-                for k, v in obs.items():
-                    if k not in b_obs:
-                        b_obs[k] = []
-                    b_obs[k].append(v)
 
-            logging.debug(
-                f"  ep={ep_idx:04d} frames "
-                f"{batch_slice[0][0]:04d}..{batch_slice[-1][0]:04d} "
-                f"(batch size {len(batch_slice)})"
-            )
+                for k in b_obs:
+                    b_obs[k] = torch.cat(b_obs[k], dim=0).to(device)
 
-            for k in b_obs:
-                b_obs[k] = torch.cat(b_obs[k], dim=0).to(device)
+                complementary_data = {
+                    "task":      b_task_str,
+                    "subtask":   [""] * len(batch_slice),
+                    "advantage": torch.ones((len(batch_slice), 1), device=device),
+                }
+                dummy_action   = torch.zeros(len(batch_slice), 1, 6, device=device)
+                batch_for_proc = {
+                    TransitionKey.ACTION:             dummy_action,
+                    **b_obs,
+                    TransitionKey.COMPLEMENTARY_DATA: complementary_data,
+                }
+                processed = preprocessor(batch_for_proc)
 
-            complementary_data = {
-                "task":      b_task_str,
-                "subtask":   [""] * len(batch_slice),
-                "advantage": torch.ones((len(batch_slice), 1), device=device),
-            }
-            dummy_action   = torch.zeros(len(batch_slice), 1, 6, device=device)
-            batch_for_proc = {
-                TransitionKey.ACTION:             dummy_action,
-                **b_obs,
-                TransitionKey.COMPLEMENTARY_DATA: complementary_data,
-            }
-            processed = preprocessor(batch_for_proc)
+                images, img_masks = policy._preprocess_images(b_obs)
+                task_tokens = processed[OBS_LANGUAGE_TOKENS].to(device)
+                task_masks  = processed[OBS_LANGUAGE_ATTENTION_MASK].to(device)
 
-            images, img_masks = policy._preprocess_images(b_obs)
-            task_tokens = processed[OBS_LANGUAGE_TOKENS].to(device)
-            task_masks  = processed[OBS_LANGUAGE_ATTENTION_MASK].to(device)
+                subtask_tokens, subtask_masks = policy.model.generate_subtask_tokens(
+                    images, img_masks, task_tokens, task_masks
+                )
 
-            subtask_tokens, subtask_masks = policy.model.generate_subtask_tokens(
-                images, img_masks, task_tokens, task_masks
-            )
+                prefix_cache = embed_probe_prefix(
+                    policy, images, img_masks, task_tokens, task_masks,
+                    subtask_tokens, subtask_masks,
+                )
 
-            prefix_cache = embed_probe_prefix(
-                policy, images, img_masks, task_tokens, task_masks,
-                subtask_tokens, subtask_masks,
-            )
-
-            attn_by_layer, segments, pad_masks, patches_per_cam = probe_forward(
-                prefix_cache, TIMESTEP, device,
-            )
-            if not attn_by_layer:
-                logging.warning("  No attention captured — skipping.")
-                continue
-
-            for layer_idx in ATTN_LAYERS:
-                if layer_idx not in attn_by_layer:
-                    logging.warning(f"  Layer {layer_idx} not captured — skipping.")
+                attn_by_layer, segments, pad_masks, patches_per_cam = probe_forward(
+                    prefix_cache, p.timestep, device,
+                )
+                if not attn_by_layer:
+                    logging.warning("      No attention captured — skipping.")
                     continue
 
-                attn_weights = attn_by_layer[layer_idx]  # [B, heads, seq, seq]
-                use_overlay = (layer_idx == 0)
+                for layer_idx in attn_layers:
+                    if layer_idx not in attn_by_layer:
+                        logging.warning(f"      Layer {layer_idx} not captured — skipping.")
+                        continue
 
-                ep_dir = os.path.join(OUTPUT_DIR, f"ep{ep_idx:04d}_L{layer_idx:02d}")
-                os.makedirs(ep_dir, exist_ok=True)
+                    attn_weights = attn_by_layer[layer_idx]
+                    use_overlay = (layer_idx == 0)
 
-                csv_path = os.path.join(ep_dir, "norm_consts.csv")
-                csv_file = open(csv_path, "a", newline="")
-                csv_writer = csv.writer(csv_file)
-                if os.path.getsize(csv_path) == 0:
-                    csv_writer.writerow(["ep", "fr", "layer", "panel", "vmax"])
+                    ep_dir = os.path.join(ds_output_dir, f"ep{ep_idx:04d}_L{layer_idx:02d}")
+                    os.makedirs(ep_dir, exist_ok=True)
 
-                for b_idx, (fr_idx, _) in enumerate(batch_slice):
-                    a_w = attn_weights[b_idx : b_idx + 1]
-                    p_m = pad_masks   [b_idx : b_idx + 1]
-                    i_t = [img[b_idx : b_idx + 1] for img in images]
+                    csv_path = os.path.join(ep_dir, "norm_consts.csv")
+                    csv_file = open(csv_path, "a", newline="")
+                    csv_writer = csv.writer(csv_file)
+                    if os.path.getsize(csv_path) == 0:
+                        csv_writer.writerow(["ep", "fr", "layer", "panel", "vmax"])
 
-                    heatmap_frames, norm_consts = render_image_overlays(
-                        a_w, segments, i_t, p_m, patches_per_cam,
-                        overlay=use_overlay,
-                    )
-                    frames_out = dict(heatmap_frames)
-                    frames_out.update(render_full_matrix(a_w, segments, p_m))
+                    for b_idx, (fr_idx, _) in enumerate(batch_slice):
+                        a_w = attn_weights[b_idx : b_idx + 1]
+                        p_m = pad_masks   [b_idx : b_idx + 1]
+                        i_t = [img[b_idx : b_idx + 1] for img in images]
 
-                    for panel, vmax in norm_consts.items():
-                        csv_writer.writerow([
-                            ep_idx, fr_idx, layer_idx, panel, f"{vmax:.6e}",
-                        ])
+                        heatmap_frames, norm_consts = render_image_overlays(
+                            a_w, segments, i_t, p_m, patches_per_cam,
+                            overlay=use_overlay,
+                        )
+                        frames_out = dict(heatmap_frames)
+                        frames_out.update(render_full_matrix(a_w, segments, p_m))
 
-                    for k, frame_np in frames_out.items():
-                        if k not in writers[layer_idx]:
-                            path = os.path.join(ep_dir, f"{k}.mp4")
-                            writers[layer_idx][k] = imageio.get_writer(
-                                path, fps=fps, macro_block_size=1
-                            )
-                        writers[layer_idx][k].append_data(frame_np)
+                        for panel, vmax in norm_consts.items():
+                            csv_writer.writerow([
+                                ep_idx, fr_idx, layer_idx, panel, f"{vmax:.6e}",
+                            ])
 
-                csv_file.close()
+                        for k, frame_np in frames_out.items():
+                            if k not in writers[layer_idx]:
+                                path = os.path.join(ep_dir, f"{k}.mp4")
+                                writers[layer_idx][k] = imageio.get_writer(
+                                    path, fps=fps, macro_block_size=1
+                                )
+                            writers[layer_idx][k].append_data(frame_np)
 
-        for dict_l in writers.values():
-            for w in dict_l.values():
-                w.close()
+                    csv_file.close()
 
-    logging.debug(f"Done. Output saved to {OUTPUT_DIR}/")
+            for dict_l in writers.values():
+                for w in dict_l.values():
+                    w.close()
+
+    # ── Primary dataset ────────────────────────────────────────────────────────
+    primary_name = os.path.basename(os.path.normpath(cfg.dataset.root))
+    logging.info(f"Primary dataset: {cfg.dataset.root}")
+    _probe_dataset(dataset, os.path.join(output_dir, primary_name))
+
+    # ── Additional datasets ────────────────────────────────────────────────────
+    extra_paths = getattr(cfg.dataset, "additional_offline_dataset_paths", []) or []
+    for extra_root in extra_paths:
+        logging.info(f"Additional dataset: {extra_root}")
+        extra_ds = load_extra_dataset(cfg, extra_root)
+        ds_name  = os.path.basename(os.path.normpath(extra_root))
+        _probe_dataset(extra_ds, os.path.join(output_dir, ds_name))
+
+    logging.debug(f"Done. Output saved to {output_dir}/")
+
 
 
 if __name__ == "__main__":

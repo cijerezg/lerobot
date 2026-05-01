@@ -65,7 +65,7 @@ This iterates over all episodes, computes anchor (or delta) representations for 
 Offline training initializes the policy and critic from demonstrations before any robot interaction. Skipping this step makes online learning highly unstable.
 
 ```bash
-python -m lerobot.scripts.offline_learner_val_pi05 --config path/to/config.json
+python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.json
 ```
 
 This script:
@@ -75,12 +75,6 @@ This script:
 - Runs validation probes every `val_freq` steps if `val_dataset_path` is set
 - Saves checkpoints every `offline_save_freq` steps to `offline_output_dir`
 - Uses `accelerate` for multi-GPU support
-
-There is also a variant without validation probes for faster iteration:
-
-```bash
-python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.json
-```
 
 ### Phase 2: Online Training
 

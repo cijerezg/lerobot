@@ -488,9 +488,26 @@ class ActionTokenizerProcessorStep(ActionProcessorStep):
         elif self.action_tokenizer_name is not None:
             if AutoProcessor is None:
                 raise ImportError("AutoProcessor is not available")
-            self.action_tokenizer = AutoProcessor.from_pretrained(
-                self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
-            )
+            # TODO: remove once transformers fixes ProcessorMixin._load_tokenizer_from_pretrained.
+            # In transformers 5.3.0 that method appends the sub-attribute name as a subfolder for
+            # any non-primary tokenizer (here "bpe_tokenizer"), but physical-intelligence/fast
+            # ships its tokenizer files at the repo root. The miss cascades into a misleading
+            # "need sentencepiece or tiktoken" error. Force the loader to use the root.
+            from transformers import processing_utils as _pu
+            _orig_load_tokenizer = _pu.ProcessorMixin._load_tokenizer_from_pretrained
+
+            @classmethod
+            def _load_tokenizer_root(cls, sub_processor_type, pretrained_model_name_or_path, subfolder="", **kwargs):
+                auto_cls = _pu.MODALITY_TO_AUTOPROCESSOR_MAPPING["tokenizer"]
+                return auto_cls.from_pretrained(pretrained_model_name_or_path, subfolder=subfolder, **kwargs)
+
+            _pu.ProcessorMixin._load_tokenizer_from_pretrained = _load_tokenizer_root
+            try:
+                self.action_tokenizer = AutoProcessor.from_pretrained(
+                    self.action_tokenizer_name, trust_remote_code=self.trust_remote_code
+                )
+            finally:
+                _pu.ProcessorMixin._load_tokenizer_from_pretrained = _orig_load_tokenizer
         else:
             raise ValueError(
                 "Either 'action_tokenizer' or 'action_tokenizer_name' must be provided. "

@@ -40,10 +40,11 @@ def log_sampled_actions(
     snapshot: dict,
     optimization_step: int,
     wandb_logger,
+    action_dim: int = 6,
 ):
     """
     This function compares ground truth action to reconsctructed actions.
-    The policy learns the velocity field, instead of the actions. 
+    The policy learns the velocity field, instead of the actions.
     This function is helpful for tracking if the policy is going astray.
     """
     with torch.no_grad():
@@ -55,11 +56,10 @@ def log_sampled_actions(
             snapshot["task_masks"],
             None,
             None
-        )  
+        )
 
-    # Use the first chunk step, first 6 dims — the action the robot would actually execute
-    sampled = sampled[:, :, :6].float().cpu()
-    gt_6_normalized = snapshot["gt_actions_normalized"][:, :, :6]           # [B, 6] float32 CPU
+    sampled = sampled[:, :, :action_dim].float().cpu()
+    gt_6_normalized = snapshot["gt_actions_normalized"][:, :, :action_dim]
     
     dim_means = sampled.mean(dim=0).mean(dim=0).tolist()
     dim_stds  = sampled.std(dim=0).mean(dim=0).tolist()
@@ -279,18 +279,18 @@ def load_additional_offline_datasets(
 
 
 
-def _prepare_batch(online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn):
+def _prepare_batch(online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn, action_dim: int = 6):
     batch = next(online_iterator)
 
     if dataset_repo_id is not None and offline_iterator is not None:
         batch_offline = next(offline_iterator)
-        batch_offline[ACTION] = batch_offline[ACTION][..., :6] # Slice offline actions
+        batch_offline[ACTION] = batch_offline[ACTION][..., :action_dim]
         batch = concatenate_batch_transitions(
-            left_batch_transitions=batch, right_batch_transition=batch_offline
+            left_batch_transitions=batch, right_batch_transition=batch_offline, action_dim=action_dim
         )
 
     batch = move_transition_to_device(batch, device)
-    batch[ACTION] = batch[ACTION][..., :6] # Ensure 6D actions
+    batch[ACTION] = batch[ACTION][..., :action_dim]
     
     if cast_to_bf16_fn:
         batch = cast_to_bf16_fn(batch)
@@ -336,9 +336,10 @@ def _update_critic(
     for _ in range(gradient_accumulation_steps):
         # Sample Batch
         batch, actions, rewards, observations, next_observations, done = _prepare_batch(
-            online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn
+            online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn,
+            action_dim=cfg.policy.action_dim,
         )
-        
+
         # Preprocess for Critic
         
         # Note: No subtask hydration needed here — critic doesn't use subtasks.
@@ -672,7 +673,8 @@ def _update_actor(
         for accum_step in range(gradient_accumulation_steps):
             # Sample NEW batch for actor update
             batch, actions, rewards, observations, next_observations, done = _prepare_batch(
-                online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn
+                online_iterator, offline_iterator, dataset_repo_id, device, cast_to_bf16_fn,
+                action_dim=cfg.policy.action_dim,
             )
             
             # --- Step 1: Calculate Advantage (Pass 1) ---
