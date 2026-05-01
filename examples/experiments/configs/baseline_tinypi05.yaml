@@ -27,7 +27,8 @@ camera_allow_stale_frames: true
 # Policy
 policy_type: tinypi05
 # pretrained_name_or_path: outputs/train/2026-04-29/19-31-23_tinypi05_cube/checkpoints/005000/pretrained_model
-pretrained_name_or_path: outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model
+# pretrained_name_or_path: outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model
+pretrained_name_or_path: outputs/train/2026-04-30/21-38-17_tinypi05_cubepickplace_e49_finetune/checkpoints/005000/pretrained_model
 
 # DRTC parameters
 estimator: jk
