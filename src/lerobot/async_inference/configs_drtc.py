@@ -220,9 +220,14 @@ class RobotClientDrtcConfig:
         default=10,
         metadata={"help": "Number of leading action steps refined by the RLT actor head."},
     )
-    rlt_token_dim: int = field(
-        default=2048,
-        metadata={"help": "Dimensionality of the compact RLT token."},
+    rlt_token_dim: int | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "Dimensionality of the compact RLT token. If None, falls back to the "
+                "policy-type default (2048 for pi05_rlt, vlm_width for tinypi05_rlt)."
+            )
+        },
     )
     rlt_actor_hidden_dims: list[int] | None = field(
         default=None,
@@ -235,6 +240,24 @@ class RobotClientDrtcConfig:
     rlt_actor_residual_scale: float = field(
         default=0.25,
         metadata={"help": "Maximum residual action scale added by the RLT actor head."},
+    )
+    rlt_actor_mode: str = field(
+        default="gaussian",
+        metadata={
+            "help": (
+                "RLT actor parameterization. 'gaussian' (paper Eq. 4) directly "
+                "predicts mu_theta(x, ã); 'residual' adds ã + scale*tanh(MLP(...))."
+            )
+        },
+    )
+    rlt_action_std: float = field(
+        default=0.05,
+        metadata={
+            "help": (
+                "Fixed Gaussian exploration std applied during online data "
+                "collection. Set 0 to disable noise."
+            )
+        },
     )
     rlt_num_critics: int = field(
         default=1,
@@ -608,8 +631,8 @@ class RobotClientDrtcConfig:
             )
         if self.rlt_chunk_size <= 0:
             raise ValueError(f"rlt_chunk_size must be positive, got {self.rlt_chunk_size}")
-        if self.rlt_token_dim <= 0:
-            raise ValueError(f"rlt_token_dim must be positive, got {self.rlt_token_dim}")
+        if self.rlt_token_dim is not None and self.rlt_token_dim <= 0:
+            raise ValueError(f"rlt_token_dim must be positive or None, got {self.rlt_token_dim}")
         for name, dims in (
             ("rlt_actor_hidden_dims", self.rlt_actor_hidden_dims),
             ("rlt_critic_hidden_dims", self.rlt_critic_hidden_dims),
@@ -619,6 +642,14 @@ class RobotClientDrtcConfig:
         if self.rlt_actor_residual_scale <= 0:
             raise ValueError(
                 f"rlt_actor_residual_scale must be positive, got {self.rlt_actor_residual_scale}"
+            )
+        if self.rlt_actor_mode not in ("gaussian", "residual"):
+            raise ValueError(
+                f"rlt_actor_mode must be 'gaussian' or 'residual', got {self.rlt_actor_mode!r}"
+            )
+        if self.rlt_action_std < 0:
+            raise ValueError(
+                f"rlt_action_std must be non-negative, got {self.rlt_action_std}"
             )
         if self.rlt_num_critics <= 0:
             raise ValueError(f"rlt_num_critics must be positive, got {self.rlt_num_critics}")

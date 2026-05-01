@@ -408,6 +408,8 @@ class RobotClientDrtc:
             rlt_actor_hidden_dims=config.rlt_actor_hidden_dims,
             rlt_critic_hidden_dims=config.rlt_critic_hidden_dims,
             rlt_actor_residual_scale=config.rlt_actor_residual_scale,
+            rlt_actor_mode=config.rlt_actor_mode,
+            rlt_action_std=config.rlt_action_std,
             rlt_num_critics=config.rlt_num_critics,
             rlt_bc_beta=config.rlt_bc_beta,
             rlt_bc_action_weights=config.rlt_bc_action_weights,

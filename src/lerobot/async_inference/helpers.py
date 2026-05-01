@@ -460,10 +460,16 @@ class RemotePolicyConfig:
     rlt_embedding_checkpoint: str | None = None
     rlt_head_checkpoint: str | None = None
     rlt_chunk_size: int = 10
-    rlt_token_dim: int = 2048
+    # None => use the policy default (2048 for pi05_rlt; vlm_width for tinypi05_rlt).
+    rlt_token_dim: int | None = None
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
+    # Paper-aligned actor: "gaussian" => mu_theta(x, ã) directly; "residual" =>
+    # legacy ã + scale*tanh(MLP(...)) head. Default "gaussian".
+    rlt_actor_mode: str = "gaussian"
+    # Fixed exploration std for online data collection. 0 => deterministic mean.
+    rlt_action_std: float = 0.05
     rlt_num_critics: int = 1
     rlt_bc_beta: float = 1.0
     rlt_bc_action_weights: list[float] | None = None
@@ -515,10 +521,12 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_embedding_checkpoint", None)
         self.__dict__.setdefault("rlt_head_checkpoint", None)
         self.__dict__.setdefault("rlt_chunk_size", 10)
-        self.__dict__.setdefault("rlt_token_dim", 2048)
+        self.__dict__.setdefault("rlt_token_dim", None)
         self.__dict__.setdefault("rlt_actor_hidden_dims", None)
         self.__dict__.setdefault("rlt_critic_hidden_dims", None)
         self.__dict__.setdefault("rlt_actor_residual_scale", 0.25)
+        self.__dict__.setdefault("rlt_actor_mode", "gaussian")
+        self.__dict__.setdefault("rlt_action_std", 0.05)
         self.__dict__.setdefault("rlt_num_critics", 1)
         self.__dict__.setdefault("rlt_bc_beta", 1.0)
         self.__dict__.setdefault("rlt_bc_action_weights", None)

@@ -1144,9 +1144,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             if self.policy_type == "pi05_rlt":
                 from lerobot.rl.rlt_pi05 import PI05RLTConfig
 
+                pi05_token_dim = getattr(policy_specs, "rlt_token_dim", None)
                 cfg_obj = PI05RLTConfig.from_base_config(
                     base_cfg,
-                    rlt_token_dim=int(getattr(policy_specs, "rlt_token_dim", 2048)),
+                    rlt_token_dim=int(pi05_token_dim) if pi05_token_dim is not None else 2048,
                     subtask_generation_enabled=False,
                     **rlt_kwargs,
                 )
