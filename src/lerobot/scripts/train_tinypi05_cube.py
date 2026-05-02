@@ -196,6 +196,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scheduler-warmup-steps", type=int, default=1_000)
     parser.add_argument("--scheduler-decay-steps", type=int, default=30_000)
     parser.add_argument("--scheduler-decay-lr", type=float, default=2.5e-6)
+    parser.add_argument(
+        "--action-encoding",
+        choices=["absolute", "anchor", "delta"],
+        default="absolute",
+        help=(
+            "Action target representation. 'absolute' uses raw joint targets (default). "
+            "'anchor' uses d_t = a_t - s_0 (translation-invariant; recommended). "
+            "'delta' uses d_0 = a_0 - s_0 then d_t = a_t - a_{t-1} (drift-prone). "
+            "Anything other than 'absolute' requires --action-encoding-stats-path."
+        ),
+    )
+    parser.add_argument(
+        "--action-encoding-stats-path",
+        type=str,
+        default=None,
+        help=(
+            "Path to a `.pt` produced by src/lerobot/scripts/compute_delta_stats.py "
+            "(`--encoding {anchor,delta} --chunk-size 50`). Used to override the action "
+            "stats in the normalizer so it sees the encoded distribution. Required when "
+            "--action-encoding is 'anchor' or 'delta'."
+        ),
+    )
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", default="lerobot")
     parser.add_argument(
@@ -471,6 +493,8 @@ def main() -> None:
         scheduler_warmup_steps=args.scheduler_warmup_steps,
         scheduler_decay_steps=args.scheduler_decay_steps,
         scheduler_decay_lr=args.scheduler_decay_lr,
+        action_encoding=args.action_encoding,
+        action_encoding_stats_path=args.action_encoding_stats_path,
         push_to_hub=False,
         **_architecture_overrides(args),
     )

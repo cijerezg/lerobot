@@ -23,8 +23,17 @@ def compute_action_stats(root_dir: str, chunk_size: int = 50, encoding: str = "d
     meta_dir = root / "meta"
     data_dir = root / "data"
     
-    if not meta_dir.exists() or not data_dir.exists():
-        logger.error(f"Invalid dataset structure in {root_dir}")
+    missing = [str(p) for p in (meta_dir, data_dir) if not p.exists()]
+    if missing:
+        logger.error(
+            "Invalid dataset structure in %s. Missing required subdirectories: %s. "
+            "Expected a LeRobotDataset layout: <root>/meta/{info.json,episodes/...} and "
+            "<root>/data/<chunk-XXX>/*.parquet. If you haven't downloaded the dataset yet, "
+            "fetch it first (e.g. `huggingface-cli download <repo_id> --local-dir %s --repo-type dataset`).",
+            root_dir,
+            ", ".join(missing),
+            root_dir,
+        )
         return
         
     # 1. Load basic info

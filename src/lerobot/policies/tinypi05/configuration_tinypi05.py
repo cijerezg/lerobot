@@ -190,6 +190,17 @@ class TinyPI05Config(PreTrainedConfig):
     tokenizer_max_length: int = 200
     tokenizer_name: str = "google/paligemma-3b-pt-224"
 
+    # Action target representation.
+    #   "absolute": raw joint targets (default).
+    #   "anchor":   d_t = a_t - s_0          (translation-invariant, recommended).
+    #   "delta":    d_0 = a_0 - s_0, d_t = a_t - a_{t-1}  (drift-prone, use only if you know why).
+    # When set to "anchor" or "delta", `action_encoding_stats_path` MUST point at a
+    # `.pt` produced by `src/lerobot/scripts/compute_delta_stats.py` so the
+    # NormalizerProcessorStep sees the encoded-action distribution rather than the
+    # absolute one. The action stats are per-timestep ([chunk_size, action_dim]).
+    action_encoding: str = "absolute"
+    action_encoding_stats_path: str | None = None
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -257,6 +268,16 @@ class TinyPI05Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if self.action_encoding not in ("absolute", "anchor", "delta"):
+            raise ValueError(
+                f"action_encoding must be 'absolute', 'anchor', or 'delta' (got {self.action_encoding!r})"
+            )
+        if self.action_encoding != "absolute" and self.action_encoding_stats_path is None:
+            raise ValueError(
+                f"action_encoding={self.action_encoding!r} requires action_encoding_stats_path "
+                "(use src/lerobot/scripts/compute_delta_stats.py to generate one)."
+            )
 
         # When sourcing pretrained embed_tokens from an HF causal-LM, the
         # source's tokenizer is the only one whose IDs map to those rows.  If
