@@ -114,6 +114,7 @@ from lerobot.rl.pi05_train_utils import (
     load_additional_offline_datasets,
     make_pi05_full_processors_with_upgrade,
     _update_critic,
+    _update_actor,
     log_pi05_training_metrics,
 )
 
@@ -307,6 +308,7 @@ def add_actor_information_and_train(
     online_steps = cfg.policy.online_steps
     async_prefetch = cfg.policy.async_prefetch
     episode_save_freq = cfg.episode_save_freq
+    skip_critic = getattr(cfg, "skip_critic", False)
 
     # Initialize logging for multiprocessing
     if not use_threads(cfg):
@@ -536,51 +538,72 @@ def add_actor_information_and_train(
 
         time_for_one_optimization_step = time.time()
 
-        for _ in range(utd_ratio - 1):
-            _update_critic(
+        if not skip_critic:
+            for _ in range(utd_ratio - 1):
+                _update_critic(
+                    policy=policy,
+                    optimizers=optimizers,
+                    online_iterator=online_iterator,
+                    offline_iterator=offline_iterator,
+                    device=device,
+                    cfg=cfg,
+                    dataset_repo_id=None,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
+                    clip_grad_norm_value=clip_grad_norm_value,
+                    cast_to_bf16_fn=cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None,
+                    use_amp=False,
+                    scaler=None
+                )
+
+                # 2. Update Target Networks
+                policy.update_target_networks()
+
+                # ----------------------------
+
+        # Sample for the last update in the UTD ratio
+
+        if skip_critic:
+            # Actor-only: skip critic forward/backward, advantage uses golden bypass
+            training_infos = _update_actor(
                 policy=policy,
                 optimizers=optimizers,
                 online_iterator=online_iterator,
                 offline_iterator=offline_iterator,
                 device=device,
                 cfg=cfg,
-                dataset_repo_id=None,
+                dataset_repo_id=dataset_repo_id,
                 gradient_accumulation_steps=gradient_accumulation_steps,
+                policy_update_freq=policy_update_freq,
                 clip_grad_norm_value=clip_grad_norm_value,
+                dataset=offline_dataset,
                 cast_to_bf16_fn=cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None,
                 use_amp=False,
-                scaler=None
+                scaler=None,
+                preprocessor=preprocessor,
             )
-            
-            # 2. Update Target Networks
-            policy.update_target_networks()
-            
-            # ----------------------------
-
-        # Sample for the last update in the UTD ratio
-
-        # Call shared update step function
-        # This handles: data fetching, preprocessing, critic update, (optional) actor update, metrics
-        training_infos = pi05_update_step(
-            policy=policy,
-            optimizers=optimizers,
-            online_iterator=online_iterator,
-            offline_iterator=offline_iterator,
-            batch_size=batch_size,
-            device=device,
-            cfg=cfg,
-            optimization_step=optimization_step,
-            dataset_repo_id=dataset_repo_id,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            critic_warmup_steps=critic_warmup_steps,
-            policy_update_freq=policy_update_freq,
-            clip_grad_norm_value=clip_grad_norm_value,
-            dataset=offline_dataset, # For subtask metadata
-            cast_to_bf16_fn=cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None,
-            use_amp=False, # Learner typically uses raw backward or fp32
-            scaler=None,
-            preprocessor=preprocessor,
-        )
+        else:
+            # Call shared update step function
+            # This handles: data fetching, preprocessing, critic update, (optional) actor update, metrics
+            training_infos = pi05_update_step(
+                policy=policy,
+                optimizers=optimizers,
+                online_iterator=online_iterator,
+                offline_iterator=offline_iterator,
+                batch_size=batch_size,
+                device=device,
+                cfg=cfg,
+                optimization_step=optimization_step,
+                dataset_repo_id=dataset_repo_id,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                critic_warmup_steps=critic_warmup_steps,
+                policy_update_freq=policy_update_freq,
+                clip_grad_norm_value=clip_grad_norm_value,
+                dataset=offline_dataset, # For subtask metadata
+                cast_to_bf16_fn=cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None,
+                use_amp=False, # Learner typically uses raw backward or fp32
+                scaler=None,
+                preprocessor=preprocessor,
+            )
 
         # ----------------------------------------
 
