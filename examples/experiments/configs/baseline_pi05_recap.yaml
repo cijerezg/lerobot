@@ -29,11 +29,12 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: pi05_rl
-pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/001600/pretrained_model
+# pretrained_name_or_path: outputs/pi05_subtasks_good_dataset_4/checkpoints/001600/pretrained_model
+pretrained_name_or_path: /home/jack/models/jack_cube_task_step_4800
 # pi05_rl subtask-token cache refresh interval, in seconds.
 # 0.0 = regenerate every chunk; larger values reduce periodic inference spikes.
-subtask_generation_enabled: False
-subtask_regeneration_interval: 0
+subtask_generation_enabled: True
+subtask_regeneration_interval: 2
 
 # DRTC parameters
 estimator: jk
@@ -49,7 +50,7 @@ latency_beta: 0.25
 
 # Timing -- env.fps in recap-config-hilserl.json is 30.
 duration_s: 120.0
-fps: 30
+fps: 20
 
 # Flow matching / RTC -- mirrors policy.num_inference_steps and policy.rtc_config
 # from recap-config-hilserl.json, then enables Alex Soare's RTC smoothing
