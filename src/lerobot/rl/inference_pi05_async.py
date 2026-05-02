@@ -88,13 +88,16 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
         import rerun as rr
         rr.init("lerobot_inference", spawn=True)
 
-    logger.info("Instantiating policy architecture")
+    logger.info("Instantiating policy architecture (this can take ~1-2 min for pi05)")
+    _t0 = time.time()
     policy = make_policy(
         cfg=cfg.policy,
         env_cfg=cfg.env,
     )
+    logger.info(f"Policy architecture instantiated in {time.time() - _t0:.1f}s.")
 
     logger.info("Instantiating pi05 full processors + un-normalization upgrade hooks")
+    _t0 = time.time()
     preprocessor, postprocessor = make_pi05_full_processors_with_upgrade(
         cfg=cfg,
         dataset=None,
@@ -102,10 +105,14 @@ def async_inference_cli(cfg: TrainRLServerPipelineConfig):
     )
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
+    logger.info(f"Processors built in {time.time() - _t0:.1f}s.")
 
     # Ensure policy runs entirely in eval
+    logger.info(f"Moving policy to device {device}...")
+    _t0 = time.time()
     policy = policy.to(device)
     policy = policy.eval()
+    logger.info(f"Policy moved to {device} and set to eval in {time.time() - _t0:.1f}s.")
     assert isinstance(policy, nn.Module)
 
     # Validate RTC features

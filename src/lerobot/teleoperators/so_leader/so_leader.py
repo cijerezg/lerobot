@@ -15,11 +15,15 @@
 # limitations under the License.
 
 import logging
+import os
+import select
+import sys
+import termios
+import threading
 import time
+import tty
 from queue import Queue
 from threading import Lock
-
-from pynput import keyboard
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
@@ -64,6 +68,8 @@ class SOLeader(Teleoperator):
         self.listener = None
         self.event_queue = Queue()
         self.bus_lock = Lock()
+        self._terminal_listener_running = False
+        self._terminal_thread: threading.Thread | None = None
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -89,43 +95,121 @@ class SOLeader(Teleoperator):
 
             self.configure()
 
-        # Start keyboard listener
-        self.listener = keyboard.Listener(on_press=self._on_press)
-        self.listener.start()
+        # Start keyboard listener.
+        # Prefer pynput (global desktop hotkeys); fall back to a stdin/TTY
+        # cbreak listener for headless machines (e.g. SSH without X11).
+        # Force the terminal path with LEROBOT_TELEOP_TERMINAL_KEYS=1.
+        force_terminal = os.environ.get("LEROBOT_TELEOP_TERMINAL_KEYS", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        pynput_started = False
+        if not force_terminal:
+            try:
+                from pynput import keyboard
+
+                self.listener = keyboard.Listener(on_press=self._on_press)
+                self.listener.start()
+                pynput_started = True
+                logger.info("Started pynput global keyboard listener.")
+            except Exception as e:
+                logger.warning(
+                    f"pynput keyboard listener unavailable ({e.__class__.__name__}: {e}); "
+                    "falling back to terminal stdin listener."
+                )
+
+        if not pynput_started:
+            self._start_terminal_listener()
 
         logger.info(f"{self} connected.")
 
     def _on_press(self, key):
+        char = getattr(key, "char", None)
+        if char is None:
+            return
         try:
-            if hasattr(key, "char"):
-                if key.char == "5":
-                    self.is_intervening = not self.is_intervening
-                    logger.info(f"Intervention state toggled: {self.is_intervening}")
-
-                    with self.bus_lock:
-                        if self.is_intervening:
-                            # User is controlling: disable torque to allow movement
-                            self.bus.disable_torque()
-                            logger.info("Torque disabled for manual control.")
-                        else:
-                            # Leader follows follower: enable torque
-                            self.bus.enable_torque()
-                            logger.info("Torque enabled for feedback following.")
-
-                elif key.char == "1":
-                    self.is_success = True
-                    logger.info("Success triggered manually.")
-                elif key.char == "0":
-                    self.terminate_episode = True
-                    logger.info("Failure/Termination triggered manually.")
-                elif key.char == "2":
-                    self.start_episode = True
-                    logger.info("Start Episode triggered manually.")
-
-        except AttributeError:
-            pass
+            self._handle_key_char(char)
         except Exception as e:
             logger.error(f"Error in keyboard listener: {e}")
+
+    def _handle_key_char(self, char: str) -> None:
+        """Process a single character keypress from any input source (pynput or stdin)."""
+        if char == "5":
+            self.is_intervening = not self.is_intervening
+            logger.info(f"Intervention state toggled: {self.is_intervening}")
+
+            with self.bus_lock:
+                if self.is_intervening:
+                    self.bus.disable_torque()
+                    logger.info("Torque disabled for manual control.")
+                else:
+                    self.bus.enable_torque()
+                    logger.info("Torque enabled for feedback following.")
+        elif char == "1":
+            self.is_success = True
+            logger.info("Success triggered manually.")
+        elif char == "0":
+            self.terminate_episode = True
+            logger.info("Failure/Termination triggered manually.")
+        elif char == "2":
+            self.start_episode = True
+            logger.info("Start Episode triggered manually.")
+
+    def _start_terminal_listener(self) -> None:
+        """Headless fallback: read single keys from this process' controlling TTY in cbreak mode.
+
+        Works over SSH without X. The same keys as the pynput path are honored:
+        5 = toggle intervention, 1 = success, 0 = terminate/failure, 2 = start episode.
+        Press Ctrl+C to send SIGINT (forwarded normally) to shut down.
+        """
+        if not sys.stdin.isatty():
+            logger.warning(
+                "stdin is not a TTY; cannot start terminal keyboard listener. "
+                "Run this process in an interactive shell to enable manual intervention keys."
+            )
+            return
+
+        self._terminal_listener_running = True
+
+        def _loop() -> None:
+            fd = sys.stdin.fileno()
+            try:
+                old_settings = termios.tcgetattr(fd)
+            except termios.error as e:
+                logger.warning(f"Could not put TTY into cbreak mode ({e}); terminal keys disabled.")
+                return
+
+            try:
+                tty.setcbreak(fd)
+                logger.info(
+                    "Terminal keyboard listener active. Press 5=toggle intervention, "
+                    "1=success, 0=fail/terminate, 2=start episode. Ctrl+C to quit."
+                )
+                while self._terminal_listener_running:
+                    rlist, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if not rlist:
+                        continue
+                    try:
+                        ch = sys.stdin.read(1)
+                    except (OSError, ValueError):
+                        break
+                    if not ch:
+                        continue
+                    try:
+                        self._handle_key_char(ch)
+                    except Exception as e:
+                        logger.error(f"Error handling terminal key {ch!r}: {e}")
+            finally:
+                try:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except Exception:
+                    pass
+
+        self._terminal_thread = threading.Thread(
+            target=_loop, daemon=True, name="so_leader_term_keys"
+        )
+        self._terminal_thread.start()
 
     @property
     def is_calibrated(self) -> bool:
@@ -247,6 +331,12 @@ class SOLeader(Teleoperator):
         if self.listener:
             self.listener.stop()
             self.listener = None
+
+        if self._terminal_listener_running:
+            self._terminal_listener_running = False
+            if self._terminal_thread is not None:
+                self._terminal_thread.join(timeout=1.0)
+                self._terminal_thread = None
 
         with self.bus_lock:
             self.bus.disconnect()

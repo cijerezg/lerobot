@@ -673,31 +673,49 @@ class PI05RLPolicy(PI05FullPolicy):
 
         # Load pretrained weights if pi05_checkpoint is specified
         if config.pi05_checkpoint:
-            print(f"Loading pretrained Pi05 weights from {config.pi05_checkpoint}")
+            import time as _time
+            _t_total = _time.time()
+            print(f"[pi05_rl] Loading pretrained Pi05 weights from {config.pi05_checkpoint}")
             
             # Check if it's an RL checkpoint (has critic or advantage_mlp)
             # We peek at the state dict first
             from safetensors.torch import load_file
             import os
             
+            def _load_with_progress(path: str, kind: str) -> dict:
+                size_gb = os.path.getsize(path) / (1024 ** 3)
+                print(
+                    f"[pi05_rl] Reading {kind} ({size_gb:.2f} GiB) from {path} ..."
+                )
+                _t = _time.time()
+                if path.endswith(".safetensors"):
+                    sd = load_file(path)
+                else:
+                    sd = torch.load(path, map_location="cpu")
+                print(
+                    f"[pi05_rl] Read {len(sd)} tensors in {_time.time() - _t:.1f}s "
+                    f"({size_gb / max(_time.time() - _t, 1e-6):.2f} GiB/s)."
+                )
+                return sd
+
             checkpoint_path = config.pi05_checkpoint
             if os.path.isdir(checkpoint_path):
                 # Try to find model.safetensors or pytorch_model.bin
                 if os.path.exists(os.path.join(checkpoint_path, "model.safetensors")):
                     checkpoint_file = os.path.join(checkpoint_path, "model.safetensors")
-                    state_dict = load_file(checkpoint_file)
+                    state_dict = _load_with_progress(checkpoint_file, "safetensors checkpoint")
                 elif os.path.exists(os.path.join(checkpoint_path, "pytorch_model.bin")):
                     checkpoint_file = os.path.join(checkpoint_path, "pytorch_model.bin")
-                    state_dict = torch.load(checkpoint_file, map_location="cpu")
+                    state_dict = _load_with_progress(checkpoint_file, "torch checkpoint")
                 else:
                     # Fallback to vanilla loading if no weight file found directly
-                    print("No weight file found directly, falling back to vanilla loading")
+                    print("[pi05_rl] No weight file found directly, falling back to vanilla loading")
                     state_dict = None
             elif os.path.isfile(checkpoint_path):
                 if checkpoint_path.endswith(".safetensors"):
-                    state_dict = load_file(checkpoint_path)
+                    state_dict = _load_with_progress(checkpoint_path, "safetensors checkpoint")
                 else:
-                    state_dict = torch.load(checkpoint_path, map_location="cpu")
+                    state_dict = _load_with_progress(checkpoint_path, "torch checkpoint")
             else:
                 # Path looks local (contains os.sep or starts with '.') but doesn't exist — error out.
                 if os.sep in checkpoint_path or checkpoint_path.startswith("."):
@@ -717,7 +735,7 @@ class PI05RLPolicy(PI05FullPolicy):
             
             if is_rl_checkpoint:
                 # Load components separately to avoid aliasing issues (critic vs critic_ensemble)
-                print("Loading actor and critic components separately...")
+                print("[pi05_rl] Loading actor and critic components separately...")
                 
                 actor_state_dict = {}
                 critic_state_dict = {}
@@ -731,6 +749,10 @@ class PI05RLPolicy(PI05FullPolicy):
                         # Strip 'critic.' prefix for loading into self.critic
                         new_key = k[7:] # len("critic.") == 7
                         critic_state_dict[new_key] = v
+                print(
+                    f"[pi05_rl] Split state dict: {len(actor_state_dict)} actor tensors, "
+                    f"{len(critic_state_dict)} critic tensors."
+                )
                 
                 # Handle tied weights for actor
                 # Check for missing embed_tokens and populate from lm_head
@@ -748,24 +770,39 @@ class PI05RLPolicy(PI05FullPolicy):
                 actor_state_dict.update(keys_to_add)
 
                 # Load actor
+                _t = _time.time()
+                print("[pi05_rl] Loading actor state dict into model...")
                 missing_actor, unexpected_actor = self.model.load_state_dict(actor_state_dict, strict=False)
-                print(f"Actor loaded. Missing: {len(missing_actor)}, Unexpected: {len(unexpected_actor)}")
+                print(
+                    f"[pi05_rl] Actor loaded in {_time.time() - _t:.1f}s. "
+                    f"Missing: {len(missing_actor)}, Unexpected: {len(unexpected_actor)}"
+                )
                 if missing_actor:
-                    print(f"Sample missing actor: {missing_actor[:5]}")
+                    print(f"[pi05_rl] Sample missing actor: {missing_actor[:5]}")
                 
                 # Load critic
                 if hasattr(self, "critic"):
+                    _t = _time.time()
+                    print("[pi05_rl] Loading critic state dict...")
                     missing_critic, unexpected_critic = self.critic.load_state_dict(critic_state_dict, strict=False)
-                    print(f"Critic loaded. Missing: {len(missing_critic)}, Unexpected: {len(unexpected_critic)}")
+                    print(
+                        f"[pi05_rl] Critic loaded in {_time.time() - _t:.1f}s. "
+                        f"Missing: {len(missing_critic)}, Unexpected: {len(unexpected_critic)}"
+                    )
                     if missing_critic:
-                        print(f"Sample missing critic: {missing_critic[:5]}")
+                        print(f"[pi05_rl] Sample missing critic: {missing_critic[:5]}")
 
                     # Sync critic_target
-                    print("Syncing critic_target with loaded critic...")
+                    _t = _time.time()
+                    print("[pi05_rl] Syncing critic_target with loaded critic...")
                     self.critic_target.load_state_dict(self.critic.state_dict())
+                    print(f"[pi05_rl] critic_target synced in {_time.time() - _t:.1f}s.")
 
                 # NOTE: PI05 uses external preprocessors for normalization instead of internal modules.
-                print("✓ RL components loaded (Normalization is handled by external preprocessor)")
+                print(
+                    f"[pi05_rl] ✓ RL components loaded in {_time.time() - _t_total:.1f}s "
+                    "(Normalization is handled by external preprocessor)"
+                )
                     
             else:
                 # Vanilla checkpoint loading (original logic)

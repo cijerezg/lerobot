@@ -1,6 +1,6 @@
 {
     "output_dir": null,
-    "use_rerun": true,
+    "use_rerun": false,
     "job_name": "default",
     "resume": false,
     "seed": 42,
@@ -18,10 +18,7 @@
     "skip_critic": false,
     "episode_logging_freq": 4,
     "episode_save_freq": 10,
-    "video_logging_cameras": [
-        "top",
-        "wrist"
-    ],
+    "video_logging_cameras": ["top", "side"],
     "wandb": {
         "enable": true,
         "project": "so101_real-v1",
@@ -38,8 +35,8 @@
     },
     "policy": {
         "type": "pi05_rl",
-        "task": "Pick up the red truck and put it in the bowl",
-        "pi05_checkpoint": "outputs/pi05_full_offline_training_val_anchor_action_v1/checkpoints/004000/pretrained_model",
+        "task": "Pick up the orange cube and place it on the black X marker",
+        "pi05_checkpoint": "/home/jack/models/jack_cube_task_step_4800",
         "tokenizer_max_length": 64,
         "max_state_dim": 6,
         "action_dim": 6,
@@ -50,8 +47,8 @@
         "loss_weight_action_ce": 1.0,
         "loss_weight_subtask_ce": 1.0,
         "inference_advantage": 1.0,
-        "subtask_regeneration_interval": 1.5,
-        "advantage_scaling": 0.20,
+        "subtask_regeneration_interval": 0,
+        "advantage_scaling": 0.2,
         "n_obs_steps": 1,
         "reward_normalization_constant": 5.0,
         "terminal_failure_reward": -16.0,
@@ -59,7 +56,7 @@
             "enabled": true,
             "execution_horizon": 10,
             "prefix_attention_schedule": "LINEAR",
-            "max_guidance_weight": 10.0,
+            "max_guidance_weight": 5.0,
             "debug": false,
             "debug_maxlen": 100
         },
@@ -70,37 +67,25 @@
             "ACTION": "QUANTILES"
         },
         "action_encoding": "anchor",
-        "action_encoding_stats_path": "outputs/stats/action_stats_anchor_annotated_dataset-v4.pt",
+        "action_encoding_stats_path": "outputs/stats_jack/action_stats_anchor_jack_cube.pt",
         "input_features": {
-            "observation.images.wrist": {
+            "observation.images.side": {
                 "type": "VISUAL",
-                "shape": [
-                    3,
-                    224,
-                    224
-                ]
+                "shape": [3, 224, 224]
             },
             "observation.images.top": {
                 "type": "VISUAL",
-                "shape": [
-                    3,
-                    224,
-                    224
-                ]
+                "shape": [3, 224, 224]
             },
             "observation.state": {
                 "type": "STATE",
-                "shape": [
-                    6
-                ]
+                "shape": [6]
             }
         },
         "output_features": {
             "action": {
                 "type": "ACTION",
-                "shape": [
-                    6
-                ]
+                "shape": [6]
             }
         },
         "device": "cuda",
@@ -136,10 +121,7 @@
             "critic_language_from_layer": 5
         },
         "critic_network_kwargs": {
-            "hidden_dims": [
-                256,
-                256
-            ],
+            "hidden_dims": [256, 256],
             "activate_final": true
         },
         "actor_learner_config": {
@@ -188,29 +170,31 @@
         "type": "gym_manipulator",
         "robot": {
             "type": "so101_follower",
-            "port": "/dev/ttyACM0",
-            "id": "follower_arm_v2",
+            "port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00",
+            "id": "so101_follower_2026_04_26_v0",
             "cameras": {
-                "wrist": {
+                "side": {
                     "type": "opencv",
-                    "index_or_path": 0,
-                    "height": 480,
-                    "width": 640,
-                    "fps": 30
+                    "index_or_path": "/dev/video4",
+                    "height": 600,
+                    "width": 800,
+                    "fps": 30,
+                    "fourcc": "MJPG"
                 },
                 "top": {
                     "type": "opencv",
-                    "index_or_path": 2,
-                    "height": 480,
-                    "width": 640,
-                    "fps": 30
+                    "index_or_path": "/dev/video0",
+                    "height": 600,
+                    "width": 800,
+                    "fps": 30,
+                    "fourcc": "MJPG"
                 }
             }
         },
         "teleop": {
             "type": "so101_leader",
-            "port": "/dev/ttyACM1",
-            "id": "leader_arm_v2"
+            "port": "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00",
+            "id": "so101_leader_2026_04_16_v2"
         },
         "processor": {
             "control_mode": "leader",
@@ -220,26 +204,18 @@
                 "add_current_to_observation": false
             },
             "image_preprocessing": {
-                "resize_size": [
-                    224,
-                    224
-                ]
+                "resize_size": [224, 224]
             },
             "gripper": {
                 "use_gripper": true,
-                "gripper_penalty": 0.00
+                "gripper_penalty": 0.0
             },
             "reset": {
                 "fixed_reset_joint_positions": [
-                    0.54,
-                    -90.69,
-                    99.55,
-                    73.70,
-                    -50.23,
-                    42.71
+                    0.54, -90.69, 99.55, 73.7, -50.23, 42.71
                 ],
                 "reset_time_s": 10,
-                "control_time_s": 200.0,
+                "control_time_s": 120.0,
                 "terminate_on_success": true
             },
             "reward_classifier": {
@@ -250,40 +226,28 @@
             "max_gripper_pos": 30
         },
         "name": "real_robot",
-        "fps": 30,
-        "task": "Pick up the red truck and put it in the bowl",
+        "fps": 20,
+        "task": "Pick up the orange cube and place it on the black X marker",
         "features": {
-            "observation.images.wrist": {
+            "observation.images.side": {
                 "type": "VISUAL",
-                "shape": [
-                    3,
-                    128,
-                    128
-                ]
+                "shape": [3, 128, 128]
             },
             "observation.images.top": {
                 "type": "VISUAL",
-                "shape": [
-                    3,
-                    128,
-                    128
-                ]
+                "shape": [3, 128, 128]
             },
             "observation.state": {
                 "type": "STATE",
-                "shape": [
-                    6
-                ]
+                "shape": [6]
             },
             "action": {
                 "type": "ACTION",
-                "shape": [
-                    6
-                ]
+                "shape": [6]
             }
         },
         "features_map": {
-            "observation.images.wrist": "observation.images.wrist",
+            "observation.images.side": "observation.images.side",
             "observation.images.top": "observation.images.top",
             "observation.state": "observation.state",
             "action": "action"
