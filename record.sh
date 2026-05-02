@@ -77,10 +77,10 @@ PY
     --teleop.type=so101_leader \
     --teleop.port="${LEADER_PORT}" \
     --teleop.id=so101_leader_2026_04_16_v2 \
-    --dataset.repo_id="jackvial/so101_pickplace_recap_${RUN_ID}" \
+    --dataset.repo_id="jackvial/so101_pickplace_${RUN_ID}" \
     --dataset.num_episodes=20 \
     --dataset.fps=30 \
-    --dataset.episode_time_s=12 \
+    --dataset.episode_time_s=20 \
     --dataset.reset_time_s=5 \
     --dataset.video=true \
     --dataset.video_encoding_batch_size=20 \
