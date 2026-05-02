@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import builtins
+import inspect
 import logging
 import math
 from collections import deque
@@ -55,7 +56,16 @@ from lerobot.utils.constants import (
 class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
+    # "overlap_end" (async/DRTC server) and "execution_horizon" (built-in RTC
+    # processor) both name the same quantity: the index where the fresh region
+    # of the new chunk starts. Accept either so server-side and policy-side
+    # naming can diverge without silently dropping the value.
     execution_horizon: int | None
+    overlap_end: int | None
+    # Number of flow-matching denoising steps; forwarded to the async RTC
+    # processor when it accepts it so `max_guidance_weight` can default to
+    # num_flow_matching_steps (Alex Soare optimization).
+    num_flow_matching_steps: int | None
 
 
 def get_safe_dtype(target_dtype, device_type):
@@ -828,16 +838,40 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             if self._rtc_enabled():
                 inference_delay = kwargs.get("inference_delay")
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
-
-                v_t = self.rtc_processor.denoise_step(
-                    x_t=x_t,
-                    prev_chunk_left_over=prev_chunk_left_over,
-                    inference_delay=inference_delay,
-                    time=time,
-                    original_denoise_step_partial=denoise_step_partial_call,
-                    execution_horizon=execution_horizon,
+                # Accept either "overlap_end" (async/DRTC server) or
+                # "execution_horizon" (built-in RTC processor); both name the
+                # boundary where the fresh region begins. Previously the model
+                # only read "execution_horizon", so the server's "overlap_end"
+                # was silently dropped and the RTC processor fell back to
+                # chunk_size - inference_delay, blending ~47/50 tokens toward
+                # the previous chunk and locking the policy to a stale plan.
+                overlap_end = kwargs.get(
+                    "overlap_end", kwargs.get("execution_horizon")
                 )
+                num_flow_matching_steps = kwargs.get(
+                    "num_flow_matching_steps",
+                    getattr(self.config, "num_inference_steps", None),
+                )
+
+                denoise_kwargs: dict = {
+                    "x_t": x_t,
+                    "prev_chunk_left_over": prev_chunk_left_over,
+                    "inference_delay": inference_delay,
+                    "time": time,
+                    "original_denoise_step_partial": denoise_step_partial_call,
+                    "execution_horizon": overlap_end,
+                }
+                # Only forward num_flow_matching_steps to processors that
+                # accept it (AsyncRTCProcessor does, built-in RTCProcessor
+                # does not).
+                try:
+                    _sig = inspect.signature(self.rtc_processor.denoise_step)
+                    if "num_flow_matching_steps" in _sig.parameters:
+                        denoise_kwargs["num_flow_matching_steps"] = num_flow_matching_steps
+                except (TypeError, ValueError):
+                    pass
+
+                v_t = self.rtc_processor.denoise_step(**denoise_kwargs)
             else:
                 v_t = denoise_step_partial_call(x_t)
 
@@ -1226,7 +1260,12 @@ class PI05Policy(PreTrainedPolicy):
 
         return actions
 
-    def forward(self, batch: dict[str, Tensor], reduction: str = "mean") -> tuple[Tensor, dict]:
+    def forward(
+        self,
+        batch: dict[str, Tensor],
+        reduction: str = "mean",
+        timestep_loss_weights: Tensor | None = None,
+    ) -> tuple[Tensor, dict]:
         """Run the batch through the model and compute the loss for training.
 
         Args:
@@ -1234,6 +1273,10 @@ class PI05Policy(PreTrainedPolicy):
             reduction: How to reduce the loss. Options:
                 - "mean": Return scalar mean loss (default, backward compatible)
                 - "none": Return per-sample losses of shape (batch_size,) for RA-BC weighting
+            timestep_loss_weights: Optional ``(B, T)`` per-timestep weights applied
+                to the unreduced flow-matching MSE loss before the final scalar
+                reduction. ``reduction="none"`` is incompatible with weighting:
+                the RA-BC sample-weight path expects raw per-sample losses.
         """
         # Prepare inputs
         images, img_masks = self._preprocess_images(batch)
@@ -1251,6 +1294,36 @@ class PI05Policy(PreTrainedPolicy):
         loss_dict = {
             "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
         }
+
+        if timestep_loss_weights is not None:
+            if reduction == "none":
+                raise ValueError(
+                    "timestep_loss_weights cannot be combined with reduction='none'. "
+                    "RA-BC per-sample weighting and critical-section per-timestep "
+                    "weighting are mutually exclusive."
+                )
+            if timestep_loss_weights.dim() != 2:
+                raise ValueError(
+                    "timestep_loss_weights must be 2-D (B, T); "
+                    f"got shape {tuple(timestep_loss_weights.shape)}."
+                )
+            if timestep_loss_weights.shape[0] != losses.shape[0]:
+                raise ValueError(
+                    f"timestep_loss_weights batch dim {timestep_loss_weights.shape[0]} does "
+                    f"not match losses batch dim {losses.shape[0]}."
+                )
+            if timestep_loss_weights.shape[1] != losses.shape[1]:
+                raise ValueError(
+                    f"timestep_loss_weights chunk dim {timestep_loss_weights.shape[1]} does "
+                    f"not match losses chunk dim {losses.shape[1]}."
+                )
+            weights = timestep_loss_weights.to(dtype=losses.dtype, device=losses.device)
+            # Broadcast (B, T) -> (B, T, action_dim) and reduce: weighted mean
+            weights_expanded = weights.unsqueeze(-1).expand_as(losses)
+            denom = weights_expanded.sum().clamp_min(1e-8)
+            loss = (losses * weights_expanded).sum() / denom
+            loss_dict["loss"] = loss.item()
+            return loss, loss_dict
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims

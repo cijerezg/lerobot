@@ -37,6 +37,7 @@ from __future__ import annotations
 import builtins
 import copy
 import csv
+import inspect
 import logging
 import math
 import resource
@@ -479,7 +480,16 @@ class ActionExpertDirect(nn.Module):
 class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
+    # "overlap_end" (async/DRTC server) and "execution_horizon" (built-in RTC
+    # processor) both name the same quantity: the index where the fresh region
+    # of the new chunk starts. Accept either so server-side and policy-side
+    # naming can diverge without silently dropping the value.
     execution_horizon: int | None
+    overlap_end: int | None
+    # Number of flow-matching denoising steps; forwarded to the async RTC
+    # processor when it accepts it so `max_guidance_weight` can default to
+    # num_flow_matching_steps (Alex Soare optimization).
+    num_flow_matching_steps: int | None
 
 
 def get_safe_dtype(target_dtype, device_type):
@@ -1306,16 +1316,40 @@ class PiStar06Pytorch(nn.Module):
             if self._rtc_enabled():
                 inference_delay = kwargs.get("inference_delay")
                 prev_chunk_left_over = kwargs.get("prev_chunk_left_over")
-                execution_horizon = kwargs.get("execution_horizon")
-
-                v_t = self.rtc_processor.denoise_step(
-                    x_t=x_t,
-                    prev_chunk_left_over=prev_chunk_left_over,
-                    inference_delay=inference_delay,
-                    time=time,
-                    original_denoise_step_partial=denoise_step_partial_call,
-                    execution_horizon=execution_horizon,
+                # Accept either "overlap_end" (async/DRTC server) or
+                # "execution_horizon" (built-in RTC processor); both name the
+                # boundary where the fresh region begins. Previously the model
+                # only read "execution_horizon", so the server's "overlap_end"
+                # was silently dropped and the RTC processor fell back to
+                # chunk_size - inference_delay, blending ~47/50 tokens toward
+                # the previous chunk and locking the policy to a stale plan.
+                overlap_end = kwargs.get(
+                    "overlap_end", kwargs.get("execution_horizon")
                 )
+                num_flow_matching_steps = kwargs.get(
+                    "num_flow_matching_steps",
+                    getattr(self.config, "num_inference_steps", None),
+                )
+
+                denoise_kwargs: dict = {
+                    "x_t": x_t,
+                    "prev_chunk_left_over": prev_chunk_left_over,
+                    "inference_delay": inference_delay,
+                    "time": time,
+                    "original_denoise_step_partial": denoise_step_partial_call,
+                    "execution_horizon": overlap_end,
+                }
+                # Only forward num_flow_matching_steps to processors that
+                # accept it (AsyncRTCProcessor does, built-in RTCProcessor
+                # does not).
+                try:
+                    _sig = inspect.signature(self.rtc_processor.denoise_step)
+                    if "num_flow_matching_steps" in _sig.parameters:
+                        denoise_kwargs["num_flow_matching_steps"] = num_flow_matching_steps
+                except (TypeError, ValueError):
+                    pass
+
+                v_t = self.rtc_processor.denoise_step(**denoise_kwargs)
             else:
                 v_t = denoise_step_partial_call(x_t)
 

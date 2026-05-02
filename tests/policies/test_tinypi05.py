@@ -38,6 +38,7 @@ def _debug_config() -> TinyPI05Config:
         dtype="float32",
         gradient_checkpointing=False,
         push_to_hub=False,
+        pretrained_vision_model=None,
     )
     config.input_features = {
         "observation.images.top": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 32, 32)),
@@ -80,6 +81,51 @@ def test_tinypi05_forward_and_predict_shapes():
 
     actions = policy.predict_action_chunk(batch)
     assert actions.shape == (1, config.chunk_size, 6)
+
+
+def test_tinypi05_forward_with_timestep_loss_weights_changes_loss():
+    """Verifies the (B, T) weight broadcast actually re-weights the reduction.
+
+    We freeze RNG so flow-matching noise is deterministic across the two
+    forwards, then compare the mean loss to a weighted loss whose weights are
+    purposely heavier on a single timestep. The two values must differ.
+    """
+    config = _debug_config()
+    policy = TinyPI05Policy(config)
+    batch = _batch(config, device=config.device)
+    # Use non-trivial actions so the per-step losses aren't constant.
+    batch[ACTION] = torch.randn(1, config.chunk_size, 6, device=config.device)
+
+    torch.manual_seed(0)
+    plain_loss, _ = policy.forward(batch)
+
+    weights = torch.ones(1, config.chunk_size, device=config.device)
+    weights[0, 0] = 10.0
+    torch.manual_seed(0)
+    weighted_loss, weighted_dict = policy.forward(batch, timestep_loss_weights=weights)
+
+    assert weighted_loss.ndim == 0
+    assert weighted_loss.item() != pytest.approx(plain_loss.item())
+    assert "loss" in weighted_dict
+
+
+def test_tinypi05_forward_rejects_bad_weight_shape():
+    config = _debug_config()
+    policy = TinyPI05Policy(config)
+    batch = _batch(config, device=config.device)
+
+    with pytest.raises(ValueError, match="must be 2-D"):
+        policy.forward(batch, timestep_loss_weights=torch.ones(config.chunk_size))
+
+    with pytest.raises(ValueError, match="chunk dim"):
+        policy.forward(batch, timestep_loss_weights=torch.ones(1, config.chunk_size + 1))
+
+    with pytest.raises(ValueError, match="reduction='none'"):
+        policy.forward(
+            batch,
+            reduction="none",
+            timestep_loss_weights=torch.ones(1, config.chunk_size),
+        )
 
 
 def test_tinypi05_processors(monkeypatch):

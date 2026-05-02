@@ -199,6 +199,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", default="lerobot")
     parser.add_argument(
+        "--use-critical-section-weights",
+        action="store_true",
+        help=(
+            "Apply per-timestep loss weights from a `meta/critical_sections.json` "
+            "annotation file. Annotated timesteps (in episode-relative seconds) get "
+            "an elevated MSE weight; everything else stays at 1.0."
+        ),
+    )
+    parser.add_argument(
+        "--critical-sections-path",
+        type=str,
+        default=None,
+        help=(
+            "Override the path to `critical_sections.json`. When omitted, defaults "
+            "to `<dataset-root>/meta/critical_sections.json`."
+        ),
+    )
+    parser.add_argument(
+        "--critical-section-default-weight",
+        type=float,
+        default=5.0,
+        help="Default weight applied to timesteps inside an annotated section without an explicit weight.",
+    )
+    parser.add_argument(
+        "--only-critical-annotated-episodes",
+        action="store_true",
+        help=(
+            "Restrict the dataloader sampler to only episodes that have at least one "
+            "critical section. Requires --use-critical-section-weights and a valid "
+            "annotations file."
+        ),
+    )
+    parser.add_argument(
         "--resume-from",
         type=Path,
         default=None,
@@ -370,6 +403,10 @@ def _finetune_training(args: argparse.Namespace) -> None:
         log_freq=args.log_freq,
         save_freq=args.save_freq,
         wandb=WandBConfig(enable=args.wandb, project=args.wandb_project),
+        use_critical_section_weights=args.use_critical_section_weights,
+        critical_sections_path=args.critical_sections_path,
+        critical_section_default_weight=args.critical_section_default_weight,
+        only_critical_annotated_episodes=args.only_critical_annotated_episodes,
     )
     with _strict_pi05_state_dict_load():
         train(cfg)
@@ -455,6 +492,10 @@ def main() -> None:
         log_freq=args.log_freq,
         save_freq=args.save_freq,
         wandb=WandBConfig(enable=args.wandb, project=args.wandb_project),
+        use_critical_section_weights=args.use_critical_section_weights,
+        critical_sections_path=args.critical_sections_path,
+        critical_section_default_weight=args.critical_section_default_weight,
+        only_critical_annotated_episodes=args.only_critical_annotated_episodes,
     )
     train(cfg)
 

@@ -64,6 +64,7 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     rabc_weights_provider=None,
+    critical_timestep_weights: torch.Tensor | None = None,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -96,6 +97,24 @@ def update_policy(
     if rabc_weights_provider is not None:
         rabc_batch_weights, rabc_batch_stats = rabc_weights_provider.compute_batch_weights(batch)
 
+    # Compute per-timestep critical-section weight stats. The (B, T) tensor itself
+    # was computed before the preprocessor (which drops `timestamp`); we just
+    # forward it into `policy.forward` and snapshot summary stats for logging.
+    critical_weight_stats = None
+    if critical_timestep_weights is not None:
+        critical_timestep_weights = critical_timestep_weights.to(
+            device=next(policy.parameters()).device
+        )
+        weighted_mask = critical_timestep_weights > 1.0
+        num_weighted = int(weighted_mask.sum().item())
+        num_total = int(critical_timestep_weights.numel())
+        critical_weight_stats = {
+            "critical_mean_weight": float(critical_timestep_weights.mean().item()),
+            "critical_max_weight": float(critical_timestep_weights.max().item()),
+            "critical_fraction_weighted": float(num_weighted) / float(max(num_total, 1)),
+            "critical_num_weighted_timesteps": num_weighted,
+        }
+
     # Let accelerator handle mixed precision
     with accelerator.autocast():
         # Use per-sample loss when RA-BC is enabled for proper weighting
@@ -111,6 +130,11 @@ def update_policy(
             output_dict["rabc_mean_weight"] = rabc_batch_stats["raw_mean_weight"]
             output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
             output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
+        elif critical_timestep_weights is not None:
+            loss, output_dict = policy.forward(
+                batch, timestep_loss_weights=critical_timestep_weights
+            )
+            output_dict.update(critical_weight_stats)
         else:
             loss, output_dict = policy.forward(batch)
 
@@ -288,6 +312,55 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
+    # Load critical-section annotations for per-timestep loss weighting if enabled.
+    critical_sections_provider = None
+    critical_sections_chunk_size = None
+    critical_sections_fps = None
+    if cfg.use_critical_section_weights or cfg.only_critical_annotated_episodes:
+        from lerobot.utils.critical_sections import CriticalSectionsProvider
+
+        critical_sections_path = cfg.critical_sections_path
+        if critical_sections_path is None:
+            if cfg.dataset.root is None:
+                raise ValueError(
+                    "Critical-section weighting / filtering requires either "
+                    "`--critical-sections-path` or a local `dataset.root` so we can "
+                    "fall back to `<dataset.root>/meta/critical_sections.json`."
+                )
+            from pathlib import Path as _Path
+            critical_sections_path = str(
+                _Path(cfg.dataset.root) / "meta" / "critical_sections.json"
+            )
+
+        if is_main_process:
+            logging.info(
+                "Loading critical-section annotations from %s (default_weight=%s)",
+                critical_sections_path,
+                cfg.critical_section_default_weight,
+            )
+        critical_sections_provider = CriticalSectionsProvider.from_path(
+            critical_sections_path,
+            default_weight=cfg.critical_section_default_weight,
+        )
+        annotated_eps = critical_sections_provider.annotated_episode_indices()
+        if cfg.only_critical_annotated_episodes and len(annotated_eps) == 0:
+            raise ValueError(
+                f"`--only-critical-annotated-episodes` is set but no episodes in "
+                f"{critical_sections_path} have any annotated sections."
+            )
+        if is_main_process:
+            logging.info(
+                "Critical sections: %d annotated episode(s) (of %d)",
+                len(annotated_eps),
+                dataset.num_episodes,
+            )
+        critical_sections_chunk_size = getattr(policy.config, "chunk_size", None)
+        if critical_sections_chunk_size is None:
+            raise ValueError(
+                "Critical-section weighting requires `policy.config.chunk_size`."
+            )
+        critical_sections_fps = float(dataset.fps)
+
     # Load precomputed SARM progress for RA-BC if enabled
     # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py
     rabc_weights = None
@@ -337,6 +410,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
     # create dataloader for offline training
+    annotated_episode_filter: list[int] | None = None
+    if cfg.only_critical_annotated_episodes and critical_sections_provider is not None:
+        annotated_episode_filter = critical_sections_provider.annotated_episode_indices()
+
     if hasattr(cfg.policy, "drop_n_last_frames"):
         # loop over dataset subtask parquet file to find episode indices that don't have subtask index != -1
         # valid_episode_list passed to episode_indexes_to_use
@@ -347,6 +424,17 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 valid_episode_list.append(episode_idx)
 
         episode_indices_to_use = valid_episode_list
+        if annotated_episode_filter is not None:
+            # Intersect the policy-specific filter with the annotated-only filter so
+            # both constraints (subtask coverage AND critical-section annotation) hold.
+            annotated_set = set(annotated_episode_filter)
+            episode_indices_to_use = [ep for ep in episode_indices_to_use if ep in annotated_set]
+            if not episode_indices_to_use:
+                raise ValueError(
+                    "No episodes satisfy both `drop_n_last_frames`/subtask_index filtering "
+                    "and `--only-critical-annotated-episodes`. Annotate more episodes or "
+                    "drop one of the constraints."
+                )
 
         shuffle = False
         sampler = EpisodeAwareSampler(
@@ -354,6 +442,14 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             dataset.meta.episodes["dataset_to_index"],
             episode_indices_to_use=episode_indices_to_use,
             drop_n_last_frames=cfg.policy.drop_n_last_frames,
+            shuffle=True,
+        )
+    elif annotated_episode_filter is not None:
+        shuffle = False
+        sampler = EpisodeAwareSampler(
+            dataset.meta.episodes["dataset_from_index"],
+            dataset.meta.episodes["dataset_to_index"],
+            episode_indices_to_use=annotated_episode_filter,
             shuffle=True,
         )
     else:
@@ -406,8 +502,23 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
-        batch = next(dl_iter)
-        batch = preprocessor(batch)
+        raw_batch = next(dl_iter)
+        # Compute critical-section per-timestep weights from the *raw* batch:
+        # the preprocessor pipeline strips `timestamp`, but we need it (plus
+        # `episode_index`) to map each chunk timestep back into absolute time.
+        critical_timestep_weights = None
+        if (
+            critical_sections_provider is not None
+            and critical_sections_chunk_size is not None
+            and critical_sections_fps is not None
+        ):
+            critical_timestep_weights = critical_sections_provider.compute_timestep_weights(
+                batch=raw_batch,
+                chunk_size=critical_sections_chunk_size,
+                fps=critical_sections_fps,
+                device=device,
+            )
+        batch = preprocessor(raw_batch)
         train_tracker.dataloading_s = time.perf_counter() - start_time
 
         train_tracker, output_dict = update_policy(
@@ -419,6 +530,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
             rabc_weights_provider=rabc_weights,
+            critical_timestep_weights=critical_timestep_weights,
         )
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we

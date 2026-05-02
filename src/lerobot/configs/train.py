@@ -74,6 +74,15 @@ class TrainPipelineConfig(HubMixin):
     rabc_epsilon: float = 1e-6  # Small constant for numerical stability
     rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense"
 
+    # Critical-section per-timestep loss weighting parameters.
+    # Annotated timesteps (in episode-relative seconds) get an elevated MSE weight
+    # so the policy spends more capacity on visually/dynamically tricky moments
+    # without losing the rest of the trajectory's context.
+    use_critical_section_weights: bool = False
+    critical_sections_path: str | None = None
+    critical_section_default_weight: float = 5.0
+    only_critical_annotated_episodes: bool = False
+
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
     checkpoint_path: Path | None = field(init=False, default=None)

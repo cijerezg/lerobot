@@ -72,6 +72,31 @@ def test_episode_indices_to_use():
     assert list(sampler) == [0, 1, 3, 4, 5]
 
 
+def test_episode_indices_to_use_with_drop_n_last_frames():
+    """Models how `lerobot_train.py` combines `--only-critical-annotated-episodes`
+    with the existing `drop_n_last_frames` policy filter: the intersection of the
+    two filters must hold and the per-episode last-frame trimming must be preserved.
+    """
+    dataset = Dataset.from_dict(
+        {
+            "timestamp": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+            "index": [0, 1, 2, 3, 4, 5, 6, 7],
+            "episode_index": [0, 0, 0, 1, 1, 1, 2, 2],
+        },
+    )
+    dataset.set_transform(hf_transform_to_torch)
+    episode_data_index = calculate_episode_data_index(dataset)
+    sampler = EpisodeAwareSampler(
+        episode_data_index["from"],
+        episode_data_index["to"],
+        episode_indices_to_use=[0, 2],
+        drop_n_last_frames=1,
+    )
+    # episode 0 covers indices 0..2 (drop last -> 0,1); episode 2 covers 6..7 (drop last -> 6).
+    assert sampler.indices == [0, 1, 6]
+    assert len(sampler) == 3
+
+
 def test_shuffle():
     dataset = Dataset.from_dict(
         {
