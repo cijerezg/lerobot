@@ -28,11 +28,45 @@ def discover_episodes(val_dir: Path, steps: list[str]) -> list[str]:
     return sorted(p.stem for p in ep_dir.glob("ep*.png"))
 
 
-def discover_attention_combos(val_dir: Path, steps: list[str]) -> list[str]:
-    att_dir = val_dir / steps[0] / "attention"
-    if not att_dir.exists():
-        return []
-    return sorted(d.name for d in att_dir.iterdir() if d.is_dir())
+def discover_attention_episodes_layers(val_dir: Path, steps: list[str]) -> tuple[list[str], list[str]]:
+    """Scan attention/ep{XXXX}_L{YY} dirs across steps; return (episodes, layers)."""
+    eps: set[str] = set()
+    layers: set[str] = set()
+    for s in steps:
+        att_dir = val_dir / s / "attention"
+        if not att_dir.exists():
+            continue
+        for d in att_dir.iterdir():
+            if not d.is_dir():
+                continue
+            if "_L" not in d.name:
+                continue
+            ep_part, l_part = d.name.rsplit("_L", 1)
+            eps.add(ep_part)
+            layers.add(f"L{l_part}")
+    return sorted(eps), sorted(layers)
+
+
+def discover_attention_files(val_dir: Path, steps: list[str], episodes: list[str], layers: list[str]) -> list[str]:
+    """Return normalized MP4 names (overlay_/heatmap_ prefix stripped)."""
+    found: set[str] = set()
+    for s in steps:
+        for ep in episodes:
+            for l in layers:
+                d = val_dir / s / "attention" / f"{ep}_{l}"
+                if not d.exists() or not d.is_dir():
+                    continue
+                for p in d.glob("*.mp4"):
+                    n = p.name
+                    if n.startswith("overlay_"):
+                        found.add(n[len("overlay_"):])
+                    elif n.startswith("heatmap_"):
+                        found.add(n[len("heatmap_"):])
+                    else:
+                        found.add(n)
+        if found:
+            break
+    return sorted(found)
 
 
 def discover_offline_inference_frames(val_dir: Path, steps: list[str]) -> list[str]:
@@ -247,20 +281,13 @@ ACTION_VIEWS = {
     "NN distances": "actions/2d/val/nn_distances.png",
 }
 
-ATTENTION_FILES = [
-    "img1_summary.mp4",
-    "img2_summary.mp4",
-    "matrix_mean.mp4",
-    "img1_all_heads.mp4",
-    "img1_action_heads.mp4",
-    "img1_language_heads.mp4",
-    "img1_subtask_heads.mp4",
-    "img2_all_heads.mp4",
-    "img2_action_heads.mp4",
-    "img2_language_heads.mp4",
-    "img2_subtask_heads.mp4",
-    "matrix_heads.mp4",
-]
+def _attention_real_fname(layer: str, fname: str) -> str:
+    """Resolve the on-disk filename: matrix_* has no prefix; layer 0 uses
+    'overlay_', deeper layers use 'heatmap_'."""
+    if fname.startswith("matrix_"):
+        return fname
+    prefix = "overlay_" if layer == "L00" else "heatmap_"
+    return f"{prefix}{fname}"
 
 REPR_COLORINGS = ["by_episode", "by_frame", "by_subtask"]
 
@@ -279,7 +306,8 @@ def build_app(run_dir: str):
         raise FileNotFoundError(f"No step_* directories in {val_dir}")
 
     episodes = discover_episodes(val_dir, all_steps)
-    att_combos = discover_attention_combos(val_dir, all_steps)
+    att_episodes, att_layers = discover_attention_episodes_layers(val_dir, all_steps)
+    att_files = discover_attention_files(val_dir, all_steps, att_episodes, att_layers)
     offline_inference_frames = discover_offline_inference_frames(val_dir, all_steps)
 
     adj_groups = discover_action_drift_jacobian_groups(val_dir, all_steps)
@@ -345,25 +373,36 @@ def build_app(run_dir: str):
             app.load(render_actions, [step_selector, action_dd], action_html)
 
         # ---- Attention tab ----
-        with gr.Tab("Attention"):
-            with gr.Row():
-                att_combo_dd = gr.Dropdown(choices=att_combos, value=att_combos[0] if att_combos else None,
-                                           label="Episode / timestep")
-                att_file_dd = gr.Dropdown(choices=ATTENTION_FILES, value=ATTENTION_FILES[0], label="View")
-            att_html = gr.HTML()
+        if att_episodes and att_layers and att_files:
+            with gr.Tab("Attention"):
+                with gr.Row():
+                    att_ep_dd = gr.Dropdown(
+                        choices=att_episodes, value=att_episodes[0], label="Episode"
+                    )
+                    att_layer_dd = gr.Dropdown(
+                        choices=att_layers, value=att_layers[0], label="Layer"
+                    )
+                    att_file_dd = gr.Dropdown(
+                        choices=att_files, value=att_files[0], label="View"
+                    )
+                att_html = gr.HTML()
 
-            def render_attention(selected_steps, combo, fname):
-                if not selected_steps or not combo or not fname:
-                    return ""
-                items = [(val_dir / s / "attention" / combo / fname, step_label(s))
-                         for s in selected_steps]
-                vertical = "mean" in fname or "summary" in fname
-                return render_video_grid(items, vertical=vertical)
+                def render_attention(selected_steps, ep, layer, fname):
+                    if not selected_steps or not ep or not layer or not fname:
+                        return ""
+                    real_fname = _attention_real_fname(layer, fname)
+                    items = [
+                        (val_dir / s / "attention" / f"{ep}_{layer}" / real_fname, step_label(s))
+                        for s in selected_steps
+                    ]
+                    vertical = "mean" in fname or "summary" in fname
+                    return render_video_grid(items, vertical=vertical)
 
-            att_combo_dd.change(render_attention, [step_selector, att_combo_dd, att_file_dd], att_html)
-            att_file_dd.change(render_attention, [step_selector, att_combo_dd, att_file_dd], att_html)
-            step_selector.change(render_attention, [step_selector, att_combo_dd, att_file_dd], att_html)
-            app.load(render_attention, [step_selector, att_combo_dd, att_file_dd], att_html)
+                att_ep_dd.change(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
+                att_layer_dd.change(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
+                att_file_dd.change(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
+                step_selector.change(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
+                app.load(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
 
         # ---- Representations tab ----
         if repr_spaces:
