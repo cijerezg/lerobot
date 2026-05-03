@@ -540,7 +540,7 @@ def _run_probe_attention(policy, preprocessor,
         embed_probe_prefix,
         probe_forward,
         render_image_overlays,
-        render_full_matrix,
+        render_action_to_prefix_matrix,
     )
     from lerobot.utils.constants import (
         OBS_LANGUAGE_ATTENTION_MASK,
@@ -647,13 +647,21 @@ def _run_probe_attention(policy, preprocessor,
                     a_w = attn_weights[b_idx : b_idx + 1]
                     p_m = pad_masks[b_idx : b_idx + 1]
                     i_t = [img[b_idx : b_idx + 1] for img in images]
+                    t_t = task_tokens   [b_idx : b_idx + 1]
+                    s_t = subtask_tokens[b_idx : b_idx + 1]
 
                     heatmap_frames, norm_consts = render_image_overlays(
                         a_w, segments, i_t, p_m, patches_per_cam,
                         overlay=use_overlay,
                     )
                     frames_out = dict(heatmap_frames)
-                    frames_out.update(render_full_matrix(a_w, segments, p_m))
+
+                    matrix_frames, matrix_norms = render_action_to_prefix_matrix(
+                        a_w, segments, p_m,
+                        t_t, s_t, policy.model._paligemma_tokenizer,
+                    )
+                    frames_out.update(matrix_frames)
+                    norm_consts.update(matrix_norms)
 
                     for panel, vmax in norm_consts.items():
                         csv_writer.writerow(
