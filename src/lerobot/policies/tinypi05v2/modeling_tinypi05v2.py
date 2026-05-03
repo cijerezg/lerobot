@@ -38,7 +38,6 @@ Parameter names mirror the checkpoint exactly so the state dict loads with
 from __future__ import annotations
 
 import builtins
-import copy
 import inspect
 import logging
 import math
@@ -243,9 +242,15 @@ class _SiglipMHA(nn.Module):
         q = self.q_proj(hidden_states).view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(hidden_states).view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(hidden_states).view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
-        attn = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        attn = attn.softmax(dim=-1, dtype=torch.float32).to(q.dtype)
-        out = torch.matmul(attn, v).transpose(1, 2).contiguous().view(batch, seq, -1)
+        out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
+        out = out.transpose(1, 2).contiguous().view(batch, seq, -1)
         return self.out_proj(out)
 
 
@@ -475,12 +480,26 @@ def _eager_attention(
 ) -> torch.Tensor:
     key_states = _repeat_kv(key, num_key_value_groups)
     value_states = _repeat_kv(value, num_key_value_groups)
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
-    if attention_mask is not None:
-        causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
-        attn_weights = attn_weights + causal_mask
-    attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
-    attn_output = torch.matmul(attn_weights, value_states)
+    if query.device.type == "cuda":
+        causal_mask = None
+        if attention_mask is not None:
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]].to(dtype=query.dtype)
+        attn_output = F.scaled_dot_product_attention(
+            query,
+            key_states,
+            value_states,
+            attn_mask=causal_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=scaling,
+        )
+    else:
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
+        attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
     return attn_output
 
@@ -1488,7 +1507,6 @@ class TinyPI05V2Pytorch(nn.Module):
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
         full_att_2d_4d = _prepare_attention_masks_4d(full_att_2d)
 
-        past_key_values = copy.deepcopy(past_key_values)
         outputs, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_4d,
             position_ids=position_ids,

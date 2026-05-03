@@ -874,6 +874,10 @@ class PaliGemmaWithExpertModel(nn.Module):
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
+        for model in (self.paligemma.model.language_model, self.gemma_expert.model):
+            config = getattr(model, "config", None)
+            if getattr(config, "_attn_implementation", None) is None:
+                config._attn_implementation = "eager"
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.model.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
