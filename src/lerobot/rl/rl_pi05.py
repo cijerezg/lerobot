@@ -1098,21 +1098,20 @@ class PI05RLPolicy(PI05FullPolicy):
 
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """Predict action chunk with subtask token generation.
-        
+
         Uses time-based caching controlled by `config.subtask_regeneration_interval`
         (default 1s) to amortize the cost of autoregressive subtask decoding across
         the high-frequency inference loop.
         """
-        import time as _time
-        
         # Preprocessor has already normalized and tokenized the inputs
         # Advantage is already in the tokens (passed from actor or defaulted)
         images, img_masks = self._preprocess_images(batch)
-               
+
         from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        
+
+        import time as _time
         # --- Subtask Token Generation with Time-Based Caching ---
         current_time = _time.time()
         interval = self.config.subtask_regeneration_interval
@@ -1140,11 +1139,11 @@ class PI05RLPolicy(PI05FullPolicy):
             images, img_masks, tokens, masks,
             subtask_tokens, subtask_masks, **kwargs
         )
-        
+
         # Unpad actions to actual action dimension
         from lerobot.utils.constants import ACTION
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
-        
+
         return actions
 

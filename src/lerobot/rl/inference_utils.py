@@ -652,7 +652,11 @@ def env_interaction_worker(
                 shared_state.episode_active = True
 
             start_time = time.perf_counter()
-            
+            if not hasattr(shared_state, '_env_step_count'):
+                shared_state._env_step_count = 0
+            shared_state._env_step_count += 1
+            _env_do_print = (shared_state._env_step_count % 30 == 1)
+
             # --- TELEOP AND STATE OVERRIDES ---
             # If we were intervening but teleop stopped, we trigger a policy reset
             if was_intervening and not shared_state.is_intervening:
@@ -667,6 +671,7 @@ def env_interaction_worker(
             was_intervening = shared_state.is_intervening
 
             # --- ACTION PREPARATION ---
+            _t_step0 = time.perf_counter() if _env_do_print else 0.0
             if was_intervening:
                 if hasattr(online_env, 'get_raw_joint_positions'):
                     raw_joints = online_env.get_raw_joint_positions()

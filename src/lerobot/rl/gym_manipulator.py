@@ -537,13 +537,13 @@ def step_env_and_process_transition(
     Returns:
         Processed transition with updated state.
     """
-
     # Create action transition on a shallow copy so we don't mutate the input.
     aux_transition = copy.copy(transition)
     aux_transition[TransitionKey.ACTION] = action
     aux_transition[TransitionKey.OBSERVATION] = (
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
     )
+
     processed_action_transition = action_processor(aux_transition)
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
@@ -565,6 +565,7 @@ def step_env_and_process_transition(
         info=new_info,
         complementary_data=complementary_data,
     )
+
     new_transition = env_processor(new_transition)
 
     return new_transition

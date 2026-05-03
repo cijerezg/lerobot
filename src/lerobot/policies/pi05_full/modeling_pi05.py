@@ -1328,7 +1328,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             images=images, img_masks=img_masks, tokens=high_level_task_tokens, subtask_tokens=subtask_tokens,
             masks=high_level_task_masks, subtask_masks=subtask_masks, fast_action_tokens=None, fast_action_masks=None
         )
-        
+
         # Ensure prefix_embs matches model dtype
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -1340,8 +1340,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_att_2d_masks = prefix_att_masks
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks, dtype=prefix_embs.dtype)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "sdpa"  # noqa: SLF001
 
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
@@ -1357,7 +1357,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         for step in range(num_steps):
             time = 1.0 + step * dt
             time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
-            
+
             # Ensure time_tensor matches model dtype
             if (
                 self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -1493,6 +1493,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         #2. decoding phase
         # Generate remaining tokens one by one using the cache.
+        decode_steps_done = 0
 
         for t in range(1, max_decoding_steps):
             # Embed the single previous token
@@ -1547,6 +1548,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             # Update finished mask for newly finished sequences
             finished = finished | (next_token.squeeze(-1) == eos_token_id)
 
+            decode_steps_done = t
+
             if finished.all():
                 break
 
@@ -1587,14 +1590,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
-        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks, dtype=suffix_embs.dtype)
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "sdpa"  # noqa: SLF001
 
         # HF attention layers append new K/V to a Cache object even when use_cache=False,
         # so the prefill cache would grow by suffix_len each denoise iteration. Snapshot
         # the prefix length and crop back after the forward to keep the cache stable.
         prefix_cache_len = past_key_values.get_seq_length()
-
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -1603,6 +1605,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=False,
             adarms_cond=[None, adarms_cond],
         )
+
         past_key_values.crop(prefix_cache_len)
 
         suffix_out = outputs_embeds[1]
