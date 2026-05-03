@@ -29,7 +29,8 @@ policy_type: tinypi05
 # pretrained_name_or_path: outputs/train/2026-04-29/19-31-23_tinypi05_cube/checkpoints/005000/pretrained_model
 # pretrained_name_or_path: outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model
 # pretrained_name_or_path: outputs/train/2026-04-30/21-38-17_tinypi05_cubepickplace_e49_finetune/checkpoints/005000/pretrained_model
-pretrained_name_or_path: outputs/train/2026-05-01/13-12-04_tinypi05_cubepickplace_e49_critical_finetune/checkpoints/015000/pretrained_model
+# pretrained_name_or_path: outputs/train/2026-05-01/13-12-04_tinypi05_cubepickplace_e49_critical_finetune/checkpoints/015000/pretrained_model
+pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/012000/pretrained_model
 
 # DRTC parameters
 estimator: jk
@@ -37,16 +38,16 @@ cooldown: true
 latency_k: 1.5
 epsilon: 1
 actions_per_chunk: 50
-s_min: 15
+s_min: 10
 latency_alpha: 0.125
 latency_beta: 0.25
 
 # Timing
 duration_s: 200.0
-fps: 30
+fps: 20
 
 # Flow matching / RTC
-num_flow_matching_steps: 8
+num_flow_matching_steps: 10
 rtc_enabled: true
 rtc_max_guidance_weight: null
 rtc_prefix_attention_schedule: linear
