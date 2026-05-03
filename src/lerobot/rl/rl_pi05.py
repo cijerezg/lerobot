@@ -238,6 +238,10 @@ class Pi05TransformerCritic(nn.Module):
             nn.Linear(512, 1)
         )
         
+        # Vision components (initialized in initialize_weights_from_actor)
+        self.vision_tower = None
+        self.multi_modal_projector = None
+        
     def initialize_weights_from_actor(self, actor_model):
         """Initialize critic weights from the actor's pretrained weights."""
         # Access the underlying PaliGemma model
@@ -259,6 +263,21 @@ class Pi05TransformerCritic(nn.Module):
         
         # Copy Norm
         self.norm = copy.deepcopy(source_model.norm)
+        
+        # Copy Vision Components and truncate layers to 13
+        self.vision_tower = copy.deepcopy(paligemma_model.model.vision_tower)
+        if hasattr(self.vision_tower, 'vision_model') and hasattr(self.vision_tower.vision_model, 'encoder'):
+            self.vision_tower.vision_model.encoder.layers = self.vision_tower.vision_model.encoder.layers[:13]
+        self.multi_modal_projector = copy.deepcopy(paligemma_model.model.multi_modal_projector)
+
+    def embed_image(self, image: Tensor) -> Tensor:
+        """Embed images using the critic's own vision tower and projector."""
+        if self.vision_tower is None or self.multi_modal_projector is None:
+            raise RuntimeError("Vision components not initialized. Call initialize_weights_from_actor first.")
+        image_outputs = self.vision_tower(image, return_dict=True)
+        selected_image_feature = image_outputs.last_hidden_state
+        image_features = self.multi_modal_projector(selected_image_feature)
+        return image_features
 
     def forward(self, vision_features: Tensor, text_embs: Tensor, token_masks: Tensor) -> Tensor:
         """
@@ -870,7 +889,7 @@ class PI05RLPolicy(PI05FullPolicy):
                     target_param.data.mul_(1 - self.config.critic_target_update_weight)
                     target_param.data.add_(param.data * self.config.critic_target_update_weight)
 
-    def get_vision_features(self, batch: dict[str, Tensor], use_grad: bool = True) -> tuple[Tensor, Tensor]:
+    def get_vision_features(self, batch: dict[str, Tensor], use_grad: bool = True, encoder_module=None) -> tuple[Tensor, Tensor]:
         """Extract vision features and their padding masks from the batch."""
         with torch.set_grad_enabled(use_grad):
             current_batch = batch.copy()
@@ -881,10 +900,12 @@ class PI05RLPolicy(PI05FullPolicy):
             vision_features = []
             vision_pad_masks = []
             
+            encoder = encoder_module if encoder_module is not None else self.model.paligemma_with_expert
+            
             for img, img_mask in zip(images, img_masks):
                 # img: [B, C, H, W]
                 # img_mask: [B]
-                feat = self.model.paligemma_with_expert.embed_image(img) # [B, N, D]
+                feat = encoder.embed_image(img) # [B, N, D]
                 vision_features.append(feat)
                 
                 B, N, _ = feat.shape
@@ -912,8 +933,8 @@ class PI05RLPolicy(PI05FullPolicy):
         
         # Actor computes vision features inside embed_prefix; only critic/critic_value need them here.
         if model != "actor":
-            vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad)
-            critic_vision_features = vision_features.detach()
+            vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad, encoder_module=self.critic)
+            critic_vision_features = vision_features
             critic_vision_masks = vision_pad_masks
 
         # Actor needs tokens too
@@ -1014,7 +1035,7 @@ class PI05RLPolicy(PI05FullPolicy):
                     next_vision_features = []
                     next_vision_pad_masks = []
                     for img, img_mask in zip(next_images, next_img_masks):
-                        feat = self.model.paligemma_with_expert.embed_image(img)
+                        feat = self.critic_target.embed_image(img)
                         next_vision_features.append(feat)
                         B, N, _ = feat.shape
                         mask = img_mask[:, None].expand(B, N)
