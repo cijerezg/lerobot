@@ -242,6 +242,8 @@ class _SiglipMHA(nn.Module):
         q = self.q_proj(hidden_states).view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(hidden_states).view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(hidden_states).view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
+        # tinypi05 delegates SigLIP to Transformers; the self-contained v2 tower
+        # calls SDPA directly so CUDA can use fused attention kernels.
         out = F.scaled_dot_product_attention(
             q,
             k,
@@ -478,12 +480,19 @@ def _eager_attention(
     scaling: float,
     num_key_value_groups: int,
 ) -> torch.Tensor:
+    # Gemma uses grouped-query attention. PyTorch 2.6's SDPA enable_gqa path
+    # avoids this materialization but is slower on the current tinypi05v2
+    # benchmark, so v2 keeps the tinypi05 eager layout and lets SDPA fuse the
+    # attention math after K/V expansion.
     key_states = _repeat_kv(key, num_key_value_groups)
     value_states = _repeat_kv(value, num_key_value_groups)
     if query.device.type == "cuda":
         causal_mask = None
         if attention_mask is not None:
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]].to(dtype=query.dtype)
+        # tinypi05 performs explicit matmul/softmax/matmul through Transformers'
+        # eager attention. v2 keeps the same repeated-K/V tensor shape but calls
+        # SDPA directly so CUDA can choose a fused attention kernel.
         attn_output = F.scaled_dot_product_attention(
             query,
             key_states,
@@ -1309,10 +1318,9 @@ class TinyPI05V2Pytorch(nn.Module):
         att_masks_t = att_masks_t[None, :].expand(pad_masks_cat.shape[0], -1)
         return embs_cat, pad_masks_cat, att_masks_t
 
-    def embed_suffix(
+    def _embed_suffix_embs_and_cond(
         self, noisy_actions: torch.Tensor, timestep: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed noisy actions and the flow-matching timestep."""
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         model_dtype = self.action_in_proj.weight.dtype
         noisy_actions = noisy_actions.to(dtype=model_dtype)
 
@@ -1335,6 +1343,13 @@ class TinyPI05V2Pytorch(nn.Module):
 
         adarms_cond = self._apply_checkpoint(time_mlp_func, time_emb)
         action_time_emb = action_emb
+        return action_time_emb, adarms_cond
+
+    def embed_suffix(
+        self, noisy_actions: torch.Tensor, timestep: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Embed noisy actions and the flow-matching timestep."""
+        action_time_emb, adarms_cond = self._embed_suffix_embs_and_cond(noisy_actions, timestep)
 
         bsize, seq_len = action_time_emb.shape[:2]
         pad = torch.ones(bsize, seq_len, dtype=torch.bool, device=timestep.device)
@@ -1428,6 +1443,15 @@ class TinyPI05V2Pytorch(nn.Module):
         prefix_att_2d = _make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
         prefix_att_2d_4d = _prepare_attention_masks_4d(prefix_att_2d)
+        if prefix_att_2d_4d.device.type == "cuda":
+            # v2 feeds additive masks straight to SDPA; pre-casting once avoids
+            # the per-layer dtype conversions the eager tinypi05 path pays.
+            prefix_attention_dtype = (
+                self.paligemma_with_expert.paligemma.model.language_model.layers[
+                    0
+                ].self_attn.q_proj.weight.dtype
+            )
+            prefix_att_2d_4d = prefix_att_2d_4d.to(dtype=prefix_attention_dtype)
 
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_4d,
@@ -1436,6 +1460,35 @@ class TinyPI05V2Pytorch(nn.Module):
             inputs_embeds=[prefix_embs, None],
             use_cache=True,
         )
+
+        # The tinypi05 baseline rebuilds suffix masks/positions inside every
+        # denoise_step call. In v2 they are invariant across flow steps, so keep
+        # one precomputed copy and pass it through the denoise loop.
+        suffix_pad_masks = torch.ones(
+            bsize, self.config.chunk_size, dtype=torch.bool, device=device
+        )
+        suffix_att_masks = torch.zeros(
+            bsize, self.config.chunk_size, dtype=prefix_embs.dtype, device=device
+        )
+        suffix_att_masks[:, 0] = 1
+        suffix_len = suffix_pad_masks.shape[1]
+        prefix_len = prefix_pad_masks.shape[1]
+        prefix_pad_2d = prefix_pad_masks[:, None, :].expand(bsize, suffix_len, prefix_len)
+        suffix_att_2d = _make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+        denoise_attention_mask = _prepare_attention_masks_4d(
+            torch.cat([prefix_pad_2d, suffix_att_2d], dim=2)
+        )
+        if denoise_attention_mask.device.type == "cuda":
+            # Match the attention dtype before entering the per-step/per-layer
+            # loop; PyTorch 2.6 SDPA requires additive masks to match query dtype.
+            denoise_attention_dtype = (
+                self.paligemma_with_expert.gemma_expert.model.layers[
+                    0
+                ].self_attn.q_proj.weight.dtype
+            )
+            denoise_attention_mask = denoise_attention_mask.to(dtype=denoise_attention_dtype)
+        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+        denoise_position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
         dt = -1.0 / num_steps
         x_t = noise
@@ -1449,6 +1502,8 @@ class TinyPI05V2Pytorch(nn.Module):
                     past_key_values=past_key_values,
                     x_t=input_x_t,
                     timestep=current_timestep,
+                    attention_mask=denoise_attention_mask,
+                    position_ids=denoise_position_ids,
                 )
 
             if self._rtc_enabled():
@@ -1491,24 +1546,36 @@ class TinyPI05V2Pytorch(nn.Module):
         past_key_values: list[tuple[torch.Tensor, torch.Tensor]],
         x_t: torch.Tensor,
         timestep: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> Tensor:
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(
-            x_t, timestep
-        )
-        suffix_len = suffix_pad_masks.shape[1]
-        batch_size = prefix_pad_masks.shape[0]
-        prefix_len = prefix_pad_masks.shape[1]
+        suffix_embs, adarms_cond = self._embed_suffix_embs_and_cond(x_t, timestep)
 
-        prefix_pad_2d = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
-        suffix_att_2d = _make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        full_att_2d = torch.cat([prefix_pad_2d, suffix_att_2d], dim=2)
+        if attention_mask is None or position_ids is None:
+            # Direct callers, including parity tests, can still use denoise_step
+            # standalone. sample_actions passes precomputed values on the hot path.
+            suffix_len = suffix_embs.shape[1]
+            batch_size = prefix_pad_masks.shape[0]
+            prefix_len = prefix_pad_masks.shape[1]
+            suffix_pad_masks = torch.ones(
+                batch_size, suffix_len, dtype=torch.bool, device=timestep.device
+            )
+            suffix_att_masks = torch.zeros(
+                batch_size, suffix_len, dtype=suffix_embs.dtype, device=suffix_embs.device
+            )
+            suffix_att_masks[:, 0] = 1
+            prefix_pad_2d = prefix_pad_masks[:, None, :].expand(batch_size, suffix_len, prefix_len)
+            suffix_att_2d = _make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
+            full_att_2d = torch.cat([prefix_pad_2d, suffix_att_2d], dim=2)
 
-        prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
-        position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
-        full_att_2d_4d = _prepare_attention_masks_4d(full_att_2d)
+            prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
+            position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
+            attention_mask = _prepare_attention_masks_4d(full_att_2d)
 
+        # The suffix path only reads the prefix KV cache. Keeping the list
+        # by reference avoids a full per-step tensor deepcopy.
         outputs, _ = self.paligemma_with_expert.forward(
-            attention_mask=full_att_2d_4d,
+            attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=[None, suffix_embs],
