@@ -30,34 +30,34 @@ policy_type: tinypi05
 # pretrained_name_or_path: outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model
 # pretrained_name_or_path: outputs/train/2026-04-30/21-38-17_tinypi05_cubepickplace_e49_finetune/checkpoints/005000/pretrained_model
 # pretrained_name_or_path: outputs/train/2026-05-01/13-12-04_tinypi05_cubepickplace_e49_critical_finetune/checkpoints/015000/pretrained_model
-pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/012000/pretrained_model
+pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/018000/pretrained_model
 
 # DRTC parameters
 estimator: jk
 cooldown: true
 latency_k: 1.5
-epsilon: 1
+epsilon: 0
 actions_per_chunk: 50
-s_min: 10
+s_min: 5 # mirrors hiserl rtc_config.execution_horizon
 latency_alpha: 0.125
 latency_beta: 0.25
 
 # Timing
-duration_s: 200.0
-fps: 20
+duration_s: 1000.0
+fps: 30 # NOTE: hiserl runs at 30 fps; bump only if camera/robot pipeline can sustain it
 
-# Flow matching / RTC
-num_flow_matching_steps: 10
+# Flow matching / RTC (mirror src/lerobot/rl/config-hiserl.json rtc_config)
+num_flow_matching_steps: 8
 rtc_enabled: true
-rtc_max_guidance_weight: null
+rtc_max_guidance_weight: 10.0
 rtc_prefix_attention_schedule: linear
-rtc_sigma_d: 0.2
+rtc_sigma_d: 1.0 # original RTC formula (hiserl doesn't override sigma_d)
 rtc_full_trajectory_alignment: true
 
 # Action filter
 action_filter_mode: butterworth
-action_filter_butterworth_cutoff: 3.0
-action_filter_gain: 1.4
+action_filter_butterworth_cutoff: 1.5
+action_filter_gain: 1.5
 
 # Diagnostics
 full_diagnostics: true
