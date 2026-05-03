@@ -1286,22 +1286,43 @@ class TinyPI05V2Pytorch(nn.Module):
         pad_masks: list[torch.Tensor] = []
         att_masks: list[int] = []
 
-        for img, img_mask in zip(images, img_masks, strict=True):
+        if images:
             vision_params = list(
                 self.paligemma_with_expert.paligemma.model.vision_tower.parameters()
             )
             vision_frozen = not any(p.requires_grad for p in vision_params)
-            if vision_frozen:
-                with torch.no_grad():
-                    img_emb = self.paligemma_with_expert.embed_image(img)
+            if images[0].device.type == "cuda":
+                # tinypi05 embeds each camera with a separate Transformers SigLIP
+                # call. v2 batches cameras on the batch axis on GPU so one
+                # vision-tower launch handles all streams, then restores order.
+                bsize = images[0].shape[0]
+                batched_images = torch.cat(images, dim=0)
+                if vision_frozen:
+                    with torch.no_grad():
+                        batched_img_emb = self.paligemma_with_expert.embed_image(batched_images)
+                else:
+                    batched_img_emb = self._apply_checkpoint(
+                        self.paligemma_with_expert.embed_image, batched_images
+                    )
+                image_embs = batched_img_emb.split(bsize, dim=0)
             else:
-                img_emb = self._apply_checkpoint(
-                    self.paligemma_with_expert.embed_image, img
-                )
-            bsize, num_img_embs = img_emb.shape[:2]
-            embs.append(img_emb)
-            pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-            att_masks += [0] * num_img_embs
+                # Keep CPU numerics identical to tinypi05's per-camera baseline;
+                # the parity test intentionally exercises this path.
+                image_embs = []
+                for img in images:
+                    if vision_frozen:
+                        with torch.no_grad():
+                            image_embs.append(self.paligemma_with_expert.embed_image(img))
+                    else:
+                        image_embs.append(
+                            self._apply_checkpoint(self.paligemma_with_expert.embed_image, img)
+                        )
+            for img_emb, img_mask in zip(image_embs, img_masks, strict=True):
+                bsize = img_emb.shape[0]
+                num_img_embs = img_emb.shape[1]
+                embs.append(img_emb)
+                pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
+                att_masks += [0] * num_img_embs
 
         def lang_embed_func(tokens_inner):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(tokens_inner)
