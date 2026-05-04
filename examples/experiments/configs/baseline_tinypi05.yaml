@@ -31,7 +31,7 @@ policy_type: tinypi05
 # pretrained_name_or_path: outputs/train/2026-04-30/21-38-17_tinypi05_cubepickplace_e49_finetune/checkpoints/005000/pretrained_model
 # pretrained_name_or_path: outputs/train/2026-05-01/13-12-04_tinypi05_cubepickplace_e49_critical_finetune/checkpoints/015000/pretrained_model
 # pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/018000/pretrained_model
-pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/054000/054000/pretrained_model
+pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model
 
 # DRTC parameters
 estimator: jk
@@ -45,7 +45,7 @@ latency_beta: 0.25
 
 # Timing
 duration_s: 1000.0
-fps: 25 # NOTE: hiserl runs at 30 fps; bump only if camera/robot pipeline can sustain it
+fps: 30 # NOTE: hiserl runs at 30 fps; bump only if camera/robot pipeline can sustain it
 
 # Flow matching / RTC (mirror src/lerobot/rl/config-hiserl.json rtc_config)
 num_flow_matching_steps: 5
