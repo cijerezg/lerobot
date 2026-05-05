@@ -898,7 +898,8 @@ def pi05_update_step(
     # -------------------------------------------------------------------------
     # 2. Actor Update Loop (Conditional)
     # -------------------------------------------------------------------------
-    
+
+    actor_infos: dict = {}
     if optimization_step >= critic_warmup_steps and optimization_step % policy_update_freq == 0:
         actor_infos = _update_actor(
             policy=policy,

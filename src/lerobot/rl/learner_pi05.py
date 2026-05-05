@@ -439,7 +439,7 @@ def add_actor_information_and_train(
             capacity=cfg.policy.offline_buffer_capacity,
             reward_normalization_constant=cfg.policy.reward_normalization_constant,
             terminal_failure_reward=cfg.policy.terminal_failure_reward,
-            inject_complementary_info={"is_golden": True},
+            inject_complementary_info={"is_golden": cfg.treat_main_dataset_as_golden},
             cache_dir=cfg.buffer_cache_dir,
         )
         offline_replay_buffer.dataset = offline_dataset
@@ -477,7 +477,7 @@ def add_actor_information_and_train(
     online_iterator = None
     offline_iterator = None
 
-    critic_warmup_steps = 0
+    critic_warmup_steps = cfg.policy.critic_warmup_steps
     policy_update_freq = 1
 
 

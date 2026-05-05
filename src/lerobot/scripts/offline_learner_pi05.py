@@ -241,7 +241,7 @@ def run_offline_training(
     offline_steps = cfg.policy.offline_steps
     
     # Critic warmup steps
-    critic_warmup_steps = 0
+    critic_warmup_steps = cfg.policy.critic_warmup_steps
     
     if is_main_process:
         logging.info(f"Offline training will run for {offline_steps} optimization steps")
@@ -359,7 +359,7 @@ def run_offline_training(
         capacity=cfg.policy.offline_buffer_capacity,
         reward_normalization_constant=cfg.policy.reward_normalization_constant,
         terminal_failure_reward=cfg.policy.terminal_failure_reward,
-        inject_complementary_info={"is_golden": True},
+        inject_complementary_info={"is_golden": cfg.treat_main_dataset_as_golden},
         cache_dir=buffer_cache_dir,
     )
     offline_replay_buffer.dataset = offline_dataset

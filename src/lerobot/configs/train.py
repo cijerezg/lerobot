@@ -235,6 +235,7 @@ class ProbeConfig:
     enable_spatial_memorization: bool = True
     enable_action_drift_jacobian: bool = False  # per-frame causal A*J maps (needs backward)
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
+    enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
 
     # Common
     output_dir: str = "outputs/probe"
@@ -265,6 +266,10 @@ class ProbeConfig:
     spatial_layers: str = "0,9,17"
     spatial_n_frames: int = 32  # total frames (1 per unique episode)
 
+    # Critic values distribution
+    critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution
+    critic_grad_frames: int = 200  # frames sampled for ||dV/dvision|| (forward+backward)
+
 
 @dataclass(kw_only=True)
 class TrainRLServerPipelineConfig(TrainPipelineConfig):
@@ -286,3 +291,4 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     val_freq: int = 1000
     val_on_start: bool = False
     skip_critic: bool = False             # skip all critic training (forward+backward); actor advantage uses golden bypass
+    treat_main_dataset_as_golden: bool = True  # tag main offline dataset frames is_golden=True (advantage bypass); set False for non-expert main datasets

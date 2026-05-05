@@ -4,9 +4,9 @@ Periodic validation pipeline for offline Pi05 RL training.
 
 This module is designed to be imported from offline_learner_pi05.py (or any
 other training script) without modifying that file. It exposes three public
-functions that together implement periodic validation using seven probe
+functions that together implement periodic validation using eight probe
 scripts (actions, representations, attention, offline_inference, spatial_memorization,
-action_drift_jacobian, spatial_memorization_jacobian).
+action_drift_jacobian, spatial_memorization_jacobian, critic_values_distribution).
 
 Each probe can be individually enabled/disabled via ProbeConfig flags
 (enable_actions, enable_representations, etc.). Raw probe data is saved
@@ -64,6 +64,8 @@ Call-graph of run_validation()
     │    └─ per-frame A*|dA/d(action)| causal maps → MP4
     ├─ _run_probe_spatial_memorization_jacobian()  [if enable_spatial_memorization_jacobian]
     │    └─ 1-per-episode → multi-layer Jacobian → aggregate causal stats → PNG
+    ├─ _run_probe_critic_values_distribution()     [if enable_critic_values_distribution]
+    │    └─ V(s)/TD-error histograms + ||dV/dvision|| percentile frames → PNGs
     ├─ torch.save(raw_data, "probe_raw_data.pt")
     ├─ log_dict() to WandB
     └─ finally: policy.train()
@@ -1214,6 +1216,25 @@ def _run_probe_spatial_memorization_jacobian(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Probe: critic values distribution (TD-error + ||dV/dvision|| percentiles)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _run_probe_critic_values_distribution(
+    policy, preprocessor,
+    val_dataset, val_ep_indices,
+    cfg, output_dir, device,
+):
+    """V(s) / TD-error histograms + critic gradient-magnitude exemplars."""
+    from lerobot.probes.critic_values_distribution import run_critic_values_distribution
+
+    return run_critic_values_distribution(
+        policy, preprocessor,
+        val_dataset, val_ep_indices,
+        cfg, output_dir, device,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main entry point — called from the training loop
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1438,6 +1459,28 @@ def run_validation(
                     exc_info=True,
                 )
             logging.info("[VAL] Spatial memorization jacobian analysis completed")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # ── probe_critic_values_distribution ────────────────────────────────
+        if p.enable_critic_values_distribution:
+            logging.info("[VAL] Critic values distribution analysis started")
+            try:
+                raw = _run_probe_critic_values_distribution(
+                    policy, preprocessor,
+                    val_dataset, val_ep_indices,
+                    cfg,
+                    output_dir=os.path.join(step_dir, "critic_values_distribution"),
+                    device=device,
+                )
+                if raw is not None:
+                    raw_data["critic_values_distribution"] = raw
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL] probe_critic_values_distribution failed at step {step}: {exc}",
+                    exc_info=True,
+                )
+            logging.info("[VAL] Critic values distribution analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 

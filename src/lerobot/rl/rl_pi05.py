@@ -85,6 +85,7 @@ class PI05RLConfig(PI05FullConfig):
     async_prefetch: bool = False
     online_step_before_learning: int = 100
     policy_update_freq: int = 1
+    critic_warmup_steps: int = 0
     grad_clip_norm: float = 40.0
     gradient_accumulation_steps: int = 1
     
