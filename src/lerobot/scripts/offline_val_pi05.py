@@ -138,8 +138,15 @@ import gc
 import logging
 import os
 import random as random_mod
+import warnings
 from dataclasses import dataclass
 from typing import Optional
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*video decoding and encoding capabilities of torchvision are deprecated.*",
+    category=UserWarning,
+)
 
 import numpy as np
 import torch

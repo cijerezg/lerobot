@@ -60,6 +60,7 @@ class TrainableParamsConfig:
     vision_encoder_from_layer: VisionEncoderTrainConfig = field(default_factory=VisionEncoderTrainConfig)
     language_from_layer: int | None = None         # None=frozen, int=train layers >= this index
     critic_language_from_layer: int | None = None  # same; critic norm/value_head/queries always on
+    critic_vision_encoder_from_layer: VisionEncoderTrainConfig = field(default_factory=VisionEncoderTrainConfig)
 
 @PreTrainedConfig.register_subclass("pi05_rl")
 @dataclass

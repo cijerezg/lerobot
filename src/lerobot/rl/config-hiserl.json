@@ -5,16 +5,16 @@
     "resume": false,
     "seed": 42,
     "num_workers": 4,
-    "batch_size": 8,
+    "batch_size": 32,
     "log_freq": 20,
     "save_checkpoint": true,
     "save_freq": 100,
-    "offline_output_dir": "outputs/pi05_full_offline_training_val_anchor_action_v1",
+    "offline_output_dir": "outputs/pi05_full_offline_training_diverse-v1",
     "offline_save_freq": 400,
-    "val_dataset_path": "outputs/annotated_dataset_validation",
+    "val_dataset_path": "outputs/annotated-dataset-validation-v7",
     "val_split": 0.0,
-    "val_freq": 400,
-    "val_on_start": false,
+    "val_freq": 200,
+    "val_on_start": true,
     "skip_critic": true,
     "treat_main_dataset_as_golden": true,
     "episode_logging_freq": 4,
@@ -29,9 +29,9 @@
         "offline_project": "so101_real_offline-v1",
         "disable_artifact": true
     },
-    "buffer_cache_dir": "outputs/buffer_cache",
+    "buffer_cache_dir": "outputs/buffer_cache-v1",
     "dataset": {
-        "root": "outputs/annotated_dataset-v4-correct-cams",
+        "root": "outputs/annotated-dataset-v7",
         "repo_id": "cijerezg/yellow-car-offline-training-v2",
         "use_imagenet_stats": false,
         "max_episodes": null,
@@ -117,7 +117,7 @@
         "offline_buffer_capacity": 50000,
         "online_step_before_learning": 10,
         "policy_update_freq": 1,
-        "critic_warmup_steps": 0,
+        "critic_warmup_steps": 4000,
         "discount": 0.97,
         "async_prefetch": false,
         "num_critics": 1,
@@ -127,7 +127,7 @@
         "critic_target_update_weight": 0.005,
         "utd_ratio": 1,
         "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 1,
+        "gradient_accumulation_steps": 8,
         "offline_steps": 10000,
         "trainable_params": {
             "vision_encoder_from_layer": {
@@ -135,7 +135,11 @@
                 "multi_modal_projector": true
             },
             "language_from_layer": 0,
-            "critic_language_from_layer": 5
+            "critic_language_from_layer": 5,
+            "critic_vision_encoder_from_layer": {
+                "vision_tower": 5,
+                "multi_modal_projector": true
+            }
         },
         "critic_network_kwargs": {
             "hidden_dims": [
@@ -156,13 +160,13 @@
         "repo_id": "cijerezg/multi-task-toys-merged-v2"
     },
     "probe_parameters": {
-        "enable_actions": true,
-        "enable_representations": true,
-        "enable_attention": true,
-        "enable_offline_inference": true,
-        "enable_spatial_memorization": true,
-        "enable_action_drift_jacobian": true,
-        "enable_spatial_memorization_jacobian": true,
+        "enable_actions": false,
+        "enable_representations": false,
+        "enable_attention": false,
+        "enable_offline_inference": false,
+        "enable_spatial_memorization": false,
+        "enable_action_drift_jacobian": false,
+        "enable_spatial_memorization_jacobian": false,
         "enable_critic_values_distribution": true,
         "output_dir": "outputs/probe",
         "mode": "all",
@@ -186,7 +190,7 @@
         "attn_eval_subsample": 2,
         "spatial_layers": "0,9,17",
         "spatial_n_frames": 32,
-        "critic_adv_frames": 1000,
+        "critic_adv_frames": 2000,
         "critic_grad_frames": 200
     },
     "env": {

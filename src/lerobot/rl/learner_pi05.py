@@ -352,12 +352,14 @@ def add_actor_information_and_train(
 
     # Freezing some parameters
     _VISION_TOWER_DEPTH = 27   # SigLIP-400M
+    _CRITIC_VISION_TOWER_DEPTH = 13  # Critic truncates SigLIP to 13 layers (rl_pi05.py)
     _LANGUAGE_MODEL_DEPTH = 18  # Gemma 2B
     tp = cfg.policy.trainable_params
     critic_depth = cfg.policy.critic_llm_depth
     lm_layers = list(range(tp.language_from_layer, _LANGUAGE_MODEL_DEPTH)) if tp.language_from_layer is not None else []
     vt_layers  = list(range(tp.vision_encoder_from_layer.vision_tower, _VISION_TOWER_DEPTH)) if tp.vision_encoder_from_layer.vision_tower is not None else []
     cr_layers  = list(range(tp.critic_language_from_layer, critic_depth)) if tp.critic_language_from_layer is not None else []
+    cr_vt_layers = list(range(tp.critic_vision_encoder_from_layer.vision_tower, _CRITIC_VISION_TOWER_DEPTH)) if tp.critic_vision_encoder_from_layer.vision_tower is not None else []
 
     for name, param in policy.named_parameters():
         param.requires_grad = (
@@ -367,9 +369,9 @@ def add_actor_information_and_train(
             "time_mlp_in" in name or
             "time_mlp_out" in name or
             "gemma_expert" in name or
-            # Vision encoder
-            (tp.vision_encoder_from_layer.multi_modal_projector and "multi_modal_project" in name) or
-            ("vision_tower" in name and any(f".{i}." in name for i in vt_layers)) or
+            # Actor vision encoder (scoped to paligemma to avoid matching critic's vision tower)
+            (tp.vision_encoder_from_layer.multi_modal_projector and "paligemma" in name and "multi_modal_project" in name) or
+            ("paligemma" in name and "vision_tower" in name and any(f".{i}." in name for i in vt_layers)) or
             # Language model
             ("language_model" in name and any(f".{i}." in name for i in lm_layers)) or
             ("language_model.norm" in name and bool(lm_layers)) or
@@ -377,7 +379,10 @@ def add_actor_information_and_train(
             "critic.norm" in name or
             "critic.value_head" in name or
             "critic.value_queries" in name or
-            ("critic.layers" in name and any(f".{i}." in name for i in cr_layers))
+            ("critic.layers" in name and any(f".{i}." in name for i in cr_layers)) or
+            # Critic vision encoder (scoped to critic. prefix to avoid critic_target.*)
+            (tp.critic_vision_encoder_from_layer.multi_modal_projector and name.startswith("critic.") and "multi_modal_project" in name) or
+            (name.startswith("critic.vision_tower") and any(f".{i}." in name for i in cr_vt_layers))
         )
     
     # Share underlying memory for frozen critic layers to save VRAM

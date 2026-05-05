@@ -2,8 +2,15 @@
 import os
 import random
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import List, Optional, Set
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*video decoding and encoding capabilities of torchvision are deprecated.*",
+    category=UserWarning,
+)
 
 import matplotlib
 matplotlib.use("Agg")
@@ -221,7 +228,6 @@ def render_percentile_frame(obs, episode_idx, frame_idx, subtask, mag_val, p, ou
     out_path = os.path.join(output_dir, f"frame_p{p:02d}.png")
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    logging.info(f"  Saved p{p} frame to {out_path}")
 
 
 def style_plot(ax, title, xlabel, ylabel):
@@ -298,9 +304,6 @@ def run_critic_values_distribution(
         td_errors.append(td_error)
         adv_subtasks.append(gt_subtask or "None")
 
-        if (i + 1) % 50 == 0:
-            logging.info(f"  Processed {i+1}/{len(adv_indices)} advantage frames")
-
     fig, axes = plt.subplots(1, 3, figsize=(24, 6))
     sns.histplot(td_errors, bins=50, kde=True, ax=axes[0], color="coral", edgecolor="white")
     style_plot(axes[0], "TD-Error (Advantage) Histogram", "TD-Error", "Count")
@@ -309,7 +312,8 @@ def run_critic_values_distribution(
     style_plot(axes[1], "TD-Error (Advantage) CDF", "TD-Error", "Cumulative Probability")
     axes[1].margins(y=0.05)
 
-    sns.boxplot(x="td_error", y="subtask", data={"td_error": td_errors, "subtask": adv_subtasks},
+    sns.boxplot(x="td_error", y="subtask", hue="subtask", legend=False,
+                data={"td_error": td_errors, "subtask": adv_subtasks},
                 ax=axes[2], palette="pastel", fliersize=0)
     sns.stripplot(x="td_error", y="subtask", data={"td_error": td_errors, "subtask": adv_subtasks},
                   ax=axes[2], color=".3", size=3, alpha=0.5, jitter=True)
@@ -353,12 +357,10 @@ def run_critic_values_distribution(
         subtasks.append(gt_subtask or "None")
         frames.append(frame_idx)
 
-        if (i + 1) % 20 == 0:
-            logging.info(f"  Processed {i+1}/{len(grad_indices)} gradient frames")
-
     fig, axes = plt.subplots(1, 2, figsize=(20, 8))
 
-    sns.boxplot(x="grad_mag", y="subtask", data={"grad_mag": grad_mags, "subtask": subtasks},
+    sns.boxplot(x="grad_mag", y="subtask", hue="subtask", legend=False,
+                data={"grad_mag": grad_mags, "subtask": subtasks},
                 ax=axes[0], palette="pastel", fliersize=0)
     sns.stripplot(x="grad_mag", y="subtask", data={"grad_mag": grad_mags, "subtask": subtasks},
                   ax=axes[0], color=".3", size=4, alpha=0.5, jitter=True)
