@@ -776,6 +776,13 @@ class PI05RLPolicy(PI05FullPolicy):
                 
                 # Load critic
                 if hasattr(self, "critic"):
+                    # Must initialize vision tower structure (nn.Module) from actor before
+                    # loading the state dict — vision_tower/multi_modal_projector start as
+                    # None, so load_state_dict(strict=False) would silently drop those keys.
+                    print("Initializing critic structure from actor (to register vision modules)...")
+                    self._init_critic_from_actor()
+
+                    # Now override all structure with the trained checkpoint weights.
                     missing_critic, unexpected_critic = self.critic.load_state_dict(critic_state_dict, strict=False)
                     print(f"Critic loaded. Missing: {len(missing_critic)}, Unexpected: {len(unexpected_critic)}")
                     if missing_critic:
