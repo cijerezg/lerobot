@@ -452,17 +452,23 @@ def _finalize_episode_log(
     episode_counter,
     video_logging_cameras,
     critic_batch_size=40,
+    critic_subsample=1,
 ):
     """
     Process a buffered episode's frames after the episode ends.
     Called during the natural pause between episodes — no env loop impact.
     Runs critic inference, saves PNGs, and generates the overlay video,
     all behind tqdm progress bars.
+
+    critic_subsample: stride at which the critic forward is run relative to
+    video frames. The video uses every saved frame; only the V(s) curve has
+    fewer samples. Defaults to 1 (legacy 1:1 behavior).
     """
     if not episode_log_buffer:
         return
 
     os.makedirs(log_dir, exist_ok=True)
+    critic_subsample = max(1, int(critic_subsample))
     n_steps = len(episode_log_buffer)
     subtask_texts = [frame['subtask_text'] for frame in episode_log_buffer]
 
@@ -493,11 +499,17 @@ def _finalize_episode_log(
         adv_val = torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
         robot_type = cfg.env.robot.type if hasattr(cfg.env, 'robot') else ""
 
-        n_batches = (n_steps + critic_batch_size - 1) // critic_batch_size
-        logger.info(f"[ENV] Running critic inference: {n_steps} steps in {n_batches} batches (batch_size={critic_batch_size})...")
+        critic_indices = list(range(0, n_steps, critic_subsample))
+        n_critic = len(critic_indices)
+        n_batches = (n_critic + critic_batch_size - 1) // critic_batch_size
+        logger.info(
+            f"[ENV] Running critic inference: {n_critic}/{n_steps} steps "
+            f"(subsample={critic_subsample}) in {n_batches} batches (batch_size={critic_batch_size})..."
+        )
         with torch.no_grad():
-            for batch_start in tqdm(range(0, n_steps, critic_batch_size), desc="Critic inference", unit="batch"):
-                for frame in episode_log_buffer[batch_start:batch_start + critic_batch_size]:
+            for batch_start in tqdm(range(0, n_critic, critic_batch_size), desc="Critic inference", unit="batch"):
+                for ci in critic_indices[batch_start:batch_start + critic_batch_size]:
+                    frame = episode_log_buffer[ci]
                     batch_for_preprocessor = {
                         k: v for k, v in frame['obs'].items()
                         if k in cfg.policy.input_features
@@ -540,7 +552,13 @@ def _finalize_episode_log(
 
     # --- 4. Generate video ---
     try:
-        save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras, fps=cfg.env.fps, subtask_texts=subtask_texts)
+        save_video_with_critic_overlay(
+            log_dir, critic_values,
+            camera_names=video_logging_cameras,
+            fps=cfg.env.fps,
+            subtask_texts=subtask_texts,
+            subsample=critic_subsample,
+        )
         logger.info(f"[ENV] Video generated for episode {episode_counter}")
     except Exception as e:
         logger.error(f"[ENV] Failed to generate video: {e}")

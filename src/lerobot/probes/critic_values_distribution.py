@@ -23,6 +23,7 @@ import textwrap
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.rl.inference_utils import _finalize_episode_log
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 from lerobot.types import TransitionKey
@@ -45,8 +46,10 @@ def get_random_valid_samples(
     n_frames: int,
     seed: int,
     val_ep_indices: Optional[Set[int]] = None,
+    lookahead_frames: int = 1,
 ) -> List[int]:
-    """Pick *n_frames* dataset indices whose next index lies in the same episode.
+    """Pick *n_frames* dataset indices whose [idx, idx + lookahead_frames] window
+    lies entirely in the same episode.
 
     If *val_ep_indices* is provided, the candidate pool is restricted to those
     episodes only.
@@ -69,12 +72,13 @@ def get_random_valid_samples(
     for idx in candidate_indices:
         if len(samples) >= n_frames:
             break
-        if idx + 1 >= len(dataset):
+        end = idx + lookahead_frames
+        if end >= len(dataset):
             continue
 
         item = dataset.hf_dataset[idx]
-        next_item = dataset.hf_dataset[idx + 1]
-        if item["episode_index"].item() != next_item["episode_index"].item():
+        end_item = dataset.hf_dataset[end]
+        if item["episode_index"].item() != end_item["episode_index"].item():
             continue
 
         samples.append(idx)
@@ -238,6 +242,92 @@ def style_plot(ax, title, xlabel, ylabel):
     sns.despine(ax=ax, offset=10, trim=True)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-episode V(s) traces (mirrors online _finalize_episode_log → critic-overlay video)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def run_episode_critic_traces(
+    policy,
+    preprocessor,
+    val_dataset,
+    val_ep_indices,
+    cfg,
+    output_dir: str,
+    device,
+):
+    """For each selected episode, build the same per-frame buffer that the
+    online rollout produces, then hand it to `_finalize_episode_log` — the
+    function that already saves PNGs, runs critic inference, dumps the JSON +
+    plot, and renders the critic-overlay video.
+
+    The video plays at native fps; only the critic forward is sub-sampled
+    (stride = ``probe_parameters.attn_eval_subsample``, default 2).
+
+    Outputs (one sub-directory per episode):
+        {output_dir}/ep{NNNN}/critic_values.json
+        {output_dir}/ep{NNNN}/critic_plot.png
+        {output_dir}/ep{NNNN}/episode_video.mp4
+    """
+    p = cfg.probe_parameters
+    chunk_size = cfg.policy.n_action_steps
+    subsample = max(1, int(getattr(p, "attn_eval_subsample", 2)))
+    seed = int(getattr(p, "random_seed", 42))
+    max_episodes = getattr(p, "max_episodes", None)
+    video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
+
+    # `_finalize_episode_log` reads cfg.policy.preprocessor for the critic batch.
+    if not hasattr(policy, "preprocessor") or policy.preprocessor is None:
+        policy.preprocessor = preprocessor
+
+    ep_to_indices = _build_episode_index(val_dataset)
+    if val_ep_indices is not None:
+        ep_to_indices = {k: v for k, v in ep_to_indices.items() if k in val_ep_indices}
+    selected_eps = sorted(ep_to_indices.keys())
+    if max_episodes:
+        rng = random.Random(seed)
+        rng.shuffle(selected_eps)
+        selected_eps = sorted(selected_eps[: int(max_episodes)])
+
+    if not selected_eps:
+        logging.warning("[VAL] critic_episode_traces: no episodes to process")
+        return None
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    for ep_idx in selected_eps:
+        indices = ep_to_indices[ep_idx]
+        ep_dir = os.path.join(output_dir, f"ep{ep_idx:04d}")
+        os.makedirs(ep_dir, exist_ok=True)
+
+        episode_log_buffer = []
+        for global_idx in indices:
+            obs, _, _, gt_subtask, _, _, _ = get_frame_data(
+                val_dataset, global_idx, chunk_size,
+            )
+            episode_log_buffer.append({
+                "obs": obs,
+                "subtask_text": gt_subtask or "",
+            })
+
+        try:
+            _finalize_episode_log(
+                episode_log_buffer=episode_log_buffer,
+                policy=policy,
+                cfg=cfg,
+                log_dir=ep_dir,
+                episode_counter=ep_idx,
+                video_logging_cameras=video_logging_cameras,
+                critic_subsample=subsample,
+            )
+        except Exception as exc:
+            logging.warning(
+                f"[VAL] critic_episode_traces ep{ep_idx}: failed: {exc}",
+                exc_info=True,
+            )
+
+    return {"episodes": selected_eps, "subsample": subsample}
+
+
 def run_critic_values_distribution(
     policy,
     preprocessor,
@@ -271,37 +361,73 @@ def run_critic_values_distribution(
     n_grad = int(getattr(p, "critic_grad_frames", 200))
     seed = int(getattr(p, "random_seed", 42))
     discount = getattr(policy.config, "discount", 0.99)
+    advantage_scaling = float(getattr(cfg.policy, "advantage_scaling", 1.0))
+
+    # ── Part 0: per-episode V(s) traces ─────────────────────────────────────
+    # Walk full episodes at native fps; sub-sample only the critic forward.
+    # Reuses inference_utils._finalize_episode_log so the rendered video is
+    # identical to the one produced by the online rollout logger.
+    try:
+        run_episode_critic_traces(
+            policy, preprocessor,
+            val_dataset, val_ep_indices,
+            cfg,
+            output_dir=os.path.join(output_dir, "episode_traces"),
+            device=device,
+        )
+    except Exception as exc:
+        logging.warning(
+            f"[VAL] critic_values_distribution: episode traces failed: {exc}",
+            exc_info=True,
+        )
 
     # ── Part 1: advantage / TD-error ────────────────────────────────────────
+    # Mirrors training (buffer.py:309 + buffer.py:330-334):
+    #   next_state = s_{t + chunk_size}
+    #   reward     = max over [t + chunk, t + 2*chunk)
+    #   done       = any over [t + chunk, t + 2*chunk)
+    # Need the full window [idx, idx + 2*chunk - 1] inside the same episode.
     logging.info(f"[VAL] critic_values_distribution: sampling {n_adv} frames for TD-error")
     adv_indices = get_random_valid_samples(
         val_dataset, n_adv, seed, val_ep_indices=val_ep_indices,
+        lookahead_frames=2 * chunk_size - 1,
     )
     if not adv_indices:
         logging.warning("[VAL] critic_values_distribution: no advantage samples")
         return None
 
     td_errors: list[float] = []
+    squashed_advantages: list[float] = []
     adv_subtasks: list[str] = []
 
     for i, idx in enumerate(adv_indices):
         obs, _, _, gt_subtask, task_str, _, _ = get_frame_data(val_dataset, idx, chunk_size)
-        next_obs, _, _, _, next_task_str, _, _ = get_frame_data(val_dataset, idx + 1, chunk_size)
+        next_obs, _, _, _, next_task_str, _, _ = get_frame_data(val_dataset, idx + chunk_size, chunk_size)
 
         v_current = get_v(policy, preprocessor, obs, task_str, device)
         v_next = get_v(policy, preprocessor, next_obs, next_task_str, device)
 
-        item = val_dataset.hf_dataset[idx]
-        reward = item.get("reward", 0.0)
-        done = item.get("next.done", False)
-
-        if isinstance(reward, torch.Tensor): reward = reward.item()
-        if isinstance(done, torch.Tensor): done = done.item()
+        # Aggregate reward (max) and done (any) over the lookahead chunk window.
+        rewards_window: list[float] = []
+        dones_window: list[bool] = []
+        for off in range(chunk_size):
+            w_idx = min(idx + chunk_size + off, len(val_dataset) - 1)
+            f = val_dataset.hf_dataset[w_idx]
+            r = f.get("reward", 0.0)
+            d = f.get("next.done", False)
+            if isinstance(r, torch.Tensor): r = r.item()
+            if isinstance(d, torch.Tensor): d = d.item()
+            rewards_window.append(float(r))
+            dones_window.append(bool(d))
+        reward = max(rewards_window)
+        done = any(dones_window)
 
         target_v = reward + discount * v_next * (1.0 - float(done))
         td_error = target_v - v_current
+        squashed = float(np.tanh(td_error / advantage_scaling))
 
         td_errors.append(td_error)
+        squashed_advantages.append(squashed)
         adv_subtasks.append(gt_subtask or "None")
 
     fig, axes = plt.subplots(1, 3, figsize=(24, 6))
@@ -326,6 +452,32 @@ def run_critic_values_distribution(
     plt.close()
     logging.info(f"[VAL] critic_values_distribution: saved advantage plot → {adv_plot_path}")
 
+    # Squashed advantage = tanh(raw / advantage_scaling), matching
+    # pi05_train_utils.py:720 (the value the actor actually conditions on).
+    fig, axes = plt.subplots(1, 3, figsize=(24, 6))
+    sns.histplot(squashed_advantages, bins=50, kde=True, ax=axes[0],
+                 color="seagreen", edgecolor="white")
+    style_plot(axes[0], "Squashed Advantage Histogram", "tanh(adv / scale)", "Count")
+
+    sns.ecdfplot(squashed_advantages, ax=axes[1], color="seagreen", linewidth=3)
+    style_plot(axes[1], "Squashed Advantage CDF", "tanh(adv / scale)", "Cumulative Probability")
+    axes[1].margins(y=0.05)
+
+    sns.boxplot(x="squashed", y="subtask", hue="subtask", legend=False,
+                data={"squashed": squashed_advantages, "subtask": adv_subtasks},
+                ax=axes[2], palette="pastel", fliersize=0)
+    sns.stripplot(x="squashed", y="subtask",
+                  data={"squashed": squashed_advantages, "subtask": adv_subtasks},
+                  ax=axes[2], color=".3", size=3, alpha=0.5, jitter=True)
+    style_plot(axes[2], "Squashed Advantage by Subtask", "tanh(adv / scale)", "Subtask")
+    axes[2].set_yticklabels(axes[2].get_yticklabels(), rotation=0)
+
+    plt.tight_layout(pad=3.0)
+    sq_plot_path = os.path.join(output_dir, "advantage_squashed_dist.png")
+    plt.savefig(sq_plot_path, dpi=200)
+    plt.close()
+    logging.info(f"[VAL] critic_values_distribution: saved squashed advantage plot → {sq_plot_path}")
+
     # ── Part 2: gradient magnitudes ─────────────────────────────────────────
     logging.info(f"[VAL] critic_values_distribution: sampling {n_grad} frames for gradients")
     grad_indices = get_random_valid_samples(
@@ -335,6 +487,7 @@ def run_critic_values_distribution(
         logging.warning("[VAL] critic_values_distribution: no gradient samples")
         return {
             "td_errors": torch.tensor(td_errors),
+            "squashed_advantages": torch.tensor(squashed_advantages),
             "adv_subtasks": adv_subtasks,
         }
 
@@ -402,6 +555,7 @@ def run_critic_values_distribution(
 
     raw = {
         "td_errors":   torch.tensor(td_errors),
+        "squashed_advantages": torch.tensor(squashed_advantages),
         "grad_mags":   torch.tensor(grad_mags),
         "episodes":    torch.tensor(episodes),
         "frames":      torch.tensor(frames),
