@@ -127,8 +127,50 @@ def get_v(policy, preprocessor, obs, task_str, device):
     vision_features = torch.cat(vision_features, dim=1)
     vision_pad_masks = torch.cat(vision_pad_masks, dim=1)
 
-    v = policy.critic(vision_features, critic_text_embs, critic_token_masks)
-    return v.item()
+    out = policy.critic(vision_features, critic_text_embs, critic_token_masks)
+    return out["value"].item()
+
+
+@torch.no_grad()
+def get_v_and_probs(policy, preprocessor, obs, task_str, device):
+    """Like `get_v` but also returns the full predicted distribution over value bins."""
+    batch_size = 1
+    dummy_action = torch.zeros(batch_size, 1, 6, device=device)
+    complementary_data = {
+        "task": [task_str],
+        "subtask": [""],
+        "advantage": torch.tensor([[1.0]], device=device),
+    }
+
+    batch_for_proc = {
+        TransitionKey.ACTION: dummy_action,
+        **{k: v.to(device) for k, v in obs.items()},
+        TransitionKey.COMPLEMENTARY_DATA: complementary_data,
+    }
+    processed = preprocessor(batch_for_proc)
+
+    actor_tokens = processed[OBS_LANGUAGE_TOKENS]
+    actor_masks = processed[OBS_LANGUAGE_ATTENTION_MASK]
+
+    critic_tokens = processed.get("critic_tokens", actor_tokens)
+    critic_token_masks = processed.get("critic_pad_mask", actor_masks)
+
+    actor_embed_layer = policy.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
+    critic_text_embs = actor_embed_layer(critic_tokens).detach()
+
+    images, img_masks = policy._preprocess_images({k: v.to(device) for k, v in obs.items()})
+
+    vision_features = []
+    encoder = policy.critic
+    for img, img_mask in zip(images, img_masks):
+        feat = encoder.embed_image(img)
+        vision_features.append(feat)
+    vision_features = torch.cat(vision_features, dim=1)
+
+    out = policy.critic(vision_features, critic_text_embs, critic_token_masks)
+    v = out["value"].item()
+    probs = out["probs"].squeeze(0).float().cpu().numpy()
+    return v, probs
 
 
 def compute_gradient_magnitude(policy, preprocessor, obs, task_str, device):
@@ -176,7 +218,8 @@ def compute_gradient_magnitude(policy, preprocessor, obs, task_str, device):
     vision_features = vision_features.detach().requires_grad_(True)
     critic_text_embs = critic_text_embs.detach().requires_grad_(True)
 
-    v = policy.critic(vision_features, critic_text_embs, critic_token_masks)
+    out = policy.critic(vision_features, critic_text_embs, critic_token_masks)
+    v = out["value"].sum()
 
     policy.critic.zero_grad()
     v.backward()
@@ -328,6 +371,76 @@ def run_episode_critic_traces(
     return {"episodes": selected_eps, "subsample": subsample}
 
 
+def run_predicted_distributions(
+    policy,
+    preprocessor,
+    val_dataset,
+    val_ep_indices,
+    cfg,
+    output_dir: str,
+    device,
+):
+    """Plot the critic's predicted distribution over the value support for a
+    handful of random frames. One subplot per frame, in a grid; x-axis is the
+    bin centers (V_min..V_max), y-axis is probability mass. The expected V is
+    overlaid as a vertical dashed line.
+
+    Output:
+        {output_dir}/predicted_distributions.png
+    """
+    p = cfg.probe_parameters
+    chunk_size = cfg.policy.n_action_steps
+    n_frames = int(getattr(p, "critic_dist_frames", 9))
+    seed = int(getattr(p, "random_seed", 42)) + 7
+
+    indices = get_random_valid_samples(
+        val_dataset, n_frames, seed, val_ep_indices=val_ep_indices,
+        lookahead_frames=0,
+    )
+    if not indices:
+        logging.warning("[VAL] predicted_distributions: no samples")
+        return None
+
+    bin_centers = policy.critic.bin_centers.detach().float().cpu().numpy()
+
+    n_cols = 3
+    n_rows = (len(indices) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 5, n_rows * 4), squeeze=False)
+
+    for i, idx in enumerate(indices):
+        obs, _, _, gt_subtask, task_str, ep_idx, frame_idx = get_frame_data(
+            val_dataset, idx, chunk_size,
+        )
+        v, probs = get_v_and_probs(policy, preprocessor, obs, task_str, device)
+
+        ax = axes[i // n_cols, i % n_cols]
+        ax.plot(bin_centers, probs, color="steelblue", linewidth=2)
+        ax.fill_between(bin_centers, probs, alpha=0.2, color="steelblue")
+        ax.axvline(v, color="crimson", linestyle="--", linewidth=1.5, label=f"E[V] = {v:.3f}")
+        title = f"ep{ep_idx} f{frame_idx}"
+        if gt_subtask:
+            title += f"\n{gt_subtask[:40]}"
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel("V")
+        ax.set_ylabel("P(V)")
+        ax.legend(loc="upper left", fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+    for j in range(len(indices), n_rows * n_cols):
+        axes[j // n_cols, j % n_cols].axis("off")
+
+    plt.tight_layout(pad=2.0)
+    out_path = os.path.join(output_dir, "predicted_distributions.png")
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    logging.info(f"[VAL] predicted_distributions: saved → {out_path}")
+
+    return {
+        "indices": indices,
+        "bin_centers": torch.tensor(bin_centers),
+    }
+
+
 def run_critic_values_distribution(
     policy,
     preprocessor,
@@ -378,6 +491,21 @@ def run_critic_values_distribution(
     except Exception as exc:
         logging.warning(
             f"[VAL] critic_values_distribution: episode traces failed: {exc}",
+            exc_info=True,
+        )
+
+    # ── Part 0.5: predicted value distributions for random frames ───────────
+    try:
+        run_predicted_distributions(
+            policy, preprocessor,
+            val_dataset, val_ep_indices,
+            cfg,
+            output_dir=output_dir,
+            device=device,
+        )
+    except Exception as exc:
+        logging.warning(
+            f"[VAL] critic_values_distribution: predicted distributions failed: {exc}",
             exc_info=True,
         )
 

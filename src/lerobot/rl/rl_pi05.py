@@ -107,6 +107,13 @@ class PI05RLConfig(PI05FullConfig):
     # Critic network arguments
     critic_network_kwargs: dict | None = None
 
+    # Distributional critic (HL-Gauss over B bins)
+    num_value_bins: int = 201
+    value_support_min: float = -1.2
+    value_support_max: float = 0.0
+    hl_gauss_sigma_ratio: float = 5.0  # σ in units of bin width
+    use_distributional_critic: bool = True  # toggle CE vs MSE loss; metrics always log both
+
     # Trainable parameter configuration
     trainable_params: TrainableParamsConfig = field(default_factory=TrainableParamsConfig)
 
@@ -205,17 +212,20 @@ class Pi05TransformerCritic(nn.Module):
             use_adarms=False,
         )
         self.critic_gemma_config = critic_gemma_config
-        
-        # Learned query tokens for value prediction (32 tokens)
-        # Initialize with magnitude similar to scaled text embeddings (~270)
-        # Text norm ≈ sqrt(hidden_dim) * embedding_norm ≈ 45 * 6 ≈ 270
-        # So we init queries with std ≈ 270 / sqrt(hidden_dim) ≈ 6
-        self.num_query_tokens = 32
-        query_init_std = 1.0  # Standard initialization
+
+        # Distributional critic: one query token per bin. Each query gathers
+        # evidence through the transformer, and a shared Linear(D→1) head emits
+        # one logit per query. Softmax across queries gives a 201-bin
+        # distribution over the value support.
+        self.num_value_bins = config.num_value_bins
+        self.num_query_tokens = self.num_value_bins
+        # BERT-style small init — 201 queries are a lot more sequence than 32,
+        # so collapse risk is real if we copy the old std=1.0.
+        query_init_std = 0.02
         self.value_queries = nn.Parameter(torch.randn(1, self.num_query_tokens, hidden_dim) * query_init_std)
         # Force contiguous gradients
         self.value_queries.register_hook(lambda grad: grad.contiguous())
-        
+
         # Rotary Embeddings
         self.rotary_emb = GemmaRotaryEmbedding(critic_gemma_config)
 
@@ -229,17 +239,20 @@ class Pi05TransformerCritic(nn.Module):
 
         # Final normalization
         self.norm = PiGemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
-        
-        # Token-wise projection to reduce dimensionality before flattening
-        self.token_proj = nn.Linear(hidden_dim, 512)
-        
-        # Value head (projects from flattened projected tokens -> 1 value)
-        self.value_head = nn.Sequential(
-            nn.Linear(512 * self.num_query_tokens, 512 * 2),
-            SwiGLU(),
-            nn.Linear(512, 1)
+
+        # Shared per-query logit head: each of the B query outputs is mapped
+        # to a single scalar logit by the same Linear, so bins remain ordered
+        # and comparable.
+        self.bin_logit_head = nn.Linear(hidden_dim, 1)
+
+        # Bin support and HL-Gauss bandwidth as buffers so they move with .to(device).
+        bin_centers = torch.linspace(
+            config.value_support_min, config.value_support_max, self.num_value_bins
         )
-        
+        self.register_buffer("bin_centers", bin_centers, persistent=False)
+        bin_width = (config.value_support_max - config.value_support_min) / (self.num_value_bins - 1)
+        self.hl_gauss_sigma = float(config.hl_gauss_sigma_ratio * bin_width)
+
         # Vision components (initialized in initialize_weights_from_actor)
         self.vision_tower = None
         self.multi_modal_projector = None
@@ -281,14 +294,27 @@ class Pi05TransformerCritic(nn.Module):
         image_features = self.multi_modal_projector(selected_image_feature)
         return image_features
 
-    def forward(self, vision_features: Tensor, text_embs: Tensor, token_masks: Tensor) -> Tensor:
+    def value_from_logits(self, logits: Tensor) -> Tensor:
+        """Expected value under softmax(logits). logits: [..., num_value_bins] → [..., 1]."""
+        probs = F.softmax(logits, dim=-1)
+        return self.value_from_probs(probs)
+
+    def value_from_probs(self, probs: Tensor) -> Tensor:
+        """Expected value under an already-normalized distribution. probs: [..., num_value_bins] → [..., 1]."""
+        bin_centers = self.bin_centers.to(dtype=probs.dtype)
+        return (probs * bin_centers).sum(dim=-1, keepdim=True)
+
+    def forward(self, vision_features: Tensor, text_embs: Tensor, token_masks: Tensor) -> dict[str, Tensor]:
         """
         Args:
             vision_features: [B, num_patches, hidden_dim]
             text_embs: [B, seq_len, hidden_dim]
             token_masks: [B, seq_len]
         Returns:
-            value: [B, 1]
+            dict with:
+                logits: [B, num_value_bins] — pre-softmax bin scores
+                probs:  [B, num_value_bins] — softmax distribution over the value support
+                value:  [B, 1] — expected value E[V] under `probs`
         """
         
         batch_size = text_embs.shape[0]
@@ -385,18 +411,48 @@ class Pi05TransformerCritic(nn.Module):
         
         # Extract Queries (At the END)
         start_idx = vision_features.shape[1] + text_embs.shape[1]
-        queries_out = hidden_states[:, start_idx:, :] # [B, num_queries, D]
-        
-        # Token-wise projection (applied to each of the 32 tokens independently)
-        queries_proj = self.token_proj(queries_out) # [B, num_queries, 256]
-        
-        # Flatten all projected tokens together
-        queries_flat = queries_proj.reshape(batch_size, -1) # [B, num_queries * 256]
+        queries_out = hidden_states[:, start_idx:, :]  # [B, num_value_bins, D]
 
-        # Value Head
-        value = self.value_head(queries_flat.to(self.dtype))
+        # Shared per-query logit head: one scalar per query → 201 logits
+        logits = self.bin_logit_head(queries_out.to(self.dtype)).squeeze(-1)  # [B, num_value_bins]
 
-        return value
+        probs = F.softmax(logits, dim=-1)  # [B, num_value_bins]
+        value = self.value_from_probs(probs)  # [B, 1]
+
+        return {"logits": logits, "probs": probs, "value": value}
+
+    def hl_gauss_target(self, target_v: Tensor) -> Tensor:
+        """Build the HL-Gauss target distribution for scalar TD targets.
+
+        Returns a distribution over the 201 bins by integrating a Gaussian
+        of std `self.hl_gauss_sigma` centered at `target_v` against bin edges
+        (CDF differences). The first and last bins absorb tails beyond the
+        support, so out-of-range targets degrade to a one-hot at the boundary.
+
+        Args:
+            target_v: scalar TD targets, shape [B] or [B, 1].
+        Returns:
+            target distribution, shape [B, num_value_bins], rows sum to 1.
+        """
+        if target_v.ndim == 2:
+            target_v = target_v.squeeze(-1)
+        target_v = target_v.to(dtype=self.bin_centers.dtype)
+
+        # Internal edges: midpoints between consecutive bin centers.
+        internal_edges = 0.5 * (self.bin_centers[:-1] + self.bin_centers[1:])  # [num_value_bins - 1]
+        # CDF at each internal edge under N(target_v, σ²)
+        z = (internal_edges.unsqueeze(0) - target_v.unsqueeze(-1)) / (
+            self.hl_gauss_sigma * math.sqrt(2)
+        )
+        cdf_internal = 0.5 * (1.0 + torch.erf(z))  # [B, num_value_bins - 1]
+
+        # Pad with 0 at -∞ and 1 at +∞ so boundary bins absorb the tails.
+        zeros = torch.zeros_like(cdf_internal[:, :1])
+        ones = torch.ones_like(cdf_internal[:, :1])
+        cdf_full = torch.cat([zeros, cdf_internal, ones], dim=-1)  # [B, num_value_bins + 1]
+
+        target_dist = cdf_full[:, 1:] - cdf_full[:, :-1]  # [B, num_value_bins]
+        return target_dist
 
 class PI05RLPytorch(PI05Pytorch):
     """Subclass of PI05Pytorch to inject Advantage Conditioning."""
@@ -1032,8 +1088,10 @@ class PI05RLPolicy(PI05FullPolicy):
             
         elif model == "critic":
             # Critic Update
-            current_v = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
-            
+            critic_out = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
+            current_v = critic_out["value"]
+            current_logits = critic_out["logits"]
+
             with torch.no_grad():
                 # Next state processing (copied from actor block)
                 if "next_state" in batch:
@@ -1060,55 +1118,73 @@ class PI05RLPolicy(PI05FullPolicy):
                     actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
                     next_critic_text_embs = actor_embed_layer(next_critic_tokens).detach()
                         
-                    next_v = self.critic_target(next_vision_features, next_critic_text_embs, next_critic_token_masks)
+                    next_v = self.critic_target(next_vision_features, next_critic_text_embs, next_critic_token_masks)["value"]
                 else:
                     # Handle case where next_state is missing (e.g. end of episode or not provided)
                     # For now, we assume next_state is always provided in RL batch
                     raise ValueError("next_state is required for critic update")
             
-            # Loss
+            # TD scalar target
             reward = batch["reward"]
             done = batch["next.done"]
 
-            # Unsqueeze to match next_v shape [B, 1]
             if reward.ndim == 1:
                 reward = reward.unsqueeze(-1)
             if done.ndim == 1:
                 done = done.unsqueeze(-1)
-            
-            # Ensure correct dtype for mixed precision training
+
             reward = reward.to(dtype=current_v.dtype)
             done = done.to(dtype=current_v.dtype)
-            
-            target_q = reward + self.config.discount * next_v * (1 - done)
-            target_q = target_q.to(dtype=current_v.dtype)
-            # By definition of reward structure, the values should are bounded by 0.
-            # We leave a little headroom
-            target_q = target_q.clamp(max=0.05)
-            
-            loss_critic_raw = F.mse_loss(current_v, target_q, reduction="none")
-            loss_critic = loss_critic_raw.mean()
-            
+
+            target_v_raw = reward + self.config.discount * next_v * (1 - done)
+            # Clamp inside the bin support so CE and MSE see the same target.
+            # Targets outside the support saturate at the boundary bin.
+            v_min = self.config.value_support_min
+            v_max = self.config.value_support_max
+            target_v = target_v_raw.clamp(min=v_min, max=v_max).to(dtype=current_v.dtype)
+
+            # Always compute both losses; pick one for backprop, log both.
+            target_dist = self.critic.hl_gauss_target(target_v).to(dtype=current_logits.dtype)
+            log_probs = F.log_softmax(current_logits, dim=-1)
+            ce_per_sample = -(target_dist * log_probs).sum(dim=-1)  # [B]
+            loss_critic_ce = ce_per_sample.mean()
+
+            mse_per_sample = F.mse_loss(current_v, target_v, reduction="none").squeeze(-1)  # [B]
+            loss_critic_mse = mse_per_sample.mean()
+
+            if self.config.use_distributional_critic:
+                loss_critic = loss_critic_ce
+                loss_critic_raw = ce_per_sample.detach().unsqueeze(-1)
+            else:
+                loss_critic = loss_critic_mse
+                loss_critic_raw = mse_per_sample.detach().unsqueeze(-1)
+
+            td_error = torch.abs(current_v - target_v)
+
             self.critic_log_counter += 1
             if self.critic_log_counter % 200 == 0:
-                print(f"[Critic] Loss: {loss_critic.item():.4f} | V_mean: {current_v.mean().item():.4f} | Target_mean: {target_q.mean().item():.4f} | TD_err: {torch.abs(current_v - target_q).mean().item():.4f}")
-            
-            # Metrics
-            td_error = torch.abs(current_v - target_q)
-            
+                clamp_frac = (target_v_raw != target_v).float().mean().item()
+                print(
+                    f"[Critic] CE: {loss_critic_ce.item():.4f} | MSE: {loss_critic_mse.item():.4f} "
+                    f"| V_mean: {current_v.mean().item():.4f} | Target_mean: {target_v.mean().item():.4f} "
+                    f"| TD_err: {td_error.mean().item():.4f} | clamp_frac: {clamp_frac:.3f}"
+                )
+
             return {
                 "loss_critic": loss_critic,
-                "loss_critic_raw": loss_critic_raw.detach(),
+                "loss_critic_raw": loss_critic_raw,
+                "loss_critic_ce": loss_critic_ce.detach(),
+                "loss_critic_mse": loss_critic_mse.detach(),
                 "critic_values": current_v,
-                "target_values": target_q,
+                "target_values": target_v,
                 "td_error": td_error,
                 "td_error_mean": td_error.mean().item(),
                 "critic_value_mean": current_v.mean().item(),
-                "target_value_mean": target_q.mean().item(),
+                "target_value_mean": target_v.mean().item(),
             }
 
         elif model == "critic_value":
-            values = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
+            values = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)["value"]
             return {
                 "critic_values": values,
                 "critic_value_mean": values.mean().item()

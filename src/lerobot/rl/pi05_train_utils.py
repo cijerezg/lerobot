@@ -326,6 +326,8 @@ def _update_critic(
     scaler
 ) -> dict:
     accum_loss_critic = 0.0
+    accum_loss_critic_ce = 0.0
+    accum_loss_critic_mse = 0.0
     critic_values_list = []
     td_error_list = []
     target_values_list = []
@@ -371,6 +373,10 @@ def _update_critic(
             
         # Accumulate metrics
         accum_loss_critic += critic_output["loss_critic"].detach().item()
+        if "loss_critic_ce" in critic_output:
+            accum_loss_critic_ce += critic_output["loss_critic_ce"].detach().item()
+        if "loss_critic_mse" in critic_output:
+            accum_loss_critic_mse += critic_output["loss_critic_mse"].detach().item()
         critic_values_list.append(critic_output["critic_values"].detach())
         td_error_list.append(critic_output["td_error"].detach())
         target_values_list.append(critic_output["target_values"].detach())
@@ -403,6 +409,8 @@ def _update_critic(
     
     training_infos = {
         "loss_critic": accum_loss_critic / gradient_accumulation_steps,
+        "loss_critic_ce": accum_loss_critic_ce / gradient_accumulation_steps,
+        "loss_critic_mse": accum_loss_critic_mse / gradient_accumulation_steps,
         "critic_grad_norm": critic_grad_norm,
         "td_error_mean": all_td_errors.mean().item(),
         "td_error_std": all_td_errors.std().item() if all_td_errors.numel() > 1 else 0.0,
