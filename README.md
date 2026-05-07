@@ -8,7 +8,7 @@ This repo is a research-oriented version of [LeRobot](https://github.com/hugging
 
 This is an active project and we expect to continually add more features and capabilities. Happy to take requests.
 
-<video src="https://github.com/user-attachments/assets/9461ba1e-725b-4ee4-8d32-173fa6a86600" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/9c5330a9-27bf-4aab-98df-ea142f40093d" controls width="100%"></video>
 
 
 ## Key features
