@@ -371,6 +371,134 @@ def run_episode_critic_traces(
     return {"episodes": selected_eps, "subsample": subsample}
 
 
+def _rescale_to_critic_range(values: list[float]) -> list[float]:
+    """Linearly rescale *values* to the critic's display range [-2.1, 0.1].
+
+    Uses the 2nd/98th percentiles as the input extent so a single spike
+    doesn't flatten the rest of the curve.
+    """
+    arr = np.array(values, dtype=np.float64)
+    p_lo = float(np.percentile(arr, 2))
+    p_hi = float(np.percentile(arr, 98))
+    if p_hi == p_lo:
+        return [-1.0] * len(values)
+    c_min, c_max = -2.1, 0.1
+    scaled = (arr - p_lo) / (p_hi - p_lo) * (c_max - c_min) + c_min
+    return scaled.tolist()
+
+
+def run_episode_gradient_traces(
+    policy,
+    preprocessor,
+    val_dataset,
+    val_ep_indices,
+    cfg,
+    output_dir: str,
+    device,
+):
+    """Same structure as run_episode_critic_traces but overlays gradient magnitude.
+
+    For each selected episode:
+      1. Saves per-frame PNGs.
+      2. Computes gradient magnitude at every *subsample*-th frame.
+      3. Rescales the magnitudes into the critic display range [-2.1, 0.1] so
+         the existing save_video_with_critic_overlay is reused unchanged.
+
+    Output per episode:
+        {output_dir}/ep{NNNN}/episode_video.mp4
+    """
+    from lerobot.rl.utils import save_video_with_critic_overlay
+    from PIL import Image as PILImage
+
+    p = cfg.probe_parameters
+    chunk_size = cfg.policy.n_action_steps
+    subsample = max(1, int(getattr(p, "attn_eval_subsample", 2)))
+    seed = int(getattr(p, "random_seed", 42))
+    max_episodes = getattr(p, "max_episodes", None)
+    video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
+
+    ep_to_indices = _build_episode_index(val_dataset)
+    if val_ep_indices is not None:
+        ep_to_indices = {k: v for k, v in ep_to_indices.items() if k in val_ep_indices}
+    selected_eps = sorted(ep_to_indices.keys())
+    if max_episodes:
+        rng = random.Random(seed)
+        rng.shuffle(selected_eps)
+        selected_eps = sorted(selected_eps[: int(max_episodes)])
+
+    if not selected_eps:
+        logging.warning("[VAL] gradient_episode_traces: no episodes to process")
+        return None
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    for ep_idx in selected_eps:
+        indices = ep_to_indices[ep_idx]
+        ep_dir = os.path.join(output_dir, f"ep{ep_idx:04d}")
+        os.makedirs(ep_dir, exist_ok=True)
+
+        # ── 1. Save per-frame PNGs ───────────────────────────────────────────
+        subtask_texts = []
+        for step_idx, global_idx in enumerate(indices):
+            obs, _, _, gt_subtask, task_str, _, _ = get_frame_data(
+                val_dataset, global_idx, chunk_size,
+            )
+            subtask_texts.append(gt_subtask or "")
+            for key, val in obs.items():
+                if "image" not in key:
+                    continue
+                cam_name = key.split(".")[-1]
+                if cam_name not in video_logging_cameras:
+                    continue
+                img_tensor = val[0] if val.ndim == 4 else val
+                if img_tensor.dtype == torch.uint8:
+                    img_np = img_tensor.numpy().transpose(1, 2, 0)
+                else:
+                    v_max = img_tensor.max().item()
+                    if v_max <= 5.0:
+                        img_np = (img_tensor.float().numpy().transpose(1, 2, 0) * 255.0).clip(0, 255).astype(np.uint8)
+                    else:
+                        img_np = img_tensor.float().numpy().transpose(1, 2, 0).clip(0, 255).astype(np.uint8)
+                PILImage.fromarray(img_np).save(
+                    os.path.join(ep_dir, f"step_{step_idx:06d}_{cam_name}.png")
+                )
+
+        # ── 2. Compute gradient magnitudes (subsampled) ──────────────────────
+        grad_mags: list[float] = []
+        critic_indices = list(range(0, len(indices), subsample))
+        for ci in critic_indices:
+            obs, _, _, _, task_str, _, _ = get_frame_data(
+                val_dataset, indices[ci], chunk_size,
+            )
+            try:
+                mag = compute_gradient_magnitude(policy, preprocessor, obs, task_str, device)
+            except Exception as exc:
+                logging.warning(f"[VAL] gradient_traces ep{ep_idx} step{ci}: {exc}")
+                mag = 0.0
+            grad_mags.append(mag)
+
+        # ── 3. Rescale and render video ──────────────────────────────────────
+        if not grad_mags:
+            continue
+        scaled = _rescale_to_critic_range(grad_mags)
+        try:
+            save_video_with_critic_overlay(
+                ep_dir,
+                scaled,
+                camera_names=video_logging_cameras,
+                fps=cfg.env.fps,
+                subtask_texts=subtask_texts,
+                subsample=subsample,
+            )
+        except Exception as exc:
+            logging.warning(
+                f"[VAL] gradient_episode_traces ep{ep_idx}: video failed: {exc}",
+                exc_info=True,
+            )
+
+    return {"episodes": selected_eps, "subsample": subsample}
+
+
 def run_predicted_distributions(
     policy,
     preprocessor,
@@ -502,6 +630,21 @@ def run_critic_values_distribution(
     except Exception as exc:
         logging.warning(
             f"[VAL] critic_values_distribution: episode traces failed: {exc}",
+            exc_info=True,
+        )
+
+    # ── Part 0.25: per-episode gradient magnitude traces ────────────────────
+    try:
+        run_episode_gradient_traces(
+            policy, preprocessor,
+            val_dataset, val_ep_indices,
+            cfg,
+            output_dir=os.path.join(output_dir, "episode_gradient_traces"),
+            device=device,
+        )
+    except Exception as exc:
+        logging.warning(
+            f"[VAL] critic_values_distribution: gradient traces failed: {exc}",
             exc_info=True,
         )
 

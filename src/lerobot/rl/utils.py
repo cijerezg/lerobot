@@ -226,7 +226,7 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
     critic_np = np.array(critic_values[:num_critic])
     c_min, c_max = -2.1, 0.1
     critic_norm = (critic_np - c_min) / (c_max - c_min)
-    norm_clip_max = 1.5
+    norm_clip_max = 1.0
     critic_norm = np.clip(critic_norm, 0, norm_clip_max)
 
     # Map to pixel coordinates (inverted Y for image space)
