@@ -1189,7 +1189,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         t_to_start = time.perf_counter()
         self.policy.to(self.device)
-        if self.policy_type in ("pi05_rlt", "tinypi05", "tinypi05_rlt"):
+        if self.policy_type in ("pi05_rlt", "tinypi05", "tinypi05v2", "tinypi05_rlt"):
             cfg_dtype = str(getattr(getattr(self.policy, "config", None), "dtype", ""))
             if cfg_dtype in {"bfloat16", "bf16"}:
                 self.policy.model.to(dtype=torch.bfloat16)

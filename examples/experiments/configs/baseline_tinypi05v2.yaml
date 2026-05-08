@@ -1,0 +1,72 @@
+# DRTC baseline for the tinypi05 policy.
+#
+# Run with:
+#   ./scripts/run_drtc_experiment.sh --config baseline_tinypi05
+name: baseline_tinypi05v2
+
+# Hardware
+robot_type: so101_follower
+gpu: ""
+client_host: ""
+server_host: ""
+robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
+robot_id: so101_follower_2026_04_26_v0
+
+# TinyPI05 checkpoints trained on the cube dataset expect observation.images.{side,top}.
+camera1_name: side
+camera1_path: /dev/video0
+camera2_name: top
+camera2_path: /dev/video4
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc: MJPG
+camera_use_threaded_async_read: true
+camera_allow_stale_frames: true
+
+# Policy
+policy_type: tinypi05v2
+# pretrained_name_or_path: outputs/train/2026-04-29/19-31-23_tinypi05_cube/checkpoints/005000/pretrained_model
+# pretrained_name_or_path: outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model
+# pretrained_name_or_path: outputs/train/2026-04-30/21-38-17_tinypi05_cubepickplace_e49_finetune/checkpoints/005000/pretrained_model
+# pretrained_name_or_path: outputs/train/2026-05-01/13-12-04_tinypi05_cubepickplace_e49_critical_finetune/checkpoints/015000/pretrained_model
+# pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/018000/pretrained_model
+pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model
+
+# DRTC parameters
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+actions_per_chunk: 50
+s_min: 5 # mirrors hiserl rtc_config.execution_horizon
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing
+duration_s: 1000.0
+fps: 30 # NOTE: hiserl runs at 30 fps; bump only if camera/robot pipeline can sustain it
+
+# Flow matching / RTC (mirror src/lerobot/rl/config-hiserl.json rtc_config)
+num_flow_matching_steps: 5
+rtc_enabled: true
+rtc_max_guidance_weight: 10.0
+rtc_prefix_attention_schedule: linear
+rtc_sigma_d: 1.0 # original RTC formula (hiserl doesn't override sigma_d)
+rtc_full_trajectory_alignment: true
+
+# Action filter
+action_filter_mode: none
+action_filter_butterworth_cutoff: 5
+action_filter_gain: 1.4
+
+# Diagnostics
+full_diagnostics: true
+trajectory_viz_enabled: false
+
+# Teleop intervention
+teleop_enabled: true
+teleop_type: so101_leader
+teleop_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00
+teleop_id: so101_leader_2026_04_16_v2
+teleop_send_feedback: true
