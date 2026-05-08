@@ -403,6 +403,15 @@ def run_predicted_distributions(
 
     bin_centers = policy.critic.bin_centers.detach().float().cpu().numpy()
 
+    # Per-episode last frame index, used to label each subplot with how many
+    # frames remain until episode end (a critic value is much easier to judge
+    # when you know the frame is e.g. 5 steps from termination vs 200).
+    ep_to_indices = _build_episode_index(val_dataset)
+    ep_last_frame = {
+        ep: max(val_dataset.hf_dataset[i]["frame_index"].item() for i in idxs)
+        for ep, idxs in ep_to_indices.items()
+    }
+
     n_cols = 3
     n_rows = (len(indices) + n_cols - 1) // n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 5, n_rows * 4), squeeze=False)
@@ -413,11 +422,13 @@ def run_predicted_distributions(
         )
         v, probs = get_v_and_probs(policy, preprocessor, obs, task_str, device)
 
+        frames_to_end = ep_last_frame[ep_idx] - frame_idx
+
         ax = axes[i // n_cols, i % n_cols]
         ax.plot(bin_centers, probs, color="steelblue", linewidth=2)
         ax.fill_between(bin_centers, probs, alpha=0.2, color="steelblue")
         ax.axvline(v, color="crimson", linestyle="--", linewidth=1.5, label=f"E[V] = {v:.3f}")
-        title = f"ep{ep_idx} f{frame_idx}"
+        title = f"ep{ep_idx} f{frame_idx}  ({frames_to_end} to end)"
         if gt_subtask:
             title += f"\n{gt_subtask[:40]}"
         ax.set_title(title, fontsize=10)

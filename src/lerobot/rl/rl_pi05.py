@@ -72,6 +72,7 @@ class PI05RLConfig(PI05FullConfig):
     action_dim: int = 6
     drop_n_last_frames: int = 2  # Drop the last n frames from the replay buffer
     critic_target_update_weight: float = 0.005
+    critic_target_update_every: int = 1  # Run Polyak every N optimizer steps (batch updates with proportionally larger τ to clear BF16 ULP)
     num_critics: int = 1
     discount: float = 0.97
     
@@ -453,6 +454,24 @@ class Pi05TransformerCritic(nn.Module):
 
         target_dist = cdf_full[:, 1:] - cdf_full[:, :-1]  # [B, num_value_bins]
         return target_dist
+
+    def one_hot_target(self, target_v: Tensor) -> Tensor:
+        """Build a one-hot target distribution over bins for exact (terminal) targets.
+
+        Used when the scalar target carries no estimation noise (terminal rewards),
+        so label smoothing via HL-Gauss is unwanted. Picks the nearest bin to
+        `target_v` and emits a one-hot row.
+
+        Args:
+            target_v: scalar targets, shape [B] or [B, 1].
+        Returns:
+            target distribution, shape [B, num_value_bins], one-hot rows.
+        """
+        if target_v.ndim == 2:
+            target_v = target_v.squeeze(-1)
+        target_v = target_v.to(dtype=self.bin_centers.dtype)
+        idx = torch.argmin(torch.abs(self.bin_centers.unsqueeze(0) - target_v.unsqueeze(-1)), dim=-1)
+        return F.one_hot(idx, num_classes=self.bin_centers.shape[0]).to(dtype=self.bin_centers.dtype)
 
 class PI05RLPytorch(PI05Pytorch):
     """Subclass of PI05Pytorch to inject Advantage Conditioning."""
@@ -946,13 +965,17 @@ class PI05RLPolicy(PI05FullPolicy):
 
     def update_target_networks(self):
         """Update target critic."""
-        if hasattr(self, "critic_target"):
-            with torch.no_grad():
-                for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
-                    if not param.requires_grad:
-                        continue
-                    target_param.data.mul_(1 - self.config.critic_target_update_weight)
-                    target_param.data.add_(param.data * self.config.critic_target_update_weight)
+        if not hasattr(self, "critic_target"):
+            return
+        self._polyak_call_counter = getattr(self, "_polyak_call_counter", 0) + 1
+        if self._polyak_call_counter % self.config.critic_target_update_every != 0:
+            return
+        with torch.no_grad():
+            for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
+                if not param.requires_grad:
+                    continue
+                target_param.data.mul_(1 - self.config.critic_target_update_weight)
+                target_param.data.add_(param.data * self.config.critic_target_update_weight)
 
     def get_vision_features(self, batch: dict[str, Tensor], use_grad: bool = True, encoder_module=None) -> tuple[Tensor, Tensor]:
         """Extract vision features and their padding masks from the batch."""
@@ -1144,7 +1167,12 @@ class PI05RLPolicy(PI05FullPolicy):
             target_v = target_v_raw.clamp(min=v_min, max=v_max).to(dtype=current_v.dtype)
 
             # Always compute both losses; pick one for backprop, log both.
-            target_dist = self.critic.hl_gauss_target(target_v).to(dtype=current_logits.dtype)
+            # Terminal targets are exact (reward only, no bootstrap noise) — use a
+            # one-hot at the nearest bin so the predicted E[V] can match exactly,
+            # especially for success at V=0 where HL-Gauss would clip and bias E[V] below 0.
+            hl_gauss_dist = self.critic.hl_gauss_target(target_v).to(dtype=current_logits.dtype)
+            one_hot_dist = self.critic.one_hot_target(target_v).to(dtype=current_logits.dtype)
+            target_dist = torch.where(done.bool(), one_hot_dist, hl_gauss_dist)
             log_probs = F.log_softmax(current_logits, dim=-1)
             ce_per_sample = -(target_dist * log_probs).sum(dim=-1)  # [B]
             loss_critic_ce = ce_per_sample.mean()

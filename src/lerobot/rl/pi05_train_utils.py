@@ -974,14 +974,14 @@ def log_pi05_training_metrics(
                 "Optimization step": optimization_step
             })
         if critic_hist is not None:
-            critic_vals = np.clip(critic_hist, -1, .5)
+            critic_vals = np.clip(critic_hist, -2, .1)
             wandb_logger._wandb.log({
                 "train/critic_value_histogram": wandb.Histogram(critic_vals),
                 "Optimization step": optimization_step
             })
         
         if target_value_hist is not None:
-             target_vals = np.clip(target_value_hist, -1, .5)
+             target_vals = np.clip(target_value_hist, -2, .1)
              wandb_logger._wandb.log({
                 "train/target_value_histogram": wandb.Histogram(target_vals),
                 "Optimization step": optimization_step
@@ -989,7 +989,7 @@ def log_pi05_training_metrics(
         
         # Log critic histogram from critic update
         if critic_hist_from_critic is not None:
-            critic_vals_from_critic = np.clip(critic_hist_from_critic, -1, .5)
+            critic_vals_from_critic = np.clip(critic_hist_from_critic, -2, .1)
             wandb_logger._wandb.log({
                 "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
                 "Optimization step": optimization_step
@@ -997,13 +997,13 @@ def log_pi05_training_metrics(
 
         if flow_loss_raw is not None:
             wandb_logger._wandb.log({
-                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.04)),
+                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.01)),
                 "Optimization step": optimization_step
             })
 
         if loss_critic_raw is not None:
             wandb_logger._wandb.log({
-                "train/loss_critic_histogram_flat": wandb.Histogram(np.clip(loss_critic_raw.flatten(), 0, .02)),
+                "train/loss_critic_histogram_flat": wandb.Histogram(np.clip(loss_critic_raw.flatten(), 0, .005)),
                 "Optimization step": optimization_step
             })
 
