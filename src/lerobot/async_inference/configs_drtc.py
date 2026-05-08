@@ -225,7 +225,7 @@ class RobotClientDrtcConfig:
         metadata={
             "help": (
                 "Dimensionality of the compact RLT token. If None, falls back to the "
-                "policy-type default (2048 for pi05_rlt, vlm_width for tinypi05_rlt)."
+                "policy-type default (2048 for pi05_rlt, vlm_width for tinypi05_rlt / tinypi05v2_rlt)."
             )
         },
     )

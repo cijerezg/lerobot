@@ -460,7 +460,7 @@ class RemotePolicyConfig:
     rlt_embedding_checkpoint: str | None = None
     rlt_head_checkpoint: str | None = None
     rlt_chunk_size: int = 10
-    # None => use the policy default (2048 for pi05_rlt; vlm_width for tinypi05_rlt).
+    # None => use the policy default (2048 for pi05_rlt; vlm_width for tinypi05_rlt / tinypi05v2_rlt).
     rlt_token_dim: int | None = None
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
