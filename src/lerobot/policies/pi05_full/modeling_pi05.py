@@ -1415,7 +1415,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 - generated_subtask_masks: (B, max_decoding_steps) bool mask (True for valid tokens, False for padding)
         """
         if max_decoding_steps is None:
-            max_decoding_steps = self.config.tokenizer_max_length
+            max_decoding_steps = self.config.max_decoding_steps
 
         bsize = tokens.shape[0]
         device = tokens.device
@@ -2030,7 +2030,7 @@ class PI05FullPolicy(PreTrainedPolicy):
         if should_regenerate:
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
                 images, img_masks, high_level_task_tokens, high_level_task_masks,
-                max_decoding_steps=self.config.tokenizer_max_length
+                max_decoding_steps=self.config.max_decoding_steps
             )
             self._cached_subtask_tokens = subtask_tokens
             self._cached_subtask_masks = subtask_masks

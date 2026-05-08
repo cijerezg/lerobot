@@ -224,7 +224,7 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
     # Prepare critic curve data for plotting
     # Normalize critic values for plotting (0 to frame_height)
     critic_np = np.array(critic_values[:num_critic])
-    c_min, c_max = -1.1, 0.1
+    c_min, c_max = -2.1, 0.1
     critic_norm = (critic_np - c_min) / (c_max - c_min)
     norm_clip_max = 1.5
     critic_norm = np.clip(critic_norm, 0, norm_clip_max)
@@ -282,11 +282,11 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
         # Draw vertical axis and ticks
         axis_x = 50
         tick_length = 10
-        ticks = [-1.0, -0.75, -0.5, -0.25, 0.0]
+        ticks = [-2.0, -1.5, -1.0, -0.5, 0.0]
 
         # Draw axis line — extend to the full plot top so the axis covers
         # the region above 0.0 where the curve can reach (up to norm_clip_max)
-        y_bottom = get_y(-1.0)
+        y_bottom = get_y(-2.0)
         y_top = frame_height // 2 + margin
         cv2.line(overlay, (axis_x, y_top), (axis_x, y_bottom), (105, 0, 0), 1)
 
