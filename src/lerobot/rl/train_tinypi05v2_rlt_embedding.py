@@ -54,6 +54,7 @@ class TrainTinyPI05V2RLTEmbeddingConfig:
     num_workers: int = 4
     steps: int = 10_000
     lr: float = 1e-4
+    warmup_steps: int = 500
     log_freq: int = 50
     save_freq: int = 1_000
     max_episodes: int | None = None
@@ -163,6 +164,16 @@ def train_tinypi05v2_rlt_embedding(cfg: TrainTinyPI05V2RLTEmbeddingConfig) -> No
     )
 
     optimizer = torch.optim.AdamW(policy.rlt_embedding.parameters(), lr=cfg.lr)
+
+    # Linear warmup from 0 -> cfg.lr over the first cfg.warmup_steps, then constant.
+    # Helps avoid early-step loss spikes when training the freshly-initialized
+    # rlt_embedding transformer head, especially at larger batch sizes.
+    def _lr_lambda(step: int) -> float:
+        if cfg.warmup_steps <= 0:
+            return 1.0
+        return min(1.0, (step + 1) / float(cfg.warmup_steps))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
     dataloader = DataLoader(
         dataset,
         batch_size=cfg.batch_size,
@@ -189,9 +200,16 @@ def train_tinypi05v2_rlt_embedding(cfg: TrainTinyPI05V2RLTEmbeddingConfig) -> No
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
         if step % cfg.log_freq == 0:
-            logging.info("step=%d loss_rlt_embedding=%.6f", step, float(loss.detach().cpu()))
+            current_lr = scheduler.get_last_lr()[0]
+            logging.info(
+                "step=%d loss_rlt_embedding=%.6f lr=%.2e",
+                step,
+                float(loss.detach().cpu()),
+                current_lr,
+            )
 
         if step % cfg.save_freq == 0 or step == cfg.steps:
             _save_checkpoint(policy, output_dir, step, cfg)

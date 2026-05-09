@@ -479,6 +479,14 @@ class RobotClientDrtc:
         # Note: Only the main control loop thread reads/writes obs_cooldown.
         self.obs_cooldown: int = 0
 
+        # Inference-epoch fence. Action chunks whose `src_control_step` is
+        # below this value were generated against a pre-boundary observation
+        # (e.g. an inference in flight when the user disengaged intervention
+        # or started a new episode) and must be discarded so they cannot be
+        # merged into the freshly-cleared schedule. Bumped by
+        # `_begin_new_inference_epoch`.
+        self._min_accepted_src_control_step: int = -1
+
         # SPSC Mailboxes (one-slot queues)
         # Observation request register: main thread -> observation sender
         self._obs_request_reg: LWWRegister[ObservationRequest | None] = LWWRegister(
@@ -623,6 +631,27 @@ class RobotClientDrtc:
             except Exception as e:
                 self.logger.error("Failed to disable teleop intervention for episode start: %s", e)
         self._rlt_phase_intervening = False
+
+    def _begin_new_inference_epoch(self, reason: str) -> None:
+        """Discard in-flight chunks, reset filter, re-trigger inference.
+
+        Called at any control-flow boundary where commanded actions must not
+        be continuous with what came before: episode start, episode discard,
+        and intervention falling-edge. Without this fence, an inference
+        request sent before the boundary can land just after the boundary,
+        get merged into the now-empty action schedule, and command a target
+        from the pre-boundary state distribution — a one-step jerk.
+        """
+        self.action_schedule.clear()
+        self._action_filter.reset()
+        self._min_accepted_src_control_step = self.control_step + 1
+        self.obs_cooldown = 0
+        self._metrics.diagnostic.counter(f"inference_epoch_bumped_{reason}", 1)
+        self.logger.info(
+            "Inference epoch advanced (reason=%s, min_src=%d)",
+            reason,
+            self._min_accepted_src_control_step,
+        )
 
     def _poll_teleop_events(self) -> dict[Any, Any]:
         """Poll teleop events once for a control tick."""
@@ -1142,8 +1171,7 @@ class RobotClientDrtc:
             self._disable_teleop_intervention_for_episode_start()
             teleop_events[TeleopEvents.IS_INTERVENTION] = False
             teleop_events[TeleopEvents.IS_INTERVENTION.value] = False
-            self.action_schedule.clear()
-            self.obs_cooldown = 0
+            self._begin_new_inference_epoch("episode_start")
             self._rlt_episode_id += 1
             self._rlt_episode_open = True
             self._rlt_executed_actions.clear()
@@ -1177,8 +1205,7 @@ class RobotClientDrtc:
         episode_id = self._rlt_episode_id
         dropped_transitions = self._rlt_current_episode_transitions
         self._disable_teleop_intervention_for_episode_start()
-        self.action_schedule.clear()
-        self.obs_cooldown = 0
+        self._begin_new_inference_epoch("episode_discard")
         self._rlt_episode_open = False
         self._rlt_pending_chunks.clear()
         self._rlt_executed_actions.clear()
@@ -1626,13 +1653,12 @@ class RobotClientDrtc:
                     )
             elif not waiting_for_episode_start:
                 if self._was_intervening:
-                    # Falling edge: dump stale chunks queued during intervention
-                    # and reset cooldown so the next inference round re-anchors
+                    # Falling edge: dump stale chunks queued during intervention,
+                    # reset the action filter's IIR state, and fence in-flight
+                    # inference replies so the next executed action is anchored
                     # at the new pose.
-                    self.action_schedule.clear()
-                    self.obs_cooldown = 0
-                    self.logger.info("Teleop disengaged, cleared action schedule")
                     self._metrics.diagnostic.counter("intervention_disengage", 1)
+                    self._begin_new_inference_epoch("intervention_disengage")
 
                 if not self.action_schedule.is_empty():
                     result = self.action_schedule.pop_front()
@@ -1805,7 +1831,19 @@ class RobotClientDrtc:
             t_phase3_start = time.perf_counter()
             state, _, is_new = self._action_reader.read_if_newer()
             chunk = state.value
-            if is_new and chunk is not None and not waiting_for_episode_start:
+            stale_chunk = (
+                is_new
+                and chunk is not None
+                and chunk.src_control_step < self._min_accepted_src_control_step
+            )
+            if stale_chunk:
+                self._metrics.diagnostic.counter("dropped_stale_chunk_epoch", 1)
+                self.logger.debug(
+                    "Dropped stale chunk: src_step=%d < min=%d",
+                    chunk.src_control_step,
+                    self._min_accepted_src_control_step,
+                )
+            if is_new and chunk is not None and not waiting_for_episode_start and not stale_chunk:
 
                 current_step = self.current_action_step
                 latency_steps = self.latency_estimator.estimate_steps
