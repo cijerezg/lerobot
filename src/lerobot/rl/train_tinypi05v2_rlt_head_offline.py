@@ -204,7 +204,7 @@ def train_tinypi05v2_rlt_head_offline(cfg: TrainTinyPI05V2RLTHeadOfflineConfig) 
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    replay = RLTReplayBuffer.load(cfg.replay_buffer_path)
+    replay = RLTReplayBuffer.load(cfg.replay_buffer_path, apply_review_sidecar=True)
     if len(replay) < cfg.batch_size:
         raise ValueError(f"Replay buffer has {len(replay)} samples, but batch_size={cfg.batch_size}")
 

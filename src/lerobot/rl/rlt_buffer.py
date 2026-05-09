@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import random
 from collections import deque
 from dataclasses import dataclass
@@ -35,6 +37,9 @@ class RLTReplaySample:
 # Bumped whenever new fields are persisted. Loaders must remain backward
 # compatible with all prior versions by defaulting missing keys to None.
 RLT_REPLAY_BUFFER_VERSION = 2
+RLT_REVIEW_SIDECAR_VERSION = 1
+_RLT_REVIEW_LABELS = {"success", "failure", "open"}
+_LOGGER = logging.getLogger(__name__)
 
 
 def _copy_images_jpeg(images: dict[str, bytes] | None) -> dict[str, bytes] | None:
@@ -42,6 +47,80 @@ def _copy_images_jpeg(images: dict[str, bytes] | None) -> dict[str, bytes] | Non
         return None
     # JPEG payloads are immutable bytes; the dict is the only mutable layer.
     return dict(images)
+
+
+def _review_sidecar_path(replay_path: Path) -> Path:
+    return replay_path.with_suffix(".review.json")
+
+
+def _warn_malformed_review_entry(sidecar_path: Path, episode_id: object, reason: str) -> None:
+    _LOGGER.warning(
+        "Ignoring malformed RLT review sidecar entry in %s for episode %r: %s",
+        sidecar_path,
+        episode_id,
+        reason,
+    )
+
+
+def _load_review_sidecar_entries(
+    sidecar_path: Path, valid_episode_ids: set[int]
+) -> dict[int, tuple[str, bool]]:
+    try:
+        with sidecar_path.open("r", encoding="utf-8") as f:
+            sidecar = json.load(f)
+    except OSError as exc:
+        _LOGGER.warning("Failed to read RLT review sidecar %s: %s", sidecar_path, exc)
+        return {}
+    except json.JSONDecodeError as exc:
+        _LOGGER.warning("Ignoring malformed RLT review sidecar %s: %s", sidecar_path, exc)
+        return {}
+
+    if not isinstance(sidecar, dict):
+        _LOGGER.warning("Ignoring malformed RLT review sidecar %s: expected object", sidecar_path)
+        return {}
+    if sidecar.get("version") != RLT_REVIEW_SIDECAR_VERSION:
+        _LOGGER.warning(
+            "Ignoring unsupported RLT review sidecar %s version %r",
+            sidecar_path,
+            sidecar.get("version"),
+        )
+        return {}
+
+    episodes = sidecar.get("episodes")
+    if not isinstance(episodes, dict):
+        _LOGGER.warning("Ignoring malformed RLT review sidecar %s: expected episodes object", sidecar_path)
+        return {}
+
+    entries: dict[int, tuple[str, bool]] = {}
+    for episode_key, entry in episodes.items():
+        try:
+            episode_id = int(episode_key)
+        except (TypeError, ValueError):
+            _warn_malformed_review_entry(sidecar_path, episode_key, "episode id must be an integer")
+            continue
+        if episode_id not in valid_episode_ids:
+            continue
+        if not isinstance(entry, dict):
+            _warn_malformed_review_entry(sidecar_path, episode_key, "entry must be an object")
+            continue
+        if "label" not in entry or "deleted" not in entry:
+            _warn_malformed_review_entry(sidecar_path, episode_key, "entry must include label and deleted")
+            continue
+
+        label = entry["label"]
+        deleted = entry["deleted"]
+        if not isinstance(label, str) or label not in _RLT_REVIEW_LABELS:
+            _warn_malformed_review_entry(
+                sidecar_path,
+                episode_key,
+                f"label must be one of {sorted(_RLT_REVIEW_LABELS)}",
+            )
+            continue
+        if not isinstance(deleted, bool):
+            _warn_malformed_review_entry(sidecar_path, episode_key, "deleted must be a boolean")
+            continue
+        entries[episode_id] = (label, deleted)
+    return entries
 
 
 class RLTReplayBuffer:
@@ -171,17 +250,81 @@ class RLTReplayBuffer:
                 )
             )
 
+    def apply_review_sidecar(self, replay_path: str | Path) -> None:
+        sidecar_path = _review_sidecar_path(Path(replay_path))
+        if not sidecar_path.exists():
+            return
+
+        valid_episode_ids = {int(sample.episode_id) for sample in self._samples if sample.episode_id is not None}
+        review_entries = _load_review_sidecar_entries(sidecar_path, valid_episode_ids)
+        if not review_entries:
+            return
+
+        before_count = len(self._samples)
+        samples = [
+            sample
+            for sample in self._samples
+            if sample.episode_id is None or not review_entries.get(int(sample.episode_id), ("open", False))[1]
+        ]
+        samples_by_episode: dict[int, list[int]] = {}
+        for index, sample in enumerate(samples):
+            if sample.episode_id is None:
+                continue
+            episode_id = int(sample.episode_id)
+            entry = review_entries.get(episode_id)
+            if entry is None or entry[1]:
+                continue
+            samples_by_episode.setdefault(episode_id, []).append(index)
+
+        for episode_id, indices in samples_by_episode.items():
+            label = review_entries[episode_id][0]
+            terminal_index = next(
+                (index for index in reversed(indices) if samples[index].done),
+                indices[-1],
+            )
+            for index in indices:
+                sample = samples[index]
+                sample.success = label == "success"
+                sample.failure = label == "failure"
+                if label == "open":
+                    sample.done = False
+                    sample.reward = 0.0
+                elif index == terminal_index:
+                    sample.done = True
+                    sample.reward = 1.0 if label == "success" else 0.0
+                else:
+                    sample.done = False
+                    sample.reward = 0.0
+
+        self._samples = deque(samples, maxlen=self.capacity)
+        _LOGGER.info(
+            "Applied RLT review sidecar %s: samples %d -> %d, updated_episodes=%d",
+            sidecar_path,
+            before_count,
+            len(self._samples),
+            len(review_entries),
+        )
+
     def save(self, path: str | Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.state_dict(), path)
 
     @classmethod
-    def load(cls, path: str | Path, *, capacity: int | None = None) -> "RLTReplayBuffer":
+    def load(
+        cls,
+        path: str | Path,
+        *,
+        capacity: int | None = None,
+        apply_review_sidecar: bool = False,
+    ) -> RLTReplayBuffer:
         # `weights_only=True` is safe here because every persisted value is a
         # tensor, plain Python scalar, str, bytes, or dict/list of those types.
-        state_dict = torch.load(Path(path), map_location="cpu", weights_only=True)
+        replay_path = Path(path)
+        state_dict = torch.load(replay_path, map_location="cpu", weights_only=True)
         replay_capacity = int(capacity or state_dict.get("capacity", 1))
         replay = cls(capacity=replay_capacity)
         replay.load_state_dict(state_dict)
+        if apply_review_sidecar:
+            replay.apply_review_sidecar(replay_path)
         return replay

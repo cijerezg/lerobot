@@ -1,5 +1,8 @@
 """Tests for the v2 RLT replay buffer (review-only image / episode metadata)."""
 
+import json
+
+import pytest
 import torch
 
 from lerobot.rl.rlt_buffer import (
@@ -39,6 +42,15 @@ def _v2_sample(
         failure=failure,
         chunk_start_step=chunk_start_step,
     )
+
+
+def _write_review_sidecar(replay_path, episodes: dict[str, dict[str, object]]) -> None:
+    sidecar = {
+        "version": 1,
+        "buffer_path": str(replay_path),
+        "episodes": episodes,
+    }
+    replay_path.with_suffix(".review.json").write_text(json.dumps(sidecar), encoding="utf-8")
 
 
 def test_v2_save_load_round_trip_preserves_review_fields(tmp_path):
@@ -139,6 +151,130 @@ def test_loading_v1_buffer_defaults_review_fields_to_none(tmp_path):
     # And v1 fields are still intact.
     assert s.rl_token.shape == (4,)
     assert bool(s.done) is False
+
+
+def test_review_sidecar_absent_leaves_samples_unchanged(tmp_path):
+    replay = RLTReplayBuffer(capacity=3)
+    replay.add(_v2_sample(offset=0.0, episode_id=1, success=False, failure=False))
+    replay.add(_v2_sample(offset=1.0, episode_id=2, done=True, success=True, failure=False))
+    path = tmp_path / "rlt_online_replay.pt"
+    replay.save(path)
+
+    loaded = RLTReplayBuffer.load(path, capacity=3, apply_review_sidecar=True)
+    samples = loaded.samples()
+
+    assert len(samples) == 2
+    assert [sample.episode_id for sample in samples] == [1, 2]
+    assert [sample.success for sample in samples] == [False, True]
+    assert [sample.failure for sample in samples] == [False, False]
+    assert [sample.done for sample in samples] == [False, True]
+    assert [sample.reward for sample in samples] == [0.0, 1.0]
+
+
+def test_review_sidecar_deleted_episode_removes_samples(tmp_path):
+    replay = RLTReplayBuffer(capacity=4)
+    replay.add(_v2_sample(offset=0.0, episode_id=12))
+    replay.add(_v2_sample(offset=1.0, episode_id=12, done=True, failure=True))
+    replay.add(_v2_sample(offset=2.0, episode_id=14))
+    path = tmp_path / "rlt_online_replay.pt"
+    replay.save(path)
+    _write_review_sidecar(
+        path,
+        {
+            "12": {"label": "failure", "deleted": True},
+            "999": {"label": "success", "deleted": False},
+        },
+    )
+
+    loaded = RLTReplayBuffer.load(path, capacity=4, apply_review_sidecar=True)
+
+    assert len(loaded) == 1
+    assert [sample.episode_id for sample in loaded.samples()] == [14]
+
+
+@pytest.mark.parametrize(
+    ("label", "expected_success", "expected_failure", "expected_reward"),
+    [
+        ("success", True, False, 1.0),
+        ("failure", False, True, 0.0),
+    ],
+)
+def test_review_sidecar_open_episode_changed_to_outcome_updates_samples(
+    tmp_path, label, expected_success, expected_failure, expected_reward
+):
+    replay = RLTReplayBuffer(capacity=2)
+    replay.add(_v2_sample(offset=0.0, episode_id=14, done=False, success=False, failure=False))
+    replay.add(_v2_sample(offset=1.0, episode_id=14, done=False, success=False, failure=False))
+    path = tmp_path / "rlt_online_replay.pt"
+    replay.save(path)
+    _write_review_sidecar(path, {"14": {"label": label, "deleted": False}})
+
+    loaded = RLTReplayBuffer.load(path, capacity=2, apply_review_sidecar=True)
+    samples = loaded.samples()
+
+    assert [sample.success for sample in samples] == [expected_success, expected_success]
+    assert [sample.failure for sample in samples] == [expected_failure, expected_failure]
+    assert [sample.done for sample in samples] == [False, True]
+    assert [sample.reward for sample in samples] == [0.0, expected_reward]
+
+
+def test_review_sidecar_outcome_changed_to_open_clears_flags(tmp_path):
+    replay = RLTReplayBuffer(capacity=2)
+    replay.add(_v2_sample(offset=0.0, episode_id=3, done=False, success=True, failure=False))
+    replay.add(_v2_sample(offset=1.0, episode_id=3, done=True, success=True, failure=False))
+    path = tmp_path / "rlt_online_replay.pt"
+    replay.save(path)
+    _write_review_sidecar(path, {"3": {"label": "open", "deleted": False}})
+
+    loaded = RLTReplayBuffer.load(path, capacity=2, apply_review_sidecar=True)
+    samples = loaded.samples()
+
+    assert [sample.success for sample in samples] == [False, False]
+    assert [sample.failure for sample in samples] == [False, False]
+    assert [sample.done for sample in samples] == [False, False]
+    assert [sample.reward for sample in samples] == [0.0, 0.0]
+
+
+def test_review_sidecar_malformed_entries_are_ignored_without_crashing(tmp_path, caplog):
+    replay = RLTReplayBuffer(capacity=3)
+    replay.add(_v2_sample(offset=0.0, episode_id=1, done=True, success=True, failure=False))
+    replay.add(_v2_sample(offset=1.0, episode_id=2, done=True, success=False, failure=True))
+    path = tmp_path / "rlt_online_replay.pt"
+    replay.save(path)
+    _write_review_sidecar(
+        path,
+        {
+            "1": {"label": "not-a-label", "deleted": False},
+            "2": {"label": "success", "deleted": "false"},
+            "999": {"label": "success", "deleted": False},
+        },
+    )
+
+    with caplog.at_level("WARNING"):
+        loaded = RLTReplayBuffer.load(path, capacity=3, apply_review_sidecar=True)
+
+    samples = loaded.samples()
+    assert len(samples) == 2
+    assert samples[0].success is True
+    assert samples[0].failure is False
+    assert samples[1].success is False
+    assert samples[1].failure is True
+    assert "Ignoring malformed RLT review sidecar entry" in caplog.text
+
+
+def test_review_sidecar_ignores_buffers_without_episode_ids(tmp_path):
+    replay = RLTReplayBuffer(capacity=2)
+    replay.add(_v2_sample(offset=0.0, episode_id=None, success=False, failure=False))
+    path = tmp_path / "rlt_online_replay.pt"
+    replay.save(path)
+    _write_review_sidecar(path, {"0": {"label": "success", "deleted": False}})
+
+    loaded = RLTReplayBuffer.load(path, capacity=2, apply_review_sidecar=True)
+    sample = loaded.samples()[0]
+
+    assert sample.episode_id is None
+    assert sample.success is False
+    assert sample.failure is False
 
 
 def test_sample_batch_unaffected_by_review_fields(tmp_path):

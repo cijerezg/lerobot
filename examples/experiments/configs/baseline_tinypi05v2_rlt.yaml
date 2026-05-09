@@ -70,6 +70,15 @@ rlt_demo_buffer_path:
 rlt_online_buffer_path: outputs/rlt_tinypi05v2_online/rlt_online_replay.pt
 rlt_online_buffer_save_freq_transitions: 100
 rlt_persist_buffer_on_shutdown: true
+
+# Review-only image capture: snapshots inference-time camera frames as JPEGs and
+# attaches them to each RLTReplaySample, plus mirrors every accepted transition
+# into an append-only archive so episodes survive replay-buffer rollover. Off
+# the inference hot path (encoder runs in a worker thread). Consumed by the
+# lerobot-data-studio offline viewer.
+rlt_review_capture_enabled: true
+rlt_review_jpeg_quality: 80
+rlt_review_archive_path: outputs/rlt_tinypi05v2_online/rlt_review_archive.pt
 rlt_actor_lr: 0.0003
 rlt_critic_lr: 0.0003
 rlt_discount: 0.985

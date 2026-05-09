@@ -126,6 +126,15 @@ class ExperimentConfig:
     rlt_train_freq_s: float = 1.0
     rlt_save_freq_steps: int = 500
     rlt_output_dir: str = "outputs/rlt_online"
+    rlt_demo_buffer_path: str | None = None
+    rlt_online_buffer_path: str | None = None
+    rlt_online_buffer_save_freq_transitions: int = 100
+    rlt_persist_buffer_on_shutdown: bool = True
+    # Review-only image capture (off the inference hot path; consumed by the
+    # lerobot-data-studio offline viewer).
+    rlt_review_capture_enabled: bool = False
+    rlt_review_jpeg_quality: int = 80
+    rlt_review_archive_path: str | None = None
     rlt_actor_lr: float = 3e-4
     rlt_critic_lr: float = 3e-4
     rlt_discount: float = 0.99
@@ -199,7 +208,10 @@ _SCALAR_FIELDS = frozenset({
     "rlt_online_collection_enabled", "rlt_online_training_enabled",
     "rlt_warmup_episodes", "rlt_warmup_transitions", "rlt_replay_capacity",
     "rlt_batch_size", "rlt_utd_ratio", "rlt_train_freq_s", "rlt_save_freq_steps",
-    "rlt_output_dir", "rlt_actor_lr", "rlt_critic_lr", "rlt_discount",
+    "rlt_output_dir", "rlt_demo_buffer_path", "rlt_online_buffer_path",
+    "rlt_online_buffer_save_freq_transitions", "rlt_persist_buffer_on_shutdown",
+    "rlt_review_capture_enabled", "rlt_review_jpeg_quality", "rlt_review_archive_path",
+    "rlt_actor_lr", "rlt_critic_lr", "rlt_discount",
     "rlt_target_update_tau", "rlt_execute_after_train_steps",
     "rlt_context_cache_size", "rlt_transition_queue_size",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
@@ -413,6 +425,13 @@ def create_client_config(
         rlt_train_freq_s=config.rlt_train_freq_s,
         rlt_save_freq_steps=config.rlt_save_freq_steps,
         rlt_output_dir=config.rlt_output_dir,
+        rlt_demo_buffer_path=config.rlt_demo_buffer_path,
+        rlt_online_buffer_path=config.rlt_online_buffer_path,
+        rlt_online_buffer_save_freq_transitions=config.rlt_online_buffer_save_freq_transitions,
+        rlt_persist_buffer_on_shutdown=config.rlt_persist_buffer_on_shutdown,
+        rlt_review_capture_enabled=config.rlt_review_capture_enabled,
+        rlt_review_jpeg_quality=config.rlt_review_jpeg_quality,
+        rlt_review_archive_path=config.rlt_review_archive_path,
         rlt_actor_lr=config.rlt_actor_lr,
         rlt_critic_lr=config.rlt_critic_lr,
         rlt_discount=config.rlt_discount,
