@@ -217,9 +217,15 @@ if [ "$ENABLE_TUI" = true ]; then
     # mode. Feed an unbounded stream of empty lines on stdin so each prompt
     # auto-accepts the existing calibration (ENTER == reuse). `yes ""` runs
     # forever and exits as soon as the experiment process closes the pipe.
-    LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE" \
-    LEROBOT_DRTC_CONTROL_FILE="$CONTROL_FILE" \
-        yes "" 2>/dev/null | uv run --no-sync python examples/experiments/run_drtc_experiment.py \
+    #
+    # NOTE: variable assignments preceding a *pipeline* only apply to the first
+    # command in the pipeline. We must `export` the DRTC side-channel paths so
+    # they reach the `uv run` process on the right side of the pipe (otherwise
+    # the client won't see `LEROBOT_DRTC_CONTROL_FILE` and TUI commands like
+    # "start episode" will be silently dropped).
+    export LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE"
+    export LEROBOT_DRTC_CONTROL_FILE="$CONTROL_FILE"
+    yes "" 2>/dev/null | uv run --no-sync python examples/experiments/run_drtc_experiment.py \
         "${EXTRA_ARGS[@]}" "$@" "${CLIENT_TRAJECTORY_ARGS[@]}" \
         >"$CLIENT_LOG_FILE" 2>&1 &
     EXPERIMENT_PID=$!
