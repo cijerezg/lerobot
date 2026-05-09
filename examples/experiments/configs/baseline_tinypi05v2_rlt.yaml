@@ -38,7 +38,7 @@ subtask_regeneration_interval: 0
 rlt_enabled: true
 
 # Always set this. Train it first via `train_tinypi05v2_rlt_embedding`.
-rlt_embedding_checkpoint: outputs/tinypi05v2_rlt_embedding/rlt_embedding_latest.pt
+rlt_embedding_checkpoint: outputs/tinypi05v2_rlt_embedding/rlt_embedding_step_010000.pt
 
 # Leave unset for this config. If a head checkpoint is loaded, the RLT actor is
 # considered available and may execute instead of pure VLA passthrough.

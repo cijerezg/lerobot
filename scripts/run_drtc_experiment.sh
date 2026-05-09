@@ -209,9 +209,17 @@ if [ "$ENABLE_VIZ" = true ] && ! printf '%s\n' "$@" | grep -q -E '^--trajectory_
 fi
 
 if [ "$ENABLE_TUI" = true ]; then
+    # The experiment client runs as a background process with stdout/stderr
+    # redirected to a log file so the TUI can own the terminal. Some teleop /
+    # robot drivers (e.g. so_leader, so_follower, koch_*, lekiwi) call
+    # `input(...)` during `connect()` to ask whether to reuse the existing
+    # calibration file -- that prompt cannot be answered interactively in TUI
+    # mode. Feed an unbounded stream of empty lines on stdin so each prompt
+    # auto-accepts the existing calibration (ENTER == reuse). `yes ""` runs
+    # forever and exits as soon as the experiment process closes the pipe.
     LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE" \
     LEROBOT_DRTC_CONTROL_FILE="$CONTROL_FILE" \
-        uv run --no-sync python examples/experiments/run_drtc_experiment.py \
+        yes "" 2>/dev/null | uv run --no-sync python examples/experiments/run_drtc_experiment.py \
         "${EXTRA_ARGS[@]}" "$@" "${CLIENT_TRAJECTORY_ARGS[@]}" \
         >"$CLIENT_LOG_FILE" 2>&1 &
     EXPERIMENT_PID=$!
