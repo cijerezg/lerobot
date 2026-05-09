@@ -441,6 +441,9 @@ class RobotClientDrtc:
             rlt_action_deviation_abs_max=config.rlt_action_deviation_abs_max,
             rlt_loss_abs_max=config.rlt_loss_abs_max,
             rlt_safety_patience=config.rlt_safety_patience,
+            rlt_review_capture_enabled=config.rlt_review_capture_enabled,
+            rlt_review_jpeg_quality=config.rlt_review_jpeg_quality,
+            rlt_review_archive_path=config.rlt_review_archive_path,
         )
 
         self.channel = grpc.insecure_channel(

@@ -335,6 +335,31 @@ class RobotClientDrtcConfig:
         default=True,
         metadata={"help": "Persist the online RLT buffer when the policy server resets or stops."},
     )
+    rlt_review_capture_enabled: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Capture inference-time camera frames as JPEGs and persist them inside each "
+                "RLTReplaySample (review-only). Adds a small server-side encode thread; safe to "
+                "leave disabled for production training runs."
+            )
+        },
+    )
+    rlt_review_jpeg_quality: int = field(
+        default=80,
+        metadata={"help": "JPEG quality (1-100) used when rlt_review_capture_enabled is True."},
+    )
+    rlt_review_archive_path: str | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "Optional append-only archive file for review. Mirrors every accepted RLT "
+                "transition without ever truncating, so episodes survive replay-buffer rollover. "
+                "Distinct from rlt_online_buffer_path, which is sized to rlt_replay_capacity for "
+                "training."
+            )
+        },
+    )
     rlt_actor_lr: float = field(default=3e-4, metadata={"help": "Online RLT actor learning rate."})
     rlt_critic_lr: float = field(default=3e-4, metadata={"help": "Online RLT critic learning rate."})
     rlt_discount: float = field(default=0.99, metadata={"help": "Online RLT critic discount factor."})
@@ -708,6 +733,10 @@ class RobotClientDrtcConfig:
             )
         if self.rlt_grad_clip_norm is not None and self.rlt_grad_clip_norm <= 0:
             raise ValueError(f"rlt_grad_clip_norm must be positive or None, got {self.rlt_grad_clip_norm}")
+        if not 1 <= int(self.rlt_review_jpeg_quality) <= 100:
+            raise ValueError(
+                f"rlt_review_jpeg_quality must be in [1, 100], got {self.rlt_review_jpeg_quality}"
+            )
         for name, value in (
             ("rlt_q_abs_max", self.rlt_q_abs_max),
             ("rlt_action_deviation_abs_max", self.rlt_action_deviation_abs_max),

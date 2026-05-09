@@ -22,6 +22,26 @@ class RLTReplaySample:
     reward: float
     done: bool
     is_intervention: bool
+    # v2 review-only fields. None on v1 buffers and when capture is disabled,
+    # so the training hot path never has to branch on them.
+    images_jpeg: dict[str, bytes] | None = None
+    inference_ts: float | None = None
+    episode_id: int | None = None
+    success: bool | None = None
+    failure: bool | None = None
+    chunk_start_step: int | None = None
+
+
+# Bumped whenever new fields are persisted. Loaders must remain backward
+# compatible with all prior versions by defaulting missing keys to None.
+RLT_REPLAY_BUFFER_VERSION = 2
+
+
+def _copy_images_jpeg(images: dict[str, bytes] | None) -> dict[str, bytes] | None:
+    if images is None:
+        return None
+    # JPEG payloads are immutable bytes; the dict is the only mutable layer.
+    return dict(images)
 
 
 class RLTReplayBuffer:
@@ -52,6 +72,14 @@ class RLTReplayBuffer:
                 reward=float(sample.reward),
                 done=bool(sample.done),
                 is_intervention=bool(sample.is_intervention),
+                images_jpeg=_copy_images_jpeg(sample.images_jpeg),
+                inference_ts=None if sample.inference_ts is None else float(sample.inference_ts),
+                episode_id=None if sample.episode_id is None else int(sample.episode_id),
+                success=None if sample.success is None else bool(sample.success),
+                failure=None if sample.failure is None else bool(sample.failure),
+                chunk_start_step=None
+                if sample.chunk_start_step is None
+                else int(sample.chunk_start_step),
             )
         )
 
@@ -90,7 +118,7 @@ class RLTReplayBuffer:
 
     def state_dict(self) -> dict[str, Any]:
         def _sample_state(sample: RLTReplaySample) -> dict[str, Any]:
-            return {
+            state: dict[str, Any] = {
                 "rl_token": sample.rl_token.detach().cpu(),
                 "proprio": sample.proprio.detach().cpu(),
                 "reference_chunk": sample.reference_chunk.detach().cpu(),
@@ -101,10 +129,19 @@ class RLTReplayBuffer:
                 "reward": float(sample.reward),
                 "done": bool(sample.done),
                 "is_intervention": bool(sample.is_intervention),
+                "images_jpeg": _copy_images_jpeg(sample.images_jpeg),
+                "inference_ts": None if sample.inference_ts is None else float(sample.inference_ts),
+                "episode_id": None if sample.episode_id is None else int(sample.episode_id),
+                "success": None if sample.success is None else bool(sample.success),
+                "failure": None if sample.failure is None else bool(sample.failure),
+                "chunk_start_step": None
+                if sample.chunk_start_step is None
+                else int(sample.chunk_start_step),
             }
+            return state
 
         return {
-            "version": 1,
+            "version": RLT_REPLAY_BUFFER_VERSION,
             "capacity": self.capacity,
             "samples": [_sample_state(sample) for sample in self._samples],
         }
@@ -125,6 +162,12 @@ class RLTReplayBuffer:
                     reward=float(sample["reward"]),
                     done=bool(sample["done"]),
                     is_intervention=bool(sample["is_intervention"]),
+                    images_jpeg=sample.get("images_jpeg"),
+                    inference_ts=sample.get("inference_ts"),
+                    episode_id=sample.get("episode_id"),
+                    success=sample.get("success"),
+                    failure=sample.get("failure"),
+                    chunk_start_step=sample.get("chunk_start_step"),
                 )
             )
 
@@ -135,6 +178,8 @@ class RLTReplayBuffer:
 
     @classmethod
     def load(cls, path: str | Path, *, capacity: int | None = None) -> "RLTReplayBuffer":
+        # `weights_only=True` is safe here because every persisted value is a
+        # tensor, plain Python scalar, str, bytes, or dict/list of those types.
         state_dict = torch.load(Path(path), map_location="cpu", weights_only=True)
         replay_capacity = int(capacity or state_dict.get("capacity", 1))
         replay = cls(capacity=replay_capacity)

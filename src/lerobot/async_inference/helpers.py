@@ -501,6 +501,10 @@ class RemotePolicyConfig:
     rlt_action_deviation_abs_max: float | None = None
     rlt_loss_abs_max: float | None = None
     rlt_safety_patience: int = 3
+    # Review-only image capture (server-side, off the inference hot path).
+    rlt_review_capture_enabled: bool = False
+    rlt_review_jpeg_quality: int = 80
+    rlt_review_archive_path: str | None = None
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC/spike fields existed."""
@@ -558,6 +562,9 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_action_deviation_abs_max", None)
         self.__dict__.setdefault("rlt_loss_abs_max", None)
         self.__dict__.setdefault("rlt_safety_patience", 3)
+        self.__dict__.setdefault("rlt_review_capture_enabled", False)
+        self.__dict__.setdefault("rlt_review_jpeg_quality", 80)
+        self.__dict__.setdefault("rlt_review_archive_path", None)
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

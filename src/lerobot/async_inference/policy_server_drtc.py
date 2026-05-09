@@ -53,7 +53,7 @@ from lerobot.transport import (
     services_pb2_grpc,  # type: ignore
 )
 from lerobot.transport.utils import receive_bytes_in_chunks
-from lerobot.utils.constants import OBS_STATE
+from lerobot.utils.constants import OBS_IMAGES, OBS_STATE
 
 from .configs_drtc import PolicyServerDrtcConfig
 from .constants import SUPPORTED_POLICIES
@@ -69,6 +69,7 @@ from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
 from .utils.compression import decode_images_from_transport
 from .utils.drtc_status import emit_status
 from .utils.metrics import DiagnosticMetrics, EvActionChunk, Metrics
+from .utils.rlt_image_capture import RltImageEncoder
 from .utils.simulation import SpikeDelaySimulator
 from .utils.trajectory_viz import TrajectoryVizServer
 from .utils.viz_utils import compute_prefix_weights_for_viz
@@ -205,6 +206,10 @@ class RLTSourceContext:
     proprio: torch.Tensor
     reference_chunk: torch.Tensor
     anchor_state: torch.Tensor | None
+    # Review-only payload populated when rlt_review_capture_enabled. None when
+    # capture is disabled or the encoder dropped/timed out for this context.
+    images_jpeg: dict[str, bytes] | None = None
+    inference_ts: float | None = None
 
 
 class RLTSourceContextCache:
@@ -366,6 +371,18 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_critic_optimizer: torch.optim.Optimizer | None = None
         self._rlt_training_head = "disabled"
 
+        # Review-only image capture (off by default; enabled via RemotePolicyConfig).
+        self._rlt_review_capture_enabled = False
+        self._rlt_review_jpeg_quality = 80
+        self._rlt_review_archive_path: str | None = None
+        self._rlt_review_archive: list[RLTReplaySample] = []
+        self._rlt_review_archive_dirty = False
+        self._rlt_image_encoder: RltImageEncoder | None = None
+        # Monotone submission key the inference thread uses to address its
+        # encoder mailbox slot. Distinct from rlt_next_context_id because the
+        # context id is allocated only after the cache decision is made.
+        self._rlt_review_next_submission_id = 1
+
         # Spike delay simulator for experiments
         self._delay_simulator = SpikeDelaySimulator(config=config.mock_spike_config)
 
@@ -491,6 +508,48 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             return
         self._persist_rlt_replay(reason="periodic")
 
+    def _persist_rlt_review_archive(self, *, reason: str) -> None:
+        """Persist the append-only review archive, never truncating older samples.
+
+        Distinct from `_persist_rlt_replay`: the training replay buffer is
+        sized to `rlt_replay_capacity` and discards old samples on rollover,
+        which is wrong for review. This archive grows unboundedly until the
+        process exits or `_reset_server` clears it for a new session.
+        """
+        if not self._rlt_review_archive_path or not self._rlt_review_archive_dirty:
+            return
+        archive_size = len(self._rlt_review_archive)
+        if archive_size <= 0:
+            return
+        replay = RLTReplayBuffer(capacity=archive_size)
+        replay.extend(self._rlt_review_archive)
+        replay.save(self._rlt_review_archive_path)
+        self._rlt_review_archive_dirty = False
+        self.logger.info(
+            "Saved %d RLT review archive samples to %s (%s)",
+            archive_size,
+            self._rlt_review_archive_path,
+            reason,
+        )
+        self._emit_rlt_status(
+            "rlt_review_archive_saved",
+            review_archive_path=self._rlt_review_archive_path,
+            review_archive_save_reason=reason,
+            review_archive_size=archive_size,
+        )
+
+    def _maybe_persist_rlt_review_archive(self) -> None:
+        if not self._rlt_review_archive_path:
+            return
+        # Reuse the training-replay save cadence to keep behavior predictable
+        # for operators tuning a single knob; 0 disables periodic flushes and
+        # leaves only the on-shutdown / on-reset write.
+        if self._rlt_online_buffer_save_freq_transitions <= 0:
+            return
+        if self._rlt_accepted_transitions % self._rlt_online_buffer_save_freq_transitions != 0:
+            return
+        self._persist_rlt_review_archive(reason="periodic")
+
     def _configure_rlt_online(self, policy_specs: RemotePolicyConfig) -> None:
         self._rlt_online_collection_enabled = bool(
             getattr(policy_specs, "rlt_online_collection_enabled", False)
@@ -512,6 +571,24 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_persist_buffer_on_shutdown = bool(
             getattr(policy_specs, "rlt_persist_buffer_on_shutdown", True)
         )
+        self._rlt_review_capture_enabled = bool(
+            getattr(policy_specs, "rlt_review_capture_enabled", False)
+        )
+        self._rlt_review_jpeg_quality = int(getattr(policy_specs, "rlt_review_jpeg_quality", 80))
+        self._rlt_review_archive_path = getattr(policy_specs, "rlt_review_archive_path", None)
+        # Tear down any encoder/archive carried over from a previous session before
+        # rebuilding for the new policy specs.
+        if self._rlt_image_encoder is not None:
+            self._rlt_image_encoder.shutdown(wait=False)
+            self._rlt_image_encoder = None
+        self._rlt_review_archive = []
+        self._rlt_review_archive_dirty = False
+        if self._rlt_review_capture_enabled:
+            self._rlt_image_encoder = RltImageEncoder(
+                quality=self._rlt_review_jpeg_quality,
+                max_pending=8,
+                max_workers=1,
+            )
         self._rlt_actor_lr = float(getattr(policy_specs, "rlt_actor_lr", 3e-4))
         self._rlt_critic_lr = float(getattr(policy_specs, "rlt_critic_lr", 3e-4))
         self._rlt_discount = float(getattr(policy_specs, "rlt_discount", 0.99))
@@ -625,6 +702,48 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 )
         return action_tensor, reference, rl_token, proprio, policy_mode
 
+    @staticmethod
+    def _snapshot_review_images_uint8(raw_obs: Any) -> dict[str, np.ndarray]:
+        """Extract (H, W, 3) uint8 RGB images from a raw observation dict.
+
+        Returns an empty dict when ``raw_obs`` is not a dict or contains no
+        image-shaped uint8 ndarrays. Keys are namespaced with ``OBS_IMAGES``
+        (e.g. ``observation.images.front``) so they match dataset conventions.
+        """
+        if not isinstance(raw_obs, dict):
+            return {}
+        out: dict[str, np.ndarray] = {}
+        for key, value in raw_obs.items():
+            if not isinstance(value, np.ndarray):
+                continue
+            if value.dtype != np.uint8 or value.ndim != 3 or value.shape[2] != 3:
+                continue
+            # Snapshot synchronously so the producer can mutate / reuse buffers.
+            out[f"{OBS_IMAGES}.{key}"] = np.ascontiguousarray(value)
+        return out
+
+    def _maybe_submit_review_images(self, raw_obs: Any) -> int | None:
+        """Submit raw uint8 images to the review encoder; return the mailbox key.
+
+        No-op (returns None) when capture is disabled, the encoder is absent,
+        the policy isn't in a collectable state, or no images were found.
+        """
+        if (
+            not self._rlt_review_capture_enabled
+            or self._rlt_image_encoder is None
+            or not self._rlt_source_collectable()
+        ):
+            return None
+        images = self._snapshot_review_images_uint8(raw_obs)
+        if not images:
+            return None
+        submission_id = self._rlt_review_next_submission_id
+        self._rlt_review_next_submission_id += 1
+        if not self._rlt_image_encoder.submit(submission_id, images):
+            self._metrics.diagnostic.counter("rlt_review_image_submit_dropped", 1)
+            return None
+        return submission_id
+
     def _cache_rlt_source_context(
         self,
         *,
@@ -634,9 +753,26 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         rl_token: torch.Tensor,
         proprio: torch.Tensor,
         anchor_state: torch.Tensor | None,
+        review_submission_id: int | None = None,
+        review_inference_ts: float | None = None,
     ) -> int:
         context_id = self._next_rlt_context_id_value()
         rlt_window = min(int(getattr(self.policy.config, "rlt_chunk_size", reference.shape[1])), reference.shape[1])
+        # Pop the (possibly already encoded) JPEGs from the encoder mailbox.
+        # Encoding started early in _predict_chunk and runs in a worker thread,
+        # so by the time we get here it has almost always completed; we wait
+        # only briefly to avoid stalling inference if it didn't.
+        images_jpeg: dict[str, bytes] | None = None
+        if (
+            self._rlt_review_capture_enabled
+            and self._rlt_image_encoder is not None
+            and review_submission_id is not None
+        ):
+            images_jpeg = self._rlt_image_encoder.pop(review_submission_id, timeout_s=0.05)
+            if images_jpeg is None:
+                self._metrics.diagnostic.counter("rlt_review_image_lagged", 1)
+            else:
+                self._metrics.diagnostic.counter("rlt_review_image_attached", 1)
         context = RLTSourceContext(
             context_id=context_id,
             source_control_step=source_control_step,
@@ -647,6 +783,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             anchor_state=anchor_state.squeeze(0).detach().cpu()
             if isinstance(anchor_state, torch.Tensor) and anchor_state.dim() == 2
             else (anchor_state.detach().cpu() if isinstance(anchor_state, torch.Tensor) else None),
+            images_jpeg=images_jpeg,
+            inference_ts=review_inference_ts,
         )
         self._rlt_context_cache.put(context)
         self._metrics.diagnostic.counter("rlt_context_cached", 1)
@@ -736,10 +874,24 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             reward=float(transition.reward),
             done=bool(transition.done),
             is_intervention=bool(transition.is_intervention),
+            # Review fields. images_jpeg / inference_ts come from the source
+            # context (captured at the inference instant). The remaining wire
+            # fields are mirrored verbatim so the offline viewer can render
+            # episode boundaries and success/failure badges without having to
+            # reconstruct them from (reward, done).
+            images_jpeg=source.images_jpeg,
+            inference_ts=source.inference_ts,
+            episode_id=int(transition.episode_id),
+            success=bool(transition.success),
+            failure=bool(transition.failure),
+            chunk_start_step=int(transition.chunk_start_step),
         )
         with self._rlt_replay_lock:
             self._rlt_replay.add(sample)
             replay_size = len(self._rlt_replay)
+        if self._rlt_review_archive_path:
+            self._rlt_review_archive.append(sample)
+            self._rlt_review_archive_dirty = True
         self._rlt_accepted_transitions += 1
         self._rlt_online_replay_size += 1
         self._rlt_buffer_dirty = True
@@ -756,6 +908,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             episode_id=int(transition.episode_id),
         )
         self._maybe_persist_rlt_replay()
+        self._maybe_persist_rlt_review_archive()
 
     def _start_rlt_trainer_if_needed(self) -> None:
         if not self._rlt_online_training_enabled or not self._is_rlt_policy():
@@ -928,6 +1081,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._policy_ready.clear()
         if self._rlt_persist_buffer_on_shutdown:
             self._persist_rlt_replay(reason="reset")
+            self._persist_rlt_review_archive(reason="reset")
+        if self._rlt_image_encoder is not None:
+            self._rlt_image_encoder.shutdown(wait=False)
+            self._rlt_image_encoder = None
 
         # Wait for the old producer thread to observe shutdown and exit
         # before replacing registers, so it doesn't loop forever on the
@@ -963,6 +1120,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_safety_violation_count = 0
         self._rlt_actor_disabled_by_safety = False
         self._rlt_completed_episodes.clear()
+        # Review-archive state is rebuilt on the next _configure_rlt_online.
+        self._rlt_review_archive = []
+        self._rlt_review_archive_dirty = False
+        self._rlt_review_next_submission_id = 1
 
         try:
             self._debug_chunks_remaining = int(
@@ -1857,6 +2018,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         else:
             raw_obs = raw_obs_any
         _mark("obs_meta")
+        # Kick off review image encoding in parallel with the rest of inference.
+        # The submission_id is later popped inside _cache_rlt_source_context.
+        review_submission_id = self._maybe_submit_review_images(raw_obs)
+        review_inference_ts = time.time() if self._rlt_review_capture_enabled else None
         norm_debug = self._norm_debug_chunks_remaining > 0
 
         # 1. Prepare observation
@@ -2033,6 +2198,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 rl_token=rlt_rl_token,
                 proprio=rlt_proprio,
                 anchor_state=anchor_state,
+                review_submission_id=review_submission_id,
+                review_inference_ts=review_inference_ts,
             )
             rlt_collectable = True
         _mark("raw_action_cache")
