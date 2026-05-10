@@ -22,6 +22,7 @@ python -m lerobot.async_inference.policy_server_drtc \
 import logging
 import os
 import pickle  # nosec
+import signal
 import threading
 import time
 from collections import OrderedDict
@@ -361,6 +362,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_buffer_dirty = False
         self._rlt_demo_replay_size = 0
         self._rlt_online_replay_size = 0
+        self._rlt_episode_id_offset = 0
         self._rlt_completed_episodes: set[int] = set()
         self._rlt_context_cache = RLTSourceContextCache(max_size=256)
         self._rlt_replay = RLTReplayBuffer(capacity=10000)
@@ -468,6 +470,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         with self._rlt_replay_lock:
             self._rlt_replay.extend(loaded.samples())
             replay_size = len(self._rlt_replay)
+        loaded_episode_ids = [
+            int(sample.episode_id) for sample in loaded.samples() if sample.episode_id is not None
+        ]
+        if source == "online" and loaded_episode_ids:
+            self._rlt_episode_id_offset = max(self._rlt_episode_id_offset, max(loaded_episode_ids))
         loaded_size = len(loaded)
         self.logger.info("Loaded %d RLT %s replay samples from %s", loaded_size, source, replay_path)
         self._emit_rlt_status(
@@ -475,9 +482,31 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             replay_source=source,
             replay_path=str(replay_path),
             replay_loaded_size=loaded_size,
+            rlt_episode_id_offset=self._rlt_episode_id_offset,
             rlt_replay_size=replay_size,
         )
         return loaded_size
+
+    def _load_rlt_review_archive(self) -> None:
+        if not self._rlt_review_archive_path:
+            return
+        archive_path = Path(self._rlt_review_archive_path)
+        if not archive_path.exists():
+            return
+        loaded = RLTReplayBuffer.load(archive_path)
+        self._rlt_review_archive = loaded.samples()
+        loaded_episode_ids = [
+            int(sample.episode_id) for sample in loaded.samples() if sample.episode_id is not None
+        ]
+        if loaded_episode_ids:
+            self._rlt_episode_id_offset = max(self._rlt_episode_id_offset, max(loaded_episode_ids))
+        self.logger.info("Loaded %d RLT review archive samples from %s", len(loaded), archive_path)
+        self._emit_rlt_status(
+            "rlt_review_archive_loaded",
+            review_archive_path=str(archive_path),
+            review_archive_size=len(loaded),
+            rlt_episode_id_offset=self._rlt_episode_id_offset,
+        )
 
     def _persist_rlt_replay(self, *, reason: str) -> None:
         if not self._rlt_online_buffer_path or not self._rlt_buffer_dirty:
@@ -610,11 +639,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_context_cache = RLTSourceContextCache(max_size=context_cache_size)
         with self._rlt_replay_lock:
             self._rlt_replay = RLTReplayBuffer(capacity=self._rlt_replay_capacity)
+        self._rlt_episode_id_offset = 0
         self._rlt_demo_replay_size = self._load_rlt_replay_file(self._rlt_demo_buffer_path, source="demo")
         self._rlt_online_replay_size = self._load_rlt_replay_file(
             self._rlt_online_buffer_path,
             source="online",
         )
+        if self._rlt_review_capture_enabled:
+            self._load_rlt_review_archive()
         self._rlt_buffer_dirty = False
         self._rlt_accepted_transitions = 0
         self._rlt_completed_episodes.clear()
@@ -865,6 +897,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             )
         executed_np = actions_flat.reshape(num_actions, action_dim)
         executed_model = self._executed_actions_to_model_space(executed_np, source)
+        episode_id = int(transition.episode_id) + int(self._rlt_episode_id_offset)
 
         sample = RLTReplaySample(
             rl_token=source.rl_token,
@@ -884,7 +917,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             # reconstruct them from (reward, done).
             images_jpeg=source.images_jpeg,
             inference_ts=source.inference_ts,
-            episode_id=int(transition.episode_id),
+            episode_id=episode_id,
             success=bool(transition.success),
             failure=bool(transition.failure),
             chunk_start_step=int(transition.chunk_start_step),
@@ -899,7 +932,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_online_replay_size += 1
         self._rlt_buffer_dirty = True
         if transition.done:
-            self._rlt_completed_episodes.add(int(transition.episode_id))
+            self._rlt_completed_episodes.add(episode_id)
         self._metrics.diagnostic.counter("rlt_transition_accepted", 1)
         self._metrics.diagnostic.set_context(rlt_replay_size=replay_size)
         self._emit_rlt_status(
@@ -908,7 +941,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             transition_success=bool(transition.success),
             transition_failure=bool(transition.failure),
             transition_intervention=bool(transition.is_intervention),
-            episode_id=int(transition.episode_id),
+            episode_id=episode_id,
+            client_episode_id=int(transition.episode_id),
         )
         self._maybe_persist_rlt_replay()
         self._maybe_persist_rlt_review_archive()
@@ -1120,6 +1154,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_buffer_dirty = False
         self._rlt_demo_replay_size = 0
         self._rlt_online_replay_size = 0
+        self._rlt_episode_id_offset = 0
         self._rlt_safety_violation_count = 0
         self._rlt_actor_disabled_by_safety = False
         self._rlt_completed_episodes.clear()
@@ -2426,7 +2461,14 @@ def serve_drtc(cfg: PolicyServerDrtcConfig) -> None:
         )
 
     server_started = False
+    original_sigterm_handler = signal.getsignal(signal.SIGTERM)
+
+    def _handle_sigterm(signum: int, _frame: Any) -> None:
+        policy_server.logger.info("Signal %s received; shutting down", signum)
+        server.stop(grace=5)
+
     try:
+        signal.signal(signal.SIGTERM, _handle_sigterm)
         server.start()
         server_started = True
         print(f"PolicyServerDrtc listening on {cfg.host}:{bound_port}")
@@ -2445,6 +2487,7 @@ def serve_drtc(cfg: PolicyServerDrtcConfig) -> None:
             policy_server.logger.error("Error while stopping policy server", exc_info=True)
         if server_started:
             server.stop(grace=5)
+        signal.signal(signal.SIGTERM, original_sigterm_handler)
     print("Server terminated")
 
 

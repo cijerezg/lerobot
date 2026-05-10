@@ -96,6 +96,14 @@ cleanup() {
     if [ "$STARTED_SERVER" = true ] && [ -n "$POLICY_SERVER_PID" ] && kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
         echo "Stopping policy server (PID: $POLICY_SERVER_PID)..."
         kill -TERM "$POLICY_SERVER_PID" 2>/dev/null || true
+        for _ in {1..20}; do
+            kill -0 "$POLICY_SERVER_PID" 2>/dev/null || break
+            sleep 0.5
+        done
+        if kill -0 "$POLICY_SERVER_PID" 2>/dev/null; then
+            echo "Policy server did not stop after 10s; forcing shutdown..."
+            kill -KILL "$POLICY_SERVER_PID" 2>/dev/null || true
+        fi
         wait "$POLICY_SERVER_PID" 2>/dev/null || true
     fi
 
@@ -134,7 +142,10 @@ if ss -tlnp 2>/dev/null | grep -q ":${POLICY_SERVER_PORT} " || \
     EXISTING_PID=$(lsof -ti TCP:"${POLICY_SERVER_PORT}" -sTCP:LISTEN 2>/dev/null || true)
     if [ -n "$EXISTING_PID" ]; then
         kill -TERM $EXISTING_PID 2>/dev/null || true
-        sleep 1
+        for _ in {1..20}; do
+            kill -0 $EXISTING_PID 2>/dev/null || break
+            sleep 0.5
+        done
         # Force-kill if still running
         kill -0 $EXISTING_PID 2>/dev/null && kill -9 $EXISTING_PID 2>/dev/null || true
         sleep 0.5
