@@ -903,7 +903,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         num_actions = int(transition.num_actions)
         action_dim = int(transition.action_dim)
-        actions_flat = np.frombuffer(transition.executed_actions_f32, dtype=np.float32)
+        actions_flat = np.frombuffer(transition.executed_actions_f32, dtype=np.float32).copy()
         if num_actions <= 0 or action_dim <= 0 or actions_flat.size != num_actions * action_dim:
             raise ValueError(
                 f"invalid executed action payload: size={actions_flat.size}, shape=({num_actions}, {action_dim})"
@@ -911,11 +911,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         executed_np = actions_flat.reshape(num_actions, action_dim)
         executed_model = self._executed_actions_to_model_space(executed_np, source)
         episode_id = int(transition.episode_id) + int(self._rlt_episode_id_offset)
+        training_reference = executed_model if transition.is_intervention else source.reference_chunk
 
         sample = RLTReplaySample(
             rl_token=source.rl_token,
             proprio=source.proprio,
-            reference_chunk=source.reference_chunk,
+            reference_chunk=training_reference,
             executed_chunk=executed_model,
             next_rl_token=next_context.rl_token,
             next_proprio=next_context.proprio,

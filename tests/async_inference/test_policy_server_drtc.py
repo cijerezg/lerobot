@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from types import SimpleNamespace
 
 import torch
 
@@ -140,3 +141,132 @@ def test_load_rlt_review_archive_preserves_existing_samples(tmp_path, monkeypatc
 
     assert len(server._rlt_review_archive) == 2
     assert server._rlt_episode_id_offset == 12
+
+
+class _DiagnosticStub:
+    def counter(self, *_args, **_kwargs):
+        pass
+
+    def set_context(self, **_kwargs):
+        pass
+
+
+def _server_for_accept_transition(policy_server_drtc):
+    server = policy_server_drtc.PolicyServerDrtc.__new__(policy_server_drtc.PolicyServerDrtc)
+    server._rlt_context_cache = policy_server_drtc.RLTSourceContextCache(max_size=4)
+    server._rlt_replay_lock = threading.Lock()
+    server._rlt_replay = RLTReplayBuffer(capacity=4)
+    server._rlt_replay_capacity = 4
+    server._rlt_review_archive_path = None
+    server._rlt_review_archive = []
+    server._rlt_train_step = 0
+    server._rlt_online_collection_enabled = True
+    server._rlt_online_training_enabled = True
+    server._rlt_training_head = "idle"
+    server._rlt_actor_disabled_by_safety = False
+    server._rlt_demo_replay_size = 0
+    server._rlt_accepted_transitions = 0
+    server._rlt_online_replay_size = 0
+    server._rlt_online_buffer_save_freq_transitions = 0
+    server._rlt_buffer_dirty = False
+    server._rlt_completed_episodes = set()
+    server._rlt_episode_id_offset = 0
+    server._action_encoding = "raw"
+    server._action_normalizer = None
+    server._metrics = SimpleNamespace(diagnostic=_DiagnosticStub())
+    return server
+
+
+@require_package("grpcio", "grpc")
+def test_accept_rlt_transition_uses_executed_chunk_as_intervention_reference(monkeypatch):
+    from lerobot.async_inference import policy_server_drtc
+    from lerobot.transport import services_pb2
+
+    monkeypatch.setattr(policy_server_drtc, "emit_status", lambda *_args, **_kwargs: None)
+
+    server = _server_for_accept_transition(policy_server_drtc)
+
+    source_reference = torch.zeros(3, 2)
+    source = policy_server_drtc.RLTSourceContext(
+        context_id=1,
+        source_control_step=10,
+        chunk_start_step=10,
+        rl_token=torch.ones(4),
+        proprio=torch.ones(2),
+        reference_chunk=source_reference,
+        anchor_state=None,
+    )
+    next_context = policy_server_drtc.RLTSourceContext(
+        context_id=2,
+        source_control_step=13,
+        chunk_start_step=13,
+        rl_token=torch.ones(4) * 2,
+        proprio=torch.ones(2) * 2,
+        reference_chunk=torch.ones(3, 2) * 3,
+        anchor_state=None,
+    )
+    server._rlt_context_cache.put(source)
+    server._rlt_context_cache.put(next_context)
+
+    executed = torch.tensor([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]], dtype=torch.float32)
+    transition = services_pb2.RLTTransitionChunk(
+        episode_id=7,
+        source_rlt_context_id=1,
+        next_rlt_context_id=2,
+        chunk_start_step=10,
+        num_actions=3,
+        action_dim=2,
+        executed_actions_f32=executed.numpy().tobytes(),
+        reward=0.0,
+        done=False,
+        is_intervention=True,
+    )
+
+    server._accept_rlt_transition(transition)
+
+    sample = server._rlt_replay.samples()[0]
+    assert torch.equal(sample.reference_chunk, executed)
+    assert torch.equal(sample.executed_chunk, executed)
+    assert torch.equal(sample.next_reference_chunk, next_context.reference_chunk)
+
+
+@require_package("grpcio", "grpc")
+def test_accept_rlt_transition_keeps_source_reference_for_non_intervention(monkeypatch):
+    from lerobot.async_inference import policy_server_drtc
+    from lerobot.transport import services_pb2
+
+    monkeypatch.setattr(policy_server_drtc, "emit_status", lambda *_args, **_kwargs: None)
+
+    server = _server_for_accept_transition(policy_server_drtc)
+
+    source_reference = torch.ones(3, 2)
+    source = policy_server_drtc.RLTSourceContext(
+        context_id=1,
+        source_control_step=10,
+        chunk_start_step=10,
+        rl_token=torch.ones(4),
+        proprio=torch.ones(2),
+        reference_chunk=source_reference,
+        anchor_state=None,
+    )
+    server._rlt_context_cache.put(source)
+
+    executed = torch.zeros(3, 2, dtype=torch.float32)
+    transition = services_pb2.RLTTransitionChunk(
+        episode_id=7,
+        source_rlt_context_id=1,
+        next_rlt_context_id=0,
+        chunk_start_step=10,
+        num_actions=3,
+        action_dim=2,
+        executed_actions_f32=executed.numpy().tobytes(),
+        reward=0.0,
+        done=True,
+        is_intervention=False,
+    )
+
+    server._accept_rlt_transition(transition)
+
+    sample = server._rlt_replay.samples()[0]
+    assert torch.equal(sample.reference_chunk, source_reference)
+    assert torch.equal(sample.executed_chunk, executed)
