@@ -118,6 +118,12 @@ class PI05RLConfig(PI05FullConfig):
     # Trainable parameter configuration
     trainable_params: TrainableParamsConfig = field(default_factory=TrainableParamsConfig)
 
+    # Weight anchor (periodic convex pull toward init weights, with optimizer-state reset)
+    # alpha == 0 or every_n_steps == 0 disables.
+    anchor_alpha: float = 0.0
+    anchor_every_n_steps: int = 0
+    anchor_targets: list[str] = field(default_factory=lambda: ["actor", "critic"])
+
     # Offline training steps
     offline_steps: int = 10000
 

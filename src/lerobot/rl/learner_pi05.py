@@ -117,6 +117,7 @@ from lerobot.rl.pi05_train_utils import (
     _update_actor,
     log_pi05_training_metrics,
 )
+from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
 
 import wandb
 import gc
@@ -398,6 +399,13 @@ def add_actor_information_and_train(
 
     optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg=cfg, policy=policy)
 
+    weight_anchors = build_weight_anchors(
+        optimizers=optimizers,
+        alpha=cfg.policy.anchor_alpha,
+        every_n_steps=cfg.policy.anchor_every_n_steps,
+        targets=cfg.policy.anchor_targets,
+    )
+
     # If we are resuming, we need to load the training state
     resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
 
@@ -609,6 +617,8 @@ def add_actor_information_and_train(
                 scaler=None,
                 preprocessor=preprocessor,
             )
+
+        apply_weight_anchors(weight_anchors, optimizers, optimization_step)
 
         # ----------------------------------------
 

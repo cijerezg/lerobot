@@ -99,6 +99,7 @@ from lerobot.rl.pi05_train_utils import (
     _update_actor,
     log_pi05_training_metrics,
 )
+from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
 
 import wandb
 
@@ -423,7 +424,14 @@ def run_offline_training(
         for param, target_param in zip(_policy.critic.parameters(), _policy.critic_target.parameters()):
             if not param.requires_grad:
                 target_param.data = param.data
-    
+
+    weight_anchors = build_weight_anchors(
+        optimizers=optimizers,
+        alpha=cfg.policy.anchor_alpha,
+        every_n_steps=cfg.policy.anchor_every_n_steps,
+        targets=cfg.policy.anchor_targets,
+    )
+
     # Helper function for bfloat16 casting
     cast_to_bf16_fn = cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None
     
@@ -527,8 +535,10 @@ def run_offline_training(
                 scaler=None,
                 preprocessor=preprocessor,
             )
-        
-        
+
+        apply_weight_anchors(weight_anchors, optimizers, optimization_step)
+
+
         # Log training metrics
         if optimization_step % log_freq == 0:
             training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
