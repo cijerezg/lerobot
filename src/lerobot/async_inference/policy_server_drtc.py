@@ -723,10 +723,23 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     )
                 else:
                     refined_prefix = self.policy.rlt_actor(rl_token, proprio, actor_ref)
-                action_tensor = torch.cat(
-                    [refined_prefix, reference[:, self.policy.config.rlt_chunk_size :]], dim=1
-                )
-                policy_mode = "rlt_actor"
+                action_deviation_abs_max = float((refined_prefix - actor_ref).detach().abs().max().cpu())
+                if (
+                    self._rlt_action_deviation_abs_max is not None
+                    and action_deviation_abs_max > float(self._rlt_action_deviation_abs_max)
+                ):
+                    action_tensor = reference
+                    policy_mode = "rlt_safety_passthrough"
+                    self._emit_rlt_status(
+                        "rlt_inference_safety_passthrough",
+                        rlt_action_deviation_abs_max=action_deviation_abs_max,
+                        rlt_action_deviation_limit=float(self._rlt_action_deviation_abs_max),
+                    )
+                else:
+                    action_tensor = torch.cat(
+                        [refined_prefix, reference[:, self.policy.config.rlt_chunk_size :]], dim=1
+                    )
+                    policy_mode = "rlt_actor"
             else:
                 action_tensor = reference
                 policy_mode = (

@@ -117,6 +117,8 @@ class ExperimentConfig:
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
+    rlt_actor_mode: str = "gaussian"
+    rlt_action_std: float = 0.05
     rlt_num_critics: int = 1
     rlt_bc_beta: float = 1.0
     rlt_jerk_beta: float = 0.0
@@ -147,6 +149,11 @@ class ExperimentConfig:
     rlt_execute_after_train_steps: int = 1000000
     rlt_context_cache_size: int = 256
     rlt_transition_queue_size: int = 256
+    rlt_grad_clip_norm: float | None = None
+    rlt_q_abs_max: float | None = None
+    rlt_action_deviation_abs_max: float | None = None
+    rlt_loss_abs_max: float | None = None
+    rlt_safety_patience: int = 3
     # DRTC parameters
     latency_k: float = 2.0
     epsilon: int = 2
@@ -211,7 +218,7 @@ _SCALAR_FIELDS = frozenset({
     "rlt_enabled", "rlt_embedding_checkpoint", "rlt_head_checkpoint",
     "rlt_chunk_size", "rlt_token_dim",
     "rlt_actor_hidden_dims", "rlt_critic_hidden_dims",
-    "rlt_actor_residual_scale", "rlt_num_critics",
+    "rlt_actor_residual_scale", "rlt_actor_mode", "rlt_action_std", "rlt_num_critics",
     "rlt_bc_beta", "rlt_jerk_beta", "rlt_reference_dropout_p",
     "rlt_online_collection_enabled", "rlt_online_training_enabled",
     "rlt_warmup_episodes", "rlt_warmup_transitions", "rlt_replay_capacity",
@@ -222,6 +229,8 @@ _SCALAR_FIELDS = frozenset({
     "rlt_actor_lr", "rlt_critic_lr", "rlt_discount",
     "rlt_target_update_tau", "rlt_execute_after_train_steps",
     "rlt_context_cache_size", "rlt_transition_queue_size",
+    "rlt_grad_clip_norm", "rlt_q_abs_max", "rlt_action_deviation_abs_max",
+    "rlt_loss_abs_max", "rlt_safety_patience",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "run_until_interrupt", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
@@ -424,6 +433,8 @@ def create_client_config(
         rlt_actor_hidden_dims=config.rlt_actor_hidden_dims,
         rlt_critic_hidden_dims=config.rlt_critic_hidden_dims,
         rlt_actor_residual_scale=config.rlt_actor_residual_scale,
+        rlt_actor_mode=config.rlt_actor_mode,
+        rlt_action_std=config.rlt_action_std,
         rlt_num_critics=config.rlt_num_critics,
         rlt_bc_beta=config.rlt_bc_beta,
         rlt_jerk_beta=config.rlt_jerk_beta,
@@ -452,6 +463,11 @@ def create_client_config(
         rlt_execute_after_train_steps=config.rlt_execute_after_train_steps,
         rlt_context_cache_size=config.rlt_context_cache_size,
         rlt_transition_queue_size=config.rlt_transition_queue_size,
+        rlt_grad_clip_norm=config.rlt_grad_clip_norm,
+        rlt_q_abs_max=config.rlt_q_abs_max,
+        rlt_action_deviation_abs_max=config.rlt_action_deviation_abs_max,
+        rlt_loss_abs_max=config.rlt_loss_abs_max,
+        rlt_safety_patience=config.rlt_safety_patience,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
         s_min=config.s_min,

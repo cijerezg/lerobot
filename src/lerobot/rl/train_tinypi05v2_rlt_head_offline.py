@@ -67,6 +67,8 @@ class TrainTinyPI05V2RLTHeadOfflineConfig:
     rlt_actor_hidden_dim: int = 256
     rlt_critic_hidden_dim: int = 256
     rlt_actor_residual_scale: float = 0.25
+    rlt_actor_mode: str = "gaussian"
+    rlt_action_std: float = 0.05
     rlt_num_critics: int = 4
     rlt_bc_beta: float = 0.1
     rlt_bc_action_weights: list[float] | None = None
@@ -136,6 +138,8 @@ def _build_policy(
         rlt_actor_hidden_dim=cfg.rlt_actor_hidden_dim,
         rlt_critic_hidden_dim=cfg.rlt_critic_hidden_dim,
         rlt_actor_residual_scale=cfg.rlt_actor_residual_scale,
+        rlt_actor_mode=cfg.rlt_actor_mode,
+        rlt_action_std=cfg.rlt_action_std,
         rlt_num_critics=cfg.rlt_num_critics,
         rlt_bc_beta=cfg.rlt_bc_beta,
         rlt_bc_action_weights=cfg.rlt_bc_action_weights,
