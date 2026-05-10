@@ -36,9 +36,9 @@ Output layout (all under probe_parameters.output_dir/actions/):
   3d/{ds}/by_subtask.html             interactive by subtask
 
 Usage:
-    python actions_pi05.py config-hiserl.json
-    python actions_pi05.py config-hiserl.json --probe_parameters.output_dir outputs/probe
-    python actions_pi05.py config-hiserl.json --probe_parameters.mode plot
+    python actions_pi05.py config-hiserl.yaml
+    python actions_pi05.py config-hiserl.yaml --probe_parameters.output_dir outputs/probe
+    python actions_pi05.py config-hiserl.yaml --probe_parameters.mode plot
 """
 
 import logging

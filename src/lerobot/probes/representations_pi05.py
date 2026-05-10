@@ -27,9 +27,9 @@ Output layout (all under probe_parameters.output_dir/representations/):
   {dataset}/subtask_injection/generated_subtasks.csv  per-frame GT and model-generated subtask text
 
 Usage:
-    python representations_pi05.py config-hiserl.json
-    python representations_pi05.py config-hiserl.json --probe_parameters.output_dir outputs/probe
-    python representations_pi05.py config-hiserl.json --probe_parameters.mode plot
+    python representations_pi05.py config-hiserl.yaml
+    python representations_pi05.py config-hiserl.yaml --probe_parameters.output_dir outputs/probe
+    python representations_pi05.py config-hiserl.yaml --probe_parameters.mode plot
 """
 
 import logging

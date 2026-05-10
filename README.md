@@ -74,7 +74,7 @@ python -m lerobot.policies.pi05_full.annotate.subtask_annotate_gemma_4 \
 
 #### Config file
 
-This is the file used for all the scripts in this repo. An example of the config file can be found in the [`rl/config-hiserl.json`](src/lerobot/rl/config-hiserl.json)
+This is the file used for all the scripts in this repo. An example of the config file can be found in the [`rl/config-hiserl.yaml`](src/lerobot/rl/config-hiserl.yaml)
 
 To get started with training, the key fields to change are:
 - `root`: this is the path to your dataset.
@@ -97,7 +97,7 @@ Set the choice via `policy.action_encoding` in the config. `anchor` and `delta` 
 We suggest to start with a round of offline training so that the policy has a decent starting point. To run it use:
 
 ```bash
-python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.json
+python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.yaml
 ```
 
 Once the offline training has run for a while, update the checkpoint in the config and proceed to online training.
@@ -105,13 +105,13 @@ Once the offline training has run for a while, update the checkpoint in the conf
 First run the learner script:
 
 ```bash
-python -m lerobot.rl.learner_pi05 --config path/to/config.json
+python -m lerobot.rl.learner_pi05 --config path/to/config.yaml
 ```
 
 and then on another terminal run the actor script:
 
 ```bash
-python -m lerobot.rl.actor_pi05_async --config path/to/config.json
+python -m lerobot.rl.actor_pi05_async --config path/to/config.yaml
 ```
 
 The learner will automatically save buffers to disk with the online data. After processing, those can be reused for the next round of offline or online training.
@@ -131,7 +131,7 @@ Following the suggestions from the RECAP paper, we suggest to retrain every time
 Once you have a trained model, your camera indices and follower and leader ports in the config file, and then you can run inference using:
 
 ```bash
-python -m lerobot.rl.inference_pi05_async --config path/to/config.json
+python -m lerobot.rl.inference_pi05_async --config path/to/config.yaml
 ```
 
 

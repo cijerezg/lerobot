@@ -22,7 +22,7 @@ into the policy's subtask token cache, taking effect on the very next action
 chunk generation. The model's normal time-based cache then resumes.
 
 Usage:
-    python lerobot/src/lerobot/rl/inference_pi05_async_interactive.py --config-path=config-hiserl.json
+    python lerobot/src/lerobot/rl/inference_pi05_async_interactive.py --config-path=config-hiserl.yaml
 
 Config note:
     subtask_regeneration_interval must be > 0 (e.g. 30). If it is 0 the model

@@ -22,7 +22,7 @@ without spawning actors or handling online data collection. It's designed
 to create a good initialization before online RL training begins.
 
 Usage:
-    python offline_learner_val_pi05.py config-hiserl.json --offline-steps 10000
+    python offline_learner_val_pi05.py config-hiserl.yaml --offline-steps 10000
 
 Adds periodic validation (actions, representations, attention)
 on top of offline_learner_pi05.py. Config fields: val_dataset_path, val_split,
@@ -139,10 +139,11 @@ def offline_train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None,
         accelerator: Optional Accelerator instance for multi-GPU training
     """
     cfg.validate()
-    
+    cfg.env.task = cfg.policy.task
+
     if job_name is None:
         job_name = cfg.job_name
-    
+
     if job_name is None:
         raise ValueError("Job name must be specified either in config or as a parameter")
     
