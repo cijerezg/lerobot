@@ -429,23 +429,26 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
     def _emit_rlt_status(self, event: str, **fields: Any) -> None:
         with self._rlt_replay_lock:
             replay_size = len(self._rlt_replay)
+        status_fields = {
+            "rlt_replay_size": replay_size,
+            "rlt_replay_capacity": self._rlt_replay_capacity,
+            "rlt_completed_episodes": len(self._rlt_completed_episodes),
+            "rlt_train_step": self._rlt_train_step,
+            "rlt_online_collection_enabled": self._rlt_online_collection_enabled,
+            "rlt_online_training_enabled": self._rlt_online_training_enabled,
+            "rlt_training_head": self._rlt_training_head,
+            "rlt_actor_training": self._rlt_training_head == "actor",
+            "rlt_critic_training": self._rlt_training_head == "critic",
+            "rlt_actor_disabled_by_safety": self._rlt_actor_disabled_by_safety,
+            "rlt_demo_replay_size": self._rlt_demo_replay_size,
+            "rlt_online_replay_size": self._rlt_online_replay_size,
+            "rlt_accepted_transitions": self._rlt_accepted_transitions,
+        }
+        status_fields.update(fields)
         emit_status(
             "policy_server",
             event,
-            rlt_replay_size=replay_size,
-            rlt_replay_capacity=self._rlt_replay_capacity,
-            rlt_completed_episodes=len(self._rlt_completed_episodes),
-            rlt_train_step=self._rlt_train_step,
-            rlt_online_collection_enabled=self._rlt_online_collection_enabled,
-            rlt_online_training_enabled=self._rlt_online_training_enabled,
-            rlt_training_head=self._rlt_training_head,
-            rlt_actor_training=self._rlt_training_head == "actor",
-            rlt_critic_training=self._rlt_training_head == "critic",
-            rlt_actor_disabled_by_safety=self._rlt_actor_disabled_by_safety,
-            rlt_demo_replay_size=self._rlt_demo_replay_size,
-            rlt_online_replay_size=self._rlt_online_replay_size,
-            rlt_accepted_transitions=self._rlt_accepted_transitions,
-            **fields,
+            **status_fields,
         )
 
     def _set_rlt_training_head(self, head: str) -> None:
