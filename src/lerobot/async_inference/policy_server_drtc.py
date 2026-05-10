@@ -704,6 +704,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         if self.policy is None:
             raise RuntimeError("policy is not loaded")
         with self._rlt_model_lock:
+            self.policy.eval()
             reference = self.policy.predict_vla_reference_chunk(observation, **rtc_kwargs)
             rl_token = self.policy.extract_rl_token(observation)
             proprio = observation[OBS_STATE].to(dtype=rl_token.dtype, device=rl_token.device)
@@ -2205,9 +2206,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     rtc_kwargs = {}
             _mark("rtc_prefix")
 
-            if self._is_rlt_policy() and (
-                self._rlt_online_collection_enabled or self._rlt_online_training_enabled
-            ):
+            use_rlt_context_path = self._is_rlt_policy() and (
+                self._rlt_online_collection_enabled
+                or self._rlt_online_training_enabled
+                or self._rlt_action_deviation_abs_max is not None
+            )
+            if use_rlt_context_path:
                 (
                     action_tensor,
                     rlt_reference,

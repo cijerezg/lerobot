@@ -1,10 +1,10 @@
 # DRTC config for deterministic tinypi05v2_rlt head inference tests.
 #
-# Conservative 20260509 offline head baseline.
+# May 10 256-wide offline head trained from the updated 20260510 replay data.
 #
 # Run with:
-#   ./scripts/run_drtc_experiment.sh --config baseline_tinypi05v2_rlt_eval
-name: baseline_tinypi05v2_rlt_eval_conservative_20260509
+#   ./scripts/run_drtc_experiment.sh --config baseline_tinypi05v2_rlt_eval_20260510_256
+name: baseline_tinypi05v2_rlt_eval_20260510_256
 
 # Hardware
 robot_type: so101_follower
@@ -32,21 +32,21 @@ pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickpl
 subtask_generation_enabled: false
 subtask_regeneration_interval: 0
 
-# RLT modules. Conservative May 9 offline head baseline.
+# RLT modules. Latest May 10 offline head.
 rlt_enabled: true
 rlt_embedding_checkpoint: outputs/tinypi05v2_rlt_embedding/rlt_embedding_step_010000.pt
-rlt_head_checkpoint: outputs/tinypi05v2_rlt_offline_head_20260509_conservative/rlt_head_step_000700.pt
+rlt_head_checkpoint: outputs/tinypi05v2_rlt_offline_head_20260510_256/rlt_head_step_001000.pt
 rlt_chunk_size: 10
 # Leave unset for tinypi05v2_rlt so it matches the TinyPI05V2 VLM width.
 rlt_token_dim:
-rlt_actor_hidden_dims: [512, 512, 512]
-rlt_critic_hidden_dims: [512, 512, 512]
+rlt_actor_hidden_dims: [256, 256]
+rlt_critic_hidden_dims: [256, 256]
 rlt_actor_residual_scale: 0.25
 rlt_actor_mode: gaussian
 rlt_num_critics: 4
-rlt_bc_beta: 1.0
-rlt_jerk_beta: 0.01
-rlt_reference_dropout_p: 0.5
+rlt_bc_beta: 2.0
+rlt_jerk_beta: 0.05
+rlt_reference_dropout_p: 0.0
 
 # Evaluation mode: no replay recording and no online updates.
 rlt_online_collection_enabled: false
@@ -70,10 +70,9 @@ rlt_target_update_tau: 0.005
 rlt_execute_after_train_steps: 0
 rlt_context_cache_size: 256
 rlt_transition_queue_size: 256
-rlt_grad_clip_norm: 20.0
+rlt_grad_clip_norm: 5.0
 rlt_q_abs_max: 100.0
-# Disabled for the conservative baseline to match the 20260509 eval path.
-rlt_action_deviation_abs_max:
+rlt_action_deviation_abs_max: 1.0
 rlt_loss_abs_max: 1000.0
 rlt_safety_patience: 3
 
