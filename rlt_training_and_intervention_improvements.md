@@ -148,6 +148,52 @@ Recommended order:
 3. Collect more clean, reviewed RLT rollouts focused on the critical phase.
 4. Return to base-model data collection only if the VLA reference chunks are not reasonably competent.
 
+## May 2026 Smaller-Head Rollout Result
+
+The smaller anchored head was a large improvement over the original large head and succeeded twice, but it was not yet better than the VLA baseline. It still showed post-drop oscillation / jerkiness after releasing the cube.
+
+Interpretation:
+
+- The RLT pipeline is likely basically working.
+- The smaller `[256, 256]` head and stronger anchoring are the right direction.
+- The current head is not good enough to use as the behavior policy for data collection.
+- Collecting rollouts with this head would risk polluting replay with oscillatory post-drop behavior.
+
+For the next data pass, collect with VLA passthrough while still recording RLT context:
+
+```yaml
+rlt_enabled: true
+rlt_head_checkpoint:
+rlt_online_collection_enabled: true
+rlt_online_training_enabled: false
+rlt_execute_after_train_steps: 1000000
+```
+
+Use teleop interventions around the failure window, especially immediately after drop/release. This should produce cleaner transitions:
+
+```text
+reference_chunk = what the VLA wanted
+executed_chunk = corrected human action when intervention occurred
+is_intervention = true
+```
+
+After collecting and reviewing a larger buffer, retrain the small anchored head. If post-drop jerk remains the main issue, try even stronger anchoring and smoothness:
+
+```bash
+--steps=300 \
+--actor_lr=0.00001 \
+--critic_lr=0.0001 \
+--rlt_actor_hidden_dims='[256, 256]' \
+--rlt_critic_hidden_dims='[256, 256]' \
+--rlt_num_critics=4 \
+--rlt_bc_beta=3.0 \
+--rlt_jerk_beta=0.1 \
+--rlt_reference_dropout_p=0.0 \
+--grad_clip_norm=5.0
+```
+
+Do not increase head size yet. More clean, reviewed RLT data around the VLA failure mode is more valuable than more capacity.
+
 Sources:
 
 - RLT paper: https://www.pi.website/download/rlt.pdf
