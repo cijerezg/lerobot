@@ -57,7 +57,7 @@ rlt_reference_dropout_p: 0.5
 # VLA rollouts with async online RLT-head training. Actor execution is held off
 # by rlt_execute_after_train_steps so collection remains VLA passthrough.
 rlt_online_collection_enabled: true
-rlt_online_training_enabled: true
+rlt_online_training_enabled: false
 rlt_warmup_episodes: 1
 rlt_warmup_transitions: 256
 rlt_replay_capacity: 50000
@@ -65,8 +65,8 @@ rlt_batch_size: 256
 rlt_utd_ratio: 1
 rlt_train_freq_s: 1.0
 rlt_save_freq_steps: 100
-rlt_output_dir: outputs/rlt_tinypi05v2_online_20260509
-rlt_online_buffer_path: outputs/rlt_tinypi05v2_online_20260509/rlt_online_replay_20260509.pt
+rlt_output_dir: outputs/rlt_tinypi05v2_online_20260510
+rlt_online_buffer_path: outputs/rlt_tinypi05v2_online_20260509/rlt_online_replay_20260510.pt
 rlt_demo_buffer_path:
 rlt_online_buffer_save_freq_transitions: 100
 rlt_persist_buffer_on_shutdown: true
