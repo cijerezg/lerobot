@@ -120,6 +120,34 @@ That would make offline analysis clearer and avoid losing the original VLA propo
 - Prefer collecting more clean, reviewed rollouts over extending offline training on a tiny replay.
 - If the base VLA policy is far from competent, collect more teleop / DAgger-style data for the frozen policy before relying on RLT.
 
+## Base Data Vs Smaller RLT Head
+
+For the current run, the first fix should be a smaller, more anchored RLT head, followed by more reviewed RLT rollout data. More base-model data is only the first priority if the frozen VLA is not already near-competent.
+
+Use this decision rule:
+
+- If the frozen VLA rollouts are mostly coherent and reach the right task phase, train a smaller RLT head and collect more reviewed RLT rollouts.
+- If the frozen VLA often does the wrong task, misses the object entirely, cannot reach the critical phase, or needs frequent full-trajectory teleop, collect more base-model imitation data before relying on RLT.
+- If the frozen VLA succeeds sometimes but is slow, hesitant, or imprecise near grasp/contact/place, RLT is the right layer, but the current replay is too small/noisy for a large head.
+
+The observed pattern from the May 2026 run:
+
+```text
+reviewed RLT samples: ~504
+large head: [512, 512, 512]
+behavior: erratic
+metrics: Q rose, action deviation rose, critic loss became very low
+```
+
+This points more toward RLT critic exploitation / overfitting than base-model undertraining.
+
+Recommended order:
+
+1. Train a smaller `[256, 256]` head with strong anchoring.
+2. Run short safety-gated evals.
+3. Collect more clean, reviewed RLT rollouts focused on the critical phase.
+4. Return to base-model data collection only if the VLA reference chunks are not reasonably competent.
+
 Sources:
 
 - RLT paper: https://www.pi.website/download/rlt.pdf
