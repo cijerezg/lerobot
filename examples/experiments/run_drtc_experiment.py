@@ -114,7 +114,12 @@ class ExperimentConfig:
     rlt_head_checkpoint: str | None = None
     rlt_chunk_size: int = 10
     rlt_token_dim: int = 2048
+    rlt_actor_hidden_dims: list[int] | None = None
+    rlt_critic_hidden_dims: list[int] | None = None
+    rlt_actor_residual_scale: float = 0.25
+    rlt_num_critics: int = 1
     rlt_bc_beta: float = 1.0
+    rlt_jerk_beta: float = 0.0
     rlt_reference_dropout_p: float = 0.5
     rlt_online_collection_enabled: bool = False
     rlt_online_training_enabled: bool = False
@@ -204,7 +209,10 @@ _SCALAR_FIELDS = frozenset({
     "policy_type", "pretrained_name_or_path", "inference_advantage",
     "subtask_regeneration_interval", "subtask_generation_enabled",
     "rlt_enabled", "rlt_embedding_checkpoint", "rlt_head_checkpoint",
-    "rlt_chunk_size", "rlt_token_dim", "rlt_bc_beta", "rlt_reference_dropout_p",
+    "rlt_chunk_size", "rlt_token_dim",
+    "rlt_actor_hidden_dims", "rlt_critic_hidden_dims",
+    "rlt_actor_residual_scale", "rlt_num_critics",
+    "rlt_bc_beta", "rlt_jerk_beta", "rlt_reference_dropout_p",
     "rlt_online_collection_enabled", "rlt_online_training_enabled",
     "rlt_warmup_episodes", "rlt_warmup_transitions", "rlt_replay_capacity",
     "rlt_batch_size", "rlt_utd_ratio", "rlt_train_freq_s", "rlt_save_freq_steps",
@@ -413,7 +421,12 @@ def create_client_config(
         rlt_head_checkpoint=config.rlt_head_checkpoint,
         rlt_chunk_size=config.rlt_chunk_size,
         rlt_token_dim=config.rlt_token_dim,
+        rlt_actor_hidden_dims=config.rlt_actor_hidden_dims,
+        rlt_critic_hidden_dims=config.rlt_critic_hidden_dims,
+        rlt_actor_residual_scale=config.rlt_actor_residual_scale,
+        rlt_num_critics=config.rlt_num_critics,
         rlt_bc_beta=config.rlt_bc_beta,
+        rlt_jerk_beta=config.rlt_jerk_beta,
         rlt_reference_dropout_p=config.rlt_reference_dropout_p,
         rlt_online_collection_enabled=config.rlt_online_collection_enabled,
         rlt_online_training_enabled=config.rlt_online_training_enabled,
