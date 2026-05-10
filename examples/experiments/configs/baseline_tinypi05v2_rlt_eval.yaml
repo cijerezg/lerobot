@@ -37,7 +37,7 @@ subtask_regeneration_interval: 0
 # RLT modules. Point this at the latest offline / async-trained head checkpoint.
 rlt_enabled: true
 rlt_embedding_checkpoint: outputs/tinypi05v2_rlt_embedding/rlt_embedding_step_010000.pt
-rlt_head_checkpoint: outputs/tinypi05v2_rlt_offline_head_20260509_anchor/rlt_head_step_000500.pt
+rlt_head_checkpoint: outputs/tinypi05v2_rlt_offline_head_20260510_256/rlt_head_step_000700.pt
 rlt_chunk_size: 10
 # Leave unset for tinypi05v2_rlt so it matches the TinyPI05V2 VLM width.
 rlt_token_dim:
@@ -73,7 +73,7 @@ rlt_context_cache_size: 256
 rlt_transition_queue_size: 256
 rlt_grad_clip_norm: 5.0
 rlt_q_abs_max: 100.0
-rlt_action_deviation_abs_max: 0.75
+rlt_action_deviation_abs_max: 1.0
 rlt_loss_abs_max: 1000.0
 rlt_safety_patience: 3
 
