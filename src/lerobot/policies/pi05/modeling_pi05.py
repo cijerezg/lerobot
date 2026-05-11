@@ -1173,8 +1173,9 @@ class PI05Policy(PreTrainedPolicy):
             if img.device != device:
                 img = img.to(device)
 
-            # Ensure float32 dtype for consistency
-            if img.dtype != torch.float32:
+            if img.dtype == torch.uint8:
+                img = img.to(torch.float32) / 255.0
+            elif img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
             # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats

@@ -998,6 +998,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
+            import pdb; pdb.set_trace()
 
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
@@ -1946,8 +1947,9 @@ class PI05FullPolicy(PreTrainedPolicy):
             if img.device != device:
                 img = img.to(device)
 
-            # Ensure float32 dtype for consistency
-            if img.dtype != torch.float32:
+            if img.dtype == torch.uint8:
+                img = img.to(torch.float32) / 255.0
+            elif img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
             # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats

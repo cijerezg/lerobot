@@ -537,7 +537,49 @@ def run_offline_training(
                 preprocessor=preprocessor,
             )
 
+        # =====================================================================
+        # >>> TEMP DEBUG: PRE/POST WEIGHT-ANCHOR CHECKPOINTS  (REMOVE LATER) <<<
+        # One-off instrumentation: dump weights immediately before and after
+        # each anchor merge so we can diff/eval the effect. Saves to
+        #   <output_dir>/checkpoints/anchor_<step>_{pre,post}/
+        # Does NOT touch the `last` symlink or training_state.pt.
+        # To revert: delete this whole block down to the matching END marker
+        # and keep only the original `apply_weight_anchors(...)` line.
+        # =====================================================================
+        anchor_will_fire = any(
+            a.should_merge(optimization_step) for a in weight_anchors.values()
+        )
+        if anchor_will_fire and is_main_process:
+            _dbg_out = Path(cfg.output_dir) if isinstance(cfg.output_dir, str) else cfg.output_dir
+            save_checkpoint(
+                checkpoint_dir=_dbg_out / "checkpoints" / f"anchor_{optimization_step:09d}_pre",
+                step=optimization_step,
+                cfg=cfg,
+                policy=accelerator.unwrap_model(policy),
+                optimizer=optimizers,
+                scheduler=None,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+            )
+        accelerator.wait_for_everyone()
+
         apply_weight_anchors(weight_anchors, optimizers, optimization_step)
+
+        if anchor_will_fire and is_main_process:
+            save_checkpoint(
+                checkpoint_dir=_dbg_out / "checkpoints" / f"anchor_{optimization_step:09d}_post",
+                step=optimization_step,
+                cfg=cfg,
+                policy=accelerator.unwrap_model(policy),
+                optimizer=optimizers,
+                scheduler=None,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+            )
+        accelerator.wait_for_everyone()
+        # =====================================================================
+        # <<< END TEMP DEBUG: PRE/POST WEIGHT-ANCHOR CHECKPOINTS <<<
+        # =====================================================================
 
 
         # Log training metrics
