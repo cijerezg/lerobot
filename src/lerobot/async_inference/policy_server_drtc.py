@@ -348,6 +348,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_discount = 0.99
         self._rlt_target_update_tau = 0.005
         self._rlt_execute_after_train_steps = 1000000
+        self._rlt_eval_actor_blend = 1.0
         self._rlt_grad_clip_norm: float | None = None
         self._rlt_q_abs_max: float | None = None
         self._rlt_action_deviation_abs_max: float | None = None
@@ -438,6 +439,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_train_step": self._rlt_train_step,
             "rlt_online_collection_enabled": self._rlt_online_collection_enabled,
             "rlt_online_training_enabled": self._rlt_online_training_enabled,
+            "rlt_eval_actor_blend": self._rlt_eval_actor_blend,
             "rlt_training_head": self._rlt_training_head,
             "rlt_actor_training": self._rlt_training_head == "actor",
             "rlt_critic_training": self._rlt_training_head == "critic",
@@ -628,6 +630,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_execute_after_train_steps = int(
             getattr(policy_specs, "rlt_execute_after_train_steps", 1000000)
         )
+        self._rlt_eval_actor_blend = float(getattr(policy_specs, "rlt_eval_actor_blend", 1.0))
         self._rlt_grad_clip_norm = getattr(policy_specs, "rlt_grad_clip_norm", None)
         self._rlt_q_abs_max = getattr(policy_specs, "rlt_q_abs_max", None)
         self._rlt_action_deviation_abs_max = getattr(policy_specs, "rlt_action_deviation_abs_max", None)
@@ -724,6 +727,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     )
                 else:
                     refined_prefix = self.policy.rlt_actor(rl_token, proprio, actor_ref)
+                if not self._rlt_online_collection_enabled and self._rlt_eval_actor_blend < 1.0:
+                    refined_prefix = actor_ref + self._rlt_eval_actor_blend * (
+                        refined_prefix - actor_ref
+                    )
                 action_deviation_abs_max = float((refined_prefix - actor_ref).detach().abs().max().cpu())
                 if (
                     self._rlt_action_deviation_abs_max is not None
@@ -1309,6 +1316,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             policy_load_path,
             self.device,
         )
+        self._rlt_eval_actor_blend = float(getattr(policy_specs, "rlt_eval_actor_blend", 1.0))
         t_load_start = time.perf_counter()
         if self.policy_type == "pi05_rl":
             # PI05FullPolicy.from_pretrained's state-dict remapper only prepends
@@ -1519,7 +1527,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 self.policy = self.policy.eval()
                 self.logger.info(
                     "%s configured | rlt_enabled=%s | embedding=%s | head=%s | "
-                    "rlt_chunk_size=%s | rlt_token_dim=%s | rlt_num_critics=%s",
+                    "rlt_chunk_size=%s | rlt_token_dim=%s | rlt_num_critics=%s | "
+                    "rlt_eval_actor_blend=%.3f",
                     self.policy_type,
                     getattr(self.policy.config, "rlt_enabled", False),
                     getattr(self.policy.config, "rlt_embedding_checkpoint", None),
@@ -1527,6 +1536,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     getattr(self.policy.config, "rlt_chunk_size", None),
                     getattr(self.policy.config, "rlt_token_dim", None),
                     getattr(self.policy.config, "rlt_num_critics", None),
+                    self._rlt_eval_actor_blend,
                 )
         t_pp_done = time.perf_counter()
         self.logger.info("Built pre/post processors in %.1fs", t_pp_done - t_pp_start)
@@ -2210,6 +2220,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 self._rlt_online_collection_enabled
                 or self._rlt_online_training_enabled
                 or self._rlt_action_deviation_abs_max is not None
+                or self._rlt_eval_actor_blend < 1.0
             )
             if use_rlt_context_path:
                 (

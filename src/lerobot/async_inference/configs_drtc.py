@@ -241,6 +241,15 @@ class RobotClientDrtcConfig:
         default=0.25,
         metadata={"help": "Maximum residual action scale added by the RLT actor head."},
     )
+    rlt_eval_actor_blend: float = field(
+        default=1.0,
+        metadata={
+            "help": (
+                "Evaluation-time blend for the RLT actor prefix. 1.0 executes the "
+                "actor as trained; 0.0 falls back to the VLA reference prefix."
+            )
+        },
+    )
     rlt_actor_mode: str = field(
         default="gaussian",
         metadata={
@@ -667,6 +676,10 @@ class RobotClientDrtcConfig:
         if self.rlt_actor_residual_scale <= 0:
             raise ValueError(
                 f"rlt_actor_residual_scale must be positive, got {self.rlt_actor_residual_scale}"
+            )
+        if not 0 <= self.rlt_eval_actor_blend <= 1:
+            raise ValueError(
+                f"rlt_eval_actor_blend must be in [0, 1], got {self.rlt_eval_actor_blend}"
             )
         if self.rlt_actor_mode not in ("gaussian", "residual"):
             raise ValueError(

@@ -1,11 +1,13 @@
-# DRTC config for deterministic tinypi05v2_rlt head inference tests.
+# DRTC diagnostic config: tinypi05v2_rlt wrapper with the RLT actor disabled.
 #
-# May 10 256-wide offline head retrained from the updated 20260510 replay data
-# with the May 9 anchor recipe.
+# This keeps the same DRTC/camera/runtime settings as the May 9 anchor RLT eval
+# config, but leaves the RLT head unloaded so inference is the frozen VLA
+# reference chunk. Use it to tell whether a bad direction comes from the base
+# policy/scene or from the RLT head.
 #
 # Run with:
-#   ./scripts/run_drtc_experiment.sh --config baseline_tinypi05v2_rlt_eval_20260510_256
-name: baseline_tinypi05v2_rlt_eval_20260510_256
+#   ./scripts/run_drtc_experiment.sh --config examples/experiments/configs/baseline_tinypi05v2_rlt_eval_vla_passthrough.yaml
+name: baseline_tinypi05v2_rlt_eval_vla_passthrough
 
 # Hardware
 robot_type: so101_follower
@@ -15,7 +17,7 @@ server_host: ""
 robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
 robot_id: so101_follower_2026_04_26_v0
 
-# Cameras: tinypi05v2_rlt expects observation.images.{side,top} for this checkpoint.
+# Cameras: tinypi05v2 expects observation.images.{side,top} for this checkpoint.
 camera1_name: side
 camera1_path: /dev/video0
 camera2_name: top
@@ -33,23 +35,17 @@ pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickpl
 subtask_generation_enabled: false
 subtask_regeneration_interval: 0
 
-# RLT modules. May 10 anchor-recipe offline head.
-rlt_enabled: true
-rlt_embedding_checkpoint: outputs/tinypi05v2_rlt_embedding/rlt_embedding_step_010000.pt
-rlt_head_checkpoint: outputs/tinypi05v2_rlt_offline_head_20260510_anchor_recipe/rlt_head_step_000500.pt
+# RLT wrapper present, but actor disabled by leaving the head unloaded.
+rlt_enabled: false
+rlt_embedding_checkpoint:
+rlt_head_checkpoint:
 rlt_chunk_size: 10
-# Leave unset for tinypi05v2_rlt so it matches the TinyPI05V2 VLM width.
 rlt_token_dim:
 rlt_actor_hidden_dims: [256, 256]
 rlt_critic_hidden_dims: [256, 256]
 rlt_actor_residual_scale: 0.25
-# Dampen the eval-time actor correction to reduce back-and-forth jerk while
-# keeping some learned improvement over the VLA reference.
-rlt_eval_actor_blend: 0.5
 rlt_actor_mode: gaussian
 rlt_num_critics: 4
-# These training knobs only matter if online training is enabled; the loaded
-# checkpoint weights already encode the offline recipe used during training.
 rlt_bc_beta: 2.0
 rlt_jerk_beta: 0.05
 rlt_reference_dropout_p: 0.0
@@ -78,7 +74,6 @@ rlt_context_cache_size: 256
 rlt_transition_queue_size: 256
 rlt_grad_clip_norm: 5.0
 rlt_q_abs_max: 100.0
-# Disabled to match the 20260509 anchor eval path exactly.
 rlt_action_deviation_abs_max:
 rlt_loss_abs_max: 1000.0
 rlt_safety_patience: 3
@@ -106,7 +101,7 @@ rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 0.2
 rtc_full_trajectory_alignment: false
 
-# Start without extra client-side filtering while establishing RLT parity.
+# Match anchor RLT eval filtering.
 action_filter_mode: butterworth
 action_filter_butterworth_cutoff: 3.0
 action_filter_gain: 1.0

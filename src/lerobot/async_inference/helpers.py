@@ -465,6 +465,9 @@ class RemotePolicyConfig:
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
+    # Eval-time blend between the VLA reference prefix and the RLT actor prefix.
+    # 1.0 => execute the actor as trained; 0.0 => VLA passthrough for the RLT prefix.
+    rlt_eval_actor_blend: float = 1.0
     # Paper-aligned actor: "gaussian" => mu_theta(x, ã) directly; "residual" =>
     # legacy ã + scale*tanh(MLP(...)) head. Default "gaussian".
     rlt_actor_mode: str = "gaussian"
@@ -529,6 +532,7 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_actor_hidden_dims", None)
         self.__dict__.setdefault("rlt_critic_hidden_dims", None)
         self.__dict__.setdefault("rlt_actor_residual_scale", 0.25)
+        self.__dict__.setdefault("rlt_eval_actor_blend", 1.0)
         self.__dict__.setdefault("rlt_actor_mode", "gaussian")
         self.__dict__.setdefault("rlt_action_std", 0.05)
         self.__dict__.setdefault("rlt_num_critics", 1)
