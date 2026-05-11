@@ -166,6 +166,84 @@ The RLT paper uses a Gaussian actor conditioned on the RL token, proprioception,
 
 Runtime blending is therefore a practical safety/damping layer for robot eval, not the paper objective. It should be treated as a deployment guard while retraining or improving data.
 
+## Blended May 10 Rollout Result
+
+After fixing the `rlt_eval_actor_blend` config plumbing, blended May 10 rollout behavior looked much better and could succeed at the task. However, it was still not an improvement over the base VLA.
+
+Current interpretation:
+
+- Base VLA remains the best baseline.
+- May 10 RLT unblended is too unstable.
+- May 10 RLT blended is safe enough to execute, but not better than VLA.
+- The current May 10 head should not be used as the behavior policy for new autonomous data collection.
+
+Blending is acting as a stabilizer by pulling the actor back toward the VLA reference. If the stable blended behavior only matches VLA performance, the learned correction is not yet adding useful task improvement.
+
+Best next data step:
+
+- Collect more targeted correction data with VLA passthrough while still recording RLT context.
+- Focus interventions on moments where the VLA is weak, rather than replacing whole rollouts.
+- Aim for small phase-specific corrections around grasp/contact/place or post-drop stabilization.
+
+For another May 10 retrain, make the actor even more imitation-dominant:
+
+```bash
+--rlt_bc_beta=4.0 \
+--rlt_jerk_beta=0.1 \
+--actor_lr=0.00001 \
+--steps=300
+```
+
+Then compare early checkpoints. The key metric is whether actor first-step correction stays near the executed correction magnitude. In the May 10 anchor-recipe run, the actor was overshooting:
+
+```text
+actor correction RMS:   0.336
+executed correction RMS: 0.182
+```
+
+## Phase-Focused Replay Filtering
+
+A reasonable next experiment is to edit the existing rollout replay into a smaller grasp-focused correction dataset. The goal is not to train a whole-rollout replacement policy. The goal is to teach the RLT head when and how to nudge the VLA around grasp failures.
+
+Keep transitions around:
+
+- right before grasp
+- during gripper closure / contact
+- immediately after successful grasp
+- immediately after failed grasp
+- human interventions that correct grasp pose, gripper timing, or early lift
+- VLA-pass-through examples where the base policy was already correct in the same phase
+
+Remove transitions that do not teach the grasp correction:
+
+- long approach from far away
+- long stable transport after a good grasp
+- post-drop oscillation
+- reset/camera junk
+- whole-rollout segments where the RLT head should not be learning a new behavior
+
+Important: do not keep only failures and interventions. The filtered replay still needs examples where the right correction is near zero. Otherwise the actor may learn to always modify the VLA reference at grasp time.
+
+Also be careful with rewards. The current review sidecar is episode-level, and the replay reward is usually attached to terminal success/failure transitions. If the filtered replay removes the terminal reward-bearing transition, critic learning may become weak or misleading. For a small grasp-phase replay, treat training as conservative behavior correction:
+
+```bash
+--rlt_bc_beta=4.0 \
+--rlt_jerk_beta=0.1 \
+--actor_lr=0.00001 \
+--steps=300
+```
+
+If the actor still overshoots, increase BC/smoothness further or stop earlier. The expected behavior is a small phase-specific nudge, not a new autonomous policy.
+
+Implementation preference:
+
+- Create a new filtered `.pt` replay buffer using `episode_id` and `chunk_start_step` ranges.
+- Keep the original replay untouched.
+- Do not rely on the current `.review.json` for transition-level pruning, because it only supports episode-level delete/label.
+- A future improvement could extend the sidecar format with transition-level include/exclude ranges, but a separate filtered replay file is simpler for now.
+
+## Current Replay Semantics
+
 The repo's offline RLT training currently stores:
 
 ```text
@@ -178,13 +256,14 @@ The actor loss uses `executed_chunk` as the BC target for intervention samples, 
 
 ## Next Steps
 
-1. Re-run the May 10 eval after the `rlt_eval_actor_blend` plumbing fix and confirm `drtc_status_*.jsonl` reports `rlt_eval_actor_blend: 0.5`.
-2. If still jerky, test `rlt_eval_actor_blend: 0.25`.
-3. If retraining, make the May 10 head more imitation-dominant and monitor whether actor first-step correction stays near the executed correction magnitude.
-4. Consider adding an analysis script that reports:
+1. Use base VLA / VLA passthrough for the next data collection pass, not the current May 10 RLT head.
+2. Collect targeted intervention corrections around the weak task phases.
+3. Build a grasp-phase filtered replay from existing reviewed rollouts.
+4. Retrain the May 10 head with stronger BC/smoothness and lower actor LR.
+5. Evaluate early checkpoints with `rlt_eval_actor_blend` only as a safety/damping tool.
+6. Consider adding an analysis script that reports:
    - actor correction first-step RMS
    - executed correction first-step RMS
    - actor correction jump between replans
    - executed correction jump between replans
    - within-chunk jerk
-
