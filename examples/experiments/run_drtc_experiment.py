@@ -117,6 +117,7 @@ class ExperimentConfig:
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
+    rlt_eval_actor_blend: float = 1.0
     rlt_actor_mode: str = "gaussian"
     rlt_action_std: float = 0.05
     rlt_num_critics: int = 1
@@ -218,7 +219,8 @@ _SCALAR_FIELDS = frozenset({
     "rlt_enabled", "rlt_embedding_checkpoint", "rlt_head_checkpoint",
     "rlt_chunk_size", "rlt_token_dim",
     "rlt_actor_hidden_dims", "rlt_critic_hidden_dims",
-    "rlt_actor_residual_scale", "rlt_actor_mode", "rlt_action_std", "rlt_num_critics",
+    "rlt_actor_residual_scale", "rlt_eval_actor_blend",
+    "rlt_actor_mode", "rlt_action_std", "rlt_num_critics",
     "rlt_bc_beta", "rlt_jerk_beta", "rlt_reference_dropout_p",
     "rlt_online_collection_enabled", "rlt_online_training_enabled",
     "rlt_warmup_episodes", "rlt_warmup_transitions", "rlt_replay_capacity",
@@ -433,6 +435,7 @@ def create_client_config(
         rlt_actor_hidden_dims=config.rlt_actor_hidden_dims,
         rlt_critic_hidden_dims=config.rlt_critic_hidden_dims,
         rlt_actor_residual_scale=config.rlt_actor_residual_scale,
+        rlt_eval_actor_blend=config.rlt_eval_actor_blend,
         rlt_actor_mode=config.rlt_actor_mode,
         rlt_action_std=config.rlt_action_std,
         rlt_num_critics=config.rlt_num_critics,
