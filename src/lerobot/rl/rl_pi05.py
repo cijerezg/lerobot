@@ -1247,10 +1247,7 @@ class PI05RLPolicy(PI05FullPolicy):
 
         # Preprocessor has already normalized and tokenized the inputs
         # Advantage is already in the tokens (passed from actor or defaulted)
-        t0 = _time.perf_counter()
         images, img_masks = self._preprocess_images(batch)
-        t1 = _time.perf_counter()
-        print(f"[TIMING] preprocess_images: {(t1-t0)*1000:.1f} ms", flush=True)
 
         from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
         tokens = batch[OBS_LANGUAGE_TOKENS]
@@ -1266,16 +1263,11 @@ class PI05RLPolicy(PI05FullPolicy):
             or (current_time - self._last_subtask_time) >= interval
         )
 
-        print(f"[TIMING] max_decoding_steps={self.config.max_decoding_steps}  should_regenerate={should_regenerate}", flush=True)
-
         if should_regenerate:
-            t2 = _time.perf_counter()
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
                 images, img_masks, tokens, masks,
                 max_decoding_steps=self.config.max_decoding_steps
             )
-            t3 = _time.perf_counter()
-            print(f"[TIMING] generate_subtask_tokens: {(t3-t2)*1000:.1f} ms", flush=True)
             self._cached_subtask_tokens = subtask_tokens
             self._cached_subtask_masks = subtask_masks
             self._last_subtask_time = current_time
@@ -1284,14 +1276,10 @@ class PI05RLPolicy(PI05FullPolicy):
             subtask_masks = self._cached_subtask_masks
 
         # Sample actions with subtask conditioning
-        t4 = _time.perf_counter()
         actions = self.model.sample_actions(
             images, img_masks, tokens, masks,
             subtask_tokens, subtask_masks, **kwargs
         )
-        t5 = _time.perf_counter()
-        print(f"[TIMING] sample_actions:            {(t5-t4)*1000:.1f} ms", flush=True)
-        print(f"[TIMING] total predict_action_chunk: {(t5-t0)*1000:.1f} ms", flush=True)
 
         # Unpad actions to actual action dimension
         from lerobot.utils.constants import ACTION

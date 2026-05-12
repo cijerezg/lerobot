@@ -370,15 +370,12 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 # p95 latency avoids a single spike biasing the model to look too far ahead
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 
-                _t_pac0 = time.perf_counter()
                 actions_chunk = policy.predict_action_chunk(
                     processed_batch,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_actions,
                     execution_horizon=execution_horizon,
                 )
-                _t_pac1 = time.perf_counter()
-                print(f"[TIMING] predict_action_chunk={(_t_pac1-_t_pac0)*1000:.1f}ms", flush=True)
 
                 # --- Subtask token decoding (for logging) ---
                 inference_step += 1
