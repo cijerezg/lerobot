@@ -998,8 +998,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
-            import pdb; pdb.set_trace()
-
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
@@ -1432,11 +1430,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
         bos_mask = torch.ones((bsize, 1), dtype=torch.bool, device=device)
 
+        import time as _t
+        _t0 = _t.perf_counter()
         # Embed prefix [Images, Language | BOS] — BOS in subtask segment, not language segment
         prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
             images=images, img_masks=img_masks, tokens=tokens, subtask_tokens=bos_token,
             masks=masks, subtask_masks=bos_mask, fast_action_tokens=None, fast_action_masks=None
         )
+        _t1 = _t.perf_counter()
+        print(f"[GST] embed_prefix: {(_t1-_t0)*1000:.1f}ms  prefix_len={prefix_embs.shape[1]}", flush=True)
 
         # Ensure correct precision (bfloat16/float32)
         if (
@@ -1453,6 +1455,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # Forward pass (Prefill) with use_cache=True
         # We only pass [prefix_embs, None] because we aren't using the suffix (expert) model yet
+        _t2 = _t.perf_counter()
         (prefix_out, _), past_key_values = self.paligemma_with_expert.forward(
             attention_mask=att_4d,
             position_ids=position_ids,
@@ -1461,6 +1464,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=True,  # Enable caching
             adarms_cond=[None, None],
         )
+        _t3 = _t.perf_counter()
+        print(f"[GST] prefill forward: {(_t3-_t2)*1000:.1f}ms", flush=True)
 
         # Sample the first action token from the last logit of the prefix
         last_logits = lm_head(prefix_out[:, -1:, :])  # (B, 1, V)
@@ -1495,6 +1500,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         #2. decoding phase
         # Generate remaining tokens one by one using the cache.
         decode_steps_done = 0
+        _t_decode_start = _t.perf_counter()
 
         for t in range(1, max_decoding_steps):
             # Embed the single previous token
@@ -1553,6 +1559,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
             if finished.all():
                 break
+
+        print(f"[GST] decode loop: {(_t.perf_counter()-_t_decode_start)*1000:.1f}ms  steps={decode_steps_done}", flush=True)
 
         # pad rest only if shape less than max_decoding_steps, we should always return a shape of (bsize, max_decoding_steps)
         if generated_subtask_tokens.shape[1] < max_decoding_steps:

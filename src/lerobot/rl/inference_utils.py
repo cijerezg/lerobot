@@ -370,12 +370,15 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 # p95 latency avoids a single spike biasing the model to look too far ahead
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 
+                _t_pac0 = time.perf_counter()
                 actions_chunk = policy.predict_action_chunk(
                     processed_batch,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_actions,
                     execution_horizon=execution_horizon,
                 )
+                _t_pac1 = time.perf_counter()
+                print(f"[TIMING] predict_action_chunk={(_t_pac1-_t_pac0)*1000:.1f}ms", flush=True)
 
                 # --- Subtask token decoding (for logging) ---
                 inference_step += 1
@@ -586,28 +589,28 @@ def env_interaction_worker(
         action_interval = 1.0 / cfg.env.fps
         was_intervening = False
         
-        # Wait for initial episode start
+        # Wait for initial episode start, then reset and populate obs BEFORE signalling
+        # episode_active=True — so the inference thread never spins on latest_obs=None
+        # during the robot reset (which can take several seconds).
         logger.info("[ENV] Waiting for '2' on the teleop device to start episode...")
-        while shared_state.running and not shared_state.episode_active:
+        _episode_requested = False
+        while shared_state.running and not _episode_requested:
             if teleop_device.get_teleop_events().get(TeleopEvents.START_EPISODE, False):
-                shared_state.episode_active = True
-                break
+                _episode_requested = True
             time.sleep(0.1)
 
-        # Extract initial state observation immediately to bootstrap the shared state
-        # (Assuming the env was reset right before spawning threads)
         obs, info = online_env.reset()
         env_processor.reset()
         action_processor.reset()
-        
+
         from lerobot.rl.gym_manipulator import create_transition
         transition = create_transition(observation=obs, info=info)
         transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
         transition = env_processor(transition)
-        
-        # Push initial to shared state
+
         policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
         shared_state.update_observation(policy_fmt_obs, False)
+        shared_state.episode_active = True  # signal inference only after obs is ready
 
         interaction_step = 0
         video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
