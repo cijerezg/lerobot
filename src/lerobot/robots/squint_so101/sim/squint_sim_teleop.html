@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Squint SO101 Sim Teleop</title>
+    <style>
+        :root {
+            --bg: #f4f1e8;
+            --panel: #ffffff;
+            --ink: #171717;
+            --muted: #6b6257;
+            --line: #1f1f1f;
+            --accent: #2f6f73;
+            --warn: #b43d2f;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: Helvetica, Arial, sans-serif;
+            padding: 16px;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        h1 {
+            font-size: 22px;
+            margin: 0;
+            letter-spacing: 0;
+        }
+
+        .status {
+            border: 2px solid var(--line);
+            padding: 8px 10px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            background: var(--warn);
+            color: #fff;
+        }
+
+        .status.connected {
+            background: var(--accent);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 14px;
+        }
+
+        .camera {
+            background: var(--panel);
+            border: 3px solid var(--line);
+            min-width: 0;
+        }
+
+        .camera-title {
+            border-bottom: 3px solid var(--line);
+            padding: 8px 10px;
+            font-size: 13px;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .camera-image {
+            background: #111;
+            aspect-ratio: 4 / 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .camera-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+
+        .meta {
+            margin-top: 12px;
+            border: 2px solid var(--line);
+            background: var(--panel);
+            padding: 10px;
+            color: var(--muted);
+            font-family: "Courier New", monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+
+        .empty {
+            border: 3px dashed var(--muted);
+            padding: 24px;
+            color: var(--muted);
+            background: var(--panel);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Squint SO101 Sim Teleop</h1>
+        <div class="status" id="status">Disconnected</div>
+    </header>
+    <main>
+        <div class="grid" id="camera-grid">
+            <div class="empty">Waiting for sim camera frames...</div>
+        </div>
+        <div class="meta" id="meta">frames: 0 | step: -- | age: --</div>
+    </main>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const wsPort = Number(params.get('ws_port') || 8099);
+        const statusEl = document.getElementById('status');
+        const gridEl = document.getElementById('camera-grid');
+        const metaEl = document.getElementById('meta');
+        let frameCount = 0;
+        let lastTimestamp = null;
+        let lastStep = null;
+        let reconnectTimer = null;
+
+        function setStatus(text, connected) {
+            statusEl.textContent = text;
+            statusEl.className = connected ? 'status connected' : 'status';
+        }
+
+        function updateMeta(action) {
+            const age = lastTimestamp ? `${Math.max(0, Date.now() / 1000 - lastTimestamp).toFixed(1)}s` : '--';
+            const actionText = action ? JSON.stringify(action, null, 2) : '{}';
+            metaEl.textContent = `frames: ${frameCount} | step: ${lastStep ?? '--'} | age: ${age}\n${actionText}`;
+        }
+
+        function onFrame(data) {
+            const cameras = Array.isArray(data.cameras) ? data.cameras : [];
+            if (cameras.length === 0) return;
+
+            frameCount += 1;
+            lastTimestamp = Number(data.timestamp) || (Date.now() / 1000);
+            lastStep = data.step;
+            gridEl.innerHTML = '';
+
+            for (const camera of cameras) {
+                const card = document.createElement('div');
+                card.className = 'camera';
+
+                const title = document.createElement('div');
+                title.className = 'camera-title';
+                title.textContent = camera.name || 'camera';
+
+                const imageWrap = document.createElement('div');
+                imageWrap.className = 'camera-image';
+                const img = document.createElement('img');
+                img.src = camera.data_url;
+                img.alt = `${camera.name || 'camera'} frame`;
+                imageWrap.appendChild(img);
+
+                card.appendChild(title);
+                card.appendChild(imageWrap);
+                gridEl.appendChild(card);
+            }
+            updateMeta(data.action);
+        }
+
+        function connect() {
+            clearTimeout(reconnectTimer);
+            const wsUrl = `ws://${window.location.hostname}:${wsPort}`;
+            const ws = new WebSocket(wsUrl);
+            setStatus('Connecting', false);
+
+            ws.onopen = () => setStatus('Connected', true);
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'frame') onFrame(data);
+                } catch (error) {
+                    console.error(error);
+                }
+            };
+            ws.onclose = () => {
+                setStatus('Disconnected', false);
+                reconnectTimer = setTimeout(connect, 750);
+            };
+            ws.onerror = () => setStatus('Error', false);
+        }
+
+        connect();
+        setInterval(() => updateMeta(null), 1000);
+    </script>
+</body>
+</html>

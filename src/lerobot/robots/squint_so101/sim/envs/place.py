@@ -2,20 +2,19 @@ from dataclasses import asdict, dataclass
 from typing import Any, Optional, Sequence, Union
 
 import dacite
+import mani_skill.envs.utils.randomization as randomization
 import numpy as np
 import sapien
 import torch
-from sapien.render import RenderBodyComponent
-from transforms3d.euler import euler2quat
-
-import mani_skill.envs.utils.randomization as randomization
 from mani_skill.utils import common
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs.actor import Actor
 from mani_skill.utils.structs.pose import Pose
-from .base_random_env import DefaultCameraEnv, DefaultRandomizationConfig
+from sapien.render import RenderBodyComponent
+from transforms3d.euler import euler2quat
 
+from .base_random_env import DefaultCameraEnv, DefaultRandomizationConfig
 from .robot.so100 import SO100
 from .robot.so101 import SO101
 
@@ -23,6 +22,7 @@ from .robot.so101 import SO101
 @dataclass
 class PlaceRandomizationConfig(DefaultRandomizationConfig):
     """Domain randomization config for Place task, extending wrist camera randomization."""
+
     # Noisy joint positions for better sim2real
     robot_qpos_noise_std: float = np.deg2rad(5)
     # Cube-specific randomization
@@ -57,8 +57,17 @@ class Place(DefaultCameraEnv):
     """
 
     SUPPORTED_ROBOTS = ["so100", "so101"]
-    SUPPORTED_OBS_MODES = ["none", "state", "state_dict", "rgb", "rgb+segmentation", "rgb+state", "rgb+segmentation+state",
-                           "rgb+depth+segmentation", "rgb+depth+segmentation+state"]
+    SUPPORTED_OBS_MODES = [
+        "none",
+        "state",
+        "state_dict",
+        "rgb",
+        "rgb+segmentation",
+        "rgb+state",
+        "rgb+segmentation+state",
+        "rgb+depth+segmentation",
+        "rgb+depth+segmentation+state",
+    ]
     agent: Union[SO100, SO101]
 
     def __init__(
@@ -68,12 +77,12 @@ class Place(DefaultCameraEnv):
         robot_uids="so101",
         control_mode="pd_joint_target_delta_pos",
         target_type="bin",
-        domain_randomization_config: Union[
-            PlaceRandomizationConfig, dict
-        ] = PlaceRandomizationConfig(),
+        domain_randomization_config: Union[PlaceRandomizationConfig, dict] = PlaceRandomizationConfig(),
         domain_randomization=False,
         spawn_box_pos=[0.3, 0],
         spawn_box_half_size=0.2 / 2,
+        marker_xy_offset: Sequence[float] | None = None,
+        marker_yaw_degrees: float = 0.0,
         **kwargs,
     ):
         self.item_type = item_type
@@ -104,6 +113,12 @@ class Place(DefaultCameraEnv):
 
         self.spawn_box_pos = spawn_box_pos
         self.spawn_box_half_size = spawn_box_half_size
+        if marker_xy_offset is None:
+            marker_xy_offset = (-0.175, 0.095)
+        if len(marker_xy_offset) != 2:
+            raise ValueError(f"marker_xy_offset must contain exactly two values, got {marker_xy_offset}")
+        self.marker_xy_offset = tuple(float(value) for value in marker_xy_offset)
+        self.marker_yaw = np.deg2rad(float(marker_yaw_degrees))
 
         super().__init__(
             *args,
@@ -124,8 +139,7 @@ class Place(DefaultCameraEnv):
             options,
             sapien.Pose(p=[0, 0, 0], q=euler2quat(0, 0, self.base_z_rot)),
             build_separate=True
-            if self.domain_randomization
-            and self.domain_randomization_config.robot_color == "random"
+            if self.domain_randomization and self.domain_randomization_config.robot_color == "random"
             else False,
         )
 
@@ -178,7 +192,7 @@ class Place(DefaultCameraEnv):
         elif self.item_type == "can":
             colors = np.zeros((self.num_envs, 3))
             colors[:, :] = 0
-            colors[:, 2] = 1 # blue
+            colors[:, 2] = 1  # blue
             half_radii = (
                 np.ones(self.num_envs)
                 * (
@@ -217,7 +231,9 @@ class Place(DefaultCameraEnv):
             self.item_half_radii = common.to_tensor(half_radii, device=self.device)
             self.item_half_heights = common.to_tensor(half_heights, device=self.device)
             self.item_half_sizes = self.item_half_heights
-            self.item_dimensions = torch.stack([self.item_half_radii, self.item_half_radii, self.item_half_heights], dim=-1)
+            self.item_dimensions = torch.stack(
+                [self.item_half_radii, self.item_half_radii, self.item_half_heights], dim=-1
+            )
 
         colors = np.concatenate([colors, np.ones((self.num_envs, 1))], axis=-1)
         self.item_frictions = common.to_tensor(frictions, device=self.device)
@@ -249,21 +265,28 @@ class Place(DefaultCameraEnv):
                         half_size=[half_sizes[i] * 0.35, half_sizes[i] * 0.35, 0.0004],
                         material=cube_mark_color,
                     )
-                builder.initial_pose = sapien.Pose(p=[0.2, 0, half_sizes[i]])  # Offset to avoid collision with bin at creation
+                builder.initial_pose = sapien.Pose(
+                    p=[0.2, 0, half_sizes[i]]
+                )  # Offset to avoid collision with bin at creation
 
             elif self.item_type == "can":
                 cylinder_pose = sapien.Pose(q=euler2quat(0, np.pi / 2, 0))
                 builder.add_cylinder_collision(
-                    radius=half_radii[i], half_length=half_heights[i], material=material, density=densities[i],
-                    pose=cylinder_pose
+                    radius=half_radii[i],
+                    half_length=half_heights[i],
+                    material=material,
+                    density=densities[i],
+                    pose=cylinder_pose,
                 )
                 builder.add_cylinder_visual(
                     radius=half_radii[i],
                     half_length=half_heights[i],
                     material=sapien.render.RenderMaterial(base_color=colors[i]),
-                    pose=cylinder_pose
+                    pose=cylinder_pose,
                 )
-                builder.initial_pose = sapien.Pose(p=[0.2, 0, half_heights[i]])  # Offset to avoid collision with bin at creation
+                builder.initial_pose = sapien.Pose(
+                    p=[0.2, 0, half_heights[i]]
+                )  # Offset to avoid collision with bin at creation
 
             builder.set_scene_idxs([i])
             item = builder.build(name=f"item-{i}")
@@ -281,9 +304,15 @@ class Place(DefaultCameraEnv):
 
         # Default target half sizes (mid-range)
         cfg = self.domain_randomization_config
-        bin_half_sizes_x = np.ones(self.num_envs) * (cfg.bin_half_size_x_range[0] + cfg.bin_half_size_x_range[1]) / 2
-        bin_half_sizes_y = np.ones(self.num_envs) * (cfg.bin_half_size_y_range[0] + cfg.bin_half_size_y_range[1]) / 2
-        bin_half_sizes_z = np.ones(self.num_envs) * (cfg.bin_half_size_z_range[0] + cfg.bin_half_size_z_range[1]) / 2
+        bin_half_sizes_x = (
+            np.ones(self.num_envs) * (cfg.bin_half_size_x_range[0] + cfg.bin_half_size_x_range[1]) / 2
+        )
+        bin_half_sizes_y = (
+            np.ones(self.num_envs) * (cfg.bin_half_size_y_range[0] + cfg.bin_half_size_y_range[1]) / 2
+        )
+        bin_half_sizes_z = (
+            np.ones(self.num_envs) * (cfg.bin_half_size_z_range[0] + cfg.bin_half_size_z_range[1]) / 2
+        )
 
         if self.domain_randomization:
             bin_half_sizes_x = self._batched_episode_rng.uniform(
@@ -305,7 +334,9 @@ class Place(DefaultCameraEnv):
         self.bin_half_sizes_x = common.to_tensor(bin_half_sizes_x, device=self.device)
         self.bin_half_sizes_y = common.to_tensor(bin_half_sizes_y, device=self.device)
         self.bin_half_sizes_z = common.to_tensor(bin_half_sizes_z, device=self.device)
-        self.bin_dimensions = torch.stack([self.bin_half_sizes_x, self.bin_half_sizes_y, self.bin_half_sizes_z], dim=-1)
+        self.bin_dimensions = torch.stack(
+            [self.bin_half_sizes_x, self.bin_half_sizes_y, self.bin_half_sizes_z], dim=-1
+        )
 
         targets = []
         for i in range(self.num_envs):
@@ -315,7 +346,9 @@ class Place(DefaultCameraEnv):
             target_center_pose = sapien.Pose([0.0, 0.0, thickness / 2])
             target_center_half_size = [bin_half_size[0], bin_half_size[1], thickness / 2]
             builder.add_box_collision(pose=target_center_pose, half_size=target_center_half_size)
-            builder.add_box_visual(pose=target_center_pose, half_size=target_center_half_size, material=target_color)
+            builder.add_box_visual(
+                pose=target_center_pose, half_size=target_center_half_size, material=target_color
+            )
 
             if self.target_type == "bin":
                 # Bin walls
@@ -337,7 +370,7 @@ class Place(DefaultCameraEnv):
                 bar_half_width = max(0.004, min(bin_half_size[0], bin_half_size[1]) * 0.07)
                 bar_half_height = 0.0008
                 bar_pose_z = thickness + bar_half_height
-                for angle in (np.pi / 4, -np.pi / 4):
+                for angle in (np.pi / 4 + self.marker_yaw, -np.pi / 4 + self.marker_yaw):
                     builder.add_box_visual(
                         pose=sapien.Pose(
                             p=[0.0, 0.0, bar_pose_z],
@@ -348,7 +381,9 @@ class Place(DefaultCameraEnv):
                     )
 
             initial_z = 0.0 if self.target_type == "marker" else bin_half_size[2]
-            builder.initial_pose = sapien.Pose(p=[-0.2, 0, initial_z])  # Offset to avoid collision with item at creation
+            builder.initial_pose = sapien.Pose(
+                p=[-0.2, 0, initial_z]
+            )  # Offset to avoid collision with item at creation
             builder.set_scene_idxs([i])
             if self.target_type == "marker":
                 bin_actor = builder.build_kinematic(name=f"bin-{i}")
@@ -374,9 +409,7 @@ class Place(DefaultCameraEnv):
         # Convert rest_qpos to tensor
         self.rest_qpos = common.to_tensor(self.rest_qpos, device=self.device)
         # Table pose
-        self.table_pose = Pose.create_from_pq(
-            p=[-0.12 + 0.737, 0, -0.9196429], q=euler2quat(0, 0, np.pi / 2)
-        )
+        self.table_pose = Pose.create_from_pq(p=[-0.12 + 0.737, 0, -0.9196429], q=euler2quat(0, 0, np.pi / 2))
 
         # Build camera mount
         self._load_camera_mount()
@@ -431,7 +464,9 @@ class Place(DefaultCameraEnv):
             force = force + self.scene.get_pairwise_contact_forces(link, self.item)
         return force
 
-    def _marker_two_prong_grasp_ready(self, min_force: float = 0.05, max_angle: float = 115.0) -> torch.Tensor:
+    def _marker_two_prong_grasp_ready(
+        self, min_force: float = 0.05, max_angle: float = 115.0
+    ) -> torch.Tensor:
         left_link = getattr(self.agent, "finger1_link", None)
         right_link = getattr(self.agent, "finger2_link", None)
         left_tip = getattr(self.agent, "finger1_tip", left_link)
@@ -468,18 +503,22 @@ class Place(DefaultCameraEnv):
             self.item_lifted_once[env_idx] = False
             if self.target_type == "marker":
                 if not hasattr(self, "marker_grasp_active"):
-                    self.marker_grasp_active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-                    self.marker_grasp_offset = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+                    self.marker_grasp_active = torch.zeros(
+                        self.num_envs, dtype=torch.bool, device=self.device
+                    )
+                    self.marker_grasp_offset = torch.zeros(
+                        (self.num_envs, 3), dtype=torch.float32, device=self.device
+                    )
                 self.marker_grasp_active[env_idx] = False
                 self.marker_grasp_offset[env_idx] = 0.0
 
             # Random initial qpos
             self.agent.robot.set_qpos(
-                self.rest_qpos + torch.randn(size=(b, self.rest_qpos.shape[-1])) * self.domain_randomization_config.initial_qpos_noise_scale
+                self.rest_qpos
+                + torch.randn(size=(b, self.rest_qpos.shape[-1]))
+                * self.domain_randomization_config.initial_qpos_noise_scale
             )
-            self.agent.robot.set_pose(
-                Pose.create_from_pq(p=[0, 0, 0], q=euler2quat(0, 0, self.base_z_rot))
-            )
+            self.agent.robot.set_pose(Pose.create_from_pq(p=[0, 0, 0], q=euler2quat(0, 0, self.base_z_rot)))
 
             # Sample positions for item and target
             spawn_center = self.agent.robot.pose.p + torch.tensor(
@@ -489,11 +528,9 @@ class Place(DefaultCameraEnv):
             # Use placement sampler for non-overlapping positions
             region = [
                 [-self.spawn_box_half_size, -self.spawn_box_half_size],
-                [self.spawn_box_half_size, self.spawn_box_half_size]
+                [self.spawn_box_half_size, self.spawn_box_half_size],
             ]
-            sampler = randomization.UniformPlacementSampler(
-                bounds=region, batch_size=b, device=self.device
-            )
+            sampler = randomization.UniformPlacementSampler(bounds=region, batch_size=b, device=self.device)
 
             # Item/target radius (use max for conservative placement)
             if self.item_type == "can":
@@ -506,7 +543,7 @@ class Place(DefaultCameraEnv):
                 # Align the marker layout with jackvial/so101_pickplace_160_20260501a.
                 # Replaying episode-0 joint states reaches the cube near (0.23, -0.01)
                 # and places it near (0.13, 0.09) in simulator workspace coordinates.
-                bin_xy_offset = torch.tensor([-0.175, 0.095], device=self.device).repeat(b, 1)
+                bin_xy_offset = torch.tensor(self.marker_xy_offset, device=self.device).repeat(b, 1)
                 item_xy_offset = torch.tensor([-0.07, -0.006], device=self.device).repeat(b, 1)
             else:
                 item_xy_offset = sampler.sample(item_radius, 100)
@@ -544,7 +581,9 @@ class Place(DefaultCameraEnv):
             return
         if not hasattr(self, "marker_grasp_active"):
             self.marker_grasp_active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-            self.marker_grasp_offset = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+            self.marker_grasp_offset = torch.zeros(
+                (self.num_envs, 3), dtype=torch.float32, device=self.device
+            )
 
         qpos = self.agent.robot.get_qpos()
         gripper_qpos = qpos[:, 5]
@@ -659,7 +698,6 @@ class Place(DefaultCameraEnv):
             "item_lifted": item_lifted,
             "item_lifted_once": self.item_lifted_once,
             "is_item_static": is_item_static,
-
             "success": success,
             "is_item_above_bin": is_item_above_bin,
             "is_item_on_target": is_item_on_target,
@@ -697,8 +735,10 @@ class Place(DefaultCameraEnv):
         )
         # Close: target is final position
         item_to_goal_dist_z_close = torch.linalg.norm(goal_xyz[..., 2:] - item_pos[..., 2:], dim=1)
-        item_close_to_goal = (item_to_goal_dist_xy <= self.bin_radius)
-        item_to_goal_dist_z = torch.where(item_close_to_goal, item_to_goal_dist_z_close, item_to_goal_dist_z_far)
+        item_close_to_goal = item_to_goal_dist_xy <= self.bin_radius
+        item_to_goal_dist_z = torch.where(
+            item_close_to_goal, item_to_goal_dist_z_close, item_to_goal_dist_z_far
+        )
         place_reward_z = 1 - torch.tanh(10.0 * item_to_goal_dist_z)
         place_reward = place_reward_final + place_reward_z
 
@@ -711,11 +751,12 @@ class Place(DefaultCameraEnv):
 
         # Above target: 3 + place_reward + gripper_openness
         is_item_dropped = (~info["robot_touching_item"]).float()
-        robot_v = torch.linalg.norm(self.agent.robot.get_qvel()[:, :-1], axis=1) 
+        robot_v = torch.linalg.norm(self.agent.robot.get_qvel()[:, :-1], axis=1)
         static_robot_reward = 1 - torch.tanh(robot_v * 10)
         place_mask = info.get("is_item_on_target", info["is_item_above_bin"])
-        reward[place_mask] = (4 + place_reward + is_item_dropped + gripper_openness + static_robot_reward)[place_mask]
-
+        reward[place_mask] = (4 + place_reward + is_item_dropped + gripper_openness + static_robot_reward)[
+            place_mask
+        ]
 
         # Success
         reward[info["success"]] = 9
@@ -726,12 +767,9 @@ class Place(DefaultCameraEnv):
             reward -= 3 * info["robot_touching_bin"].float()
         reward -= 1 * (~info["item_lifted"]).float()  # Encourage picking item fast
 
-
         return reward
 
-    def compute_normalized_dense_reward(
-        self, obs: Any, action: torch.Tensor, info: dict
-    ):
+    def compute_normalized_dense_reward(self, obs: Any, action: torch.Tensor, info: dict):
         return self.compute_dense_reward(obs=obs, action=action, info=info) / 9
 
 

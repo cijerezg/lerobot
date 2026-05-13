@@ -46,3 +46,5 @@ class SquintSO101RobotConfig(RobotConfig):
     bootstrap_dataset_episodes: list[int] | None = None
     bootstrap_dataset_episode_interval: int = 1
     bootstrap_dataset_action_stride: int = 1
+    marker_xy_offset: list[float] | None = None
+    marker_yaw_degrees: float = 0.0

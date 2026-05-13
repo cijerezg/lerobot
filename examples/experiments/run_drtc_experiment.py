@@ -108,6 +108,8 @@ class ExperimentConfig:
     sim_bootstrap_dataset_episodes: list[int] | None = None
     sim_bootstrap_dataset_episode_interval: int = 1
     sim_bootstrap_dataset_action_stride: int = 1
+    sim_marker_xy_offset: list[float] | None = None
+    sim_marker_yaw_degrees: float = 0.0
     camera1_path: str = DEFAULT_CAMERA1_PATH
     camera2_path: str = DEFAULT_CAMERA2_PATH
     # Names used as keys in the robot's `cameras` dict. Different policies expect
@@ -253,6 +255,7 @@ _SCALAR_FIELDS = frozenset({
     "sim_success_reward_threshold", "sim_action_clip", "sim_headless",
     "sim_reset_seed_on_terminal", "sim_bootstrap_dataset_episode", "sim_bootstrap_dataset_episodes",
     "sim_bootstrap_dataset_episode_interval", "sim_bootstrap_dataset_action_stride",
+    "sim_marker_xy_offset", "sim_marker_yaw_degrees",
     "camera1_path", "camera2_path",
     "camera1_name", "camera2_name",
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
@@ -422,6 +425,8 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             bootstrap_dataset_episodes=config.sim_bootstrap_dataset_episodes,
             bootstrap_dataset_episode_interval=config.sim_bootstrap_dataset_episode_interval,
             bootstrap_dataset_action_stride=config.sim_bootstrap_dataset_action_stride,
+            marker_xy_offset=config.sim_marker_xy_offset,
+            marker_yaw_degrees=config.sim_marker_yaw_degrees,
         )
 
     camera_fourcc = config.camera_fourcc.strip() if isinstance(config.camera_fourcc, str) else config.camera_fourcc
@@ -586,7 +591,7 @@ def create_client_config(
         control_use_deadline_clock=True,
         obs_fallback_on_failure=True,
         obs_fallback_max_age_s=2.0,
-        trajectory_viz_enabled=config.trajectory_viz_enabled,
+        trajectory_viz_enabled=config.trajectory_viz_enabled or trajectory_viz_ws_url is not None,
         # Drop/spike/duplicate/reorder/disconnect injection
         drop_obs_config=config.drop_obs_config,
         drop_action_config=config.drop_action_config,

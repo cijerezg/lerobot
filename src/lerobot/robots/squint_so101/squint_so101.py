@@ -436,6 +436,9 @@ class SquintSO101Robot(Robot):
             "reconfiguration_freq": None,
             "control_mode": self.config.control_mode,
         }
+        if self.config.marker_xy_offset is not None:
+            kwargs["marker_xy_offset"] = self.config.marker_xy_offset
+        kwargs["marker_yaw_degrees"] = self.config.marker_yaw_degrees
         kwargs["domain_randomization_config"] = domain_randomization_config
         self._env = gym.make(self.env_id, **kwargs)
         self._refresh_qpos_limits()
