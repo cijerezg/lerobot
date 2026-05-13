@@ -478,6 +478,7 @@ class RemotePolicyConfig:
     rlt_bc_action_weights: list[float] | None = None
     rlt_jerk_beta: float = 0.0
     rlt_reference_dropout_p: float = 0.5
+    rlt_intervention_reference_mode: str = "executed"
     rlt_online_collection_enabled: bool = False
     rlt_online_training_enabled: bool = False
     rlt_warmup_episodes: int = 1
@@ -485,6 +486,9 @@ class RemotePolicyConfig:
     rlt_replay_capacity: int = 10000
     rlt_batch_size: int = 64
     rlt_utd_ratio: int = 1
+    rlt_critic_updates_per_actor: int = 1
+    rlt_success_sample_fraction: float = 0.0
+    rlt_intervention_sample_fraction: float = 0.0
     rlt_train_freq_s: float = 1.0
     rlt_save_freq_steps: int = 500
     rlt_output_dir: str = "outputs/rlt_online"
@@ -540,6 +544,7 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_bc_action_weights", None)
         self.__dict__.setdefault("rlt_jerk_beta", 0.0)
         self.__dict__.setdefault("rlt_reference_dropout_p", 0.5)
+        self.__dict__.setdefault("rlt_intervention_reference_mode", "executed")
         self.__dict__.setdefault("rlt_online_collection_enabled", False)
         self.__dict__.setdefault("rlt_online_training_enabled", False)
         self.__dict__.setdefault("rlt_warmup_episodes", 1)
@@ -547,6 +552,9 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_replay_capacity", 10000)
         self.__dict__.setdefault("rlt_batch_size", 64)
         self.__dict__.setdefault("rlt_utd_ratio", 1)
+        self.__dict__.setdefault("rlt_critic_updates_per_actor", 1)
+        self.__dict__.setdefault("rlt_success_sample_fraction", 0.0)
+        self.__dict__.setdefault("rlt_intervention_sample_fraction", 0.0)
         self.__dict__.setdefault("rlt_train_freq_s", 1.0)
         self.__dict__.setdefault("rlt_save_freq_steps", 500)
         self.__dict__.setdefault("rlt_output_dir", "outputs/rlt_online")

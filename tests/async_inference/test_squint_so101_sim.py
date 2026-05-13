@@ -1,6 +1,10 @@
 import pandas as pd
 
-from examples.experiments.run_drtc_experiment import _parse_experiment_dict, create_robot_config
+from examples.experiments.run_drtc_experiment import (
+    _parse_experiment_dict,
+    create_client_config,
+    create_robot_config,
+)
 from lerobot.robots.squint_so101 import SquintSO101Robot, SquintSO101RobotConfig
 from lerobot.robots.squint_so101.squint_so101 import (
     infer_squint_env_id,
@@ -86,6 +90,7 @@ def test_create_robot_config_builds_squint_config():
             "camera2_name": "top",
             "sim_dataset_root": "outputs/so101_pickplace_160_20260501a",
             "sim_video_dir": "outputs/test_videos",
+            "sim_reset_seed_on_terminal": True,
             "sim_bootstrap_dataset_episode": 0,
             "sim_bootstrap_dataset_action_stride": 3,
         }
@@ -98,8 +103,31 @@ def test_create_robot_config_builds_squint_config():
     assert robot_cfg.side_camera_name == "side"
     assert robot_cfg.top_camera_name == "top"
     assert robot_cfg.video_dir == "outputs/test_videos"
+    assert robot_cfg.reset_seed_on_terminal is True
     assert robot_cfg.bootstrap_dataset_episode == 0
     assert robot_cfg.bootstrap_dataset_action_stride == 3
+
+
+def test_rlt_paper_cadence_config_propagates_to_client(tmp_path):
+    cfg = _parse_experiment_dict(
+        {
+            "name": "sim",
+            "estimator": "jk",
+            "cooldown": True,
+            "robot_type": "squint_so101",
+            "rlt_critic_updates_per_actor": 2,
+            "rlt_success_sample_fraction": 0.5,
+            "rlt_intervention_sample_fraction": 0.25,
+            "rlt_intervention_reference_mode": "original",
+        }
+    )
+
+    client_cfg = create_client_config(cfg, tmp_path / "metrics.csv")
+
+    assert client_cfg.rlt_critic_updates_per_actor == 2
+    assert client_cfg.rlt_success_sample_fraction == 0.5
+    assert client_cfg.rlt_intervention_sample_fraction == 0.25
+    assert client_cfg.rlt_intervention_reference_mode == "original"
 
 
 def test_squint_robot_rlt_events_are_one_shot():

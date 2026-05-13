@@ -162,13 +162,58 @@ class RLTReplayBuffer:
             )
         )
 
-    def sample(self, batch_size: int, *, device: torch.device | str | None = None) -> dict[str, Tensor]:
+    def sample(
+        self,
+        batch_size: int,
+        *,
+        device: torch.device | str | None = None,
+        success_fraction: float = 0.0,
+        intervention_fraction: float = 0.0,
+    ) -> dict[str, Tensor]:
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
         if len(self._samples) < batch_size:
             raise ValueError(f"not enough samples: {len(self._samples)} < {batch_size}")
+        if not 0.0 <= success_fraction <= 1.0:
+            raise ValueError(f"success_fraction must be in [0, 1], got {success_fraction}")
+        if not 0.0 <= intervention_fraction <= 1.0:
+            raise ValueError(f"intervention_fraction must be in [0, 1], got {intervention_fraction}")
+        if success_fraction + intervention_fraction > 1.0:
+            raise ValueError(
+                "success_fraction + intervention_fraction must be <= 1, "
+                f"got {success_fraction + intervention_fraction}"
+            )
 
-        samples = random.sample(list(self._samples), batch_size)
+        all_samples = list(self._samples)
+        chosen: list[int] = []
+        chosen_set: set[int] = set()
+
+        def choose(indices: list[int], count: int) -> None:
+            if count <= 0:
+                return
+            candidates = [index for index in indices if index not in chosen_set]
+            if not candidates:
+                return
+            selected = random.sample(candidates, min(count, len(candidates)))
+            chosen.extend(selected)
+            chosen_set.update(selected)
+
+        success_target = int(round(batch_size * success_fraction))
+        intervention_target = int(round(batch_size * intervention_fraction))
+        success_indices = [
+            index
+            for index, sample in enumerate(all_samples)
+            if bool(sample.success) or float(sample.reward) > 0.0
+        ]
+        intervention_indices = [
+            index for index, sample in enumerate(all_samples) if bool(sample.is_intervention)
+        ]
+        choose(success_indices, success_target)
+        choose(intervention_indices, intervention_target)
+        choose(list(range(len(all_samples))), batch_size - len(chosen))
+        random.shuffle(chosen)
+        samples = [all_samples[index] for index in chosen]
+
         out = {
             "rl_token": torch.stack([s.rl_token for s in samples], dim=0),
             "proprio": torch.stack([s.proprio for s in samples], dim=0),
@@ -182,6 +227,8 @@ class RLTReplayBuffer:
             "is_intervention": torch.tensor(
                 [s.is_intervention for s in samples], dtype=torch.float32
             ).view(-1, 1, 1),
+            "success": torch.tensor([bool(s.success) for s in samples], dtype=torch.float32).unsqueeze(-1),
+            "failure": torch.tensor([bool(s.failure) for s in samples], dtype=torch.float32).unsqueeze(-1),
         }
         if device is not None:
             out = {key: value.to(device) for key, value in out.items()}

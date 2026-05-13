@@ -288,6 +288,16 @@ class RobotClientDrtcConfig:
         default=0.5,
         metadata={"help": "Reference action dropout probability for RLT actor training."},
     )
+    rlt_intervention_reference_mode: str = field(
+        default="executed",
+        metadata={
+            "help": (
+                "How intervention transitions set the replay reference chunk. 'executed' matches "
+                "the RLT paper by replacing the VLA reference with the intervention; 'original' "
+                "keeps the VLA reference while still using the executed chunk as the BC target."
+            )
+        },
+    )
     rlt_online_collection_enabled: bool = field(
         default=False,
         metadata={"help": "Collect compact online RLT transitions on the DRTC client."},
@@ -315,6 +325,33 @@ class RobotClientDrtcConfig:
     rlt_utd_ratio: int = field(
         default=1,
         metadata={"help": "RLT online updates per trainer tick."},
+    )
+    rlt_critic_updates_per_actor: int = field(
+        default=1,
+        metadata={
+            "help": (
+                "Number of critic TD updates to run before each actor update. "
+                "The RLT paper uses two critic updates for each actor update."
+            )
+        },
+    )
+    rlt_success_sample_fraction: float = field(
+        default=0.0,
+        metadata={
+            "help": (
+                "Minimum fraction of each online RLT batch drawn from transitions in successful "
+                "episodes when available. Used to keep sparse successful rollouts represented."
+            )
+        },
+    )
+    rlt_intervention_sample_fraction: float = field(
+        default=0.0,
+        metadata={
+            "help": (
+                "Minimum fraction of each online RLT batch drawn from intervention transitions "
+                "when available."
+            )
+        },
     )
     rlt_train_freq_s: float = field(
         default=1.0,
@@ -691,6 +728,26 @@ class RobotClientDrtcConfig:
             )
         if self.rlt_num_critics <= 0:
             raise ValueError(f"rlt_num_critics must be positive, got {self.rlt_num_critics}")
+        if self.rlt_critic_updates_per_actor <= 0:
+            raise ValueError(
+                "rlt_critic_updates_per_actor must be positive, "
+                f"got {self.rlt_critic_updates_per_actor}"
+            )
+        if not 0 <= self.rlt_success_sample_fraction <= 1:
+            raise ValueError(
+                "rlt_success_sample_fraction must be in [0, 1], "
+                f"got {self.rlt_success_sample_fraction}"
+            )
+        if not 0 <= self.rlt_intervention_sample_fraction <= 1:
+            raise ValueError(
+                "rlt_intervention_sample_fraction must be in [0, 1], "
+                f"got {self.rlt_intervention_sample_fraction}"
+            )
+        if self.rlt_success_sample_fraction + self.rlt_intervention_sample_fraction > 1:
+            raise ValueError(
+                "rlt_success_sample_fraction + rlt_intervention_sample_fraction must be <= 1, "
+                f"got {self.rlt_success_sample_fraction + self.rlt_intervention_sample_fraction}"
+            )
         if self.rlt_bc_beta < 0:
             raise ValueError(f"rlt_bc_beta must be non-negative, got {self.rlt_bc_beta}")
         if self.rlt_bc_action_weights is not None and any(weight < 0 for weight in self.rlt_bc_action_weights):
@@ -699,6 +756,11 @@ class RobotClientDrtcConfig:
             )
         if self.rlt_jerk_beta < 0:
             raise ValueError(f"rlt_jerk_beta must be non-negative, got {self.rlt_jerk_beta}")
+        if self.rlt_intervention_reference_mode not in ("executed", "original"):
+            raise ValueError(
+                "rlt_intervention_reference_mode must be 'executed' or 'original', "
+                f"got {self.rlt_intervention_reference_mode!r}"
+            )
         if not 0 <= self.rlt_reference_dropout_p <= 1:
             raise ValueError(
                 "rlt_reference_dropout_p must be in [0, 1], "

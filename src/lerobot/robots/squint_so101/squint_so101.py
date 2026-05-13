@@ -221,6 +221,7 @@ class SquintSO101Robot(Robot):
         self._pending_terminal_event: str | None = None
         self._episode_had_success = False
         self._last_reward = 0.0
+        self._last_sent_action_units: np.ndarray | None = None
         self._qpos_low = np.array([-np.pi] * 5 + [0.0], dtype=np.float32)
         self._qpos_high = np.array([np.pi] * 5 + [np.pi / 2], dtype=np.float32)
         self._unit_low, self._unit_high = _default_lerobot_unit_range()
@@ -311,6 +312,7 @@ class SquintSO101Robot(Robot):
         if self.config.action_clip is not None:
             sim_action = np.clip(sim_action, -self.config.action_clip, self.config.action_clip)
         sim_action = self._fit_action_space(sim_action.astype(np.float32))
+        self._last_sent_action_units = target_units.astype(np.float32).copy()
 
         obs, reward, terminated, truncated, info = self._env.step(sim_action)
         self._latest_obs = obs
@@ -329,10 +331,10 @@ class SquintSO101Robot(Robot):
             self._pending_terminal_event = "success" if success else "failure"
             self._flush_video(success=success)
             if self.config.reset_after_terminal:
-                self._reset_episode(seed=None)
+                reset_seed = self.config.seed if self.config.reset_seed_on_terminal else None
+                self._reset_episode(seed=reset_seed)
 
-        sent_qpos = self._get_qpos()
-        sent_units = self._qpos_to_lerobot_units(sent_qpos)
+        sent_units = self._last_sent_action_units
         return {key: float(value) for key, value in zip(ACTION_KEYS, sent_units, strict=True)}
 
     def disconnect(self) -> None:

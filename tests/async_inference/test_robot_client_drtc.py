@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from lerobot.async_inference.robot_client_drtc import RobotClientDrtc
+from lerobot.async_inference.helpers import TimedAction
+from lerobot.async_inference.robot_client_drtc import ReceivedActionChunk, RobotClientDrtc
 from lerobot.transport import services_pb2
 
 
@@ -18,7 +19,7 @@ class _DiagnosticStub:
 def _make_rlt_client() -> tuple[RobotClientDrtc, _DiagnosticStub]:
     client = RobotClientDrtc.__new__(RobotClientDrtc)
     diagnostic = _DiagnosticStub()
-    client.config = SimpleNamespace(rlt_online_collection_enabled=True)
+    client.config = SimpleNamespace(rlt_online_collection_enabled=True, rlt_chunk_size=3)
     client._metrics = SimpleNamespace(diagnostic=diagnostic)
     client._rlt_transition_queue = Queue()
     client._rlt_current_episode_transition_buffer = []
@@ -52,13 +53,64 @@ def test_rlt_episode_done_backfills_last_buffered_transition_as_terminal():
             done=False,
         )
     )
+    client._rlt_current_episode_transition_buffer.append(
+        services_pb2.RLTTransitionChunk(
+            episode_id=3,
+            source_rlt_context_id=12,
+            next_rlt_context_id=13,
+            chunk_start_step=22,
+            num_actions=2,
+            action_dim=2,
+            executed_actions_f32=actions.tobytes(),
+            reward=0.0,
+            done=False,
+        )
+    )
 
     client._rlt_maybe_emit_transitions(reward=1.0, done=True, success=True, failure=False)
 
-    queued = client._rlt_transition_queue.get_nowait()
-    assert queued.done is True
-    assert queued.success is True
-    assert queued.failure is False
-    assert queued.reward == 1.0
-    assert queued.next_rlt_context_id == 0
+    first = client._rlt_transition_queue.get_nowait()
+    terminal = client._rlt_transition_queue.get_nowait()
+    assert first.done is False
+    assert first.success is True
+    assert first.failure is False
+    assert first.reward == 0.0
+    assert terminal.done is True
+    assert terminal.success is True
+    assert terminal.failure is False
+    assert terminal.reward == 1.0
+    assert terminal.next_rlt_context_id == 0
     assert diagnostic.counters["rlt_terminal_transition_backfilled"] == 1
+
+
+def test_rlt_action_modified_detects_robot_side_action_rewrite():
+    requested = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+    applied = np.asarray([1.0, 2.5, 3.0], dtype=np.float32)
+
+    assert RobotClientDrtc._rlt_action_was_modified(requested, applied)
+    assert not RobotClientDrtc._rlt_action_was_modified(requested, requested.copy())
+
+
+def test_rlt_collectable_chunk_uses_shifted_window_start():
+    client, _diagnostic = _make_rlt_client()
+    actions = [
+        TimedAction(action=np.asarray([float(i)], dtype=np.float32), action_step=100 + i)
+        for i in range(5)
+    ]
+    chunk = ReceivedActionChunk(
+        actions=actions,
+        src_control_step=10,
+        chunk_start_step=100,
+        measured_latency=0.0,
+        rlt_context_id=21,
+        policy_mode="rlt_actor",
+        rlt_collectable=True,
+        rlt_window_start_index=2,
+    )
+
+    client._rlt_note_collectable_chunk(chunk)
+
+    pending = client._rlt_pending_chunks[21]
+    assert pending.chunk_start_step == 102
+    assert pending.num_actions == 3
+    assert pending.action_dim == 1

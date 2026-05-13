@@ -139,10 +139,12 @@ def test_rlt_action_metadata_and_transition_chunk_roundtrip():
         rlt_context_id=42,
         policy_mode="vla_passthrough",
         rlt_collectable=True,
+        rlt_window_start_index=2,
     )
     assert dense.rlt_context_id == 42
     assert dense.policy_mode == "vla_passthrough"
     assert dense.rlt_collectable
+    assert dense.rlt_window_start_index == 2
 
     transition = services_pb2.RLTTransitionChunk(
         episode_id=5,

@@ -102,6 +102,7 @@ class ExperimentConfig:
     sim_success_reward_threshold: float = 0.5
     sim_action_clip: float | None = None
     sim_headless: bool = False
+    sim_reset_seed_on_terminal: bool = False
     sim_bootstrap_dataset_episode: int | None = None
     sim_bootstrap_dataset_action_stride: int = 1
     camera1_path: str = DEFAULT_CAMERA1_PATH
@@ -150,6 +151,7 @@ class ExperimentConfig:
     rlt_bc_beta: float = 1.0
     rlt_jerk_beta: float = 0.0
     rlt_reference_dropout_p: float = 0.5
+    rlt_intervention_reference_mode: str = "executed"
     rlt_online_collection_enabled: bool = False
     rlt_online_training_enabled: bool = False
     rlt_warmup_episodes: int = 1
@@ -157,6 +159,9 @@ class ExperimentConfig:
     rlt_replay_capacity: int = 10000
     rlt_batch_size: int = 64
     rlt_utd_ratio: int = 1
+    rlt_critic_updates_per_actor: int = 1
+    rlt_success_sample_fraction: float = 0.0
+    rlt_intervention_sample_fraction: float = 0.0
     rlt_train_freq_s: float = 1.0
     rlt_save_freq_steps: int = 500
     rlt_output_dir: str = "outputs/rlt_online"
@@ -243,7 +248,7 @@ _SCALAR_FIELDS = frozenset({
     "sim_video_max_episodes", "sim_video_max_frames",
     "sim_white_x_background", "sim_max_episode_steps",
     "sim_success_reward_threshold", "sim_action_clip", "sim_headless",
-    "sim_bootstrap_dataset_episode", "sim_bootstrap_dataset_action_stride",
+    "sim_reset_seed_on_terminal", "sim_bootstrap_dataset_episode", "sim_bootstrap_dataset_action_stride",
     "camera1_path", "camera2_path",
     "camera1_name", "camera2_name",
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
@@ -256,9 +261,12 @@ _SCALAR_FIELDS = frozenset({
     "rlt_actor_residual_scale", "rlt_eval_actor_blend",
     "rlt_actor_mode", "rlt_action_std", "rlt_num_critics",
     "rlt_bc_beta", "rlt_jerk_beta", "rlt_reference_dropout_p",
+    "rlt_intervention_reference_mode",
     "rlt_online_collection_enabled", "rlt_online_training_enabled",
     "rlt_warmup_episodes", "rlt_warmup_transitions", "rlt_replay_capacity",
-    "rlt_batch_size", "rlt_utd_ratio", "rlt_train_freq_s", "rlt_save_freq_steps",
+    "rlt_batch_size", "rlt_utd_ratio", "rlt_critic_updates_per_actor",
+    "rlt_success_sample_fraction", "rlt_intervention_sample_fraction",
+    "rlt_train_freq_s", "rlt_save_freq_steps",
     "rlt_output_dir", "rlt_demo_buffer_path", "rlt_online_buffer_path",
     "rlt_online_buffer_save_freq_transitions", "rlt_persist_buffer_on_shutdown",
     "rlt_review_capture_enabled", "rlt_review_jpeg_quality", "rlt_review_archive_path",
@@ -405,6 +413,7 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             max_episode_steps=config.sim_max_episode_steps,
             success_reward_threshold=config.sim_success_reward_threshold,
             action_clip=config.sim_action_clip,
+            reset_seed_on_terminal=config.sim_reset_seed_on_terminal,
             bootstrap_dataset_episode=config.sim_bootstrap_dataset_episode,
             bootstrap_dataset_action_stride=config.sim_bootstrap_dataset_action_stride,
         )
@@ -508,6 +517,7 @@ def create_client_config(
         rlt_bc_beta=config.rlt_bc_beta,
         rlt_jerk_beta=config.rlt_jerk_beta,
         rlt_reference_dropout_p=config.rlt_reference_dropout_p,
+        rlt_intervention_reference_mode=config.rlt_intervention_reference_mode,
         rlt_online_collection_enabled=config.rlt_online_collection_enabled,
         rlt_online_training_enabled=config.rlt_online_training_enabled,
         rlt_warmup_episodes=config.rlt_warmup_episodes,
@@ -515,6 +525,9 @@ def create_client_config(
         rlt_replay_capacity=config.rlt_replay_capacity,
         rlt_batch_size=config.rlt_batch_size,
         rlt_utd_ratio=config.rlt_utd_ratio,
+        rlt_critic_updates_per_actor=config.rlt_critic_updates_per_actor,
+        rlt_success_sample_fraction=config.rlt_success_sample_fraction,
+        rlt_intervention_sample_fraction=config.rlt_intervention_sample_fraction,
         rlt_train_freq_s=config.rlt_train_freq_s,
         rlt_save_freq_steps=config.rlt_save_freq_steps,
         rlt_output_dir=config.rlt_output_dir,

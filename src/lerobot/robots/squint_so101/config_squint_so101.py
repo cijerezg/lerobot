@@ -39,5 +39,6 @@ class SquintSO101RobotConfig(RobotConfig):
     success_reward_threshold: float = 0.5
     action_clip: float | None = None
     reset_after_terminal: bool = True
+    reset_seed_on_terminal: bool = False
     bootstrap_dataset_episode: int | None = None
     bootstrap_dataset_action_stride: int = 1

@@ -336,6 +336,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_replay_capacity = 10000
         self._rlt_batch_size = 64
         self._rlt_utd_ratio = 1
+        self._rlt_critic_updates_per_actor = 1
+        self._rlt_success_sample_fraction = 0.0
+        self._rlt_intervention_sample_fraction = 0.0
+        self._rlt_intervention_reference_mode = "executed"
         self._rlt_train_freq_s = 1.0
         self._rlt_save_freq_steps = 500
         self._rlt_output_dir = "outputs/rlt_online"
@@ -439,7 +443,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_train_step": self._rlt_train_step,
             "rlt_online_collection_enabled": self._rlt_online_collection_enabled,
             "rlt_online_training_enabled": self._rlt_online_training_enabled,
-            "rlt_eval_actor_blend": self._rlt_eval_actor_blend,
+            "rlt_eval_actor_blend": getattr(self, "_rlt_eval_actor_blend", 1.0),
             "rlt_training_head": self._rlt_training_head,
             "rlt_actor_training": self._rlt_training_head == "actor",
             "rlt_critic_training": self._rlt_training_head == "critic",
@@ -447,6 +451,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_demo_replay_size": self._rlt_demo_replay_size,
             "rlt_online_replay_size": self._rlt_online_replay_size,
             "rlt_accepted_transitions": self._rlt_accepted_transitions,
+            "rlt_critic_updates_per_actor": getattr(self, "_rlt_critic_updates_per_actor", 1),
+            "rlt_success_sample_fraction": getattr(self, "_rlt_success_sample_fraction", 0.0),
+            "rlt_intervention_sample_fraction": getattr(self, "_rlt_intervention_sample_fraction", 0.0),
+            "rlt_intervention_reference_mode": getattr(
+                self, "_rlt_intervention_reference_mode", "executed"
+            ),
         }
         status_fields.update(fields)
         emit_status(
@@ -594,6 +604,21 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_replay_capacity = int(getattr(policy_specs, "rlt_replay_capacity", 10000))
         self._rlt_batch_size = int(getattr(policy_specs, "rlt_batch_size", 64))
         self._rlt_utd_ratio = int(getattr(policy_specs, "rlt_utd_ratio", 1))
+        self._rlt_critic_updates_per_actor = max(
+            1,
+            int(getattr(policy_specs, "rlt_critic_updates_per_actor", 1)),
+        )
+        self._rlt_success_sample_fraction = float(
+            getattr(policy_specs, "rlt_success_sample_fraction", 0.0)
+        )
+        self._rlt_intervention_sample_fraction = float(
+            getattr(policy_specs, "rlt_intervention_sample_fraction", 0.0)
+        )
+        self._rlt_intervention_reference_mode = str(
+            getattr(policy_specs, "rlt_intervention_reference_mode", "executed")
+        )
+        if self._rlt_intervention_reference_mode not in ("executed", "original"):
+            self._rlt_intervention_reference_mode = "executed"
         self._rlt_train_freq_s = float(getattr(policy_specs, "rlt_train_freq_s", 1.0))
         self._rlt_save_freq_steps = int(getattr(policy_specs, "rlt_save_freq_steps", 500))
         self._rlt_output_dir = str(getattr(policy_specs, "rlt_output_dir", "outputs/rlt_online"))
@@ -703,7 +728,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self,
         observation: dict[str, torch.Tensor],
         rtc_kwargs: dict[str, Any],
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, str]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, str, int]:
         if self.policy is None:
             raise RuntimeError("policy is not loaded")
         with self._rlt_model_lock:
@@ -711,8 +736,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             reference = self.policy.predict_vla_reference_chunk(observation, **rtc_kwargs)
             rl_token = self.policy.extract_rl_token(observation)
             proprio = observation[OBS_STATE].to(dtype=rl_token.dtype, device=rl_token.device)
+            rlt_window = min(int(self.policy.config.rlt_chunk_size), int(reference.shape[1]))
+            max_start = max(0, int(reference.shape[1]) - rlt_window)
+            window_start = 0
+            if rtc_kwargs:
+                window_start = min(max(0, int(rtc_kwargs.get("inference_delay", 0))), max_start)
             if self._rlt_should_execute_actor():
-                actor_ref = reference[:, : self.policy.config.rlt_chunk_size].to(
+                window_end = window_start + rlt_window
+                actor_ref = reference[:, window_start:window_end].to(
                     dtype=rl_token.dtype,
                     device=rl_token.device,
                 )
@@ -745,7 +776,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     )
                 else:
                     action_tensor = torch.cat(
-                        [refined_prefix, reference[:, self.policy.config.rlt_chunk_size :]], dim=1
+                        [
+                            reference[:, :window_start],
+                            refined_prefix,
+                            reference[:, window_end:],
+                        ],
+                        dim=1,
                     )
                     policy_mode = "rlt_actor"
             else:
@@ -756,7 +792,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     and self._rlt_train_step < self._rlt_execute_after_train_steps
                     else "vla_passthrough"
                 )
-        return action_tensor, reference, rl_token, proprio, policy_mode
+        return action_tensor, reference, rl_token, proprio, policy_mode, window_start
 
     @staticmethod
     def _snapshot_review_images_uint8(raw_obs: Any) -> dict[str, np.ndarray]:
@@ -809,11 +845,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         rl_token: torch.Tensor,
         proprio: torch.Tensor,
         anchor_state: torch.Tensor | None,
+        window_start_index: int = 0,
         review_submission_id: int | None = None,
         review_inference_ts: float | None = None,
     ) -> int:
         context_id = self._next_rlt_context_id_value()
         rlt_window = min(int(getattr(self.policy.config, "rlt_chunk_size", reference.shape[1])), reference.shape[1])
+        max_start = max(0, int(reference.shape[1]) - rlt_window)
+        window_start_index = min(max(0, int(window_start_index)), max_start)
+        window_end = window_start_index + rlt_window
         # Pop the (possibly already encoded) JPEGs from the encoder mailbox.
         # Encoding started early in _predict_chunk and runs in a worker thread,
         # so by the time we get here it has almost always completed; we wait
@@ -832,10 +872,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         context = RLTSourceContext(
             context_id=context_id,
             source_control_step=source_control_step,
-            chunk_start_step=chunk_start_step,
+            chunk_start_step=chunk_start_step + window_start_index,
             rl_token=rl_token.squeeze(0).detach().cpu(),
             proprio=proprio.squeeze(0).detach().cpu(),
-            reference_chunk=reference[:, :rlt_window].squeeze(0).detach().cpu(),
+            reference_chunk=reference[:, window_start_index:window_end].squeeze(0).detach().cpu(),
             anchor_state=anchor_state.squeeze(0).detach().cpu()
             if isinstance(anchor_state, torch.Tensor) and anchor_state.dim() == 2
             else (anchor_state.detach().cpu() if isinstance(anchor_state, torch.Tensor) else None),
@@ -919,7 +959,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         executed_np = actions_flat.reshape(num_actions, action_dim)
         executed_model = self._executed_actions_to_model_space(executed_np, source)
         episode_id = int(transition.episode_id) + int(self._rlt_episode_id_offset)
-        training_reference = executed_model if transition.is_intervention else source.reference_chunk
+        use_executed_reference = (
+            bool(transition.is_intervention)
+            and self._rlt_intervention_reference_mode == "executed"
+        )
+        training_reference = executed_model if use_executed_reference else source.reference_chunk
 
         sample = RLTReplaySample(
             rl_token=source.rl_token,
@@ -1020,6 +1064,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._rlt_safety_violation_count = 0
             return
 
+        if self._rlt_train_step < self._rlt_execute_after_train_steps:
+            self._emit_rlt_status(
+                "rlt_safety_warmup_violation",
+                rlt_safety_violations=",".join(violations),
+                rlt_safety_violation_count=0,
+            )
+            return
+
         self._rlt_safety_violation_count += 1
         self._emit_rlt_status(
             "rlt_safety_violation",
@@ -1051,22 +1103,34 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             for _ in range(self._rlt_utd_ratio):
                 try:
-                    with self._rlt_replay_lock:
-                        batch = self._rlt_replay.sample(self._rlt_batch_size, device=self.device or "cpu")
                     with self._rlt_model_lock:
                         self.policy.rlt_actor.train()
                         self.policy.rlt_critic.train()
                         self._set_rlt_training_head("critic")
-                        critic_loss, critic_stats = rlt_critic_loss(
-                            self.policy,
-                            batch,
-                            self._rlt_discount,
-                            return_stats=True,
-                        )
-                        self._rlt_critic_optimizer.zero_grad(set_to_none=True)
-                        critic_loss.backward()
-                        critic_grad_norm = self._clip_rlt_grad_norm(self.policy.rlt_critic.parameters())
-                        self._rlt_critic_optimizer.step()
+                        critic_loss = None
+                        critic_stats = {}
+                        critic_grad_norm = 0.0
+                        batch = None
+                        for _critic_update in range(self._rlt_critic_updates_per_actor):
+                            with self._rlt_replay_lock:
+                                batch = self._rlt_replay.sample(
+                                    self._rlt_batch_size,
+                                    device=self.device or "cpu",
+                                    success_fraction=self._rlt_success_sample_fraction,
+                                    intervention_fraction=self._rlt_intervention_sample_fraction,
+                                )
+                            critic_loss, critic_stats = rlt_critic_loss(
+                                self.policy,
+                                batch,
+                                self._rlt_discount,
+                                return_stats=True,
+                            )
+                            self._rlt_critic_optimizer.zero_grad(set_to_none=True)
+                            critic_loss.backward()
+                            critic_grad_norm = self._clip_rlt_grad_norm(self.policy.rlt_critic.parameters())
+                            self._rlt_critic_optimizer.step()
+                        if batch is None or critic_loss is None:
+                            continue
 
                         self._set_rlt_training_head("actor")
                         actor_loss, actor_stats = rlt_actor_loss(self.policy, batch, return_stats=True)
@@ -1082,6 +1146,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                             **self._rlt_float_stats(actor_stats),
                             "rlt_critic_grad_norm": critic_grad_norm,
                             "rlt_actor_grad_norm": actor_grad_norm,
+                            "rlt_batch_success_fraction": float(batch["success"].float().mean().detach().cpu()),
+                            "rlt_batch_intervention_fraction": float(
+                                batch["is_intervention"].float().mean().detach().cpu()
+                            ),
                         }
                         self._check_rlt_safety(rlt_stats)
 
@@ -1121,6 +1189,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_replay_size": len(self._rlt_replay),
             "rlt_demo_replay_size": self._rlt_demo_replay_size,
             "rlt_online_replay_size": self._rlt_online_replay_size,
+            "rlt_critic_updates_per_actor": self._rlt_critic_updates_per_actor,
+            "rlt_success_sample_fraction": self._rlt_success_sample_fraction,
+            "rlt_intervention_sample_fraction": self._rlt_intervention_sample_fraction,
+            "rlt_intervention_reference_mode": self._rlt_intervention_reference_mode,
             "rlt_grad_clip_norm": self._rlt_grad_clip_norm,
             "rlt_q_abs_max": self._rlt_q_abs_max,
             "rlt_action_deviation_abs_max": self._rlt_action_deviation_abs_max,
@@ -2129,6 +2201,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         rlt_proprio: torch.Tensor | None = None
         rlt_context_id = 0
         rlt_policy_mode = ""
+        rlt_window_start_index = 0
         rlt_collectable = False
 
         with torch.no_grad():
@@ -2229,6 +2302,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     rlt_rl_token,
                     rlt_proprio,
                     rlt_policy_mode,
+                    rlt_window_start_index,
                 ) = self._predict_pi05_rlt_with_context(observation, rtc_kwargs)
             else:
                 action_tensor = self._get_action_chunk(observation, **rtc_kwargs)
@@ -2265,10 +2339,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 rl_token=rlt_rl_token,
                 proprio=rlt_proprio,
                 anchor_state=anchor_state,
+                window_start_index=rlt_window_start_index,
                 review_submission_id=review_submission_id,
                 review_inference_ts=review_inference_ts,
             )
             rlt_collectable = True
+        if rlt_policy_mode:
+            self._metrics.diagnostic.counter(f"rlt_policy_mode_{rlt_policy_mode}", 1)
         _mark("raw_action_cache")
 
         # 4. Vectorized postprocess: (B, T, A_in) -> (B*T, A_in) -> (B, T, A_out)
@@ -2433,6 +2510,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             rlt_context_id=int(rlt_context_id),
             policy_mode=rlt_policy_mode,
             rlt_collectable=bool(rlt_collectable),
+            rlt_window_start_index=int(rlt_window_start_index),
         )
         dense = services_pb2.ActionsDense(**dense_kwargs)
         _mark("dense_proto")

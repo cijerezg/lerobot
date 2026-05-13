@@ -298,6 +298,7 @@ class ReceivedActionChunk:
     rlt_context_id: int = 0
     policy_mode: str = ""
     rlt_collectable: bool = False
+    rlt_window_start_index: int = 0
 
 
 @dataclass
@@ -416,6 +417,7 @@ class RobotClientDrtc:
             rlt_bc_action_weights=config.rlt_bc_action_weights,
             rlt_jerk_beta=config.rlt_jerk_beta,
             rlt_reference_dropout_p=config.rlt_reference_dropout_p,
+            rlt_intervention_reference_mode=config.rlt_intervention_reference_mode,
             rlt_online_collection_enabled=config.rlt_online_collection_enabled,
             rlt_online_training_enabled=config.rlt_online_training_enabled,
             rlt_warmup_episodes=config.rlt_warmup_episodes,
@@ -423,6 +425,9 @@ class RobotClientDrtc:
             rlt_replay_capacity=config.rlt_replay_capacity,
             rlt_batch_size=config.rlt_batch_size,
             rlt_utd_ratio=config.rlt_utd_ratio,
+            rlt_critic_updates_per_actor=config.rlt_critic_updates_per_actor,
+            rlt_success_sample_fraction=config.rlt_success_sample_fraction,
+            rlt_intervention_sample_fraction=config.rlt_intervention_sample_fraction,
             rlt_train_freq_s=config.rlt_train_freq_s,
             rlt_save_freq_steps=config.rlt_save_freq_steps,
             rlt_output_dir=config.rlt_output_dir,
@@ -1251,15 +1256,18 @@ class RobotClientDrtc:
         if chunk.rlt_context_id <= 0 or chunk.rlt_context_id in self._rlt_emitted_context_ids:
             return
 
-        window_len = min(len(chunk.actions), self.config.rlt_chunk_size)
+        window_start_index = max(0, int(getattr(chunk, "rlt_window_start_index", 0)))
+        if window_start_index >= len(chunk.actions):
+            return
+        window_len = min(len(chunk.actions) - window_start_index, self.config.rlt_chunk_size)
         if window_len <= 0:
             return
 
         pending = RLTPendingChunk(
             rlt_context_id=chunk.rlt_context_id,
-            chunk_start_step=chunk.chunk_start_step,
+            chunk_start_step=chunk.chunk_start_step + window_start_index,
             num_actions=window_len,
-            action_dim=int(chunk.actions[0].get_action().shape[0]),
+            action_dim=int(chunk.actions[window_start_index].get_action().shape[0]),
             policy_mode=chunk.policy_mode,
         )
         for old in self._rlt_pending_chunks.values():
@@ -1389,6 +1397,9 @@ class RobotClientDrtc:
                 success=success,
                 failure=failure,
             )
+            for transition in self._rlt_current_episode_transition_buffer:
+                transition.success = bool(success)
+                transition.failure = bool(failure)
             label = "success" if success else "failure"
             queued_transitions = self._rlt_flush_current_episode_transitions()
             self._rlt_completed_episodes_count += 1
@@ -1557,6 +1568,7 @@ class RobotClientDrtc:
             rlt_context_id=int(dense.rlt_context_id),
             policy_mode=str(dense.policy_mode),
             rlt_collectable=bool(dense.rlt_collectable),
+            rlt_window_start_index=int(dense.rlt_window_start_index),
         )
 
     def _publish_received_actions(
@@ -1573,6 +1585,7 @@ class RobotClientDrtc:
         rlt_context_id: int = 0,
         policy_mode: str = "",
         rlt_collectable: bool = False,
+        rlt_window_start_index: int = 0,
     ) -> None:
         chunk = ReceivedActionChunk(
             actions=timed_actions,
@@ -1586,6 +1599,7 @@ class RobotClientDrtc:
             rlt_context_id=rlt_context_id,
             policy_mode=policy_mode,
             rlt_collectable=rlt_collectable,
+            rlt_window_start_index=rlt_window_start_index,
         )
         _, accepted = self._action_reg.update_if_newer(control_step=src_control_step, value=chunk)
         if accepted:
@@ -1673,6 +1687,7 @@ class RobotClientDrtc:
                     t_send_start = time.perf_counter()
                     sent_action = self.robot.send_action(self._action_array_to_dict(filtered_action))
                     self._update_latest_follower_pos_from_action(sent_action)
+                    applied_action = self._action_dict_to_array(sent_action, fallback=filtered_action)
                     t_send_done = time.perf_counter()
                     self._metrics.diagnostic.timing_s("send_action_ms", t_send_done - t_send_start)
 
@@ -1693,7 +1708,7 @@ class RobotClientDrtc:
                 if teleop_action is not None:
                     self._rlt_record_executed_action(
                         executed_step,
-                        filtered_action,
+                        applied_action,
                         is_intervention=True,
                     )
             elif not waiting_for_episode_start:
@@ -1717,6 +1732,7 @@ class RobotClientDrtc:
                         t_send_start = time.perf_counter()
                         sent_action = self.robot.send_action(self._action_array_to_dict(filtered_action))
                         self._update_latest_follower_pos_from_action(sent_action)
+                        applied_action = self._action_dict_to_array(sent_action, fallback=filtered_action)
                         t_send_done = time.perf_counter()
 
                         # Keep action_step aligned with the schedule's action-step keys.
@@ -1744,8 +1760,8 @@ class RobotClientDrtc:
                             )
                         self._rlt_record_executed_action(
                             step,
-                            filtered_action,
-                            is_intervention=False,
+                            applied_action,
+                            is_intervention=self._rlt_action_was_modified(filtered_action, applied_action),
                         )
 
             # Send the latest follower pose back to the leader so the leader
@@ -2007,6 +2023,19 @@ class RobotClientDrtc:
     def _action_array_to_dict(self, action_array: np.ndarray) -> dict[str, float]:
         """Convert action array to dictionary keyed by robot action features."""
         return {key: action_array[i].item() for i, key in enumerate(self.robot.action_features)}
+
+    def _action_dict_to_array(self, action: dict[str, Any], *, fallback: np.ndarray) -> np.ndarray:
+        """Convert a robot-returned action dict to model order, falling back when incomplete."""
+        try:
+            return np.asarray([float(action[key]) for key in self.robot.action_features], dtype=np.float32)
+        except Exception:
+            return np.asarray(fallback, dtype=np.float32)
+
+    @staticmethod
+    def _rlt_action_was_modified(requested: np.ndarray, applied: np.ndarray, atol: float = 1e-4) -> bool:
+        requested_arr = np.asarray(requested, dtype=np.float32)
+        applied_arr = np.asarray(applied, dtype=np.float32)
+        return requested_arr.shape == applied_arr.shape and not np.allclose(requested_arr, applied_arr, atol=atol)
 
     def _update_latest_follower_pos_from_action(self, action: dict[str, Any]) -> None:
         """Cache the per-tick follower goal used for leader feedback."""

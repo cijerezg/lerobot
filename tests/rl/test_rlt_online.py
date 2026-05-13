@@ -43,6 +43,33 @@ def test_rlt_replay_buffer_samples_expected_shapes():
     assert batch["reward"].shape == (2, 1)
     assert batch["done"].shape == (2, 1)
     assert batch["is_intervention"].shape == (2, 1, 1)
+    assert batch["success"].shape == (2, 1)
+    assert batch["failure"].shape == (2, 1)
+
+
+def test_rlt_replay_buffer_can_prioritize_success_and_interventions():
+    replay = RLTReplayBuffer(capacity=8)
+    for offset in range(4):
+        sample = _sample(float(offset))
+        sample.reward = 0.0
+        sample.is_intervention = False
+        replay.add(sample)
+    for offset in range(4, 6):
+        sample = _sample(float(offset))
+        sample.reward = 0.0
+        sample.success = True
+        sample.is_intervention = False
+        replay.add(sample)
+    for offset in range(6, 8):
+        sample = _sample(float(offset))
+        sample.reward = 0.0
+        sample.is_intervention = True
+        replay.add(sample)
+
+    batch = replay.sample(4, success_fraction=0.5, intervention_fraction=0.5)
+
+    assert int(batch["success"].sum().item()) == 2
+    assert int(batch["is_intervention"].sum().item()) == 2
 
 
 def test_rlt_replay_buffer_persists_round_trip(tmp_path):

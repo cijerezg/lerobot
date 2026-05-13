@@ -109,6 +109,8 @@ message ActionsDense {
   string policy_mode = 11;
   // Whether the client should collect executed actions for this chunk.
   bool rlt_collectable = 12;
+  // Start row inside actions_f32 for the RLT training/execution window.
+  int32 rlt_window_start_index = 13;
 }
 
 message PolicySetup {
