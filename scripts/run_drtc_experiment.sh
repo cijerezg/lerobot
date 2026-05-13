@@ -70,6 +70,37 @@ CLIENT_LOG_FILE="$LOG_DIR/drtc_experiment_${LOG_TIMESTAMP}.log"
 STATUS_FILE="$LOG_DIR/drtc_status_${LOG_TIMESTAMP}.jsonl"
 CONTROL_FILE="$LOG_DIR/drtc_controls_${LOG_TIMESTAMP}.jsonl"
 
+CONFIG_ARG=""
+for ((i = 0; i < ${#ARGS[@]}; i++)); do
+    case "${ARGS[$i]}" in
+        --config=*) CONFIG_ARG="${ARGS[$i]#*=}" ;;
+        --config)
+            if ((i + 1 < ${#ARGS[@]})); then
+                CONFIG_ARG="${ARGS[$((i + 1))]}"
+            fi
+            ;;
+    esac
+done
+
+CONFIG_PATH=""
+if [ -n "$CONFIG_ARG" ]; then
+    if [ -f "$CONFIG_ARG" ]; then
+        CONFIG_PATH="$CONFIG_ARG"
+    elif [ -f "$PROJECT_ROOT/$CONFIG_ARG" ]; then
+        CONFIG_PATH="$PROJECT_ROOT/$CONFIG_ARG"
+    elif [ -f "$PROJECT_ROOT/examples/experiments/configs/$CONFIG_ARG" ]; then
+        CONFIG_PATH="$PROJECT_ROOT/examples/experiments/configs/$CONFIG_ARG"
+    elif [ -f "$PROJECT_ROOT/examples/experiments/configs/${CONFIG_ARG}.yaml" ]; then
+        CONFIG_PATH="$PROJECT_ROOT/examples/experiments/configs/${CONFIG_ARG}.yaml"
+    fi
+fi
+
+if [ "$ENABLE_TUI" = true ] && [ -n "$CONFIG_PATH" ]; then
+    if grep -Eq '^[[:space:]]*sim_headless:[[:space:]]*true([[:space:]]*#.*)?$' "$CONFIG_PATH"; then
+        ENABLE_TUI=false
+    fi
+fi
+
 # PIDs for cleanup
 POLICY_SERVER_PID=""
 SERVER_TIMING_TAIL_PID=""

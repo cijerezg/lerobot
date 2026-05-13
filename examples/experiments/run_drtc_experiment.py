@@ -41,6 +41,7 @@ from lerobot.cameras.opencv import OpenCVCameraConfig
 # `lerobot` consolidated SO100Follower/SO101Follower into a single `so_follower`
 # package; SO100FollowerConfig and SO101FollowerConfig are kept as TypeAlias.
 from lerobot.robots.so_follower import SO100FollowerConfig, SO101FollowerConfig
+from lerobot.robots.squint_so101 import SquintSO101RobotConfig
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,31 @@ class ExperimentConfig:
     server_host: str = ""
     robot_port: str = DEFAULT_ROBOT_PORT
     robot_id: str = DEFAULT_ROBOT_ID
+    # Squint SO101 simulator. Used when robot_type=squint_so101.
+    sim_squint_root: str = "/home/jack/code/squint"
+    sim_env_id: str | None = None
+    sim_dataset_root: str | None = None
+    sim_dataset_repo_id: str | None = None
+    sim_task: str | None = None
+    sim_control_mode: str = "pd_joint_target_delta_pos"
+    sim_obs_mode: str = "rgb+segmentation"
+    sim_render_mode: str = "rgb_array"
+    sim_domain_randomization: bool = False
+    sim_seed: int = 0
+    sim_sensor_width: int = 224
+    sim_sensor_height: int = 224
+    sim_video_dir: str = "outputs/rlt_squint_videos"
+    sim_video_fps: int = 20
+    sim_video_every_episodes: int = 1
+    sim_video_max_episodes: int = 20
+    sim_video_max_frames: int = 300
+    sim_white_x_background: bool = True
+    sim_max_episode_steps: int | None = None
+    sim_success_reward_threshold: float = 0.5
+    sim_action_clip: float | None = None
+    sim_headless: bool = False
+    sim_bootstrap_dataset_episode: int | None = None
+    sim_bootstrap_dataset_action_stride: int = 1
     camera1_path: str = DEFAULT_CAMERA1_PATH
     camera2_path: str = DEFAULT_CAMERA2_PATH
     # Names used as keys in the robot's `cameras` dict. Different policies expect
@@ -210,6 +236,14 @@ _SCALAR_FIELDS = frozenset({
     "name", "estimator", "cooldown",
     "robot_type", "gpu", "client_host", "server_host",
     "robot_port", "robot_id",
+    "sim_squint_root", "sim_env_id", "sim_dataset_root", "sim_dataset_repo_id", "sim_task",
+    "sim_control_mode", "sim_obs_mode", "sim_render_mode", "sim_domain_randomization",
+    "sim_seed", "sim_sensor_width", "sim_sensor_height",
+    "sim_video_dir", "sim_video_fps", "sim_video_every_episodes",
+    "sim_video_max_episodes", "sim_video_max_frames",
+    "sim_white_x_background", "sim_max_episode_steps",
+    "sim_success_reward_threshold", "sim_action_clip", "sim_headless",
+    "sim_bootstrap_dataset_episode", "sim_bootstrap_dataset_action_stride",
     "camera1_path", "camera2_path",
     "camera1_name", "camera2_name",
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
@@ -341,7 +375,40 @@ def resolve_config_path(config_arg: str) -> Path:
     )
 
 
-def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101FollowerConfig:
+def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101FollowerConfig | SquintSO101RobotConfig:
+    robot_type_normalized = config.robot_type.strip().lower()
+    if robot_type_normalized in {"squint_so101", "so101_squint", "sim_so101"}:
+        return SquintSO101RobotConfig(
+            id=config.robot_id or "squint_so101",
+            squint_root=config.sim_squint_root,
+            env_id=config.sim_env_id,
+            dataset_root=config.sim_dataset_root,
+            dataset_repo_id=config.sim_dataset_repo_id,
+            task=config.sim_task,
+            control_mode=config.sim_control_mode,
+            obs_mode=config.sim_obs_mode,
+            render_mode=config.sim_render_mode,
+            domain_randomization=config.sim_domain_randomization,
+            seed=config.sim_seed,
+            sensor_width=config.sim_sensor_width,
+            sensor_height=config.sim_sensor_height,
+            camera_width=config.camera_width,
+            camera_height=config.camera_height,
+            top_camera_name=config.camera2_name,
+            side_camera_name=config.camera1_name,
+            video_dir=config.sim_video_dir,
+            video_fps=config.sim_video_fps,
+            video_every_episodes=config.sim_video_every_episodes,
+            video_max_episodes=config.sim_video_max_episodes,
+            video_max_frames=config.sim_video_max_frames,
+            white_x_background=config.sim_white_x_background,
+            max_episode_steps=config.sim_max_episode_steps,
+            success_reward_threshold=config.sim_success_reward_threshold,
+            action_clip=config.sim_action_clip,
+            bootstrap_dataset_episode=config.sim_bootstrap_dataset_episode,
+            bootstrap_dataset_action_stride=config.sim_bootstrap_dataset_action_stride,
+        )
+
     camera_fourcc = config.camera_fourcc.strip() if isinstance(config.camera_fourcc, str) else config.camera_fourcc
     if camera_fourcc == "":
         camera_fourcc = None
@@ -366,7 +433,6 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             allow_stale_frames=config.camera_allow_stale_frames,
         ),
     }
-    robot_type_normalized = config.robot_type.strip().lower()
     if robot_type_normalized in {"so101", "so101_follower"}:
         return SO101FollowerConfig(port=config.robot_port, id=config.robot_id, cameras=camera_cfg)
     if robot_type_normalized in {"so100", "so100_follower"}:

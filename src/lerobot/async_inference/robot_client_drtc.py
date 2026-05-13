@@ -715,6 +715,13 @@ class RobotClientDrtc:
                 events[TeleopEvents.DISCARD_EPISODE.value] = True
                 self._emit_rlt_status("tui_control", command=command)
 
+        robot_event_getter = getattr(self.robot, "get_rlt_events", None)
+        if callable(robot_event_getter):
+            try:
+                events.update(dict(robot_event_getter()))
+            except Exception as e:
+                self.logger.error("Robot RLT event read failed: %s", e)
+
         if self._tui_intervention_enabled:
             events[TeleopEvents.IS_INTERVENTION] = True
             events[TeleopEvents.IS_INTERVENTION.value] = True
@@ -1296,6 +1303,35 @@ class RobotClientDrtc:
         self._rlt_current_episode_transition_buffer.clear()
         return queued
 
+    def _rlt_backfill_terminal_transition(
+        self,
+        *,
+        reward: float,
+        success: bool,
+        failure: bool,
+    ) -> None:
+        if any(transition.done for transition in self._rlt_current_episode_transition_buffer):
+            return
+        if not self._rlt_current_episode_transition_buffer:
+            self._metrics.diagnostic.counter("rlt_terminal_transition_missing", 1)
+            self._emit_rlt_status("rlt_terminal_transition_missing")
+            return
+
+        terminal = self._rlt_current_episode_transition_buffer[-1]
+        terminal.next_rlt_context_id = 0
+        terminal.reward = float(reward)
+        terminal.done = True
+        terminal.success = bool(success)
+        terminal.failure = bool(failure)
+        self._metrics.diagnostic.counter("rlt_terminal_transition_backfilled", 1)
+        self._emit_rlt_status(
+            "rlt_terminal_transition_backfilled",
+            terminal_context_id=int(terminal.source_rlt_context_id),
+            terminal_chunk_start_step=int(terminal.chunk_start_step),
+            terminal_success=bool(success),
+            terminal_failure=bool(failure),
+        )
+
     def _rlt_maybe_emit_transitions(
         self,
         *,
@@ -1348,6 +1384,11 @@ class RobotClientDrtc:
         for context_id in emitted_ids:
             self._rlt_pending_chunks.pop(context_id, None)
         if done:
+            self._rlt_backfill_terminal_transition(
+                reward=reward,
+                success=success,
+                failure=failure,
+            )
             label = "success" if success else "failure"
             queued_transitions = self._rlt_flush_current_episode_transitions()
             self._rlt_completed_episodes_count += 1

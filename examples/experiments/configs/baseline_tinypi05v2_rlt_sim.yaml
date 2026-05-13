@@ -1,0 +1,144 @@
+# DRTC config for tinypi05v2_rlt online training in the Squint SO101 simulator.
+#
+# This mirrors baseline_tinypi05v2_rlt.yaml, but replaces the real SO101
+# follower + teleop episode labels with a headless Squint simulator robot. The
+# simulator reads the checkpoint's dataset root below to recover the trained
+# task instruction, maps it to the matching Squint SO101 marker task, and emits
+# automatic RLT start/success/failure episode events.
+#
+# Run with:
+#   ./scripts/run_drtc_experiment.sh --config baseline_tinypi05v2_rlt_sim
+name: baseline_tinypi05v2_rlt_squint_sim
+
+# Simulator
+robot_type: squint_so101
+gpu: ""
+client_host: "local squint sim"
+server_host: "local policy server"
+robot_id: squint_so101_pickplace_20260513
+sim_headless: true
+sim_squint_root: /home/jack/code/squint
+sim_dataset_root: outputs/so101_pickplace_160_20260501a
+sim_dataset_repo_id: jackvial/so101_pickplace_160_20260501a
+# Leave unset to derive SO101PlaceCubeMarker-v1 from the dataset task text.
+sim_env_id:
+sim_control_mode: pd_joint_target_delta_pos
+sim_obs_mode: rgb+segmentation
+sim_render_mode: rgb_array
+sim_domain_randomization: false
+sim_seed: 1000
+sim_sensor_width: 224
+sim_sensor_height: 224
+sim_white_x_background: false
+sim_max_episode_steps: 100
+sim_success_reward_threshold: 0.5
+sim_bootstrap_dataset_episode: 0
+sim_bootstrap_dataset_action_stride: 3
+sim_video_dir: outputs/rlt_tinypi05v2_squint_marker_sim_v5/videos
+sim_video_fps: 20
+sim_video_every_episodes: 1
+sim_video_max_episodes: 20
+sim_video_max_frames: 120
+
+# The policy checkpoint expects observation.images.{side,top}; the simulator
+# supplies side=Squint sensor RGB and top=third-person render RGB.
+camera1_name: side
+camera2_name: top
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc:
+camera_use_threaded_async_read: false
+camera_allow_stale_frames: true
+
+# Policy: 92k Tinypi VLA checkpoint trained on the dataset above.
+policy_type: tinypi05v2_rlt
+pretrained_name_or_path: outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model
+subtask_generation_enabled: false
+subtask_regeneration_interval: 0
+
+# RLT modules.
+rlt_enabled: true
+rlt_embedding_checkpoint: outputs/tinypi05v2_rlt_embedding/rlt_embedding_step_010000.pt
+rlt_head_checkpoint:
+rlt_chunk_size: 10
+rlt_token_dim:
+rlt_actor_hidden_dims: [512, 512, 512]
+rlt_critic_hidden_dims: [512, 512, 512]
+rlt_actor_residual_scale: 0.25
+rlt_num_critics: 4
+rlt_bc_beta: 0.1
+rlt_jerk_beta: 0.001
+rlt_reference_dropout_p: 0.5
+
+# Online sim RLT training. Keep actor execution held off at first so the smoke
+# run is a VLA rollout distribution with async actor/critic updates.
+rlt_online_collection_enabled: true
+rlt_online_training_enabled: true
+rlt_warmup_episodes: 1
+rlt_warmup_transitions: 8
+rlt_replay_capacity: 50000
+rlt_batch_size: 8
+rlt_utd_ratio: 4
+rlt_train_freq_s: 0.25
+rlt_save_freq_steps: 500
+rlt_output_dir: outputs/rlt_tinypi05v2_squint_marker_sim_v5
+rlt_online_buffer_path: outputs/rlt_tinypi05v2_squint_marker_sim_v5/rlt_online_replay.pt
+rlt_demo_buffer_path:
+rlt_online_buffer_save_freq_transitions: 25
+rlt_persist_buffer_on_shutdown: true
+
+rlt_review_capture_enabled: true
+rlt_review_jpeg_quality: 80
+rlt_review_archive_path: outputs/rlt_tinypi05v2_squint_marker_sim_v5/rlt_review_archive.pt
+rlt_actor_lr: 0.0003
+rlt_critic_lr: 0.0003
+rlt_discount: 0.985
+rlt_target_update_tau: 0.005
+rlt_execute_after_train_steps: 1000000
+rlt_context_cache_size: 256
+rlt_transition_queue_size: 256
+rlt_grad_clip_norm: 20.0
+rlt_q_abs_max: 100.0
+rlt_action_deviation_abs_max: 2.0
+rlt_loss_abs_max: 1000.0
+rlt_safety_patience: 3
+
+# DRTC parameters. Keep actions_per_chunk at the policy checkpoint's 50-step
+# horizon because the anchor-action normalizer stats are per-timestep.
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+actions_per_chunk: 50
+s_min: 15
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing
+duration_s: 90.0
+run_until_interrupt: false
+fps: 10
+
+# Flow matching / RTC
+num_flow_matching_steps: 3
+rtc_enabled: true
+rtc_max_guidance_weight:
+rtc_prefix_attention_schedule: linear
+rtc_sigma_d: 0.2
+rtc_full_trajectory_alignment: false
+
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 3.0
+action_filter_gain: 1.0
+
+# Diagnostics
+full_diagnostics: true
+trajectory_viz_enabled: false
+
+# No manual teleop in headless sim; the simulator emits episode labels.
+teleop_enabled: false
+teleop_type:
+teleop_port:
+teleop_id:
+teleop_send_feedback: false
