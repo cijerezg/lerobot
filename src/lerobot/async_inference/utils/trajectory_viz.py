@@ -29,20 +29,86 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import logging
+import math
 import threading
 import time
-from functools import partial
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from queue import Empty, Full, Queue
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .metrics import EvActionChunk, EvExecutedAction
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert common runtime values into JSON-serializable values."""
+    try:
+        import numpy as np
+    except ImportError:  # pragma: no cover - numpy is a runtime dependency here
+        np = None
+
+    if np is not None:
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, np.generic):
+            return _json_safe(value.item())
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _put_latest(queue: Queue, item: Any) -> None:
+    try:
+        queue.put_nowait(item)
+    except Full:
+        try:
+            queue.get_nowait()
+            queue.put_nowait(item)
+        except Empty:
+            pass
+
+
+def encode_image_for_viz(image: Any, *, max_width: int = 360, jpeg_quality: int = 65) -> dict[str, Any] | None:
+    """Encode a uint8 RGB image as a compact JPEG data URL for browser display."""
+    try:
+        import cv2  # type: ignore
+        import numpy as np
+    except ImportError:
+        logger.debug("OpenCV/numpy unavailable; cannot encode visualization frame")
+        return None
+
+    if not isinstance(image, np.ndarray) or image.dtype != np.uint8 or image.ndim != 3:
+        return None
+    if image.shape[-1] != 3 or image.shape[0] <= 0 or image.shape[1] <= 0:
+        return None
+
+    height, width = int(image.shape[0]), int(image.shape[1])
+    encoded = image
+    if width > max_width:
+        scale = max_width / float(width)
+        target_size = (int(max_width), max(1, int(round(height * scale))))
+        encoded = cv2.resize(encoded, target_size, interpolation=cv2.INTER_AREA)
+        height, width = int(encoded.shape[0]), int(encoded.shape[1])
+
+    bgr = cv2.cvtColor(encoded, cv2.COLOR_RGB2BGR)
+    ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)])
+    if not ok:
+        return None
+
+    data_url = "data:image/jpeg;base64," + base64.b64encode(bytes(buf)).decode("ascii")
+    return {"data_url": data_url, "width": width, "height": height}
 
 
 # =============================================================================
@@ -56,11 +122,15 @@ class TrajectoryVizServer:
     def __init__(self, ws_port: int = 8089, http_port: int = 8088):
         self.ws_port = ws_port
         self.http_port = http_port
-        self._chunk_queue: Queue[dict] = Queue(maxsize=100)
+        self._chunk_queue: Queue[tuple[dict, Any | None]] = Queue(maxsize=200)
         self._clients: set = set()
         self._shutdown = threading.Event()
 
-    def on_chunk(self, event: "EvActionChunk") -> None:
+    def on_event(self, event: dict[str, Any]) -> None:
+        """Forward a generic visualization event to browser clients."""
+        _put_latest(self._chunk_queue, (_json_safe(event), None))
+
+    def on_chunk(self, event: EvActionChunk) -> None:
         """Callback to forward action chunks."""
         chunk_data = {
             "type": "action_chunk",
@@ -72,15 +142,7 @@ class TrajectoryVizServer:
             "rtc_params": event.rtc_params,
             "prefix_weights": event.prefix_weights,
         }
-        try:
-            self._chunk_queue.put_nowait(chunk_data)
-        except Full:
-            # Drop oldest if full
-            try:
-                self._chunk_queue.get_nowait()
-                self._chunk_queue.put_nowait(chunk_data)
-            except Empty:
-                pass
+        self.on_event(chunk_data)
 
     async def _handler(self, websocket):
         """Handle a WebSocket connection."""
@@ -91,16 +153,10 @@ class TrajectoryVizServer:
                 # and queue them for broadcasting to all other clients (browsers)
                 try:
                     data = json.loads(message)
-                    # Queue for broadcasting (e.g., executed_action from robot client)
-                    try:
-                        self._chunk_queue.put_nowait(data)
-                    except Full:
-                        # Drop oldest if full
-                        try:
-                            self._chunk_queue.get_nowait()
-                            self._chunk_queue.put_nowait(data)
-                        except Empty:
-                            pass
+                    # Queue for broadcasting (e.g., executed_action from robot client).
+                    # Exclude the source socket so large camera frames are not echoed
+                    # back to the robot-side sender, which does not read replies.
+                    _put_latest(self._chunk_queue, (_json_safe(data), websocket))
                 except json.JSONDecodeError:
                     pass
         finally:
@@ -113,15 +169,18 @@ class TrajectoryVizServer:
                 # Non-blocking check with small sleep
                 await asyncio.sleep(0.01)
                 try:
-                    chunk_data = self._chunk_queue.get_nowait()
+                    chunk_data, source = self._chunk_queue.get_nowait()
                 except Empty:
                     continue
 
                 if self._clients:
                     message = json.dumps(chunk_data)
+                    recipients = [client for client in self._clients if client is not source]
+                    if not recipients:
+                        continue
                     # Broadcast to all connected clients
                     await asyncio.gather(
-                        *[client.send(message) for client in self._clients],
+                        *[client.send(message) for client in recipients],
                         return_exceptions=True,
                     )
             except Exception as e:
@@ -196,7 +255,7 @@ class TrajectoryVizClient:
         self._ws = None
         self._loop = None
         self._thread: threading.Thread | None = None
-        self._queue: Queue[dict] = Queue(maxsize=100)
+        self._queue: Queue[dict] = Queue(maxsize=200)
         self._shutdown = threading.Event()
         self._connected = False
         self._connection_attempted = False
@@ -225,6 +284,25 @@ class TrajectoryVizClient:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         self._loop.run_until_complete(self._connect_and_send())
+
+    def _enqueue(self, payload: dict[str, Any], *, warn_if_disconnected: bool = False) -> None:
+        if not self._connected:
+            if warn_if_disconnected:
+                self._dropped_while_disconnected += 1
+                now = time.time()
+                if now - self._last_not_connected_warn > self._NOT_CONNECTED_WARN_INTERVAL:
+                    self._last_not_connected_warn = now
+                    if self._connection_attempted:
+                        logger.warning(
+                            f"Trajectory viz: not connected to server, dropping chunks "
+                            f"(total dropped: {self._dropped_while_disconnected}). "
+                            f"Is the viz server running at {self.ws_url}?"
+                        )
+                    else:
+                        logger.debug("Trajectory viz: waiting for connection to establish...")
+            return
+
+        _put_latest(self._queue, _json_safe(payload))
 
     async def _connect_and_send(self) -> None:
         """Connect to the server and send queued data."""
@@ -274,24 +352,8 @@ class TrajectoryVizClient:
                     )
                 await asyncio.sleep(2.0)
 
-    def on_chunk(self, event: "EvActionChunk") -> None:
+    def on_chunk(self, event: EvActionChunk) -> None:
         """Callback to queue an action chunk for sending."""
-        if not self._connected:
-            self._dropped_while_disconnected += 1
-            # Rate-limited warning to avoid log spam
-            now = time.time()
-            if now - self._last_not_connected_warn > self._NOT_CONNECTED_WARN_INTERVAL:
-                self._last_not_connected_warn = now
-                if self._connection_attempted:
-                    logger.warning(
-                        f"Trajectory viz: not connected to server, dropping chunks "
-                        f"(total dropped: {self._dropped_while_disconnected}). "
-                        f"Is the viz server running at {self.ws_url}?"
-                    )
-                else:
-                    logger.debug("Trajectory viz: waiting for connection to establish...")
-            return
-
         chunk_data = {
             "type": "action_chunk",
             "source_step": event.src_control_step,
@@ -302,37 +364,56 @@ class TrajectoryVizClient:
             "rtc_params": event.rtc_params,
             "prefix_weights": event.prefix_weights,
         }
-        try:
-            self._queue.put_nowait(chunk_data)
-        except Full:
-            # Drop oldest if full
-            try:
-                self._queue.get_nowait()
-                self._queue.put_nowait(chunk_data)
-            except Empty:
-                pass
+        self._enqueue(chunk_data, warn_if_disconnected=True)
 
-    def on_executed_action(self, event: "EvExecutedAction") -> None:
+    def on_executed_action(self, event: EvExecutedAction) -> None:
         """Callback to queue an executed action for sending."""
-        if not self._connected:
-            # Don't count/warn for executed actions, just silently drop
-            return
-
         action_data = {
             "type": "executed_action",
             "step": event.step,
             "action": event.action,
             "timestamp": event.timestamp,
         }
-        try:
-            self._queue.put_nowait(action_data)
-        except Full:
-            # Drop oldest if full
-            try:
-                self._queue.get_nowait()
-                self._queue.put_nowait(action_data)
-            except Empty:
-                pass
+        self._enqueue(action_data)
+
+    def on_observation_frame(
+        self,
+        *,
+        step: int,
+        timestamp: float,
+        images: dict[str, Any],
+        max_width: int = 360,
+        jpeg_quality: int = 65,
+    ) -> None:
+        """Queue a camera observation frame for the browser visualization."""
+        cameras: list[dict[str, Any]] = []
+        for name, image in images.items():
+            encoded = encode_image_for_viz(image, max_width=max_width, jpeg_quality=jpeg_quality)
+            if encoded is None:
+                continue
+            cameras.append({"name": str(name), **encoded})
+        if not cameras:
+            return
+        self._enqueue(
+            {
+                "type": "observation_frame",
+                "step": int(step),
+                "timestamp": float(timestamp),
+                "cameras": cameras,
+            }
+        )
+
+    def on_rlt_status(self, source: str, event: str, fields: dict[str, Any]) -> None:
+        """Queue an RLT status/metric update for the browser visualization."""
+        self._enqueue(
+            {
+                "type": "rlt_status",
+                "source": source,
+                "event": event,
+                "timestamp": time.time(),
+                **fields,
+            }
+        )
 
 
 # =============================================================================

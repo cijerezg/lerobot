@@ -464,6 +464,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             event,
             **status_fields,
         )
+        if self._trajectory_viz_server is not None:
+            self._trajectory_viz_server.on_event(
+                {
+                    "type": "rlt_status",
+                    "source": "policy_server",
+                    "event": event,
+                    "timestamp": time.time(),
+                    **status_fields,
+                }
+            )
 
     def _set_rlt_training_head(self, head: str) -> None:
         if head == self._rlt_training_head:

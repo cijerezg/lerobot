@@ -543,6 +543,8 @@ class RobotClientDrtc:
         self._trajectory_chunk_queue: Queue[services_pb2.TrajectoryChunk] = Queue(maxsize=10)
         self._trajectory_sender_thread: threading.Thread | None = None
         self._trajectory_viz_client: TrajectoryVizClient | None = None
+        self._trajectory_viz_last_observation_ts = 0.0
+        self._trajectory_viz_observation_interval_s = 0.5
         if config.trajectory_viz_enabled:
             self._trajectory_sender_thread = threading.Thread(
                 target=self._trajectory_chunk_sender,
@@ -569,6 +571,8 @@ class RobotClientDrtc:
         self._rlt_current_episode_transitions = 0
         self._rlt_current_episode_transition_buffer: list[services_pb2.RLTTransitionChunk] = []
         self._rlt_completed_episodes_count = 0
+        self._rlt_success_episodes_count = 0
+        self._rlt_failure_episodes_count = 0
         self._rlt_discarded_episodes_count = 0
         self._rlt_last_episode_label: str | None = None
         self._rlt_phase = "waiting_to_start_next_episode"
@@ -604,20 +608,27 @@ class RobotClientDrtc:
     def _emit_rlt_status(self, event: str, *, phase: str | None = None, **fields: Any) -> None:
         if phase is not None:
             self._rlt_phase = phase
+        status_fields = {
+            "phase": self._rlt_phase,
+            "episode_id": self._rlt_episode_id,
+            "episode_open": self._rlt_episode_open,
+            "episodes_recorded": self._rlt_completed_episodes_count,
+            "episodes_succeeded": self._rlt_success_episodes_count,
+            "episodes_failed": self._rlt_failure_episodes_count,
+            "episodes_discarded": self._rlt_discarded_episodes_count,
+            "current_episode_transitions": self._rlt_current_episode_transitions,
+            "last_label": self._rlt_last_episode_label,
+            "intervention": self._rlt_phase_intervening,
+            "rlt_online_collection_enabled": self.config.rlt_online_collection_enabled,
+            **fields,
+        }
         emit_status(
             "robot_client",
             event,
-            phase=self._rlt_phase,
-            episode_id=self._rlt_episode_id,
-            episode_open=self._rlt_episode_open,
-            episodes_recorded=self._rlt_completed_episodes_count,
-            episodes_discarded=self._rlt_discarded_episodes_count,
-            current_episode_transitions=self._rlt_current_episode_transitions,
-            last_label=self._rlt_last_episode_label,
-            intervention=self._rlt_phase_intervening,
-            rlt_online_collection_enabled=self.config.rlt_online_collection_enabled,
-            **fields,
+            **status_fields,
         )
+        if self._trajectory_viz_client is not None:
+            self._trajectory_viz_client.on_rlt_status("robot_client", event, status_fields)
 
     def _set_rlt_recording_phase(self, intervening: bool) -> None:
         if not self.config.rlt_online_collection_enabled or not self._rlt_episode_open:
@@ -661,6 +672,38 @@ class RobotClientDrtc:
             reason,
             self._min_accepted_src_control_step,
         )
+
+    def _maybe_emit_observation_frame(
+        self,
+        raw_observation: RawObservation,
+        *,
+        control_step: int,
+        timestamp: float,
+    ) -> None:
+        client = self._trajectory_viz_client
+        if client is None:
+            return
+        now = time.time()
+        if now - self._trajectory_viz_last_observation_ts < self._trajectory_viz_observation_interval_s:
+            return
+
+        camera_images = {
+            key: value
+            for key, value in raw_observation.items()
+            if isinstance(value, np.ndarray)
+            and value.dtype == np.uint8
+            and value.ndim == 3
+            and value.shape[-1] == 3
+        }
+        if not camera_images:
+            return
+
+        client.on_observation_frame(
+            step=int(control_step),
+            timestamp=float(timestamp),
+            images=camera_images,
+        )
+        self._trajectory_viz_last_observation_ts = now
 
     def _poll_teleop_events(self) -> dict[Any, Any]:
         """Poll teleop events once for a control tick."""
@@ -1009,6 +1052,11 @@ class RobotClientDrtc:
                 # Avoid mutating cached observation dict if we are reusing it.
                 if used_fallback:
                     raw_observation = dict(raw_observation)
+                self._maybe_emit_observation_frame(
+                    raw_observation,
+                    control_step=request.control_step,
+                    timestamp=start_rtt_timestamp,
+                )
                 raw_observation["task"] = request.task
                 if request.rtc_meta is not None:
                     raw_observation["__rtc__"] = request.rtc_meta
@@ -1403,6 +1451,10 @@ class RobotClientDrtc:
             label = "success" if success else "failure"
             queued_transitions = self._rlt_flush_current_episode_transitions()
             self._rlt_completed_episodes_count += 1
+            if success:
+                self._rlt_success_episodes_count += 1
+            else:
+                self._rlt_failure_episodes_count += 1
             self._rlt_last_episode_label = label
             self._rlt_phase_intervening = False
             self.logger.info(

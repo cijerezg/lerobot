@@ -43,7 +43,7 @@
             margin-bottom: 12px;
             color: var(--structural-black);
             font-weight: 700;
-            letter-spacing: -0.5px;
+            letter-spacing: 0;
             position: relative;
         }
 
@@ -91,6 +91,254 @@
         .status.connecting {
             background: var(--primary-blue);
             color: var(--bg-cream);
+        }
+
+        .sim-overview {
+            display: grid;
+            grid-template-columns: minmax(320px, 1.4fr) minmax(240px, 0.8fr) minmax(320px, 1fr);
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .sim-card {
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 14px;
+            min-width: 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sim-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--primary-blue);
+        }
+
+        .sim-card.episode::before {
+            background: var(--primary-red);
+        }
+
+        .sim-card.rlt::before {
+            background: var(--primary-yellow);
+        }
+
+        .sim-card-title {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            font-weight: 700;
+        }
+
+        .camera-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px;
+        }
+
+        .camera-frame {
+            border: 2px solid var(--structural-black);
+            background: var(--structural-black);
+            min-width: 0;
+        }
+
+        .camera-frame-title {
+            background: var(--bg-cream);
+            color: var(--text-dark);
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 7px;
+            text-transform: uppercase;
+            border-bottom: 2px solid var(--structural-black);
+        }
+
+        .camera-frame-image {
+            aspect-ratio: 4 / 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .camera-frame-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+        }
+
+        .empty-state {
+            color: var(--ochre);
+            font-size: 12px;
+            background: var(--bg-cream);
+            border: 2px dashed var(--ochre);
+            padding: 12px;
+            min-height: 68px;
+            display: flex;
+            align-items: center;
+        }
+
+        .camera-meta,
+        .episode-meta,
+        .rlt-meta {
+            margin-top: 10px;
+            font-size: 11px;
+            color: var(--ochre);
+            font-family: 'Courier New', monospace;
+        }
+
+        .episode-status-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .episode-badge {
+            border: 2px solid var(--structural-black);
+            background: var(--bg-cream);
+            color: var(--text-dark);
+            padding: 8px 10px;
+            font-size: 13px;
+            font-weight: 800;
+            text-transform: uppercase;
+            min-width: 112px;
+            text-align: center;
+        }
+
+        .episode-badge.recording {
+            background: var(--primary-yellow);
+        }
+
+        .episode-badge.success {
+            background: #2d6a4f;
+            color: var(--bg-white);
+        }
+
+        .episode-badge.failure {
+            background: var(--primary-red);
+            color: var(--bg-white);
+        }
+
+        .episode-badge.discarded {
+            background: var(--ochre);
+            color: var(--bg-white);
+        }
+
+        .episode-id {
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+            color: var(--text-muted);
+            font-weight: 700;
+        }
+
+        .episode-counts {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .episode-count {
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            padding: 8px;
+            min-width: 0;
+        }
+
+        .episode-count-label {
+            display: block;
+            font-size: 9px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .episode-count-value {
+            display: block;
+            font-size: 22px;
+            font-family: 'Courier New', monospace;
+            font-weight: 800;
+        }
+
+        .episode-history {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-height: 28px;
+        }
+
+        .episode-history-item {
+            border: 2px solid var(--structural-black);
+            padding: 3px 7px;
+            font-size: 11px;
+            font-family: 'Courier New', monospace;
+            background: var(--bg-cream);
+        }
+
+        .episode-history-item.success {
+            background: rgba(45, 106, 79, 0.2);
+        }
+
+        .episode-history-item.failure {
+            background: rgba(193, 39, 45, 0.18);
+        }
+
+        .episode-history-item.discarded {
+            background: rgba(139, 115, 85, 0.2);
+        }
+
+        .rlt-metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .rlt-metric {
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            padding: 7px;
+            min-width: 0;
+        }
+
+        .rlt-metric-label {
+            display: block;
+            font-size: 9px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: 700;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .rlt-metric-value {
+            display: block;
+            font-size: 17px;
+            font-family: 'Courier New', monospace;
+            font-weight: 800;
+            color: var(--structural-black);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .rlt-loss-chart-container {
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            padding: 8px;
+            height: 116px;
+        }
+
+        .rlt-loss-chart-container canvas {
+            width: 100% !important;
+            height: 94px !important;
         }
 
         /* RTC Parameters Panel */
@@ -633,12 +881,27 @@
         }
 
         @media (max-width: 1200px) {
+            .sim-overview {
+                grid-template-columns: 1fr 1fr;
+            }
+            .sim-card.rlt {
+                grid-column: 1 / -1;
+            }
             .charts-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
         }
 
         @media (max-width: 800px) {
+            .sim-overview {
+                grid-template-columns: 1fr;
+            }
+            .sim-card.rlt {
+                grid-column: auto;
+            }
+            .rlt-metrics-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
             .charts-grid {
                 grid-template-columns: 1fr;
             }
@@ -654,6 +917,82 @@
 <body>
     <h1>RTC Trajectory Visualization</h1>
     <div id="status" class="status disconnected">Disconnected</div>
+
+    <div class="sim-overview">
+        <div class="sim-card cameras">
+            <div class="sim-card-title">Sim Cameras</div>
+            <div class="camera-grid" id="camera-grid">
+                <div class="empty-state">Waiting for camera observations...</div>
+            </div>
+            <div class="camera-meta" id="camera-meta">frames: 0 | step: -- | age: --</div>
+        </div>
+
+        <div class="sim-card episode">
+            <div class="sim-card-title">Episode Outcome</div>
+            <div class="episode-status-row">
+                <div class="episode-badge" id="episode-status">Idle</div>
+                <div class="episode-id" id="episode-id">episode --</div>
+            </div>
+            <div class="episode-counts">
+                <div class="episode-count">
+                    <span class="episode-count-label">Success</span>
+                    <span class="episode-count-value" id="episode-success-count">0</span>
+                </div>
+                <div class="episode-count">
+                    <span class="episode-count-label">Failure</span>
+                    <span class="episode-count-value" id="episode-failure-count">0</span>
+                </div>
+                <div class="episode-count">
+                    <span class="episode-count-label">Discarded</span>
+                    <span class="episode-count-value" id="episode-discard-count">0</span>
+                </div>
+            </div>
+            <div class="episode-history" id="episode-history"></div>
+            <div class="episode-meta" id="episode-meta">phase: -- | transitions: --</div>
+        </div>
+
+        <div class="sim-card rlt">
+            <div class="sim-card-title">RLT Head Metrics</div>
+            <div class="rlt-metrics-grid">
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Head</span>
+                    <span class="rlt-metric-value" id="rlt-head">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Train Step</span>
+                    <span class="rlt-metric-value" id="rlt-train-step">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Replay</span>
+                    <span class="rlt-metric-value" id="rlt-replay">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Online Replay</span>
+                    <span class="rlt-metric-value" id="rlt-online-replay">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Actor Loss</span>
+                    <span class="rlt-metric-value" id="rlt-actor-loss">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Critic Loss</span>
+                    <span class="rlt-metric-value" id="rlt-critic-loss">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Actor Grad</span>
+                    <span class="rlt-metric-value" id="rlt-actor-grad">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Critic Grad</span>
+                    <span class="rlt-metric-value" id="rlt-critic-grad">--</span>
+                </div>
+            </div>
+            <div class="rlt-loss-chart-container">
+                <canvas id="rlt-loss-chart"></canvas>
+            </div>
+            <div class="rlt-meta" id="rlt-meta">event: -- | actor q: -- | critic q: --</div>
+        </div>
+    </div>
     
     <!-- RTC Parameters Panel -->
     <div class="rtc-panel" id="rtc-panel">
@@ -791,6 +1130,8 @@
         const WS_PORT = 8089;
         const MAX_CHUNKS = 10;
         const MAX_ROLLING_AVG_POINTS = 100;
+        const MAX_RLT_POINTS = 200;
+        const MAX_EPISODE_HISTORY = 20;
         const MAX_DEBUG_LINES = 10;
         const CHUNK_COLORS = [
             '#c1272d',  // vermillion
@@ -810,6 +1151,7 @@
         let executedCharts = [];  // Charts for executed actions
         let rollingAvgChart = null;
         let prefixWeightsChart = null;  // RTC prefix weights chart
+        let rltLossChart = null;
         let currentRtcParams = null;  // Current RTC parameters
         let lastRtcParamsJson = null;  // For debouncing RTC panel updates
         let chunks = [];
@@ -823,6 +1165,20 @@
         let lastChunkTime = null;
         let sessionStartTime = null;
         let debugLines = [];
+        let cameraFrameCount = 0;
+        let lastCameraTimestamp = null;
+        let lastCameraStep = null;
+        let rltSequence = 0;
+        let latestRltStatus = {};
+        let rltLossHistory = [];
+        const episodeState = {
+            success: 0,
+            failure: 0,
+            discarded: 0,
+            labeledEpisodes: new Set(),
+            discardedEpisodes: new Set(),
+            history: [],
+        };
 
         // Session metrics
         const sessionMetrics = {
@@ -844,6 +1200,23 @@
         function formatNumber(n, decimals = 4) {
             if (n === null || n === undefined || isNaN(n)) return '--';
             return n.toFixed(decimals);
+        }
+
+        function formatValue(value, decimals = 4) {
+            if (value === null || value === undefined || value === '') return '--';
+            if (typeof value === 'number') return formatNumber(value, decimals);
+            if (typeof value === 'boolean') return value ? 'true' : 'false';
+            return String(value);
+        }
+
+        function formatCount(value) {
+            if (value === null || value === undefined || isNaN(Number(value))) return '--';
+            return String(Number(value));
+        }
+
+        function setText(id, value) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value;
         }
 
         function debug(msg) {
@@ -941,6 +1314,76 @@
             rollingAvgChart.data.datasets[0].data = discData;
             rollingAvgChart.data.datasets[1].data = accelData;
             rollingAvgChart.update('none');
+        }
+
+        function initRltLossChart() {
+            const canvas = document.getElementById('rlt-loss-chart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            rltLossChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Actor Loss',
+                            data: [],
+                            borderColor: '#c1272d',
+                            backgroundColor: 'transparent',
+                            tension: 0.2,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        },
+                        {
+                            label: 'Critic Loss',
+                            data: [],
+                            borderColor: '#1a3a6e',
+                            backgroundColor: 'transparent',
+                            tension: 0.2,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                color: '#1a1a1a',
+                                boxWidth: 10,
+                                padding: 8,
+                                font: { size: 10, weight: 'bold' }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            ticks: { color: '#5a5a5a', font: { size: 8 } },
+                            grid: { color: '#d0c8b8' }
+                        },
+                        y: {
+                            ticks: { color: '#5a5a5a', font: { size: 8 } },
+                            grid: { color: '#d0c8b8' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateRltLossChart() {
+            if (!rltLossChart) return;
+            rltLossChart.data.datasets[0].data = rltLossHistory
+                .filter(p => p.actorLoss !== null)
+                .map(p => ({ x: p.x, y: p.actorLoss }));
+            rltLossChart.data.datasets[1].data = rltLossHistory
+                .filter(p => p.criticLoss !== null)
+                .map(p => ({ x: p.x, y: p.criticLoss }));
+            rltLossChart.update('none');
         }
 
         // Initialize prefix weights chart
@@ -1548,6 +1991,191 @@
             updateExecutedCharts();
         }
 
+        function updateCameraMeta() {
+            const age = lastCameraTimestamp ? `${Math.max(0, Date.now() / 1000 - lastCameraTimestamp).toFixed(1)}s` : '--';
+            setText('camera-meta', `frames: ${cameraFrameCount} | step: ${lastCameraStep ?? '--'} | age: ${age}`);
+        }
+
+        function onObservationFrame(data) {
+            const cameras = Array.isArray(data.cameras) ? data.cameras : [];
+            if (cameras.length === 0) return;
+
+            cameraFrameCount++;
+            lastCameraTimestamp = Number(data.timestamp) || (Date.now() / 1000);
+            lastCameraStep = data.step;
+
+            const grid = document.getElementById('camera-grid');
+            grid.innerHTML = '';
+            cameras
+                .slice()
+                .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                .forEach(camera => {
+                    const frame = document.createElement('div');
+                    frame.className = 'camera-frame';
+
+                    const title = document.createElement('div');
+                    title.className = 'camera-frame-title';
+                    title.textContent = camera.name || 'camera';
+
+                    const imageWrap = document.createElement('div');
+                    imageWrap.className = 'camera-frame-image';
+                    const img = document.createElement('img');
+                    img.src = camera.data_url;
+                    img.alt = `${camera.name || 'camera'} observation`;
+                    imageWrap.appendChild(img);
+
+                    frame.appendChild(title);
+                    frame.appendChild(imageWrap);
+                    grid.appendChild(frame);
+                });
+
+            updateCameraMeta();
+        }
+
+        function humanizeStatus(value) {
+            if (!value) return '--';
+            return String(value)
+                .replace(/^rlt_/, '')
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        function renderEpisodeHistory() {
+            const container = document.getElementById('episode-history');
+            container.innerHTML = '';
+            if (episodeState.history.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'empty-state';
+                empty.textContent = 'Waiting for episode labels...';
+                container.appendChild(empty);
+                return;
+            }
+
+            for (const item of episodeState.history.slice(-MAX_EPISODE_HISTORY)) {
+                const chip = document.createElement('div');
+                chip.className = `episode-history-item ${item.label}`;
+                chip.textContent = `#${item.episodeId}: ${item.label}`;
+                container.appendChild(chip);
+            }
+        }
+
+        function setEpisodeStatus(text, statusClass = '') {
+            const badge = document.getElementById('episode-status');
+            badge.className = `episode-badge ${statusClass}`.trim();
+            badge.textContent = text;
+        }
+
+        function updateEpisodePanel(data) {
+            if (data.episode_id !== undefined) {
+                setText('episode-id', `episode ${data.episode_id}`);
+            }
+
+            let label = data.label || data.last_label;
+            if (data.event === 'rlt_episode_labeled') {
+                label = data.success ? 'success' : data.failure ? 'failure' : label;
+                const key = String(data.episode_id ?? data.timestamp ?? episodeState.history.length);
+                if (!episodeState.labeledEpisodes.has(key)) {
+                    episodeState.labeledEpisodes.add(key);
+                    if (label === 'success') episodeState.success++;
+                    if (label === 'failure') episodeState.failure++;
+                    episodeState.history.push({ episodeId: data.episode_id ?? '--', label: label || 'labeled' });
+                }
+                setEpisodeStatus(humanizeStatus(label), label === 'success' ? 'success' : 'failure');
+            } else if (data.event === 'rlt_episode_discarded') {
+                const key = String(data.episode_id ?? data.timestamp ?? episodeState.history.length);
+                if (!episodeState.discardedEpisodes.has(key)) {
+                    episodeState.discardedEpisodes.add(key);
+                    episodeState.discarded++;
+                    episodeState.history.push({ episodeId: data.episode_id ?? '--', label: 'discarded' });
+                }
+                setEpisodeStatus('Discarded', 'discarded');
+            } else if (data.event === 'rlt_episode_started' || data.episode_open) {
+                setEpisodeStatus('Recording', 'recording');
+            } else if (data.phase) {
+                setEpisodeStatus(humanizeStatus(data.phase));
+            }
+
+            if (Number.isFinite(Number(data.episodes_discarded))) {
+                episodeState.discarded = Math.max(episodeState.discarded, Number(data.episodes_discarded));
+            }
+            if (Number.isFinite(Number(data.episodes_succeeded))) {
+                episodeState.success = Math.max(episodeState.success, Number(data.episodes_succeeded));
+            }
+            if (Number.isFinite(Number(data.episodes_failed))) {
+                episodeState.failure = Math.max(episodeState.failure, Number(data.episodes_failed));
+            }
+            setText('episode-success-count', episodeState.success);
+            setText('episode-failure-count', episodeState.failure);
+            setText('episode-discard-count', episodeState.discarded);
+            setText(
+                'episode-meta',
+                `phase: ${formatValue(data.phase)} | transitions: ${formatValue(data.current_episode_transitions, 0)}`
+            );
+            renderEpisodeHistory();
+        }
+
+        function pickMetric(keys) {
+            for (const key of keys) {
+                if (latestRltStatus[key] !== undefined && latestRltStatus[key] !== null) {
+                    return latestRltStatus[key];
+                }
+            }
+            return null;
+        }
+
+        function updateRltPanel(data) {
+            const replaySize = pickMetric(['rlt_replay_size']);
+            const replayCapacity = pickMetric(['rlt_replay_capacity']);
+            const onlineReplay = pickMetric(['rlt_online_replay_size']);
+            const actorLoss = pickMetric(['rlt_actor_loss', 'actor_loss']);
+            const criticLoss = pickMetric(['rlt_critic_loss', 'critic_loss']);
+            const actorGrad = pickMetric(['rlt_actor_grad_norm']);
+            const criticGrad = pickMetric(['rlt_critic_grad_norm']);
+            const actorQ = pickMetric(['actor_q_mean']);
+            const criticQ = pickMetric(['pred_q_mean', 'target_q_mean']);
+
+            setText('rlt-head', formatValue(pickMetric(['rlt_training_head'])));
+            setText('rlt-train-step', formatCount(pickMetric(['rlt_train_step'])));
+            setText(
+                'rlt-replay',
+                replaySize === null ? '--' : `${formatCount(replaySize)}${replayCapacity === null ? '' : `/${formatCount(replayCapacity)}`}`
+            );
+            setText('rlt-online-replay', formatCount(onlineReplay));
+            setText('rlt-actor-loss', formatValue(actorLoss));
+            setText('rlt-critic-loss', formatValue(criticLoss));
+            setText('rlt-actor-grad', formatValue(actorGrad));
+            setText('rlt-critic-grad', formatValue(criticGrad));
+            setText(
+                'rlt-meta',
+                `event: ${formatValue(data.event)} | actor q: ${formatValue(actorQ)} | critic q: ${formatValue(criticQ)}`
+            );
+        }
+
+        function onRltStatus(data) {
+            latestRltStatus = { ...latestRltStatus, ...data };
+            if (data.source === 'robot_client' || data.episode_id !== undefined || data.phase !== undefined) {
+                updateEpisodePanel(data);
+            }
+
+            updateRltPanel(data);
+
+            const actorLoss = Number(data.rlt_actor_loss ?? data.actor_loss);
+            const criticLoss = Number(data.rlt_critic_loss ?? data.critic_loss);
+            if (Number.isFinite(actorLoss) || Number.isFinite(criticLoss)) {
+                const trainStep = Number(data.rlt_train_step ?? pickMetric(['rlt_train_step']));
+                rltSequence += 1;
+                rltLossHistory.push({
+                    x: Number.isFinite(trainStep) ? trainStep : rltSequence,
+                    actorLoss: Number.isFinite(actorLoss) ? actorLoss : null,
+                    criticLoss: Number.isFinite(criticLoss) ? criticLoss : null,
+                });
+                while (rltLossHistory.length > MAX_RLT_POINTS) {
+                    rltLossHistory.shift();
+                }
+                updateRltLossChart();
+            }
+        }
+
         // Update trajectory charts with new chunk
         function updateCharts() {
             if (charts.length === 0 || chunks.length === 0) return;
@@ -1624,6 +2252,7 @@
             const now = Date.now();
             const timeSinceLastChunk = lastChunkTime ? ((now - lastChunkTime) / 1000).toFixed(1) : 'N/A';
             const sessionDuration = sessionStartTime ? ((now - sessionStartTime) / 1000).toFixed(0) : '0';
+            updateCameraMeta();
             
             stats.innerHTML = `
                 Chunks received: ${chunkCount} |
@@ -1715,6 +2344,10 @@
                         onChunk(data);
                     } else if (data.type === 'executed_action') {
                         onExecutedAction(data);
+                    } else if (data.type === 'observation_frame') {
+                        onObservationFrame(data);
+                    } else if (data.type === 'rlt_status') {
+                        onRltStatus(data);
                     }
                 } catch (e) {
                     debug(`Parse error: ${e.message}`);
@@ -1738,6 +2371,8 @@
         initExecutedCharts(numDimensions);
         initRollingAvgChart();
         initPrefixWeightsChart();
+        initRltLossChart();
+        renderEpisodeHistory();
         connect();
 
         // Update stats periodically
