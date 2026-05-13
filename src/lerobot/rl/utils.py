@@ -176,16 +176,23 @@ def preprocess_batch_for_pi05(
     
     return forward_batch
 
-def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fps=30, subtask_texts=None):
+def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fps=30, subtask_texts=None, subsample=1):
     """
     Generate a side-by-side video of configured camera views with a critic curve overlay.
 
     Args:
-        subtask_texts: Optional list of subtask strings (one per frame).
+        subtask_texts: Optional list of subtask strings (one per video frame).
                        Rendered in the top-left corner when provided.
+        subsample:     Stride at which critic values were computed relative to
+                       video frames. With ``subsample=1`` (default),
+                       ``len(critic_values) == num_video_frames`` (legacy 1:1).
+                       With ``subsample>1``, ``critic_values[j]`` corresponds to
+                       video frame ``j * subsample``; the video still uses every
+                       PNG, only the critic curve is sparser.
     """
     if camera_names is None:
         camera_names = ["top", "side"]
+    subsample = max(1, int(subsample))
 
     # Find all images for each camera
     camera_images = []
@@ -199,10 +206,10 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
     if not camera_images:
         raise ValueError("No images found for video generation")
 
-    # Ensure we have the same number of images and critic values across all cameras
-    num_frames = len(critic_values)
-    for imgs in camera_images:
-        num_frames = min(num_frames, len(imgs))
+    # Number of video frames (every camera image is rendered).
+    num_video_frames = min(len(imgs) for imgs in camera_images)
+    # Number of critic samples actually plotted along the curve.
+    num_critic = min(len(critic_values), (num_video_frames + subsample - 1) // subsample)
 
     # Video settings
     # Each view is 224x224, resized to 448x448. Side-by-side is N * 448 x 448.
@@ -216,10 +223,10 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
 
     # Prepare critic curve data for plotting
     # Normalize critic values for plotting (0 to frame_height)
-    critic_np = np.array(critic_values[:num_frames])
-    c_min, c_max = -1.1, 0.1
+    critic_np = np.array(critic_values[:num_critic])
+    c_min, c_max = -2.1, 0.1
     critic_norm = (critic_np - c_min) / (c_max - c_min)
-    norm_clip_max = 1.5
+    norm_clip_max = 1.0
     critic_norm = np.clip(critic_norm, 0, norm_clip_max)
 
     # Map to pixel coordinates (inverted Y for image space)
@@ -227,13 +234,18 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
     lower_half_height = frame_height // 2
     margin = 10
     plot_y = (lower_half_height - 2 * margin) * (1 - critic_norm / norm_clip_max) + (frame_height // 2 + margin)
-    plot_x = np.linspace(0, frame_width, num_frames)
+    # Each critic sample j sits at video-frame j*subsample → map to x across the full video timeline.
+    if num_video_frames > 1:
+        plot_x = (np.arange(num_critic) * subsample) * (frame_width / (num_video_frames - 1))
+        plot_x = np.minimum(plot_x, frame_width)
+    else:
+        plot_x = np.zeros(num_critic)
 
     def get_y(val):
         norm = (val - c_min) / (c_max - c_min)
         return int((lower_half_height - 2 * margin) * (1 - norm / norm_clip_max) + (frame_height // 2 + margin))
 
-    for i in range(num_frames):
+    for i in range(num_video_frames):
         # Load and resize images
         imgs_to_stack = []
         for cam_imgs in camera_images:
@@ -270,11 +282,11 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
         # Draw vertical axis and ticks
         axis_x = 50
         tick_length = 10
-        ticks = [-1.0, -0.75, -0.5, -0.25, 0.0]
+        ticks = [-2.0, -1.5, -1.0, -0.5, 0.0]
 
         # Draw axis line — extend to the full plot top so the axis covers
         # the region above 0.0 where the curve can reach (up to norm_clip_max)
-        y_bottom = get_y(-1.0)
+        y_bottom = get_y(-2.0)
         y_top = frame_height // 2 + margin
         cv2.line(overlay, (axis_x, y_top), (axis_x, y_bottom), (105, 0, 0), 1)
 
@@ -295,8 +307,10 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
         points = np.vstack((plot_x, plot_y)).T.astype(np.int32)
         cv2.polylines(overlay, [points], isClosed=False, color=(200, 100, 100), thickness=1)
 
-        # 2. Draw progressing curve with high alpha (dark blue)
-        prog_points = points[:i+1]
+        # 2. Draw progressing curve with high alpha (dark blue) — clipped to
+        # critic samples produced up to and including video frame `i`.
+        j_max = min(num_critic, i // subsample + 1)
+        prog_points = points[:j_max]
         if len(prog_points) > 1:
             cv2.polylines(overlay, [prog_points], isClosed=False, color=(105, 0, 0), thickness=3)
 

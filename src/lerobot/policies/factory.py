@@ -55,6 +55,7 @@ from .pretrained import PreTrainedPolicy
 from .sac.configuration_sac import SACConfig
 from .smolvla.configuration_smolvla import SmolVLAConfig
 from .tdmpc.configuration_tdmpc import TDMPCConfig
+from .tinypi05.configuration_tinypi05 import TinyPI05Config
 from .utils import validate_visual_features_consistency
 from .vqbet.configuration_vqbet import VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig
@@ -131,6 +132,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .pi05_full.modeling_pi05 import PI05FullPolicy
 
         return PI05FullPolicy
+    elif name in {"tinypi05", "tinypi05v2"}:
+        from .tinypi05.modeling_tinypi05 import TinyPI05Policy, TinyPI05V2Policy
+
+        return TinyPI05V2Policy if name == "tinypi05v2" else TinyPI05Policy
     elif name == "sac":
         from .sac.modeling_sac import SACPolicy
 
@@ -193,6 +198,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI05Config(**kwargs)
     elif policy_type == "pi05_full":
         return PI05FullConfig(**kwargs)
+    elif policy_type == "tinypi05":
+        return TinyPI05Config(**kwargs)
     elif policy_type == "sac":
         return SACConfig(**kwargs)
     elif policy_type == "smolvla":
@@ -264,6 +271,16 @@ def make_pre_post_processors(
             policy configuration type.
     """
     if pretrained_path:
+        if isinstance(policy_cfg, TinyPI05Config):
+            from .tinypi05 import processor_tinypi05  # noqa: F401
+
+            preprocessor_overrides = kwargs.get("preprocessor_overrides") or {}
+            preprocessor_overrides.setdefault(
+                "tinypi05_action_encoding_processor_step",
+                {"action_encoding": policy_cfg.action_encoding},
+            )
+            kwargs["preprocessor_overrides"] = preprocessor_overrides
+
         # TODO(Steven): Temporary patch, implement correctly the processors for Gr00t
         if isinstance(policy_cfg, GrootConfig):
             # GROOT handles normalization in groot_pack_inputs_v3 step
@@ -372,6 +389,14 @@ def make_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
             preprocessor_overrides=kwargs.get("preprocessor_overrides"),
+        )
+
+    elif isinstance(policy_cfg, TinyPI05Config):
+        from .tinypi05.processor_tinypi05 import make_tinypi05_pre_post_processors
+
+        processors = make_tinypi05_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
         )
 
     elif isinstance(policy_cfg, SACConfig):

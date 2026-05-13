@@ -8,7 +8,7 @@ This repo is a research-oriented version of [LeRobot](https://github.com/hugging
 
 This is an active project and we expect to continually add more features and capabilities. Happy to take requests.
 
-<video src="https://github.com/user-attachments/assets/9461ba1e-725b-4ee4-8d32-173fa6a86600" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/9c5330a9-27bf-4aab-98df-ea142f40093d" controls width="100%"></video>
 
 
 ## Key features
@@ -17,6 +17,14 @@ This is an active project and we expect to continually add more features and cap
 - End-to-end implementation of [RECAP](https://arxiv.org/pdf/2511.14759)-like algorithm for offline and online training
 - Asynchronous inference with RTC that runs up to 30Hz with leader guided human invervention. In addition, a live inference script where a user can write subtasks for $\pi_{0.5}$ on the fly.
 - A suite of metrics and validation tools to examine the model's internals like attention maps, clusters of representation, among others.
+
+
+## Roadmap-ish
+
+**This section is meant to describe the work currently being done with its context**
+
+Using this repo, I trained the policy shown in the video above to complete the task under several arrangements. However, there are still failure modes, all of which are related to grasping as it is the hardest part of the task. The goal now is to automatically identify these difficult moments and have the policy focus on them. The current idea is to use the critic. The hypothesis is that the critic variance and its gradient will be highest during the hard parts of the task because those moments determine success or failure. Weighting the flow loss with the critic gradient should then force the policy to focus on those critical steps.
+
 
 
 ## How to install
@@ -66,12 +74,12 @@ python -m lerobot.policies.pi05_full.annotate.subtask_annotate_gemma_4 \
 
 #### Config file
 
-This is the file used for all the scripts in this repo. An example of the config file can be found in the [`rl/config-hiserl.json`](src/lerobot/rl/config-hiserl.json)
+This is the file used for all the scripts in this repo. An example of the config file can be found in the [`rl/config-hiserl.json`](src/lerobot/rl/config-hiserl.json).
 
 To get started with training, the key fields to change are:
 - `root`: this is the path to your dataset.
 - `task`: this is is the task prompt
-- `pi05_checkpoint`: this is the path to your checkpoint. If starting from scratch, use `lerobot/pi05_base` which loads the weight for base $\pi_{0.5}$.
+- `policy.pretrained_path`: this is the path to the TinyPI05 checkpoint used for inference. For `pi05_rl` training configs, use `policy.pi05_checkpoint` instead.
 
 
 #### Action encoding
@@ -120,10 +128,18 @@ Following the suggestions from the RECAP paper, we suggest to retrain every time
 ### Inference
 
 
-Once you have a trained model, your camera indices and follower and leader ports in the config file, and then you can run inference using:
+Once you have a trained model and your camera indices and follower and leader ports are set in the config file, run inference with the HILSerl config. The included config is set up for the self-contained TinyPI05 policy and points at the local weights in `outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model`.
 
 ```bash
-python -m lerobot.rl.inference_pi05_async --config path/to/config.json
+python -m lerobot.rl.inference_pi05_async --config src/lerobot/rl/config-hiserl.json
+```
+
+To upload those local model weights to Hugging Face:
+
+```bash
+uv run huggingface-cli upload <your-hf-user>/tinypi05-so101-pickplace \
+  outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model \
+  --repo-type model
 ```
 
 
@@ -134,5 +150,3 @@ Many _important_ details were ommitted in this introduction, and as we all know 
 - [Advanced usage](docs/pi05_docs/advanced_usage.md): a deep dive on how to use all the features in the repo.
 - [RECAP implementation](docs/pi05_docs/recap_implementation.md): an overview of RECAP and details about our implementation.
 - [Validation metrics](docs/pi05_docs/metrics.md): explains the metrics that we chose and how they help uncover the inner workings of the model.
-
-

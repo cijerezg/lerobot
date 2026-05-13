@@ -62,6 +62,7 @@ from lerobot.probes.utils_pi05 import (
 from lerobot.probes.attention_pi05 import (
     embed_probe_prefix,
     build_sample_list,
+    render_action_to_prefix_matrix,
 )
 
 
@@ -598,11 +599,21 @@ def run_action_drift_jacobian(
                     c_m = causal_map[b_idx : b_idx + 1]
                     p_m = pad_masks[b_idx : b_idx + 1]
                     i_t = [img[b_idx : b_idx + 1] for img in images]
+                    t_t = task_tokens   [b_idx : b_idx + 1]
+                    s_t = subtask_tokens[b_idx : b_idx + 1]
 
                     frames_out, norm_consts = render_disaggregated(
                         c_m, segments, i_t, p_m, patches_per_cam,
                         label_prefix=f"causal_L{layer_idx}",
                     )
+
+                    matrix_frames, matrix_norms = render_action_to_prefix_matrix(
+                        c_m, segments, p_m,
+                        t_t, s_t, policy.model._paligemma_tokenizer,
+                        label_prefix=f"causal_L{layer_idx}",
+                    )
+                    frames_out.update(matrix_frames)
+                    norm_consts.update(matrix_norms)
 
                     for panel, vmax in norm_consts.items():
                         csv_writer.writerow(
@@ -777,11 +788,20 @@ def probe_cli(cfg: TrainRLServerPipelineConfig):
                     c_m = causal_map[b_idx : b_idx + 1]
                     p_m = pad_masks[b_idx : b_idx + 1]
                     i_t = [img[b_idx : b_idx + 1] for img in images]
+                    t_t = task_tokens   [b_idx : b_idx + 1]
+                    s_t = subtask_tokens[b_idx : b_idx + 1]
 
                     frames_out, _ = render_disaggregated(
                         c_m, segments, i_t, p_m, patches_per_cam,
                         label_prefix=f"causal_L{layer_idx}",
                     )
+
+                    matrix_frames, _ = render_action_to_prefix_matrix(
+                        c_m, segments, p_m,
+                        t_t, s_t, policy.model._paligemma_tokenizer,
+                        label_prefix=f"causal_L{layer_idx}",
+                    )
+                    frames_out.update(matrix_frames)
 
                     for key, frame_np in frames_out.items():
                         if key not in writers[layer_idx]:

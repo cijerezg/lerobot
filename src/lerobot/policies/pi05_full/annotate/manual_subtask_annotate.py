@@ -310,7 +310,7 @@ def build_app():
             with gr.Column(scale=2):
                 gr.Markdown("### 3. Annotate Episodes")
                 with gr.Row():
-                    episode_slider = gr.Slider(minimum=0, maximum=0, step=1, label="Episode Index", interactive=True)
+                    episode_slider = gr.Slider(minimum=0, maximum=1, step=1, label="Episode Index", interactive=True)
                     load_ep_btn = gr.Button("Load Episode Video")
                 
                 ep_status = gr.Textbox(label="Episode Status", interactive=False)

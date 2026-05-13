@@ -34,40 +34,33 @@
         "additional_offline_dataset_paths": []
     },
     "policy": {
-        "type": "pi05_rl",
-        "task": "Pick up the orange cube and place it on the black X marker",
-        "pi05_checkpoint": "/home/jack/models/jack_cube_task_step_4800",
-        "tokenizer_max_length": 64,
-        "max_state_dim": 6,
+        "type": "tinypi05",
+        "task": "Pick up the cube and place it at the target",
+        "pretrained_path": "outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model",
+        "tokenizer_max_length": 200,
+        "max_state_dim": 32,
+        "max_action_dim": 32,
         "action_dim": 6,
+        "chunk_size": 50,
+        "n_action_steps": 50,
         "num_inference_steps": 5,
-        "use_separate_critic": true,
-        "knowledge_insulation": true,
-        "loss_weight_flow": 1.0,
-        "loss_weight_action_ce": 1.0,
-        "loss_weight_subtask_ce": 1.0,
         "inference_advantage": 1.0,
-        "subtask_regeneration_interval": 0,
-        "advantage_scaling": 0.2,
-        "n_obs_steps": 1,
-        "reward_normalization_constant": 5.0,
-        "terminal_failure_reward": -16.0,
+        "online_buffer_capacity": 5000,
+        "use_separate_critic": false,
         "rtc_config": {
             "enabled": true,
-            "execution_horizon": 10,
+            "execution_horizon": 5,
             "prefix_attention_schedule": "LINEAR",
-            "max_guidance_weight": 5.0,
+            "max_guidance_weight": 10.0,
             "debug": false,
             "debug_maxlen": 100
         },
         "normalization_mapping": {
             "VISUAL": "IDENTITY",
-            "STATE": "MIN_MAX",
-            "ENV": "MIN_MAX",
+            "STATE": "QUANTILES",
             "ACTION": "QUANTILES"
         },
         "action_encoding": "anchor",
-        "action_encoding_stats_path": "outputs/stats_jack/action_stats_anchor_jack_cube.pt",
         "input_features": {
             "observation.images.side": {
                 "type": "VISUAL",
@@ -89,51 +82,11 @@
             }
         },
         "device": "cuda",
-        "actor_device": "cuda:0",
-        "learner_device": "cuda:0",
         "use_amp": false,
-        "dataset_stats": null,
-        "storage_device": "cpu",
         "dtype": "bfloat16",
         "gradient_checkpointing": true,
-        "online_steps": 20000,
-        "online_buffer_capacity": 5000,
-        "offline_buffer_capacity": 50000,
-        "online_step_before_learning": 10,
-        "policy_update_freq": 1,
-        "discount": 0.97,
-        "async_prefetch": false,
-        "num_critics": 1,
-        "critic_lr": 0.00005,
-        "actor_lr": 0.00005,
-        "optimizer_weight_decay": 0.1,
-        "critic_target_update_weight": 0.005,
-        "utd_ratio": 1,
-        "grad_clip_norm": 2.0,
-        "gradient_accumulation_steps": 1,
-        "offline_steps": 10000,
-        "trainable_params": {
-            "vision_encoder_from_layer": {
-                "vision_tower": 5,
-                "multi_modal_projector": true
-            },
-            "language_from_layer": 0,
-            "critic_language_from_layer": 5
-        },
-        "critic_network_kwargs": {
-            "hidden_dims": [256, 256],
-            "activate_final": true
-        },
-        "actor_learner_config": {
-            "learner_host": "192.168.50.1",
-            "learner_port": 50051,
-            "policy_parameters_push_frequency": 180
-        },
-        "concurrency": {
-            "actor": "threads",
-            "learner": "threads"
-        },
-        "repo_id": "cijerezg/multi-task-toys-merged-v2"
+        "repo_id": "cijerezg/tinypi05-so101-pickplace",
+        "push_to_hub": false
     },
     "probe_parameters": {
         "enable_actions": true,
@@ -175,7 +128,7 @@
             "cameras": {
                 "side": {
                     "type": "opencv",
-                    "index_or_path": "/dev/video4",
+                    "index_or_path": "/dev/video0",
                     "height": 600,
                     "width": 800,
                     "fps": 30,
@@ -183,7 +136,7 @@
                 },
                 "top": {
                     "type": "opencv",
-                    "index_or_path": "/dev/video0",
+                    "index_or_path": "/dev/video4",
                     "height": 600,
                     "width": 800,
                     "fps": 30,
@@ -215,7 +168,7 @@
                     0.54, -90.69, 99.55, 73.7, -50.23, 42.71
                 ],
                 "reset_time_s": 10,
-                "control_time_s": 120.0,
+                "control_time_s": 1000.0,
                 "terminate_on_success": true
             },
             "reward_classifier": {
@@ -226,8 +179,8 @@
             "max_gripper_pos": 30
         },
         "name": "real_robot",
-        "fps": 20,
-        "task": "Pick up the orange cube and place it on the black X marker",
+        "fps": 30,
+        "task": "Pick up the cube and place it at the target",
         "features": {
             "observation.images.side": {
                 "type": "VISUAL",

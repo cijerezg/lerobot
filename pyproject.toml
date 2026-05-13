@@ -92,6 +92,7 @@ dependencies = [
     # Custom analysis (research fork)
     "scikit-learn",
     "umap-learn",
+    "gradio",
 ]
 
 # Optional dependencies

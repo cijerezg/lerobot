@@ -501,6 +501,7 @@ class ReplayBuffer:
         use_drq: bool = True,
         reward_normalization_constant: float = 1.0,
         terminal_failure_reward: float = -1.0,
+        inject_complementary_info: dict | None = None,
     ) -> "ReplayBuffer":
         """
         Load a ReplayBuffer from pre-decoded memmap cache files.
@@ -579,15 +580,29 @@ class ReplayBuffer:
         comp_keys = meta.get("complementary_info_keys", [])
         has_golden = meta.get("inject_golden", False)
 
+        # Caller-side override: if inject_complementary_info explicitly sets
+        # is_golden, honor it over the cache's baked-in flag.
+        caller_wants_golden: bool | None = None
+        if inject_complementary_info is not None and "is_golden" in inject_complementary_info:
+            caller_wants_golden = bool(inject_complementary_info["is_golden"])
+
         all_comp_keys = []
         for k in comp_keys:
+            if k == "is_golden" and caller_wants_golden is False:
+                continue
             safe = _sanitize(f"complementary_info.{k}")
             if (cache_dir / f"{safe}.bin").exists():
                 all_comp_keys.append(k)
-        if has_golden and "is_golden" not in all_comp_keys:
+        load_golden = has_golden if caller_wants_golden is None else caller_wants_golden
+        if load_golden and "is_golden" not in all_comp_keys:
             safe = _sanitize("complementary_info.is_golden")
             if (cache_dir / f"{safe}.bin").exists():
                 all_comp_keys.append("is_golden")
+            elif caller_wants_golden is True:
+                logger.warning(
+                    "treat_main_dataset_as_golden=True but cache has no is_golden column; "
+                    "proceeding without golden bypass. Rebuild the cache with --inject-golden to enable."
+                )
 
         replay_buffer.has_complementary_info = len(all_comp_keys) > 0
         replay_buffer.complementary_info_keys = list(all_comp_keys)
@@ -675,6 +690,7 @@ class ReplayBuffer:
                     use_drq=use_drq,
                     reward_normalization_constant=reward_normalization_constant,
                     terminal_failure_reward=terminal_failure_reward,
+                    inject_complementary_info=inject_complementary_info,
                 )
             else:
                 logger.info(f"No valid cache found in {cache_dir}, falling back to video decode")

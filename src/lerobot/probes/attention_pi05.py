@@ -430,76 +430,268 @@ def render_image_overlays(attn_weights, segments, image_tensors, pad_masks,
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Full attention matrix figure
+# Action → [action | language | subtask] focused matrix
 # ──────────────────────────────────────────────────────────────────────────────
 
-_SEG_COLORS = {
-    "img1":     (76,  114, 176),
-    "img2":     (85,  168, 104),
-    "language": (196, 78,  82),
-    "subtask":  (129, 114, 178),
-    "action":   (204, 185, 116),
-}
-_DEFAULT_COLOR = (119, 119, 119)
+def _decode_token_label(tokenizer, tid):
+    """Decode a single token ID to a readable ASCII label.
+
+    Uses tokenizer.decode() (matches the rest of the codebase, e.g. rl_pi05.py
+    and offline_inference_pi05.py); convert_ids_to_tokens leaks SentencePiece
+    markers (U+2581) which cv2's Hershey font can't render and shows as '?'.
+    Empty/whitespace-only results return "" so the label is skipped and the
+    column renders as a blank separator (e.g. between digits of a state value).
+    """
+    text = tokenizer.decode([int(tid)], skip_special_tokens=False)
+    text = text.replace("\n", " ").strip()
+    if not text:
+        return ""
+    return text.encode("ascii", errors="replace").decode("ascii")
 
 
-def cv2_draw_matrix(attn_mat, segments, title):
-    mat_np   = attn_mat.numpy() if hasattr(attn_mat, "numpy") else attn_mat
-    L        = mat_np.shape[0]
-    out_size = 500
+def _draw_rotated_text(canvas, text, x_center, y_top, font_scale, color):
+    """Render `text` rotated 90° CW (reads top-to-bottom) onto `canvas` in-place,
+    centered horizontally at x_center, starting at y_top. Uses max-blend so it
+    won't erase existing dividers."""
+    if not text:
+        return
+    (tw, th), baseline = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1
+    )
+    pad = 2
+    sub = np.zeros((th + baseline + pad * 2, tw + pad * 2, 3), dtype=np.uint8)
+    cv2.putText(sub, text, (pad, th + pad),
+                cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 1, cv2.LINE_AA)
+    rotated = cv2.rotate(sub, cv2.ROTATE_90_CLOCKWISE)
+    rh, rw = rotated.shape[:2]
+    x0 = max(0, x_center - rw // 2)
+    y0 = y_top
+    x1 = min(canvas.shape[1], x0 + rw)
+    y1 = min(canvas.shape[0], y0 + rh)
+    if x1 > x0 and y1 > y0:
+        roi = canvas[y0:y1, x0:x1]
+        np.maximum(roi, rotated[: y1 - y0, : x1 - x0], out=roi)
 
-    mat_min, mat_max = mat_np.min(), mat_np.max()
-    mat_norm  = (mat_np - mat_min) / (mat_max - mat_min + 1e-8)
-    mat_gray  = (mat_norm * 255).astype(np.uint8)
-    mat_color = cv2.applyColorMap(mat_gray, cv2.COLORMAP_VIRIDIS)
-    mat_rgb   = cv2.cvtColor(mat_color, cv2.COLOR_BGR2RGB)
-    mat_rgb   = cv2.resize(mat_rgb, (out_size, out_size), interpolation=cv2.INTER_NEAREST)
 
-    scale = out_size / L if L > 0 else 1
+def _render_matrix_panel(
+    mat, vmax, col_labels, n_action, div1, div2, n_lang, n_subtask,
+    title, out_w, out_h,
+    title_font_scale=0.55, label_font_scale=0.35, group_font_scale=0.5,
+):
+    """Render a single attention matrix panel using cv2.
 
-    for name, s, e in segments:
-        c = _SEG_COLORS.get(name, _DEFAULT_COLOR)
-        for pos in [s, e]:
-            p_scaled     = int(pos * scale)
-            line_overlay = mat_rgb.copy()
-            cv2.line(line_overlay, (0, p_scaled), (out_size, p_scaled), c, 1)
-            cv2.line(line_overlay, (p_scaled, 0), (p_scaled, out_size), c, 1)
-            mat_rgb = cv2.addWeighted(mat_rgb, 0.7, line_overlay, 0.3, 0)
+    Layout: title strip on top, y-axis index labels on left, heatmap in the
+    middle, group annotation strip + rotated column labels on the bottom.
+    """
+    margin_top    = 32
+    margin_left   = 42
+    margin_right  = 8
+    margin_bottom = 140
 
-    cv2.rectangle(mat_rgb, (0, 0), (out_size, 25), (0, 0, 0), cv2.FILLED)
-    cv2.putText(mat_rgb, title, (5, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+    hm_x0 = margin_left
+    hm_y0 = margin_top
+    hm_w  = out_w - margin_left - margin_right
+    hm_h  = out_h - margin_top - margin_bottom
+
+    arr = mat.numpy() if hasattr(mat, "numpy") else mat
+    norm = (arr / max(vmax, 1e-8)).clip(0, 1)
+    gray = (norm * 255).astype(np.uint8)
+    color_bgr = cv2.applyColorMap(gray, cv2.COLORMAP_VIRIDIS)
+    color_rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
+    color_rgb = cv2.resize(color_rgb, (hm_w, hm_h), interpolation=cv2.INTER_NEAREST)
+
+    canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+    canvas[hm_y0 : hm_y0 + hm_h, hm_x0 : hm_x0 + hm_w] = color_rgb
+
+    cv2.putText(canvas, title, (hm_x0 + 4, margin_top - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, title_font_scale,
                 (255, 255, 255), 1, cv2.LINE_AA)
-    return mat_rgb
+
+    n_cols     = len(col_labels)
+    px_per_col = hm_w / max(n_cols, 1)
+    px_per_row = hm_h / max(n_action, 1)
+
+    for ai in range(0, n_action, 5):
+        y = int(hm_y0 + (ai + 0.5) * px_per_row + 4)
+        cv2.putText(canvas, str(ai), (4, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1, cv2.LINE_AA)
+
+    for div in (div1, div2):
+        x = int(hm_x0 + div * px_per_col)
+        cv2.line(canvas, (x, hm_y0), (x, hm_y0 + hm_h), (255, 255, 255), 1)
+
+    annot_y = hm_y0 + hm_h + 18
+
+    def _label_group(name, x_start_col, x_end_col):
+        x_mid = int(hm_x0 + ((x_start_col + x_end_col) / 2) * px_per_col)
+        (tw, _th), _ = cv2.getTextSize(
+            name, cv2.FONT_HERSHEY_SIMPLEX, group_font_scale, 1
+        )
+        cv2.putText(canvas, name, (x_mid - tw // 2, annot_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, group_font_scale,
+                    (255, 255, 255), 1, cv2.LINE_AA)
+
+    _label_group("action self", 0, div1)
+    if n_lang > 0:
+        _label_group("language", div1, div1 + n_lang)
+    if n_subtask > 0:
+        _label_group("subtask", div2, div2 + n_subtask)
+
+    label_y = hm_y0 + hm_h + 28
+    for ci, text in enumerate(col_labels):
+        if not text:
+            continue
+        x_center = int(hm_x0 + (ci + 0.5) * px_per_col)
+        _draw_rotated_text(
+            canvas, text, x_center, label_y, label_font_scale, (220, 220, 220)
+        )
+
+    return canvas
 
 
-def render_full_matrix(attn_weights, segments, pad_masks):
-    frames_out = {}
-    n_heads    = attn_weights.shape[1]
-    attn       = torch.nan_to_num(attn_weights[0].float().cpu(), nan=0.0)
-    pad        = pad_masks[0].cpu()
+def _render_heads_grid(
+    per_head_mat, vmax, col_labels, n_action, div1, div2, n_lang, n_subtask,
+    out_w, out_h, suptitle,
+):
+    """Tile per-head panels into a 2×4 grid below a suptitle strip."""
+    title_h = 36
+    h_cols, h_rows = 4, 2
+    grid_h  = out_h - title_h
+    panel_w = out_w // h_cols
+    panel_h = grid_h // h_rows
 
-    pad_2d      = pad[:, None] & pad[None, :]
-    attn_masked = attn * pad_2d[None].float()
+    canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+    cv2.putText(canvas, suptitle, (12, 26),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
 
-    mean_mat = attn_masked.mean(0)
-    frames_out["matrix_mean"] = cv2_draw_matrix(mean_mat, segments, "mean across heads")
+    H = per_head_mat.shape[0]
+    for hi in range(H):
+        r = hi // h_cols
+        c = hi % h_cols
+        sub = _render_matrix_panel(
+            per_head_mat[hi], vmax, col_labels, n_action, div1, div2,
+            n_lang, n_subtask,
+            title=f"head {hi}", out_w=panel_w, out_h=panel_h,
+            title_font_scale=0.45, label_font_scale=0.30, group_font_scale=0.4,
+        )
+        canvas[title_h + r * panel_h : title_h + (r + 1) * panel_h,
+               c * panel_w : (c + 1) * panel_w] = sub
+    return canvas
 
-    h_cols = 4
-    h_rows = (n_heads + h_cols - 1) // h_cols
 
-    head_rows = []
-    for r in range(h_rows):
-        row_imgs = []
-        for c in range(h_cols):
-            idx = r * h_cols + c
-            if idx < n_heads:
-                row_imgs.append(cv2_draw_matrix(attn_masked[idx], segments, f"head {idx}"))
-            else:
-                row_imgs.append(np.zeros((500, 500, 3), dtype=np.uint8))
-        head_rows.append(np.hstack(row_imgs))
+def render_action_to_prefix_matrix(
+    attn_weights, segments, pad_masks,
+    task_tokens, subtask_tokens, tokenizer,
+    label_prefix="matrix",
+    max_lang_cols=48, max_subtask_cols=16,
+):
+    """
+    Attention from action queries to [action | language | subtask] keys.
 
-    frames_out["matrix_heads"] = np.vstack(head_rows)
-    return frames_out
+    Drops image columns (already covered by overlays). Each row is renormalized
+    over the displayed columns so values reflect relative weighting among
+    {action self, language, subtask} rather than tiny residuals after most
+    mass landed on image patches.
+
+    To keep column positions stable across frames (subtask length varies
+    frame-to-frame), the language and subtask blocks always take a fixed
+    `max_*_cols` budget. Pad positions within that budget render as black
+    (their attention is masked to 0, so they contribute 0 to the row sum
+    and don't affect renormalization) and have empty labels.
+
+    Parameters
+    ----------
+    attn_weights     : Tensor [1, H, seq, seq]
+    segments         : list of (name, start, end)
+    pad_masks        : Tensor [1, seq]
+    task_tokens      : Tensor [1, T_lang]   raw token IDs (pre-pad-strip)
+    subtask_tokens   : Tensor [1, T_subtask]
+    tokenizer        : transformers tokenizer (e.g. policy.model._paligemma_tokenizer)
+    label_prefix     : str — prepended to output dict keys
+    max_lang_cols    : fixed display budget for language tokens
+    max_subtask_cols : fixed display budget for subtask tokens
+
+    Returns
+    -------
+    frames_out  : dict
+        - "{label_prefix}_action_to_prefix_mean"  : [Hp, Wp, 3] uint8
+        - "{label_prefix}_action_to_prefix_heads" : [Hp, Wp, 3] uint8 (2×4 grid)
+    norm_consts : dict  panel → vmax
+    """
+    seg_dict = {name: (s, e) for name, s, e in segments}
+    a_s, a_e = seg_dict["action"]
+    l_s, l_e = seg_dict["language"]
+    s_s, s_e = seg_dict["subtask"]
+
+    attn = torch.nan_to_num(attn_weights[0].float().cpu(), nan=0.0)  # [H, seq, seq]
+    pad  = pad_masks[0].cpu()
+    H    = attn.shape[0]
+
+    # Fixed display budgets so column positions are stable across frames.
+    n_lang    = min(l_e - l_s, max_lang_cols)
+    n_subtask = min(s_e - s_s, max_subtask_cols)
+
+    action_col_idx  = list(range(a_s, a_e))
+    lang_col_idx    = list(range(l_s, l_s + n_lang))
+    subtask_col_idx = list(range(s_s, s_s + n_subtask))
+    cols            = action_col_idx + lang_col_idx + subtask_col_idx
+
+    n_action = a_e - a_s
+
+    # Labels: blank for pad positions, decoded text for valid ones.
+    lang_valid_slice    = pad[l_s : l_s + n_lang]
+    subtask_valid_slice = pad[s_s : s_s + n_subtask]
+
+    lang_labels = [
+        _decode_token_label(tokenizer, task_tokens[0, i].item()) if v else ""
+        for i, v in enumerate(lang_valid_slice.tolist())
+    ]
+    subtask_labels = [
+        _decode_token_label(tokenizer, subtask_tokens[0, i].item()) if v else ""
+        for i, v in enumerate(subtask_valid_slice.tolist())
+    ]
+    action_labels  = [str(i) if (i % 5 == 0) else "" for i in range(n_action)]
+    all_col_labels = action_labels + lang_labels + subtask_labels
+
+    # Slice and renormalize each row over displayed cols
+    sliced      = attn[:, a_s:a_e][:, :, cols]           # [H, n_action, n_cols]
+    row_sum     = sliced.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+    sliced_norm = sliced / row_sum
+
+    div1 = n_action               # action ↔ language boundary
+    div2 = n_action + n_lang      # language ↔ subtask boundary
+
+    # Fixed output dims (constant across frames so imageio writers stay happy).
+    MEAN_W,  MEAN_H  = 2400, 900
+    HEADS_W, HEADS_H = 3600, 1350
+
+    frames_out  = {}
+    norm_consts = {}
+
+    # ── Mean panel ────────────────────────────────────────────────────────────
+    mean_mat  = sliced_norm.mean(0)
+    mean_vmax = mean_mat.max().item()
+    norm_consts[f"{label_prefix}_action_to_prefix_mean"] = mean_vmax
+
+    frames_out[f"{label_prefix}_action_to_prefix_mean"] = _render_matrix_panel(
+        mean_mat, mean_vmax, all_col_labels, n_action, div1, div2,
+        n_lang, n_subtask,
+        title="action → [action | language | subtask] (mean over heads, row-normalized)",
+        out_w=MEAN_W, out_h=MEAN_H,
+    )
+
+    # ── Per-head 2×4 grid ─────────────────────────────────────────────────────
+    heads_vmax = sliced_norm.max().item()
+    norm_consts[f"{label_prefix}_action_to_prefix_heads"] = heads_vmax
+
+    frames_out[f"{label_prefix}_action_to_prefix_heads"] = _render_heads_grid(
+        sliced_norm, heads_vmax, all_col_labels, n_action, div1, div2,
+        n_lang, n_subtask,
+        out_w=HEADS_W, out_h=HEADS_H,
+        suptitle="action → [action | language | subtask] (per-head, row-normalized)",
+    )
+
+    return frames_out, norm_consts
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -623,13 +815,21 @@ def probe_cli(cfg: ProbeAttentionConfig):
                         a_w = attn_weights[b_idx : b_idx + 1]
                         p_m = pad_masks   [b_idx : b_idx + 1]
                         i_t = [img[b_idx : b_idx + 1] for img in images]
+                        t_t = task_tokens   [b_idx : b_idx + 1]
+                        s_t = subtask_tokens[b_idx : b_idx + 1]
 
                         heatmap_frames, norm_consts = render_image_overlays(
                             a_w, segments, i_t, p_m, patches_per_cam,
                             overlay=use_overlay,
                         )
                         frames_out = dict(heatmap_frames)
-                        frames_out.update(render_full_matrix(a_w, segments, p_m))
+
+                        matrix_frames, matrix_norms = render_action_to_prefix_matrix(
+                            a_w, segments, p_m,
+                            t_t, s_t, policy.model._paligemma_tokenizer,
+                        )
+                        frames_out.update(matrix_frames)
+                        norm_consts.update(matrix_norms)
 
                         for panel, vmax in norm_consts.items():
                             csv_writer.writerow([

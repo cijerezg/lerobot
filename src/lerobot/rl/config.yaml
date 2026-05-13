@@ -1,0 +1,350 @@
+# =============================================================================
+# HISERL pi0.5 RL training config
+# =============================================================================
+# Used by:
+#   - lerobot/src/lerobot/scripts/offline_learner_pi05.py   (offline)
+#   - lerobot/src/lerobot/rl/inference_pi05_async.py        (online actor)
+#   - lerobot/src/lerobot/rl/inference_pi05_async_interactive.py
+#   - lerobot/src/lerobot/probes/{actions,representations,attention,...}_pi05.py
+#
+# Schema: TrainRLServerPipelineConfig in lerobot/src/lerobot/configs/train.py
+# Override any field via CLI, e.g.:
+#   --probe_parameters.output_dir=outputs/probe
+#   --policy.actor_lr=1e-5
+#
+# Layout: top of file = frequently-tuned knobs; rarely-touched fields sink down.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Hot knobs (changed often)
+# -----------------------------------------------------------------------------
+offline_output_dir: outputs/pi05_full_offline_training_diverse-v3
+batch_size: 64
+
+
+# -----------------------------------------------------------------------------
+# Dataset
+# -----------------------------------------------------------------------------
+dataset:
+  root: outputs/annotated-dataset-v7
+  repo_id: cijerezg/yellow-car-offline-training-v2  # used for hub-push naming only
+  use_imagenet_stats: false
+  max_episodes: null                   # null → use all episodes
+  additional_offline_dataset_paths: []   #  Datasets generated from inference 
+
+
+# -----------------------------------------------------------------------------
+# RL flags (shared offline + online)
+# -----------------------------------------------------------------------------
+skip_critic: true                      # skip critic train step; pretrained critic still runs forward for logging
+treat_main_dataset_as_golden: true     # select true only if root dataset is of very high quality
+
+
+# -----------------------------------------------------------------------------
+# Validation (offline)
+# -----------------------------------------------------------------------------
+val_dataset_path: outputs/annotated-dataset-validation-v7
+val_split: 0.0                 # if > 0: hold out fraction of main dataset instead
+val_freq: 400                  # optimizer steps between validation passes
+val_on_start: false
+
+
+# =============================================================================
+# Policy: pi0.5 + RL head
+# =============================================================================
+policy:
+  # ---- Identity & checkpoint ------------------------------------------------
+  type: pi05_rl
+  task: "Pick up the red truck and put it in the bowl"
+  pi05_checkpoint: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
+
+  # effective batch size: gradient_accumulation_steps * batch_size
+  gradient_accumulation_steps: 2
+
+  # ---- Trainable params (LoRA-style layer slicing) --------------------------
+  # `from_layer: N` → unfreeze layers ≥ N. `null` → fully frozen.
+  trainable_params:
+    vision_encoder_from_layer:
+      vision_tower: 5
+      multi_modal_projector: true
+    language_from_layer: 5
+    critic_language_from_layer: 5
+    critic_vision_encoder_from_layer:
+      vision_tower: null
+      multi_modal_projector: false
+
+  # ---- Losses & optimizer ---------------------------------------------------
+  loss_weight_flow: 1.0                 # flow-matching MSE
+  loss_weight_action_ce: 1.0            # FAST action-token CE
+  loss_weight_subtask_ce: 1.0           # subtask-token CE
+  actor_lr: 0.00005
+  critic_lr: 0.0001
+  optimizer_weight_decay: 0.1
+  grad_clip_norm: 2.0
+
+  # ---- Reward shaping -------------------------------------------------------
+  reward_normalization_constant: 10.0
+  terminal_failure_reward: -15.0
+  advantage_scaling: 0.20
+
+  # ---- Retain update with base weights (average between init and current)
+  anchor_alpha: 0.2
+  anchor_every_n_steps: 2000
+  anchor_targets: [actor, critic]
+
+  # ---- Critic (distributional / HL-Gauss) -----------------------------------
+  use_distributional_critic: true       # CE over value bins; metrics also log MSE
+  num_value_bins: 201
+  value_support_min: -2.0
+  value_support_max: 0.0
+  hl_gauss_sigma_ratio: 8               # σ in units of bin width
+  num_critics: 1
+  critic_target_update_weight: 0.02     # Polyak τ
+  critic_target_update_every: 4         # run Polyak every N optimizer steps
+  discount: 0.97
+
+  # ---- Buffer & training schedule -------------------------------------------
+  online_buffer_capacity: 5000
+  offline_buffer_capacity: 50000
+  online_step_before_learning: 10       # warmup transitions before learner starts (online)
+  online_steps: 20000
+  offline_steps: 10000
+  policy_update_freq: 1                 # actor updates per critic update
+  critic_warmup_steps: 0
+  utd_ratio: 1
+  async_prefetch: false
+
+  # ---- Inference ------------------------------------------------------------
+  inference_advantage: 1.0              # constant advantage value injected at inference
+  subtask_regeneration_interval: 1.5    # seconds between subtask re-generations
+  rtc_config:                           # real-time chunking (action-queue prefix attention)
+    enabled: true
+    execution_horizon: 10
+    prefix_attention_schedule: LINEAR
+    max_guidance_weight: 10.0
+    debug: false
+    debug_maxlen: 100
+
+  # ---- Architecture / I/O ---------------------------------------------------
+  tokenizer_max_length: 64
+  max_state_dim: 6
+  action_dim: 6
+  n_obs_steps: 1
+  num_inference_steps: 5                # flow-matching denoising steps
+  max_decoding_steps: 24                # subtask token decode budget
+  knowledge_insulation: true            # block grads from action tokens into VLM K/V
+  use_separate_critic: true
+  dtype: bfloat16
+  gradient_checkpointing: true
+  use_amp: false
+  action_encoding: anchor
+  action_encoding_stats_path: outputs/stats/action_stats_anchor_annotated_dataset-v4.pt
+  normalization_mapping:
+    VISUAL: IDENTITY
+    STATE: MIN_MAX
+    ENV: MIN_MAX
+    ACTION: QUANTILES
+  input_features:
+    observation.images.wrist:
+      type: VISUAL
+      shape: [3, 224, 224]
+    observation.images.top:
+      type: VISUAL
+      shape: [3, 224, 224]
+    observation.state:
+      type: STATE
+      shape: [6]
+  output_features:
+    action:
+      type: ACTION
+      shape: [6]
+
+  # ---- Devices --------------------------------------------------------------
+  device: cuda                          # default; per-process overrides below
+  actor_device: cuda:0
+  learner_device: cuda:0
+  storage_device: cpu                   # replay-buffer tensors live here
+
+  # ---- Distributed runtime (online actor↔learner) ---------------------------
+  actor_learner_config:
+    learner_host: 192.168.50.1
+    learner_port: 50051
+    policy_parameters_push_frequency: 180
+  concurrency:
+    actor: threads
+    learner: threads
+
+  # ---- Hub (required by validate(); not actually pushed) --------------------
+  repo_id: cijerezg/multi-task-toys-merged-v2
+
+
+# -----------------------------------------------------------------------------
+# Run identity & I/O
+# -----------------------------------------------------------------------------
+output_dir: null               # online-run output dir; null → auto outputs/train/<date>/...
+job_name: default
+resume: false
+seed: 42
+
+
+# -----------------------------------------------------------------------------
+# Logging / checkpointing
+# -----------------------------------------------------------------------------
+log_freq: 20
+save_checkpoint: true
+save_freq: 100                 # online checkpoint cadence (optimizer steps)
+offline_save_freq: 400         # offline checkpoint cadence; falls back to save_freq if null
+buffer_cache_dir: outputs/buffer_cache-v1
+use_rerun: true
+
+
+# -----------------------------------------------------------------------------
+# Episode-level logging (online actor)
+# -----------------------------------------------------------------------------
+episode_logging_freq: 4        # log every Nth episode
+episode_save_freq: 10          # save buffer snapshot every Nth episode
+video_logging_cameras: [top, wrist]
+
+
+# -----------------------------------------------------------------------------
+# Dataloader
+# -----------------------------------------------------------------------------
+num_workers: 4
+
+
+# -----------------------------------------------------------------------------
+# Weights & Biases
+# -----------------------------------------------------------------------------
+wandb:
+  enable: true
+  project: so101_real-v1               # online run project
+  offline_project: so101_real_offline-v1
+  disable_artifact: true               # don't push checkpoints as wandb artifacts
+
+
+# =============================================================================
+# Probes (offline_val_pi05.py + standalone probe scripts)
+# =============================================================================
+probe_parameters:
+  # ---- Enable flags ---------------------------------------------------------
+  enable_actions: false
+  enable_representations: false
+  enable_attention: false
+  enable_offline_inference: false
+  enable_spatial_memorization: false
+  enable_action_drift_jacobian: false
+  enable_spatial_memorization_jacobian: false
+  enable_critic_values_distribution: true
+
+  # ---- Common ---------------------------------------------------------------
+  output_dir: outputs/probe
+  mode: all                             # collect | plot | all
+  max_episodes: 5
+  n_frames_per_episode: 128
+  random_seed: 42
+  timestep: 0.5                         # single diffusion timestep used by all probes
+
+  # ---- Actions / representations --------------------------------------------
+  ref_max_episodes: 2
+  ref_n_frames_per_episode: 256
+  action_pca_dims: 50
+  repr_pca_dims: 100
+  umap_n_neighbors: 15
+  umap_min_dist: 0.1
+  umap_seed: 42
+  sites: prefix,suffix
+  ep_3d_a: 0
+  ep_3d_b: 1
+  subtask_injection: false
+
+  # ---- Attention ------------------------------------------------------------
+  validation_batch_size: 32
+  attn_eval_episodes: null
+  attn_eval_subsample: 2
+
+  # ---- Spatial memorization -------------------------------------------------
+  spatial_layers: "0,9,17"
+  spatial_n_frames: 32
+
+  # ---- Critic values distribution -------------------------------------------
+  critic_adv_frames: 2000               # frames sampled for V(s)/TD-error
+  critic_grad_frames: 800               # frames sampled for ||dV/dvision||
+
+
+# =============================================================================
+# Environment (real robot via gym_manipulator)
+# =============================================================================
+env:
+  type: gym_manipulator
+  name: real_robot
+  fps: 30
+  # task is auto-mirrored from policy.task at runtime (offline_learner_pi05.py / learner.py).
+
+  # ---- Robot ----------------------------------------------------------------
+  robot:
+    type: so101_follower
+    port: /dev/ttyACM0
+    id: follower_arm_v2
+    cameras:
+      wrist:
+        type: opencv
+        index_or_path: 0
+        height: 480
+        width: 640
+        fps: 30
+      top:
+        type: opencv
+        index_or_path: 2
+        height: 480
+        width: 640
+        fps: 30
+
+  # ---- Teleop ---------------------------------------------------------------
+  teleop:
+    type: so101_leader
+    port: /dev/ttyACM1
+    id: leader_arm_v2
+
+  # ---- Processor (gym wrapper) ----------------------------------------------
+  processor:
+    control_mode: leader
+    observation:
+      display_cameras: false
+      add_joint_velocity_to_observation: false
+      add_current_to_observation: false
+    image_preprocessing:
+      resize_size: [224, 224]
+    gripper:
+      use_gripper: true
+      gripper_penalty: 0.00
+    reset:
+      fixed_reset_joint_positions: [0.54, -90.69, 99.55, 73.70, -50.23, 42.71]
+      reset_time_s: 10
+      control_time_s: 200.0
+      terminate_on_success: true
+    reward_classifier:
+      pretrained_path: null
+      success_threshold: 0.5
+      success_reward: 1.0
+    max_gripper_pos: 30
+
+  # ---- Feature schema -------------------------------------------------------
+  features:
+    observation.images.wrist:
+      type: VISUAL
+      shape: [3, 128, 128]
+    observation.images.top:
+      type: VISUAL
+      shape: [3, 128, 128]
+    observation.state:
+      type: STATE
+      shape: [6]
+    action:
+      type: ACTION
+      shape: [6]
+  features_map:
+    observation.images.wrist: observation.images.wrist
+    observation.images.top: observation.images.top
+    observation.state: observation.state
+    action: action

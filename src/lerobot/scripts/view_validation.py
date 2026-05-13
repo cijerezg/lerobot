@@ -146,6 +146,39 @@ def discover_spatial_memorization_files(val_dir: Path, steps: list[str], probe_d
     return []
 
 
+def discover_critic_values_files(val_dir: Path, steps: list[str]) -> list[str]:
+    """Discover PNGs produced by the critic_values_distribution probe.
+
+    The probe writes flat PNGs into step_NNNN/critic_values_distribution/.
+    Returned names preserve a friendly ordering: distribution plots first,
+    then percentile frames in numeric order.
+    """
+    seen: set[str] = set()
+    for s in steps:
+        d = val_dir / s / "critic_values_distribution"
+        if d.exists() and d.is_dir():
+            for p in d.glob("*.png"):
+                seen.add(p.name)
+    if not seen:
+        return []
+
+    def _sort_key(name: str) -> tuple[int, str]:
+        # advantage_dist first, then gradient_magnitudes, then frame_pXX in numeric order
+        if name == "advantage_dist.png":
+            return (0, name)
+        if name == "gradient_magnitudes.png":
+            return (1, name)
+        if name.startswith("frame_p") and name.endswith(".png"):
+            try:
+                pct = int(name[len("frame_p"):-len(".png")])
+                return (2, f"{pct:03d}")
+            except ValueError:
+                return (3, name)
+        return (4, name)
+
+    return sorted(seen, key=_sort_key)
+
+
 # ---------------------------------------------------------------------------
 # Rendering helpers
 # ---------------------------------------------------------------------------
@@ -322,6 +355,8 @@ def build_app(run_dir: str):
 
     smj_layers = discover_spatial_memorization_layers(val_dir, all_steps, "spatial_memorization_jacobian")
     smj_files = discover_spatial_memorization_files(val_dir, all_steps, "spatial_memorization_jacobian", smj_layers)
+
+    cv_files = discover_critic_values_files(val_dir, all_steps)
     default_indices = sorted(list({0, len(all_steps) // 2, len(all_steps) - 1}))
     default_steps = [all_steps[i] for i in default_indices]
 
@@ -558,6 +593,27 @@ def build_app(run_dir: str):
                 smj_file_dd.change(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
                 step_selector.change(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
                 app.load(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
+
+        # ---- Critic Values tab ----
+        if cv_files:
+            with gr.Tab("Critic Values"):
+                cv_file_dd = gr.Dropdown(
+                    choices=cv_files, value=cv_files[0], label="View"
+                )
+                cv_html = gr.HTML()
+
+                def render_cv(selected_steps, fname):
+                    if not selected_steps or not fname:
+                        return ""
+                    items = [
+                        (val_dir / s / "critic_values_distribution" / fname, step_label(s))
+                        for s in selected_steps
+                    ]
+                    return render_image_grid(items)
+
+                cv_file_dd.change(render_cv, [step_selector, cv_file_dd], cv_html)
+                step_selector.change(render_cv, [step_selector, cv_file_dd], cv_html)
+                app.load(render_cv, [step_selector, cv_file_dd], cv_html)
 
     return app
 

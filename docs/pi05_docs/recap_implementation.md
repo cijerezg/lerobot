@@ -242,7 +242,7 @@ For online transitions, the actor stores the exact subtask tokens it used during
 
 The full $\pi_{0.5}$ + critic stack is too large to train end-to-end on a single workstation, so only a subset of parameters is unfrozen. The strategy is configured via `policy.trainable_params` and resolved at learner startup.
 
-| Component | Config field | Default in `config-hiserl.json` | Total layers |
+| Component | Config field | Default in `config-hiserl.yaml` | Total layers |
 |-----------|--------------|---------------------------------|--------------|
 | Vision tower (SigLIP) | `vision_tower` | `5` (train layers 5–26) | 27 |
 | Multi-modal projector | `multi_modal_projector` | `true` | 1 |
@@ -251,7 +251,7 @@ The full $\pi_{0.5}$ + critic stack is too large to train end-to-end on a single
 | Critic decoder layers | `critic_language_from_layer` | `1` (train layers 1–5) | 6 |
 | Critic value head / queries / norm | — | always trained | — |
 
-Setting any `_from_layer` field to `null` freezes the entire component. The dataclass defaults (`None`) freeze everything by default; the practical defaults shown above come from `config-hiserl.json`.
+Setting any `_from_layer` field to `null` freezes the entire component. The dataclass defaults (`None`) freeze everything by default; the practical defaults shown above come from `config-hiserl.yaml`.
 
 For online training the freezing tends to be more aggressive than offline (roughly 25% of parameters trained vs. ~80% offline), purely because online imposes the additional cost of the actor process and the gRPC traffic.
 
@@ -274,7 +274,7 @@ The asymmetry between success (+1) and failure (-16) is intentional: failure sho
 
 ## Key hyperparameters
 
-These are the values used in the default `config-hiserl.json`. The dataclass defaults in `PI05RLConfig` differ in places (e.g., `advantage_scaling=1.0`, `gradient_accumulation_steps=1`, `grad_clip_norm=40.0`, `actor_lr=critic_lr=3e-4`) — the config below is what we run.
+These are the values used in the default `config-hiserl.yaml`. The dataclass defaults in `PI05RLConfig` differ in places (e.g., `advantage_scaling=1.0`, `gradient_accumulation_steps=1`, `grad_clip_norm=40.0`, `actor_lr=critic_lr=3e-4`) — the config below is what we run.
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|

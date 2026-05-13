@@ -22,7 +22,7 @@ without spawning actors or handling online data collection. It's designed
 to create a good initialization before online RL training begins.
 
 Usage:
-    python offline_learner_val_pi05.py config-hiserl.json --offline-steps 10000
+    python offline_learner_val_pi05.py config-hiserl.yaml --offline-steps 10000
 
 Adds periodic validation (actions, representations, attention)
 on top of offline_learner_pi05.py. Config fields: val_dataset_path, val_split,
@@ -32,8 +32,15 @@ val_freq. See offline_val_pi05.py for full documentation.
 import gc
 import logging
 import os
+import warnings
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*video decoding and encoding capabilities of torchvision are deprecated.*",
+    category=UserWarning,
+)
 
 import time
 from pathlib import Path
@@ -92,6 +99,7 @@ from lerobot.rl.pi05_train_utils import (
     _update_actor,
     log_pi05_training_metrics,
 )
+from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
 
 import wandb
 
@@ -131,10 +139,11 @@ def offline_train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None,
         accelerator: Optional Accelerator instance for multi-GPU training
     """
     cfg.validate()
-    
+    cfg.env.task = cfg.policy.task
+
     if job_name is None:
         job_name = cfg.job_name
-    
+
     if job_name is None:
         raise ValueError("Job name must be specified either in config or as a parameter")
     
@@ -241,7 +250,7 @@ def run_offline_training(
     offline_steps = cfg.policy.offline_steps
     
     # Critic warmup steps
-    critic_warmup_steps = 0
+    critic_warmup_steps = cfg.policy.critic_warmup_steps
     
     if is_main_process:
         logging.info(f"Offline training will run for {offline_steps} optimization steps")
@@ -277,12 +286,14 @@ def run_offline_training(
     
     # Freezing some parameters
     _VISION_TOWER_DEPTH = 27   # SigLIP-400M
+    _CRITIC_VISION_TOWER_DEPTH = 13  # Critic truncates SigLIP to 13 layers (rl_pi05.py)
     _LANGUAGE_MODEL_DEPTH = 18  # Gemma 2B
     tp = cfg.policy.trainable_params
     critic_depth = cfg.policy.critic_llm_depth
     lm_layers = list(range(tp.language_from_layer, _LANGUAGE_MODEL_DEPTH)) if tp.language_from_layer is not None else []
     vt_layers  = list(range(tp.vision_encoder_from_layer.vision_tower, _VISION_TOWER_DEPTH)) if tp.vision_encoder_from_layer.vision_tower is not None else []
     cr_layers  = list(range(tp.critic_language_from_layer, critic_depth)) if tp.critic_language_from_layer is not None else []
+    cr_vt_layers = list(range(tp.critic_vision_encoder_from_layer.vision_tower, _CRITIC_VISION_TOWER_DEPTH)) if tp.critic_vision_encoder_from_layer.vision_tower is not None else []
 
     for name, param in policy.named_parameters():
         param.requires_grad = (
@@ -292,9 +303,9 @@ def run_offline_training(
             "time_mlp_in" in name or
             "time_mlp_out" in name or
             "gemma_expert" in name or
-            # Vision encoder
-            (tp.vision_encoder_from_layer.multi_modal_projector and "multi_modal_project" in name) or
-            ("vision_tower" in name and any(f".{i}." in name for i in vt_layers)) or
+            # Actor vision encoder (scoped to paligemma to avoid matching critic's vision tower)
+            (tp.vision_encoder_from_layer.multi_modal_projector and "paligemma" in name and "multi_modal_project" in name) or
+            ("paligemma" in name and "vision_tower" in name and any(f".{i}." in name for i in vt_layers)) or
             # Language model
             ("language_model" in name and any(f".{i}." in name for i in lm_layers)) or
             ("language_model.norm" in name and bool(lm_layers)) or
@@ -302,7 +313,10 @@ def run_offline_training(
             "critic.norm" in name or
             "critic.value_head" in name or
             "critic.value_queries" in name or
-            ("critic.layers" in name and any(f".{i}." in name for i in cr_layers))
+            ("critic.layers" in name and any(f".{i}." in name for i in cr_layers)) or
+            # Critic vision encoder (scoped to critic. prefix to avoid critic_target.*)
+            (tp.critic_vision_encoder_from_layer.multi_modal_projector and name.startswith("critic.") and "multi_modal_project" in name) or
+            (name.startswith("critic.vision_tower") and any(f".{i}." in name for i in cr_vt_layers))
         )
 
     # Log trainable parameters
@@ -359,7 +373,7 @@ def run_offline_training(
         capacity=cfg.policy.offline_buffer_capacity,
         reward_normalization_constant=cfg.policy.reward_normalization_constant,
         terminal_failure_reward=cfg.policy.terminal_failure_reward,
-        inject_complementary_info={"is_golden": True},
+        inject_complementary_info={"is_golden": cfg.treat_main_dataset_as_golden},
         cache_dir=buffer_cache_dir,
     )
     offline_replay_buffer.dataset = offline_dataset
@@ -411,7 +425,14 @@ def run_offline_training(
         for param, target_param in zip(_policy.critic.parameters(), _policy.critic_target.parameters()):
             if not param.requires_grad:
                 target_param.data = param.data
-    
+
+    weight_anchors = build_weight_anchors(
+        optimizers=optimizers,
+        alpha=cfg.policy.anchor_alpha,
+        every_n_steps=cfg.policy.anchor_every_n_steps,
+        targets=cfg.policy.anchor_targets,
+    )
+
     # Helper function for bfloat16 casting
     cast_to_bf16_fn = cast_to_bf16 if cfg.policy.dtype == "bfloat16" else None
     
@@ -515,8 +536,52 @@ def run_offline_training(
                 scaler=None,
                 preprocessor=preprocessor,
             )
-        
-        
+
+        # =====================================================================
+        # >>> TEMP DEBUG: PRE/POST WEIGHT-ANCHOR CHECKPOINTS  (REMOVE LATER) <<<
+        # One-off instrumentation: dump weights immediately before and after
+        # each anchor merge so we can diff/eval the effect. Saves to
+        #   <output_dir>/checkpoints/anchor_<step>_{pre,post}/
+        # Does NOT touch the `last` symlink or training_state.pt.
+        # To revert: delete this whole block down to the matching END marker
+        # and keep only the original `apply_weight_anchors(...)` line.
+        # =====================================================================
+        anchor_will_fire = any(
+            a.should_merge(optimization_step) for a in weight_anchors.values()
+        )
+        if anchor_will_fire and is_main_process:
+            _dbg_out = Path(cfg.output_dir) if isinstance(cfg.output_dir, str) else cfg.output_dir
+            save_checkpoint(
+                checkpoint_dir=_dbg_out / "checkpoints" / f"anchor_{optimization_step:09d}_pre",
+                step=optimization_step,
+                cfg=cfg,
+                policy=accelerator.unwrap_model(policy),
+                optimizer=optimizers,
+                scheduler=None,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+            )
+        accelerator.wait_for_everyone()
+
+        apply_weight_anchors(weight_anchors, optimizers, optimization_step)
+
+        if anchor_will_fire and is_main_process:
+            save_checkpoint(
+                checkpoint_dir=_dbg_out / "checkpoints" / f"anchor_{optimization_step:09d}_post",
+                step=optimization_step,
+                cfg=cfg,
+                policy=accelerator.unwrap_model(policy),
+                optimizer=optimizers,
+                scheduler=None,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+            )
+        accelerator.wait_for_everyone()
+        # =====================================================================
+        # <<< END TEMP DEBUG: PRE/POST WEIGHT-ANCHOR CHECKPOINTS <<<
+        # =====================================================================
+
+
         # Log training metrics
         if optimization_step % log_freq == 0:
             training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)

@@ -326,6 +326,8 @@ def _update_critic(
     scaler
 ) -> dict:
     accum_loss_critic = 0.0
+    accum_loss_critic_ce = 0.0
+    accum_loss_critic_mse = 0.0
     critic_values_list = []
     td_error_list = []
     target_values_list = []
@@ -371,6 +373,10 @@ def _update_critic(
             
         # Accumulate metrics
         accum_loss_critic += critic_output["loss_critic"].detach().item()
+        if "loss_critic_ce" in critic_output:
+            accum_loss_critic_ce += critic_output["loss_critic_ce"].detach().item()
+        if "loss_critic_mse" in critic_output:
+            accum_loss_critic_mse += critic_output["loss_critic_mse"].detach().item()
         critic_values_list.append(critic_output["critic_values"].detach())
         td_error_list.append(critic_output["td_error"].detach())
         target_values_list.append(critic_output["target_values"].detach())
@@ -403,6 +409,8 @@ def _update_critic(
     
     training_infos = {
         "loss_critic": accum_loss_critic / gradient_accumulation_steps,
+        "loss_critic_ce": accum_loss_critic_ce / gradient_accumulation_steps,
+        "loss_critic_mse": accum_loss_critic_mse / gradient_accumulation_steps,
         "critic_grad_norm": critic_grad_norm,
         "td_error_mean": all_td_errors.mean().item(),
         "td_error_std": all_td_errors.std().item() if all_td_errors.numel() > 1 else 0.0,
@@ -898,7 +906,8 @@ def pi05_update_step(
     # -------------------------------------------------------------------------
     # 2. Actor Update Loop (Conditional)
     # -------------------------------------------------------------------------
-    
+
+    actor_infos: dict = {}
     if optimization_step >= critic_warmup_steps and optimization_step % policy_update_freq == 0:
         actor_infos = _update_actor(
             policy=policy,
@@ -965,14 +974,14 @@ def log_pi05_training_metrics(
                 "Optimization step": optimization_step
             })
         if critic_hist is not None:
-            critic_vals = np.clip(critic_hist, -1, .5)
+            critic_vals = np.clip(critic_hist, -2, .1)
             wandb_logger._wandb.log({
                 "train/critic_value_histogram": wandb.Histogram(critic_vals),
                 "Optimization step": optimization_step
             })
         
         if target_value_hist is not None:
-             target_vals = np.clip(target_value_hist, -1, .5)
+             target_vals = np.clip(target_value_hist, -2, .1)
              wandb_logger._wandb.log({
                 "train/target_value_histogram": wandb.Histogram(target_vals),
                 "Optimization step": optimization_step
@@ -980,7 +989,7 @@ def log_pi05_training_metrics(
         
         # Log critic histogram from critic update
         if critic_hist_from_critic is not None:
-            critic_vals_from_critic = np.clip(critic_hist_from_critic, -1, .5)
+            critic_vals_from_critic = np.clip(critic_hist_from_critic, -2, .1)
             wandb_logger._wandb.log({
                 "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
                 "Optimization step": optimization_step
@@ -988,13 +997,13 @@ def log_pi05_training_metrics(
 
         if flow_loss_raw is not None:
             wandb_logger._wandb.log({
-                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.04)),
+                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.01)),
                 "Optimization step": optimization_step
             })
 
         if loss_critic_raw is not None:
             wandb_logger._wandb.log({
-                "train/loss_critic_histogram_flat": wandb.Histogram(np.clip(loss_critic_raw.flatten(), 0, .02)),
+                "train/loss_critic_histogram_flat": wandb.Histogram(np.clip(loss_critic_raw.flatten(), 0, .005)),
                 "Optimization step": optimization_step
             })
 

@@ -60,6 +60,7 @@ class TrainableParamsConfig:
     vision_encoder_from_layer: VisionEncoderTrainConfig = field(default_factory=VisionEncoderTrainConfig)
     language_from_layer: int | None = None         # None=frozen, int=train layers >= this index
     critic_language_from_layer: int | None = None  # same; critic norm/value_head/queries always on
+    critic_vision_encoder_from_layer: VisionEncoderTrainConfig = field(default_factory=VisionEncoderTrainConfig)
 
 @PreTrainedConfig.register_subclass("pi05_rl")
 @dataclass
@@ -71,6 +72,7 @@ class PI05RLConfig(PI05FullConfig):
     action_dim: int = 6
     drop_n_last_frames: int = 2  # Drop the last n frames from the replay buffer
     critic_target_update_weight: float = 0.005
+    critic_target_update_every: int = 1  # Run Polyak every N optimizer steps (batch updates with proportionally larger τ to clear BF16 ULP)
     num_critics: int = 1
     discount: float = 0.97
     
@@ -85,6 +87,7 @@ class PI05RLConfig(PI05FullConfig):
     async_prefetch: bool = False
     online_step_before_learning: int = 100
     policy_update_freq: int = 1
+    critic_warmup_steps: int = 0
     grad_clip_norm: float = 40.0
     gradient_accumulation_steps: int = 1
     
@@ -105,8 +108,21 @@ class PI05RLConfig(PI05FullConfig):
     # Critic network arguments
     critic_network_kwargs: dict | None = None
 
+    # Distributional critic (HL-Gauss over B bins)
+    num_value_bins: int = 201
+    value_support_min: float = -1.2
+    value_support_max: float = 0.0
+    hl_gauss_sigma_ratio: float = 5.0  # σ in units of bin width
+    use_distributional_critic: bool = True  # toggle CE vs MSE loss; metrics always log both
+
     # Trainable parameter configuration
     trainable_params: TrainableParamsConfig = field(default_factory=TrainableParamsConfig)
+
+    # Weight anchor (periodic convex pull toward init weights, with optimizer-state reset)
+    # alpha == 0 or every_n_steps == 0 disables.
+    anchor_alpha: float = 0.0
+    anchor_every_n_steps: int = 0
+    anchor_targets: list[str] = field(default_factory=lambda: ["actor", "critic"])
 
     # Offline training steps
     offline_steps: int = 10000
@@ -203,17 +219,20 @@ class Pi05TransformerCritic(nn.Module):
             use_adarms=False,
         )
         self.critic_gemma_config = critic_gemma_config
-        
-        # Learned query tokens for value prediction (32 tokens)
-        # Initialize with magnitude similar to scaled text embeddings (~270)
-        # Text norm ≈ sqrt(hidden_dim) * embedding_norm ≈ 45 * 6 ≈ 270
-        # So we init queries with std ≈ 270 / sqrt(hidden_dim) ≈ 6
-        self.num_query_tokens = 32
-        query_init_std = 1.0  # Standard initialization
+
+        # Distributional critic: one query token per bin. Each query gathers
+        # evidence through the transformer, and a shared Linear(D→1) head emits
+        # one logit per query. Softmax across queries gives a 201-bin
+        # distribution over the value support.
+        self.num_value_bins = config.num_value_bins
+        self.num_query_tokens = self.num_value_bins
+        # BERT-style small init — 201 queries are a lot more sequence than 32,
+        # so collapse risk is real if we copy the old std=1.0.
+        query_init_std = 0.02
         self.value_queries = nn.Parameter(torch.randn(1, self.num_query_tokens, hidden_dim) * query_init_std)
         # Force contiguous gradients
         self.value_queries.register_hook(lambda grad: grad.contiguous())
-        
+
         # Rotary Embeddings
         self.rotary_emb = GemmaRotaryEmbedding(critic_gemma_config)
 
@@ -227,16 +246,23 @@ class Pi05TransformerCritic(nn.Module):
 
         # Final normalization
         self.norm = PiGemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
-        
-        # Token-wise projection to reduce dimensionality before flattening
-        self.token_proj = nn.Linear(hidden_dim, 512)
-        
-        # Value head (projects from flattened projected tokens -> 1 value)
-        self.value_head = nn.Sequential(
-            nn.Linear(512 * self.num_query_tokens, 512 * 2),
-            SwiGLU(),
-            nn.Linear(512, 1)
+
+        # Shared per-query logit head: each of the B query outputs is mapped
+        # to a single scalar logit by the same Linear, so bins remain ordered
+        # and comparable.
+        self.bin_logit_head = nn.Linear(hidden_dim, 1)
+
+        # Bin support and HL-Gauss bandwidth as buffers so they move with .to(device).
+        bin_centers = torch.linspace(
+            config.value_support_min, config.value_support_max, self.num_value_bins
         )
+        self.register_buffer("bin_centers", bin_centers, persistent=False)
+        bin_width = (config.value_support_max - config.value_support_min) / (self.num_value_bins - 1)
+        self.hl_gauss_sigma = float(config.hl_gauss_sigma_ratio * bin_width)
+
+        # Vision components (initialized in initialize_weights_from_actor)
+        self.vision_tower = None
+        self.multi_modal_projector = None
         
     def initialize_weights_from_actor(self, actor_model):
         """Initialize critic weights from the actor's pretrained weights."""
@@ -259,15 +285,43 @@ class Pi05TransformerCritic(nn.Module):
         
         # Copy Norm
         self.norm = copy.deepcopy(source_model.norm)
+        
+        # Copy Vision Components and truncate layers to 13
+        self.vision_tower = copy.deepcopy(paligemma_model.model.vision_tower)
+        if hasattr(self.vision_tower, 'vision_model') and hasattr(self.vision_tower.vision_model, 'encoder'):
+            self.vision_tower.vision_model.encoder.layers = self.vision_tower.vision_model.encoder.layers[:13]
+        self.multi_modal_projector = copy.deepcopy(paligemma_model.model.multi_modal_projector)
 
-    def forward(self, vision_features: Tensor, text_embs: Tensor, token_masks: Tensor) -> Tensor:
+    def embed_image(self, image: Tensor) -> Tensor:
+        """Embed images using the critic's own vision tower and projector."""
+        if self.vision_tower is None or self.multi_modal_projector is None:
+            raise RuntimeError("Vision components not initialized. Call initialize_weights_from_actor first.")
+        image_outputs = self.vision_tower(image, return_dict=True)
+        selected_image_feature = image_outputs.last_hidden_state
+        image_features = self.multi_modal_projector(selected_image_feature)
+        return image_features
+
+    def value_from_logits(self, logits: Tensor) -> Tensor:
+        """Expected value under softmax(logits). logits: [..., num_value_bins] → [..., 1]."""
+        probs = F.softmax(logits, dim=-1)
+        return self.value_from_probs(probs)
+
+    def value_from_probs(self, probs: Tensor) -> Tensor:
+        """Expected value under an already-normalized distribution. probs: [..., num_value_bins] → [..., 1]."""
+        bin_centers = self.bin_centers.to(dtype=probs.dtype)
+        return (probs * bin_centers).sum(dim=-1, keepdim=True)
+
+    def forward(self, vision_features: Tensor, text_embs: Tensor, token_masks: Tensor) -> dict[str, Tensor]:
         """
         Args:
             vision_features: [B, num_patches, hidden_dim]
             text_embs: [B, seq_len, hidden_dim]
             token_masks: [B, seq_len]
         Returns:
-            value: [B, 1]
+            dict with:
+                logits: [B, num_value_bins] — pre-softmax bin scores
+                probs:  [B, num_value_bins] — softmax distribution over the value support
+                value:  [B, 1] — expected value E[V] under `probs`
         """
         
         batch_size = text_embs.shape[0]
@@ -364,18 +418,66 @@ class Pi05TransformerCritic(nn.Module):
         
         # Extract Queries (At the END)
         start_idx = vision_features.shape[1] + text_embs.shape[1]
-        queries_out = hidden_states[:, start_idx:, :] # [B, num_queries, D]
-        
-        # Token-wise projection (applied to each of the 32 tokens independently)
-        queries_proj = self.token_proj(queries_out) # [B, num_queries, 256]
-        
-        # Flatten all projected tokens together
-        queries_flat = queries_proj.reshape(batch_size, -1) # [B, num_queries * 256]
+        queries_out = hidden_states[:, start_idx:, :]  # [B, num_value_bins, D]
 
-        # Value Head
-        value = self.value_head(queries_flat.to(self.dtype))
+        # Shared per-query logit head: one scalar per query → 201 logits
+        logits = self.bin_logit_head(queries_out.to(self.dtype)).squeeze(-1)  # [B, num_value_bins]
 
-        return value
+        probs = F.softmax(logits, dim=-1)  # [B, num_value_bins]
+        value = self.value_from_probs(probs)  # [B, 1]
+
+        return {"logits": logits, "probs": probs, "value": value}
+
+    def hl_gauss_target(self, target_v: Tensor) -> Tensor:
+        """Build the HL-Gauss target distribution for scalar TD targets.
+
+        Returns a distribution over the 201 bins by integrating a Gaussian
+        of std `self.hl_gauss_sigma` centered at `target_v` against bin edges
+        (CDF differences). The first and last bins absorb tails beyond the
+        support, so out-of-range targets degrade to a one-hot at the boundary.
+
+        Args:
+            target_v: scalar TD targets, shape [B] or [B, 1].
+        Returns:
+            target distribution, shape [B, num_value_bins], rows sum to 1.
+        """
+        if target_v.ndim == 2:
+            target_v = target_v.squeeze(-1)
+        target_v = target_v.to(dtype=self.bin_centers.dtype)
+
+        # Internal edges: midpoints between consecutive bin centers.
+        internal_edges = 0.5 * (self.bin_centers[:-1] + self.bin_centers[1:])  # [num_value_bins - 1]
+        # CDF at each internal edge under N(target_v, σ²)
+        z = (internal_edges.unsqueeze(0) - target_v.unsqueeze(-1)) / (
+            self.hl_gauss_sigma * math.sqrt(2)
+        )
+        cdf_internal = 0.5 * (1.0 + torch.erf(z))  # [B, num_value_bins - 1]
+
+        # Pad with 0 at -∞ and 1 at +∞ so boundary bins absorb the tails.
+        zeros = torch.zeros_like(cdf_internal[:, :1])
+        ones = torch.ones_like(cdf_internal[:, :1])
+        cdf_full = torch.cat([zeros, cdf_internal, ones], dim=-1)  # [B, num_value_bins + 1]
+
+        target_dist = cdf_full[:, 1:] - cdf_full[:, :-1]  # [B, num_value_bins]
+        return target_dist
+
+    def one_hot_target(self, target_v: Tensor) -> Tensor:
+        """Build a one-hot target distribution over bins for exact (terminal) targets.
+
+        Used when the scalar target carries no estimation noise (terminal rewards),
+        so label smoothing via HL-Gauss is unwanted. Picks the nearest bin to
+        `target_v` and emits a one-hot row.
+
+        Args:
+            target_v: scalar targets, shape [B] or [B, 1].
+        Returns:
+            target distribution, shape [B, num_value_bins], one-hot rows.
+        """
+        if target_v.ndim == 2:
+            target_v = target_v.squeeze(-1)
+        target_v = target_v.to(dtype=self.bin_centers.dtype)
+        idx = torch.argmin(torch.abs(self.bin_centers.unsqueeze(0) - target_v.unsqueeze(-1)), dim=-1)
+        return F.one_hot(idx, num_classes=self.bin_centers.shape[0]).to(dtype=self.bin_centers.dtype)
 
 class PI05RLPytorch(PI05Pytorch):
     """Subclass of PI05Pytorch to inject Advantage Conditioning."""
@@ -782,6 +884,13 @@ class PI05RLPolicy(PI05FullPolicy):
                 
                 # Load critic
                 if hasattr(self, "critic"):
+                    # Must initialize vision tower structure (nn.Module) from actor before
+                    # loading the state dict — vision_tower/multi_modal_projector start as
+                    # None, so load_state_dict(strict=False) would silently drop those keys.
+                    print("[pi05_rl] Initializing critic structure from actor (to register vision modules)...")
+                    self._init_critic_from_actor()
+
+                    # Now override all structure with the trained checkpoint weights.
                     _t = _time.time()
                     print("[pi05_rl] Loading critic state dict...")
                     missing_critic, unexpected_critic = self.critic.load_state_dict(critic_state_dict, strict=False)
@@ -899,15 +1008,19 @@ class PI05RLPolicy(PI05FullPolicy):
 
     def update_target_networks(self):
         """Update target critic."""
-        if hasattr(self, "critic_target"):
-            with torch.no_grad():
-                for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
-                    if not param.requires_grad:
-                        continue
-                    target_param.data.mul_(1 - self.config.critic_target_update_weight)
-                    target_param.data.add_(param.data * self.config.critic_target_update_weight)
+        if not hasattr(self, "critic_target"):
+            return
+        self._polyak_call_counter = getattr(self, "_polyak_call_counter", 0) + 1
+        if self._polyak_call_counter % self.config.critic_target_update_every != 0:
+            return
+        with torch.no_grad():
+            for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
+                if not param.requires_grad:
+                    continue
+                target_param.data.mul_(1 - self.config.critic_target_update_weight)
+                target_param.data.add_(param.data * self.config.critic_target_update_weight)
 
-    def get_vision_features(self, batch: dict[str, Tensor], use_grad: bool = True) -> tuple[Tensor, Tensor]:
+    def get_vision_features(self, batch: dict[str, Tensor], use_grad: bool = True, encoder_module=None) -> tuple[Tensor, Tensor]:
         """Extract vision features and their padding masks from the batch."""
         with torch.set_grad_enabled(use_grad):
             current_batch = batch.copy()
@@ -918,10 +1031,12 @@ class PI05RLPolicy(PI05FullPolicy):
             vision_features = []
             vision_pad_masks = []
             
+            encoder = encoder_module if encoder_module is not None else self.model.paligemma_with_expert
+            
             for img, img_mask in zip(images, img_masks):
                 # img: [B, C, H, W]
                 # img_mask: [B]
-                feat = self.model.paligemma_with_expert.embed_image(img) # [B, N, D]
+                feat = encoder.embed_image(img) # [B, N, D]
                 vision_features.append(feat)
                 
                 B, N, _ = feat.shape
@@ -949,8 +1064,8 @@ class PI05RLPolicy(PI05FullPolicy):
         
         # Actor computes vision features inside embed_prefix; only critic/critic_value need them here.
         if model != "actor":
-            vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad)
-            critic_vision_features = vision_features.detach()
+            vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad, encoder_module=self.critic)
+            critic_vision_features = vision_features
             critic_vision_masks = vision_pad_masks
 
         # Actor needs tokens too
@@ -1039,8 +1154,10 @@ class PI05RLPolicy(PI05FullPolicy):
             
         elif model == "critic":
             # Critic Update
-            current_v = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
-            
+            critic_out = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
+            current_v = critic_out["value"]
+            current_logits = critic_out["logits"]
+
             with torch.no_grad():
                 # Next state processing (copied from actor block)
                 if "next_state" in batch:
@@ -1051,7 +1168,7 @@ class PI05RLPolicy(PI05FullPolicy):
                     next_vision_features = []
                     next_vision_pad_masks = []
                     for img, img_mask in zip(next_images, next_img_masks):
-                        feat = self.model.paligemma_with_expert.embed_image(img)
+                        feat = self.critic_target.embed_image(img)
                         next_vision_features.append(feat)
                         B, N, _ = feat.shape
                         mask = img_mask[:, None].expand(B, N)
@@ -1067,55 +1184,78 @@ class PI05RLPolicy(PI05FullPolicy):
                     actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
                     next_critic_text_embs = actor_embed_layer(next_critic_tokens).detach()
                         
-                    next_v = self.critic_target(next_vision_features, next_critic_text_embs, next_critic_token_masks)
+                    next_v = self.critic_target(next_vision_features, next_critic_text_embs, next_critic_token_masks)["value"]
                 else:
                     # Handle case where next_state is missing (e.g. end of episode or not provided)
                     # For now, we assume next_state is always provided in RL batch
                     raise ValueError("next_state is required for critic update")
             
-            # Loss
+            # TD scalar target
             reward = batch["reward"]
             done = batch["next.done"]
 
-            # Unsqueeze to match next_v shape [B, 1]
             if reward.ndim == 1:
                 reward = reward.unsqueeze(-1)
             if done.ndim == 1:
                 done = done.unsqueeze(-1)
-            
-            # Ensure correct dtype for mixed precision training
+
             reward = reward.to(dtype=current_v.dtype)
             done = done.to(dtype=current_v.dtype)
-            
-            target_q = reward + self.config.discount * next_v * (1 - done)
-            target_q = target_q.to(dtype=current_v.dtype)
-            # By definition of reward structure, the values should are bounded by 0.
-            # We leave a little headroom
-            target_q = target_q.clamp(max=0.05)
-            
-            loss_critic_raw = F.mse_loss(current_v, target_q, reduction="none")
-            loss_critic = loss_critic_raw.mean()
-            
+
+            target_v_raw = reward + self.config.discount * next_v * (1 - done)
+            # Clamp inside the bin support so CE and MSE see the same target.
+            # Targets outside the support saturate at the boundary bin.
+            v_min = self.config.value_support_min
+            v_max = self.config.value_support_max
+            target_v = target_v_raw.clamp(min=v_min, max=v_max).to(dtype=current_v.dtype)
+
+            # Always compute both losses; pick one for backprop, log both.
+            # Terminal targets are exact (reward only, no bootstrap noise) — use a
+            # one-hot at the nearest bin so the predicted E[V] can match exactly,
+            # especially for success at V=0 where HL-Gauss would clip and bias E[V] below 0.
+            hl_gauss_dist = self.critic.hl_gauss_target(target_v).to(dtype=current_logits.dtype)
+            one_hot_dist = self.critic.one_hot_target(target_v).to(dtype=current_logits.dtype)
+            target_dist = torch.where(done.bool(), one_hot_dist, hl_gauss_dist)
+            log_probs = F.log_softmax(current_logits, dim=-1)
+            ce_per_sample = -(target_dist * log_probs).sum(dim=-1)  # [B]
+            loss_critic_ce = ce_per_sample.mean()
+
+            mse_per_sample = F.mse_loss(current_v, target_v, reduction="none").squeeze(-1)  # [B]
+            loss_critic_mse = mse_per_sample.mean()
+
+            if self.config.use_distributional_critic:
+                loss_critic = loss_critic_ce
+                loss_critic_raw = ce_per_sample.detach().unsqueeze(-1)
+            else:
+                loss_critic = loss_critic_mse
+                loss_critic_raw = mse_per_sample.detach().unsqueeze(-1)
+
+            td_error = torch.abs(current_v - target_v)
+
             self.critic_log_counter += 1
             if self.critic_log_counter % 200 == 0:
-                print(f"[Critic] Loss: {loss_critic.item():.4f} | V_mean: {current_v.mean().item():.4f} | Target_mean: {target_q.mean().item():.4f} | TD_err: {torch.abs(current_v - target_q).mean().item():.4f}")
-            
-            # Metrics
-            td_error = torch.abs(current_v - target_q)
-            
+                clamp_frac = (target_v_raw != target_v).float().mean().item()
+                print(
+                    f"[Critic] CE: {loss_critic_ce.item():.4f} | MSE: {loss_critic_mse.item():.4f} "
+                    f"| V_mean: {current_v.mean().item():.4f} | Target_mean: {target_v.mean().item():.4f} "
+                    f"| TD_err: {td_error.mean().item():.4f} | clamp_frac: {clamp_frac:.3f}"
+                )
+
             return {
                 "loss_critic": loss_critic,
-                "loss_critic_raw": loss_critic_raw.detach(),
+                "loss_critic_raw": loss_critic_raw,
+                "loss_critic_ce": loss_critic_ce.detach(),
+                "loss_critic_mse": loss_critic_mse.detach(),
                 "critic_values": current_v,
-                "target_values": target_q,
+                "target_values": target_v,
                 "td_error": td_error,
                 "td_error_mean": td_error.mean().item(),
                 "critic_value_mean": current_v.mean().item(),
-                "target_value_mean": target_q.mean().item(),
+                "target_value_mean": target_v.mean().item(),
             }
 
         elif model == "critic_value":
-            values = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
+            values = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)["value"]
             return {
                 "critic_values": values,
                 "critic_value_mean": values.mean().item()
@@ -1135,21 +1275,21 @@ class PI05RLPolicy(PI05FullPolicy):
 
     def predict_action_chunk(self, batch: dict[str, Tensor], **kwargs) -> Tensor:
         """Predict action chunk with subtask token generation.
-        
+
         Uses time-based caching controlled by `config.subtask_regeneration_interval`
         (default 1s) to amortize the cost of autoregressive subtask decoding across
         the high-frequency inference loop.
         """
         import time as _time
-        
+
         # Preprocessor has already normalized and tokenized the inputs
         # Advantage is already in the tokens (passed from actor or defaulted)
         images, img_masks = self._preprocess_images(batch)
-               
+
         from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
-        
+
         # --- Subtask Token Generation with Time-Based Caching ---
         current_time = _time.time()
         interval = self.config.subtask_regeneration_interval
@@ -1163,7 +1303,7 @@ class PI05RLPolicy(PI05FullPolicy):
         if should_regenerate:
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
                 images, img_masks, tokens, masks,
-                max_decoding_steps=self.config.tokenizer_max_length
+                max_decoding_steps=self.config.max_decoding_steps
             )
             self._cached_subtask_tokens = subtask_tokens
             self._cached_subtask_masks = subtask_masks
@@ -1177,11 +1317,10 @@ class PI05RLPolicy(PI05FullPolicy):
             images, img_masks, tokens, masks,
             subtask_tokens, subtask_masks, **kwargs
         )
-        
+
         # Unpad actions to actual action dimension
         from lerobot.utils.constants import ACTION
         original_action_dim = self.config.output_features[ACTION].shape[0]
         actions = actions[:, :, :original_action_dim]
-        
-        return actions
 
+        return actions

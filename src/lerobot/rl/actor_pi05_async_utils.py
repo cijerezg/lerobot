@@ -588,7 +588,7 @@ def env_interaction_worker_actor(
                     subtask_tokens_for_transition = cached_tokens.clone()
                     subtask_masks_for_transition = cached_masks.clone()
                 else:
-                    max_len = cfg.policy.tokenizer_max_length
+                    max_len = cfg.policy.max_decoding_steps
                     subtask_tokens_for_transition = torch.zeros(max_len, dtype=torch.long)
                     subtask_masks_for_transition = torch.zeros(max_len, dtype=torch.bool)
 

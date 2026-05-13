@@ -129,6 +129,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
     """
 
     cfg.validate()
+    cfg.env.task = cfg.policy.task
 
     if job_name is None:
         job_name = cfg.job_name

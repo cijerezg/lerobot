@@ -117,6 +117,7 @@ from lerobot.rl.pi05_train_utils import (
     _update_actor,
     log_pi05_training_metrics,
 )
+from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
 
 import wandb
 import gc
@@ -352,12 +353,14 @@ def add_actor_information_and_train(
 
     # Freezing some parameters
     _VISION_TOWER_DEPTH = 27   # SigLIP-400M
+    _CRITIC_VISION_TOWER_DEPTH = 13  # Critic truncates SigLIP to 13 layers (rl_pi05.py)
     _LANGUAGE_MODEL_DEPTH = 18  # Gemma 2B
     tp = cfg.policy.trainable_params
     critic_depth = cfg.policy.critic_llm_depth
     lm_layers = list(range(tp.language_from_layer, _LANGUAGE_MODEL_DEPTH)) if tp.language_from_layer is not None else []
     vt_layers  = list(range(tp.vision_encoder_from_layer.vision_tower, _VISION_TOWER_DEPTH)) if tp.vision_encoder_from_layer.vision_tower is not None else []
     cr_layers  = list(range(tp.critic_language_from_layer, critic_depth)) if tp.critic_language_from_layer is not None else []
+    cr_vt_layers = list(range(tp.critic_vision_encoder_from_layer.vision_tower, _CRITIC_VISION_TOWER_DEPTH)) if tp.critic_vision_encoder_from_layer.vision_tower is not None else []
 
     for name, param in policy.named_parameters():
         param.requires_grad = (
@@ -367,9 +370,9 @@ def add_actor_information_and_train(
             "time_mlp_in" in name or
             "time_mlp_out" in name or
             "gemma_expert" in name or
-            # Vision encoder
-            (tp.vision_encoder_from_layer.multi_modal_projector and "multi_modal_project" in name) or
-            ("vision_tower" in name and any(f".{i}." in name for i in vt_layers)) or
+            # Actor vision encoder (scoped to paligemma to avoid matching critic's vision tower)
+            (tp.vision_encoder_from_layer.multi_modal_projector and "paligemma" in name and "multi_modal_project" in name) or
+            ("paligemma" in name and "vision_tower" in name and any(f".{i}." in name for i in vt_layers)) or
             # Language model
             ("language_model" in name and any(f".{i}." in name for i in lm_layers)) or
             ("language_model.norm" in name and bool(lm_layers)) or
@@ -377,7 +380,10 @@ def add_actor_information_and_train(
             "critic.norm" in name or
             "critic.value_head" in name or
             "critic.value_queries" in name or
-            ("critic.layers" in name and any(f".{i}." in name for i in cr_layers))
+            ("critic.layers" in name and any(f".{i}." in name for i in cr_layers)) or
+            # Critic vision encoder (scoped to critic. prefix to avoid critic_target.*)
+            (tp.critic_vision_encoder_from_layer.multi_modal_projector and name.startswith("critic.") and "multi_modal_project" in name) or
+            (name.startswith("critic.vision_tower") and any(f".{i}." in name for i in cr_vt_layers))
         )
     
     # Share underlying memory for frozen critic layers to save VRAM
@@ -392,6 +398,13 @@ def add_actor_information_and_train(
     logging.info(f"Trainable parameter names: {trainable_params}")  # Show what's being trainedebug
 
     optimizers, lr_scheduler = make_optimizers_and_scheduler(cfg=cfg, policy=policy)
+
+    weight_anchors = build_weight_anchors(
+        optimizers=optimizers,
+        alpha=cfg.policy.anchor_alpha,
+        every_n_steps=cfg.policy.anchor_every_n_steps,
+        targets=cfg.policy.anchor_targets,
+    )
 
     # If we are resuming, we need to load the training state
     resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
@@ -439,7 +452,7 @@ def add_actor_information_and_train(
             capacity=cfg.policy.offline_buffer_capacity,
             reward_normalization_constant=cfg.policy.reward_normalization_constant,
             terminal_failure_reward=cfg.policy.terminal_failure_reward,
-            inject_complementary_info={"is_golden": True},
+            inject_complementary_info={"is_golden": cfg.treat_main_dataset_as_golden},
             cache_dir=cfg.buffer_cache_dir,
         )
         offline_replay_buffer.dataset = offline_dataset
@@ -477,7 +490,7 @@ def add_actor_information_and_train(
     online_iterator = None
     offline_iterator = None
 
-    critic_warmup_steps = 0
+    critic_warmup_steps = cfg.policy.critic_warmup_steps
     policy_update_freq = 1
 
 
@@ -604,6 +617,8 @@ def add_actor_information_and_train(
                 scaler=None,
                 preprocessor=preprocessor,
             )
+
+        apply_weight_anchors(weight_anchors, optimizers, optimization_step)
 
         # ----------------------------------------
 

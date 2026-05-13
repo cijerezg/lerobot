@@ -4,9 +4,9 @@ Periodic validation pipeline for offline Pi05 RL training.
 
 This module is designed to be imported from offline_learner_pi05.py (or any
 other training script) without modifying that file. It exposes three public
-functions that together implement periodic validation using seven probe
+functions that together implement periodic validation using eight probe
 scripts (actions, representations, attention, offline_inference, spatial_memorization,
-action_drift_jacobian, spatial_memorization_jacobian).
+action_drift_jacobian, spatial_memorization_jacobian, critic_values_distribution).
 
 Each probe can be individually enabled/disabled via ProbeConfig flags
 (enable_actions, enable_representations, etc.). Raw probe data is saved
@@ -64,6 +64,8 @@ Call-graph of run_validation()
     │    └─ per-frame A*|dA/d(action)| causal maps → MP4
     ├─ _run_probe_spatial_memorization_jacobian()  [if enable_spatial_memorization_jacobian]
     │    └─ 1-per-episode → multi-layer Jacobian → aggregate causal stats → PNG
+    ├─ _run_probe_critic_values_distribution()     [if enable_critic_values_distribution]
+    │    └─ V(s)/TD-error histograms + ||dV/dvision|| percentile frames → PNGs
     ├─ torch.save(raw_data, "probe_raw_data.pt")
     ├─ log_dict() to WandB
     └─ finally: policy.train()
@@ -136,8 +138,15 @@ import gc
 import logging
 import os
 import random as random_mod
+import warnings
 from dataclasses import dataclass
 from typing import Optional
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*video decoding and encoding capabilities of torchvision are deprecated.*",
+    category=UserWarning,
+)
 
 import numpy as np
 import torch
@@ -540,7 +549,7 @@ def _run_probe_attention(policy, preprocessor,
         embed_probe_prefix,
         probe_forward,
         render_image_overlays,
-        render_full_matrix,
+        render_action_to_prefix_matrix,
     )
     from lerobot.utils.constants import (
         OBS_LANGUAGE_ATTENTION_MASK,
@@ -647,13 +656,21 @@ def _run_probe_attention(policy, preprocessor,
                     a_w = attn_weights[b_idx : b_idx + 1]
                     p_m = pad_masks[b_idx : b_idx + 1]
                     i_t = [img[b_idx : b_idx + 1] for img in images]
+                    t_t = task_tokens   [b_idx : b_idx + 1]
+                    s_t = subtask_tokens[b_idx : b_idx + 1]
 
                     heatmap_frames, norm_consts = render_image_overlays(
                         a_w, segments, i_t, p_m, patches_per_cam,
                         overlay=use_overlay,
                     )
                     frames_out = dict(heatmap_frames)
-                    frames_out.update(render_full_matrix(a_w, segments, p_m))
+
+                    matrix_frames, matrix_norms = render_action_to_prefix_matrix(
+                        a_w, segments, p_m,
+                        t_t, s_t, policy.model._paligemma_tokenizer,
+                    )
+                    frames_out.update(matrix_frames)
+                    norm_consts.update(matrix_norms)
 
                     for panel, vmax in norm_consts.items():
                         csv_writer.writerow(
@@ -1206,6 +1223,25 @@ def _run_probe_spatial_memorization_jacobian(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Probe: critic values distribution (TD-error + ||dV/dvision|| percentiles)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _run_probe_critic_values_distribution(
+    policy, preprocessor,
+    val_dataset, val_ep_indices,
+    cfg, output_dir, device,
+):
+    """V(s) / TD-error histograms + critic gradient-magnitude exemplars."""
+    from lerobot.probes.critic_values_distribution import run_critic_values_distribution
+
+    return run_critic_values_distribution(
+        policy, preprocessor,
+        val_dataset, val_ep_indices,
+        cfg, output_dir, device,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main entry point — called from the training loop
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1430,6 +1466,28 @@ def run_validation(
                     exc_info=True,
                 )
             logging.info("[VAL] Spatial memorization jacobian analysis completed")
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        # ── probe_critic_values_distribution ────────────────────────────────
+        if p.enable_critic_values_distribution:
+            logging.info("[VAL] Critic values distribution analysis started")
+            try:
+                raw = _run_probe_critic_values_distribution(
+                    policy, preprocessor,
+                    val_dataset, val_ep_indices,
+                    cfg,
+                    output_dir=os.path.join(step_dir, "critic_values_distribution"),
+                    device=device,
+                )
+                if raw is not None:
+                    raw_data["critic_values_distribution"] = raw
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL] probe_critic_values_distribution failed at step {step}: {exc}",
+                    exc_info=True,
+                )
+            logging.info("[VAL] Critic values distribution analysis completed")
         gc.collect()
         torch.cuda.empty_cache()
 

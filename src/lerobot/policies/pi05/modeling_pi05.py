@@ -617,10 +617,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )
         return func(*args, **kwargs)
 
-    def _prepare_attention_masks_4d(self, att_2d_masks):
+    def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
         """Helper method to prepare 4D attention masks for transformer."""
         att_2d_masks_4d = att_2d_masks[:, None, :, :]
-        return torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
+        result = torch.where(att_2d_masks_4d, 0.0, OPENPI_ATTENTION_MASK_VALUE)
+        if dtype is not None:
+            result = result.to(dtype=dtype)
+        return result
 
     def sample_noise(self, shape, device):
         return torch.normal(
@@ -814,8 +817,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks, dtype=prefix_embs.dtype)
+        self.paligemma_with_expert.paligemma.model.language_model.config._attn_implementation = "sdpa"  # noqa: SLF001
 
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
@@ -884,8 +887,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
-        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks, dtype=suffix_embs.dtype)
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "sdpa"  # noqa: SLF001
 
         past_key_values = copy.deepcopy(past_key_values)
         outputs_embeds, _ = self.paligemma_with_expert.forward(
@@ -1170,8 +1173,9 @@ class PI05Policy(PreTrainedPolicy):
             if img.device != device:
                 img = img.to(device)
 
-            # Ensure float32 dtype for consistency
-            if img.dtype != torch.float32:
+            if img.dtype == torch.uint8:
+                img = img.to(torch.float32) / 255.0
+            elif img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
             # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats
