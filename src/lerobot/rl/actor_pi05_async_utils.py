@@ -335,7 +335,23 @@ def get_actions_worker_actor(policy, shared_state: SharedStateActor, action_queu
                 
                 # --- Zero-phase Butterworth low-pass filter ---
                 processed_actions = apply_butterworth_filter(processed_actions)
-                
+
+                # --- Per-joint safety clamp ---
+                clamp_limits = getattr(policy.config, "action_clamp_limits", None)
+                if clamp_limits is not None:
+                    limits = torch.tensor(clamp_limits, dtype=processed_actions.dtype, device=processed_actions.device)
+                    exceeded = (processed_actions < limits[:, 0]) | (processed_actions > limits[:, 1])
+                    if exceeded.any():
+                        joints_exceeded = exceeded.any(dim=0).nonzero(as_tuple=True)[0].tolist()
+                        raw_min = processed_actions[:, joints_exceeded].min(dim=0).values.tolist()
+                        raw_max = processed_actions[:, joints_exceeded].max(dim=0).values.tolist()
+                        logger.warning(
+                            f"[CLAMP] Action exceeded limits on joints {joints_exceeded} — "
+                            f"raw range: min={[f'{v:.1f}' for v in raw_min]}, max={[f'{v:.1f}' for v in raw_max]}. "
+                            f"Clamping to safe limits."
+                        )
+                    processed_actions = torch.clamp(processed_actions, min=limits[:, 0], max=limits[:, 1])
+
             new_latency = time.perf_counter() - current_time
             new_delay = math.ceil(new_latency / time_per_chunk)
             latency_tracker.add(new_latency)

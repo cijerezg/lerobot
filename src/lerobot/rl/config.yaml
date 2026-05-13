@@ -116,6 +116,12 @@ policy:
   async_prefetch: false
 
   # ---- Inference ------------------------------------------------------------
+  # Per-joint absolute position clamp [min, max] in degrees. Highly recommended
+  # before running any policy on hardware. Obtain values by running teleop and
+  # moving the arm through its full safe range of motion.
+  # Set to null to disable (unsafe for untested policies).
+  action_clamp_limits: null             # e.g. [[-150,150],[-150,0],[0,150],[-150,150],[-150,150],[0,60]]
+
   inference_advantage: 1.0              # constant advantage value injected at inference
   subtask_regeneration_interval: 1.5    # seconds between subtask re-generations
   rtc_config:                           # real-time chunking (action-queue prefix attention)

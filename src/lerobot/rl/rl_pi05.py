@@ -129,7 +129,13 @@ class PI05RLConfig(PI05FullConfig):
 
     # Inference parameters
     num_inference_steps: int = 5
-    
+
+    # Per-joint absolute position clamp applied before sending actions to the robot.
+    # List of [min, max] pairs in degrees, one per action dimension.
+    # Highly recommended — set via lerobot-find-joint-limits or manual teleop.
+    # null disables clamping (unsafe for untested policies).
+    action_clamp_limits: list[list[float]] | None = None
+
     # Advantage parameters
     inference_advantage: float = 1.0
     advantage_scaling: float = 1.0

@@ -127,6 +127,19 @@ Following the suggestions from the RECAP paper, we suggest to retrain every time
 
 ### Inference
 
+> **Highly recommended before first inference: set `action_clamp_limits`.**
+> Without joint clamping, a misbehaving policy can send extreme position targets and damage the hardware. Before running any policy on a physical robot, teleop the arm through its full safe range of motion and record the min/max joint positions observed. Then set `policy.action_clamp_limits` in your config as a list of `[min, max]` pairs in degrees, one per joint:
+> ```yaml
+> policy:
+>   action_clamp_limits:
+>     - [-150, 150]  # joint 1
+>     - [-150,   0]  # joint 2
+>     - [   0, 150]  # joint 3
+>     - [-150, 150]  # joint 4
+>     - [-150, 150]  # joint 5
+>     - [   0,  60]  # gripper
+> ```
+> Replace the example values with the limits you measured for your robot. Any action outside these bounds will be silently clamped before it reaches the servos.
 
 Once you have a trained model, your camera indices and follower and leader ports in the config file, and then you can run inference using:
 
