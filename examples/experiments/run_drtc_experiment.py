@@ -80,7 +80,8 @@ class ExperimentConfig:
     robot_port: str = DEFAULT_ROBOT_PORT
     robot_id: str = DEFAULT_ROBOT_ID
     # Squint SO101 simulator. Used when robot_type=squint_so101.
-    sim_squint_root: str = "/home/jack/code/squint"
+    # Legacy no-op: Squint envs are vendored under lerobot.robots.squint_so101.sim.
+    sim_squint_root: str = ""
     sim_env_id: str | None = None
     sim_dataset_root: str | None = None
     sim_dataset_repo_id: str | None = None
@@ -104,6 +105,8 @@ class ExperimentConfig:
     sim_headless: bool = False
     sim_reset_seed_on_terminal: bool = False
     sim_bootstrap_dataset_episode: int | None = None
+    sim_bootstrap_dataset_episodes: list[int] | None = None
+    sim_bootstrap_dataset_episode_interval: int = 1
     sim_bootstrap_dataset_action_stride: int = 1
     camera1_path: str = DEFAULT_CAMERA1_PATH
     camera2_path: str = DEFAULT_CAMERA2_PATH
@@ -248,7 +251,8 @@ _SCALAR_FIELDS = frozenset({
     "sim_video_max_episodes", "sim_video_max_frames",
     "sim_white_x_background", "sim_max_episode_steps",
     "sim_success_reward_threshold", "sim_action_clip", "sim_headless",
-    "sim_reset_seed_on_terminal", "sim_bootstrap_dataset_episode", "sim_bootstrap_dataset_action_stride",
+    "sim_reset_seed_on_terminal", "sim_bootstrap_dataset_episode", "sim_bootstrap_dataset_episodes",
+    "sim_bootstrap_dataset_episode_interval", "sim_bootstrap_dataset_action_stride",
     "camera1_path", "camera2_path",
     "camera1_name", "camera2_name",
     "camera_width", "camera_height", "camera_fps", "camera_fourcc",
@@ -415,6 +419,8 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             action_clip=config.sim_action_clip,
             reset_seed_on_terminal=config.sim_reset_seed_on_terminal,
             bootstrap_dataset_episode=config.sim_bootstrap_dataset_episode,
+            bootstrap_dataset_episodes=config.sim_bootstrap_dataset_episodes,
+            bootstrap_dataset_episode_interval=config.sim_bootstrap_dataset_episode_interval,
             bootstrap_dataset_action_stride=config.sim_bootstrap_dataset_action_stride,
         )
 

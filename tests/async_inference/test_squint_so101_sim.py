@@ -10,6 +10,7 @@ from lerobot.robots.squint_so101.squint_so101 import (
     infer_squint_env_id,
     read_dataset_action_range,
     read_dataset_episode_actions,
+    read_dataset_episode_initial_state,
     read_dataset_initial_state,
     read_dataset_task,
 )
@@ -78,6 +79,25 @@ def test_read_dataset_episode_actions_from_lerobot_v3_data(tmp_path):
     assert actions.tolist() == [first, second]
 
 
+def test_read_dataset_episode_initial_state_from_lerobot_v3_data(tmp_path):
+    dataset_root = tmp_path / "dataset"
+    data_dir = dataset_root / "data" / "chunk-000"
+    data_dir.mkdir(parents=True)
+    first = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    second = [7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+    pd.DataFrame(
+        {
+            "episode_index": [0, 1],
+            "frame_index": [0, 0],
+            "observation.state": [first, second],
+        }
+    ).to_parquet(data_dir / "file-000.parquet")
+
+    state = read_dataset_episode_initial_state(str(dataset_root), episode_index=1)
+
+    assert state.tolist() == second
+
+
 def test_create_robot_config_builds_squint_config():
     cfg = _parse_experiment_dict(
         {
@@ -92,6 +112,8 @@ def test_create_robot_config_builds_squint_config():
             "sim_video_dir": "outputs/test_videos",
             "sim_reset_seed_on_terminal": True,
             "sim_bootstrap_dataset_episode": 0,
+            "sim_bootstrap_dataset_episodes": [0, 2, 3],
+            "sim_bootstrap_dataset_episode_interval": 6,
             "sim_bootstrap_dataset_action_stride": 3,
         }
     )
@@ -105,7 +127,24 @@ def test_create_robot_config_builds_squint_config():
     assert robot_cfg.video_dir == "outputs/test_videos"
     assert robot_cfg.reset_seed_on_terminal is True
     assert robot_cfg.bootstrap_dataset_episode == 0
+    assert robot_cfg.bootstrap_dataset_episodes == [0, 2, 3]
+    assert robot_cfg.bootstrap_dataset_episode_interval == 6
     assert robot_cfg.bootstrap_dataset_action_stride == 3
+
+
+def test_squint_robot_schedules_bootstrap_dataset_episodes():
+    robot = SquintSO101Robot(
+        SquintSO101RobotConfig(
+            bootstrap_dataset_episodes=[0, 2, 3],
+            bootstrap_dataset_episode_interval=6,
+        )
+    )
+
+    assert robot._bootstrap_dataset_episode_for_sim_episode(0) == 0
+    assert robot._bootstrap_dataset_episode_for_sim_episode(5) is None
+    assert robot._bootstrap_dataset_episode_for_sim_episode(6) == 2
+    assert robot._bootstrap_dataset_episode_for_sim_episode(12) == 3
+    assert robot._bootstrap_dataset_episode_for_sim_episode(18) is None
 
 
 def test_rlt_paper_cadence_config_propagates_to_client(tmp_path):

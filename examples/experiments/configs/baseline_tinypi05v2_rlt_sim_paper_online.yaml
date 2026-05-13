@@ -17,7 +17,7 @@ client_host: "local squint sim"
 server_host: "local policy server"
 robot_id: squint_so101_pickplace_20260513_paper_online
 sim_headless: true
-sim_squint_root: /home/jack/code/squint
+sim_squint_root: ""  # legacy no-op; sim env code is vendored in this repo
 sim_dataset_root: outputs/so101_pickplace_160_20260501a
 sim_dataset_repo_id: jackvial/so101_pickplace_160_20260501a
 sim_env_id:
@@ -33,8 +33,10 @@ sim_max_episode_steps: 100
 sim_success_reward_threshold: 0.5
 sim_reset_seed_on_terminal: true
 sim_bootstrap_dataset_episode: 0
+sim_bootstrap_dataset_episodes:
+sim_bootstrap_dataset_episode_interval: 1
 sim_bootstrap_dataset_action_stride: 3
-sim_video_dir: outputs/rlt_tinypi05v2_squint_marker_sim_paper_online_v7/videos
+sim_video_dir: outputs/rlt_tinypi05v2_squint_marker_sim_grasp_contact_v5_online/videos
 sim_video_fps: 20
 sim_video_every_episodes: 1
 sim_video_max_episodes: 30
@@ -88,15 +90,15 @@ rlt_success_sample_fraction: 1.0
 rlt_intervention_sample_fraction: 0.0
 rlt_train_freq_s: 0.25
 rlt_save_freq_steps: 250
-rlt_output_dir: outputs/rlt_tinypi05v2_squint_marker_sim_paper_online_v7
-rlt_online_buffer_path: outputs/rlt_tinypi05v2_squint_marker_sim_paper_online_v7/rlt_online_replay.pt
+rlt_output_dir: outputs/rlt_tinypi05v2_squint_marker_sim_grasp_contact_v5_online
+rlt_online_buffer_path: outputs/rlt_tinypi05v2_squint_marker_sim_grasp_contact_v5_online/rlt_online_replay.pt
 rlt_demo_buffer_path:
 rlt_online_buffer_save_freq_transitions: 50
 rlt_persist_buffer_on_shutdown: true
 
 rlt_review_capture_enabled: true
 rlt_review_jpeg_quality: 80
-rlt_review_archive_path: outputs/rlt_tinypi05v2_squint_marker_sim_paper_online_v7/rlt_review_archive.pt
+rlt_review_archive_path: outputs/rlt_tinypi05v2_squint_marker_sim_grasp_contact_v5_online/rlt_review_archive.pt
 rlt_actor_lr: 0.0001
 rlt_critic_lr: 0.0003
 rlt_discount: 0.985
@@ -123,7 +125,7 @@ latency_alpha: 0.125
 latency_beta: 0.25
 
 # Timing
-duration_s: 240.0
+duration_s: 900.0
 run_until_interrupt: false
 fps: 10
 

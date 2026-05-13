@@ -17,7 +17,7 @@ client_host: "local squint sim"
 server_host: "local policy server"
 robot_id: squint_so101_pickplace_20260513
 sim_headless: true
-sim_squint_root: /home/jack/code/squint
+sim_squint_root: ""  # legacy no-op; sim env code is vendored in this repo
 sim_dataset_root: outputs/so101_pickplace_160_20260501a
 sim_dataset_repo_id: jackvial/so101_pickplace_160_20260501a
 # Leave unset to derive SO101PlaceCubeMarker-v1 from the dataset task text.

@@ -10,10 +10,12 @@ from lerobot.robots.config import RobotConfig
 @RobotConfig.register_subclass("squint_so101")
 @dataclass
 class SquintSO101RobotConfig(RobotConfig):
-    """SO101 simulator backed by the local Squint ManiSkill task suite."""
+    """SO101 simulator backed by the vendored Squint ManiSkill task suite."""
 
     id: str | None = "squint_so101"
-    squint_root: str = "/home/jack/code/squint"
+    # Kept for compatibility with existing experiment configs. The simulator is
+    # vendored under lerobot.robots.squint_so101.sim and no longer reads this.
+    squint_root: str = ""
     env_id: str | None = None
     dataset_root: str | None = None
     dataset_repo_id: str | None = None
@@ -41,4 +43,6 @@ class SquintSO101RobotConfig(RobotConfig):
     reset_after_terminal: bool = True
     reset_seed_on_terminal: bool = False
     bootstrap_dataset_episode: int | None = None
+    bootstrap_dataset_episodes: list[int] | None = None
+    bootstrap_dataset_episode_interval: int = 1
     bootstrap_dataset_action_stride: int = 1

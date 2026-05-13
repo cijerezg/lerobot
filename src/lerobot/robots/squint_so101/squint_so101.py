@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -159,6 +158,29 @@ def read_dataset_episode_actions(
     return None
 
 
+def read_dataset_episode_initial_state(dataset_root: str | None, episode_index: int | None) -> np.ndarray | None:
+    """Read the first demonstrated robot state for one LeRobot v3 episode."""
+    if not dataset_root or episode_index is None:
+        return None
+    data_root = Path(dataset_root) / "data"
+    if not data_root.exists():
+        return None
+    try:
+        import pandas as pd
+
+        for data_file in sorted(data_root.glob("chunk-*/file-*.parquet")):
+            data = pd.read_parquet(data_file, columns=["episode_index", "frame_index", "observation.state"])
+            episode = data[data["episode_index"] == int(episode_index)].sort_values("frame_index")
+            if episode.empty:
+                continue
+            state = np.asarray(episode["observation.state"].iloc[0], dtype=np.float32)
+            if state.shape == (len(ACTION_KEYS),) and np.isfinite(state).all():
+                return state
+    except Exception as exc:
+        logger.warning("Failed to read dataset episode %s initial state from %s: %s", episode_index, data_root, exc)
+    return None
+
+
 def _default_lerobot_unit_range() -> tuple[np.ndarray, np.ndarray]:
     low = np.array([-100.0] * 5 + [0.0], dtype=np.float32)
     high = np.array([100.0] * 5 + [100.0], dtype=np.float32)
@@ -229,11 +251,25 @@ class SquintSO101Robot(Robot):
         if action_range is not None:
             self._unit_low, self._unit_high = action_range
         self._initial_state_units = read_dataset_initial_state(config.dataset_root)
-        self._bootstrap_actions = read_dataset_episode_actions(
-            config.dataset_root,
-            config.bootstrap_dataset_episode,
-            config.bootstrap_dataset_action_stride,
-        )
+        self._bootstrap_dataset_episodes = list(config.bootstrap_dataset_episodes or [])
+        self._bootstrap_dataset_episode_interval = max(1, int(config.bootstrap_dataset_episode_interval))
+        bootstrap_episode_ids = set(self._bootstrap_dataset_episodes)
+        if config.bootstrap_dataset_episode is not None:
+            bootstrap_episode_ids.add(int(config.bootstrap_dataset_episode))
+        self._bootstrap_actions_by_episode: dict[int, np.ndarray] = {}
+        self._bootstrap_initial_states_by_episode: dict[int, np.ndarray] = {}
+        for episode in sorted(bootstrap_episode_ids):
+            actions = read_dataset_episode_actions(
+                config.dataset_root,
+                episode,
+                config.bootstrap_dataset_action_stride,
+            )
+            if actions is not None:
+                self._bootstrap_actions_by_episode[episode] = actions
+            state = read_dataset_episode_initial_state(config.dataset_root, episode)
+            if state is not None:
+                self._bootstrap_initial_states_by_episode[episode] = state
+        self._active_bootstrap_actions: np.ndarray | None = None
         self._bootstrap_active = False
         self._video_frames: list[np.ndarray] = []
         self._video_dir = Path(config.video_dir)
@@ -297,9 +333,9 @@ class SquintSO101Robot(Robot):
     def send_action(self, action: RobotAction) -> RobotAction:
         self._require_connected()
         target_units = np.array([float(action[key]) for key in ACTION_KEYS], dtype=np.float32)
-        if self._bootstrap_active:
-            if self._episode_step < len(self._bootstrap_actions):
-                target_units = self._bootstrap_actions[self._episode_step].astype(np.float32)
+        if self._bootstrap_active and self._active_bootstrap_actions is not None:
+            if self._episode_step < len(self._active_bootstrap_actions):
+                target_units = self._active_bootstrap_actions[self._episode_step].astype(np.float32)
             else:
                 self._bootstrap_active = False
         target_qpos = self._lerobot_units_to_qpos(target_units)
@@ -364,19 +400,14 @@ class SquintSO101Robot(Robot):
         return {}
 
     def _import_squint(self) -> None:
-        squint_root = Path(self.config.squint_root).expanduser().resolve()
-        if not squint_root.exists():
-            raise FileNotFoundError(f"Squint root does not exist: {squint_root}")
-        if str(squint_root) not in sys.path:
-            sys.path.insert(0, str(squint_root))
         os.environ.setdefault("MKL_SERVICE_FORCE_INTEL", "1")
         try:
-            import envs  # noqa: F401
             import mani_skill.envs  # noqa: F401
+            import lerobot.robots.squint_so101.sim.envs  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "Squint SO101 simulation requires Squint's ManiSkill dependencies. "
-                "Install them in this environment from /home/jack/code/squint/environment.yaml "
+                "Squint SO101 simulation requires ManiSkill dependencies. "
+                "Install this environment with the squint_so101 extra "
                 "(notably `mani_skill_nightly`, `dacite`, and `transforms3d`)."
             ) from exc
 
@@ -409,30 +440,63 @@ class SquintSO101Robot(Robot):
         self._env = gym.make(self.env_id, **kwargs)
         self._refresh_qpos_limits()
 
+    def _bootstrap_dataset_episode_for_sim_episode(self, sim_episode_index: int) -> int | None:
+        if self._bootstrap_dataset_episodes:
+            if sim_episode_index % self._bootstrap_dataset_episode_interval != 0:
+                return None
+            schedule_index = sim_episode_index // self._bootstrap_dataset_episode_interval
+            if schedule_index < len(self._bootstrap_dataset_episodes):
+                return self._bootstrap_dataset_episodes[schedule_index]
+            return None
+        if self.config.bootstrap_dataset_episode is not None and sim_episode_index == 0:
+            return int(self.config.bootstrap_dataset_episode)
+        return None
+
     def _reset_episode(self, seed: int | None) -> None:
+        next_episode_index = self._episode_index + 1
+        bootstrap_dataset_episode = self._bootstrap_dataset_episode_for_sim_episode(next_episode_index)
         obs, info = self._env.reset(seed=seed)
-        obs = self._apply_dataset_initial_state(obs, info)
+        obs = self._apply_dataset_initial_state(obs, info, bootstrap_dataset_episode)
         self._latest_obs = obs
         self._latest_info = dict(info or {})
-        self._episode_index += 1
+        self._episode_index = next_episode_index
         self._episode_step = 0
         self._video_frames = []
         self._pending_start_event = True
         self._episode_had_success = False
-        self._bootstrap_active = self._bootstrap_actions is not None and self._episode_index == 0
+        self._active_bootstrap_dataset_episode = bootstrap_dataset_episode
+        self._active_bootstrap_actions = (
+            self._bootstrap_actions_by_episode.get(bootstrap_dataset_episode)
+            if bootstrap_dataset_episode is not None
+            else None
+        )
+        self._bootstrap_active = self._active_bootstrap_actions is not None
         if self._bootstrap_active:
             logger.info(
-                "Using dataset action bootstrap for simulator episode %s (%s actions)",
+                "Using dataset action bootstrap for simulator episode %s from dataset episode %s (%s actions)",
                 self._episode_index,
-                len(self._bootstrap_actions),
+                self._active_bootstrap_dataset_episode,
+                len(self._active_bootstrap_actions),
             )
         self._append_video_frame()
 
-    def _apply_dataset_initial_state(self, obs: Any, info: dict[str, Any]) -> Any:
-        if self._initial_state_units is None:
+    def _apply_dataset_initial_state(
+        self,
+        obs: Any,
+        info: dict[str, Any],
+        bootstrap_dataset_episode: int | None = None,
+    ) -> Any:
+        state_units = (
+            self._bootstrap_initial_states_by_episode.get(bootstrap_dataset_episode)
+            if bootstrap_dataset_episode is not None
+            else None
+        )
+        if state_units is None:
+            state_units = self._initial_state_units
+        if state_units is None:
             return obs
         try:
-            qpos = self._lerobot_units_to_qpos(self._initial_state_units)
+            qpos = self._lerobot_units_to_qpos(state_units)
             qpos_tensor = torch.as_tensor(qpos, dtype=torch.float32, device=self._env.unwrapped.device).view(1, -1)
             robot = self._env.unwrapped.agent.robot
             robot.set_qpos(qpos_tensor)
