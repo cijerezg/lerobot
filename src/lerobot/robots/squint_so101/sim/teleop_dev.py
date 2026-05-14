@@ -44,6 +44,7 @@ class CameraVizServer:
         self.http_port = int(http_port)
         self.ws_port = int(ws_port)
         self._queue: Queue[dict[str, Any]] = Queue(maxsize=8)
+        self._control_queue: Queue[dict[str, Any]] = Queue(maxsize=128)
         self._clients: set[Any] = set()
         self._shutdown = threading.Event()
         self._http_server: HTTPServer | None = None
@@ -63,7 +64,23 @@ class CameraVizServer:
         if self._http_server is not None:
             self._http_server.shutdown()
 
-    def on_observation(self, observation: dict[str, Any], *, step: int, action: dict[str, float]) -> None:
+    def drain_controls(self) -> list[dict[str, Any]]:
+        controls: list[dict[str, Any]] = []
+        while True:
+            try:
+                controls.append(self._control_queue.get_nowait())
+            except Empty:
+                return controls
+
+    def on_observation(
+        self,
+        observation: dict[str, Any],
+        *,
+        step: int,
+        action: dict[str, float],
+        camera_state: dict[str, Any] | None = None,
+        camera_status: str | None = None,
+    ) -> None:
         cameras: list[dict[str, Any]] = []
         for name, value in observation.items():
             if not isinstance(value, np.ndarray) or value.dtype != np.uint8 or value.ndim != 3:
@@ -84,6 +101,10 @@ class CameraVizServer:
             "cameras": sorted(cameras, key=lambda item: item["name"]),
             "action": action,
         }
+        if camera_state is not None:
+            payload["camera_state"] = camera_state
+        if camera_status is not None:
+            payload["camera_status"] = camera_status
         try:
             self._queue.put_nowait(payload)
         except Full:
@@ -117,8 +138,8 @@ class CameraVizServer:
     async def _handler(self, websocket):
         self._clients.add(websocket)
         try:
-            async for _message in websocket:
-                pass
+            async for message in websocket:
+                self._on_client_message(message)
         finally:
             self._clients.discard(websocket)
 
@@ -146,6 +167,21 @@ class CameraVizServer:
 
         async with websockets.serve(self._handler, "0.0.0.0", self.ws_port):
             await self._broadcast_loop()
+
+    def _on_client_message(self, message: str) -> None:
+        try:
+            payload = json.loads(message)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict) or payload.get("type") != "camera_control":
+            return
+        try:
+            self._control_queue.put_nowait(payload)
+        except Full:
+            with suppress(Empty):
+                self._control_queue.get_nowait()
+            with suppress(Full):
+                self._control_queue.put_nowait(payload)
 
 
 class TerminalKeyboardJointTeleop:
@@ -266,6 +302,209 @@ def _clip_action(robot: SquintSO101Robot, action: dict[str, float]) -> dict[str,
     return clipped
 
 
+def _canonical_camera_name(name: Any) -> str | None:
+    name_l = str(name or "").lower()
+    if name_l in {"top", "render", "render_camera"}:
+        return "top"
+    if name_l in {"side", "base", "base_camera"}:
+        return "side"
+    return None
+
+
+def _normalize(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
+    norm = float(np.linalg.norm(vector))
+    if norm < 1e-9:
+        return fallback.astype(np.float64)
+    return vector / norm
+
+
+def _rotate_about_axis(vector: np.ndarray, axis: np.ndarray, angle: float) -> np.ndarray:
+    axis = _normalize(axis, np.array([0.0, 0.0, 1.0], dtype=np.float64))
+    return (
+        vector * np.cos(angle)
+        + np.cross(axis, vector) * np.sin(angle)
+        + axis * np.dot(axis, vector) * (1.0 - np.cos(angle))
+    )
+
+
+def _camera_control_defaults(robot: SquintSO101Robot) -> dict[str, dict[str, list[float]]]:
+    env = getattr(robot, "_env", None)
+    unwrapped = getattr(env, "unwrapped", env)
+    side_settings = getattr(unwrapped, "base_camera_settings", None) or {}
+
+    top_eye = [0.5, 0.3, 0.35]
+    top_target = [0.3, 0.0, 0.1]
+    if getattr(unwrapped, "target_type", None) == "marker":
+        with suppress(Exception):
+            from lerobot.robots.squint_so101.sim.envs import place
+
+            top_eye = list(place.MARKER_TOP_CAMERA_POS)
+            top_target = list(place.MARKER_TOP_CAMERA_TARGET)
+
+    return {
+        "top": {
+            "eye": [float(value) for value in top_eye],
+            "target": [float(value) for value in top_target],
+        },
+        "side": {
+            "eye": [float(value) for value in side_settings.get("pos", [0.6, 0.3, 0.3])],
+            "target": [float(value) for value in side_settings.get("target", [0.3, 0.0, 0.05])],
+        },
+    }
+
+
+def _ensure_camera_control_state(robot: SquintSO101Robot) -> dict[str, dict[str, list[float]]]:
+    env = getattr(robot, "_env", None)
+    unwrapped = getattr(env, "unwrapped", env)
+    if not hasattr(unwrapped, "_teleop_camera_defaults"):
+        defaults = _camera_control_defaults(robot)
+        setattr(unwrapped, "_teleop_camera_defaults", defaults)
+        setattr(unwrapped, "_teleop_camera_state", json.loads(json.dumps(defaults)))
+    return getattr(unwrapped, "_teleop_camera_state")
+
+
+def _set_camera_pose(
+    robot: SquintSO101Robot,
+    camera: str,
+    eye: list[float] | np.ndarray,
+    target: list[float] | np.ndarray,
+) -> None:
+    env = getattr(robot, "_env", None)
+    unwrapped = getattr(env, "unwrapped", env)
+    eye_values = [float(value) for value in eye]
+    target_values = [float(value) for value in target]
+    state = _ensure_camera_control_state(robot)
+    state[camera] = {"eye": eye_values, "target": target_values}
+
+    if camera == "side":
+        if hasattr(unwrapped, "base_camera_settings"):
+            unwrapped.base_camera_settings = {"pos": eye_values, "target": target_values}
+        if hasattr(unwrapped, "camera_mount") and hasattr(unwrapped, "sample_camera_poses"):
+            unwrapped.camera_mount.set_pose(unwrapped.sample_camera_poses(n=unwrapped.num_envs))
+            if getattr(unwrapped, "gpu_sim_enabled", False):
+                unwrapped.scene._gpu_apply_all()
+        return
+
+    with suppress(Exception):
+        if "render_camera" not in unwrapped.scene.human_render_cameras:
+            robot._render_rgb()
+        from mani_skill.utils import sapien_utils
+
+        camera_obj = unwrapped.scene.human_render_cameras["render_camera"].camera
+        camera_obj.set_local_pose(sapien_utils.look_at(eye_values, target_values).sp)
+
+
+def _save_camera_poses(robot: SquintSO101Robot, selected_camera: str | None = None) -> Path:
+    env = getattr(robot, "_env", None)
+    unwrapped = getattr(env, "unwrapped", env)
+    state = _ensure_camera_control_state(robot)
+    payload = {
+        "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "env_id": getattr(robot, "env_id", None),
+        "selected_camera": selected_camera,
+        "cameras": {
+            name: {
+                "eye": [float(value) for value in values["eye"]],
+                "target": [float(value) for value in values["target"]],
+            }
+            for name, values in state.items()
+        },
+    }
+    path = Path("outputs/camera_alignment/saved_camera_poses.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+    setattr(unwrapped, "_teleop_camera_status", f"Saved camera poses to {path}")
+    print(f"Saved camera poses to {path}", flush=True)
+    return path
+
+
+def _apply_camera_control(robot: SquintSO101Robot, payload: dict[str, Any]) -> bool:
+    mode = str(payload.get("mode") or "orbit").lower()
+    camera = _canonical_camera_name(payload.get("camera"))
+    if mode == "save":
+        _save_camera_poses(robot, selected_camera=camera)
+        return True
+    if camera is None:
+        return False
+
+    state = _ensure_camera_control_state(robot)
+    defaults = getattr(getattr(robot._env, "unwrapped", robot._env), "_teleop_camera_defaults", {})
+
+    if mode == "reset":
+        default = defaults.get(camera)
+        if not default:
+            return False
+        _set_camera_pose(robot, camera, default["eye"], default["target"])
+        return True
+
+    if mode == "set":
+        eye = payload.get("eye")
+        target = payload.get("target")
+        if not isinstance(eye, list) or not isinstance(target, list) or len(eye) != 3 or len(target) != 3:
+            return False
+        _set_camera_pose(robot, camera, eye, target)
+        return True
+
+    current = state.get(camera)
+    if current is None:
+        return False
+    eye = np.asarray(current["eye"], dtype=np.float64)
+    target = np.asarray(current["target"], dtype=np.float64)
+    offset = eye - target
+    distance = max(float(np.linalg.norm(offset)), 1e-4)
+    forward = _normalize(target - eye, np.array([1.0, 0.0, 0.0], dtype=np.float64))
+    world_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    right = _normalize(np.cross(forward, world_up), np.array([1.0, 0.0, 0.0], dtype=np.float64))
+    up = _normalize(np.cross(right, forward), world_up)
+
+    dx = float(payload.get("dx") or 0.0)
+    dy = float(payload.get("dy") or 0.0)
+    if mode == "orbit":
+        yaw = -dx * 0.006
+        pitch = -dy * 0.006
+        offset = _rotate_about_axis(offset, world_up, yaw)
+        right = _normalize(np.cross(_normalize(-offset, forward), world_up), right)
+        offset = _rotate_about_axis(offset, right, pitch)
+        eye = target + offset
+    elif mode == "pan":
+        scale = distance * 0.0016
+        delta = (-right * dx + up * dy) * scale
+        eye = eye + delta
+        target = target + delta
+    elif mode == "dolly":
+        factor = float(np.exp(np.clip(dy, -240.0, 240.0) * 0.0015))
+        eye = target + offset * factor
+    elif mode == "move_xy":
+        step = float(payload.get("step") or 0.01)
+        delta = np.array([dx * step, dy * step, 0.0], dtype=np.float64)
+        eye = eye + delta
+        target = target + delta
+    else:
+        return False
+
+    eye[2] = max(float(eye[2]), 0.015)
+    target[2] = max(float(target[2]), 0.0)
+    _set_camera_pose(robot, camera, eye, target)
+    return True
+
+
+def _camera_control_state(robot: SquintSO101Robot) -> dict[str, Any]:
+    state = _ensure_camera_control_state(robot)
+    return {
+        name: {
+            "eye": [round(float(value), 4) for value in values["eye"]],
+            "target": [round(float(value), 4) for value in values["target"]],
+        }
+        for name, values in state.items()
+    }
+
+
+def _camera_control_status(robot: SquintSO101Robot) -> str | None:
+    env = getattr(robot, "_env", None)
+    unwrapped = getattr(env, "unwrapped", env)
+    return getattr(unwrapped, "_teleop_camera_status", None)
+
+
 def _make_leader(args: argparse.Namespace):
     if args.teleop_mode not in {"so100_leader", "so101_leader"}:
         return None
@@ -302,6 +541,7 @@ def run_worker(args: argparse.Namespace) -> int:
     print(f"Environment: {robot_config.env_id or 'inferred from dataset/task'}", flush=True)
 
     robot.connect()
+    _ensure_camera_control_state(robot)
     observation = robot.get_observation()
     action = _action_from_observation(observation)
     leader = _make_leader(args)
@@ -344,6 +584,8 @@ def _run_loop(
     while keep_running():
         tick = time.perf_counter()
         command: str | None = None
+        for control in server.drain_controls():
+            _apply_camera_control(robot, control)
         if keyboard_action is not None:
             action, command = keyboard_action(action)
             if command == "quit":
@@ -361,7 +603,13 @@ def _run_loop(
         robot.send_action(action)
         observation = robot.get_observation()
         action.update(_action_from_observation(observation) if args.follow_applied_action else {})
-        server.on_observation(observation, step=step, action=action)
+        server.on_observation(
+            observation,
+            step=step,
+            action=action,
+            camera_state=_camera_control_state(robot),
+            camera_status=_camera_control_status(robot),
+        )
 
         now = time.time()
         if now - last_print > 2.0:

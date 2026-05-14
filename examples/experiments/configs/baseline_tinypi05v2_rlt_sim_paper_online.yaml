@@ -36,8 +36,8 @@ sim_bootstrap_dataset_episode: 0
 sim_bootstrap_dataset_episodes:
 sim_bootstrap_dataset_episode_interval: 1
 sim_bootstrap_dataset_action_stride: 3
-sim_marker_xy_offset: [-0.175, 0.095]
-sim_marker_yaw_degrees: 90.0
+sim_marker_xy_offset: [-0.11475445, 0.110]
+sim_marker_yaw_degrees: 0.0
 sim_video_dir: outputs/rlt_tinypi05v2_squint_marker_sim_grasp_contact_v5_online/videos
 sim_video_fps: 20
 sim_video_every_episodes: 1

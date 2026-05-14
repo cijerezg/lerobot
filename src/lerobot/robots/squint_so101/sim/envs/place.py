@@ -6,7 +6,8 @@ import mani_skill.envs.utils.randomization as randomization
 import numpy as np
 import sapien
 import torch
-from mani_skill.utils import common
+from mani_skill.sensors.camera import CameraConfig
+from mani_skill.utils import common, sapien_utils
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs.actor import Actor
@@ -18,6 +19,18 @@ from .base_random_env import DefaultCameraEnv, DefaultRandomizationConfig
 from .robot.so100 import SO100
 from .robot.so101 import SO101
 
+MARKER_BASE_SIZE = (0.110, 0.070)
+# Front x of base_so101_v2_convex.obj after applying the URDF collision origin.
+SO101_BASE_FRONT_X = 0.06524555
+MARKER_CUBE_START_DISTANCE_FROM_BASE_FRONT = 0.220
+MARKER_CENTER_DISTANCE_FROM_BASE_FRONT = 0.120
+MARKER_CENTER_LEFT_OF_BASE_CENTER = 0.110
+PLACE_CUBE_FACE_SIZE = 0.024
+MARKER_TOP_CAMERA_POS = [0.45, 1.00, 0.35]
+MARKER_TOP_CAMERA_TARGET = [0.55, 0.15, 0.12]
+MARKER_SIDE_CAMERA_POS = [0.25, -0.70, 0.18]
+MARKER_SIDE_CAMERA_TARGET = [0.65, 0.30, 0.05]
+
 
 @dataclass
 class PlaceRandomizationConfig(DefaultRandomizationConfig):
@@ -26,7 +39,7 @@ class PlaceRandomizationConfig(DefaultRandomizationConfig):
     # Noisy joint positions for better sim2real
     robot_qpos_noise_std: float = np.deg2rad(5)
     # Cube-specific randomization
-    cube_half_size_range: Sequence[float] = (0.022 / 2, 0.028 / 2)
+    cube_half_size_range: Sequence[float] = (PLACE_CUBE_FACE_SIZE / 2, PLACE_CUBE_FACE_SIZE / 2)
     # Can-specific randomization
     can_radius_range: Sequence[float] = (0.028 / 2, 0.038 / 2)
     can_half_height_range: Sequence[float] = (0.05 / 2, 0.07 / 2)
@@ -69,6 +82,13 @@ class Place(DefaultCameraEnv):
         "rgb+depth+segmentation+state",
     ]
     agent: Union[SO100, SO101]
+
+    @property
+    def _default_human_render_camera_configs(self):
+        if getattr(self, "target_type", None) == "marker":
+            pose = sapien_utils.look_at(MARKER_TOP_CAMERA_POS, MARKER_TOP_CAMERA_TARGET)
+            return CameraConfig("render_camera", pose, 512, 512, 52 * np.pi / 180, 0.01, 100)
+        return super()._default_human_render_camera_configs
 
     def __init__(
         self,
@@ -114,7 +134,10 @@ class Place(DefaultCameraEnv):
         self.spawn_box_pos = spawn_box_pos
         self.spawn_box_half_size = spawn_box_half_size
         if marker_xy_offset is None:
-            marker_xy_offset = (-0.175, 0.095)
+            marker_xy_offset = (
+                SO101_BASE_FRONT_X + MARKER_CENTER_DISTANCE_FROM_BASE_FRONT - self.spawn_box_pos[0],
+                MARKER_CENTER_LEFT_OF_BASE_CENTER,
+            )
         if len(marker_xy_offset) != 2:
             raise ValueError(f"marker_xy_offset must contain exactly two values, got {marker_xy_offset}")
         self.marker_xy_offset = tuple(float(value) for value in marker_xy_offset)
@@ -130,8 +153,8 @@ class Place(DefaultCameraEnv):
         )
         if self.target_type == "marker" and hasattr(self, "base_camera_settings"):
             self.base_camera_settings = dict(
-                pos=[0.35, -0.65, 0.22],
-                target=[0.30, 0.00, 0.04],
+                pos=MARKER_SIDE_CAMERA_POS,
+                target=MARKER_SIDE_CAMERA_TARGET,
             )
 
     def _load_agent(self, options: dict):
@@ -241,7 +264,6 @@ class Place(DefaultCameraEnv):
 
         # Build items
         items = []
-        cube_mark_color = sapien.render.RenderMaterial(base_color=[0.0, 0.0, 0.0, 1.0])
         for i in range(self.num_envs):
             builder = self.scene.create_actor_builder()
             friction = frictions[i]
@@ -259,12 +281,6 @@ class Place(DefaultCameraEnv):
                     half_size=[half_sizes[i]] * 3,
                     material=sapien.render.RenderMaterial(base_color=colors[i]),
                 )
-                if self.target_type == "marker":
-                    builder.add_box_visual(
-                        pose=sapien.Pose([0.0, 0.0, half_sizes[i] + 0.0004]),
-                        half_size=[half_sizes[i] * 0.35, half_sizes[i] * 0.35, 0.0004],
-                        material=cube_mark_color,
-                    )
                 builder.initial_pose = sapien.Pose(
                     p=[0.2, 0, half_sizes[i]]
                 )  # Offset to avoid collision with bin at creation
@@ -326,9 +342,8 @@ class Place(DefaultCameraEnv):
             )
 
         if self.target_type == "marker":
-            marker_half_sizes = np.maximum(bin_half_sizes_x, bin_half_sizes_y)
-            bin_half_sizes_x = marker_half_sizes
-            bin_half_sizes_y = marker_half_sizes
+            bin_half_sizes_x = np.ones(self.num_envs) * (MARKER_BASE_SIZE[0] / 2)
+            bin_half_sizes_y = np.ones(self.num_envs) * (MARKER_BASE_SIZE[1] / 2)
             bin_half_sizes_z = np.ones(self.num_envs) * (thickness / 2)
 
         self.bin_half_sizes_x = common.to_tensor(bin_half_sizes_x, device=self.device)
@@ -366,11 +381,12 @@ class Place(DefaultCameraEnv):
                     builder.add_box_collision(pose=wall_pose, half_size=wall_half_size)
                     builder.add_box_visual(pose=wall_pose, half_size=wall_half_size, material=target_color)
             else:
-                bar_half_length = min(bin_half_size[0], bin_half_size[1]) * 1.35
+                bar_half_length = np.linalg.norm(bin_half_size[:2]) * 0.95
                 bar_half_width = max(0.004, min(bin_half_size[0], bin_half_size[1]) * 0.07)
                 bar_half_height = 0.0008
                 bar_pose_z = thickness + bar_half_height
-                for angle in (np.pi / 4 + self.marker_yaw, -np.pi / 4 + self.marker_yaw):
+                diagonal_angle = np.arctan2(bin_half_size[1], bin_half_size[0])
+                for angle in (diagonal_angle, -diagonal_angle):
                     builder.add_box_visual(
                         pose=sapien.Pose(
                             p=[0.0, 0.0, bar_pose_z],
@@ -381,9 +397,10 @@ class Place(DefaultCameraEnv):
                     )
 
             initial_z = 0.0 if self.target_type == "marker" else bin_half_size[2]
-            builder.initial_pose = sapien.Pose(
-                p=[-0.2, 0, initial_z]
-            )  # Offset to avoid collision with item at creation
+            initial_pose_kwargs = {"p": [-0.2, 0, initial_z]}
+            if self.target_type == "marker":
+                initial_pose_kwargs["q"] = euler2quat(0, 0, self.marker_yaw)
+            builder.initial_pose = sapien.Pose(**initial_pose_kwargs)  # Offset to avoid collision with item at creation
             builder.set_scene_idxs([i])
             if self.target_type == "marker":
                 bin_actor = builder.build_kinematic(name=f"bin-{i}")
@@ -540,11 +557,14 @@ class Place(DefaultCameraEnv):
             bin_radius = self.bin_radius.max().item() + 0.01
 
             if self.target_type == "marker":
-                # Align the marker layout with jackvial/so101_pickplace_160_20260501a.
-                # Replaying episode-0 joint states reaches the cube near (0.23, -0.01)
-                # and places it near (0.13, 0.09) in simulator workspace coordinates.
+                # Place the cube 220mm forward from the SO101 base front center.
                 bin_xy_offset = torch.tensor(self.marker_xy_offset, device=self.device).repeat(b, 1)
-                item_xy_offset = torch.tensor([-0.07, -0.006], device=self.device).repeat(b, 1)
+                cube_start_x = (
+                    SO101_BASE_FRONT_X
+                    + MARKER_CUBE_START_DISTANCE_FROM_BASE_FRONT
+                    - self.spawn_box_pos[0]
+                )
+                item_xy_offset = torch.tensor([cube_start_x, 0.0], device=self.device).repeat(b, 1)
             else:
                 item_xy_offset = sampler.sample(item_radius, 100)
                 bin_xy_offset = sampler.sample(bin_radius, 100, verbose=False)
@@ -561,7 +581,12 @@ class Place(DefaultCameraEnv):
             bin_xyz[:, :2] = spawn_center[env_idx, :2] + bin_xy_offset
             bin_xyz[:, 2] = 0.0 if self.target_type == "marker" else self.bin_thickness / 2
             if self.target_type == "marker":
-                self.bin.set_pose(Pose.create_from_pq(bin_xyz))
+                marker_q = torch.tensor(
+                    euler2quat(0, 0, self.marker_yaw),
+                    device=self.device,
+                    dtype=bin_xyz.dtype,
+                ).repeat(b, 1)
+                self.bin.set_pose(Pose.create_from_pq(bin_xyz, marker_q))
             else:
                 qs = randomization.random_quaternions(b, lock_x=True, lock_y=True)
                 self.bin.set_pose(Pose.create_from_pq(bin_xyz, qs))
@@ -659,8 +684,15 @@ class Place(DefaultCameraEnv):
             bin_pos[:, 2] = self.bin_thickness + self.item_half_sizes
 
         offset = item_pos - bin_pos
-        inside_x = torch.abs(offset[:, 0]) < self.bin_half_sizes_x
-        inside_y = torch.abs(offset[:, 1]) < self.bin_half_sizes_y
+        offset_for_bounds = offset
+        if self.target_type == "marker":
+            cos_yaw = torch.cos(torch.tensor(self.marker_yaw, device=self.device, dtype=offset.dtype))
+            sin_yaw = torch.sin(torch.tensor(self.marker_yaw, device=self.device, dtype=offset.dtype))
+            local_x = cos_yaw * offset[:, 0] + sin_yaw * offset[:, 1]
+            local_y = -sin_yaw * offset[:, 0] + cos_yaw * offset[:, 1]
+            offset_for_bounds = torch.stack([local_x, local_y, offset[:, 2]], dim=-1)
+        inside_x = torch.abs(offset_for_bounds[:, 0]) < self.bin_half_sizes_x
+        inside_y = torch.abs(offset_for_bounds[:, 1]) < self.bin_half_sizes_y
         is_item_above_bin = inside_x & inside_y
         height_tol = torch.maximum(self.item_half_sizes, torch.full_like(self.item_half_sizes, 0.015))
         is_item_at_target_height = torch.abs(offset[:, 2]) <= height_tol
