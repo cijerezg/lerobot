@@ -343,7 +343,7 @@ def _update_critic(
         )
 
         # Preprocess for Critic
-        
+
         # Note: No subtask hydration needed here — critic doesn't use subtasks.
         forward_batch_critic = preprocess_batch_for_pi05(
             policy=policy,
@@ -721,7 +721,7 @@ def _update_actor(
                 device=device,
                 cast_to_bf16_fn=cast_to_bf16_fn
             )
-            
+
             # External Metrics for Efficiency
             # We calculate squashed advantage here to log consistent with what the model *would* report
             # But we pass the RAW advantage and values to the model to skip re-computation
@@ -742,7 +742,7 @@ def _update_actor(
             else:
                 actor_output = policy.forward(forward_batch_actor, model="actor", external_metrics=external_metrics)
                 loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
-            
+
             loss_actor_mean = loss_actor.mean()
             
             accum_loss_actor += actor_output["loss_actor"].mean().item()
