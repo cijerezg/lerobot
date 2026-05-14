@@ -1,12 +1,25 @@
 # =============================================================================
 # HISERL pi0.5 RL training config
 # =============================================================================
+# Used by:
+#   - lerobot/src/lerobot/scripts/offline_learner_pi05.py   (offline)
+#   - lerobot/src/lerobot/rl/inference_pi05_async.py        (online actor)
+#   - lerobot/src/lerobot/rl/inference_pi05_async_interactive.py
+#   - lerobot/src/lerobot/probes/{actions,representations,attention,...}_pi05.py
+#
+# Schema: TrainRLServerPipelineConfig in lerobot/src/lerobot/configs/train.py
+# Override any field via CLI, e.g.:
+#   --probe_parameters.output_dir=outputs/probe
+#   --policy.actor_lr=1e-5
+#
+# Layout: top of file = frequently-tuned knobs; rarely-touched fields sink down.
+# =============================================================================
 
 
 # -----------------------------------------------------------------------------
 # Hot knobs (changed often)
 # -----------------------------------------------------------------------------
-offline_output_dir: outputs/pi05_full_offline_training_diverse-v1
+offline_output_dir: outputs/pi05_full_offline_training_diverse-v3
 batch_size: 64
 
 
@@ -24,7 +37,7 @@ dataset:
 # -----------------------------------------------------------------------------
 # RL flags (shared offline + online)
 # -----------------------------------------------------------------------------
-skip_critic: false                      # skip critic train step; pretrained critic still runs forward for logging
+skip_critic: true                      # skip critic train step; pretrained critic still runs forward for logging
 treat_main_dataset_as_golden: true     # select true only if root dataset is of very high quality
 
 
@@ -34,7 +47,7 @@ treat_main_dataset_as_golden: true     # select true only if root dataset is of 
 val_dataset_path: outputs/annotated-dataset-validation-v7
 val_split: 0.0                 # if > 0: hold out fraction of main dataset instead
 val_freq: 400                  # optimizer steps between validation passes
-val_on_start: true
+val_on_start: false
 
 
 # =============================================================================
@@ -44,7 +57,7 @@ policy:
   # ---- Identity & checkpoint ------------------------------------------------
   type: pi05_rl
   task: "Pick up the red truck and put it in the bowl"
-  pi05_checkpoint: outputs/pi05_base
+  pi05_checkpoint: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
 
   # effective batch size: gradient_accumulation_steps * batch_size
   gradient_accumulation_steps: 2
@@ -53,13 +66,13 @@ policy:
   # `from_layer: N` → unfreeze layers ≥ N. `null` → fully frozen.
   trainable_params:
     vision_encoder_from_layer:
-      vision_tower: 10
+      vision_tower: 5
       multi_modal_projector: true
     language_from_layer: 5
-    critic_language_from_layer: 1
+    critic_language_from_layer: 5
     critic_vision_encoder_from_layer:
-      vision_tower: 4
-      multi_modal_projector: true
+      vision_tower: null
+      multi_modal_projector: false
 
   # ---- Losses & optimizer ---------------------------------------------------
   loss_weight_flow: 1.0                 # flow-matching MSE
@@ -93,10 +106,10 @@ policy:
 
   # ---- Buffer & training schedule -------------------------------------------
   online_buffer_capacity: 5000
-  offline_buffer_capacity: 60000
+  offline_buffer_capacity: 50000
   online_step_before_learning: 10       # warmup transitions before learner starts (online)
   online_steps: 20000
-  offline_steps: 12000
+  offline_steps: 10000
   policy_update_freq: 1                 # actor updates per critic update
   critic_warmup_steps: 0
   utd_ratio: 1
@@ -107,32 +120,32 @@ policy:
   # before running any policy on hardware. Obtain values by running teleop and
   # moving the arm through its full safe range of motion.
   # Set to null to disable (unsafe for untested policies).
-  action_clamp_limits: null             # e.g. [[-150,150],[-150,0],[0,150],[-150,150],[-150,150],[0,60]]
+  action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
 
   inference_advantage: 1.0              # constant advantage value injected at inference
   subtask_regeneration_interval: 1.5    # seconds between subtask re-generations
-  max_decoding_steps: 24                # subtask token decode budget
   rtc_config:                           # real-time chunking (action-queue prefix attention)
     enabled: true
-    execution_horizon: 20
+    execution_horizon: 10
     prefix_attention_schedule: LINEAR
     max_guidance_weight: 10.0
     debug: false
     debug_maxlen: 100
-  
+
   # ---- Architecture / I/O ---------------------------------------------------
   tokenizer_max_length: 64
   max_state_dim: 6
   action_dim: 6
   n_obs_steps: 1
   num_inference_steps: 5                # flow-matching denoising steps
+  max_decoding_steps: 24                # subtask token decode budget
   knowledge_insulation: true            # block grads from action tokens into VLM K/V
   use_separate_critic: true
   dtype: bfloat16
   gradient_checkpointing: true
   use_amp: false
   action_encoding: anchor
-  action_encoding_stats_path: outputs/stats/action_stats_anchor_annotated_dataset-v7.pt
+  action_encoding_stats_path: outputs/stats/action_stats_anchor_annotated_dataset-v4.pt
   normalization_mapping:
     VISUAL: IDENTITY
     STATE: MIN_MAX
@@ -187,7 +200,7 @@ seed: 42
 log_freq: 20
 save_checkpoint: true
 save_freq: 100                 # online checkpoint cadence (optimizer steps)
-offline_save_freq: 800         # offline checkpoint cadence; falls back to save_freq if null
+offline_save_freq: 400         # offline checkpoint cadence; falls back to save_freq if null
 buffer_cache_dir: outputs/buffer_cache-v1
 use_rerun: true
 
@@ -221,13 +234,13 @@ wandb:
 # =============================================================================
 probe_parameters:
   # ---- Enable flags ---------------------------------------------------------
-  enable_actions: true
-  enable_representations: true
-  enable_attention: true
-  enable_offline_inference: true
-  enable_spatial_memorization: true
-  enable_action_drift_jacobian: true
-  enable_spatial_memorization_jacobian: true
+  enable_actions: false
+  enable_representations: false
+  enable_attention: false
+  enable_offline_inference: false
+  enable_spatial_memorization: false
+  enable_action_drift_jacobian: false
+  enable_spatial_memorization_jacobian: false
   enable_critic_values_distribution: true
 
   # ---- Common ---------------------------------------------------------------
@@ -239,7 +252,7 @@ probe_parameters:
   timestep: 0.5                         # single diffusion timestep used by all probes
 
   # ---- Actions / representations --------------------------------------------
-  ref_max_episodes: 50
+  ref_max_episodes: 2
   ref_n_frames_per_episode: 256
   action_pca_dims: 50
   repr_pca_dims: 100
