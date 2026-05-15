@@ -1,7 +1,6 @@
 """Side-by-side comparison of validation outputs across training steps."""
 
 import argparse
-import base64
 from pathlib import Path
 
 import gradio as gr
@@ -183,18 +182,14 @@ def discover_critic_values_files(val_dir: Path, steps: list[str]) -> list[str]:
 # Rendering helpers
 # ---------------------------------------------------------------------------
 
-def img_to_data_uri(path: Path) -> str:
+def file_url(path: Path) -> str:
+    """Return a Gradio-served URL for `path`, or '' if the file is missing.
+
+    The path must be inside a directory passed to `gr.set_static_paths`.
+    """
     if not path.exists():
         return ""
-    data = base64.b64encode(path.read_bytes()).decode()
-    return f"data:image/png;base64,{data}"
-
-
-def vid_to_data_uri(path: Path) -> str:
-    if not path.exists():
-        return ""
-    data = base64.b64encode(path.read_bytes()).decode()
-    return f"data:video/mp4;base64,{data}"
+    return f"/gradio_api/file={path}"
 
 
 def render_image_grid(paths_and_labels: list[tuple[Path, str]]) -> str:
@@ -205,11 +200,11 @@ def render_image_grid(paths_and_labels: list[tuple[Path, str]]) -> str:
 
     html = '<div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:8px; width:100%;">'
     for path, label in paths_and_labels:
-        uri = img_to_data_uri(path)
+        uri = file_url(path)
         html += f'''<div style="text-align:center;">
             <div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{label}</div>'''
         if uri:
-            html += f'<img src="{uri}" style="width:100%; height:auto; border-radius:4px;" />'
+            html += f'<img src="{uri}" loading="lazy" style="width:100%; height:auto; border-radius:4px;" />'
         else:
             html += '<p style="color:#888;">Not found</p>'
         html += '</div>'
@@ -271,11 +266,11 @@ def _video_seek_script(uid: str) -> str:
 
 
 def _render_video_item(path: Path, label: str) -> str:
-    uri = vid_to_data_uri(path)
+    uri = file_url(path)
     html = f'<div style="text-align:center;">'
     html += f'<div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{label}</div>'
     if uri:
-        html += f'<video src="{uri}" preload="auto" style="width:100%; height:auto; border-radius:4px;"></video>'
+        html += f'<video src="{uri}" preload="metadata" style="width:100%; height:auto; border-radius:4px;"></video>'
     else:
         html += '<p style="color:#888;">Not found</p>'
     html += '</div>'
@@ -334,6 +329,8 @@ def build_app(run_dir: str):
     if not val_dir.exists():
         raise FileNotFoundError(f"No validation directory at {val_dir}")
 
+    gr.set_static_paths([str(val_dir)])
+
     all_steps = discover_steps(val_dir)
     if not all_steps:
         raise FileNotFoundError(f"No step_* directories in {val_dir}")
@@ -378,11 +375,11 @@ def build_app(run_dir: str):
                 thumb_path = candidate
                 break
         if thumb_path:
-            thumb_uri = img_to_data_uri(thumb_path)
+            thumb_uri = file_url(thumb_path)
             if thumb_uri:
                 gr.HTML(f'''<details style="margin-bottom:8px;">
                     <summary style="cursor:pointer; font-weight:bold; font-size:1em;">Episode thumbnails</summary>
-                    <img src="{thumb_uri}" style="width:100%; max-width:1200px; height:auto; margin-top:6px; border-radius:4px;" />
+                    <img src="{thumb_uri}" loading="lazy" style="width:100%; max-width:1200px; height:auto; margin-top:6px; border-radius:4px;" />
                 </details>''')
 
         # ---- Actions tab ----

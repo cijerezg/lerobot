@@ -547,10 +547,9 @@ class PI05RLPytorch(PI05Pytorch):
             fast_len_temp = action_tokens.shape[1] if action_tokens is not None else 0
             
             image_len = prefix_len - task_len_temp - subtask_len_temp - fast_len_temp
-            
+
             # The new forward constructs "combined_att_2d_masks" using this image_len implicitly (via previous logic if we were to reuse it)
             # But here we just needed image_len for the slicing below.
-
 
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
@@ -667,6 +666,7 @@ class PI05RLPytorch(PI05Pytorch):
                  
                  # Reshape and mask
                 st_loss = st_loss.view(subtask_labels.shape)
+                st_loss = st_loss.clamp(max=15.0)
                 if subtask_masks is not None:
                     st_loss = st_loss * subtask_masks
                     subtask_ce_loss = st_loss.sum() / (subtask_masks.sum() + 1e-6)
@@ -690,6 +690,7 @@ class PI05RLPytorch(PI05Pytorch):
                 
                 # Reshape to [B, T] to match mask
                 act_loss = act_loss.view(action_labels.shape)
+                act_loss = act_loss.clamp(max=15.0)
 
                 if action_masks is not None:
                     act_loss = act_loss * action_masks
@@ -706,7 +707,7 @@ class PI05RLPytorch(PI05Pytorch):
         )
 
         self.log_counter += 1
-        if self.log_counter % 120 == 0 and not self.suppress_debug_log:
+        if self.log_counter % 240 == 0 and not self.suppress_debug_log:
             print(f"[Actor Loss] Total: {total_loss.item():.4f} | Flow: {flow_loss.mean().item():.4f} | ActionCE: {action_ce_loss.item():.4f} | SubtaskCE: {subtask_ce_loss.item():.4f}")
             if subtask_tokens is not None:
                 pred_ids = subtask_logits.argmax(dim=-1)  # [B, subtask_len]
