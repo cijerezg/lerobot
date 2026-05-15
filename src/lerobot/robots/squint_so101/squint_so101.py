@@ -188,6 +188,58 @@ def _default_lerobot_unit_range() -> tuple[np.ndarray, np.ndarray]:
     return low, high
 
 
+def _identity_follow_calibration() -> tuple[np.ndarray, np.ndarray]:
+    return (
+        np.ones(len(ACTION_KEYS), dtype=np.float32),
+        np.zeros(len(ACTION_KEYS), dtype=np.float32),
+    )
+
+
+def _load_follow_calibration(path: str | None) -> tuple[np.ndarray, np.ndarray, Path | None]:
+    scale, offset = _identity_follow_calibration()
+    if not path:
+        return scale, offset, None
+
+    calibration_path = Path(path).expanduser()
+    if not calibration_path.exists():
+        logger.warning("Squint follow calibration file does not exist: %s", calibration_path)
+        return scale, offset, calibration_path
+
+    try:
+        with calibration_path.open() as f:
+            payload = json.load(f)
+    except Exception as exc:
+        logger.warning("Failed to load Squint follow calibration from %s: %s", calibration_path, exc)
+        return scale, offset, calibration_path
+
+    if not isinstance(payload, dict):
+        logger.warning("Ignoring malformed Squint follow calibration in %s", calibration_path)
+        return scale, offset, calibration_path
+
+    scale_payload = payload.get("scale", {})
+    offset_payload = payload.get("offset", {})
+    if not isinstance(scale_payload, dict):
+        scale_payload = {}
+    if not isinstance(offset_payload, dict):
+        offset_payload = {}
+
+    for index, key in enumerate(ACTION_KEYS):
+        try:
+            scale[index] = float(scale_payload.get(key, scale[index]))
+            offset[index] = float(offset_payload.get(key, offset[index]))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring malformed calibration value for %s in %s", key, calibration_path)
+
+    invalid_scale = ~np.isfinite(scale) | (np.abs(scale) < 1e-6)
+    if invalid_scale.any():
+        bad_keys = [key for key, invalid in zip(ACTION_KEYS, invalid_scale, strict=True) if invalid]
+        logger.warning("Resetting invalid Squint follow calibration scale values for: %s", ", ".join(bad_keys))
+        scale[invalid_scale] = 1.0
+
+    offset = np.where(np.isfinite(offset), offset, 0.0).astype(np.float32)
+    return scale.astype(np.float32), offset, calibration_path
+
+
 def _as_numpy(value: Any) -> np.ndarray:
     if isinstance(value, torch.Tensor):
         value = value.detach().cpu().numpy()
@@ -248,6 +300,9 @@ class SquintSO101Robot(Robot):
         self._qpos_low = np.array([-np.pi] * 5 + [0.0], dtype=np.float32)
         self._qpos_high = np.array([np.pi] * 5 + [np.pi / 2], dtype=np.float32)
         self._unit_low, self._unit_high = _default_lerobot_unit_range()
+        self._follow_calibration_scale, self._follow_calibration_offset, self._follow_calibration_path = (
+            _load_follow_calibration(config.follow_calibration_path)
+        )
         action_range = read_dataset_action_range(config.dataset_root)
         if action_range is not None:
             self._unit_low, self._unit_high = action_range
@@ -324,6 +379,13 @@ class SquintSO101Robot(Robot):
             self._unit_low.tolist(),
             self._unit_high.tolist(),
         )
+        if self._follow_calibration_path is not None:
+            logger.info(
+                "Squint follow calibration: path=%s scale=%s offset=%s",
+                self._follow_calibration_path,
+                self._follow_calibration_scale.tolist(),
+                self._follow_calibration_offset.tolist(),
+            )
 
     def get_observation(self) -> RobotObservation:
         self._require_connected()
@@ -377,11 +439,12 @@ class SquintSO101Robot(Robot):
 
         tick = time.perf_counter()
         target_qpos = self._lerobot_units_to_qpos(target_units)
+        applied_target_units = self._qpos_to_lerobot_units(target_qpos)
         sim_action = self._target_qpos_to_controller_action(target_qpos)
         if self.config.action_clip is not None:
             sim_action = np.clip(sim_action, -self.config.action_clip, self.config.action_clip)
         sim_action = self._fit_action_space(sim_action.astype(np.float32))
-        self._last_sent_action_units = target_units.astype(np.float32).copy()
+        self._last_sent_action_units = applied_target_units.astype(np.float32).copy()
         timing["action_transform_ms"] = (time.perf_counter() - tick) * 1000.0
 
         tick = time.perf_counter()
@@ -603,19 +666,52 @@ class SquintSO101Robot(Robot):
                 qlimits = qlimits[0]
             self._qpos_low = qlimits[:, 0].astype(np.float32)
             self._qpos_high = qlimits[:, 1].astype(np.float32)
+            self._warn_if_external_range_exceeds_sim_limits()
         except Exception as exc:
             logger.warning("Could not read Squint SO101 qlimits; using fallback limits: %s", exc)
+
+    def _warn_if_external_range_exceeds_sim_limits(self) -> None:
+        if self._follow_calibration_path is None:
+            return
+        reachable_low = self._qpos_to_lerobot_units(self._qpos_low)
+        reachable_high = self._qpos_to_lerobot_units(self._qpos_high)
+        below = self._unit_low < (reachable_low - 1e-3)
+        above = self._unit_high > (reachable_high + 1e-3)
+        if not (below.any() or above.any()):
+            return
+
+        details: list[str] = []
+        for index, key in enumerate(ACTION_KEYS):
+            if below[index] or above[index]:
+                details.append(
+                    f"{key}: configured=[{self._unit_low[index]:.2f}, {self._unit_high[index]:.2f}] "
+                    f"reachable=[{reachable_low[index]:.2f}, {reachable_high[index]:.2f}]"
+                )
+        logger.warning(
+            "Squint follow calibration makes part of the configured action range unreachable; "
+            "commands will be clipped for %s",
+            "; ".join(details),
+        )
 
     def _get_qpos(self) -> np.ndarray:
         qpos = _as_plain_numpy(self._env.unwrapped.agent.robot.get_qpos()).astype(np.float32)
         return qpos.reshape(-1)[: len(ACTION_KEYS)]
 
     def _qpos_to_lerobot_units(self, qpos: np.ndarray) -> np.ndarray:
-        return np.rad2deg(qpos).astype(np.float32)
+        return self._sim_units_to_external_units(np.rad2deg(qpos).astype(np.float32))
 
     def _lerobot_units_to_qpos(self, values: np.ndarray) -> np.ndarray:
-        qpos = np.deg2rad(values).astype(np.float32)
+        sim_units = self._external_units_to_sim_units(values)
+        qpos = np.deg2rad(sim_units).astype(np.float32)
         return np.clip(qpos, self._qpos_low, self._qpos_high).astype(np.float32)
+
+    def _external_units_to_sim_units(self, values: np.ndarray) -> np.ndarray:
+        values = np.asarray(values, dtype=np.float32)
+        return (values * self._follow_calibration_scale + self._follow_calibration_offset).astype(np.float32)
+
+    def _sim_units_to_external_units(self, values: np.ndarray) -> np.ndarray:
+        values = np.asarray(values, dtype=np.float32)
+        return ((values - self._follow_calibration_offset) / self._follow_calibration_scale).astype(np.float32)
 
     def _get_controller_target_qpos(self) -> np.ndarray | None:
         controller = getattr(self._env.unwrapped.agent, "controller", None)

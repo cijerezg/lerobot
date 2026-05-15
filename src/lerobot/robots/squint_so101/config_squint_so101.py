@@ -45,6 +45,7 @@ class SquintSO101RobotConfig(RobotConfig):
     use_dataset_initial_state: bool = True
     show_gripper_contact_markers: bool = False
     use_marker_grasp_assist: bool = True
+    follow_calibration_path: str = ""
     bootstrap_dataset_episode: int | None = None
     bootstrap_dataset_episodes: list[int] | None = None
     bootstrap_dataset_episode_interval: int = 1

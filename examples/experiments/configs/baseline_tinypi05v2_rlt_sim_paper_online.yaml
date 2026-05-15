@@ -32,6 +32,10 @@ sim_white_x_background: false
 sim_max_episode_steps: 100
 sim_success_reward_threshold: 0.5
 sim_reset_seed_on_terminal: true
+sim_use_dataset_initial_state: true
+sim_follow_calibration_path: outputs/squint_sim_teleop/follow_calibration.json
+sim_show_gripper_contact_markers: false
+sim_use_marker_grasp_assist: false
 sim_bootstrap_dataset_episode: 0
 sim_bootstrap_dataset_episodes:
 sim_bootstrap_dataset_episode_interval: 1

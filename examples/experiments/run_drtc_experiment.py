@@ -104,6 +104,10 @@ class ExperimentConfig:
     sim_action_clip: float | None = None
     sim_headless: bool = False
     sim_reset_seed_on_terminal: bool = False
+    sim_use_dataset_initial_state: bool = True
+    sim_show_gripper_contact_markers: bool = False
+    sim_use_marker_grasp_assist: bool = True
+    sim_follow_calibration_path: str = ""
     sim_bootstrap_dataset_episode: int | None = None
     sim_bootstrap_dataset_episodes: list[int] | None = None
     sim_bootstrap_dataset_episode_interval: int = 1
@@ -253,7 +257,10 @@ _SCALAR_FIELDS = frozenset({
     "sim_video_max_episodes", "sim_video_max_frames",
     "sim_white_x_background", "sim_max_episode_steps",
     "sim_success_reward_threshold", "sim_action_clip", "sim_headless",
-    "sim_reset_seed_on_terminal", "sim_bootstrap_dataset_episode", "sim_bootstrap_dataset_episodes",
+    "sim_reset_seed_on_terminal", "sim_use_dataset_initial_state",
+    "sim_show_gripper_contact_markers", "sim_use_marker_grasp_assist",
+    "sim_follow_calibration_path",
+    "sim_bootstrap_dataset_episode", "sim_bootstrap_dataset_episodes",
     "sim_bootstrap_dataset_episode_interval", "sim_bootstrap_dataset_action_stride",
     "sim_marker_xy_offset", "sim_marker_yaw_degrees",
     "camera1_path", "camera2_path",
@@ -421,6 +428,10 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             success_reward_threshold=config.sim_success_reward_threshold,
             action_clip=config.sim_action_clip,
             reset_seed_on_terminal=config.sim_reset_seed_on_terminal,
+            use_dataset_initial_state=config.sim_use_dataset_initial_state,
+            show_gripper_contact_markers=config.sim_show_gripper_contact_markers,
+            use_marker_grasp_assist=config.sim_use_marker_grasp_assist,
+            follow_calibration_path=config.sim_follow_calibration_path,
             bootstrap_dataset_episode=config.sim_bootstrap_dataset_episode,
             bootstrap_dataset_episodes=config.sim_bootstrap_dataset_episodes,
             bootstrap_dataset_episode_interval=config.sim_bootstrap_dataset_episode_interval,
