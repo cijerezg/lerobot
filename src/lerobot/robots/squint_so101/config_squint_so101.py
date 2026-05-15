@@ -42,6 +42,7 @@ class SquintSO101RobotConfig(RobotConfig):
     action_clip: float | None = None
     reset_after_terminal: bool = True
     reset_seed_on_terminal: bool = False
+    use_dataset_initial_state: bool = True
     bootstrap_dataset_episode: int | None = None
     bootstrap_dataset_episodes: list[int] | None = None
     bootstrap_dataset_episode_interval: int = 1

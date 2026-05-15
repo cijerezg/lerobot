@@ -33,6 +33,17 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = "examples/experiments/configs/baseline_tinypi05v2_rlt_sim_paper_online.yaml"
 DEFAULT_WATCH_PATHS = ("src/lerobot/robots/squint_so101",)
+DEFAULT_FOLLOW_CALIBRATION_PATH = "outputs/squint_sim_teleop/follow_calibration.json"
+# The place task already resets SO101 to the "start" keyframe. Use that as the
+# visual alignment pose; "rest" is the tucked/closed debug pose, not calibration zero.
+SO101_KEYFRAME_ACTIONS = {
+    "zero": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "start": [0.0, 0.0, 0.0, 90.0, -90.0, 60.0],
+    "rest": [0.0, -90.0, 90.0, float(np.rad2deg(0.66)), -180.0, -10.0],
+    "extended": [0.0, -45.0, 45.0, 0.0, 0.0, 100.0],
+}
+ARM_ACTION_KEYS = ACTION_KEYS[:-1]
+GRIPPER_ACTION_KEY = ACTION_KEYS[-1]
 
 
 class ReusableHTTPServer(HTTPServer):
@@ -49,6 +60,8 @@ class CameraVizServer:
         self._shutdown = threading.Event()
         self._http_server: HTTPServer | None = None
         self._threads: list[threading.Thread] = []
+        self._last_broadcast_ms = 0.0
+        self._last_broadcast_clients = 0
 
     def start(self) -> None:
         for target, name in (
@@ -80,19 +93,33 @@ class CameraVizServer:
         action: dict[str, float],
         camera_state: dict[str, Any] | None = None,
         camera_status: str | None = None,
-    ) -> None:
+    ) -> dict[str, float]:
+        total_start = time.perf_counter()
+        timing: dict[str, float] = {
+            "viz_clients": float(len(self._clients)),
+            "viz_last_broadcast_ms": float(self._last_broadcast_ms),
+            "viz_last_broadcast_clients": float(self._last_broadcast_clients),
+        }
         cameras: list[dict[str, Any]] = []
+        encode_total_ms = 0.0
         for name, value in observation.items():
             if not isinstance(value, np.ndarray) or value.dtype != np.uint8 or value.ndim != 3:
                 continue
             if value.shape[-1] != 3:
                 continue
+            encode_start = time.perf_counter()
             encoded = encode_image_for_viz(value, max_width=480, jpeg_quality=70)
+            encode_ms = (time.perf_counter() - encode_start) * 1000.0
+            encode_total_ms += encode_ms
+            timing[f"viz_encode_{name}_ms"] = encode_ms
             if encoded is None:
                 continue
             cameras.append({"name": str(name), **encoded})
+        timing["viz_encode_total_ms"] = encode_total_ms
+        timing["viz_camera_count"] = float(len(cameras))
         if not cameras:
-            return
+            timing["viz_total_ms"] = (time.perf_counter() - total_start) * 1000.0
+            return timing
 
         payload = {
             "type": "frame",
@@ -105,6 +132,7 @@ class CameraVizServer:
             payload["camera_state"] = camera_state
         if camera_status is not None:
             payload["camera_status"] = camera_status
+        queue_start = time.perf_counter()
         try:
             self._queue.put_nowait(payload)
         except Full:
@@ -113,6 +141,9 @@ class CameraVizServer:
                 self._queue.put_nowait(payload)
             except Empty:
                 pass
+        timing["viz_queue_ms"] = (time.perf_counter() - queue_start) * 1000.0
+        timing["viz_total_ms"] = (time.perf_counter() - total_start) * 1000.0
+        return timing
 
     def _run_http_server(self) -> None:
         html_dir = Path(__file__).parent
@@ -153,10 +184,14 @@ class CameraVizServer:
             if not self._clients:
                 continue
             message = json.dumps(payload)
+            broadcast_start = time.perf_counter()
+            client_count = len(self._clients)
             await asyncio.gather(
                 *[client.send(message) for client in self._clients],
                 return_exceptions=True,
             )
+            self._last_broadcast_ms = (time.perf_counter() - broadcast_start) * 1000.0
+            self._last_broadcast_clients = client_count
 
     async def _run_ws_server(self) -> None:
         try:
@@ -173,7 +208,7 @@ class CameraVizServer:
             payload = json.loads(message)
         except json.JSONDecodeError:
             return
-        if not isinstance(payload, dict) or payload.get("type") != "camera_control":
+        if not isinstance(payload, dict) or payload.get("type") not in {"camera_control", "sim_control"}:
             return
         try:
             self._control_queue.put_nowait(payload)
@@ -280,6 +315,10 @@ def _load_robot_config(args: argparse.Namespace) -> SquintSO101RobotConfig:
         robot_config.sensor_height = args.sensor_height
     if args.max_episode_steps is not None:
         robot_config.max_episode_steps = args.max_episode_steps
+    robot_config.use_dataset_initial_state = bool(args.use_dataset_initial_state or args.use_bootstrap_actions)
+    if not args.use_bootstrap_actions:
+        robot_config.bootstrap_dataset_episode = None
+        robot_config.bootstrap_dataset_episodes = None
     robot_config.video_dir = args.video_dir
     robot_config.video_every_episodes = args.video_every_episodes
     return robot_config
@@ -287,6 +326,189 @@ def _load_robot_config(args: argparse.Namespace) -> SquintSO101RobotConfig:
 
 def _action_from_observation(observation: dict[str, Any]) -> dict[str, float]:
     return {key: float(observation[key]) for key in ACTION_KEYS if key in observation}
+
+
+def _keyframe_action(name: str) -> dict[str, float] | None:
+    values = SO101_KEYFRAME_ACTIONS.get(name)
+    if values is None:
+        return None
+    return {key: float(value) for key, value in zip(ACTION_KEYS, values, strict=True)}
+
+
+def _set_sim_follower_action(robot: SquintSO101Robot, action: dict[str, float]) -> dict[str, float]:
+    if hasattr(robot, "set_joint_positions"):
+        return robot.set_joint_positions(action)
+    robot.send_action(action)
+    return action
+
+
+def _nudge_action(action: dict[str, float], joint: str, delta: float) -> dict[str, float]:
+    key = joint if joint.endswith(".pos") else f"{joint}.pos"
+    if key not in ACTION_KEYS:
+        return action
+    nudged = dict(action)
+    nudged[key] = float(nudged.get(key, 0.0)) + float(delta)
+    return nudged
+
+
+def _identity_follow_calibration() -> dict[str, dict[str, float]]:
+    return {
+        "scale": {key: 1.0 for key in ACTION_KEYS},
+        "offset": {key: 0.0 for key in ACTION_KEYS},
+    }
+
+
+def _normalize_follow_calibration(payload: Any) -> dict[str, dict[str, float]]:
+    calibration = _identity_follow_calibration()
+    if not isinstance(payload, dict):
+        return calibration
+    for section in ("scale", "offset"):
+        values = payload.get(section)
+        if not isinstance(values, dict):
+            continue
+        for key in ACTION_KEYS:
+            if key not in values:
+                continue
+            try:
+                calibration[section][key] = float(values[key])
+            except (TypeError, ValueError):
+                continue
+    refs = payload.get("gripper_refs")
+    if isinstance(refs, dict):
+        normalized_refs: dict[str, dict[str, float]] = {}
+        for name in ("closed", "open"):
+            ref = refs.get(name)
+            if not isinstance(ref, dict):
+                continue
+            try:
+                normalized_refs[name] = {
+                    "leader": float(ref["leader"]),
+                    "sim": float(ref["sim"]),
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
+        if normalized_refs:
+            calibration["gripper_refs"] = normalized_refs
+    return calibration
+
+
+def _load_follow_calibration(path: str) -> dict[str, dict[str, float]]:
+    if not path:
+        return _identity_follow_calibration()
+    calibration_path = Path(path)
+    if not calibration_path.exists():
+        return _identity_follow_calibration()
+    try:
+        with calibration_path.open() as f:
+            return _normalize_follow_calibration(json.load(f))
+    except Exception as exc:
+        logger.warning("Failed to load follow calibration from %s: %s", calibration_path, exc)
+        return _identity_follow_calibration()
+
+
+def _save_follow_calibration(path: str, calibration: dict[str, dict[str, float]]) -> None:
+    if not path:
+        return
+    calibration_path = Path(path)
+    calibration_path.parent.mkdir(parents=True, exist_ok=True)
+    with calibration_path.open("w") as f:
+        json.dump(calibration, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def _clear_follow_calibration(path: str, calibration: dict[str, dict[str, float]]) -> None:
+    calibration.clear()
+    calibration.update(_identity_follow_calibration())
+    if path:
+        with suppress(FileNotFoundError):
+            Path(path).unlink()
+
+
+def _apply_follow_calibration(
+    raw_action: dict[str, float],
+    calibration: dict[str, dict[str, float]],
+) -> dict[str, float]:
+    scale = calibration.get("scale", {})
+    offset = calibration.get("offset", {})
+    return {
+        key: float(raw_action[key]) * float(scale.get(key, 1.0)) + float(offset.get(key, 0.0))
+        for key in ACTION_KEYS
+        if key in raw_action
+    }
+
+
+def _calibrate_follow_offset(
+    raw_action: dict[str, float],
+    sim_action: dict[str, float],
+    calibration: dict[str, dict[str, float]],
+    keys: tuple[str, ...] = ARM_ACTION_KEYS,
+) -> dict[str, float]:
+    scale = calibration.setdefault("scale", {key: 1.0 for key in ACTION_KEYS})
+    offset = calibration.setdefault("offset", {key: 0.0 for key in ACTION_KEYS})
+    for key in keys:
+        if key not in raw_action or key not in sim_action:
+            continue
+        offset[key] = float(sim_action[key]) - (float(raw_action[key]) * float(scale.get(key, 1.0)))
+    return offset
+
+
+def _flip_follow_sign(
+    raw_action: dict[str, float],
+    sim_action: dict[str, float],
+    calibration: dict[str, dict[str, float]],
+    joint: str,
+) -> str | None:
+    key = joint if joint.endswith(".pos") else f"{joint}.pos"
+    if key not in ACTION_KEYS or key not in raw_action or key not in sim_action:
+        return None
+    scale = calibration.setdefault("scale", {key: 1.0 for key in ACTION_KEYS})
+    offset = calibration.setdefault("offset", {key: 0.0 for key in ACTION_KEYS})
+    scale[key] = -float(scale.get(key, 1.0))
+    offset[key] = float(sim_action[key]) - scale[key] * float(raw_action[key])
+    return key
+
+
+def _record_gripper_reference(
+    raw_action: dict[str, float],
+    sim_action: dict[str, float],
+    calibration: dict[str, dict[str, float]],
+    name: str,
+) -> str:
+    if GRIPPER_ACTION_KEY not in raw_action or GRIPPER_ACTION_KEY not in sim_action:
+        return "Cannot record gripper reference; gripper values missing"
+    name = "closed" if name == "closed" else "open"
+    refs = calibration.setdefault("gripper_refs", {})
+    refs[name] = {
+        "leader": float(raw_action[GRIPPER_ACTION_KEY]),
+        "sim": float(sim_action[GRIPPER_ACTION_KEY]),
+    }
+    other_name = "open" if name == "closed" else "closed"
+    other = refs.get(other_name)
+    if not isinstance(other, dict):
+        return f"Recorded gripper {name} reference"
+
+    closed = refs.get("closed", {})
+    open_ = refs.get("open", {})
+    leader_delta = float(open_["leader"]) - float(closed["leader"])
+    if abs(leader_delta) < 1e-6:
+        return "Recorded gripper reference, but leader open/closed values are too close to fit"
+
+    sim_delta = float(open_["sim"]) - float(closed["sim"])
+    scale = calibration.setdefault("scale", {key: 1.0 for key in ACTION_KEYS})
+    offset = calibration.setdefault("offset", {key: 0.0 for key in ACTION_KEYS})
+    scale[GRIPPER_ACTION_KEY] = sim_delta / leader_delta
+    offset[GRIPPER_ACTION_KEY] = float(closed["sim"]) - scale[GRIPPER_ACTION_KEY] * float(closed["leader"])
+    return (
+        "Fitted gripper map: "
+        f"sim={scale[GRIPPER_ACTION_KEY]:+.3f}*leader{offset[GRIPPER_ACTION_KEY]:+.3f}"
+    )
+
+
+def _format_follow_offsets(
+    calibration: dict[str, dict[str, float]], keys: tuple[str, ...] = ARM_ACTION_KEYS
+) -> str:
+    offset = calibration.get("offset", {})
+    return ", ".join(f"{key.removesuffix('.pos')}={float(offset.get(key, 0.0)):+.1f}" for key in keys)
 
 
 def _clip_action(robot: SquintSO101Robot, action: dict[str, float]) -> dict[str, float]:
@@ -488,6 +710,13 @@ def _apply_camera_control(robot: SquintSO101Robot, payload: dict[str, Any]) -> b
     return True
 
 
+def _set_viewer_status(robot: SquintSO101Robot, message: str) -> None:
+    env = getattr(robot, "_env", None)
+    unwrapped = getattr(env, "unwrapped", env)
+    if unwrapped is not None:
+        setattr(unwrapped, "_teleop_camera_status", message)
+
+
 def _camera_control_state(robot: SquintSO101Robot) -> dict[str, Any]:
     state = _ensure_camera_control_state(robot)
     return {
@@ -503,6 +732,50 @@ def _camera_control_status(robot: SquintSO101Robot) -> str | None:
     env = getattr(robot, "_env", None)
     unwrapped = getattr(env, "unwrapped", env)
     return getattr(unwrapped, "_teleop_camera_status", None)
+
+
+def _flatten_robot_timing(robot: SquintSO101Robot) -> dict[str, float]:
+    flat: dict[str, float] = {}
+    timing = getattr(robot, "_last_timing", {})
+    if not isinstance(timing, dict):
+        return flat
+    for group, values in timing.items():
+        if not isinstance(values, dict):
+            continue
+        for key, value in values.items():
+            try:
+                flat[f"robot_{group}_{key}"] = float(value)
+            except (TypeError, ValueError):
+                continue
+    return flat
+
+
+def _format_timing_report(samples: list[dict[str, float]]) -> str:
+    if not samples:
+        return "no samples"
+    keys = [
+        "loop_total_ms",
+        "control_to_frame_ms",
+        "input_ms",
+        "send_action_ms",
+        "robot_send_action_env_step_ms",
+        "get_observation_ms",
+        "robot_get_observation_top_render_ms",
+        "robot_get_observation_side_extract_ms",
+        "viz_total_ms",
+        "viz_encode_total_ms",
+        "viz_last_broadcast_ms",
+        "sleep_ms",
+    ]
+    parts: list[str] = []
+    for key in keys:
+        values = [sample[key] for sample in samples if key in sample]
+        if not values:
+            continue
+        avg = sum(values) / len(values)
+        max_value = max(values)
+        parts.append(f"{key}={avg:.1f}/{max_value:.1f}")
+    return " ".join(parts)
 
 
 def _make_leader(args: argparse.Namespace):
@@ -544,6 +817,10 @@ def run_worker(args: argparse.Namespace) -> int:
     _ensure_camera_control_state(robot)
     observation = robot.get_observation()
     action = _action_from_observation(observation)
+    latest_sim_action = dict(action)
+    follow_calibration = _load_follow_calibration(args.follow_calibration_path)
+    if any(abs(value) > 1e-6 for value in follow_calibration.get("offset", {}).values()):
+        _set_viewer_status(robot, f"Loaded follow calibration: {_format_follow_offsets(follow_calibration)}")
     leader = _make_leader(args)
 
     keyboard_cm = (
@@ -554,14 +831,33 @@ def run_worker(args: argparse.Namespace) -> int:
 
     try:
         if keyboard_cm is None:
-            return _run_loop(args, robot, server, action, leader, lambda: running)
+            return _run_loop(
+                args,
+                robot,
+                server,
+                action,
+                leader,
+                lambda: running,
+                latest_sim_action=latest_sim_action,
+                follow_calibration=follow_calibration,
+            )
         with keyboard_cm as keyboard:
             print(keyboard.help_text(), flush=True)
 
             def _keyboard_action(current: dict[str, float]) -> tuple[dict[str, float], str | None]:
                 return keyboard.apply(current)
 
-            return _run_loop(args, robot, server, action, leader, lambda: running, keyboard_action=_keyboard_action)
+            return _run_loop(
+                args,
+                robot,
+                server,
+                action,
+                leader,
+                lambda: running,
+                keyboard_action=_keyboard_action,
+                latest_sim_action=latest_sim_action,
+                follow_calibration=follow_calibration,
+            )
     finally:
         if leader is not None:
             leader.disconnect()
@@ -577,48 +873,192 @@ def _run_loop(
     leader: Any,
     keep_running,
     keyboard_action=None,
+    latest_sim_action: dict[str, float] | None = None,
+    follow_calibration: dict[str, dict[str, float]] | None = None,
 ) -> int:
     period = 1.0 / float(args.fps)
     step = 0
     last_print = 0.0
+    timing_samples: list[dict[str, float]] = []
+    latest_sim_action = dict(latest_sim_action or action)
+    follow_calibration = follow_calibration or _identity_follow_calibration()
+    pending_follow_calibration = False
+    follow_paused = False
     while keep_running():
-        tick = time.perf_counter()
+        loop_start = time.perf_counter()
+        sample: dict[str, float] = {"period_ms": period * 1000.0}
         command: str | None = None
+        tick = time.perf_counter()
         for control in server.drain_controls():
-            _apply_camera_control(robot, control)
+            control_type = control.get("type")
+            mode = str(control.get("mode") or "").lower()
+            if control_type == "sim_control" and mode == "reset":
+                reset_start = time.perf_counter()
+                robot._reset_episode(seed=robot.config.seed)
+                action = _action_from_observation(robot.get_observation())
+                latest_sim_action = dict(action)
+                sample["reset_ms"] = (time.perf_counter() - reset_start) * 1000.0
+                _set_viewer_status(robot, "Reset simulator episode to task start")
+                print("Reset simulator episode to task start", flush=True)
+                continue
+            if control_type == "sim_control" and mode == "hold_follow":
+                enabled = control.get("enabled")
+                follow_paused = (not follow_paused) if enabled is None else bool(enabled)
+                _set_viewer_status(robot, "Holding sim follower" if follow_paused else "Resumed leader follow")
+                print("Holding sim follower" if follow_paused else "Resumed leader follow", flush=True)
+                continue
+            if control_type == "sim_control" and mode == "set_follower_keyframe":
+                keyframe = str(control.get("keyframe") or "").lower()
+                keyframe_action = _keyframe_action(keyframe)
+                if keyframe_action is None:
+                    _set_viewer_status(robot, f"Unknown SO101 keyframe: {keyframe}")
+                    continue
+                latest_sim_action = _set_sim_follower_action(robot, keyframe_action)
+                action = dict(latest_sim_action)
+                follow_paused = True
+                if keyframe == "start":
+                    status = "Set SO101 alignment start; holding"
+                else:
+                    status = f"Set SO101 {keyframe} debug pose; holding"
+                _set_viewer_status(robot, status)
+                print(status, flush=True)
+                continue
+            if control_type == "sim_control" and mode == "nudge_follower_joint":
+                joint = str(control.get("joint") or "")
+                delta = float(control.get("delta") or 0.0)
+                latest_sim_action = _set_sim_follower_action(
+                    robot, _nudge_action(latest_sim_action, joint, delta)
+                )
+                action = dict(latest_sim_action)
+                follow_paused = True
+                _set_viewer_status(robot, f"Nudged {joint} {delta:+.2f}; holding")
+                continue
+            if control_type == "sim_control" and mode == "calibrate_follow":
+                pending_follow_calibration = True
+                _set_viewer_status(robot, "Arm follow calibration pending; gripper uses refs")
+                continue
+            if control_type == "sim_control" and mode == "flip_follow_sign":
+                if leader is None:
+                    _set_viewer_status(robot, "Sign flip requires leader teleop")
+                    continue
+                raw_action = {key: float(value) for key, value in leader.get_action().items() if key in ACTION_KEYS}
+                key = _flip_follow_sign(raw_action, latest_sim_action, follow_calibration, str(control.get("joint") or ""))
+                if key is None:
+                    _set_viewer_status(robot, "Could not flip selected joint sign")
+                    continue
+                _save_follow_calibration(args.follow_calibration_path, follow_calibration)
+                status = f"Flipped {key.removesuffix('.pos')} sign; recalibrated current pose"
+                _set_viewer_status(robot, status)
+                print(status, flush=True)
+                continue
+            if control_type == "sim_control" and mode == "record_gripper_reference":
+                if leader is None:
+                    _set_viewer_status(robot, "Gripper reference requires leader teleop")
+                    continue
+                raw_action = {key: float(value) for key, value in leader.get_action().items() if key in ACTION_KEYS}
+                status = _record_gripper_reference(
+                    raw_action,
+                    latest_sim_action,
+                    follow_calibration,
+                    str(control.get("reference") or "open"),
+                )
+                _save_follow_calibration(args.follow_calibration_path, follow_calibration)
+                _set_viewer_status(robot, status)
+                print(status, flush=True)
+                continue
+            if control_type == "sim_control" and mode == "clear_follow_calibration":
+                _clear_follow_calibration(args.follow_calibration_path, follow_calibration)
+                _set_viewer_status(robot, "Cleared follow calibration")
+                print("Cleared follow calibration", flush=True)
+                continue
+            if control_type == "camera_control":
+                _apply_camera_control(robot, control)
+        sample["control_queue_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        control_start = time.perf_counter()
+        tick = time.perf_counter()
         if keyboard_action is not None:
             action, command = keyboard_action(action)
             if command == "quit":
                 break
             if command == "reset":
+                reset_start = time.perf_counter()
                 robot._reset_episode(seed=robot.config.seed)
                 action = _action_from_observation(robot.get_observation())
-                print("Reset simulator episode", flush=True)
+                latest_sim_action = dict(action)
+                sample["reset_ms"] = (time.perf_counter() - reset_start) * 1000.0
+                _set_viewer_status(robot, "Reset simulator episode to task start")
+                print("Reset simulator episode to task start", flush=True)
             elif command == "print":
                 print(action, flush=True)
         elif leader is not None:
-            action = {key: float(value) for key, value in leader.get_action().items() if key in ACTION_KEYS}
+            raw_action = {key: float(value) for key, value in leader.get_action().items() if key in ACTION_KEYS}
+            if pending_follow_calibration:
+                _calibrate_follow_offset(raw_action, latest_sim_action, follow_calibration, keys=ARM_ACTION_KEYS)
+                _save_follow_calibration(args.follow_calibration_path, follow_calibration)
+                status = f"Saved arm follow calibration: {_format_follow_offsets(follow_calibration)}"
+                _set_viewer_status(robot, status)
+                print(status, flush=True)
+                follow_paused = False
+                pending_follow_calibration = False
+            action = dict(latest_sim_action) if follow_paused else _apply_follow_calibration(raw_action, follow_calibration)
+        elif pending_follow_calibration:
+            _set_viewer_status(robot, "Follow calibration requires leader teleop")
+            pending_follow_calibration = False
+        sample["input_ms"] = (time.perf_counter() - tick) * 1000.0
 
-        action = _clip_action(robot, action)
-        robot.send_action(action)
+        tick = time.perf_counter()
+        if args.clip_to_dataset_range:
+            action = _clip_action(robot, action)
+        sample["clip_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
+        if follow_paused:
+            latest_sim_action = _set_sim_follower_action(robot, latest_sim_action)
+        else:
+            robot.send_action(action)
+        sample["send_action_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
         observation = robot.get_observation()
+        sample["get_observation_ms"] = (time.perf_counter() - tick) * 1000.0
+        latest_sim_action = _action_from_observation(observation)
         action.update(_action_from_observation(observation) if args.follow_applied_action else {})
-        server.on_observation(
+
+        tick = time.perf_counter()
+        sample.update(_flatten_robot_timing(robot))
+        viz_timing = server.on_observation(
             observation,
             step=step,
             action=action,
             camera_state=_camera_control_state(robot),
             camera_status=_camera_control_status(robot),
         )
+        sample.update(viz_timing)
+        sample["viz_call_ms"] = (time.perf_counter() - tick) * 1000.0
+        sample["control_to_frame_ms"] = (time.perf_counter() - control_start) * 1000.0
 
-        now = time.time()
-        if now - last_print > 2.0:
-            print(f"step={step} action={json.dumps(action, sort_keys=True)}", flush=True)
-            last_print = now
+        should_print = time.time() - last_print > 2.0
+        printed_step = step
         step += 1
-        elapsed = time.perf_counter() - tick
+        elapsed = time.perf_counter() - loop_start
         if elapsed < period:
-            time.sleep(period - elapsed)
+            sleep_s = period - elapsed
+            sample["sleep_ms"] = sleep_s * 1000.0
+            time.sleep(sleep_s)
+        else:
+            sample["sleep_ms"] = 0.0
+        sample["loop_total_ms"] = (time.perf_counter() - loop_start) * 1000.0
+        timing_samples.append(sample)
+        if should_print:
+            print(f"step={printed_step} action={json.dumps(action, sort_keys=True)}", flush=True)
+            print(
+                f"[SQUINT TELEOP TIMING] samples={len(timing_samples)} "
+                f"avg/max_ms {_format_timing_report(timing_samples)}",
+                flush=True,
+            )
+            timing_samples = []
+            last_print = time.time()
     return 0
 
 
@@ -711,9 +1151,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sensor-width", type=int, default=None)
     parser.add_argument("--sensor-height", type=int, default=None)
     parser.add_argument("--max-episode-steps", type=int, default=None)
+    parser.add_argument(
+        "--use-bootstrap-actions",
+        action="store_true",
+        help="Replay configured dataset bootstrap actions before manual teleop takes over",
+    )
+    parser.add_argument(
+        "--use-dataset-initial-state",
+        action="store_true",
+        help="Apply the first dataset state after reset instead of the task's SO101 start keyframe",
+    )
     parser.add_argument("--video-dir", default="outputs/squint_sim_teleop/videos")
     parser.add_argument("--video-every-episodes", type=int, default=0)
     parser.add_argument("--follow-applied-action", action="store_true")
+    parser.add_argument(
+        "--clip-to-dataset-range",
+        action="store_true",
+        help="Clamp manual teleop commands to the loaded dataset action min/max range",
+    )
+    parser.add_argument(
+        "--follow-calibration-path",
+        default=DEFAULT_FOLLOW_CALIBRATION_PATH,
+        help="JSON file for real-leader to sim-follower affine calibration",
+    )
     parser.add_argument("--watch-path", action="append", default=None)
     parser.add_argument("--reload-poll-s", type=float, default=0.75)
     parser.add_argument("--no-reload", action="store_true", help="Run a single worker without file watching")

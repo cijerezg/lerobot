@@ -1,11 +1,10 @@
 import copy
+from pathlib import Path
 
 import numpy as np
 import sapien
 import sapien.render
 import torch
-from transforms3d.euler import euler2quat
-
 from mani_skill import PACKAGE_ASSET_DIR
 from mani_skill.agents.base_agent import BaseAgent, Keyframe
 from mani_skill.agents.controllers import *
@@ -13,34 +12,40 @@ from mani_skill.agents.registration import register_agent
 from mani_skill.utils import common
 from mani_skill.utils.structs.actor import Actor
 from mani_skill.utils.structs.pose import Pose
-from pathlib import Path
+from transforms3d.euler import euler2quat
 
 
 @register_agent()
 class SO101(BaseAgent):
     uid = "so101"
+    _gripper_patch_radius = 0.005
+    _gripper_min_patch_radius = 0.001
 
     # Use the urdf file from this repo
     urdf_path = str(
-        Path(__file__).parent
-        / "so101.urdf"
-    )
+    urdf_path = str(Path(__file__).parent / "so101.urdf")
     urdf_config = dict(
-        _materials=dict(
-            gripper=dict(static_friction=2.0, dynamic_friction=2.0, restitution=0.0)  
-        ),
+        _materials=dict(gripper=dict(static_friction=1.5, dynamic_friction=1.0, restitution=0.0)),
         link=dict(
             gripper_link=dict(
-                material="gripper", patch_radius=0.1, min_patch_radius=0.1
+                material="gripper",
+                patch_radius=_gripper_patch_radius,
+                min_patch_radius=_gripper_min_patch_radius,
             ),
             moving_jaw_so101_v1_link=dict(
-                material="gripper", patch_radius=0.1, min_patch_radius=0.1
+                material="gripper",
+                patch_radius=_gripper_patch_radius,
+                min_patch_radius=_gripper_min_patch_radius,
             ),
             finger1_tip=dict(
-                material="gripper", patch_radius=0.1, min_patch_radius=0.1
+                material="gripper",
+                patch_radius=_gripper_patch_radius,
+                min_patch_radius=_gripper_min_patch_radius,
             ),
             finger2_tip=dict(
-                material="gripper", patch_radius=0.1, min_patch_radius=0.1
+                material="gripper",
+                patch_radius=_gripper_patch_radius,
+                min_patch_radius=_gripper_min_patch_radius,
             ),
         ),
     )
@@ -48,13 +53,13 @@ class SO101(BaseAgent):
     keyframes = dict(
         rest=Keyframe(
             qpos=np.array(
-                [0, -1.5708, 1.5708, 0.66, -np.pi, -10 * np.pi / 180] # closed gripper
+                [0, -1.5708, 1.5708, 0.66, -np.pi, -10 * np.pi / 180]  # closed gripper
             ),  # Fully open gripper
             pose=sapien.Pose(q=list(euler2quat(0, 0, np.pi / 2))),
         ),
         start=Keyframe(
             qpos=np.array(
-                [0, 0, 0, np.pi / 2, -np.pi / 2, 60 * np.pi / 180] # sligtly open gripper
+                [0, 0, 0, np.pi / 2, -np.pi / 2, 60 * np.pi / 180]  # sligtly open gripper
             ),  # Cam up, fully open gripper
             pose=sapien.Pose(q=list(euler2quat(0, 0, np.pi / 2))),
         ),
@@ -63,9 +68,7 @@ class SO101(BaseAgent):
             pose=sapien.Pose(q=list(euler2quat(0, 0, np.pi / 2))),
         ),
         extended=Keyframe(
-            qpos=np.array(
-                [0, -0.7854, 0.7854, 0, 0, 100 * np.pi / 180]
-            ),  # Fully open gripper
+            qpos=np.array([0, -0.7854, 0.7854, 0, 0, 100 * np.pi / 180]),  # Fully open gripper
             pose=sapien.Pose(q=list(euler2quat(0, 0, np.pi / 2))),
         ),
     )
@@ -113,10 +116,10 @@ class SO101(BaseAgent):
             [joint.name for joint in self.robot.active_joints],
             lower=[-1.0, -1.0, -1.0, -1.0, -1.0, -5.0],
             upper=[1.0, 1.0, 1.0, 1.0, 1.0, 5.0],
-            damping=[1e2] * 6,  
+            damping=[1e2] * 6,
             force_limit=100,
             friction=0,
-            normalize_action=True
+            normalize_action=True,
         )
 
         controller_configs = dict(
@@ -144,25 +147,17 @@ class SO101(BaseAgent):
         return Pose.create_from_pq(self.tcp_pos, self.finger1_link.pose.q)
 
     def is_touching(self, object: Actor):
-        """Check if the robot is touching an object """
-        l_contact_forces = self.scene.get_pairwise_contact_forces(
-            self.finger1_link, object
-        )
-        r_contact_forces = self.scene.get_pairwise_contact_forces(
-            self.finger2_link, object
-        )
+        """Check if the robot is touching an object"""
+        l_contact_forces = self.scene.get_pairwise_contact_forces(self.finger1_link, object)
+        r_contact_forces = self.scene.get_pairwise_contact_forces(self.finger2_link, object)
         lforce = torch.linalg.norm(l_contact_forces, axis=1)
         rforce = torch.linalg.norm(r_contact_forces, axis=1)
         return torch.logical_or(lforce >= 1e-2, rforce >= 1e-2)
 
     def is_grasping(self, object: Actor, min_force=0.5, max_angle=110):
         """Check if the robot is grasping an object (more lenient parameters)"""
-        l_contact_forces = self.scene.get_pairwise_contact_forces(
-            self.finger1_link, object
-        )
-        r_contact_forces = self.scene.get_pairwise_contact_forces(
-            self.finger2_link, object
-        )
+        l_contact_forces = self.scene.get_pairwise_contact_forces(self.finger1_link, object)
+        r_contact_forces = self.scene.get_pairwise_contact_forces(self.finger2_link, object)
         lforce = torch.linalg.norm(l_contact_forces, axis=1)
         rforce = torch.linalg.norm(r_contact_forces, axis=1)
 
@@ -171,13 +166,8 @@ class SO101(BaseAgent):
         rdirection = -self.finger2_link.pose.to_transformation_matrix()[..., :3, 1]
         langle = common.compute_angle_between(ldirection, l_contact_forces)
         rangle = common.compute_angle_between(rdirection, r_contact_forces)
-        lflag = torch.logical_and(
-            lforce >= min_force, torch.rad2deg(langle) <= max_angle
-        )
-        rflag = torch.logical_and(
-            rforce >= min_force, torch.rad2deg(rangle) <= max_angle
-        )
-        return torch.logical_and(lflag, rflag)
+        lflag = torch.logical_and(lforce >= min_force, torch.rad2deg(langle) <= max_angle)
+        rflag = torch.logical_and(rforce >= min_force, torch.rad2deg(rangle) <= max_angle)
 
     def is_static(self, threshold=0.15):
         """Check if the robot is static (improved for SO101)"""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -250,7 +251,9 @@ class SquintSO101Robot(Robot):
         action_range = read_dataset_action_range(config.dataset_root)
         if action_range is not None:
             self._unit_low, self._unit_high = action_range
-        self._initial_state_units = read_dataset_initial_state(config.dataset_root)
+        self._initial_state_units = (
+            read_dataset_initial_state(config.dataset_root) if config.use_dataset_initial_state else None
+        )
         self._bootstrap_dataset_episodes = list(config.bootstrap_dataset_episodes or [])
         self._bootstrap_dataset_episode_interval = max(1, int(config.bootstrap_dataset_episode_interval))
         bootstrap_episode_ids = set(self._bootstrap_dataset_episodes)
@@ -266,13 +269,15 @@ class SquintSO101Robot(Robot):
             )
             if actions is not None:
                 self._bootstrap_actions_by_episode[episode] = actions
-            state = read_dataset_episode_initial_state(config.dataset_root, episode)
-            if state is not None:
-                self._bootstrap_initial_states_by_episode[episode] = state
+            if config.use_dataset_initial_state:
+                state = read_dataset_episode_initial_state(config.dataset_root, episode)
+                if state is not None:
+                    self._bootstrap_initial_states_by_episode[episode] = state
         self._active_bootstrap_actions: np.ndarray | None = None
         self._bootstrap_active = False
         self._video_frames: list[np.ndarray] = []
         self._video_dir = Path(config.video_dir)
+        self._last_timing: dict[str, dict[str, float]] = {}
 
         dataset_task = read_dataset_task(config.dataset_root)
         self.task_instruction = config.task or dataset_task
@@ -322,22 +327,52 @@ class SquintSO101Robot(Robot):
 
     def get_observation(self) -> RobotObservation:
         self._require_connected()
+        total_start = time.perf_counter()
+        timing: dict[str, float] = {}
+
+        tick = time.perf_counter()
         qpos = self._get_qpos()
         state = self._qpos_to_lerobot_units(qpos)
-        top_image, side_image = self._current_images()
+        timing["qpos_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
+        top_raw = self._render_rgb()
+        timing["top_render_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
+        top_image = self._resize_image(top_raw)
+        timing["top_resize_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
+        side_raw = self._sensor_rgb(self._latest_obs)
+        timing["side_extract_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
+        side_image = self._resize_image(side_raw)
+        timing["side_resize_ms"] = (time.perf_counter() - tick) * 1000.0
+
         obs: dict[str, Any] = {key: float(value) for key, value in zip(ACTION_KEYS, state, strict=True)}
         obs[self.config.top_camera_name] = top_image
         obs[self.config.side_camera_name] = side_image
+        timing["total_ms"] = (time.perf_counter() - total_start) * 1000.0
+        self._last_timing["get_observation"] = timing
         return obs
 
     def send_action(self, action: RobotAction) -> RobotAction:
         self._require_connected()
+        total_start = time.perf_counter()
+        timing: dict[str, float] = {}
+
+        tick = time.perf_counter()
         target_units = np.array([float(action[key]) for key in ACTION_KEYS], dtype=np.float32)
         if self._bootstrap_active and self._active_bootstrap_actions is not None:
             if self._episode_step < len(self._active_bootstrap_actions):
                 target_units = self._active_bootstrap_actions[self._episode_step].astype(np.float32)
             else:
                 self._bootstrap_active = False
+        timing["target_units_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
         target_qpos = self._lerobot_units_to_qpos(target_units)
         current_qpos = self._get_qpos()
 
@@ -349,14 +384,24 @@ class SquintSO101Robot(Robot):
             sim_action = np.clip(sim_action, -self.config.action_clip, self.config.action_clip)
         sim_action = self._fit_action_space(sim_action.astype(np.float32))
         self._last_sent_action_units = target_units.astype(np.float32).copy()
+        timing["action_transform_ms"] = (time.perf_counter() - tick) * 1000.0
 
+        tick = time.perf_counter()
         obs, reward, terminated, truncated, info = self._env.step(sim_action)
+        timing["env_step_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
         self._latest_obs = obs
         self._latest_info = dict(info or {})
         self._last_reward = _scalar_float(reward)
         self._episode_step += 1
-        self._append_video_frame()
+        timing["bookkeeping_ms"] = (time.perf_counter() - tick) * 1000.0
 
+        tick = time.perf_counter()
+        self._append_video_frame()
+        timing["append_video_ms"] = (time.perf_counter() - tick) * 1000.0
+
+        tick = time.perf_counter()
         step_success = self._episode_success(info)
         self._episode_had_success = self._episode_had_success or step_success
         terminal = _scalar_bool(terminated) or _scalar_bool(truncated) or step_success
@@ -369,9 +414,32 @@ class SquintSO101Robot(Robot):
             if self.config.reset_after_terminal:
                 reset_seed = self.config.seed if self.config.reset_seed_on_terminal else None
                 self._reset_episode(seed=reset_seed)
+        timing["terminal_ms"] = (time.perf_counter() - tick) * 1000.0
 
         sent_units = self._last_sent_action_units
+        timing["total_ms"] = (time.perf_counter() - total_start) * 1000.0
+        self._last_timing["send_action"] = timing
         return {key: float(value) for key, value in zip(ACTION_KEYS, sent_units, strict=True)}
+
+    def set_joint_positions(self, action: RobotAction) -> RobotAction:
+        """Directly set simulator joint positions from LeRobot action units."""
+        self._require_connected()
+        target_units = np.array([float(action[key]) for key in ACTION_KEYS], dtype=np.float32)
+        target_qpos = self._lerobot_units_to_qpos(target_units)
+        applied_units = self._qpos_to_lerobot_units(target_qpos)
+        qpos_tensor = torch.as_tensor(
+            target_qpos, dtype=torch.float32, device=self._env.unwrapped.device
+        ).view(1, -1)
+        robot = self._env.unwrapped.agent.robot
+        robot.set_qpos(qpos_tensor)
+        if hasattr(robot, "set_qvel"):
+            robot.set_qvel(torch.zeros_like(qpos_tensor))
+        self._last_sent_action_units = applied_units.astype(np.float32).copy()
+        try:
+            self._latest_obs = self._env.unwrapped.get_obs(self._latest_info)
+        except Exception as exc:
+            logger.debug("Failed to refresh Squint observation after direct joint set: %s", exc)
+        return {key: float(value) for key, value in zip(ACTION_KEYS, applied_units, strict=True)}
 
     def disconnect(self) -> None:
         if self._env is not None:

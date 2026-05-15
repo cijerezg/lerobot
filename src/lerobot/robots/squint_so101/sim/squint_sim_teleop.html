@@ -81,6 +81,43 @@
             color: #fff;
         }
 
+        .calibration-panel {
+            border: 2px solid var(--line);
+            background: var(--panel);
+            padding: 10px;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .calibration-panel button,
+        .calibration-panel select,
+        .calibration-panel input {
+            border: 2px solid var(--line);
+            background: #fff;
+            color: var(--ink);
+            min-height: 30px;
+            padding: 5px 8px;
+            font-size: 12px;
+            font-weight: 800;
+        }
+
+        .calibration-panel input {
+            width: 72px;
+        }
+
+        .calibration-panel label {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
         .camera-status {
             color: var(--muted);
             font-family: "Courier New", monospace;
@@ -197,12 +234,40 @@
     <header>
         <h1>Squint SO101 Sim Teleop</h1>
         <div class="toolbar">
+            <button type="button" id="reset-sim" title="Reset simulator episode to the task start pose">Reset Sim</button>
+            <button type="button" id="calibrate-follow" title="Save arm offsets from the current real leader pose to the current sim follower pose">Calibrate Follow</button>
+            <button type="button" id="clear-follow-cal" title="Clear saved follow calibration">Clear Follow Cal</button>
             <button type="button" id="save-camera">Save Camera Pose</button>
             <div class="camera-status" id="camera-status">selected: --</div>
             <div class="status" id="status">Disconnected</div>
         </div>
     </header>
     <main>
+        <section class="calibration-panel" aria-label="follow calibration controls">
+            <button type="button" id="hold-follow">Hold Sim</button>
+            <button type="button" id="resume-follow">Resume Follow</button>
+            <button type="button" id="set-start" title="Set sim follower to the SO101 start keyframe used by the place task">Set Alignment Start</button>
+            <label>
+                Joint
+                <select id="nudge-joint">
+                    <option value="shoulder_pan">shoulder_pan</option>
+                    <option value="shoulder_lift">shoulder_lift</option>
+                    <option value="elbow_flex">elbow_flex</option>
+                    <option value="wrist_flex">wrist_flex</option>
+                    <option value="wrist_roll">wrist_roll</option>
+                    <option value="gripper">gripper</option>
+                </select>
+            </label>
+            <label>
+                Step
+                <input type="number" id="nudge-step" value="1" min="0.1" step="0.1">
+            </label>
+            <button type="button" id="nudge-negative">-</button>
+            <button type="button" id="nudge-positive">+</button>
+            <button type="button" id="flip-sign">Flip Sign</button>
+            <button type="button" id="gripper-closed-ref" title="Record the current leader/sim gripper pair as the closed reference">Grip Closed Ref</button>
+            <button type="button" id="gripper-open-ref" title="Record the current leader/sim gripper pair as the open reference">Grip Open Ref</button>
+        </section>
         <div class="grid" id="camera-grid">
             <div class="empty">Waiting for sim camera frames...</div>
         </div>
@@ -214,6 +279,19 @@
         const wsPort = Number(params.get('ws_port') || 8099);
         const statusEl = document.getElementById('status');
         const cameraStatusEl = document.getElementById('camera-status');
+        const resetSimButton = document.getElementById('reset-sim');
+        const calibrateFollowButton = document.getElementById('calibrate-follow');
+        const clearFollowCalButton = document.getElementById('clear-follow-cal');
+        const holdFollowButton = document.getElementById('hold-follow');
+        const resumeFollowButton = document.getElementById('resume-follow');
+        const setStartButton = document.getElementById('set-start');
+        const nudgeJointSelect = document.getElementById('nudge-joint');
+        const nudgeStepInput = document.getElementById('nudge-step');
+        const nudgeNegativeButton = document.getElementById('nudge-negative');
+        const nudgePositiveButton = document.getElementById('nudge-positive');
+        const flipSignButton = document.getElementById('flip-sign');
+        const gripperClosedRefButton = document.getElementById('gripper-closed-ref');
+        const gripperOpenRefButton = document.getElementById('gripper-open-ref');
         const saveCameraButton = document.getElementById('save-camera');
         const gridEl = document.getElementById('camera-grid');
         const metaEl = document.getElementById('meta');
@@ -249,6 +327,11 @@
             socket.send(JSON.stringify({ type: 'camera_control', ...payload }));
         }
 
+        function sendSimControl(payload) {
+            if (!socket || socket.readyState !== WebSocket.OPEN) return;
+            socket.send(JSON.stringify({ type: 'sim_control', ...payload }));
+        }
+
         function selectCamera(name) {
             selectedCamera = name;
             for (const [cameraName, entry] of cameraCards.entries()) {
@@ -275,6 +358,53 @@
             sendCameraControl({
                 camera: selectedCamera,
                 mode: 'save',
+            });
+        }
+
+        function resetSim() {
+            sendSimControl({ mode: 'reset' });
+        }
+
+        function calibrateFollow() {
+            sendSimControl({ mode: 'calibrate_follow' });
+        }
+
+        function clearFollowCalibration() {
+            sendSimControl({ mode: 'clear_follow_calibration' });
+        }
+
+        function holdFollow() {
+            sendSimControl({ mode: 'hold_follow', enabled: true });
+        }
+
+        function resumeFollow() {
+            sendSimControl({ mode: 'hold_follow', enabled: false });
+        }
+
+        function setFollowerKeyframe(name) {
+            sendSimControl({ mode: 'set_follower_keyframe', keyframe: name });
+        }
+
+        function nudgeFollower(sign) {
+            const step = Math.max(0.001, Number(nudgeStepInput.value) || 1);
+            sendSimControl({
+                mode: 'nudge_follower_joint',
+                joint: nudgeJointSelect.value,
+                delta: sign * step,
+            });
+        }
+
+        function flipSelectedJointSign() {
+            sendSimControl({
+                mode: 'flip_follow_sign',
+                joint: nudgeJointSelect.value,
+            });
+        }
+
+        function recordGripperReference(name) {
+            sendSimControl({
+                mode: 'record_gripper_reference',
+                reference: name,
             });
         }
 
@@ -463,6 +593,17 @@
             socket.onerror = () => setStatus('Error', false);
         }
 
+        resetSimButton.addEventListener('click', resetSim);
+        calibrateFollowButton.addEventListener('click', calibrateFollow);
+        clearFollowCalButton.addEventListener('click', clearFollowCalibration);
+        holdFollowButton.addEventListener('click', holdFollow);
+        resumeFollowButton.addEventListener('click', resumeFollow);
+        setStartButton.addEventListener('click', () => setFollowerKeyframe('start'));
+        nudgeNegativeButton.addEventListener('click', () => nudgeFollower(-1));
+        nudgePositiveButton.addEventListener('click', () => nudgeFollower(1));
+        flipSignButton.addEventListener('click', flipSelectedJointSign);
+        gripperClosedRefButton.addEventListener('click', () => recordGripperReference('closed'));
+        gripperOpenRefButton.addEventListener('click', () => recordGripperReference('open'));
         saveCameraButton.addEventListener('click', saveCameraPose);
         window.addEventListener('keydown', moveSelectedCameraXY);
         connect();
