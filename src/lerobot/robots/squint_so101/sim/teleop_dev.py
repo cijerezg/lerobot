@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG = "examples/experiments/configs/baseline_tinypi05v2_rlt_sim_paper_online.yaml"
 DEFAULT_WATCH_PATHS = ("src/lerobot/robots/squint_so101",)
 DEFAULT_FOLLOW_CALIBRATION_PATH = "outputs/squint_sim_teleop/follow_calibration.json"
+DEFAULT_FPS = 30.0
+DEFAULT_SENSOR_WIDTH = 448
+DEFAULT_SENSOR_HEIGHT = 448
+DEFAULT_VIZ_MAX_WIDTH = 720
+DEFAULT_VIZ_JPEG_QUALITY = 82
 # The place task already resets SO101 to the "start" keyframe. Use that as the
 # visual alignment pose; "rest" is the tucked/closed debug pose, not calibration zero.
 SO101_KEYFRAME_ACTIONS = {
@@ -51,9 +56,11 @@ class ReusableHTTPServer(HTTPServer):
 
 
 class CameraVizServer:
-    def __init__(self, *, http_port: int, ws_port: int):
+    def __init__(self, *, http_port: int, ws_port: int, max_width: int, jpeg_quality: int):
         self.http_port = int(http_port)
         self.ws_port = int(ws_port)
+        self.max_width = int(max_width)
+        self.jpeg_quality = int(np.clip(jpeg_quality, 1, 100))
         self._queue: Queue[dict[str, Any]] = Queue(maxsize=8)
         self._control_queue: Queue[dict[str, Any]] = Queue(maxsize=128)
         self._clients: set[Any] = set()
@@ -108,7 +115,11 @@ class CameraVizServer:
             if value.shape[-1] != 3:
                 continue
             encode_start = time.perf_counter()
-            encoded = encode_image_for_viz(value, max_width=480, jpeg_quality=70)
+            encoded = encode_image_for_viz(
+                value,
+                max_width=self.max_width,
+                jpeg_quality=self.jpeg_quality,
+            )
             encode_ms = (time.perf_counter() - encode_start) * 1000.0
             encode_total_ms += encode_ms
             timing[f"viz_encode_{name}_ms"] = encode_ms
@@ -799,7 +810,12 @@ def run_worker(args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     robot_config = _load_robot_config(args)
     robot = SquintSO101Robot(robot_config)
-    server = CameraVizServer(http_port=args.http_port, ws_port=args.ws_port)
+    server = CameraVizServer(
+        http_port=args.http_port,
+        ws_port=args.ws_port,
+        max_width=args.viz_max_width,
+        jpeg_quality=args.viz_jpeg_quality,
+    )
     leader = None
     running = True
 
@@ -814,6 +830,10 @@ def run_worker(args: argparse.Namespace) -> int:
     viewer_url = f"http://localhost:{args.http_port}/?ws_port={args.ws_port}"
     print(f"Squint sim teleop viewer: {viewer_url}", flush=True)
     print(f"Environment: {robot_config.env_id or 'inferred from dataset/task'}", flush=True)
+    if args.follow_calibration_path:
+        print(f"Follower calibration file: {Path(args.follow_calibration_path).resolve()}", flush=True)
+    else:
+        print("Follower calibration file: disabled", flush=True)
 
     robot.connect()
     _ensure_camera_control_state(robot)
@@ -1139,7 +1159,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=DEFAULT_CONFIG, help="Experiment YAML to reuse for sim settings")
     parser.add_argument("--env-id", default=None, help="Override sim env id, e.g. SO101PlaceCubeMarker-v1")
     parser.add_argument("--dataset-root", default=None, help="Override dataset root used for task/action stats")
-    parser.add_argument("--fps", type=float, default=20.0)
+    parser.add_argument("--fps", type=float, default=DEFAULT_FPS)
     parser.add_argument("--http-port", type=int, default=8098)
     parser.add_argument("--ws-port", type=int, default=8099)
     parser.add_argument("--teleop-mode", choices=["keyboard", "so100_leader", "so101_leader"], default="keyboard")
@@ -1150,8 +1170,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gripper-step", type=float, default=4.0)
     parser.add_argument("--marker-xy-offset", type=float, nargs=2, default=None)
     parser.add_argument("--marker-yaw-degrees", type=float, default=None)
-    parser.add_argument("--sensor-width", type=int, default=None)
-    parser.add_argument("--sensor-height", type=int, default=None)
+    parser.add_argument("--sensor-width", type=int, default=DEFAULT_SENSOR_WIDTH)
+    parser.add_argument("--sensor-height", type=int, default=DEFAULT_SENSOR_HEIGHT)
+    parser.add_argument(
+        "--viz-max-width",
+        type=int,
+        default=DEFAULT_VIZ_MAX_WIDTH,
+        help="Maximum encoded frame width sent to the browser",
+    )
+    parser.add_argument(
+        "--viz-jpeg-quality",
+        type=int,
+        default=DEFAULT_VIZ_JPEG_QUALITY,
+        help="JPEG quality for compressed browser frames, 1-100",
+    )
     parser.add_argument("--max-episode-steps", type=int, default=None)
     parser.add_argument(
         "--use-bootstrap-actions",
