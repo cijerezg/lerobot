@@ -22,7 +22,6 @@ class SO101(BaseAgent):
     _gripper_min_patch_radius = 0.001
 
     # Use the urdf file from this repo
-    urdf_path = str(
     urdf_path = str(Path(__file__).parent / "so101.urdf")
     urdf_config = dict(
         _materials=dict(gripper=dict(static_friction=1.5, dynamic_friction=1.0, restitution=0.0)),
@@ -168,6 +167,7 @@ class SO101(BaseAgent):
         rangle = common.compute_angle_between(rdirection, r_contact_forces)
         lflag = torch.logical_and(lforce >= min_force, torch.rad2deg(langle) <= max_angle)
         rflag = torch.logical_and(rforce >= min_force, torch.rad2deg(rangle) <= max_angle)
+        return torch.logical_and(lflag, rflag)
 
     def is_static(self, threshold=0.15):
         """Check if the robot is static (improved for SO101)"""
