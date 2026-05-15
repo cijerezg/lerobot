@@ -316,6 +316,8 @@ def _load_robot_config(args: argparse.Namespace) -> SquintSO101RobotConfig:
     if args.max_episode_steps is not None:
         robot_config.max_episode_steps = args.max_episode_steps
     robot_config.use_dataset_initial_state = bool(args.use_dataset_initial_state or args.use_bootstrap_actions)
+    robot_config.show_gripper_contact_markers = not args.no_contact_debug_markers
+    robot_config.use_marker_grasp_assist = bool(args.use_marker_grasp_assist)
     if not args.use_bootstrap_actions:
         robot_config.bootstrap_dataset_episode = None
         robot_config.bootstrap_dataset_episodes = None
@@ -1173,6 +1175,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--follow-calibration-path",
         default=DEFAULT_FOLLOW_CALIBRATION_PATH,
         help="JSON file for real-leader to sim-follower affine calibration",
+    )
+    parser.add_argument(
+        "--no-contact-debug-markers",
+        action="store_true",
+        help="Disable red gripper-tip contact markers in the sim viewer",
+    )
+    parser.add_argument(
+        "--use-marker-grasp-assist",
+        action="store_true",
+        help="Enable the marker task's hard grasp-assist path instead of pure contact physics",
     )
     parser.add_argument("--watch-path", action="append", default=None)
     parser.add_argument("--reload-poll-s", type=float, default=0.75)

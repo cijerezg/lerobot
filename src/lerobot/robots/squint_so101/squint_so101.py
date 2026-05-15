@@ -336,6 +336,9 @@ class SquintSO101Robot(Robot):
         timing["qpos_ms"] = (time.perf_counter() - tick) * 1000.0
 
         tick = time.perf_counter()
+        unwrapped = self._env.unwrapped
+        if hasattr(unwrapped, "_update_gripper_contact_markers"):
+            unwrapped._update_gripper_contact_markers()
         top_raw = self._render_rgb()
         timing["top_render_ms"] = (time.perf_counter() - tick) * 1000.0
 
@@ -374,12 +377,7 @@ class SquintSO101Robot(Robot):
 
         tick = time.perf_counter()
         target_qpos = self._lerobot_units_to_qpos(target_units)
-        current_qpos = self._get_qpos()
-
-        if "delta" in self.config.control_mode:
-            sim_action = target_qpos - current_qpos
-        else:
-            sim_action = target_qpos
+        sim_action = self._target_qpos_to_controller_action(target_qpos)
         if self.config.action_clip is not None:
             sim_action = np.clip(sim_action, -self.config.action_clip, self.config.action_clip)
         sim_action = self._fit_action_space(sim_action.astype(np.float32))
@@ -434,6 +432,11 @@ class SquintSO101Robot(Robot):
         robot.set_qpos(qpos_tensor)
         if hasattr(robot, "set_qvel"):
             robot.set_qvel(torch.zeros_like(qpos_tensor))
+        controller = getattr(self._env.unwrapped.agent, "controller", None)
+        if hasattr(controller, "_target_qpos"):
+            controller._target_qpos = qpos_tensor.clone()
+        if hasattr(controller, "_start_qpos"):
+            controller._start_qpos = qpos_tensor.clone()
         self._last_sent_action_units = applied_units.astype(np.float32).copy()
         try:
             self._latest_obs = self._env.unwrapped.get_obs(self._latest_info)
@@ -503,6 +506,8 @@ class SquintSO101Robot(Robot):
             "domain_randomization": self.config.domain_randomization,
             "reconfiguration_freq": None,
             "control_mode": self.config.control_mode,
+            "show_gripper_contact_markers": self.config.show_gripper_contact_markers,
+            "use_marker_grasp_assist": self.config.use_marker_grasp_assist,
         }
         if self.config.marker_xy_offset is not None:
             kwargs["marker_xy_offset"] = self.config.marker_xy_offset
@@ -611,6 +616,40 @@ class SquintSO101Robot(Robot):
     def _lerobot_units_to_qpos(self, values: np.ndarray) -> np.ndarray:
         qpos = np.deg2rad(values).astype(np.float32)
         return np.clip(qpos, self._qpos_low, self._qpos_high).astype(np.float32)
+
+    def _get_controller_target_qpos(self) -> np.ndarray | None:
+        controller = getattr(self._env.unwrapped.agent, "controller", None)
+        target_qpos = getattr(controller, "_target_qpos", None)
+        if target_qpos is None:
+            return None
+        target_qpos = _as_plain_numpy(target_qpos).astype(np.float32)
+        return target_qpos.reshape(-1)[: len(ACTION_KEYS)]
+
+    def _qpos_action_to_normalized_controller_action(self, action: np.ndarray) -> np.ndarray:
+        controller = getattr(self._env.unwrapped.agent, "controller", None)
+        if controller is None or not getattr(controller, "_normalize_action", False):
+            return action
+        low = getattr(controller, "action_space_low", None)
+        high = getattr(controller, "action_space_high", None)
+        if low is None or high is None:
+            return action
+        low = _as_plain_numpy(low).astype(np.float32).reshape(-1)[: action.size]
+        high = _as_plain_numpy(high).astype(np.float32).reshape(-1)[: action.size]
+        span = high - low
+        valid = np.abs(span) > 1e-6
+        normalized = np.zeros_like(action, dtype=np.float32)
+        normalized[valid] = 2.0 * (action[valid] - low[valid]) / span[valid] - 1.0
+        return normalized.astype(np.float32)
+
+    def _target_qpos_to_controller_action(self, target_qpos: np.ndarray) -> np.ndarray:
+        if "delta" in self.config.control_mode:
+            reference_qpos = self._get_controller_target_qpos()
+            if reference_qpos is None:
+                reference_qpos = self._get_qpos()
+            action = target_qpos - reference_qpos
+        else:
+            action = target_qpos
+        return self._qpos_action_to_normalized_controller_action(action)
 
     def _fit_action_space(self, action: np.ndarray) -> np.ndarray:
         shape = self._env.action_space.shape

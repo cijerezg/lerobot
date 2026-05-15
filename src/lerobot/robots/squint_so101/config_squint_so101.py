@@ -43,6 +43,8 @@ class SquintSO101RobotConfig(RobotConfig):
     reset_after_terminal: bool = True
     reset_seed_on_terminal: bool = False
     use_dataset_initial_state: bool = True
+    show_gripper_contact_markers: bool = False
+    use_marker_grasp_assist: bool = True
     bootstrap_dataset_episode: int | None = None
     bootstrap_dataset_episodes: list[int] | None = None
     bootstrap_dataset_episode_interval: int = 1

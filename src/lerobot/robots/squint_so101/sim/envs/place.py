@@ -30,6 +30,10 @@ MARKER_TOP_CAMERA_POS = [0.45, 1.00, 0.35]
 MARKER_TOP_CAMERA_TARGET = [0.55, 0.15, 0.12]
 MARKER_SIDE_CAMERA_POS = [0.25, -0.70, 0.18]
 MARKER_SIDE_CAMERA_TARGET = [0.65, 0.30, 0.05]
+GRIPPER_TIP_CONTACT_MARKER_RADIUS = 0.008
+GRIPPER_TIP_CONTACT_MIN_FORCE = 0.02
+GRIPPER_TIP_CONTACT_EXTRA_DISTANCE = 0.012
+GRIPPER_TIP_CONTACT_HIDDEN_Z = -10.0
 
 
 @dataclass
@@ -103,6 +107,8 @@ class Place(DefaultCameraEnv):
         spawn_box_half_size=0.2 / 2,
         marker_xy_offset: Sequence[float] | None = None,
         marker_yaw_degrees: float = 0.0,
+        show_gripper_contact_markers: bool = False,
+        use_marker_grasp_assist: bool = True,
         **kwargs,
     ):
         self.item_type = item_type
@@ -142,6 +148,8 @@ class Place(DefaultCameraEnv):
             raise ValueError(f"marker_xy_offset must contain exactly two values, got {marker_xy_offset}")
         self.marker_xy_offset = tuple(float(value) for value in marker_xy_offset)
         self.marker_yaw = np.deg2rad(float(marker_yaw_degrees))
+        self.show_gripper_contact_markers = bool(show_gripper_contact_markers)
+        self.use_marker_grasp_assist = bool(use_marker_grasp_assist)
 
         super().__init__(
             *args,
@@ -449,6 +457,10 @@ class Place(DefaultCameraEnv):
         goal_builder.initial_pose = sapien.Pose(p=[0, 0, 0.1])
         self.goal_site = goal_builder.build_kinematic(name="goal_site")
         self._hidden_objects.append(self.goal_site)
+        self.left_tip_contact_marker = None
+        self.right_tip_contact_marker = None
+        if self.show_gripper_contact_markers:
+            self._build_gripper_contact_markers()
 
     def _set_actor_visual_color(self, actor: Actor, color: Sequence[float]) -> None:
         for obj in actor._objs:
@@ -471,6 +483,28 @@ class Place(DefaultCameraEnv):
         self.tabletop_overlay = builder.build_kinematic(name="dataset-dark-tabletop")
         self.remove_from_state_dict_registry(self.tabletop_overlay)
 
+    def _build_gripper_contact_markers(self) -> None:
+        material = sapien.render.RenderMaterial(base_color=[1.0, 0.0, 0.0, 1.0])
+        marker_sets: dict[str, list[Any]] = {"left": [], "right": []}
+        for scene_idx in range(self.num_envs):
+            for side, markers in marker_sets.items():
+                builder = self.scene.create_actor_builder()
+                builder.add_sphere_visual(
+                    radius=GRIPPER_TIP_CONTACT_MARKER_RADIUS,
+                    material=material,
+                )
+                builder.initial_pose = sapien.Pose(p=[0, 0, GRIPPER_TIP_CONTACT_HIDDEN_Z])
+                builder.set_scene_idxs([scene_idx])
+                marker = builder.build_kinematic(name=f"{side}_gripper_tip_contact-{scene_idx}")
+                markers.append(marker)
+                self.remove_from_state_dict_registry(marker)
+
+        self.left_tip_contact_marker = Actor.merge(marker_sets["left"], name="left_gripper_tip_contact")
+        self.right_tip_contact_marker = Actor.merge(marker_sets["right"], name="right_gripper_tip_contact")
+        if self.apply_greenscreen:
+            self.remove_object_from_greenscreen(self.left_tip_contact_marker)
+            self.remove_object_from_greenscreen(self.right_tip_contact_marker)
+
     def _combined_prong_contact_force(self, links: list[Any]) -> torch.Tensor:
         force = torch.zeros_like(self.item.pose.p)
         seen = set()
@@ -480,6 +514,48 @@ class Place(DefaultCameraEnv):
             seen.add(id(link))
             force = force + self.scene.get_pairwise_contact_forces(link, self.item)
         return force
+
+    def _gripper_tip_contact_debug_state(self) -> tuple[torch.Tensor, torch.Tensor]:
+        left_link = getattr(self.agent, "finger1_link", None)
+        right_link = getattr(self.agent, "finger2_link", None)
+        left_tip = getattr(self.agent, "finger1_tip", left_link)
+        right_tip = getattr(self.agent, "finger2_tip", right_link)
+        if left_link is None or right_link is None or left_tip is None or right_tip is None:
+            false = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+            return false, false
+
+        left_force = torch.linalg.norm(self._combined_prong_contact_force([left_tip, left_link]), axis=1)
+        right_force = torch.linalg.norm(self._combined_prong_contact_force([right_tip, right_link]), axis=1)
+        item_radius = torch.linalg.norm(self.item_dimensions, dim=-1) + GRIPPER_TIP_CONTACT_EXTRA_DISTANCE
+        left_tip_near_item = torch.linalg.norm(left_tip.pose.p - self.item.pose.p, axis=1) <= item_radius
+        right_tip_near_item = torch.linalg.norm(right_tip.pose.p - self.item.pose.p, axis=1) <= item_radius
+
+        left_contact = (left_force >= GRIPPER_TIP_CONTACT_MIN_FORCE) & left_tip_near_item
+        right_contact = (right_force >= GRIPPER_TIP_CONTACT_MIN_FORCE) & right_tip_near_item
+        return left_contact, right_contact
+
+    def _update_gripper_contact_markers(self) -> None:
+        if not self.show_gripper_contact_markers:
+            return
+        if self.left_tip_contact_marker is None or self.right_tip_contact_marker is None:
+            return
+
+        left_tip = getattr(self.agent, "finger1_tip", None)
+        right_tip = getattr(self.agent, "finger2_tip", None)
+        if left_tip is None or right_tip is None:
+            return
+
+        left_contact, right_contact = self._gripper_tip_contact_debug_state()
+        left_pos = left_tip.pose.p
+        right_pos = right_tip.pose.p
+        hidden_pos = torch.zeros_like(left_pos)
+        hidden_pos[:, 2] = GRIPPER_TIP_CONTACT_HIDDEN_Z
+        self.left_tip_contact_marker.set_pose(
+            Pose.create_from_pq(torch.where(left_contact[:, None], left_pos, hidden_pos))
+        )
+        self.right_tip_contact_marker.set_pose(
+            Pose.create_from_pq(torch.where(right_contact[:, None], right_pos, hidden_pos))
+        )
 
     def _marker_two_prong_grasp_ready(
         self, min_force: float = 0.05, max_angle: float = 115.0
@@ -602,7 +678,8 @@ class Place(DefaultCameraEnv):
     def _after_control_step(self):
         if hasattr(super(), "_after_control_step"):
             super()._after_control_step()
-        if self.target_type != "marker":
+        self._update_gripper_contact_markers()
+        if self.target_type != "marker" or not self.use_marker_grasp_assist:
             return
         if not hasattr(self, "marker_grasp_active"):
             self.marker_grasp_active = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -706,7 +783,7 @@ class Place(DefaultCameraEnv):
         item_vel = torch.linalg.norm(self.item.linear_velocity, axis=-1)
         is_item_static = item_vel <= 2e-2
         is_item_grasped = self.agent.is_grasping(self.item)
-        if self.target_type == "marker" and hasattr(self, "marker_grasp_active"):
+        if self.target_type == "marker" and self.use_marker_grasp_assist and hasattr(self, "marker_grasp_active"):
             is_item_grasped = is_item_grasped | self.marker_grasp_active
         is_robot_static = self.agent.is_static()
 
