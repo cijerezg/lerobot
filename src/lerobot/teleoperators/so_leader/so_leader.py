@@ -180,6 +180,12 @@ class SOLeader(Teleoperator):
         for motor in self.bus.motors:
             self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
+    def enable_torque(self) -> None:
+        self.bus.enable_torque()
+
+    def disable_torque(self) -> None:
+        self.bus.disable_torque()
+
     def setup_motors(self) -> None:
         with self.bus_lock:
             for motor in reversed(self.bus.motors):
@@ -216,6 +222,12 @@ class SOLeader(Teleoperator):
 
         return events
 
+    def enable_torque(self) -> None:
+        self.bus.enable_torque()
+
+    def disable_torque(self) -> None:
+        self.bus.disable_torque()
+
     def send_feedback(self, feedback: dict[str, float]) -> None:
         """
         Move the leader arm to the specified joint positions.
@@ -224,11 +236,6 @@ class SOLeader(Teleoperator):
             # Do not send feedback if user is intervening to keep torque disabled
             return
 
-        # Ensure we are writing to the correct register (Goal_Position)
-        # We need to map the feedback keys (e.g. "shoulder_pan.pos") to motor names ("shoulder_pan")
-        # and values.
-
-        # Convert feedback dictionary to dict of goal positions
         goal_positions = {}
         for motor in self.bus.motors:
             if f"{motor}.pos" in feedback:
