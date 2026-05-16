@@ -95,7 +95,7 @@ def infer_molmoact2_max_sequence_length(
 class MolmoAct2Config(PreTrainedConfig):
     """MolmoAct2 policy backed by the converted HF checkpoint implementation."""
 
-    checkpoint_path: str = "allenai/MolmoAct2"
+    checkpoint_path: str = "/home/user/.cache/huggingface/hub/models--allenai--MolmoAct2-SO100_101/snapshots/d341b9e85ae433e0b0e4a0f871260658a71e443f"
     checkpoint_revision: str | None = None
     checkpoint_force_download: bool = False
     trust_remote_code: bool = True
@@ -106,7 +106,7 @@ class MolmoAct2Config(PreTrainedConfig):
 
     action_mode: str = "both"
     inference_action_mode: str | None = None
-    discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
+    discrete_action_tokenizer: str = "/home/user/.cache/huggingface/hub/models--allenai--MolmoAct2-FAST-Tokenizer/snapshots/d45593b4c863d0bc1ca064f8b352fa16b75c38e8"
     discrete_generation_max_steps: int | None = None
     norm_tag: str | None = None
 
