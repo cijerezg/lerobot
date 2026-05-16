@@ -108,7 +108,7 @@ class MolmoAct2Config(PreTrainedConfig):
     inference_action_mode: str | None = None
     discrete_action_tokenizer: str = "/home/user/.cache/huggingface/hub/models--allenai--MolmoAct2-FAST-Tokenizer/snapshots/d45593b4c863d0bc1ca064f8b352fa16b75c38e8"
     discrete_generation_max_steps: int | None = None
-    norm_tag: str | None = None
+    norm_tag: str | None = "so100_so101_molmoact2"
 
     setup_type: str = ""
     control_mode: str = ""

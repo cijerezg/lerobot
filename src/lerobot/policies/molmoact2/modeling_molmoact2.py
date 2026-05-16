@@ -613,6 +613,35 @@ def _patch_training_kv_collection(backbone: Any) -> None:
     backbone._lerobot_training_kv_collection_patched = True
 
 
+def _patch_numpy_dtype_cast(backbone: Any) -> None:
+    """Patch _to_numpy in the trust_remote_code module so bf16 tensors are cast before numpy conversion.
+
+    The HF snapshot's _to_numpy calls .cpu().numpy() directly, which fails for bfloat16.
+    We monkey-patch the module-level function so callers within that module see the fix
+    without needing to edit files in the local HuggingFace hub cache.
+    """
+    import sys
+
+    backbone_module = sys.modules.get(type(backbone).__module__)
+    if backbone_module is None or not hasattr(backbone_module, "_to_numpy"):
+        return
+    if getattr(backbone_module._to_numpy, "_lerobot_bf16_patched", False):
+        return
+
+    import numpy as np
+    import torch as _torch
+
+    def _to_numpy_patched(value: Any) -> np.ndarray:
+        if isinstance(value, np.ndarray):
+            return value
+        if _torch.is_tensor(value):
+            return value.detach().to(_torch.float32).cpu().numpy()
+        return np.asarray(value)
+
+    _to_numpy_patched._lerobot_bf16_patched = True
+    backbone_module._to_numpy = _to_numpy_patched
+
+
 class MolmoAct2Policy(PreTrainedPolicy):
     config_class = MolmoAct2Config
     name = "molmoact2"
@@ -760,6 +789,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             gradient_checkpointing=bool(self.config.gradient_checkpointing),
         )
         _patch_training_kv_collection(self._backbone())
+        _patch_numpy_dtype_cast(self._backbone())
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
         self.train(self.training)
@@ -1840,7 +1870,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             self._generation_action_horizon(),
             int(backbone.config.max_action_dim),
             device=device,
-            dtype=torch.float32,
+            dtype=next(action_expert.parameters()).dtype,  # patched: match model dtype for bf16
             generator=generator,
         )
         if self.config.mask_action_dim_padding:
