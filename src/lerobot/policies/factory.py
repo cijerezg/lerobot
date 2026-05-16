@@ -47,6 +47,7 @@ from lerobot.utils.feature_utils import dataset_to_policy_features
 from .act.configuration_act import ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig
 from .eo1.configuration_eo1 import EO1Config
+from .molmoact2.configuration_molmoact2 import MolmoAct2Config
 from .gaussian_actor.configuration_gaussian_actor import GaussianActorConfig
 from .groot.configuration_groot import GrootConfig
 from .multi_task_dit.configuration_multi_task_dit import MultiTaskDiTConfig
@@ -132,10 +133,6 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .pi05_full.modeling_pi05 import PI05FullPolicy
 
         return PI05FullPolicy
-    elif name == "sac":
-        from .sac.modeling_sac import SACPolicy
-
-        return SACPolicy
     elif name == "gaussian_actor":
         from .gaussian_actor.modeling_gaussian_actor import GaussianActorPolicy
 
@@ -160,6 +157,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from .eo1.modeling_eo1 import EO1Policy
 
         return EO1Policy
+    elif name == "molmoact2":
+        from .molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+        return MolmoAct2Policy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -202,8 +203,6 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return PI05Config(**kwargs)
     elif policy_type == "pi05_full":
         return PI05FullConfig(**kwargs)
-    elif policy_type == "sac":
-        return SACConfig(**kwargs)
     elif policy_type == "gaussian_actor":
         return GaussianActorConfig(**kwargs)
     elif policy_type == "smolvla":
@@ -216,6 +215,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return WallXConfig(**kwargs)
     elif policy_type == "eo1":
         return EO1Config(**kwargs)
+    elif policy_type == "molmoact2":
+        return MolmoAct2Config(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -387,14 +388,6 @@ def make_pre_post_processors(
             preprocessor_overrides=kwargs.get("preprocessor_overrides"),
         )
 
-    elif isinstance(policy_cfg, SACConfig):
-        from .sac.processor_sac import make_sac_pre_post_processors
-
-        processors = make_sac_pre_post_processors(
-            config=policy_cfg,
-            dataset_stats=kwargs.get("dataset_stats"),
-        )
-
     elif isinstance(policy_cfg, GaussianActorConfig):
         from .gaussian_actor.processor_gaussian_actor import make_gaussian_actor_pre_post_processors
 
@@ -440,6 +433,14 @@ def make_pre_post_processors(
         from .eo1.processor_eo1 import make_eo1_pre_post_processors
 
         processors = make_eo1_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, MolmoAct2Config):
+        from .molmoact2.processor_molmoact2 import make_molmoact2_pre_post_processors
+
+        processors = make_molmoact2_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
