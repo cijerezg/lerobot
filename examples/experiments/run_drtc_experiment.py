@@ -93,6 +93,7 @@ class ExperimentConfig:
     sim_seed: int = 0
     sim_sensor_width: int = 224
     sim_sensor_height: int = 224
+    sim_camera_pose_path: str = ""
     sim_video_dir: str = "outputs/rlt_squint_videos"
     sim_video_fps: int = 20
     sim_video_every_episodes: int = 1
@@ -252,7 +253,7 @@ _SCALAR_FIELDS = frozenset({
     "robot_port", "robot_id",
     "sim_squint_root", "sim_env_id", "sim_dataset_root", "sim_dataset_repo_id", "sim_task",
     "sim_control_mode", "sim_obs_mode", "sim_render_mode", "sim_domain_randomization",
-    "sim_seed", "sim_sensor_width", "sim_sensor_height",
+    "sim_seed", "sim_sensor_width", "sim_sensor_height", "sim_camera_pose_path",
     "sim_video_dir", "sim_video_fps", "sim_video_every_episodes",
     "sim_video_max_episodes", "sim_video_max_frames",
     "sim_white_x_background", "sim_max_episode_steps",
@@ -414,6 +415,7 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             seed=config.sim_seed,
             sensor_width=config.sim_sensor_width,
             sensor_height=config.sim_sensor_height,
+            camera_pose_path=config.sim_camera_pose_path or "",
             camera_width=config.camera_width,
             camera_height=config.camera_height,
             top_camera_name=config.camera2_name,
@@ -788,6 +790,13 @@ def main():
             "force 'positive' in the prompt, 0.0 to force 'negative'."
         ),
     )
+    parser.add_argument(
+        "--sim_camera_pose_path",
+        "--sim-camera-pose-path",
+        type=str,
+        default=None,
+        help="Override YAML sim_camera_pose_path for Squint sim camera alignment JSON.",
+    )
 
     args = parser.parse_args()
 
@@ -815,6 +824,13 @@ def main():
         if args.run_until_interrupt:
             logger.info("Overriding YAML duration: running until Ctrl+C")
             config.run_until_interrupt = True
+        if args.sim_camera_pose_path is not None:
+            logger.info(
+                "Overriding sim_camera_pose_path from CLI: %s -> %s",
+                config.sim_camera_pose_path,
+                args.sim_camera_pose_path,
+            )
+            config.sim_camera_pose_path = args.sim_camera_pose_path
 
         experiment_name = (args.experiment_name or "").strip() or None
         result = run_experiment(

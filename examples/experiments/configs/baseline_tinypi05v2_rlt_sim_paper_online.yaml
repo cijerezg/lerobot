@@ -28,6 +28,9 @@ sim_domain_randomization: false
 sim_seed: 1000
 sim_sensor_width: 224
 sim_sensor_height: 224
+# Fill this with the JSON produced by scripts/squint_charuco_align.py estimate-poses
+# or pass --sim_camera_pose_path on scripts/run_drtc_experiment.sh.
+sim_camera_pose_path:
 sim_white_x_background: false
 sim_max_episode_steps: 100
 sim_success_reward_threshold: 0.5

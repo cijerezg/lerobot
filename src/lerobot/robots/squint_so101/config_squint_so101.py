@@ -29,6 +29,7 @@ class SquintSO101RobotConfig(RobotConfig):
     sensor_height: int = 224
     camera_width: int = 800
     camera_height: int = 600
+    camera_pose_path: str = ""
     top_camera_name: str = "top"
     side_camera_name: str = "side"
     video_dir: str = "outputs/rlt_squint_videos"

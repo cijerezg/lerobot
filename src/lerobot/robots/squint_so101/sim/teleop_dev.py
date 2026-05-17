@@ -324,6 +324,8 @@ def _load_robot_config(args: argparse.Namespace) -> SquintSO101RobotConfig:
         robot_config.sensor_width = args.sensor_width
     if args.sensor_height is not None:
         robot_config.sensor_height = args.sensor_height
+    if args.camera_pose_path:
+        robot_config.camera_pose_path = args.camera_pose_path
     if args.max_episode_steps is not None:
         robot_config.max_episode_steps = args.max_episode_steps
     robot_config.use_dataset_initial_state = bool(args.use_dataset_initial_state or args.use_bootstrap_actions)
@@ -1172,6 +1174,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--marker-yaw-degrees", type=float, default=None)
     parser.add_argument("--sensor-width", type=int, default=DEFAULT_SENSOR_WIDTH)
     parser.add_argument("--sensor-height", type=int, default=DEFAULT_SENSOR_HEIGHT)
+    parser.add_argument(
+        "--camera-pose-path",
+        "--sim-camera-pose-path",
+        default="",
+        help="Alignment JSON containing Squint sim camera eye/target poses",
+    )
     parser.add_argument(
         "--viz-max-width",
         type=int,

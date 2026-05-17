@@ -69,6 +69,18 @@ def is_package_available(
         return package_exists
 
 
+def require_package(pkg_name: str, *, import_name: str | None = None, extra: str | None = None) -> None:
+    """Raise a clear error when an optional runtime dependency is missing."""
+    if is_package_available(pkg_name, import_name=import_name):
+        return
+
+    install_hint = f"lerobot[{extra}]" if extra else pkg_name
+    raise ImportError(
+        f"Package {pkg_name!r} is required for this code path. "
+        f"Install the optional dependency set with `{install_hint}`."
+    )
+
+
 _transformers_available = is_package_available("transformers")
 _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")

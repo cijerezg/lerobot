@@ -333,6 +333,7 @@ class SquintSO101Robot(Robot):
         self._video_frames: list[np.ndarray] = []
         self._video_dir = Path(config.video_dir)
         self._last_timing: dict[str, dict[str, float]] = {}
+        self._camera_pose_payload: dict[str, Any] | None = None
 
         dataset_task = read_dataset_task(config.dataset_root)
         self.task_instruction = config.task or dataset_task
@@ -578,6 +579,7 @@ class SquintSO101Robot(Robot):
         kwargs["domain_randomization_config"] = domain_randomization_config
         self._env = gym.make(self.env_id, **kwargs)
         self._refresh_qpos_limits()
+        self._apply_camera_pose_config(apply_render_camera=False)
 
     def _bootstrap_dataset_episode_for_sim_episode(self, sim_episode_index: int) -> int | None:
         if self._bootstrap_dataset_episodes:
@@ -598,6 +600,12 @@ class SquintSO101Robot(Robot):
         obs = self._apply_dataset_initial_state(obs, info, bootstrap_dataset_episode)
         self._latest_obs = obs
         self._latest_info = dict(info or {})
+        self._apply_camera_pose_config()
+        if self.config.camera_pose_path:
+            try:
+                self._latest_obs = self._env.unwrapped.get_obs(self._latest_info)
+            except Exception as exc:
+                logger.debug("Failed to refresh Squint observation after camera pose apply: %s", exc)
         self._episode_index = next_episode_index
         self._episode_step = 0
         self._video_frames = []
@@ -618,6 +626,87 @@ class SquintSO101Robot(Robot):
                 len(self._active_bootstrap_actions),
             )
         self._append_video_frame()
+
+    def _load_camera_pose_payload(self) -> dict[str, Any] | None:
+        path_value = (self.config.camera_pose_path or "").strip()
+        if not path_value:
+            return None
+        if self._camera_pose_payload is not None:
+            return self._camera_pose_payload
+
+        path = Path(path_value)
+        if not path.exists():
+            raise FileNotFoundError(f"Squint camera pose file not found: {path}")
+        with open(path) as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict) or not isinstance(payload.get("cameras"), dict):
+            raise ValueError(f"Squint camera pose file must contain a 'cameras' mapping: {path}")
+        self._camera_pose_payload = payload
+        return payload
+
+    def _camera_pose_for(self, payload: dict[str, Any], canonical_name: str) -> dict[str, Any] | None:
+        cameras = payload.get("cameras") or {}
+        if not isinstance(cameras, dict):
+            return None
+        if canonical_name == "top":
+            names = (self.config.top_camera_name, "top", "render", "render_camera")
+        else:
+            names = (self.config.side_camera_name, "side", "base", "base_camera")
+        for name in names:
+            pose = cameras.get(name)
+            if isinstance(pose, dict):
+                return pose
+        return None
+
+    @staticmethod
+    def _camera_eye_target(pose: dict[str, Any], camera_name: str) -> tuple[list[float], list[float]]:
+        try:
+            eye = [float(value) for value in pose["eye"]]
+            target = [float(value) for value in pose["target"]]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Camera pose for {camera_name!r} must contain numeric eye and target lists") from exc
+        if len(eye) != 3 or len(target) != 3:
+            raise ValueError(f"Camera pose for {camera_name!r} must contain 3D eye and target lists")
+        return eye, target
+
+    def _apply_camera_pose_config(self, *, apply_render_camera: bool = True) -> None:
+        payload = self._load_camera_pose_payload()
+        if payload is None or self._env is None:
+            return
+
+        unwrapped = self._env.unwrapped
+        applied_state: dict[str, dict[str, list[float]]] = {}
+
+        side_pose = self._camera_pose_for(payload, "side")
+        if side_pose is not None:
+            eye, target = self._camera_eye_target(side_pose, "side")
+            if hasattr(unwrapped, "base_camera_settings"):
+                unwrapped.base_camera_settings = {"pos": eye, "target": target}
+            if hasattr(unwrapped, "camera_mount") and hasattr(unwrapped, "sample_camera_poses"):
+                unwrapped.camera_mount.set_pose(unwrapped.sample_camera_poses(n=unwrapped.num_envs))
+                if getattr(unwrapped, "gpu_sim_enabled", False):
+                    unwrapped.scene._gpu_apply_all()
+            applied_state["side"] = {"eye": eye, "target": target}
+
+        top_pose = self._camera_pose_for(payload, "top")
+        if top_pose is not None:
+            eye, target = self._camera_eye_target(top_pose, "top")
+            if apply_render_camera:
+                try:
+                    from mani_skill.utils import sapien_utils
+
+                    if "render_camera" not in unwrapped.scene.human_render_cameras:
+                        self._render_rgb()
+                    camera = unwrapped.scene.human_render_cameras.get("render_camera")
+                    if camera is not None:
+                        camera.camera.set_local_pose(sapien_utils.look_at(eye, target).sp)
+                except Exception as exc:
+                    logger.warning("Failed to apply Squint top camera pose: %s", exc)
+            applied_state["top"] = {"eye": eye, "target": target}
+
+        if applied_state:
+            unwrapped._teleop_camera_defaults = json.loads(json.dumps(applied_state))
+            unwrapped._teleop_camera_state = json.loads(json.dumps(applied_state))
 
     def _apply_dataset_initial_state(
         self,

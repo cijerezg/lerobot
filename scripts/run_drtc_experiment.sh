@@ -12,6 +12,8 @@
 #   ./scripts/run_drtc_experiment.sh --config spike --output_dir results/experiments
 #   ./scripts/run_drtc_experiment.sh --config examples/experiments/configs/disconnect.yaml
 #   ./scripts/run_drtc_experiment.sh --viz --config baseline   # enable trajectory viz
+#   ./scripts/run_drtc_experiment.sh --config baseline_tinypi05v2_rlt_sim_paper_online \
+#       --sim_camera_pose_path outputs/camera_alignment/charuco_camera_poses.json
 #
 # Flags (consumed by this script, not forwarded to the experiment runner):
 #   --viz                   - Start the trajectory visualization server (HTTP :8088)

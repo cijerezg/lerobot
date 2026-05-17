@@ -1491,6 +1491,21 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 checkpoint_path=policy_checkpoint_path,
                 strict=False,
             )
+        elif self.policy_type == "molmoact2":
+            from lerobot.configs.policies import PreTrainedConfig
+
+            cfg_obj = PreTrainedConfig.from_pretrained(policy_processor_path)
+            cfg_obj.device = self.device
+            cfg_obj.pretrained_path = Path(policy_processor_path)
+            cfg_obj.inference_action_mode = "continuous"
+            cfg_obj.enable_inference_cuda_graph = False
+            if getattr(policy_specs, "num_flow_matching_steps", None) is not None:
+                cfg_obj.num_inference_steps = int(policy_specs.num_flow_matching_steps)
+            self.policy = policy_class.from_pretrained(
+                policy_processor_path,
+                config=cfg_obj,
+                strict=False,
+            )
         else:
             self.policy = policy_class.from_pretrained(policy_processor_path)
         t_load_done = time.perf_counter()
@@ -2273,6 +2288,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
                             # Zero-pad to max_action_dim if model uses padded action space
                             max_action_dim = getattr(self.policy.config, "max_action_dim", None)
+                            if max_action_dim is None:
+                                max_action_dim = getattr(self.policy.config, "expected_max_action_dim", None)
                             if max_action_dim is not None and prefix_tensor.shape[-1] < max_action_dim:
                                 b, t, a = prefix_tensor.shape
                                 padded = torch.zeros(
@@ -2287,6 +2304,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                                 "inference_delay": d,
                                 "prev_chunk_left_over": prefix_tensor.to(device=self.device),
                                 "overlap_end": effective_overlap_end,  # Clamped for RTC guidance
+                                "execution_horizon": effective_overlap_end,  # MolmoAct2 RTC compatibility
                                 "overlap_end_intended": overlap_end,  # Original for visualization
                             }
                             self._metrics.diagnostic.counter("rtc_applied", 1)
