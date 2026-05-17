@@ -32,7 +32,8 @@ camera_allow_stale_frames: true
 
 # Policy
 policy_type: molmoact2
-pretrained_name_or_path: /home/jack/code/MolmoAct2/lerobot/outputs/molmoact2_so101_pickplace_60_action_expert/checkpoints/002000/pretrained_model
+# pretrained_name_or_path: /home/jack/code/MolmoAct2/lerobot/outputs/molmoact2_so101_pickplace_60_action_expert/checkpoints/002000/pretrained_model
+pretrained_name_or_path: /mnt/2tb/models/molmoact2_so101_pickplace_160eps_10k_action_expert/checkpoints/007000/pretrained_model/
 
 # DRTC parameters. MolmoAct2's checkpoint chunk_size/n_action_steps is 30, so
 # keep actions_per_chunk <= 30.
