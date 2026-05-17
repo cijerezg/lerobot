@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import platform
+from pathlib import Path
 from typing import cast
 
 from lerobot.utils.import_utils import make_device_from_device_class
@@ -70,12 +71,16 @@ def get_cv2_rotation(rotation: Cv2Rotation) -> int | None:
         return None
 
 
-def get_cv2_backend() -> int:
+def get_cv2_backend(index_or_path: int | str | Path | None = None) -> int:
     import cv2
 
     if platform.system() == "Windows":
         return int(cv2.CAP_MSMF)  # Use MSMF for Windows instead of AVFOUNDATION
     # elif platform.system() == "Darwin":  # macOS
     #     return cv2.CAP_AVFOUNDATION
-    else:  # Linux and others
+    elif platform.system() == "Linux" and (
+        isinstance(index_or_path, int) or str(index_or_path).startswith("/dev/video")
+    ):
+        return int(cv2.CAP_V4L2)
+    else:
         return int(cv2.CAP_ANY)

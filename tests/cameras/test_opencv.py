@@ -21,6 +21,7 @@
 
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -33,6 +34,21 @@ TEST_ARTIFACTS_DIR = Path(__file__).parent.parent / "artifacts" / "cameras"
 DEFAULT_PNG_FILE_PATH = TEST_ARTIFACTS_DIR / "image_160x120.png"
 TEST_IMAGE_SIZES = ["128x128", "160x120", "320x180", "480x270"]
 TEST_IMAGE_PATHS = [TEST_ARTIFACTS_DIR / f"image_{size}.png" for size in TEST_IMAGE_SIZES]
+
+
+class _VideoCaptureWithFalseSet:
+    def __init__(self, width: int, height: int):
+        self.properties = {
+            cv2.CAP_PROP_FRAME_WIDTH: width,
+            cv2.CAP_PROP_FRAME_HEIGHT: height,
+        }
+
+    def set(self, property_id, value):
+        self.properties[property_id] = value
+        return False
+
+    def get(self, property_id):
+        return self.properties[property_id]
 
 
 def test_abc_implementation():
@@ -78,6 +94,18 @@ def test_invalid_width_connect():
 
     with pytest.raises(RuntimeError):
         camera.connect(warmup=False)
+
+
+def test_validate_width_and_height_accepts_matching_actual_values_when_set_reports_failure(caplog):
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, width=800, height=600)
+    camera = OpenCVCamera(config)
+    camera.videocapture = _VideoCaptureWithFalseSet(width=800, height=600)
+
+    with caplog.at_level("WARNING"):
+        camera._validate_width_and_height()
+
+    assert "reported failure while setting capture_width=800" in caplog.text
+    assert "reported failure while setting capture_height=600" in caplog.text
 
 
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)

@@ -220,6 +220,7 @@ class ExperimentConfig:
     action_filter_butterworth_order: int = 2
     action_filter_gain: float = 1.4
     action_filter_past_buffer_size: int = 10
+    action_max_step_deg: float | None = None
     # Drop/spike/duplicate/reorder/disconnect injection
     drop_obs_config: DropConfig | None = None
     drop_action_config: DropConfig | None = None
@@ -296,7 +297,7 @@ _SCALAR_FIELDS = frozenset({
     "rtc_prefix_attention_schedule", "rtc_sigma_d", "rtc_full_trajectory_alignment",
     "action_filter_mode", "action_filter_butterworth_cutoff",
     "action_filter_butterworth_order", "action_filter_gain",
-    "action_filter_past_buffer_size",
+    "action_filter_past_buffer_size", "action_max_step_deg",
     "full_diagnostics",
     "trajectory_viz_enabled",
     "teleop_enabled", "teleop_type", "teleop_port", "teleop_id", "teleop_send_feedback",
@@ -596,6 +597,7 @@ def create_client_config(
         action_filter_butterworth_order=config.action_filter_butterworth_order,
         action_filter_gain=config.action_filter_gain,
         action_filter_past_buffer_size=config.action_filter_past_buffer_size,
+        action_max_step_deg=config.action_max_step_deg,
         # Diagnostics and robustness
         metrics_diagnostic_enabled=True,
         metrics_diagnostic_interval_s=2.0,

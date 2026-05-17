@@ -645,6 +645,14 @@ class RobotClientDrtcConfig:
             "Used by 'median' and 'butterworth' modes for history."
         },
     )
+    action_max_step_deg: float | None = field(
+        default=None,
+        metadata={
+            "help": "Optional per-tick absolute joint target slew limit in degrees. "
+            "If set, the outgoing action delta is scaled so no joint moves more "
+            "than this amount in one control tick."
+        },
+    )
 
     @property
     def environment_dt(self) -> float:
@@ -845,6 +853,8 @@ class RobotClientDrtcConfig:
             raise ValueError(f"action_filter_gain must be positive, got {self.action_filter_gain}")
         if self.action_filter_past_buffer_size < 1:
             raise ValueError(f"action_filter_past_buffer_size must be >= 1, got {self.action_filter_past_buffer_size}")
+        if self.action_max_step_deg is not None and self.action_max_step_deg <= 0:
+            raise ValueError(f"action_max_step_deg must be positive or None, got {self.action_max_step_deg}")
         if self.teleop_enabled and self.teleop is None:
             raise ValueError("teleop_enabled=True requires `teleop` to be set")
 

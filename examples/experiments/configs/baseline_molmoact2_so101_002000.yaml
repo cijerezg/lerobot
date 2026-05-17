@@ -63,10 +63,14 @@ rtc_prefix_attention_schedule: linear
 rtc_sigma_d: 1.0
 rtc_full_trajectory_alignment: false
 
-# Action filter
-action_filter_mode: none
-action_filter_butterworth_cutoff: 5
+# Action smoothing. The max-step limiter mirrors the standalone MolmoAct2
+# command's --max-step-deg 5, while the mild low-pass filter damps chunk-boundary
+# micro-jumps without changing the policy/RTC path.
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 4.0
+action_filter_butterworth_order: 2
 action_filter_gain: 1.0
+action_max_step_deg: 5.0
 
 # Diagnostics
 full_diagnostics: true

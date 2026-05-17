@@ -592,6 +592,7 @@ class RobotClientDrtc:
 
         # Action filter (class-based, with optional hard-mask lookahead)
         self._action_filter: ActionFilter = self._create_action_filter()
+        self._last_commanded_action: np.ndarray | None = None
 
     @property
     def running(self) -> bool:
@@ -664,6 +665,7 @@ class RobotClientDrtc:
         """
         self.action_schedule.clear()
         self._action_filter.reset()
+        self._last_commanded_action = self._latest_follower_action_array()
         self._min_accepted_src_control_step = self.control_step + 1
         self.obs_cooldown = 0
         self._metrics.diagnostic.counter(f"inference_epoch_bumped_{reason}", 1)
@@ -1026,10 +1028,9 @@ class RobotClientDrtc:
                     last_good_observation = raw_observation
                     last_good_observation_time = time.time()
                     consecutive_capture_failures = 0
-                    if self._teleop_device is not None:
-                        self._latest_follower_pos = {
-                            k: float(v) for k, v in raw_observation.items() if k.endswith(".pos")
-                        }
+                    follower_pos = {k: float(v) for k, v in raw_observation.items() if k.endswith(".pos")}
+                    if follower_pos:
+                        self._latest_follower_pos = follower_pos
                 except Exception as e:
                     consecutive_capture_failures += 1
                     if (
@@ -1734,12 +1735,12 @@ class RobotClientDrtc:
                 self._metrics.diagnostic.counter("intervention_ticks", 1)
                 teleop_action = self._read_teleop_action()
                 if teleop_action is not None:
-                    ctx = FilterContext(action=teleop_action)
-                    filtered_action = self._action_filter.apply(ctx)
+                    filtered_action = self._prepare_action_for_send(teleop_action)
                     t_send_start = time.perf_counter()
                     sent_action = self.robot.send_action(self._action_array_to_dict(filtered_action))
                     self._update_latest_follower_pos_from_action(sent_action)
                     applied_action = self._action_dict_to_array(sent_action, fallback=filtered_action)
+                    self._last_commanded_action = applied_action.copy()
                     t_send_done = time.perf_counter()
                     self._metrics.diagnostic.timing_s("send_action_ms", t_send_done - t_send_start)
 
@@ -1777,14 +1778,13 @@ class RobotClientDrtc:
                     if result is not None:
                         step, action, src_control_step, chunk_start_step = result
 
-                        # Apply action filter to reduce jitter from policy micro-updates
-                        ctx = FilterContext(action=action)
-                        filtered_action = self._action_filter.apply(ctx)
+                        filtered_action = self._prepare_action_for_send(action)
 
                         t_send_start = time.perf_counter()
                         sent_action = self.robot.send_action(self._action_array_to_dict(filtered_action))
                         self._update_latest_follower_pos_from_action(sent_action)
                         applied_action = self._action_dict_to_array(sent_action, fallback=filtered_action)
+                        self._last_commanded_action = applied_action.copy()
                         t_send_done = time.perf_counter()
 
                         # Keep action_step aligned with the schedule's action-step keys.
@@ -2089,11 +2089,41 @@ class RobotClientDrtc:
         applied_arr = np.asarray(applied, dtype=np.float32)
         return requested_arr.shape == applied_arr.shape and not np.allclose(requested_arr, applied_arr, atol=atol)
 
+    def _latest_follower_action_array(self) -> np.ndarray | None:
+        """Return the latest cached follower joint state in action-feature order."""
+        try:
+            if not self._latest_follower_pos:
+                return None
+            return np.asarray(
+                [float(self._latest_follower_pos[key]) for key in self.robot.action_features],
+                dtype=np.float32,
+            )
+        except Exception:
+            return None
+
+    def _prepare_action_for_send(self, action: np.ndarray) -> np.ndarray:
+        """Apply configured smoothing and per-tick slew limiting before hardware send."""
+        filtered = self._action_filter.apply(FilterContext(action=action))
+        max_step = self.config.action_max_step_deg
+        if max_step is None:
+            return filtered
+
+        reference = self._last_commanded_action
+        if reference is None:
+            reference = self._latest_follower_action_array()
+        if reference is None or reference.shape != filtered.shape:
+            return filtered
+
+        delta = filtered - reference
+        biggest = float(np.max(np.abs(delta)))
+        if biggest <= max_step or biggest == 0.0:
+            return filtered
+
+        self._metrics.diagnostic.counter("action_step_limited", 1)
+        return reference + delta * (float(max_step) / biggest)
+
     def _update_latest_follower_pos_from_action(self, action: dict[str, Any]) -> None:
         """Cache the per-tick follower goal used for leader feedback."""
-        if self._teleop_device is None:
-            return
-
         follower_pos = {k: float(v) for k, v in action.items() if k.endswith(".pos")}
         if follower_pos:
             self._latest_follower_pos = follower_pos

@@ -127,7 +127,7 @@ class OpenCVCamera(Camera):
         self._last_read_log_s: float = 0.0
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
-        self.backend: int = get_cv2_backend()
+        self.backend: int = get_cv2_backend(config.index_or_path)
 
         if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height
@@ -281,15 +281,27 @@ class OpenCVCamera(Camera):
         height_success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
 
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        if not width_success or self.capture_width != actual_width:
+        if self.capture_width != actual_width:
             raise RuntimeError(
                 f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=})."
             )
 
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        if not height_success or self.capture_height != actual_height:
+        if self.capture_height != actual_height:
             raise RuntimeError(
                 f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
+            )
+
+        if not width_success:
+            logger.warning(
+                f"{self} reported failure while setting capture_width={self.capture_width}, "
+                f"but actual_width={actual_width}. Continuing."
+            )
+
+        if not height_success:
+            logger.warning(
+                f"{self} reported failure while setting capture_height={self.capture_height}, "
+                f"but actual_height={actual_height}. Continuing."
             )
 
     @staticmethod
