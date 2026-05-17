@@ -1,0 +1,525 @@
+#!/usr/bin/env python
+
+# Copyright 2025 The HuggingFace Inc. team.
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""
+Generic offline pretraining loop for any RL policy registered with Trainer.
+
+Replaces the PI05-specific offline_learner_pi05.py for new model families.
+All model-specific behaviour is delegated to the Trainer subclass selected by
+cfg.policy.type via Trainer.for_config(cfg).
+
+Usage:
+    python -m lerobot.rl.rl_offline --config config.yaml [overrides]
+
+Config fields required beyond the standard TrainRLServerPipelineConfig:
+    policy.offline_steps    int     number of gradient steps
+    skip_critic             bool    True → actor-only / BC mode (default False)
+
+Compared to offline_learner_pi05.py this script:
+  - Is model-agnostic (works for pi05_rl, molmoact2_rl, ...)
+  - Is single-process only (no Accelerator / DDP)
+  - Does not include weight anchors or per-step validation hooks
+  - Defers all model-specific logic to Trainer
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import gc
+import logging
+import os
+import sys
+import tempfile
+import time
+import warnings
+from pathlib import Path
+from pprint import pformat
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*video decoding and encoding capabilities of torchvision are deprecated.*",
+    category=UserWarning,
+)
+
+import torch
+from termcolor import colored
+from torch import nn
+
+from lerobot.cameras import opencv  # noqa: F401
+from lerobot.configs import parser
+from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.datasets.factory import make_dataset
+from lerobot.rl.buffer import ReplayBuffer
+from lerobot.rl.rl_trainer import Trainer
+from lerobot.rl.utils import cast_to_bf16
+from lerobot.common.wandb_utils import WandBLogger
+from lerobot.common.train_utils import (
+    get_step_checkpoint_dir,
+    save_checkpoint,
+    update_last_checkpoint,
+)
+from lerobot.utils.constants import TRAINING_STATE_DIR
+from lerobot.utils.device_utils import get_safe_torch_device
+from lerobot.utils.process import ProcessSignalHandler
+from lerobot.utils.random_utils import set_seed
+from lerobot.utils.utils import format_big_number, init_logging
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+
+def _build_optimizers(groups: list[dict]) -> dict[str, torch.optim.Optimizer]:
+    """
+    Convert the list of parameter-group dicts returned by Trainer.get_optimizer_groups
+    into a dict of named Adam optimizers.
+
+    Each group dict must have keys: "params", "lr", "name".
+    """
+    optimizers = {}
+    for g in groups:
+        optimizers[g["name"]] = torch.optim.Adam(g["params"], lr=g["lr"])
+    return optimizers
+
+
+def _save_checkpoint(
+    cfg: TrainRLServerPipelineConfig,
+    step: int,
+    total_steps: int,
+    policy: nn.Module,
+    optimizers: dict[str, torch.optim.Optimizer],
+    preprocessor,
+    postprocessor,
+) -> None:
+    output_dir = Path(cfg.output_dir)
+    checkpoint_dir = get_step_checkpoint_dir(output_dir, total_steps, step)
+
+    save_checkpoint(
+        checkpoint_dir=checkpoint_dir,
+        step=step,
+        cfg=cfg,
+        policy=policy,
+        optimizer=optimizers,
+        scheduler=None,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+    )
+
+    training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
+    training_state_dir.mkdir(parents=True, exist_ok=True)
+    torch.save({"step": step, "interaction_step": 0}, training_state_dir / "training_state.pt")
+
+    update_last_checkpoint(checkpoint_dir)
+    logging.info(f"[RL_OFFLINE] Checkpoint saved → {checkpoint_dir}")
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+
+def _preprocess_config_yaml(config_path: str) -> str:
+    """
+    Strip policy fields not valid for the active policy.type.
+
+    Enables a single unified config YAML with both PI05 and MolmoAct2 sections:
+    only the fields valid for the selected policy type survive into the
+    draccus-parsed config.  Draccus rejects unknown fields, so without this
+    step a shared YAML would always error when one model's fields are present
+    while parsing the other model's config class.
+
+    Returns the original path unchanged if no stripping is needed, otherwise
+    returns the path to a NamedTemporaryFile with the cleaned YAML.
+    """
+    import yaml
+    from lerobot.configs import PreTrainedConfig
+
+    with open(config_path) as f:
+        raw = yaml.safe_load(f)
+
+    policy_dict = raw.get("policy")
+    if not isinstance(policy_dict, dict):
+        return config_path
+
+    policy_type = policy_dict.get("type")
+    if not policy_type:
+        return config_path
+
+    try:
+        policy_cls = PreTrainedConfig.get_choice_class(policy_type)
+        valid_fields = {f.name for f in dataclasses.fields(policy_cls)} | {"type"}
+        stripped = {k: v for k, v in policy_dict.items() if k in valid_fields}
+        if len(stripped) == len(policy_dict):
+            return config_path  # nothing to strip
+        raw["policy"] = stripped
+    except Exception:
+        return config_path  # fall back on any error
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", delete=False, prefix="rl_offline_cfg_"
+    )
+    yaml.dump(raw, tmp, allow_unicode=True)
+    tmp.close()
+    return tmp.name
+
+
+@parser.wrap()
+def offline_train_cli(cfg: TrainRLServerPipelineConfig):
+    """CLI entry point — called after model registration and YAML pre-processing."""
+    offline_train(cfg, job_name=cfg.job_name)
+    logging.info("[RL_OFFLINE] Done.")
+
+
+def main() -> None:
+    """
+    Real entry point.
+
+    1. Register all model-specific configs so draccus can find their classes.
+    2. Pre-process the YAML to strip fields that belong to the inactive model.
+    3. Delegate to offline_train_cli (parser.wrap handles config parsing).
+    """
+    # Register before parsing so draccus can resolve policy.type.
+    import lerobot.rl.rl_pi05       # noqa: F401 — registers PI05RLConfig
+    import lerobot.rl.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
+
+    from lerobot.configs.parser import parse_arg
+
+    cli_args = sys.argv[1:]
+    config_path = parse_arg("config_path", cli_args)
+    if config_path:
+        processed = _preprocess_config_yaml(config_path)
+        if processed != config_path:
+            # Swap in the temp file path so parser.wrap picks it up.
+            sys.argv = (
+                [sys.argv[0]]
+                + [a for a in sys.argv[1:] if not a.startswith("--config_path")]
+                + [f"--config_path={processed}"]
+            )
+
+    offline_train_cli()  # type: ignore[call-arg]  # @parser.wrap rewrites signature
+
+
+def offline_train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None) -> None:
+    cfg.validate()
+    cfg.env.task = cfg.policy.task
+
+    if job_name is None:
+        job_name = cfg.job_name
+    if job_name is None:
+        raise ValueError("job_name must be set in config or passed explicitly.")
+
+    output_dir = (
+        getattr(cfg, "offline_output_dir", None)
+        or getattr(cfg, "output_dir_offline", None)
+        or cfg.output_dir
+    )
+    if output_dir is None:
+        raise ValueError("offline_output_dir or output_dir must be set.")
+    cfg.output_dir = str(output_dir)
+
+    log_dir = os.path.join(cfg.output_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"rl_offline_{job_name}.log")
+    init_logging(log_file=log_file, display_pid=False)
+    logging.info(f"[RL_OFFLINE] Logging → {log_file}")
+    logging.info(pformat(cfg.to_dict()))
+
+    if cfg.wandb.enable:
+        if getattr(cfg.wandb, "offline_project", None):
+            cfg.wandb.project = cfg.wandb.offline_project
+    wandb_logger = (
+        WandBLogger(cfg) if (cfg.wandb.enable and cfg.wandb.project) else None
+    )
+    if wandb_logger is None:
+        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+
+    if cfg.dataset is None:
+        raise ValueError("cfg.dataset is required for offline training.")
+
+    if cfg.seed is not None:
+        set_seed(seed=cfg.seed)
+
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+    shutdown_event = ProcessSignalHandler(use_threads=True, display_pid=False).shutdown_event
+
+    run_offline_training(cfg=cfg, wandb_logger=wandb_logger, shutdown_event=shutdown_event)
+
+
+# ── Core loop ─────────────────────────────────────────────────────────────────
+
+
+def run_offline_training(
+    cfg: TrainRLServerPipelineConfig,
+    wandb_logger: WandBLogger | None,
+    shutdown_event,
+) -> None:
+    """
+    Model-agnostic offline training loop.
+
+    Data flow:
+        offline dataset → ReplayBuffer → iterator
+            → trainer.update_critic(online_iter=iterator, offline_iter=None)
+            → trainer.update_target_networks(policy)          [if not skip_critic]
+            → trainer.update_actor(online_iter=iterator, ...)
+            → trainer.log_metrics(...)
+    """
+    # ── Config unpacking ──────────────────────────────────────────────────────
+    device_name = getattr(cfg.policy, "learner_device", None) or cfg.policy.device
+    device = get_safe_torch_device(try_device=device_name, log=True)
+    storage_device = get_safe_torch_device(try_device=cfg.policy.storage_device)
+
+    offline_steps = cfg.policy.offline_steps
+    utd_ratio = getattr(cfg.policy, "utd_ratio", 1)
+    critic_warmup_steps = getattr(cfg.policy, "critic_warmup_steps", 0)
+    policy_update_freq = getattr(cfg.policy, "policy_update_freq", 1)
+    skip_critic = getattr(cfg, "skip_critic", False)
+    gradient_accumulation_steps = getattr(cfg.policy, "gradient_accumulation_steps", 1)
+    clip_grad_norm_value = getattr(cfg.policy, "grad_clip_norm", 1.0)
+    async_prefetch = getattr(cfg.policy, "async_prefetch", False)
+    log_freq = cfg.log_freq
+    save_freq = getattr(cfg, "offline_save_freq", None) or cfg.save_freq
+    saving_checkpoint = cfg.save_checkpoint
+    fps = cfg.env.fps
+
+    cast_to_bf16_fn = cast_to_bf16 if getattr(cfg.policy, "dtype", None) == "bfloat16" else None
+
+    logging.info(f"[RL_OFFLINE] offline_steps={offline_steps}  skip_critic={skip_critic}")
+
+    # ── Build policy via Trainer ──────────────────────────────────────────────
+    trainer = Trainer.for_config(cfg)
+
+    original_device = cfg.policy.device
+    cfg.policy.device = device_name
+    policy = trainer.make_policy(cfg)
+    cfg.policy.device = original_device
+
+    assert isinstance(policy, nn.Module)
+    policy.train()
+
+    # ── Critic initialisation (before freeze so freeze_model can see it) ──────
+    if not skip_critic:
+        _init_critic = getattr(policy, "init_critic", None)
+        if callable(_init_critic):
+            _init_critic()
+
+    # ── Freeze layers ─────────────────────────────────────────────────────────
+    trainer.freeze_model(policy, cfg)
+
+    trainable = [n for n, p in policy.named_parameters() if p.requires_grad]
+    logging.info(f"[RL_OFFLINE] Trainable params: {len(trainable)}")
+
+    # ── Offline dataset & replay buffer ───────────────────────────────────────
+    logging.info("[RL_OFFLINE] Loading offline dataset …")
+    offline_dataset = make_dataset(cfg)
+    offline_dataset.delta_timestamps = None
+    offline_dataset.delta_indices = None
+
+    # ── Preprocessors ─────────────────────────────────────────────────────────
+    preprocessor, postprocessor = trainer.make_processors(
+        cfg, dataset=offline_dataset, is_main_process=True
+    )
+    policy.preprocessor = preprocessor
+    policy.postprocessor = postprocessor
+
+    # ── Optimizers ────────────────────────────────────────────────────────────
+    optimizers = _build_optimizers(trainer.get_optimizer_groups(policy, cfg))
+
+    # ── Replay buffer ─────────────────────────────────────────────────────────
+    offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
+        offline_dataset,
+        device=device,
+        state_keys=cfg.policy.input_features.keys(),
+        storage_device=storage_device,
+        optimize_memory=True,
+        capacity=cfg.policy.offline_buffer_capacity,
+        reward_normalization_constant=cfg.policy.reward_normalization_constant,
+        terminal_failure_reward=cfg.policy.terminal_failure_reward,
+        inject_complementary_info={"is_golden": getattr(cfg, "treat_main_dataset_as_golden", False)},
+        cache_dir=getattr(cfg, "buffer_cache_dir", None),
+    )
+    offline_replay_buffer.dataset = offline_dataset
+    logging.info(f"[RL_OFFLINE] Buffer: {len(offline_replay_buffer)} samples")
+
+    # Share frozen critic-target params to save VRAM
+    if not skip_critic and hasattr(policy, "critic") and hasattr(policy, "critic_target"):
+        for p, p_tgt in zip(policy.critic.parameters(), policy.critic_target.parameters()):
+            if not p.requires_grad:
+                p_tgt.data = p.data
+
+    # ── Training info ─────────────────────────────────────────────────────────
+    n_trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+    n_total = sum(p.numel() for p in policy.parameters())
+    logging.info(colored("=" * 70, "yellow", attrs=["bold"]))
+    logging.info(colored("RL_OFFLINE — generic offline training", "yellow", attrs=["bold"]))
+    logging.info(colored("=" * 70, "yellow", attrs=["bold"]))
+    logging.info(f"  policy type : {cfg.policy.type}")
+    logging.info(f"  task        : {cfg.env.task}")
+    logging.info(f"  steps       : {offline_steps}")
+    logging.info(f"  skip_critic : {skip_critic}")
+    logging.info(f"  trainable   : {format_big_number(n_trainable)} / {format_big_number(n_total)}")
+    logging.info(colored("=" * 70, "yellow", attrs=["bold"]))
+
+    # ── Iterator ─────────────────────────────────────────────────────────────
+    buf_iter = offline_replay_buffer.get_iterator(
+        batch_size=cfg.batch_size,
+        async_prefetch=async_prefetch,
+        queue_size=2,
+        action_chunk_size=cfg.policy.n_action_steps,
+    )
+
+    # ── Main loop ─────────────────────────────────────────────────────────────
+    optimization_step = 0
+
+    while optimization_step < offline_steps:
+        if shutdown_event is not None and shutdown_event.is_set():
+            logging.info("[RL_OFFLINE] Shutdown signal — exiting.")
+            break
+
+        t0 = time.time()
+
+        if optimization_step % 10 == 0:
+            print(f"[RL_OFFLINE] step {optimization_step}/{offline_steps}")
+
+        # ── Critic updates (UTD - 1 extra rounds before the last combined step) ──
+        if not skip_critic:
+            for _ in range(utd_ratio - 1):
+                trainer.update_critic(
+                    policy=policy,
+                    optimizers=optimizers,
+                    online_iter=buf_iter,
+                    offline_iter=None,
+                    device=device,
+                    cfg=cfg,
+                    preprocessor=preprocessor,
+                    dataset_repo_id=None,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
+                    clip_grad_norm_value=clip_grad_norm_value,
+                    cast_to_bf16_fn=cast_to_bf16_fn,
+                    use_amp=False,
+                    scaler=None,
+                )
+                trainer.update_target_networks(policy)
+
+        # ── Critic update (last / only round) + optional actor update ─────────
+        training_infos: dict = {}
+
+        if skip_critic:
+            # Actor-only / BC mode — no critic forward/backward
+            training_infos = trainer.update_actor(
+                policy=policy,
+                optimizers=optimizers,
+                online_iter=buf_iter,
+                offline_iter=None,
+                preprocessor=preprocessor,
+                dataset=offline_dataset,
+                device=device,
+                cfg=cfg,
+                dataset_repo_id=None,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                clip_grad_norm_value=clip_grad_norm_value,
+                cast_to_bf16_fn=cast_to_bf16_fn,
+                use_amp=False,
+                scaler=None,
+            )
+        else:
+            # Full RL: critic then actor (respecting critic_warmup_steps)
+            critic_infos = trainer.update_critic(
+                policy=policy,
+                optimizers=optimizers,
+                online_iter=buf_iter,
+                offline_iter=None,
+                device=device,
+                cfg=cfg,
+                preprocessor=preprocessor,
+                dataset_repo_id=None,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                clip_grad_norm_value=clip_grad_norm_value,
+                cast_to_bf16_fn=cast_to_bf16_fn,
+                use_amp=False,
+                scaler=None,
+            )
+            trainer.update_target_networks(policy)
+            training_infos.update(critic_infos)
+
+            if (
+                optimization_step >= critic_warmup_steps
+                and optimization_step % policy_update_freq == 0
+            ):
+                actor_infos = trainer.update_actor(
+                    policy=policy,
+                    optimizers=optimizers,
+                    online_iter=buf_iter,
+                    offline_iter=None,
+                    preprocessor=preprocessor,
+                    dataset=offline_dataset,
+                    device=device,
+                    cfg=cfg,
+                    dataset_repo_id=None,
+                    gradient_accumulation_steps=gradient_accumulation_steps,
+                    clip_grad_norm_value=clip_grad_norm_value,
+                    cast_to_bf16_fn=cast_to_bf16_fn,
+                    use_amp=False,
+                    scaler=None,
+                )
+                training_infos.update(actor_infos)
+
+        # ── Logging ───────────────────────────────────────────────────────────
+        if optimization_step % log_freq == 0:
+            training_infos["offline_buffer_size"] = len(offline_replay_buffer)
+            training_infos["Optimization step"] = optimization_step
+            trainer.log_metrics(
+                training_infos=training_infos,
+                step=optimization_step,
+                wandb_logger=wandb_logger,
+                _policy=policy,
+            )
+
+        step_time = time.time() - t0
+        step_hz = 1.0 / (step_time + 1e-9)
+        if wandb_logger is not None:
+            wandb_logger.log_dict(
+                {"Optimization frequency loop [Hz]": step_hz, "Optimization step": optimization_step},
+                mode="train",
+                custom_step_key="Optimization step",
+            )
+
+        optimization_step += 1
+
+        if optimization_step % log_freq == 0:
+            logging.info(f"[RL_OFFLINE] step {optimization_step}/{offline_steps}  {step_hz:.2f} Hz")
+
+        # ── Checkpoint ────────────────────────────────────────────────────────
+        if saving_checkpoint and (
+            optimization_step % save_freq == 0 or optimization_step == offline_steps
+        ):
+            _save_checkpoint(
+                cfg=cfg,
+                step=optimization_step,
+                total_steps=offline_steps,
+                policy=policy,
+                optimizers=optimizers,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+            )
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    logging.info(f"[RL_OFFLINE] Training complete after {optimization_step} steps.")
+
+
+if __name__ == "__main__":
+    main()
