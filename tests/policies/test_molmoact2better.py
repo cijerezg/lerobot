@@ -36,6 +36,8 @@ from lerobot.utils.constants import OBS_STATE, POLICY_PREPROCESSOR_DEFAULT_NAME
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASELINE_CONFIG = REPO_ROOT / "examples/experiments/configs/baseline_molmoact2_so101_002000.yaml"
 RUN_INTEGRATION = os.environ.get("LEROBOT_RUN_MOLMOACT2BETTER_INTEGRATION") == "1"
+PERFORMANCE_TARGET_SECONDS = 0.300
+BETTER_TARGET_DENOISING_STEPS = 3
 
 
 class _SelectActionHarnessMixin:
@@ -106,6 +108,18 @@ def test_molmoact2better_factory_registration():
 
     assert make_policy_config("molmoact2better").type == "molmoact2better"
     assert get_policy_class("molmoact2better") is MolmoAct2BetterPolicy
+
+
+def test_molmoact2better_caps_default_continuous_steps_for_latency_target():
+    policy = _BetterSelectActionHarness(batch_size=1)
+    policy.config.inference_action_mode = "continuous"
+    policy.config.num_inference_steps = 5
+
+    assert policy._kwargs_with_latency_target_steps({}) == {"num_steps": BETTER_TARGET_DENOISING_STEPS}
+    assert policy._kwargs_with_latency_target_steps({"num_steps": 8}) == {"num_steps": 8}
+
+    policy.config.inference_action_mode = "discrete"
+    assert policy._kwargs_with_latency_target_steps({}) == {}
 
 
 def _load_baseline_checkpoint_and_config() -> tuple[Path, dict[str, Any]]:
@@ -186,6 +200,37 @@ def _configure_like_policy_server_drtc(policy: MolmoAct2Policy, experiment_confi
         policy.config.rtc_config = type("RTCConfigShim", (), {"enabled": True})()
 
 
+def _server_style_active_rtc_kwargs(
+    *,
+    config: MolmoAct2BetterConfig,
+    experiment_config: dict[str, Any],
+    device: str,
+) -> dict[str, Any]:
+    if not bool(experiment_config.get("rtc_enabled", False)):
+        return {}
+
+    actions_per_chunk = int(experiment_config.get("actions_per_chunk") or config.n_action_steps)
+    inference_delay = 1
+    overlap_end = max(1, actions_per_chunk - inference_delay)
+    max_action_dim = int(
+        getattr(config, "max_action_dim", None)
+        or getattr(config, "expected_max_action_dim", None)
+        or getattr(config, "action_dim", None)
+        or config.output_features["action"].shape[0]
+    )
+    return {
+        "inference_delay": inference_delay,
+        "prev_chunk_left_over": torch.zeros(
+            1,
+            overlap_end,
+            max_action_dim,
+            device=device,
+            dtype=torch.float32,
+        ),
+        "execution_horizon": overlap_end,
+    }
+
+
 def _server_style_get_action_chunk(
     policy: MolmoAct2Policy,
     observation: dict[str, Any],
@@ -208,10 +253,12 @@ def _timed_server_style_get_action_chunk(
     batch: dict[str, Any],
     device: str,
     experiment_config: dict[str, Any],
+    rtc_kwargs: dict[str, Any] | None = None,
 ) -> tuple[Tensor, float]:
     policy = policy_cls.from_pretrained(checkpoint, config=config, strict=False).eval()
     _configure_like_policy_server_drtc(policy, experiment_config)
     actions_per_chunk = int(experiment_config.get("actions_per_chunk") or config.n_action_steps)
+    rtc_kwargs = rtc_kwargs or {}
 
     for warmup_idx in range(2):
         _seed_server_rng(1000 + warmup_idx)
@@ -219,6 +266,7 @@ def _timed_server_style_get_action_chunk(
             policy,
             _clone_batch(batch),
             actions_per_chunk=actions_per_chunk,
+            **rtc_kwargs,
         )
         del warmup_actions
 
@@ -230,6 +278,7 @@ def _timed_server_style_get_action_chunk(
         policy,
         _clone_batch(batch),
         actions_per_chunk=actions_per_chunk,
+        **rtc_kwargs,
     )
     if device == "cuda":
         torch.cuda.synchronize()
@@ -264,16 +313,22 @@ def test_checkpoint_predict_action_chunk_parity_and_timing(record_property):
     device = "cuda"
     old_config = MolmoAct2Config.from_pretrained(checkpoint)
     better_config = MolmoAct2BetterConfig.from_pretrained(checkpoint)
+    old_config.num_inference_steps = BETTER_TARGET_DENOISING_STEPS
+    better_config.num_inference_steps = int(experiment_config.get("num_flow_matching_steps") or 5)
     for config in (old_config, better_config):
         config.device = device
         config.pretrained_path = checkpoint
         config.inference_action_mode = "continuous"
-        config.num_inference_steps = int(experiment_config.get("num_flow_matching_steps") or 5)
         config.enable_inference_cuda_graph = False
 
     batch = _load_processed_baseline_batch(
         checkpoint=checkpoint,
         config=better_config,
+        device=device,
+    )
+    rtc_kwargs = _server_style_active_rtc_kwargs(
+        config=better_config,
+        experiment_config=experiment_config,
         device=device,
     )
     old_actions, old_elapsed = _timed_server_style_get_action_chunk(
@@ -283,6 +338,7 @@ def test_checkpoint_predict_action_chunk_parity_and_timing(record_property):
         batch=batch,
         device=device,
         experiment_config=experiment_config,
+        rtc_kwargs=rtc_kwargs,
     )
     better_actions, better_elapsed = _timed_server_style_get_action_chunk(
         policy_cls=MolmoAct2BetterPolicy,
@@ -291,8 +347,11 @@ def test_checkpoint_predict_action_chunk_parity_and_timing(record_property):
         batch=batch,
         device=device,
         experiment_config=experiment_config,
+        rtc_kwargs=rtc_kwargs,
     )
 
-    record_property("molmoact2_predict_action_chunk_seconds", old_elapsed)
-    record_property("molmoact2better_predict_action_chunk_seconds", better_elapsed)
+    record_property("molmoact2_active_rtc_predict_action_chunk_seconds", old_elapsed)
+    record_property("molmoact2better_active_rtc_predict_action_chunk_seconds", better_elapsed)
+    record_property("molmoact2better_active_rtc_denoising_steps", BETTER_TARGET_DENOISING_STEPS)
     torch.testing.assert_close(better_actions, old_actions, atol=1e-3, rtol=1e-3)
+    assert better_elapsed <= PERFORMANCE_TARGET_SECONDS

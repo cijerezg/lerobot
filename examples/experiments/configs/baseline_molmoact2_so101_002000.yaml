@@ -56,7 +56,7 @@ fps: 30
 #
 # Set rtc_enabled: false for a strict parity check against the standalone
 # MolmoAct2 inference script.
-num_flow_matching_steps: 5
+num_flow_matching_steps: 3
 rtc_enabled: true
 rtc_max_guidance_weight:
 rtc_prefix_attention_schedule: linear
