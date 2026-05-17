@@ -1491,10 +1491,17 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 checkpoint_path=policy_checkpoint_path,
                 strict=False,
             )
-        elif self.policy_type == "molmoact2":
-            from lerobot.configs.policies import PreTrainedConfig
+        elif self.policy_type in {"molmoact2", "molmoact2better"}:
+            if self.policy_type == "molmoact2better":
+                from lerobot.policies.molmoact2better.configuration_molmoact2better import (
+                    MolmoAct2BetterConfig,
+                )
 
-            cfg_obj = PreTrainedConfig.from_pretrained(policy_processor_path)
+                cfg_obj = MolmoAct2BetterConfig.from_pretrained(policy_processor_path)
+            else:
+                from lerobot.configs.policies import PreTrainedConfig
+
+                cfg_obj = PreTrainedConfig.from_pretrained(policy_processor_path)
             cfg_obj.device = self.device
             cfg_obj.pretrained_path = Path(policy_processor_path)
             cfg_obj.inference_action_mode = "continuous"

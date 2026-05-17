@@ -419,6 +419,10 @@ conflicts = [
     ],
     [
         { extra = "wallx" },
+        { extra = "molmoact2" },
+    ],
+    [
+        { extra = "wallx" },
         { extra = "groot" },
     ],
     [

@@ -13,7 +13,9 @@
 # limitations under the License.
 import builtins
 import datetime as dt
+import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,8 +31,18 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim import OptimizerConfig
 from lerobot.optim.schedulers import LRSchedulerConfig
 from lerobot.utils.hub import HubMixin
+from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
+
+
+def _drop_null_reward_model(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Keep MolmoAct2-fork train configs loadable without porting reward training."""
+    if "reward_model" not in config or config["reward_model"] is not None:
+        return None
+    migrated = dict(config)
+    migrated.pop("reward_model")
+    return migrated
 
 
 @dataclass
@@ -38,6 +50,9 @@ class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
     env: envs.EnvConfig | None = None
     policy: PreTrainedConfig | None = None
+    # Accepted for compatibility with MolmoAct2-fork train_config.json files.
+    # This repo's lerobot_train entrypoint still trains policies only.
+    reward_model: dict[str, Any] | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
     # with the same value for `dir` its contents will be overwritten unless you set `resume` to true.
     output_dir: Path | None = None
@@ -50,9 +65,14 @@ class TrainPipelineConfig(HubMixin):
     # `seed` is used for training (eg: model initialization, dataset shuffling)
     # AND for the evaluation environments.
     seed: int | None = 1000
+    # Set to True to use deterministic cuDNN algorithms for reproducibility.
+    # This disables cudnn.benchmark and may reduce training speed.
+    cudnn_deterministic: bool = False
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
+    prefetch_factor: int = 4
+    persistent_workers: bool = True
     steps: int = 100_000
     eval_freq: int = 20_000
     log_freq: int = 200
@@ -66,6 +86,7 @@ class TrainPipelineConfig(HubMixin):
     eval: EvalConfig = field(default_factory=EvalConfig)
     wandb: WandBConfig = field(default_factory=WandBConfig)
     peft: PeftConfig | None = None
+    sample_weighting: SampleWeightingConfig | None = None
 
     # RA-BC (Reward-Aligned Behavior Cloning) parameters
     use_rabc: bool = False  # Enable reward-weighted training
@@ -88,6 +109,12 @@ class TrainPipelineConfig(HubMixin):
     checkpoint_path: Path | None = field(init=False, default=None)
 
     def validate(self) -> None:
+        if self.reward_model is not None:
+            raise ValueError(
+                "This repo's training entrypoint does not support reward_model training. "
+                "Use policy training or port the reward-model stack separately."
+            )
+
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
         policy_path = parser.get_path_arg("policy")
         if policy_path:
@@ -118,6 +145,9 @@ class TrainPipelineConfig(HubMixin):
             raise ValueError(
                 "Policy is not configured. Please specify a pretrained policy with `--policy.path`."
             )
+
+        if self.sample_weighting is not None and self.use_rabc:
+            raise ValueError("Use either `sample_weighting` or legacy `use_rabc`, not both.")
 
         if not self.job_name:
             if self.env is None:
@@ -211,8 +241,27 @@ class TrainPipelineConfig(HubMixin):
                 ) from e
 
         cli_args = kwargs.pop("cli_args", [])
-        with draccus.config_type("json"):
-            return draccus.parse(cls, config_file, args=cli_args)
+        temp_config_file = None
+        if config_file is not None:
+            with open(config_file) as f:
+                config = json.load(f)
+            migrated_config = _drop_null_reward_model(config)
+            if migrated_config is not None:
+                with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
+                    json.dump(migrated_config, f)
+                    config_file = f.name
+                    temp_config_file = f.name
+
+        # Import policy factory so choice-registered policy configs such as
+        # molmoact2 are available when loading train_config.json directly.
+        import lerobot.policies.factory  # noqa: F401
+
+        try:
+            with draccus.config_type("json"):
+                return draccus.parse(cls, config_file, args=cli_args)
+        finally:
+            if temp_config_file is not None:
+                os.unlink(temp_config_file)
 
 
 @dataclass(kw_only=True)

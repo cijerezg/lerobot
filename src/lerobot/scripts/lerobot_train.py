@@ -63,6 +63,7 @@ def update_policy(
     accelerator: Accelerator,
     lr_scheduler=None,
     lock=None,
+    sample_weighter=None,
     rabc_weights_provider=None,
     critical_timestep_weights: torch.Tensor | None = None,
 ) -> tuple[MetricsTracker, dict]:
@@ -81,6 +82,7 @@ def update_policy(
         accelerator: The Accelerator instance for distributed training and mixed precision.
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
+        sample_weighter: Optional generic sample weighter.
         rabc_weights_provider: Optional RABCWeights instance for sample weighting.
 
     Returns:
@@ -91,11 +93,16 @@ def update_policy(
     start_time = time.perf_counter()
     policy.train()
 
-    # Get RA-BC weights if enabled
-    rabc_batch_weights = None
-    rabc_batch_stats = None
-    if rabc_weights_provider is not None:
-        rabc_batch_weights, rabc_batch_stats = rabc_weights_provider.compute_batch_weights(batch)
+    # Compute per-sample weights if enabled. Prefer the generic MolmoAct2-fork
+    # sample-weighting interface, but keep this repo's legacy RA-BC flags working.
+    sample_weights = None
+    sample_weight_stats = None
+    sample_weight_prefix = "sample_weight"
+    if sample_weighter is not None:
+        sample_weights, sample_weight_stats = sample_weighter.compute_batch_weights(batch)
+    elif rabc_weights_provider is not None:
+        sample_weights, sample_weight_stats = rabc_weights_provider.compute_batch_weights(batch)
+        sample_weight_prefix = "rabc"
 
     # Compute per-timestep critical-section weight stats. The (B, T) tensor itself
     # was computed before the preprocessor (which drops `timestamp`); we just
@@ -117,19 +124,21 @@ def update_policy(
 
     # Let accelerator handle mixed precision
     with accelerator.autocast():
-        # Use per-sample loss when RA-BC is enabled for proper weighting
-        if rabc_batch_weights is not None:
+        # Use per-sample loss when sample weighting is enabled.
+        if sample_weights is not None:
             # Get per-sample losses
             per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
-            # Apply RA-BC weights: L_RA-BC = Σ(w_i * l_i) / (Σw_i + ε)
-            # rabc_batch_weights is already normalized to sum to batch_size
+            # Weighted loss: each sample's contribution is scaled by its weight.
             epsilon = 1e-6
-            loss = (per_sample_loss * rabc_batch_weights).sum() / (rabc_batch_weights.sum() + epsilon)
-            # Log raw mean weight (before normalization) - this is the meaningful metric
-            output_dict["rabc_mean_weight"] = rabc_batch_stats["raw_mean_weight"]
-            output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
-            output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
+            loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
+            if output_dict is None:
+                output_dict = {}
+            for key, value in (sample_weight_stats or {}).items():
+                if sample_weight_prefix == "rabc" and key == "raw_mean_weight":
+                    output_dict["rabc_mean_weight"] = value
+                else:
+                    output_dict[f"{sample_weight_prefix}_{key}"] = value
         elif critical_timestep_weights is not None:
             loss, output_dict = policy.forward(
                 batch, timestep_loss_weights=critical_timestep_weights
@@ -231,7 +240,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     # Use accelerator's device
     device = accelerator.device
-    torch.backends.cudnn.benchmark = True
+    if cfg.cudnn_deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    else:
+        torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # Dataset loading synchronization: main process downloads first to avoid race conditions
@@ -311,6 +324,22 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+
+    # Generic sample weighting from the MolmoAct2 fork. This keeps newer
+    # train_config.json files loadable while preserving the legacy RA-BC path below.
+    sample_weighter = None
+    if cfg.sample_weighting is not None:
+        from lerobot.utils.sample_weighting import make_sample_weighter
+
+        if is_main_process:
+            logging.info(f"Creating sample weighter: {cfg.sample_weighting.type}")
+        sample_weighter = make_sample_weighter(
+            cfg.sample_weighting,
+            policy,
+            device,
+            dataset_root=cfg.dataset.root,
+            dataset_repo_id=cfg.dataset.repo_id,
+        )
 
     # Load critical-section annotations for per-timestep loss weighting if enabled.
     critical_sections_provider = None
@@ -464,7 +493,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         sampler=sampler,
         pin_memory=device.type == "cuda",
         drop_last=False,
-        prefetch_factor=2 if cfg.num_workers > 0 else None,
+        prefetch_factor=cfg.prefetch_factor if cfg.num_workers > 0 else None,
+        persistent_workers=cfg.persistent_workers and cfg.num_workers > 0,
     )
 
     # Prepare everything with accelerator
@@ -529,6 +559,7 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
+            sample_weighter=sample_weighter,
             rabc_weights_provider=rabc_weights,
             critical_timestep_weights=critical_timestep_weights,
         )
@@ -547,7 +578,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
                     wandb_log_dict.update(output_dict)
-                # Log RA-BC statistics if enabled
+                # Log sample-weighting / RA-BC statistics if enabled
+                if sample_weighter is not None:
+                    weighter_stats = sample_weighter.get_stats()
+                    wandb_log_dict.update(
+                        {f"sample_weighting/{k}": v for k, v in weighter_stats.items()}
+                    )
                 if rabc_weights is not None:
                     rabc_stats = rabc_weights.get_stats()
                     wandb_log_dict.update(

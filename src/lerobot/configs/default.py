@@ -35,6 +35,9 @@ class DatasetConfig:
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = field(default_factory=get_safe_default_codec)
+    # Accepted for compatibility with MolmoAct2-fork train configs.
+    # The current dataset path returns normalized float tensors for training.
+    return_uint8: bool = False
     streaming: bool = False
     # Paths to additional offline datasets to merge with the primary dataset
     additional_offline_dataset_paths: list[str] = field(default_factory=list)
@@ -50,6 +53,7 @@ class WandBConfig:
     notes: str | None = None
     run_id: str | None = None
     mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
+    add_tags: bool = True
     offline_project: str | None = None
 
 

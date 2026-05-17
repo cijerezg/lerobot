@@ -14,12 +14,17 @@
 
 from .act.configuration_act import ACTConfig as ACTConfig
 from .diffusion.configuration_diffusion import DiffusionConfig as DiffusionConfig
+from .factory import get_policy_class, make_policy, make_policy_config, make_pre_post_processors
 from .groot.configuration_groot import GrootConfig as GrootConfig
 from .molmoact2.configuration_molmoact2 import MolmoAct2Config as MolmoAct2Config
+from .molmoact2better.configuration_molmoact2better import (
+    MolmoAct2BetterConfig as MolmoAct2BetterConfig,
+)
 from .pi0.configuration_pi0 import PI0Config as PI0Config
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
 from .pistar06.configuration_pistar06 import PiStar06Config as PiStar06Config
+from .pretrained import PreTrainedPolicy as PreTrainedPolicy
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .smolvla.processor_smolvla import SmolVLANewLineProcessor
 from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
@@ -42,6 +47,12 @@ __all__ = [
     "VQBeTConfig",
     "GrootConfig",
     "MolmoAct2Config",
+    "MolmoAct2BetterConfig",
+    "PreTrainedPolicy",
     "XVLAConfig",
     "WallXConfig",
+    "get_policy_class",
+    "make_policy",
+    "make_policy_config",
+    "make_pre_post_processors",
 ]

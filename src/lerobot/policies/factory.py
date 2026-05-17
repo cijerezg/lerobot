@@ -33,6 +33,7 @@ from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.groot.configuration_groot import GrootConfig
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
+from lerobot.policies.molmoact2better.configuration_molmoact2better import MolmoAct2BetterConfig
 from lerobot.policies.pi0.configuration_pi0 import PI0Config
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
@@ -180,6 +181,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
 
         return MolmoAct2Policy
+    elif name == "molmoact2better":
+        from lerobot.policies.molmoact2better.modeling_molmoact2better import MolmoAct2BetterPolicy
+
+        return MolmoAct2BetterPolicy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -238,6 +243,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return WallXConfig(**kwargs)
     elif policy_type == "molmoact2":
         return MolmoAct2Config(**kwargs)
+    elif policy_type == "molmoact2better":
+        return MolmoAct2BetterConfig(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
