@@ -375,6 +375,8 @@ def run_offline_training(
         terminal_failure_reward=cfg.policy.terminal_failure_reward,
         inject_complementary_info={"is_golden": cfg.treat_main_dataset_as_golden},
         cache_dir=buffer_cache_dir,
+        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+        image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
     )
     offline_replay_buffer.dataset = offline_dataset
 

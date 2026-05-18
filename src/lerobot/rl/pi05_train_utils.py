@@ -206,7 +206,7 @@ def load_additional_offline_datasets(
     if not (hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths):
         return
 
-    expected_height, expected_width = 224, 224
+    image_storage_size = getattr(cfg.policy, "image_storage_size", (224, 224))
 
     for path in cfg.dataset.additional_offline_dataset_paths:
         if is_main_process:
@@ -237,10 +237,10 @@ def load_additional_offline_datasets(
                 if isinstance(v, dict):
                     for key, tensor in v.items():
                         if "images" in key:
-                            if tensor.shape[-2:] != (expected_height, expected_width):
-                                tensor = F_vision.resize(tensor, (expected_height, expected_width))
+                            if image_storage_size is not None and tensor.shape[-2:] != tuple(image_storage_size):
+                                tensor = F_vision.resize(tensor, tuple(image_storage_size))
                                 tensor = tensor.clamp(0.0, 1.0)
-                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
+                            v[key] = tensor.to(device=storage_device)
                         else:
                             v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
                 elif isinstance(v, torch.Tensor):

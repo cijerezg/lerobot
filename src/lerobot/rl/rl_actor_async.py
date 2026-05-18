@@ -3,14 +3,11 @@
 Generic async actor for distributed HILSerl online RL training.
 
 Works for any model registered with the Trainer ABC (MolmoAct2, PI05, …).
-Model-specific observation preprocessing is isolated in
-Trainer.build_inference_batch(), which injects subtask tokens / advantage for
-PI05 and just calls the preprocessor for MolmoAct2.
+RTC is the default runtime: model-specific observation preprocessing is isolated
+in Trainer.build_inference_batch(), while rtc_actor_runtime owns ActionQueue,
+latency-aware replanning, intervention resets, and smooth execution.
 
-Two threads:
-  inference_worker  — pre-generates the next action chunk while the env executes
-                      the current one (chunk-deque double-buffer, no RTC).
-  env_worker        — steps the env, buffers transitions, pushes to learner.
+The older simple chunk-deque runtime is still present as a debug fallback.
 
 Three gRPC background threads (from actor.py):
   receive_policy    — pulls updated weights from the learner.
@@ -521,6 +518,28 @@ def act_with_policy_async(
     transitions_queue,
     interactions_queue,
 ) -> None:
+    actor_runtime = (
+        getattr(cfg, "actor_runtime", None)
+        or getattr(cfg.policy, "actor_runtime", None)
+        or "rtc"
+    )
+    if actor_runtime == "rtc":
+        from lerobot.rl.rtc_actor_runtime import act_with_policy_rtc
+
+        act_with_policy_rtc(
+            cfg=cfg,
+            trainer=trainer,
+            shutdown_event=shutdown_event,
+            parameters_queue=parameters_queue,
+            transitions_queue=transitions_queue,
+            interactions_queue=interactions_queue,
+        )
+        return
+
+    if actor_runtime not in {"simple", "chunk_deque"}:
+        raise ValueError(f"Unknown actor_runtime={actor_runtime!r}; expected 'rtc' or 'simple'.")
+
+    logger.warning("[ACTOR] Using simple chunk-deque runtime; RTC is the default runtime.")
     set_seed(cfg.seed)
     device_name = getattr(cfg.policy, "actor_device", None) or cfg.policy.device
     device = get_safe_torch_device(device_name, log=True)
@@ -529,8 +548,8 @@ def act_with_policy_async(
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    logger.info("[ACTOR] Building policy and processors…")
-    policy = trainer.make_policy(cfg).to(device).eval()
+    logger.info("[ACTOR] Building actor policy and processors…")
+    policy = trainer.make_actor_policy(cfg).to(device).eval()
     preprocessor, postprocessor = trainer.make_processors(cfg)
 
     logger.info("[ACTOR] Setting up environment…")

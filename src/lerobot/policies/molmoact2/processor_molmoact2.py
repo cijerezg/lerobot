@@ -152,7 +152,7 @@ def _to_numpy(value: Any) -> np.ndarray:
     if isinstance(value, np.ndarray):
         return value
     if torch.is_tensor(value):
-        return value.detach().cpu().numpy()
+        return value.detach().float().cpu().numpy()
     return np.asarray(value)
 
 
@@ -236,15 +236,18 @@ def _build_robot_text(
     add_setup_tokens: bool,
     add_control_tokens: bool,
     num_images: int,
+    advantage_label: str | None = None,
 ) -> str:
     setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
     control_text = _wrap_control_text(control_mode, add_control_tokens=add_control_tokens)
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
+    advantage_clause = f" The advantage is {advantage_label}." if advantage_label else ""
     prompt = (
         f"The task is to {task}. The setup is {setup_text}.{state_clause} "
-        f"The expected control mode is {control_text}. Given these, what action should the robot take to complete the task?"
+        f"The expected control mode is {control_text}.{advantage_clause} "
+        f"Given these, what action should the robot take to complete the task?"
     )
     if num_images <= 0:
         image_prefix = ""
@@ -490,6 +493,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     chunk_size: int = 30
     max_action_dim: int = 32
     env_action_dim: int | None = None
+    advantage_scaling: float = 1.0
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="molmoact2")
@@ -537,6 +541,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "chunk_size": self.chunk_size,
             "max_action_dim": self.max_action_dim,
             "env_action_dim": self.env_action_dim,
+            "advantage_scaling": self.advantage_scaling,
         }
 
     def _resolve_max_sequence_length(
@@ -695,6 +700,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             tasks = [_normalize_question_text(task) for task in tasks]
         complementary["task"] = tasks
 
+        advantages = complementary.get("advantage")
+        if isinstance(advantages, torch.Tensor):
+            advantages = advantages.detach().cpu().float().numpy().flatten()
+        elif advantages is not None:
+            advantages = np.asarray(advantages, dtype=np.float32).flatten()
+
         action_padded = None
         action_horizon_is_pad = None
         action_dim_is_pad = torch.ones((batch_size, self.max_action_dim), dtype=torch.bool)
@@ -717,6 +728,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             images = images_by_example[batch_idx]
             flat_images.extend(images)
             discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
+            advantage_label: str | None = None
+            if advantages is not None:
+                adv = np.tanh(float(advantages[batch_idx]) / self.advantage_scaling)
+                adv = float(np.clip(adv, -1.0, 1.0))
+                adv_bin = int(np.digitize(adv, np.array([-1.0, 0.35, 1.0])) - 1)
+                adv_bin = max(0, min(1, adv_bin))
+                advantage_label = ["negative", "positive"][adv_bin]
             prompt = _build_robot_text(
                 task=tasks[batch_idx],
                 discrete_state_string=discrete_state,
@@ -725,6 +743,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 add_setup_tokens=self.add_setup_tokens,
                 add_control_tokens=self.add_control_tokens,
                 num_images=len(images),
+                advantage_label=advantage_label,
             )
             prompt_texts.append(prompt)
             if build_action_labels:
@@ -855,6 +874,7 @@ def make_molmoact2_pre_post_processors(
             chunk_size=chunk_size,
             max_action_dim=config.expected_max_action_dim,
             env_action_dim=env_action_dim,
+            advantage_scaling=float(getattr(config, "advantage_scaling", 1.0)),
         ),
         DeviceProcessorStep(device=config.device),
     ]

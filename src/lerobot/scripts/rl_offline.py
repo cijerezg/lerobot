@@ -35,8 +35,6 @@ Compared to offline_learner_pi05.py this script:
   - Defers all model-specific logic to Trainer
 """
 
-from __future__ import annotations
-
 import dataclasses
 import gc
 import logging
@@ -65,8 +63,10 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.rl.buffer import ReplayBuffer
+from lerobot.rl.offline_dataset_utils import load_additional_offline_datasets
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.utils import cast_to_bf16
+from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
@@ -127,6 +127,93 @@ def _save_checkpoint(
     logging.info(f"[RL_OFFLINE] Checkpoint saved → {checkpoint_dir}")
 
 
+# ── Validation probes ─────────────────────────────────────────────────────────
+
+
+def _build_validation_adapter(policy, preprocessor, postprocessor, device, cfg):
+    """Wrap the already-loaded training policy in a ProbablePolicy adapter
+    without re-loading weights.
+
+    Mirrors :meth:`ProbablePolicy.for_config` but reuses the existing policy.
+    """
+    from lerobot.probes.base import _adapter_for_type
+    adapter_cls = _adapter_for_type(getattr(cfg.policy, "type", None))
+    return adapter_cls(policy, preprocessor, postprocessor, device, cfg)
+
+
+def _run_validation_probes(
+    policy: nn.Module,
+    preprocessor,
+    postprocessor,
+    val_dataset,
+    device,
+    cfg: TrainRLServerPipelineConfig,
+    step: int,
+) -> None:
+    """Dispatch every probe whose ``cfg.probe_parameters.enable_*`` flag is set.
+
+    Each probe is wrapped in try/except so one failure doesn't kill training.
+    The policy is put into eval mode for the duration and restored at the end.
+    """
+    p = cfg.probe_parameters
+    output_root = os.path.join(cfg.output_dir, "probes", f"step_{step:08d}")
+
+    was_training = policy.training
+    policy.eval()
+    try:
+        adapter = _build_validation_adapter(policy, preprocessor, postprocessor, device, cfg)
+
+        # Each entry: (enable flag, module-import path, output sub-folder).
+        # Lazy imports so an unused probe doesn't pay its import cost.
+        probes = [
+            (p.enable_actions,                "lerobot.probes.actions",                "actions"),
+            (p.enable_offline_inference,      "lerobot.probes.offline_inference",      "offline_inference"),
+            (p.enable_attention,              "lerobot.probes.attention",              "attention"),
+            (p.enable_critic_values_distribution, "lerobot.probes.critic",             "critic"),
+            (p.enable_representations,        "lerobot.probes.representations",        "representations"),
+            (p.enable_spatial_memorization,   "lerobot.probes.attention_spatial",      "attention_spatial"),
+            (p.enable_action_drift_jacobian,  "lerobot.probes.action_drift_jacobian",  "action_drift_jacobian"),
+        ]
+
+        import importlib
+        for enabled, module_path, subdir in probes:
+            if not enabled:
+                continue
+            logging.info(f"[VAL step={step}] running probe: {subdir}")
+            try:
+                module = importlib.import_module(module_path)
+                module.run(adapter, val_dataset, cfg, os.path.join(output_root, subdir))
+            except Exception as exc:
+                logging.warning(
+                    f"[VAL step={step}] probe '{subdir}' failed: {exc}", exc_info=True,
+                )
+
+        # Drop the adapter; the policy lives on in the training scope.
+        del adapter
+        gc.collect()
+        torch.cuda.empty_cache()
+    finally:
+        if was_training:
+            policy.train()
+
+
+def _load_val_dataset(cfg: TrainRLServerPipelineConfig, fallback_dataset):
+    """Return the validation dataset.
+
+    If ``cfg.val_dataset_path`` is set, load it separately (mirrors the pi05
+    val pipeline). Otherwise fall back to the training offline dataset.
+    """
+    val_path = getattr(cfg, "val_dataset_path", None)
+    if not val_path:
+        return fallback_dataset
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    logging.info(f"[VAL] Loading validation dataset from {val_path}")
+    ds = LeRobotDataset(repo_id=cfg.dataset.repo_id, root=val_path)
+    ds.delta_timestamps = None
+    ds.delta_indices = None
+    return ds
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
@@ -175,6 +262,28 @@ def _preprocess_config_yaml(config_path: str) -> str:
     return tmp.name
 
 
+def _extract_config_path_args(args: list[str]) -> tuple[str | None, list[str]]:
+    """Accept both LeRobot's --config_path and the common --config spelling."""
+    config_path = None
+    filtered: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("--config_path="):
+            config_path = arg.split("=", 1)[1]
+        elif arg.startswith("--config="):
+            config_path = arg.split("=", 1)[1]
+        elif arg in {"--config_path", "--config"}:
+            if i + 1 >= len(args):
+                raise ValueError(f"{arg} expects a path argument.")
+            config_path = args[i + 1]
+            i += 1
+        else:
+            filtered.append(arg)
+        i += 1
+    return config_path, filtered
+
+
 @parser.wrap()
 def offline_train_cli(cfg: TrainRLServerPipelineConfig):
     """CLI entry point — called after model registration and YAML pre-processing."""
@@ -194,19 +303,13 @@ def main() -> None:
     import lerobot.rl.rl_pi05       # noqa: F401 — registers PI05RLConfig
     import lerobot.rl.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
 
-    from lerobot.configs.parser import parse_arg
-
     cli_args = sys.argv[1:]
-    config_path = parse_arg("config_path", cli_args)
+    config_path, remaining_args = _extract_config_path_args(cli_args)
     if config_path:
         processed = _preprocess_config_yaml(config_path)
-        if processed != config_path:
-            # Swap in the temp file path so parser.wrap picks it up.
-            sys.argv = (
-                [sys.argv[0]]
-                + [a for a in sys.argv[1:] if not a.startswith("--config_path")]
-                + [f"--config_path={processed}"]
-            )
+        # Swap in normalized form so parser.wrap picks it up regardless of
+        # whether the user passed --config, --config_path, or a space-separated value.
+        sys.argv = [sys.argv[0], *remaining_args, f"--config_path={processed}"]
 
     offline_train_cli()  # type: ignore[call-arg]  # @parser.wrap rewrites signature
 
@@ -337,6 +440,12 @@ def run_offline_training(
 
     # ── Optimizers ────────────────────────────────────────────────────────────
     optimizers = _build_optimizers(trainer.get_optimizer_groups(policy, cfg))
+    weight_anchors = build_weight_anchors(
+        optimizers=optimizers,
+        alpha=float(getattr(cfg.policy, "anchor_alpha", 0.0)),
+        every_n_steps=int(getattr(cfg.policy, "anchor_every_n_steps", 0)),
+        targets=list(getattr(cfg.policy, "anchor_targets", [])),
+    )
 
     # ── Replay buffer ─────────────────────────────────────────────────────────
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
@@ -350,8 +459,17 @@ def run_offline_training(
         terminal_failure_reward=cfg.policy.terminal_failure_reward,
         inject_complementary_info={"is_golden": getattr(cfg, "treat_main_dataset_as_golden", False)},
         cache_dir=getattr(cfg, "buffer_cache_dir", None),
+        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+        image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
     )
     offline_replay_buffer.dataset = offline_dataset
+    load_additional_offline_datasets(
+        cfg=cfg,
+        offline_dataset=offline_dataset,
+        offline_replay_buffer=offline_replay_buffer,
+        storage_device=storage_device,
+        is_main_process=True,
+    )
     logging.info(f"[RL_OFFLINE] Buffer: {len(offline_replay_buffer)} samples")
 
     # Share frozen critic-target params to save VRAM
@@ -380,6 +498,17 @@ def run_offline_training(
         queue_size=2,
         action_chunk_size=cfg.policy.n_action_steps,
     )
+
+    # ── Validation dataset (used by probes) ───────────────────────────────────
+    val_dataset = _load_val_dataset(cfg, fallback_dataset=offline_dataset)
+    val_freq = int(getattr(cfg, "val_freq", 0) or 0)
+    val_on_start = bool(getattr(cfg, "val_on_start", False))
+
+    if val_on_start:
+        _run_validation_probes(
+            policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
+            val_dataset=val_dataset, device=device, cfg=cfg, step=0,
+        )
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     optimization_step = 0
@@ -477,6 +606,8 @@ def run_offline_training(
                 )
                 training_infos.update(actor_infos)
 
+        apply_weight_anchors(weight_anchors, optimizers, optimization_step)
+
         # ── Logging ───────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:
             training_infos["offline_buffer_size"] = len(offline_replay_buffer)
@@ -517,6 +648,13 @@ def run_offline_training(
             )
             gc.collect()
             torch.cuda.empty_cache()
+
+        # ── Validation probes ─────────────────────────────────────────────────
+        if val_freq > 0 and optimization_step % val_freq == 0:
+            _run_validation_probes(
+                policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
+                val_dataset=val_dataset, device=device, cfg=cfg, step=optimization_step,
+            )
 
     logging.info(f"[RL_OFFLINE] Training complete after {optimization_step} steps.")
 

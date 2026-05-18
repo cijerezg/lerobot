@@ -21,6 +21,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import PI05FullPolicy, PI05Pytorch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05_full.processor_pi05 import Pi05FullPrepareStateTokenizerProcessorStep
 from lerobot.processor import TokenizerProcessorStep
+from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
     OBS_STATE, 
@@ -37,18 +38,6 @@ from lerobot.utils.constants import (
 from lerobot.policies.pi05_full.modeling_pi05 import make_att_2d_masks
         
 
-
-@dataclass
-class ActorLearnerConfig:
-    learner_host: str = "127.0.0.1"
-    learner_port: int = 50051
-    policy_parameters_push_frequency: int = 4
-    queue_get_timeout: float = 2
-
-@dataclass
-class ConcurrencyConfig:
-    actor: str = "threads"
-    learner: str = "threads"
 
 @dataclass
 class VisionEncoderTrainConfig:
@@ -84,6 +73,8 @@ class PI05RLConfig(PI05FullConfig):
     online_steps: int = 1000000
     online_buffer_capacity: int = 100000
     offline_buffer_capacity: int = 100000
+    image_storage_dtype: str = "uint8"
+    image_storage_size: tuple[int, int] | None = None
     async_prefetch: bool = False
     online_step_before_learning: int = 100
     policy_update_freq: int = 1

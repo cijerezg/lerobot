@@ -54,6 +54,14 @@ class PI05Trainer(Trainer):
         from lerobot.policies.factory import make_policy
         return make_policy(cfg=cfg.policy, env_cfg=cfg.env)
 
+    def make_actor_policy(self, cfg) -> nn.Module:
+        # Online actors receive only actor-runtime weights from the learner, so
+        # PI05 should not build/use the separate critic path here. Standalone
+        # inference still calls make_policy() and can keep a local critic.
+        if hasattr(cfg.policy, "use_separate_critic"):
+            cfg.policy.use_separate_critic = False
+        return self.make_policy(cfg)
+
     def freeze_model(self, policy: nn.Module, cfg) -> None:
         """
         Layer-granular freeze following cfg.policy.trainable_params.
@@ -266,9 +274,16 @@ class PI05Trainer(Trainer):
         )
 
     def update_target_networks(self, policy: nn.Module) -> None:
+        self._target_update_call_counter = getattr(self, "_target_update_call_counter", 0) + 1
+        every = int(getattr(policy.config, "critic_target_update_every", 1))
+        if every > 1 and self._target_update_call_counter % every != 0:
+            return
         tau = policy.config.critic_target_update_weight
-        for p, p_tgt in zip(policy.critic.parameters(), policy.critic_target.parameters()):
-            p_tgt.data.mul_(1 - tau).add_(p.data, alpha=tau)
+        with torch.no_grad():
+            for p, p_tgt in zip(policy.critic.parameters(), policy.critic_target.parameters()):
+                if not p.requires_grad:
+                    continue
+                p_tgt.data.mul_(1 - tau).add_(p.data, alpha=tau)
 
     # ── Inference ─────────────────────────────────────────────────────────────
 
@@ -287,11 +302,14 @@ class PI05Trainer(Trainer):
         from lerobot.types import TransitionKey
         preprocessor = context["preprocessor"]
         batch = {**observation}
+        batch["robot_type"] = context.get("robot_type", "so101")
+        advantage = context.get("inference_advantage", cfg.policy.inference_advantage)
+        if not isinstance(advantage, torch.Tensor):
+            advantage = torch.tensor([[advantage]], dtype=torch.float32)
         batch[TransitionKey.COMPLEMENTARY_DATA] = {
-            "task": task_str,
-            "subtask": context.get("subtask_override", ""),
-            "advantage": context.get("inference_advantage", cfg.policy.inference_advantage),
-            "robot_type": context.get("robot_type", "so101"),
+            "task": [task_str],
+            "subtask": [context.get("subtask_override", "")],
+            "advantage": advantage,
         }
         if "prev_actions" in context:
             batch[TransitionKey.COMPLEMENTARY_DATA]["prev_actions"] = context["prev_actions"]
@@ -309,15 +327,30 @@ class PI05Trainer(Trainer):
     ) -> float | None:
         observations = transition.get("state", {})
         next_observations = transition.get("next_state", {})
-        rewards = transition.get("reward", torch.zeros(1))
-        done = transition.get("done", torch.zeros(1))
-        if not observations:
+        if not observations or ACTION not in transition:
             return None
+
+        observations = {
+            key: value.to(device) if isinstance(value, torch.Tensor) else value
+            for key, value in observations.items()
+        }
+        next_observations = {
+            key: value.to(device) if isinstance(value, torch.Tensor) else value
+            for key, value in next_observations.items()
+        }
+        actions = transition[ACTION].to(device)
+        if actions.ndim == 1:
+            actions = actions.view(1, 1, -1)
+        elif actions.ndim == 2:
+            actions = actions.unsqueeze(0)
+        rewards = torch.as_tensor(transition.get("reward", 0.0), device=device).view(1)
+        done = torch.as_tensor(transition.get("done", False), device=device).view(1)
+
         batch = preprocess_batch_for_pi05(
             policy=policy,
             observations=observations,
             next_observations=next_observations,
-            actions=None,
+            actions=actions,
             rewards=rewards,
             done=done,
             task=cfg.policy.task,

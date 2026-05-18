@@ -40,11 +40,26 @@ class Trainer(ABC):
     @abstractmethod
     def make_policy(self, cfg) -> nn.Module:
         """
-        Build the full RL policy: backbone + action expert + critic + target critic.
+        Build the learner/offline RL policy.
+
+        Critic modules may be initialized lazily by the training loop through
+        policy.init_critic() when skip_critic=False.
 
         PI05:      PI05RLPolicy(cfg.policy)
         MolmoAct2: MolmoAct2RLPolicy(cfg.policy)
         """
+
+    def make_actor_policy(self, cfg) -> nn.Module:
+        """
+        Build the online actor policy.
+
+        The default is the same construction as the learner policy. Model
+        adapters can override this when the actor should avoid learner-only
+        modules or config flags, such as PI05's separate critic path.
+        Standalone inference should keep using make_policy() when it needs a
+        local critic for value overlays.
+        """
+        return self.make_policy(cfg)
 
     @abstractmethod
     def freeze_model(self, policy: nn.Module, cfg) -> None:
@@ -138,7 +153,7 @@ class Trainer(ABC):
 
         MolmoAct2:
             1. preprocessor({**observations, "task": cfg.policy.task})
-            2. pack action targets + advantage
+            2. pack action targets + optional advantage prompt label
             → {input_ids, pixel_values, attention_mask, actions, advantage}
             NO subtask lookup.
         """
@@ -152,7 +167,7 @@ class Trainer(ABC):
         cfg,
     ) -> dict[str, Any]:
         """
-        Actor forward pass + advantage-weighted loss computation.
+        Actor forward pass + policy loss computation.
 
         PI05:      policy.forward(batch, model="actor")
                    loss = w_flow*loss_flow + w_action_ce*loss_action_ce + w_subtask_ce*loss_subtask_ce

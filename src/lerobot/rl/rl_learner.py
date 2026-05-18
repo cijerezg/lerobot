@@ -22,15 +22,19 @@ Usage:
 from __future__ import annotations
 
 import logging
+import json
 import os
 import shutil
 import time
 from pprint import pformat
 from threading import Thread
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.multiprocessing as mp
 from termcolor import colored
+from PIL import Image
 from torch import nn
 from torch.multiprocessing import Process, Queue
 
@@ -40,6 +44,7 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.rl.buffer import ReplayBuffer
+from lerobot.rl.offline_dataset_utils import load_additional_offline_datasets
 from lerobot.rl.learner import (
     check_nan_in_transition,
     handle_resume_logic,
@@ -50,6 +55,8 @@ from lerobot.rl.learner import (
     start_learner,
 )
 from lerobot.rl.rl_trainer import Trainer
+from lerobot.rl.utils import save_video_with_critic_overlay
+from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
 from lerobot.transport.utils import bytes_to_transitions
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import get_safe_torch_device
@@ -221,6 +228,12 @@ def add_actor_information_and_train(
 
     # ── Optimizers ────────────────────────────────────────────────────────────
     optimizers = _build_optimizers(trainer.get_optimizer_groups(policy, cfg))
+    weight_anchors = build_weight_anchors(
+        optimizers=optimizers,
+        alpha=float(getattr(cfg.policy, "anchor_alpha", 0.0)),
+        every_n_steps=int(getattr(cfg.policy, "anchor_every_n_steps", 0)),
+        targets=list(getattr(cfg.policy, "anchor_targets", [])),
+    )
     resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
 
     # ── Processors ───────────────────────────────────────────────────────────
@@ -246,6 +259,13 @@ def add_actor_information_and_train(
     if cfg.dataset is not None:
         offline_replay_buffer = _init_offline_buffer(cfg, device, storage_device)
         offline_dataset = offline_replay_buffer.dataset
+        load_additional_offline_datasets(
+            cfg=cfg,
+            offline_dataset=offline_dataset,
+            offline_replay_buffer=offline_replay_buffer,
+            storage_device=storage_device,
+            is_main_process=True,
+        )
         batch_size = batch_size // 2
 
     # ── Initial weight push ───────────────────────────────────────────────────
@@ -281,6 +301,10 @@ def add_actor_information_and_train(
             replay_buffer=replay_buffer,
             shutdown_event=shutdown_event,
             episode_counter=episode_counter,
+            policy=policy,
+            trainer=trainer,
+            device=device_name,
+            cfg=cfg,
         )
 
         if len(replay_buffer) < online_step_before_learning:
@@ -355,6 +379,8 @@ def add_actor_information_and_train(
                 )
                 training_infos.update(actor_infos)
 
+        apply_weight_anchors(weight_anchors, optimizers, optimization_step)
+
         # ── Logging ────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:
             training_infos["replay_buffer_size"] = len(replay_buffer)
@@ -424,6 +450,10 @@ def process_transitions_vla(
     replay_buffer: ReplayBuffer,
     shutdown_event,
     episode_counter: list,
+    policy: nn.Module | None = None,
+    trainer: Trainer | None = None,
+    device: str | None = None,
+    cfg: TrainRLServerPipelineConfig | None = None,
 ) -> None:
     """Drain the transition queue and add each episode's transitions to the replay buffer."""
     while not transition_queue.empty() and not shutdown_event.is_set():
@@ -431,7 +461,20 @@ def process_transitions_vla(
         transition_list = bytes_to_transitions(buffer=raw)
         episode_counter[0] += 1
 
-        for transition in transition_list:
+        log_ctx = _maybe_start_logging_episode(cfg, episode_counter[0])
+
+        for step_idx, transition in enumerate(transition_list):
+            if log_ctx is not None and policy is not None and trainer is not None and device is not None:
+                _log_transition_for_episode(
+                    transition=transition,
+                    step_idx=step_idx,
+                    log_ctx=log_ctx,
+                    policy=policy,
+                    trainer=trainer,
+                    device=device,
+                    cfg=cfg,
+                )
+
             if check_nan_in_transition(
                 observations=transition["state"],
                 actions=transition[ACTION],
@@ -458,6 +501,130 @@ def process_transitions_vla(
 
             replay_buffer.add(**transition)
 
+        if log_ctx is not None and policy is not None:
+            _finish_logging_episode(log_ctx, episode_counter[0])
+
+
+def _maybe_start_logging_episode(
+    cfg: TrainRLServerPipelineConfig | None,
+    episode: int,
+) -> dict | None:
+    if cfg is None:
+        return None
+    freq = int(getattr(cfg, "episode_logging_freq", 0) or 0)
+    if freq <= 0 or episode % freq != 0:
+        return None
+
+    logging.info(f"[LEARNER] Starting logging episode {episode}")
+    log_dir = os.path.join(cfg.output_dir, "logging_episodes", f"episode_{episode:06d}")
+    os.makedirs(log_dir, exist_ok=True)
+    return {
+        "log_dir": log_dir,
+        "critic_values": [],
+        "camera_names": list(getattr(cfg, "video_logging_cameras", ["top", "side"])),
+        "critic_failed": False,
+    }
+
+
+def _log_transition_for_episode(
+    transition: dict,
+    step_idx: int,
+    log_ctx: dict,
+    policy: nn.Module,
+    trainer: Trainer,
+    device: str,
+    cfg: TrainRLServerPipelineConfig | None,
+) -> None:
+    _save_transition_images(
+        transition=transition,
+        log_dir=log_ctx["log_dir"],
+        step_idx=step_idx,
+        camera_names=log_ctx["camera_names"],
+    )
+
+    if cfg is None or log_ctx["critic_failed"]:
+        return
+
+    try:
+        with torch.no_grad():
+            value = trainer.critic_value_for_logging(
+                policy=policy,
+                transition=transition,
+                device=device,
+                cfg=cfg,
+            )
+    except Exception as exc:
+        log_ctx["critic_failed"] = True
+        logging.warning(f"[LEARNER] Critic value logging disabled for this episode: {exc}")
+        return
+
+    if value is not None:
+        log_ctx["critic_values"].append(float(value))
+
+
+def _save_transition_images(
+    transition: dict,
+    log_dir: str,
+    step_idx: int,
+    camera_names: list[str],
+) -> None:
+    observations = transition.get("state", {})
+    for key, value in observations.items():
+        if "image" not in key or not isinstance(value, torch.Tensor):
+            continue
+        camera_name = key.split(".")[-1]
+        if camera_name not in camera_names:
+            continue
+
+        img = value.detach().cpu()
+        while img.ndim > 3 and img.shape[0] == 1:
+            img = img.squeeze(0)
+        if img.ndim == 3 and img.shape[0] in (1, 3):
+            img = img.permute(1, 2, 0)
+        elif img.ndim != 2:
+            logging.debug(f"[LEARNER] Skipping image with unsupported shape {tuple(value.shape)}")
+            continue
+
+        img_np = img.numpy()
+        if np.nanmax(img_np) <= 1.0:
+            img_np = img_np * 255.0
+        img_np = np.clip(img_np, 0, 255).astype(np.uint8)
+        if img_np.ndim == 3 and img_np.shape[-1] == 1:
+            img_np = img_np[..., 0]
+
+        img_path = os.path.join(log_dir, f"step_{step_idx:06d}_{camera_name}.png")
+        Image.fromarray(img_np).save(img_path)
+
+
+def _finish_logging_episode(log_ctx: dict, episode: int) -> None:
+    critic_values = log_ctx["critic_values"]
+    log_dir = log_ctx["log_dir"]
+
+    if critic_values:
+        with open(os.path.join(log_dir, "critic_values.json"), "w") as f:
+            json.dump(critic_values, f)
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(critic_values)
+        plt.title(f"Critic Values - Episode {episode}")
+        plt.xlabel("Step")
+        plt.ylabel("Value")
+        plt.grid(True)
+        plt.savefig(os.path.join(log_dir, "critic_plot.png"))
+        plt.close()
+
+        try:
+            save_video_with_critic_overlay(
+                log_dir,
+                critic_values,
+                camera_names=log_ctx["camera_names"],
+            )
+            logging.info(f"[LEARNER] Video generated for episode {episode}")
+        except Exception as exc:
+            logging.error(f"[LEARNER] Failed to generate video: {exc}")
+
+    logging.info(f"[LEARNER] Finished logging episode {episode}")
+
 
 def _init_online_buffer(
     cfg: TrainRLServerPipelineConfig,
@@ -471,6 +638,8 @@ def _init_online_buffer(
             state_keys=cfg.policy.input_features.keys(),
             storage_device=storage_device,
             optimize_memory=True,
+            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+            image_storage_size=getattr(cfg.policy, "image_storage_size", None),
         )
     logging.info("Resuming: loading online buffer from disk")
     dataset = LeRobotDataset(
@@ -483,6 +652,8 @@ def _init_online_buffer(
         device=device,
         state_keys=cfg.policy.input_features.keys(),
         optimize_memory=True,
+        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+        image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
     )
 
 
@@ -517,6 +688,8 @@ def _init_offline_buffer(
         terminal_failure_reward=float(getattr(cfg.policy, "terminal_failure_reward", -10.0)),
         inject_complementary_info={"is_golden": cfg.treat_main_dataset_as_golden},
         cache_dir=cfg.buffer_cache_dir,
+        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+        image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
     )
     buf.dataset = offline_dataset
     return buf

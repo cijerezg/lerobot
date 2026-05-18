@@ -2,7 +2,7 @@
 # Unified RL training config  —  PI05 and MolmoAct2
 # =============================================================================
 # Used by:
-#   - lerobot/src/lerobot/rl/rl_offline.py   (offline BC / offline RL)
+#   - lerobot/src/lerobot/scripts/rl_offline.py   (offline BC / offline RL)
 #   - lerobot/src/lerobot/rl/rl_learner.py   (online distributed learner)
 #   - lerobot/src/lerobot/rl/inference_async.py  (online distributed actor)
 #

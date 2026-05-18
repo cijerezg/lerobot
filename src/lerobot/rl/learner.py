@@ -804,6 +804,8 @@ def initialize_replay_buffer(
             state_keys=cfg.policy.input_features.keys(),
             storage_device=storage_device,
             optimize_memory=True,
+            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+            image_storage_size=getattr(cfg.policy, "image_storage_size", None),
         )
 
     logging.info("Resume training load the online dataset")
@@ -823,6 +825,8 @@ def initialize_replay_buffer(
         device=device,
         state_keys=cfg.policy.input_features.keys(),
         optimize_memory=True,
+        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+        image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
     )
 
 
@@ -861,6 +865,8 @@ def initialize_offline_replay_buffer(
         storage_device=storage_device,
         optimize_memory=True,
         capacity=cfg.policy.offline_buffer_capacity,
+        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+        image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
     )
     offline_replay_buffer.dataset = offline_dataset
     return offline_replay_buffer

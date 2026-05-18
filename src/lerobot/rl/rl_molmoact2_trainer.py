@@ -1,8 +1,9 @@
 """
 MolmoAct2Trainer — concrete Trainer for MolmoAct2RLPolicy.
 
-BC mode  (skip_critic=True):  update_actor only; flow-matching loss, no advantage weighting.
-RL mode  (skip_critic=False): update_critic (HL-Gauss distributional TD) + advantage-weighted actor.
+BC mode  (skip_critic=True):  update_actor only; flow-matching loss, no advantage conditioning.
+RL mode  (skip_critic=False): update_critic (HL-Gauss distributional TD) + actor with advantage
+                              binned into a "negative"/"positive" clause inside the prompt.
 """
 from __future__ import annotations
 
@@ -168,19 +169,26 @@ class MolmoAct2Trainer(Trainer):
             _fwd_critic = getattr(policy, "forward_critic")
             _fwd_target = getattr(policy, "forward_critic_target")
 
-            # V(s') from frozen target — no grad.
+            # V(s') from frozen target — no grad. Match PI05 target semantics:
+            # clamp scalar TD target into support, and use one-hot bins for
+            # exact terminal targets instead of HL-Gauss smoothing.
             with torch.no_grad():
                 target_out = _fwd_target(next_batch)
                 v_next = target_out["value"].to(rewards.dtype)
-                td_target = rewards + discount * v_next * (1.0 - done.float())
+                td_target_raw = rewards + discount * v_next * (1.0 - done.float())
+                v_min = float(getattr(cfg.policy, "value_support_min", -2.0))
+                v_max = float(getattr(cfg.policy, "value_support_max", 0.0))
+                td_target = td_target_raw.clamp(min=v_min, max=v_max)
                 critic_net: nn.Module = getattr(policy, "critic")
-                soft_target = critic_net.hl_gauss_target(td_target)  # type: ignore[attr-defined]
+                hl_target = critic_net.hl_gauss_target(td_target).to(dtype=torch.float32)  # type: ignore[attr-defined]
+                one_hot_target = critic_net.one_hot_target(td_target).to(dtype=torch.float32)  # type: ignore[attr-defined]
+                soft_target = torch.where(done.bool(), one_hot_target, hl_target)
 
             # V(s) with grad.
             critic_out = _fwd_critic(curr_batch)
             logits = critic_out["logits"]  # [B, num_bins]
 
-            loss_ce = -(soft_target * F.log_softmax(logits.float(), dim=-1)).sum(dim=-1).mean()
+            loss_ce = -(soft_target.to(logits.device) * F.log_softmax(logits.float(), dim=-1)).sum(dim=-1).mean()
             (loss_ce / grad_accum).backward()
 
             accum_ce += loss_ce.item() / grad_accum
@@ -197,12 +205,18 @@ class MolmoAct2Trainer(Trainer):
         # Logging metrics (using last accumulation step).
         with torch.no_grad():
             v_curr = last_critic_out["value"].float() if last_critic_out else torch.zeros(1)
-            td_err = (last_td_target - v_curr).abs().mean().item() if last_td_target is not None else 0.0
+            if last_td_target is not None:
+                td_delta = last_td_target.float() - v_curr
+                td_err = td_delta.abs().mean().item()
+                mse = (td_delta.square()).mean().item()
+            else:
+                td_err = 0.0
+                mse = 0.0
 
         return {
             "loss_critic": accum_ce,
             "loss_critic_ce": accum_ce,
-            "loss_critic_mse": td_err,
+            "loss_critic_mse": mse,
             "critic_grad_norm": grad_norm,
             "critic_value_mean": v_curr.mean().item(),
             "td_error_mean": td_err,
@@ -276,7 +290,7 @@ class MolmoAct2Trainer(Trainer):
         raw_batch: dict,  # noqa: ARG002
         observations: dict,
         actions: torch.Tensor,
-        advantage: torch.Tensor,  # noqa: ARG002
+        advantage: torch.Tensor | None,
         preprocessor,
         dataset,  # noqa: ARG002
         cfg,
@@ -285,26 +299,29 @@ class MolmoAct2Trainer(Trainer):
         Build the MolmoAct2 forward batch.
 
         Flat dict with image/state observation keys + action + task string.
-        The preprocessor (PolicyProcessorPipeline) converts this via:
-          batch_to_transition → (steps) → transition_to_batch
-        producing input_ids, pixel_values, attention_mask etc. for forward().
+        In RL mode, the raw advantage tensor is threaded via complementary_data
+        so the prompt step bins it into a "negative"/"positive" clause.
         """
+        from lerobot.types import TransitionKey
+
         action_dim = self._action_dim(cfg)
         pre_input: dict[str, Any] = {
             **observations,
             "action": actions[..., :action_dim],
             "task": cfg.policy.task,
         }
+        if advantage is not None:
+            pre_input[TransitionKey.COMPLEMENTARY_DATA] = {"advantage": advantage}
         return preprocessor(pre_input)
 
     def actor_forward(
         self,
         policy: nn.Module,
         batch: dict,
-        advantage: torch.Tensor,  # noqa: ARG002 — weighting handled in update_actor
+        advantage: torch.Tensor,  # noqa: ARG002 — advantage is consumed by the preprocessor as a prompt
         cfg,  # noqa: ARG002
     ) -> dict[str, Any]:
-        """BC forward pass — advantage weighting is applied by update_actor, not here."""
+        """Forward pass. Advantage conditioning is applied via the prompt in build_training_batch."""
         loss, metrics = policy.forward(batch)
         return {
             "loss_actor": loss.item(),
@@ -327,8 +344,9 @@ class MolmoAct2Trainer(Trainer):
         """
         Actor update: sample → [compute_advantage] → preprocess → forward → backward → step.
 
-        BC mode (skip_critic=True):  advantage=0, weight=1.
-        RL mode (skip_critic=False): advantage-weighted loss via exp(squashed_advantage.mean()).
+        BC mode (skip_critic=True):  no advantage clause in the prompt.
+        RL mode (skip_critic=False): raw advantage is threaded into the batch and the
+                                     preprocessor inserts a "negative"/"positive" clause.
         Handles gradient accumulation.  Only the "policy" optimizer is touched here.
         """
         from lerobot.rl.buffer import concatenate_batch_transitions
@@ -368,8 +386,9 @@ class MolmoAct2Trainer(Trainer):
             observations = raw.get("state", {})
             actions = raw[ACTION][..., :action_dim]
 
-            # Advantage weighting (RL mode only).
-            adv_weight = torch.tensor(1.0, device=device)
+            # Advantage as prompt conditioning (RL mode only). Raw advantage is
+            # threaded into the batch; the preprocessor bins it into a label.
+            raw_adv: torch.Tensor | None = None
             if not skip_critic:
                 next_observations = raw.get("next_state", {})
                 rewards = raw["reward"]
@@ -378,7 +397,7 @@ class MolmoAct2Trainer(Trainer):
                     rewards = torch.tensor(rewards)
                 if not isinstance(done, torch.Tensor):
                     done = torch.tensor(done)
-                _, squashed_adv, _ = self.compute_advantage(
+                raw_adv, squashed_adv, _ = self.compute_advantage(
                     policy,
                     batch=raw,  # type: ignore[arg-type]
                     observations=observations,
@@ -388,24 +407,23 @@ class MolmoAct2Trainer(Trainer):
                     cfg=cfg,
                     preprocessor=preprocessor,
                 )
-                adv_weight = torch.exp(squashed_adv.mean().to(device))
                 accum["advantage_squashed_mean"] += squashed_adv.mean().item() / grad_accum
 
             fwd_batch = self.build_training_batch(
                 raw_batch=raw,  # type: ignore[arg-type]
                 observations=observations,
                 actions=actions,
-                advantage=adv_weight,
+                advantage=raw_adv,
                 preprocessor=preprocessor,
                 dataset=dataset,
                 cfg=cfg,
             )
 
+            # Keep actor loss clean: advantage is only a prompt label.
             loss, metrics = policy.forward(fwd_batch)
-            weighted_loss = loss * adv_weight
-            (weighted_loss / grad_accum).backward()
+            (loss / grad_accum).backward()
 
-            accum["loss_actor"] += weighted_loss.item() / grad_accum
+            accum["loss_actor"] += loss.item() / grad_accum
             accum["loss_flow"] += metrics.get("action_flow_loss", 0.0) / grad_accum
             accum["loss_discrete_ce"] += metrics.get("discrete_ce_loss", 0.0) / grad_accum
 
@@ -418,11 +436,17 @@ class MolmoAct2Trainer(Trainer):
         """Polyak update: critic_target ← τ*critic + (1-τ)*critic_target."""
         if not hasattr(policy, "critic"):
             return
+        self._target_update_call_counter = getattr(self, "_target_update_call_counter", 0) + 1
+        every = int(getattr(policy.config, "critic_target_update_every", 1))
+        if every > 1 and self._target_update_call_counter % every != 0:
+            return
         critic_net: nn.Module = getattr(policy, "critic")
         critic_target: nn.Module = getattr(policy, "critic_target")
         tau = float(getattr(policy.config, "critic_target_update_weight", 0.005))
         with torch.no_grad():
             for p, p_tgt in zip(critic_net.parameters(), critic_target.parameters()):
+                if not p.requires_grad:
+                    continue
                 p_tgt.data.lerp_(p.data, tau)
 
     # ── Inference ─────────────────────────────────────────────────────────────
@@ -471,7 +495,7 @@ class MolmoAct2Trainer(Trainer):
             return None
 
     def push_weights(self, policy: nn.Module, parameters_queue) -> None:
-        """Push trainable parameters to actor queue."""
+        """Push trainable actor-runtime parameters to the actor queue."""
         from lerobot.transport.utils import state_to_bytes
         from lerobot.utils.transition import move_state_dict_to_device
 
@@ -479,6 +503,8 @@ class MolmoAct2Trainer(Trainer):
             name: param
             for name, param in policy.named_parameters()
             if param.requires_grad
+            and not name.startswith("critic.")
+            and not name.startswith("critic_target.")
         }
         state_bytes = state_to_bytes({"policy": move_state_dict_to_device(trainable, "cpu")})
         parameters_queue.put(state_bytes)
@@ -500,7 +526,8 @@ class MolmoAct2Trainer(Trainer):
             + "  ".join(f"{k}={v:.4f}" for k, v in scalars.items())
         )
         if wandb_logger is not None:
-            wandb_logger.log({"step": step, **scalars})
+            scalars["Optimization step"] = step
+            wandb_logger.log_dict(scalars, mode="train", custom_step_key="Optimization step")
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

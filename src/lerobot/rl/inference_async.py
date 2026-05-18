@@ -1,16 +1,9 @@
 #!/usr/bin/env python
 """
-VLA actor script for distributed HILSerl online RL training.
+Generic standalone/actor-like VLA inference runner.
 
-Mirrors actor_pi05_async.py but for VLA models (MolmoAct2, etc.) where:
-  - Model dispatch is via Trainer.for_config() — no PI05-specific imports.
-  - No RTC / ActionQueue: chunk actions pre-generated in a background inference
-    thread while the env thread executes the current chunk step-by-step.
-  - No subtask tokens, no anchor/delta alignment.
-
-Two threads:
-  get_actions_worker_vla   — inference: pre-generates the next action chunk.
-  env_interaction_worker_vla — env: executes actions, collects transitions.
+RTC is now the default runtime. The old chunk-deque implementation remains as
+a debug fallback via `inference_runtime=chunk_deque`.
 
 Usage:
     python -m lerobot.rl.inference_async \
@@ -519,6 +512,27 @@ def act_with_policy_async_vla(
     transitions_queue,
     interactions_queue,
 ) -> None:
+    runtime = (
+        getattr(cfg, "inference_runtime", None)
+        or getattr(cfg.policy, "inference_runtime", None)
+        or getattr(cfg, "actor_runtime", None)
+        or getattr(cfg.policy, "actor_runtime", None)
+        or "rtc"
+    )
+    if runtime == "rtc":
+        from lerobot.rl.rtc_actor_runtime import act_with_policy_rtc_inference
+
+        trainer = Trainer.for_config(cfg)
+        act_with_policy_rtc_inference(
+            cfg=cfg,
+            trainer=trainer,
+            shutdown_event=shutdown_event,
+        )
+        return
+    if runtime not in {"chunk_deque", "simple"}:
+        raise ValueError(f"Unknown inference_runtime={runtime!r}; expected 'rtc' or 'chunk_deque'.")
+
+    logger.warning("[INFERENCE] Using legacy chunk-deque runtime; RTC is the default runtime.")
     set_seed(cfg.seed)
     device = get_safe_torch_device(
         getattr(cfg.policy, "actor_device", None) or cfg.policy.device, log=True
@@ -613,20 +627,28 @@ def actor_vla_cli(cfg: TrainRLServerPipelineConfig):
     log_dir = os.path.join(cfg.output_dir or "outputs", "logs")
     os.makedirs(log_dir, exist_ok=True)
     init_logging(log_file=os.path.join(log_dir, f"actor_{cfg.job_name}.log"), display_pid=False)
-    logger.info("[ACTOR] VLA actor starting.")
+    logger.info("[INFERENCE] Generic inference starting.")
 
     shutdown_event = ProcessSignalHandler(use_threads=True, display_pid=False).shutdown_event
 
     def _sigint(sig, frame):
-        logger.info("[ACTOR] SIGINT — shutting down…")
+        logger.info("[INFERENCE] SIGINT — shutting down…")
         shutdown_event.set()
 
     signal.signal(signal.SIGINT, _sigint)
 
-    # -- gRPC transport -------------------------------------------------------
-    alc = getattr(cfg.policy, "actor_learner_config", None)
+    runtime = (
+        getattr(cfg, "inference_runtime", None)
+        or getattr(cfg.policy, "inference_runtime", None)
+        or getattr(cfg, "actor_runtime", None)
+        or getattr(cfg.policy, "actor_runtime", None)
+        or "rtc"
+    )
+
+    # -- optional gRPC transport for legacy actor-like chunk runtime ----------
+    alc = None if runtime == "rtc" else getattr(cfg.policy, "actor_learner_config", None)
     if alc is None:
-        logger.warning("[ACTOR] No actor_learner_config — running in standalone mode (no learner).")
+        logger.info("[INFERENCE] Running in standalone mode (no learner transport).")
         from queue import Queue as _Queue
         parameters_queue = _Queue()
         transitions_queue = _Queue()
@@ -662,7 +684,7 @@ def actor_vla_cli(cfg: TrainRLServerPipelineConfig):
         )
     finally:
         shutdown_event.set()
-        logger.info("[ACTOR] actor_vla_cli finished.")
+        logger.info("[INFERENCE] inference_cli finished.")
 
 
 if __name__ == "__main__":

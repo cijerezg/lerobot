@@ -2136,3 +2136,115 @@ class MolmoAct2Policy(PreTrainedPolicy):
         del peft_config
         if not self.config.checkpoint_path:
             raise ValueError("MolmoAct2 LoRA fine-tuning requires `policy.checkpoint_path`.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Attention probing hook (cross_attn + self_attn on the action expert)
+# ─────────────────────────────────────────────────────────────────────────────
+# Mirrors pi05's _PROBING_CAPTURE pattern. Off by default; the probes flip
+# ``enabled`` on, run a forward, then read back per-layer attention.
+# Captures softmax(QK^T) explicitly because SDPA does not expose attn_weights.
+
+_MOLMOACT2_PROBING_CAPTURE: dict = {}
+
+
+def _patched_action_attention(self, q, k, v, *, attn_mask=None, is_causal=False):
+    """Replacement for ``ActionExpert{Self,Cross}Attention._attention``.
+
+    Two modes, both gated by ``_MOLMOACT2_PROBING_CAPTURE["enabled"]``:
+
+    * **Standard capture** (``requires_grad=False``): compute softmax(QK^T) on
+      CPU, detached, for visualization. The model output still comes from the
+      original SDPA path (numerically identical to softmax-then-matmul but
+      faster and not in the autograd graph).
+
+    * **Jacobian capture** (``requires_grad=True``): compute the same softmax
+      on GPU **in the autograd graph**, store the leaf tensor, and use
+      ``weights @ V`` for the output so ``loss.backward()`` populates
+      ``weights.grad``. Mirrors pi05's grad-aware path in
+      :func:`lerobot.policies.pi05_full.modeling_pi05.capture_attn_weights`.
+
+    Captured weights have shape ``[B, n_heads, S_q, S_k]``.
+    """
+    if not _MOLMOACT2_PROBING_CAPTURE.get("enabled"):
+        return self._lerobot_orig_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+
+    layer_idx = getattr(self, "_lerobot_probe_layer_idx", -1)
+    kind = getattr(self, "_lerobot_probe_kind", "unknown")
+    bucket = _MOLMOACT2_PROBING_CAPTURE.setdefault(f"{kind}_attn_by_layer", {})
+    target_layer = _MOLMOACT2_PROBING_CAPTURE.get("target_layer")
+    req_grad = bool(_MOLMOACT2_PROBING_CAPTURE.get("requires_grad", False))
+
+    # In single-layer Jacobian mode, only capture (and route through) the
+    # target layer. Other layers go through the original SDPA path so we
+    # don't keep all layers' attention in the graph at once.
+    if req_grad and target_layer is not None and layer_idx != target_layer:
+        return self._lerobot_orig_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+
+    # q, k, v come in as [B, S, H, D] (per the action expert forward()).
+    q_h = q.transpose(1, 2)  # [B, H, S_q, D]
+    k_h = k.transpose(1, 2)  # [B, H, S_k, D]
+    scale = 1.0 / (q_h.shape[-1] ** 0.5)
+
+    def _build_scores(q_float, k_float):
+        sc = torch.matmul(q_float, k_float.transpose(-2, -1)) * scale
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                sc = sc.masked_fill(~attn_mask, float("-inf"))
+            else:
+                sc = sc + attn_mask.float()
+        elif is_causal:
+            S_q, S_k = sc.shape[-2], sc.shape[-1]
+            causal = torch.triu(
+                torch.full((S_q, S_k), float("-inf"), device=sc.device),
+                diagonal=1,
+            )
+            sc = sc + causal
+        return sc
+
+    if req_grad:
+        # Keep on GPU, in graph; output uses captured weights so .grad is populated.
+        v_h = v.transpose(1, 2).float()  # [B, H, S_k, D]
+        scores = _build_scores(q_h.float(), k_h.float())
+        weights = torch.softmax(scores, dim=-1)
+        weights.retain_grad()
+        bucket[layer_idx] = weights
+        out = torch.matmul(weights, v_h)               # [B, H, S_q, D]
+        return out.transpose(1, 2).to(q.dtype).contiguous()
+
+    # Standard mode: detach + CPU for visualization; output from SDPA fast path.
+    with torch.no_grad():
+        scores = _build_scores(q_h.float(), k_h.float())
+        bucket[layer_idx] = torch.softmax(scores, dim=-1).cpu()
+    return self._lerobot_orig_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+
+
+def register_action_attention_probing(action_expert):
+    """Attach attention-capture patches to every action_expert block's
+    ``self_attn`` and ``cross_attn`` modules. Returns a cleanup callable that
+    restores the originals.
+
+    Patches are no-ops unless ``_MOLMOACT2_PROBING_CAPTURE["enabled"]`` is True,
+    so registering once at adapter init is safe — there is no overhead in
+    normal forward passes.
+    """
+    patched_modules = []
+    for layer_idx, block in enumerate(action_expert.blocks):
+        for kind, attn in (("self", block.self_attn), ("cross", block.cross_attn)):
+            if hasattr(attn, "_lerobot_orig_attention"):
+                continue  # already patched
+            attn._lerobot_orig_attention = attn._attention
+            attn._lerobot_probe_layer_idx = layer_idx
+            attn._lerobot_probe_kind = kind
+            attn._attention = types.MethodType(_patched_action_attention, attn)
+            patched_modules.append(attn)
+
+    def cleanup() -> None:
+        for attn in patched_modules:
+            attn._attention = attn._lerobot_orig_attention
+            del attn._lerobot_orig_attention
+            del attn._lerobot_probe_layer_idx
+            del attn._lerobot_probe_kind
+        patched_modules.clear()
+
+    return cleanup
