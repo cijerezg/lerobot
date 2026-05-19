@@ -10,13 +10,18 @@ set -euo pipefail
 
 RUN_ID="${1:-}"
 
-# Use stable by-id paths when possible to avoid ttyACM renumbering.
+# Use stable by-id paths when possible to avoid device renumbering.
 # You can override these without editing the file:
-#   FOLLOWER_PORT=/dev/serial/by-id/<...> LEADER_PORT=/dev/serial/by-id/<...> ./record.sh 0
+#   FOLLOWER_PORT=/dev/serial/by-id/<...> LEADER_PORT=/dev/serial/by-id/<...> \
+#   SCENE_CAM_PATH=/dev/v4l/by-id/<...> WRIST_CAM_PATH=/dev/v4l/by-id/<...> ./record.sh 0
 FOLLOWER_PORT="${FOLLOWER_PORT:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00}"
 LEADER_PORT="${LEADER_PORT:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00}"
+SCENE_CAM_PATH="${SCENE_CAM_PATH:-/dev/v4l/by-id/usb-H264_USB_Camera_H264_USB_Camera_2020032801-video-index0}"
+WRIST_CAM_PATH="${WRIST_CAM_PATH:-/dev/v4l/by-id/usb-5MP_USB_Camera_5MP_USB_Camera_01.00.00-video-index0}"
 export FOLLOWER_PORT
 export LEADER_PORT
+export SCENE_CAM_PATH
+export WRIST_CAM_PATH
 
 # Preflight: verify the configured ports actually respond with Feetech servo IDs.
 .venv/bin/python - <<'PY'
@@ -72,19 +77,19 @@ PY
 .venv/bin/python ./src/lerobot/scripts/lerobot_record.py \
     --robot.type=so101_follower \
     --robot.port="${FOLLOWER_PORT}" \
-    --robot.cameras="{ top: {type: opencv, index_or_path: /dev/video0, width: 800, height: 600, fps: 30, fourcc: MJPG}, side: {type: opencv, index_or_path: /dev/video4, width: 800, height: 600, fps: 30, fourcc: MJPG}}" \
+    --robot.cameras="{ scene: {type: opencv, index_or_path: '${SCENE_CAM_PATH}', width: 800, height: 600, fps: 30, fourcc: MJPG}, wrist: {type: opencv, index_or_path: '${WRIST_CAM_PATH}', width: 800, height: 600, fps: 30, fourcc: MJPG}}" \
     --robot.id=so101_follower_2026_04_26_v0 \
     --teleop.type=so101_leader \
     --teleop.port="${LEADER_PORT}" \
     --teleop.id=so101_leader_2026_04_16_v2 \
     --dataset.repo_id="jackvial/so101_pickplace_${RUN_ID}" \
-    --dataset.num_episodes=20 \
+    --dataset.num_episodes=3 \
     --dataset.fps=30 \
-    --dataset.episode_time_s=20 \
+    --dataset.episode_time_s=15 \
     --dataset.reset_time_s=5 \
     --dataset.video=true \
-    --dataset.video_encoding_batch_size=20 \
-    --dataset.push_to_hub=true \
+    --dataset.video_encoding_batch_size=3 \
+    --dataset.push_to_hub=false \
     --dataset.single_task="Pick up the orange cube and place it on the black X marker with the white background" \
     --display_data=false \
     --play_sounds=false
