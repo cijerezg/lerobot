@@ -22,6 +22,13 @@ from lerobot.utils.transition import move_transition_to_device
 class MolmoAct2Trainer(Trainer):
     """Trainer for MolmoAct2RLPolicy. Supports both BC (skip_critic=True) and RL modes."""
 
+    # Value histograms live inside the distributional critic's support; clip to
+    # the configured default so a single outlier doesn't flatten the bin range.
+    _HISTOGRAM_CLIP_RANGES = {
+        "critic_value_histogram_from_critic": (-2.0, 0.1),
+        "target_value_histogram": (-2.0, 0.1),
+    }
+
     # ── Setup ─────────────────────────────────────────────────────────────────
 
     def make_processors(self, cfg, dataset=None, is_main_process: bool = True) -> tuple:  # noqa: ARG002
@@ -138,9 +145,10 @@ class MolmoAct2Trainer(Trainer):
         optimizers["critic"].zero_grad()
 
         accum_ce = 0.0
-        last_critic_out: dict[str, torch.Tensor] | None = None
-        last_td_target: torch.Tensor | None = None
-        last_soft_target: torch.Tensor | None = None
+        v_curr_list: list[torch.Tensor] = []
+        td_target_list: list[torch.Tensor] = []
+        td_error_list: list[torch.Tensor] = []
+        loss_per_sample_list: list[torch.Tensor] = []
 
         for _ in range(grad_accum):
             raw = next(online_iter)
@@ -188,13 +196,21 @@ class MolmoAct2Trainer(Trainer):
             critic_out = _fwd_critic(curr_batch)
             logits = critic_out["logits"]  # [B, num_bins]
 
-            loss_ce = -(soft_target.to(logits.device) * F.log_softmax(logits.float(), dim=-1)).sum(dim=-1).mean()
+            ce_per_sample = -(
+                soft_target.to(logits.device) * F.log_softmax(logits.float(), dim=-1)
+            ).sum(dim=-1)
+            loss_ce = ce_per_sample.mean()
             (loss_ce / grad_accum).backward()
 
             accum_ce += loss_ce.item() / grad_accum
-            last_critic_out = critic_out
-            last_td_target = td_target
-            last_soft_target = soft_target
+
+            with torch.no_grad():
+                v_curr_step = critic_out["value"].float().view(-1)
+                td_target_step = td_target.float().view(-1)
+                v_curr_list.append(v_curr_step)
+                td_target_list.append(td_target_step)
+                td_error_list.append(td_target_step - v_curr_step)
+                loss_per_sample_list.append(ce_per_sample.detach().float().view(-1))
 
         critic_net2: nn.Module = getattr(policy, "critic")
         grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -202,33 +218,26 @@ class MolmoAct2Trainer(Trainer):
         ).item()
         optimizers["critic"].step()
 
-        # Logging metrics (using last accumulation step).
-        with torch.no_grad():
-            v_curr = last_critic_out["value"].float() if last_critic_out else torch.zeros(1)
-            if last_td_target is not None:
-                td_delta = last_td_target.float() - v_curr
-                td_err = td_delta.abs().mean().item()
-                mse = (td_delta.square()).mean().item()
-            else:
-                td_err = 0.0
-                mse = 0.0
+        all_v_curr = torch.cat(v_curr_list)
+        all_td_target = torch.cat(td_target_list)
+        all_td_error = torch.cat(td_error_list)
+        all_loss_per_sample = torch.cat(loss_per_sample_list)
 
         return {
             "loss_critic": accum_ce,
             "loss_critic_ce": accum_ce,
-            "loss_critic_mse": mse,
+            "loss_critic_mse": all_td_error.square().mean().item(),
             "critic_grad_norm": grad_norm,
-            "critic_value_mean": v_curr.mean().item(),
-            "td_error_mean": td_err,
-            "target_value_mean": last_td_target.mean().item() if last_td_target is not None else 0.0,
-            "critic_histogram_from_critic": (
-                last_critic_out["probs"].detach().float().cpu().numpy()
-                if last_critic_out else None
-            ),
-            "target_value_histogram": (
-                last_soft_target.detach().float().cpu().numpy()
-                if last_soft_target is not None else None
-            ),
+            "critic_value_mean": all_v_curr.mean().item(),
+            "critic_value_std": all_v_curr.std().item() if all_v_curr.numel() > 1 else 0.0,
+            "target_value_mean": all_td_target.mean().item(),
+            "target_value_std": all_td_target.std().item() if all_td_target.numel() > 1 else 0.0,
+            "td_error_mean": all_td_error.abs().mean().item(),
+            "td_error_std": all_td_error.std().item() if all_td_error.numel() > 1 else 0.0,
+            "critic_value_histogram_from_critic": all_v_curr.cpu().numpy(),
+            "target_value_histogram": all_td_target.cpu().numpy(),
+            "td_error_histogram": all_td_error.cpu().numpy(),
+            "loss_critic_histogram_flat": all_loss_per_sample.cpu().numpy(),
         }
 
     def compute_advantage(
@@ -365,6 +374,8 @@ class MolmoAct2Trainer(Trainer):
             "loss_discrete_ce": 0.0,
             "advantage_squashed_mean": 0.0,
         }
+        squashed_adv_list: list[torch.Tensor] = []
+        raw_adv_list: list[torch.Tensor] = []
 
         # Identify actor params for grad clipping (excludes critic).
         critic_param_ids: set[int] = set()
@@ -408,6 +419,8 @@ class MolmoAct2Trainer(Trainer):
                     preprocessor=preprocessor,
                 )
                 accum["advantage_squashed_mean"] += squashed_adv.mean().item() / grad_accum
+                squashed_adv_list.append(squashed_adv.detach().float().view(-1))
+                raw_adv_list.append(raw_adv.detach().float().view(-1))
 
             fwd_batch = self.build_training_batch(
                 raw_batch=raw,  # type: ignore[arg-type]
@@ -427,8 +440,27 @@ class MolmoAct2Trainer(Trainer):
             accum["loss_flow"] += metrics.get("action_flow_loss", 0.0) / grad_accum
             accum["loss_discrete_ce"] += metrics.get("discrete_ce_loss", 0.0) / grad_accum
 
-        torch.nn.utils.clip_grad_norm_(actor_params, clip_norm)
+        actor_grad_norm = torch.nn.utils.clip_grad_norm_(actor_params, clip_norm).item()
         policy_opt.step()
+
+        accum["actor_grad_norm"] = actor_grad_norm
+
+        if squashed_adv_list:
+            all_squashed = torch.cat(squashed_adv_list)
+            all_raw = torch.cat(raw_adv_list)
+            accum["advantage_mean"] = all_squashed.mean().item()
+            accum["advantage_std"] = (
+                all_squashed.std().item() if all_squashed.numel() > 1 else 0.0
+            )
+            accum["advantage_positive_label_fraction"] = (
+                (all_squashed > 0.25).float().mean().item()
+            )
+            accum["advantage_raw_mean"] = all_raw.mean().item()
+            accum["advantage_raw_std"] = (
+                all_raw.std().item() if all_raw.numel() > 1 else 0.0
+            )
+            accum["advantage_histogram"] = all_squashed.cpu().numpy()
+            accum["advantage_raw_histogram"] = all_raw.cpu().numpy()
 
         return accum
 
@@ -518,16 +550,13 @@ class MolmoAct2Trainer(Trainer):
         wandb_logger,
         _policy: nn.Module,
     ) -> None:
-        if step == 0:
-            return
         scalars = {k: v for k, v in training_infos.items() if isinstance(v, (int, float))}
-        logging.info(
-            f"[MolmoAct2Trainer] step={step}  "
-            + "  ".join(f"{k}={v:.4f}" for k, v in scalars.items())
-        )
-        if wandb_logger is not None:
-            scalars["Optimization step"] = step
-            wandb_logger.log_dict(scalars, mode="train", custom_step_key="Optimization step")
+        if scalars:
+            logging.info(
+                f"[MolmoAct2Trainer] step={step}  "
+                + "  ".join(f"{k}={v:.4f}" for k, v in scalars.items())
+            )
+        super().log_metrics(training_infos, step, wandb_logger, _policy)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

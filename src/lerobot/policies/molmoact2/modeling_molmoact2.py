@@ -2148,6 +2148,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
 _MOLMOACT2_PROBING_CAPTURE: dict = {}
 
 
+def _call_original_action_attention(self, q, k, v, *, attn_mask=None, is_causal=False):
+    try:
+        return self._lerobot_orig_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+    except TypeError as exc:
+        if "is_causal" not in str(exc):
+            raise
+        return self._lerobot_orig_attention(q, k, v, attn_mask=attn_mask)
+
+
 def _patched_action_attention(self, q, k, v, *, attn_mask=None, is_causal=False):
     """Replacement for ``ActionExpert{Self,Cross}Attention._attention``.
 
@@ -2167,7 +2176,7 @@ def _patched_action_attention(self, q, k, v, *, attn_mask=None, is_causal=False)
     Captured weights have shape ``[B, n_heads, S_q, S_k]``.
     """
     if not _MOLMOACT2_PROBING_CAPTURE.get("enabled"):
-        return self._lerobot_orig_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+        return _call_original_action_attention(self, q, k, v, attn_mask=attn_mask, is_causal=is_causal)
 
     layer_idx = getattr(self, "_lerobot_probe_layer_idx", -1)
     kind = getattr(self, "_lerobot_probe_kind", "unknown")
@@ -2179,7 +2188,7 @@ def _patched_action_attention(self, q, k, v, *, attn_mask=None, is_causal=False)
     # target layer. Other layers go through the original SDPA path so we
     # don't keep all layers' attention in the graph at once.
     if req_grad and target_layer is not None and layer_idx != target_layer:
-        return self._lerobot_orig_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+        return _call_original_action_attention(self, q, k, v, attn_mask=attn_mask, is_causal=is_causal)
 
     # q, k, v come in as [B, S, H, D] (per the action expert forward()).
     q_h = q.transpose(1, 2)  # [B, H, S_q, D]
@@ -2216,7 +2225,7 @@ def _patched_action_attention(self, q, k, v, *, attn_mask=None, is_causal=False)
     with torch.no_grad():
         scores = _build_scores(q_h.float(), k_h.float())
         bucket[layer_idx] = torch.softmax(scores, dim=-1).cpu()
-    return self._lerobot_orig_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+    return _call_original_action_attention(self, q, k, v, attn_mask=attn_mask, is_causal=is_causal)
 
 
 def register_action_attention_probing(action_expert):

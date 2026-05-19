@@ -238,21 +238,33 @@ def collect_aggregates(adapter: ProbablePolicy, dataset, samples, layers, timest
             logging.warning(f"  ep={ep_idx} fr={fr_idx}: no cross-attn captured, skipping.")
             continue
 
-        # Image-side segments. Fallback: if no img segments (e.g. molmoact2 v1),
-        # emit a single "encoder" pseudo-camera covering the whole encoder axis.
+        patch_indices = result.extras.get("image_patch_indices_by_segment", {})
         cam_segs = [(name, s, e) for name, s, e in result.encoder_segments
                     if name.startswith("img")]
-        if not cam_segs:
-            seq_len = next(iter(result.cross_attn_by_layer.values())).shape[-1]
-            cam_segs = [("encoder", 0, seq_len)]
+        if not cam_segs or (result.patches_per_cam <= 0 and not patch_indices):
+            logging.warning(
+                f"  ep={ep_idx} fr={fr_idx}: no image patch segments available; "
+                "skipping spatial aggregation for this frame."
+            )
+            continue
 
         if img_h is None and result.image_tensors:
             img_t = result.image_tensors[0][0].cpu()
             img_h = int(img_t.shape[1])
             img_w = int(img_t.shape[2])
         if patches_per_cam is None:
-            patches_per_cam = result.patches_per_cam or (cam_segs[0][2] - cam_segs[0][1])
+            if patch_indices:
+                first_indices = next(iter(patch_indices.values()))
+                patches_per_cam = len(first_indices)
+            else:
+                patches_per_cam = result.patches_per_cam or (cam_segs[0][2] - cam_segs[0][1])
             n_p = int(patches_per_cam ** 0.5) if patches_per_cam > 0 else 1
+            if n_p * n_p != patches_per_cam:
+                logging.warning(
+                    f"  ep={ep_idx} fr={fr_idx}: patch count {patches_per_cam} is not square; "
+                    "skipping spatial aggregation for this frame."
+                )
+                continue
 
         for layer_idx, cross in result.cross_attn_by_layer.items():
             # cross: [B=1, H, n_action, encoder_seq_len]
@@ -261,8 +273,13 @@ def collect_aggregates(adapter: ProbablePolicy, dataset, samples, layers, timest
                 n_heads = attn.shape[0]
 
             for cam_name, cs, ce in cam_segs:
-                # Mean over action queries → [H, K=ce-cs]
-                vec = attn[:, :, cs:ce].mean(dim=1)
+                indices = patch_indices.get(cam_name)
+                if indices is not None:
+                    idx = torch.as_tensor(indices, dtype=torch.long)
+                    vec = attn.index_select(dim=2, index=idx).mean(dim=1)
+                else:
+                    # Mean over action queries → [H, K=ce-cs]
+                    vec = attn[:, :, cs:ce].mean(dim=1)
                 key = (layer_idx, cam_name)
                 collected.setdefault(key, []).append(vec)
 

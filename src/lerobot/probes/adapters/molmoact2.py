@@ -40,6 +40,33 @@ class MolmoAct2Adapter(ProbablePolicy):
     def action_dim(self) -> int:
         return int(self._cfg.policy.output_features[ACTION].shape[0])
 
+    def _inference_action_mode(self) -> str:
+        requested = getattr(self._cfg.policy, "inference_action_mode", None)
+        if requested in {"continuous", "discrete"}:
+            return str(requested)
+
+        action_mode = getattr(self._cfg.policy, "action_mode", None)
+        if action_mode in {"continuous", "discrete"}:
+            return str(action_mode)
+
+        training_mode_fn = getattr(self._policy, "_training_action_mode", None)
+        training_mode = training_mode_fn() if callable(training_mode_fn) else None
+        if training_mode in {"continuous", "discrete"}:
+            return str(training_mode)
+
+        raise ValueError(
+            "MolmoAct2 probes need an explicit inference action mode when action_mode=both. "
+            "Set policy.inference_action_mode to either continuous or discrete."
+        )
+
+    def _set_probe_cuda_graph_enabled(self, enabled: bool) -> None:
+        set_enabled = getattr(self._policy, "_set_inference_cuda_graph_enabled", None)
+        if callable(set_enabled):
+            set_enabled(bool(enabled))
+
+    def _restore_probe_cuda_graph_enabled(self) -> None:
+        self._set_probe_cuda_graph_enabled(not bool(getattr(self._policy, "training", False)))
+
     def _make_batch(
         self,
         obs: dict[str, Tensor],
@@ -92,7 +119,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         batch = self._make_batch(obs, task_str, advantage=advantage)
         # MolmoAct2Policy.predict_action_chunk returns [B, n_action_steps, action_dim],
         # already sliced and float32. See modeling_molmoact2.py:2004.
-        norm_actions = self._policy.predict_action_chunk(batch)
+        norm_actions = self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode())
         pred_norm = norm_actions.squeeze(0).float().cpu()
         unnorm = self._postprocessor(norm_actions.float())
         pred_unnorm = unnorm.squeeze(0).float().cpu()
@@ -121,17 +148,18 @@ class MolmoAct2Adapter(ProbablePolicy):
     def _capture_attention_viz(self, obs, task_str, layers):
         obs_on_device = {k: v.to(self._device) for k, v in obs.items()}
         batch = self._make_batch(obs, task_str, advantage=1.0)
-
         _MOLMOACT2_PROBING_CAPTURE.clear()
         _MOLMOACT2_PROBING_CAPTURE["enabled"] = True
+        self._set_probe_cuda_graph_enabled(False)
         try:
             # NOTE: predict_action_chunk runs the full flow-matching loop.
             # Captured attention reflects the LAST step's activations.
             # Single-timestep capture (matching pi05) is a future improvement;
             # the `timestep` arg is accepted but currently ignored.
-            self._policy.predict_action_chunk(batch)
+            self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode())
         finally:
             _MOLMOACT2_PROBING_CAPTURE["enabled"] = False
+            self._restore_probe_cuda_graph_enabled()
 
         cross_raw = _MOLMOACT2_PROBING_CAPTURE.get("cross_attn_by_layer", {})
         self_raw  = _MOLMOACT2_PROBING_CAPTURE.get("self_attn_by_layer", {})
@@ -164,7 +192,6 @@ class MolmoAct2Adapter(ProbablePolicy):
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
         batch = self._make_batch(obs, task_str, advantage=1.0, gt_actions=dummy_actions)
         model_inputs = self._policy._model_inputs(batch)
-
         num_t = max(1, int(getattr(self._policy.config, "num_flow_timesteps", 1)))
         action_dtype = next(self._policy._action_expert().parameters()).dtype
         timesteps_tensor = torch.full(
@@ -215,16 +242,144 @@ class MolmoAct2Adapter(ProbablePolicy):
 
         return self._pack_molmoact2_result(causal_cross, causal_self, batch, obs_on_device)
 
+    def _image_keys_for_obs(self, obs: dict[str, Tensor]) -> list[str]:
+        configured = list(getattr(self._cfg.policy, "image_keys", []) or [])
+        if configured and all(key in obs for key in configured):
+            return configured
+        keys = [key for key in obs if str(key).startswith("observation.images.")]
+        if not keys:
+            keys = [key for key in obs if str(key).startswith("observation.image")]
+        return sorted(keys)
+
+    def _image_patch_token_id(self) -> int | None:
+        for source in (
+            getattr(getattr(self._policy, "model", None), "config", None),
+            getattr(getattr(self._policy, "config", None), "hf_config", None),
+            getattr(self._policy, "config", None),
+        ):
+            value = getattr(source, "image_patch_id", None) if source is not None else None
+            if value is not None:
+                return int(value)
+        backbone = getattr(self._policy, "_backbone", None)
+        if callable(backbone):
+            value = getattr(getattr(backbone(), "config", None), "image_patch_id", None)
+            if value is not None:
+                return int(value)
+        return None
+
+    @staticmethod
+    def _safe_cam_name(image_key: str, index: int) -> str:
+        name = str(image_key).split(".")[-1] or f"cam{index + 1}"
+        clean = "".join(ch if ch.isalnum() else "_" for ch in name).strip("_")
+        return f"img_{clean or f'cam{index + 1}'}"
+
+    @staticmethod
+    def _model_view_images_from_pixel_values(batch: dict, num_images: int) -> list[Tensor]:
+        """Reconstruct Molmo's 378-ish model-view RGB images from flattened patches.
+
+        ``pixel_values`` stores one image as a square grid of flattened RGB
+        patches, e.g. ``[729, 588]`` = ``27*27`` patches of ``14*14*3``.
+        The attention tokens are pooled later (e.g. to 14x14), but this image is
+        the right visual background for probe overlays because it is what Molmo
+        received after resize/crop preprocessing, not the raw camera frame.
+        """
+        pixel_values = batch.get("pixel_values")
+        if not torch.is_tensor(pixel_values) or pixel_values.ndim != 3:
+            return []
+
+        n = min(num_images, int(pixel_values.shape[0]))
+        if n <= 0:
+            return []
+
+        n_patches = int(pixel_values.shape[1])
+        flat_patch = int(pixel_values.shape[2])
+        patch_area = flat_patch // 3
+        patch_size = int(patch_area ** 0.5)
+        grid_size = int(n_patches ** 0.5)
+        if flat_patch != patch_size * patch_size * 3 or n_patches != grid_size * grid_size:
+            return []
+
+        patches = pixel_values[:n].detach().float().reshape(
+            n, grid_size, grid_size, patch_size, patch_size, 3,
+        )
+        images = patches.permute(0, 5, 1, 3, 2, 4).reshape(
+            n, 3, grid_size * patch_size, grid_size * patch_size,
+        )
+
+        # The shared renderer expects image tensors in roughly [-1, 1]. Molmo's
+        # processor commonly emits [0, 1] patch pixels, so convert for display.
+        img_min = float(images.min().item()) if images.numel() else 0.0
+        img_max = float(images.max().item()) if images.numel() else 1.0
+        if img_min >= 0.0 and img_max <= 1.5:
+            images = images * 2.0 - 1.0
+        elif img_min >= 0.0 and img_max > 1.5:
+            images = images / 255.0 * 2.0 - 1.0
+
+        return [images[i : i + 1] for i in range(n)]
+
+    def _image_attention_metadata(self, batch: dict, obs_on_device: dict[str, Tensor], encoder_seq_len: int):
+        input_ids = batch.get("input_ids")
+        image_grids = batch.get("image_grids")
+        if not torch.is_tensor(input_ids) or not torch.is_tensor(image_grids):
+            return [("encoder", 0, encoder_seq_len)], [], 0, {}
+
+        patch_id = self._image_patch_token_id()
+        if patch_id is None:
+            return [("encoder", 0, encoder_seq_len)], [], 0, {}
+
+        row = input_ids[0].detach().cpu()
+        patch_positions = (row == int(patch_id)).nonzero(as_tuple=False).flatten().tolist()
+        if not patch_positions:
+            return [("encoder", 0, encoder_seq_len)], [], 0, {}
+
+        grids = image_grids.detach().cpu()
+        pooled_counts = (grids[:, :2].prod(dim=1) + grids[:, 2:].prod(dim=1)).to(torch.long).tolist()
+        image_keys = self._image_keys_for_obs(obs_on_device)
+        num_images = min(len(image_keys), len(pooled_counts))
+        model_view_images = self._model_view_images_from_pixel_values(batch, num_images)
+
+        encoder_segments: list[tuple[str, int, int]] = []
+        image_tensors: list[Tensor] = []
+        patch_indices_by_segment: dict[str, list[int]] = {}
+        patch_counts_by_segment: dict[str, int] = {}
+        offset = 0
+        for idx in range(num_images):
+            count = int(pooled_counts[idx])
+            positions = patch_positions[offset : offset + count]
+            offset += count
+            if len(positions) != count or count <= 0:
+                continue
+            cam_name = self._safe_cam_name(image_keys[idx], idx)
+            patch_indices_by_segment[cam_name] = [int(pos) for pos in positions]
+            patch_counts_by_segment[cam_name] = count
+            encoder_segments.append((cam_name, min(positions), max(positions) + 1))
+            if idx < len(model_view_images):
+                image_tensors.append(model_view_images[idx])
+            else:
+                image_tensors.append(obs_on_device[image_keys[idx]])
+
+        if not encoder_segments:
+            return [("encoder", 0, encoder_seq_len)], [], 0, {}
+
+        first_count = next(iter(patch_counts_by_segment.values()), 0)
+        patches_per_cam = first_count if all(v == first_count for v in patch_counts_by_segment.values()) else 0
+        extras = {
+            "image_patch_indices_by_segment": patch_indices_by_segment,
+            "image_patch_counts_by_segment": patch_counts_by_segment,
+        }
+        return encoder_segments, image_tensors, patches_per_cam, extras
+
     def _pack_molmoact2_result(self, cross_attn, self_attn, batch, obs_on_device):
         """Wrap captured attention dicts in an AttentionCaptureResult."""
         encoder_seq_len = 0
         if cross_attn:
             encoder_seq_len = int(next(iter(cross_attn.values())).shape[-1])
-        # Encoder-side segmentation: v1 emits a single ("encoder", 0, S) span.
-        # Refining into (img1, img2, ..., language, state) blocks requires
-        # mapping input_ids → hidden-state positions through the HF processor.
-        encoder_segments: list[tuple[str, int, int]] = [("encoder", 0, encoder_seq_len)]
-        image_tensors = [v for k, v in obs_on_device.items() if "images" in k]
+
+        encoder_segments, image_tensors, patches_per_cam, image_extras = self._image_attention_metadata(
+            batch, obs_on_device, encoder_seq_len
+        )
+        extras = {"_capture_caveat": "viz path: last flow-matching step"}
+        extras.update(image_extras)
 
         return AttentionCaptureResult(
             cross_attn_by_layer=cross_attn,
@@ -232,13 +387,13 @@ class MolmoAct2Adapter(ProbablePolicy):
             encoder_segments=encoder_segments,
             encoder_pad_masks=batch.get("attention_mask"),
             image_tensors=image_tensors,
-            patches_per_cam=0,
+            patches_per_cam=patches_per_cam,
             task_tokens=batch.get("input_ids"),
             subtask_tokens=None,
             tokenizer=getattr(self._policy, "tokenizer", None) or getattr(
                 self._preprocessor, "tokenizer", None
             ),
-            extras={"_capture_caveat": "viz path: last flow-matching step"},
+            extras=extras,
         )
 
     # ── Critic / value head ──────────────────────────────────────────────────
@@ -299,11 +454,13 @@ class MolmoAct2Adapter(ProbablePolicy):
 
         try:
             batch = self._make_batch(obs, task_str, advantage=1.0)
+            self._set_probe_cuda_graph_enabled(False)
             # NOTE: predict_action_chunk runs the full flow-matching loop.
             # Captured hidden states reflect the LAST step. Same caveat as
             # capture_attention.
-            self._policy.predict_action_chunk(batch)
+            self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode())
         finally:
+            self._restore_probe_cuda_graph_enabled()
             h_enc.remove()
             h_act.remove()
 

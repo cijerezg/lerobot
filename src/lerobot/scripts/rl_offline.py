@@ -176,17 +176,24 @@ def _run_validation_probes(
         ]
 
         import importlib
+        root_logger = logging.getLogger()
         for enabled, module_path, subdir in probes:
             if not enabled:
                 continue
-            logging.info(f"[VAL step={step}] running probe: {subdir}")
+            logging.info(f"[VAL step={step}] probe '{subdir}' started")
+            old_level = root_logger.level
             try:
                 module = importlib.import_module(module_path)
+                root_logger.setLevel(max(old_level, logging.WARNING))
                 module.run(adapter, val_dataset, cfg, os.path.join(output_root, subdir))
             except Exception as exc:
-                logging.warning(
-                    f"[VAL step={step}] probe '{subdir}' failed: {exc}", exc_info=True,
-                )
+                root_logger.setLevel(old_level)
+                logging.warning(f"[VAL step={step}] probe '{subdir}' failed: {exc}")
+            else:
+                root_logger.setLevel(old_level)
+                logging.info(f"[VAL step={step}] probe '{subdir}' finished successfully")
+            finally:
+                root_logger.setLevel(old_level)
 
         # Drop the adapter; the policy lives on in the training scope.
         del adapter

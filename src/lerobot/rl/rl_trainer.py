@@ -253,6 +253,11 @@ class Trainer(ABC):
 
     # ── Logging ───────────────────────────────────────────────────────────────
 
+    # Optional per-key clip ranges for histogram logging.  Subclasses can override
+    # to bound noisy distributions (e.g. critic values clipped to value support).
+    # Keys are matched exactly against histogram-bearing entries in training_infos.
+    _HISTOGRAM_CLIP_RANGES: dict[str, tuple[float, float]] = {}
+
     def log_metrics(
         self,
         training_infos: dict,
@@ -261,12 +266,49 @@ class Trainer(ABC):
         _policy: nn.Module,  # available for subclasses that log weight stats / histograms
     ) -> None:
         """
-        Log scalar metrics to W&B. Override to add histograms, videos, etc.
-        Default: logs all scalar (int/float) values in training_infos.
+        Log scalar metrics + histogram (numpy-array) metrics to W&B.
+
+        Scalars  → wandb_logger.log_dict(...) with custom_step_key="Optimization step"
+        Histograms (any numpy.ndarray value) → wandb.Histogram, optionally clipped
+                   via cls._HISTOGRAM_CLIP_RANGES[key].
+
+        Subclasses can override _HISTOGRAM_CLIP_RANGES to add per-key clipping or
+        override this method entirely for richer behaviour.
         """
-        scalars = {k: v for k, v in training_infos.items() if isinstance(v, (int, float))}
-        if wandb_logger is not None:
-            wandb_logger.log({"step": step, **scalars})
+        if step == 0 or wandb_logger is None:
+            return
+
+        import numpy as np  # local import to keep base trainer lightweight
+        import wandb        # local import to avoid hard wandb dep at import time
+
+        scalars: dict = {}
+        histograms: dict = {}
+        for k, v in training_infos.items():
+            if isinstance(v, np.ndarray):
+                histograms[k] = v
+            elif isinstance(v, torch.Tensor):
+                # Catch tensors that slipped past the update functions.
+                if v.numel() == 1:
+                    scalars[k] = v.detach().float().item()
+                else:
+                    histograms[k] = v.detach().float().cpu().numpy()
+            elif isinstance(v, (int, float)):
+                scalars[k] = v
+
+        if scalars:
+            wandb_logger.log_dict(
+                d=scalars, mode="train", custom_step_key="Optimization step"
+            )
+
+        for key, arr in histograms.items():
+            arr = arr.flatten()
+            clip = self._HISTOGRAM_CLIP_RANGES.get(key)
+            if clip is not None:
+                arr = np.clip(arr, clip[0], clip[1])
+            wandb_logger._wandb.log({
+                f"train/{key}": wandb.Histogram(arr),
+                "Optimization step": step,
+            })
 
     # ── Registry ──────────────────────────────────────────────────────────────
 

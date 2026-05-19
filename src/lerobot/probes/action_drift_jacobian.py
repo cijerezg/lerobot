@@ -47,6 +47,7 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.attention import (
+    _warn_overcommit_if_risky,
     build_episode_samples,
     render_cross_matrix,
     render_image_overlays,
@@ -85,6 +86,7 @@ def _probe_dataset(adapter, ds, ds_output_dir, layers, timestep, cfg):
         return
 
     fps = getattr(ds, "fps", 30) / max(1, getattr(p, "attn_eval_subsample", 1))
+    _warn_overcommit_if_risky("JAC")
     t_str = f"{timestep:.2f}".replace(".", "p")
 
     for ep_idx, ep_frames in samples:
@@ -133,9 +135,9 @@ def _probe_dataset(adapter, ds, ds_output_dir, layers, timestep, cfg):
 
                 for key, frame_np in panels.items():
                     if key not in writers[layer_idx]:
+                        out_path = os.path.join(ep_dir, f"{key}.mp4")
                         writers[layer_idx][key] = imageio.get_writer(
-                            os.path.join(ep_dir, f"{key}.mp4"),
-                            fps=fps, macro_block_size=1,
+                            out_path, fps=fps, macro_block_size=1,
                         )
                     writers[layer_idx][key].append_data(frame_np)
 

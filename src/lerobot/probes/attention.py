@@ -57,6 +57,49 @@ class ProbeAttentionConfig(TrainRLServerPipelineConfig):
 # Sample selection — per-episode, fixed-stride
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _read_proc_int(path: str) -> int | None:
+    try:
+        with open(path) as f:
+            return int(f.read().strip())
+    except Exception:
+        return None
+
+
+def _read_meminfo_kb() -> dict[str, int]:
+    out: dict[str, int] = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    out[parts[0].rstrip(":")] = int(parts[1])
+    except Exception:
+        pass
+    return out
+
+
+def _warn_overcommit_if_risky(probe_name: str) -> None:
+    overcommit = _read_proc_int("/proc/sys/vm/overcommit_memory")
+    meminfo = _read_meminfo_kb()
+    commit_limit = meminfo.get("CommitLimit")
+    committed = meminfo.get("Committed_AS")
+    if overcommit != 0 or not commit_limit or not committed:
+        return
+    ratio = committed / max(commit_limit, 1)
+    if ratio <= 1.0:
+        return
+    logging.warning(
+        "[%s] Linux vm.overcommit_memory=0 with Committed_AS/CommitLimit=%.2f "
+        "(%0.1f/%0.1f GB). imageio/ffmpeg video writers may fail with "
+        "[Errno 12] Cannot allocate memory from this large training process. "
+        "For ML workstations, consider: sudo sysctl -w vm.overcommit_memory=1",
+        probe_name,
+        ratio,
+        committed / 1024 / 1024,
+        commit_limit / 1024 / 1024,
+    )
+
+
 def build_episode_samples(dataset, episodes_str, random_n, subsample, seed=None):
     """Return ``[(ep_idx, [(fr_idx, global_idx), ...]), ...]``."""
     ep_to_indices = build_episode_index(dataset)
@@ -121,20 +164,9 @@ def cv2_heatmap(heatmap, title, img_h, img_w, vmax=None):
     return h_rgb
 
 
-def _attn_to_image_heatmap(cross_attn_layer, k_start, k_end, n_p, img_h, img_w):
-    """
-    Mean attention from all action queries to key positions [k_start:k_end].
-
-    Inputs:
-        cross_attn_layer: [n_heads, n_action, encoder_seq_len]  (already squeezed to B=1)
-        n_p: side length of the patch grid (so n_p*n_p == k_end - k_start)
-    Returns:
-        per_head: [n_heads, img_h, img_w]
-        mean:     [img_h, img_w]
-    """
-    n_heads = cross_attn_layer.shape[0]
-    slc = cross_attn_layer[:, :, k_start:k_end]      # [H, n_action, n_patches]
-    per_head = slc.mean(dim=1)                        # mean over actions → [H, n_patches]
+def _attn_values_to_image_heatmap(per_head: torch.Tensor, n_p: int, img_h: int, img_w: int):
+    """Upsample per-head patch attention from [H, n_p*n_p] to image size."""
+    n_heads = per_head.shape[0]
 
     def _up(x):
         grid = x.reshape(n_p, n_p).float()
@@ -145,6 +177,21 @@ def _attn_to_image_heatmap(cross_attn_layer, k_start, k_end, n_p, img_h, img_w):
     per_head_up = torch.stack([_up(per_head[h]) for h in range(n_heads)])
     mean_up = _up(per_head.mean(0))
     return per_head_up, mean_up
+
+
+def _attn_to_image_heatmap(cross_attn_layer, k_start, k_end, n_p, img_h, img_w):
+    """Mean attention from all action queries to contiguous key positions."""
+    slc = cross_attn_layer[:, :, k_start:k_end]      # [H, n_action, n_patches]
+    per_head = slc.mean(dim=1)                        # mean over actions → [H, n_patches]
+    return _attn_values_to_image_heatmap(per_head, n_p, img_h, img_w)
+
+
+def _attn_indices_to_image_heatmap(cross_attn_layer, indices, n_p, img_h, img_w):
+    """Mean attention to explicit, possibly non-contiguous image patch indices."""
+    idx = torch.as_tensor(indices, dtype=torch.long, device=cross_attn_layer.device)
+    slc = cross_attn_layer.index_select(dim=2, index=idx)
+    per_head = slc.mean(dim=1)
+    return _attn_values_to_image_heatmap(per_head, n_p, img_h, img_w)
 
 
 def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
@@ -161,12 +208,12 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
         return frames, vmax_by_panel
     image_segs = [(name, s, e) for name, s, e in result.encoder_segments
                   if name.startswith("img")]
-    if not image_segs or result.patches_per_cam <= 0:
+    patch_indices = result.extras.get("image_patch_indices_by_segment", {})
+    if not image_segs or (result.patches_per_cam <= 0 and not patch_indices):
         return frames, vmax_by_panel
 
     attn = torch.nan_to_num(cross_attn[0].float().cpu(), nan=0.0)  # [H, n_act, enc]
     n_heads = attn.shape[0]
-    n_p = int(result.patches_per_cam ** 0.5)
     h_cols = 4
     h_rows = (n_heads + h_cols - 1) // h_cols
 
@@ -181,7 +228,17 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
         if img_np is None:
             img_np = np.zeros((img_h, img_w, 3), dtype=np.uint8)
 
-        per_head, mean_map = _attn_to_image_heatmap(attn, cs, ce, n_p, img_h, img_w)
+        indices = patch_indices.get(cam_name)
+        if indices is not None:
+            n_p = int(len(indices) ** 0.5)
+            if n_p * n_p != len(indices):
+                continue
+            per_head, mean_map = _attn_indices_to_image_heatmap(attn, indices, n_p, img_h, img_w)
+        else:
+            n_p = int(result.patches_per_cam ** 0.5)
+            if n_p * n_p != ce - cs:
+                continue
+            per_head, mean_map = _attn_to_image_heatmap(attn, cs, ce, n_p, img_h, img_w)
         vmean = float(mean_map.max().item())
         vheads = float(per_head.max().item())
         vmax_by_panel[f"{cam_name}_mean"] = vmean
@@ -336,6 +393,7 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
         return
 
     fps = getattr(ds, "fps", 30) / max(1, getattr(p, "attn_eval_subsample", 1))
+    _warn_overcommit_if_risky("ATTN")
 
     for ep_idx, ep_frames in samples:
         writers: dict[int, dict[str, Any]] = {l: {} for l in attn_layers}  # noqa: E741
@@ -372,9 +430,9 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
 
                 for key, frame_np in panels.items():
                     if key not in writers[layer_idx]:
+                        out_path = os.path.join(ep_dir, f"{key}.mp4")
                         writers[layer_idx][key] = imageio.get_writer(
-                            os.path.join(ep_dir, f"{key}.mp4"),
-                            fps=fps, macro_block_size=1,
+                            out_path, fps=fps, macro_block_size=1,
                         )
                     writers[layer_idx][key].append_data(frame_np)
 
