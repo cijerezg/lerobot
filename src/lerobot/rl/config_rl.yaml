@@ -134,8 +134,7 @@ policy:
   # Required when action_encoding is anchor/delta; ignored otherwise.
   action_encoding_stats_path: null
   # Per-joint safety clamp in degrees. Recommended before hardware runs.
-  action_clamp_limits: null
-  # Example (SO101): [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
+  action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
 
   # ---- Sequence / chunking --------------------------------------------------
   n_obs_steps: 1
@@ -170,10 +169,10 @@ policy:
   input_features:
     observation.images.wrist:
       type: VISUAL
-      shape: [3, 224, 224]
+      shape: [3, 378, 378]
     observation.images.top:
       type: VISUAL
-      shape: [3, 224, 224]
+      shape: [3, 378, 378]
     observation.state:
       type: STATE
       shape: [6]
@@ -402,7 +401,7 @@ env:
   robot:
     type: so101_follower
     port: /dev/ttyACM0
-    id: follower_arm_v3
+    id: follower_arm_v2
     cameras:
       wrist:
         type: opencv
@@ -421,7 +420,7 @@ env:
   teleop:
     type: so101_leader
     port: /dev/ttyACM1
-    id: leader_arm_v3
+    id: leader_arm_v2
 
   # ---- Processor (gym wrapper) ----------------------------------------------
   processor:
@@ -431,7 +430,7 @@ env:
       add_joint_velocity_to_observation: false
       add_current_to_observation: false
     image_preprocessing:
-      resize_size: [224, 224]
+      resize_size: [378, 378]
     gripper:
       use_gripper: true
       gripper_penalty: 0.00
@@ -451,10 +450,10 @@ env:
   features:
     observation.images.wrist:
       type: VISUAL
-      shape: [3, 128, 128]
+      shape: [3, 378, 378]
     observation.images.top:
       type: VISUAL
-      shape: [3, 128, 128]
+      shape: [3, 378, 378]
     observation.state:
       type: STATE
       shape: [6]
