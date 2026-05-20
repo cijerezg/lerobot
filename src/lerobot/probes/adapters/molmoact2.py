@@ -133,6 +133,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         timestep: float = 0.5,
         layers: list[int] | None = None,
         requires_grad: bool = False,
+        gt_actions: Tensor | None = None,
     ) -> AttentionCaptureResult:
         # Register the action-expert hooks once per adapter. The hooks stay
         # installed (no-ops when the global flag is off), so this is safe.
@@ -141,24 +142,48 @@ class MolmoAct2Adapter(ProbablePolicy):
             self._attn_hooks_registered = True
 
         if requires_grad:
-            return self._capture_attention_jacobian(obs, task_str, timestep, layers)
-        return self._capture_attention_viz(obs, task_str, layers)
+            return self._capture_attention_jacobian(obs, task_str, timestep, layers, gt_actions)
+        return self._capture_attention_viz(obs, task_str, timestep, layers)
+
+    def _flow_probe_inputs(self, obs, task_str, timestep, gt_actions: Tensor | None = None):
+        device = self._device
+        chunk_size = self.chunk_size
+        action_dim = self.action_dim
+
+        if gt_actions is None:
+            action_targets = torch.zeros(1, chunk_size, action_dim, device=device)
+        else:
+            action_targets = gt_actions[:chunk_size, :action_dim].unsqueeze(0).to(device)
+
+        obs_on_device = {k: v.to(device) for k, v in obs.items()}
+        batch = self._make_batch(obs, task_str, advantage=1.0, gt_actions=action_targets)
+        model_inputs = self._policy._model_inputs(batch)
+        num_t = max(1, int(getattr(self._policy.config, "num_flow_timesteps", 1)))
+        action_dtype = next(self._policy._action_expert().parameters()).dtype
+        timesteps_tensor = torch.full(
+            (1, num_t), float(timestep), device=device, dtype=action_dtype,
+        )
+        return obs_on_device, batch, model_inputs, timesteps_tensor
 
     @torch.no_grad()
-    def _capture_attention_viz(self, obs, task_str, layers):
-        obs_on_device = {k: v.to(self._device) for k, v in obs.items()}
-        batch = self._make_batch(obs, task_str, advantage=1.0)
+    def _capture_attention_viz(self, obs, task_str, timestep, layers):
+        obs_on_device, batch, model_inputs, timesteps_tensor = self._flow_probe_inputs(
+            obs, task_str, timestep,
+        )
         _MOLMOACT2_PROBING_CAPTURE.clear()
         _MOLMOACT2_PROBING_CAPTURE["enabled"] = True
+        _MOLMOACT2_PROBING_CAPTURE["requires_grad"] = False
         self._set_probe_cuda_graph_enabled(False)
         try:
-            # NOTE: predict_action_chunk runs the full flow-matching loop.
-            # Captured attention reflects the LAST step's activations.
-            # Single-timestep capture (matching pi05) is a future improvement;
-            # the `timestep` arg is accepted but currently ignored.
-            self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode())
+            self._policy._compute_flow_matching_loss_joint_per_layer(
+                batch=batch,
+                model_inputs=model_inputs,
+                timesteps=timesteps_tensor,
+                reduction="mean",
+            )
         finally:
             _MOLMOACT2_PROBING_CAPTURE["enabled"] = False
+            _MOLMOACT2_PROBING_CAPTURE["requires_grad"] = False
             self._restore_probe_cuda_graph_enabled()
 
         cross_raw = _MOLMOACT2_PROBING_CAPTURE.get("cross_attn_by_layer", {})
@@ -169,35 +194,22 @@ class MolmoAct2Adapter(ProbablePolicy):
         self_attn  = {k: v for k, v in self_raw.items()  if k in wanted}
         return self._pack_molmoact2_result(cross_attn, self_attn, batch, obs_on_device)
 
-    def _capture_attention_jacobian(self, obs, task_str, timestep, layers):
+    def _capture_attention_jacobian(self, obs, task_str, timestep, layers, gt_actions=None):
         """Per-layer forward+backward through the training flow path, returns
         causal maps ``A * |dA|`` packed into ``cross_attn_by_layer`` /
         ``self_attn_by_layer``.
 
         Uses ``MolmoAct2Policy._compute_flow_matching_loss_joint_per_layer``
         (grad-enabled) instead of ``predict_action_chunk`` (no_grad). The flow
-        loss is L2 on (pred_velocity - target_velocity); backprop populates
-        ``.grad`` on captured weights. Per-layer iteration prevents OOM by only
+        loss is L2 on (pred_velocity - target_velocity) using ``gt_actions`` when
+        the caller supplies them; backprop populates ``.grad`` on captured
+        weights. Per-layer iteration prevents OOM by only
         routing the target layer through the grad-aware patched _attention; all
         other layers go through SDPA.
         """
-        device = self._device
-        chunk_size = self.chunk_size
-        action_dim = self.action_dim
-
-        # Dummy GT actions — the flow loss requires them but their values don't
-        # matter for Jacobian shape; grads still flow through captured weights.
-        dummy_actions = torch.zeros(1, chunk_size, action_dim, device=device)
-
-        obs_on_device = {k: v.to(device) for k, v in obs.items()}
-        batch = self._make_batch(obs, task_str, advantage=1.0, gt_actions=dummy_actions)
-        model_inputs = self._policy._model_inputs(batch)
-        num_t = max(1, int(getattr(self._policy.config, "num_flow_timesteps", 1)))
-        action_dtype = next(self._policy._action_expert().parameters()).dtype
-        timesteps_tensor = torch.full(
-            (1, num_t), float(timestep), device=device, dtype=action_dtype,
+        obs_on_device, batch, model_inputs, timesteps_tensor = self._flow_probe_inputs(
+            obs, task_str, timestep, gt_actions,
         )
-
         action_expert = self._policy._action_expert()
         n_layers = len(action_expert.blocks)
         target_layers = list(layers) if layers else list(range(n_layers))
@@ -242,14 +254,44 @@ class MolmoAct2Adapter(ProbablePolicy):
 
         return self._pack_molmoact2_result(causal_cross, causal_self, batch, obs_on_device)
 
+    def _configured_image_keys(self) -> list[str]:
+        """Image key order used by the MolmoAct2 input packer."""
+        for source in (
+            getattr(self._cfg, "policy", None),
+            getattr(self._policy, "config", None),
+        ):
+            configured = list(getattr(source, "image_keys", []) or [])
+            if configured:
+                return [str(key) for key in configured]
+
+        for step in getattr(self._preprocessor, "steps", []) or []:
+            configured = list(getattr(step, "image_keys", []) or [])
+            if configured:
+                return [str(key) for key in configured]
+        return []
+
     def _image_keys_for_obs(self, obs: dict[str, Tensor]) -> list[str]:
-        configured = list(getattr(self._cfg.policy, "image_keys", []) or [])
+        configured = self._configured_image_keys()
         if configured and all(key in obs for key in configured):
             return configured
         keys = [key for key in obs if str(key).startswith("observation.images.")]
         if not keys:
             keys = [key for key in obs if str(key).startswith("observation.image")]
         return sorted(keys)
+
+    def _tokenizer(self):
+        tokenizer = getattr(self._policy, "tokenizer", None)
+        if tokenizer is not None:
+            return tokenizer
+        tokenizer = getattr(self._preprocessor, "tokenizer", None)
+        if tokenizer is not None:
+            return tokenizer
+        for step in getattr(self._preprocessor, "steps", []) or []:
+            processor = getattr(step, "processor", None)
+            tokenizer = getattr(processor, "tokenizer", None)
+            if tokenizer is not None:
+                return tokenizer
+        return None
 
     def _image_patch_token_id(self) -> int | None:
         for source in (
@@ -274,20 +316,21 @@ class MolmoAct2Adapter(ProbablePolicy):
         return f"img_{clean or f'cam{index + 1}'}"
 
     @staticmethod
-    def _model_view_images_from_pixel_values(batch: dict, num_images: int) -> list[Tensor]:
-        """Reconstruct Molmo's 378-ish model-view RGB images from flattened patches.
+    def _model_view_images_from_pixel_values(batch: dict, num_crops: int | None = None) -> list[Tensor]:
+        """Reconstruct Molmo's model-view RGB crops from flattened patches.
 
-        ``pixel_values`` stores one image as a square grid of flattened RGB
-        patches, e.g. ``[729, 588]`` = ``27*27`` patches of ``14*14*3``.
-        The attention tokens are pooled later (e.g. to 14x14), but this image is
-        the right visual background for probe overlays because it is what Molmo
-        received after resize/crop preprocessing, not the raw camera frame.
+        ``pixel_values`` is flat across all crops from all camera images. Crop 0
+        for each image is the resized/global view; later crops are the local
+        high-resolution tiles used by Molmo's visual encoder.
         """
         pixel_values = batch.get("pixel_values")
         if not torch.is_tensor(pixel_values) or pixel_values.ndim != 3:
             return []
 
-        n = min(num_images, int(pixel_values.shape[0]))
+        if num_crops is None:
+            n = int(pixel_values.shape[0])
+        else:
+            n = min(int(num_crops), int(pixel_values.shape[0]))
         if n <= 0:
             return []
 
@@ -307,7 +350,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         )
 
         # The shared renderer expects image tensors in roughly [-1, 1]. Molmo's
-        # processor commonly emits [0, 1] patch pixels, so convert for display.
+        # processor may emit [0, 1], [0, 255], or already-normalized patch pixels.
         img_min = float(images.min().item()) if images.numel() else 0.0
         img_max = float(images.max().item()) if images.numel() else 1.0
         if img_min >= 0.0 and img_max <= 1.5:
@@ -334,39 +377,139 @@ class MolmoAct2Adapter(ProbablePolicy):
 
         grids = image_grids.detach().cpu()
         pooled_counts = (grids[:, :2].prod(dim=1) + grids[:, 2:].prod(dim=1)).to(torch.long).tolist()
+        global_pooled_counts = grids[:, :2].prod(dim=1).to(torch.long).tolist()
+
+        image_num_crops = batch.get("image_num_crops")
+        if torch.is_tensor(image_num_crops):
+            crop_counts = image_num_crops.detach().cpu().to(torch.long).tolist()
+        else:
+            crop_counts = [1] * len(pooled_counts)
+
+        image_token_pooling = batch.get("image_token_pooling")
+        pooling_rows = (
+            image_token_pooling.detach().cpu().to(torch.long)
+            if torch.is_tensor(image_token_pooling)
+            else None
+        )
+
         image_keys = self._image_keys_for_obs(obs_on_device)
-        num_images = min(len(image_keys), len(pooled_counts))
-        model_view_images = self._model_view_images_from_pixel_values(batch, num_images)
+        num_images = min(len(image_keys), len(pooled_counts), len(crop_counts))
+        total_crops = sum(max(0, int(crop_counts[idx])) for idx in range(num_images))
+        model_view_crops = self._model_view_images_from_pixel_values(batch, total_crops)
+
+        pixel_values = batch.get("pixel_values")
+        n_patches_per_crop = (
+            int(pixel_values.shape[1])
+            if torch.is_tensor(pixel_values) and pixel_values.ndim == 3
+            else 0
+        )
+        patch_grid = int(n_patches_per_crop ** 0.5) if n_patches_per_crop > 0 else 0
+        if patch_grid * patch_grid != n_patches_per_crop:
+            patch_grid = 0
 
         encoder_segments: list[tuple[str, int, int]] = []
         image_tensors: list[Tensor] = []
         patch_indices_by_segment: dict[str, list[int]] = {}
         patch_counts_by_segment: dict[str, int] = {}
-        offset = 0
+        pooling_by_segment: dict[str, dict] = {}
+        tensors_by_segment: dict[str, Tensor] = {}
+        overlay_segments: list[str] = []
+
+        token_offset = 0
+        pooling_offset = 0
+        crop_offset = 0
         for idx in range(num_images):
             count = int(pooled_counts[idx])
-            positions = patch_positions[offset : offset + count]
-            offset += count
+            crop_count = max(0, int(crop_counts[idx]))
+            positions = patch_positions[token_offset : token_offset + count]
+            token_offset += count
             if len(positions) != count or count <= 0:
+                crop_offset += crop_count
+                pooling_offset += count
                 continue
+
             cam_name = self._safe_cam_name(image_keys[idx], idx)
-            patch_indices_by_segment[cam_name] = [int(pos) for pos in positions]
-            patch_counts_by_segment[cam_name] = count
-            encoder_segments.append((cam_name, min(positions), max(positions) + 1))
-            if idx < len(model_view_images):
-                image_tensors.append(model_view_images[idx])
+            global_tokens = int(global_pooled_counts[idx]) if idx < len(global_pooled_counts) else count
+            global_positions = positions[:global_tokens] if global_tokens > 0 else positions
+            patch_indices_by_segment[cam_name] = [int(pos) for pos in global_positions]
+            patch_counts_by_segment[cam_name] = len(global_positions)
+            if global_positions:
+                encoder_segments.append((cam_name, min(global_positions), max(global_positions) + 1))
+            overlay_segments.append(cam_name)
+
+            if crop_offset < len(model_view_crops):
+                global_image = model_view_crops[crop_offset]
             else:
-                image_tensors.append(obs_on_device[image_keys[idx]])
+                global_image = obs_on_device[image_keys[idx]]
+            image_tensors.append(global_image)
+            tensors_by_segment[cam_name] = global_image
+
+            image_pooling = None
+            if pooling_rows is not None:
+                image_pooling = pooling_rows[pooling_offset : pooling_offset + count]
+            pooling_offset += count
+
+            if image_pooling is not None and patch_grid > 0 and crop_count > 1:
+                for crop_rel in range(1, crop_count):
+                    low = crop_rel * n_patches_per_crop
+                    high = (crop_rel + 1) * n_patches_per_crop
+                    valid_for_crop = (image_pooling >= low) & (image_pooling < high)
+                    token_rows = valid_for_crop.any(dim=1).nonzero(as_tuple=False).flatten()
+                    if token_rows.numel() == 0:
+                        continue
+
+                    crop_name = f"{cam_name}_crop{crop_rel:02d}"
+                    rows = image_pooling.index_select(dim=0, index=token_rows).clone()
+                    local_rows = torch.where(
+                        (rows >= low) & (rows < high),
+                        rows - low,
+                        torch.full_like(rows, -1),
+                    )
+                    crop_positions = [int(positions[int(token_idx)]) for token_idx in token_rows.tolist()]
+                    patch_indices_by_segment[crop_name] = crop_positions
+                    patch_counts_by_segment[crop_name] = len(crop_positions)
+                    if crop_positions:
+                        encoder_segments.append((crop_name, min(crop_positions), max(crop_positions) + 1))
+                    pooling_by_segment[crop_name] = {
+                        "pooling": local_rows.tolist(),
+                        "patch_grid": patch_grid,
+                    }
+                    crop_tensor_idx = crop_offset + crop_rel
+                    if crop_tensor_idx < len(model_view_crops):
+                        tensors_by_segment[crop_name] = model_view_crops[crop_tensor_idx]
+                    overlay_segments.append(crop_name)
+
+            crop_offset += crop_count
 
         if not encoder_segments:
             return [("encoder", 0, encoder_seq_len)], [], 0, {}
 
+        encoder_segments.sort(key=lambda segment: segment[1])
         first_count = next(iter(patch_counts_by_segment.values()), 0)
-        patches_per_cam = first_count if all(v == first_count for v in patch_counts_by_segment.values()) else 0
+        patches_per_cam = (
+            first_count if all(v == first_count for v in patch_counts_by_segment.values()) else 0
+        )
         extras = {
             "image_patch_indices_by_segment": patch_indices_by_segment,
             "image_patch_counts_by_segment": patch_counts_by_segment,
+            "image_overlay_segments": overlay_segments,
+            "image_tensors_by_segment": tensors_by_segment,
         }
+        attention_mask = batch.get("attention_mask")
+        if torch.is_tensor(attention_mask) and attention_mask.ndim >= 2:
+            valid_mask = attention_mask[0].detach().cpu().to(torch.bool)
+            labels = batch.get("labels")
+            if torch.is_tensor(labels) and labels.ndim >= 2:
+                valid_mask &= labels[0].detach().cpu().eq(-100)
+            valid_positions = valid_mask.nonzero(as_tuple=False).flatten()
+            text_positions = [
+                int(pos) for pos in valid_positions.tolist()
+                if int(row[int(pos)]) != int(patch_id)
+            ]
+            if text_positions:
+                extras["text_token_indices_by_segment"] = {"language": text_positions}
+        if pooling_by_segment:
+            extras["image_pooling_by_segment"] = pooling_by_segment
         return encoder_segments, image_tensors, patches_per_cam, extras
 
     def _pack_molmoact2_result(self, cross_attn, self_attn, batch, obs_on_device):
@@ -390,9 +533,7 @@ class MolmoAct2Adapter(ProbablePolicy):
             patches_per_cam=patches_per_cam,
             task_tokens=batch.get("input_ids"),
             subtask_tokens=None,
-            tokenizer=getattr(self._policy, "tokenizer", None) or getattr(
-                self._preprocessor, "tokenizer", None
-            ),
+            tokenizer=self._tokenizer(),
             extras=extras,
         )
 

@@ -332,7 +332,7 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     offline_save_freq: int | None = None
     buffer_cache_dir: str | None = None
     use_rerun: bool = True
-    video_logging_cameras: list[str] = field(default_factory=lambda: ["top", "side"])
+    video_logging_cameras: list[str] | None = None  # derived from policy.image_features in validate() when unset
     episode_logging_freq: int = 4
     episode_save_freq: int = 10
     probe_parameters: ProbeConfig = field(default_factory=ProbeConfig)
@@ -344,3 +344,8 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     val_on_start: bool = False
     skip_critic: bool = False             # skip all critic training (forward+backward); actor advantage uses golden bypass
     treat_main_dataset_as_golden: bool = True  # tag main offline dataset frames is_golden=True (advantage bypass); set False for non-expert main datasets
+
+    def validate(self) -> None:
+        super().validate()
+        if self.video_logging_cameras is None and self.policy is not None:
+            self.video_logging_cameras = [k.split(".")[-1] for k in self.policy.image_features]

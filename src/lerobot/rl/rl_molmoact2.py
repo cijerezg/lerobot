@@ -13,6 +13,7 @@ Both are registered with type "molmoact2_rl" so:
 from __future__ import annotations
 
 import copy
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -92,6 +93,68 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     anchor_every_n_steps: int = 0
     anchor_targets: list[str] = field(default_factory=lambda: ["policy", "critic"])
 
+    # ── Inference ─────────────────────────────────────────────────────────
+    # Constant advantage value injected as prompt conditioning at inference.
+    # NOTE: not yet consumed by build_inference_batch — placeholder for future wiring.
+    inference_advantage: float = 1.0
+
+    # ── Action encoding ───────────────────────────────────────────────────
+    # "absolute" (default) - network predicts a_t directly.
+    # "anchor"             - network predicts d_t = a_t - s_0.
+    # "delta"              - network predicts step-deltas.
+    action_encoding: str = "absolute"
+
+    # Path to precomputed encoded-action stats (.pt file with normalizer stats).
+    # Required when action_encoding is "anchor" or "delta"; ignored for absolute.
+    action_encoding_stats_path: str | None = None
+
+    # Per-joint [min, max] limits in degrees, applied after inference reconstruction.
+    # None disables clamping.
+    action_clamp_limits: list[list[float]] | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+
+        if self.action_encoding not in {"absolute", "anchor", "delta"}:
+            raise ValueError(
+                f"Unsupported action_encoding={self.action_encoding!r}. "
+                "Expected one of {'absolute', 'anchor', 'delta'}."
+            )
+        if self.action_encoding in {"anchor", "delta"}:
+            stats_path = self.action_encoding_stats_path
+            if not stats_path or not os.path.exists(os.path.expanduser(stats_path)):
+                raise ValueError(
+                    f"action_encoding={self.action_encoding!r} requires an existing "
+                    f"action_encoding_stats_path, got {stats_path!r}."
+                )
+
+        if self.action_clamp_limits is not None:
+            action_dim = None
+            action_feature = (
+                self.output_features.get("action") if isinstance(self.output_features, dict) else None
+            )
+            if action_feature is not None:
+                shape = getattr(action_feature, "shape", None)
+                if shape is None and isinstance(action_feature, dict):
+                    shape = action_feature.get("shape")
+                if shape:
+                    action_dim = int(shape[0])
+
+            if action_dim is not None and len(self.action_clamp_limits) != action_dim:
+                raise ValueError(
+                    f"action_clamp_limits must have {action_dim} [min, max] pairs, "
+                    f"got {len(self.action_clamp_limits)}."
+                )
+            for idx, limits in enumerate(self.action_clamp_limits):
+                if not isinstance(limits, (list, tuple)) or len(limits) != 2:
+                    raise ValueError(
+                        f"action_clamp_limits[{idx}] must be a [min, max] pair, got {limits!r}."
+                    )
+                if float(limits[0]) > float(limits[1]):
+                    raise ValueError(
+                        f"action_clamp_limits[{idx}] min must be <= max, got {limits!r}."
+                    )
+
 
 # ── Critic ─────────────────────────────────────────────────────────────────
 
@@ -112,7 +175,7 @@ class MolmoAct2Critic(nn.Module):
         super().__init__()
         self.num_value_bins: int = int(config.num_value_bins)
         self.num_critic_blocks: int = int(config.critic_llm_depth)
-        self.compute_dtype = torch.bfloat16 if config.model_dtype == "bfloat16" else torch.float32
+        self.compute_dtype = torch.bfloat16 if config.dtype == "bfloat16" else torch.float32
 
         D = self.TEXT_HIDDEN_SIZE
 
@@ -332,7 +395,7 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
     """
     MolmoAct2 policy for RL training.
 
-    Phase 2: BC-only — identical to MolmoAct2Policy.
+    Phase 2: actor-only — identical to MolmoAct2Policy.
     Phase 3: adds distributional value critic (MolmoAct2Critic).
     """
 
@@ -346,10 +409,10 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
         Instantiate and initialise the distributional critic + its frozen target.
 
         Called by the trainer only when skip_critic=False; lazy to avoid 2×
-        memory overhead during BC-only runs.
+        memory overhead during actor-only runs.
         """
         device = self.config.device
-        dtype = torch.bfloat16 if getattr(self.config, "model_dtype", "bfloat16") == "bfloat16" else torch.float32
+        dtype = torch.bfloat16 if getattr(self.config, "dtype", "bfloat16") == "bfloat16" else torch.float32
 
         self.critic: MolmoAct2Critic = MolmoAct2Critic(self.config)
         backbone = self._backbone()

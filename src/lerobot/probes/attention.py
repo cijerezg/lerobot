@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 import random
@@ -194,6 +195,50 @@ def _attn_indices_to_image_heatmap(cross_attn_layer, indices, n_p, img_h, img_w)
     return _attn_values_to_image_heatmap(per_head, n_p, img_h, img_w)
 
 
+def _attn_indices_to_pooled_patch_heatmap(
+    cross_attn_layer,
+    indices,
+    pooling,
+    patch_grid,
+    img_h,
+    img_w,
+):
+    """Project attention on pooled image tokens back to crop patch pixels.
+
+    Molmo crop tokens are pooled from one or more ViT patches and are not always
+    a square, contiguous token block. The adapter passes the local pooling rows
+    for a crop; this renderer scatters each token's attention back to the crop's
+    patch grid before upsampling to image size.
+    """
+    idx = torch.as_tensor(indices, dtype=torch.long, device=cross_attn_layer.device)
+    slc = cross_attn_layer.index_select(dim=2, index=idx)
+    per_head_token = slc.mean(dim=1).float().cpu()  # [H, n_tokens]
+
+    pooling_t = torch.as_tensor(pooling, dtype=torch.long)
+    if pooling_t.ndim == 1:
+        pooling_t = pooling_t[:, None]
+    if pooling_t.shape[0] != per_head_token.shape[1]:
+        raise ValueError(
+            f"pooling rows ({pooling_t.shape[0]}) do not match token indices ({per_head_token.shape[1]})"
+        )
+
+    n_heads = per_head_token.shape[0]
+    n_patches = int(patch_grid) * int(patch_grid)
+    patch_values = torch.zeros((n_heads, n_patches), dtype=per_head_token.dtype)
+    patch_counts = torch.zeros(n_patches, dtype=per_head_token.dtype)
+
+    for token_idx in range(pooling_t.shape[0]):
+        valid = pooling_t[token_idx]
+        valid = valid[(valid >= 0) & (valid < n_patches)].unique()
+        if valid.numel() == 0:
+            continue
+        patch_values[:, valid] += per_head_token[:, token_idx : token_idx + 1]
+        patch_counts[valid] += 1.0
+
+    patch_values = patch_values / patch_counts.clamp_min(1.0).unsqueeze(0)
+    return _attn_values_to_image_heatmap(patch_values, int(patch_grid), img_h, img_w)
+
+
 def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
     """Render per-camera overlays + per-head grids for a single layer.
 
@@ -206,10 +251,18 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
     cross_attn = result.cross_attn_by_layer.get(layer_idx)
     if cross_attn is None:
         return frames, vmax_by_panel
-    image_segs = [(name, s, e) for name, s, e in result.encoder_segments
-                  if name.startswith("img")]
+    overlay_segments = result.extras.get("image_overlay_segments")
+    if overlay_segments:
+        image_segs = [(str(name), None, None) for name in overlay_segments]
+    else:
+        image_segs = [(name, s, e) for name, s, e in result.encoder_segments
+                      if name.startswith("img")]
     patch_indices = result.extras.get("image_patch_indices_by_segment", {})
-    if not image_segs or (result.patches_per_cam <= 0 and not patch_indices):
+    pooling_by_segment = result.extras.get("image_pooling_by_segment", {})
+    tensors_by_segment = result.extras.get("image_tensors_by_segment", {})
+    if not image_segs or (
+        result.patches_per_cam <= 0 and not patch_indices and not pooling_by_segment
+    ):
         return frames, vmax_by_panel
 
     attn = torch.nan_to_num(cross_attn[0].float().cpu(), nan=0.0)  # [H, n_act, enc]
@@ -219,8 +272,11 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
 
     for cam_idx, (cam_name, cs, ce) in enumerate(image_segs):
         img_np = None
-        if cam_idx < len(result.image_tensors):
-            img_t = result.image_tensors[cam_idx].squeeze(0).cpu()
+        img_t = tensors_by_segment.get(cam_name)
+        if img_t is None and cam_idx < len(result.image_tensors):
+            img_t = result.image_tensors[cam_idx]
+        if img_t is not None:
+            img_t = img_t.squeeze(0).cpu()
             img_t = img_t * 0.5 + 0.5
             img_np = (img_t.clamp(0, 1).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
         img_h = img_np.shape[0] if img_np is not None else 224
@@ -229,12 +285,23 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
             img_np = np.zeros((img_h, img_w, 3), dtype=np.uint8)
 
         indices = patch_indices.get(cam_name)
-        if indices is not None:
+        pooling = pooling_by_segment.get(cam_name)
+        if indices is not None and pooling is not None:
+            patch_grid = int(pooling.get("patch_grid", 0))
+            pooling_rows = pooling.get("pooling")
+            if patch_grid <= 0 or pooling_rows is None:
+                continue
+            per_head, mean_map = _attn_indices_to_pooled_patch_heatmap(
+                attn, indices, pooling_rows, patch_grid, img_h, img_w
+            )
+        elif indices is not None:
             n_p = int(len(indices) ** 0.5)
             if n_p * n_p != len(indices):
                 continue
             per_head, mean_map = _attn_indices_to_image_heatmap(attn, indices, n_p, img_h, img_w)
         else:
+            if cs is None or ce is None:
+                continue
             n_p = int(result.patches_per_cam ** 0.5)
             if n_p * n_p != ce - cs:
                 continue
@@ -307,6 +374,43 @@ def _render_matrix(mat_2d, vmax, title, out_w=1200, out_h=600,
     return canvas
 
 
+def _matrix_indices_from_result(result: AttentionCaptureResult, encoder_len: int):
+    explicit = result.extras.get("matrix_col_indices_by_segment")
+    if not explicit:
+        explicit = {}
+        for name, indices in result.extras.get("image_patch_indices_by_segment", {}).items():
+            explicit[str(name)] = indices
+        for name, indices in result.extras.get("text_token_indices_by_segment", {}).items():
+            explicit[str(name)] = indices
+
+    selected: list[int] = []
+    display_segments: list[tuple[str, int, int]] = []
+    seen: set[int] = set()
+    for name, raw_indices in explicit.items():
+        clean = []
+        for idx in raw_indices:
+            idx = int(idx)
+            if 0 <= idx < encoder_len and idx not in seen:
+                clean.append(idx)
+                seen.add(idx)
+        if not clean:
+            continue
+        start = len(selected)
+        selected.extend(clean)
+        display_segments.append((str(name), start, len(selected)))
+
+    if not selected:
+        return None, result.encoder_segments
+    return torch.as_tensor(selected, dtype=torch.long), display_segments
+
+
+def _cross_matrix_attn_and_segments(result: AttentionCaptureResult, attn: torch.Tensor):
+    idx, segments = _matrix_indices_from_result(result, int(attn.shape[-1]))
+    if idx is None:
+        return attn, segments
+    return attn.index_select(dim=-1, index=idx), segments
+
+
 def render_cross_matrix(result: AttentionCaptureResult, layer_idx: int):
     """Mean cross-attention heatmap (rows=actions, cols=encoder)."""
     frames: dict[str, np.ndarray] = {}
@@ -317,13 +421,14 @@ def render_cross_matrix(result: AttentionCaptureResult, layer_idx: int):
         return frames, vmax_by_panel
 
     attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)   # [H, n_act, enc]
-    mean = attn.mean(dim=0)                                     # [n_act, enc]
+    attn, display_segments = _cross_matrix_attn_and_segments(result, attn)
+    mean = attn.mean(dim=0)                                     # [n_act, displayed_enc]
     vmax = float(mean.max().item())
     vmax_by_panel["cross_matrix_mean"] = vmax
     frames["cross_matrix_mean"] = _render_matrix(
         mean, vmax,
         f"L{layer_idx}: cross-attn action→encoder (mean over heads)",
-        col_segments=result.encoder_segments,
+        col_segments=display_segments,
     )
 
     # Per-head 2×4 grid
@@ -343,7 +448,7 @@ def render_cross_matrix(result: AttentionCaptureResult, layer_idx: int):
         r, c = divmod(h, h_cols)
         sub = _render_matrix(attn[h], head_vmax, f"head {h}",
                              out_w=sub_w, out_h=sub_h,
-                             col_segments=result.encoder_segments)
+                             col_segments=display_segments)
         canvas[36 + r * sub_h : 36 + (r + 1) * sub_h,
                c * sub_w : (c + 1) * sub_w] = sub
     frames["cross_matrix_heads"] = canvas
@@ -369,6 +474,279 @@ def render_self_matrix(result: AttentionCaptureResult, layer_idx: int):
         out_w=900, out_h=900,
     )
     return frames, vmax_by_panel
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Action → [action | decoded text] focused matrix
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _decode_token_label(tokenizer, tid) -> str:
+    if tokenizer is None:
+        return str(int(tid))
+    try:
+        text = tokenizer.decode([int(tid)], skip_special_tokens=False)
+    except Exception:
+        return str(int(tid))
+    text = str(text).replace("\n", " ").strip()
+    return text.encode("ascii", errors="replace").decode("ascii") if text else ""
+
+
+def _draw_rotated_text(canvas, text, x_center, y_top, font_scale, color):
+    if not text:
+        return
+    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+    pad = 2
+    sub = np.zeros((th + baseline + pad * 2, tw + pad * 2, 3), dtype=np.uint8)
+    cv2.putText(sub, text, (pad, th + pad), cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale, color, 1, cv2.LINE_AA)
+    rotated = cv2.rotate(sub, cv2.ROTATE_90_CLOCKWISE)
+    rh, rw = rotated.shape[:2]
+    x0 = max(0, x_center - rw // 2)
+    y0 = y_top
+    x1 = min(canvas.shape[1], x0 + rw)
+    y1 = min(canvas.shape[0], y0 + rh)
+    if x1 > x0 and y1 > y0:
+        roi = canvas[y0:y1, x0:x1]
+        np.maximum(roi, rotated[: y1 - y0, : x1 - x0], out=roi)
+
+
+def _render_action_text_panel(
+    mat,
+    vmax,
+    col_labels,
+    groups,
+    title,
+    out_w=2400,
+    out_h=900,
+    title_font_scale=0.55,
+    label_font_scale=0.35,
+    group_font_scale=0.5,
+):
+    arr = mat.numpy() if hasattr(mat, "numpy") else mat
+    n_rows, n_cols = arr.shape[:2]
+    norm = (arr / max(float(vmax), 1e-8)).clip(0, 1)
+    gray = (norm * 255).astype(np.uint8)
+    color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_VIRIDIS), cv2.COLOR_BGR2RGB)
+
+    margin_top, margin_bottom, margin_left, margin_right = 32, 140, 42, 8
+    hm_w = out_w - margin_left - margin_right
+    hm_h = out_h - margin_top - margin_bottom
+    color = cv2.resize(color, (hm_w, hm_h), interpolation=cv2.INTER_NEAREST)
+
+    canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+    canvas[margin_top : margin_top + hm_h, margin_left : margin_left + hm_w] = color
+    cv2.putText(canvas, title, (margin_left + 4, margin_top - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, title_font_scale,
+                (255, 255, 255), 1, cv2.LINE_AA)
+
+    px_col = hm_w / max(n_cols, 1)
+    px_row = hm_h / max(n_rows, 1)
+    for row_idx in range(0, n_rows, 5):
+        y = int(margin_top + (row_idx + 0.5) * px_row + 4)
+        cv2.putText(canvas, str(row_idx), (4, y), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4, (200, 200, 200), 1, cv2.LINE_AA)
+
+    annot_y = margin_top + hm_h + 18
+    for group_name, start, end in groups:
+        if end <= start:
+            continue
+        if start > 0:
+            x = int(margin_left + start * px_col)
+            cv2.line(canvas, (x, margin_top), (x, margin_top + hm_h), (255, 255, 255), 1)
+        mid = int(margin_left + ((start + end) / 2) * px_col)
+        (tw, _), _ = cv2.getTextSize(group_name, cv2.FONT_HERSHEY_SIMPLEX, group_font_scale, 1)
+        cv2.putText(canvas, group_name, (mid - tw // 2, annot_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, group_font_scale,
+                    (255, 255, 255), 1, cv2.LINE_AA)
+
+    label_y = margin_top + hm_h + 28
+    for col_idx, label in enumerate(col_labels):
+        if not label:
+            continue
+        x_center = int(margin_left + (col_idx + 0.5) * px_col)
+        _draw_rotated_text(canvas, label, x_center, label_y,
+                           label_font_scale, (220, 220, 220))
+    return canvas
+
+
+def _render_action_text_heads(per_head, vmax, col_labels, groups, title):
+    n_heads = int(per_head.shape[0])
+    h_cols = 4
+    h_rows = (n_heads + h_cols - 1) // h_cols
+    panel_w, panel_h = 900, 520
+    title_h = 36
+    canvas = np.zeros((title_h + h_rows * panel_h, h_cols * panel_w, 3), dtype=np.uint8)
+    cv2.putText(canvas, title, (12, 26), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (255, 255, 255), 1, cv2.LINE_AA)
+    for head_idx in range(n_heads):
+        r, c = divmod(head_idx, h_cols)
+        sub = _render_action_text_panel(
+            per_head[head_idx], vmax, col_labels, groups, f"head {head_idx}",
+            out_w=panel_w, out_h=panel_h,
+            title_font_scale=0.45, label_font_scale=0.30, group_font_scale=0.4,
+        )
+        canvas[title_h + r * panel_h : title_h + (r + 1) * panel_h,
+               c * panel_w : (c + 1) * panel_w] = sub
+    return canvas
+
+
+def _token_label_for_position(result: AttentionCaptureResult, segment_name: str, pos: int, seg_start: int | None):
+    tokenizer = result.tokenizer
+    tokens = result.subtask_tokens if segment_name == "subtask" else result.task_tokens
+    if not torch.is_tensor(tokens) or tokens.ndim < 2:
+        return ""
+    row = tokens[0].detach().cpu()
+    if seg_start is None and 0 <= pos < row.shape[0]:
+        token_idx = pos
+    elif seg_start is not None and 0 <= pos - seg_start < row.shape[0]:
+        token_idx = pos - seg_start
+    elif 0 <= pos < row.shape[0]:
+        token_idx = pos
+    else:
+        return ""
+    return _decode_token_label(tokenizer, row[token_idx].item())
+
+
+def _text_blocks_for_action_matrix(result: AttentionCaptureResult):
+    blocks: list[tuple[str, list[int], int | None]] = []
+    segment_lookup = {name: (s, e) for name, s, e in result.encoder_segments}
+    for name in ("language", "subtask"):
+        if name in segment_lookup:
+            s, e = segment_lookup[name]
+            blocks.append((name, list(range(s, e)), s))
+
+    explicit = result.extras.get("text_token_indices_by_segment", {})
+    for name, indices in explicit.items():
+        if name not in {block[0] for block in blocks}:
+            blocks.append((str(name), [int(i) for i in indices], None))
+    return blocks
+
+
+def render_action_text_matrix(result: AttentionCaptureResult, layer_idx: int):
+    """Action queries to action self-attention plus decoded language/subtask keys."""
+    frames: dict[str, np.ndarray] = {}
+    vmax_by_panel: dict[str, float] = {}
+
+    cross = result.cross_attn_by_layer.get(layer_idx)
+    selfa = result.self_attn_by_layer.get(layer_idx)
+    if cross is None or selfa is None:
+        return frames, vmax_by_panel
+
+    text_blocks = _text_blocks_for_action_matrix(result)
+    if not text_blocks:
+        return frames, vmax_by_panel
+
+    cross_attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)
+    self_attn = torch.nan_to_num(selfa[0].float().cpu(), nan=0.0)
+    n_action = int(self_attn.shape[-1])
+    encoder_len = int(cross_attn.shape[-1])
+    encoder_valid = None
+    if torch.is_tensor(result.encoder_pad_masks) and result.encoder_pad_masks.ndim >= 2:
+        encoder_valid = result.encoder_pad_masks[0].detach().cpu().to(torch.bool)
+
+    parts = [self_attn]
+    col_labels = [str(i) if i % 5 == 0 else "" for i in range(n_action)]
+    groups: list[tuple[str, int, int]] = [("action self", 0, n_action)]
+    col_pos = n_action
+
+    max_cols = {"language": 48, "subtask": 16}
+    for name, indices, seg_start in text_blocks:
+        budget = max_cols.get(name, 96)
+        kept = [idx for idx in indices[:budget] if 0 <= idx < encoder_len]
+        if not kept:
+            continue
+        idx_t = torch.as_tensor(kept, dtype=torch.long)
+        block = cross_attn.index_select(dim=-1, index=idx_t)
+        if encoder_valid is not None:
+            valid = encoder_valid.index_select(dim=0, index=idx_t).to(block.dtype)
+            block = block * valid.view(1, 1, -1)
+        parts.append(block)
+        for idx in kept:
+            if encoder_valid is not None and not bool(encoder_valid[idx]):
+                col_labels.append("")
+            else:
+                col_labels.append(_token_label_for_position(result, name, idx, seg_start))
+        groups.append((name, col_pos, col_pos + len(kept)))
+        col_pos += len(kept)
+
+    if len(parts) == 1:
+        return frames, vmax_by_panel
+
+    sliced = torch.cat(parts, dim=-1)
+    sliced = sliced / sliced.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    mean = sliced.mean(dim=0)
+
+    mean_vmax = float(mean.max().item())
+    heads_vmax = float(sliced.max().item())
+    vmax_by_panel["action_text_matrix_mean"] = mean_vmax
+    vmax_by_panel["action_text_matrix_heads"] = heads_vmax
+    frames["action_text_matrix_mean"] = _render_action_text_panel(
+        mean, mean_vmax, col_labels, groups,
+        f"L{layer_idx}: action -> [action | language | subtask] (mean, row-normalized)",
+    )
+    frames["action_text_matrix_heads"] = _render_action_text_heads(
+        sliced, heads_vmax, col_labels, groups,
+        f"L{layer_idx}: action -> [action | language | subtask] (per-head, row-normalized)",
+    )
+    return frames, vmax_by_panel
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Probe metadata diagnostics
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _summarize_indices(indices):
+    vals = [int(x) for x in indices]
+    if not vals:
+        return {"count": 0}
+    return {
+        "count": len(vals),
+        "min": min(vals),
+        "max": max(vals),
+        "first": vals[:12],
+        "last": vals[-12:],
+    }
+
+
+def _attention_metadata_summary(result: AttentionCaptureResult, layer_idx: int) -> dict[str, Any]:
+    cross = result.cross_attn_by_layer.get(layer_idx)
+    selfa = result.self_attn_by_layer.get(layer_idx)
+    raw_indices: dict[str, Any] = {}
+    for key in (
+        "image_patch_indices_by_segment",
+        "text_token_indices_by_segment",
+        "matrix_col_indices_by_segment",
+    ):
+        value = result.extras.get(key)
+        if isinstance(value, dict):
+            raw_indices[key] = {str(name): _summarize_indices(indices) for name, indices in value.items()}
+
+    display_segments = None
+    if cross is not None:
+        attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)
+        idx, segments = _matrix_indices_from_result(result, int(attn.shape[-1]))
+        display_segments = segments
+        if idx is not None:
+            raw_indices["cross_matrix_display_indices"] = _summarize_indices(idx.tolist())
+
+    return {
+        "layer": int(layer_idx),
+        "cross_shape": list(cross.shape) if torch.is_tensor(cross) else None,
+        "self_shape": list(selfa.shape) if torch.is_tensor(selfa) else None,
+        "encoder_segments": [list(seg) for seg in result.encoder_segments],
+        "cross_matrix_display_segments": [list(seg) for seg in display_segments or []],
+        "patches_per_cam": int(result.patches_per_cam),
+        "indices": raw_indices,
+        "adapter_debug": result.extras.get("image_attention_debug", {}),
+    }
+
+
+def _append_attention_metadata(result: AttentionCaptureResult, layer_idx: int, ep_idx: int, fr_idx: int, ep_dir: str):
+    summary = _attention_metadata_summary(result, layer_idx)
+    summary.update({"ep": int(ep_idx), "fr": int(fr_idx)})
+    path = os.path.join(ep_dir, "metadata.jsonl")
+    with open(path, "a") as f:
+        f.write(json.dumps(summary, sort_keys=True) + "\n")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -418,9 +796,11 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
                     csv_files[layer_idx] = (f, w)
                 csv_f, csv_w = csv_files[layer_idx]
 
+                _append_attention_metadata(result, layer_idx, ep_idx, fr_idx, ep_dir)
+
                 panels: dict[str, np.ndarray] = {}
                 vmaxes: dict[str, float] = {}
-                for renderer in (render_image_overlays, render_cross_matrix, render_self_matrix):
+                for renderer in (render_image_overlays, render_cross_matrix, render_self_matrix, render_action_text_matrix):
                     p_frames, p_vmax = renderer(result, layer_idx)
                     panels.update(p_frames)
                     vmaxes.update(p_vmax)
@@ -456,9 +836,7 @@ def run(adapter, primary_dataset, cfg, output_dir):
     logging.info(f"Probing layers: {attn_layers} timestep: {timestep}")
     os.makedirs(output_dir, exist_ok=True)
 
-    primary_name = os.path.basename(os.path.normpath(cfg.dataset.root))
-    _probe_dataset(adapter, primary_dataset,
-                   os.path.join(output_dir, primary_name), attn_layers, timestep, cfg)
+    _probe_dataset(adapter, primary_dataset, output_dir, attn_layers, timestep, cfg)
 
     for extra_root in getattr(cfg.dataset, "additional_offline_dataset_paths", []) or []:
         logging.info(f"Additional dataset: {extra_root}")

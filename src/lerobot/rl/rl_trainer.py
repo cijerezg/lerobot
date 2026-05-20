@@ -1,10 +1,37 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
+
+
+@dataclass
+class TrainableParamsConfig:
+    """Per-submodule freeze schedule shared by all RL trainers.
+
+    Each field: None → freeze that submodule entirely; int N → train layers
+    with index >= N (i.e., the top (depth - N) layers).
+
+    Implicit rules baked into every trainer's freeze_model:
+      - When `vision_from_layer` is set, the multi-modal projector + ViT stem
+        train alongside the selected ViT layers (no separate knob).
+      - When `language_from_layer` is set, the final layer norm (and lm_head,
+        where untied) train alongside the selected language blocks.
+      - The action expert is always trainable.
+      - Token embeddings follow the policy's `freeze_embedding` flag, not this
+        struct.
+      - Critic mirrors apply the same rules to the critic-side submodules.
+        Always-on critic heads (value queries, bin logit head) stay trainable
+        regardless.
+    """
+
+    vision_from_layer: int | None = None
+    language_from_layer: int | None = None
+    critic_vision_from_layer: int | None = None
+    critic_language_from_layer: int | None = None
 
 
 class Trainer(ABC):

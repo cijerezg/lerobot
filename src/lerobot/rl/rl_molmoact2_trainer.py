@@ -1,9 +1,9 @@
 """
 MolmoAct2Trainer — concrete Trainer for MolmoAct2RLPolicy.
 
-BC mode  (skip_critic=True):  update_actor only; flow-matching loss, no advantage conditioning.
-RL mode  (skip_critic=False): update_critic (HL-Gauss distributional TD) + actor with advantage
-                              binned into a "negative"/"positive" clause inside the prompt.
+Actor-only mode     (skip_critic=True):  update_actor only; no critic updates.
+Critic-trained mode (skip_critic=False): update_critic (HL-Gauss distributional TD)
+                                         + actor with advantage binned into the prompt.
 """
 from __future__ import annotations
 
@@ -19,14 +19,31 @@ from lerobot.utils.constants import ACTION
 from lerobot.utils.transition import move_transition_to_device
 
 
+# Depths for the SO100/SO101 MolmoAct2 checkpoint. Adjust if you point this
+# trainer at a different variant.
+_MOLMOACT2_VIT_DEPTH = 25        # image_vit.transformer.resblocks.{0..24}
+_MOLMOACT2_LANGUAGE_DEPTH = 36   # transformer.blocks.{0..35}
+
+
+def _layer_idx_after(name: str, marker: str) -> int:
+    """Parse the integer layer index immediately after `marker` in `name`."""
+    return int(name.split(marker)[1].split(".")[0])
+
+
 class MolmoAct2Trainer(Trainer):
-    """Trainer for MolmoAct2RLPolicy. Supports both BC (skip_critic=True) and RL modes."""
+    """Trainer for MolmoAct2RLPolicy. Supports actor-only and critic-trained modes."""
 
     # Value histograms live inside the distributional critic's support; clip to
     # the configured default so a single outlier doesn't flatten the bin range.
     _HISTOGRAM_CLIP_RANGES = {
         "critic_value_histogram_from_critic": (-2.0, 0.1),
+        "critic_value_histogram_from_actor": (-2.0, 0.1),
         "target_value_histogram": (-2.0, 0.1),
+        "target_value_histogram_actor": (-2.0, 0.1),
+        "v_next_histogram_actor": (-2.0, 0.1),
+        "flow_loss_histogram_flat": (0.0, 0.01),
+        "flow_loss_per_sample_histogram": (0.0, 0.01),
+        "loss_critic_histogram_flat": (0.0, 0.005),
     }
 
     # ── Setup ─────────────────────────────────────────────────────────────────
@@ -39,6 +56,8 @@ class MolmoAct2Trainer(Trainer):
         inputs: AddBatchDimensionProcessorStep only adds a dim to 1-D / 3-D tensors,
         so batched images [B,C,H,W] and states [B,D] pass through unchanged.
         """
+        import os
+
         from lerobot.policies.molmoact2.processor_molmoact2 import make_molmoact2_pre_post_processors
 
         dataset_stats = None
@@ -46,10 +65,24 @@ class MolmoAct2Trainer(Trainer):
             dataset_stats = dataset.stats
         dataset_meta = getattr(dataset, "meta", None) if dataset is not None else None
 
+        action_stats_override = None
+        action_encoding = getattr(cfg.policy, "action_encoding", "absolute")
+        if action_encoding in ("anchor", "delta"):
+            stats_path = getattr(cfg.policy, "action_encoding_stats_path", None)
+            if not stats_path or not os.path.exists(os.path.expanduser(stats_path)):
+                raise ValueError(
+                    f"action_encoding={action_encoding} but action_encoding_stats_path "
+                    f"{stats_path!r} is invalid or does not exist!"
+                )
+            if is_main_process:
+                logging.info(f"Loading {action_encoding} action stats from {stats_path}")
+            action_stats_override = torch.load(os.path.expanduser(stats_path), map_location="cpu")
+
         result = make_molmoact2_pre_post_processors(
             config=cfg.policy,
             dataset_stats=dataset_stats,
             dataset_meta=dataset_meta,
+            action_stats_override=action_stats_override,
         )
         self._preprocessor = result[0]  # cache for critic_value_for_logging
         return result
@@ -60,23 +93,37 @@ class MolmoAct2Trainer(Trainer):
 
     def freeze_model(self, policy: nn.Module, cfg) -> None:
         """
-        Actor freeze is already applied during _load_hf_model:
-          - train_action_expert_only → _freeze_non_action_expert_parameters()
-          - enable_lora_vlm → LoRA adapters (non-LoRA params frozen)
-          - freeze_embedding → _freeze_input_embeddings()
+        Two paths:
 
-        For RL mode (skip_critic=False): the critic was deepcopied from the
-        (possibly frozen) actor backbone, so its parameters inherit
-        requires_grad=False.  We unfreeze all critic params here so they
-        can learn value estimates.  critic_target stays frozen — init_critic()
-        already set that.
+        1. `cfg.policy.trainable_params is None` (default) → keep the coarse
+           freeze applied during `_load_hf_model`:
+             - train_action_expert_only → _freeze_non_action_expert_parameters()
+             - enable_lora_vlm → LoRA adapters (non-LoRA params frozen)
+             - freeze_embedding → _freeze_input_embeddings()
+
+        2. `cfg.policy.trainable_params` is set → authoritative per-name freeze
+           following TrainableParamsConfig. Action expert always trains;
+           embeddings governed by `freeze_embedding`; everything else gated
+           by the schedule (unknown params default to frozen).
+
+        Critic-trained mode (skip_critic=False): critic params are then
+        unfrozen — either fully (path 1) or per the critic_* schedule (path 2).
+        critic_target stays frozen.
         """
         skip_critic: bool = bool(getattr(cfg, "skip_critic", True))
+        tp = getattr(cfg.policy, "trainable_params", None)
+        freeze_embedding: bool = bool(getattr(cfg.policy, "freeze_embedding", True))
+
+        if tp is not None:
+            self._apply_actor_freeze(policy, tp, freeze_embedding=freeze_embedding)
 
         if not skip_critic and hasattr(policy, "critic"):
             critic_net: nn.Module = getattr(policy, "critic")
-            for p in critic_net.parameters():
-                p.requires_grad_(True)
+            if tp is not None:
+                self._apply_critic_freeze(critic_net, tp, cfg)
+            else:
+                for p in critic_net.parameters():
+                    p.requires_grad_(True)
 
             # Share frozen actor layers with critic_target to save VRAM.
             # Only valid for params that neither the critic nor actor will update.
@@ -92,6 +139,72 @@ class MolmoAct2Trainer(Trainer):
             f"[MolmoAct2Trainer] Trainable: {trainable:,} / {total:,} params "
             f"({100 * trainable / max(total, 1):.1f}%)"
         )
+
+    @staticmethod
+    def _apply_actor_freeze(policy: nn.Module, tp, *, freeze_embedding: bool) -> None:
+        vision_on = tp.vision_from_layer is not None
+        language_on = tp.language_from_layer is not None
+        vt_layers = (
+            set(range(tp.vision_from_layer, _MOLMOACT2_VIT_DEPTH)) if vision_on else set()
+        )
+        lm_layers = (
+            set(range(tp.language_from_layer, _MOLMOACT2_LANGUAGE_DEPTH)) if language_on else set()
+        )
+
+        for name, param in policy.named_parameters():
+            if name.startswith("critic.") or name.startswith("critic_target."):
+                continue  # critic handled separately
+
+            if ".action_expert." in name:
+                param.requires_grad = True
+            elif ".transformer.wte" in name:
+                param.requires_grad = not freeze_embedding
+            elif ".lm_head" in name or name.endswith("lm_head.weight"):
+                param.requires_grad = language_on
+            elif ".transformer.blocks." in name:
+                param.requires_grad = _layer_idx_after(name, ".transformer.blocks.") in lm_layers
+            elif ".transformer.ln_f" in name:
+                param.requires_grad = language_on
+            elif ".image_vit.transformer.resblocks." in name:
+                param.requires_grad = _layer_idx_after(name, ".resblocks.") in vt_layers
+            elif ".image_vit.patch_embedding" in name or ".image_vit.positional_embedding" in name:
+                param.requires_grad = vision_on
+            elif ".image_pooling_2d" in name or ".image_projector" in name:
+                param.requires_grad = vision_on
+            else:
+                # Unknown actor param — freeze. Safer than accidentally training
+                # something the schedule didn't anticipate.
+                param.requires_grad = False
+
+    @staticmethod
+    def _apply_critic_freeze(critic_net: nn.Module, tp, cfg) -> None:
+        cr_vision_on = tp.critic_vision_from_layer is not None
+        cr_language_on = tp.critic_language_from_layer is not None
+        cr_vt_layers = (
+            set(range(tp.critic_vision_from_layer, _MOLMOACT2_VIT_DEPTH))
+            if cr_vision_on else set()
+        )
+        cr_layers = (
+            set(range(tp.critic_language_from_layer, int(getattr(cfg.policy, "critic_llm_depth", 12))))
+            if cr_language_on else set()
+        )
+
+        for name, param in critic_net.named_parameters():
+            # Always-trainable critic heads.
+            if name.startswith("value_queries") or name.startswith("bin_logit_head"):
+                param.requires_grad = True
+            elif "transformer_blocks." in name:
+                param.requires_grad = _layer_idx_after(name, "transformer_blocks.") in cr_layers
+            elif name.startswith("ln_f"):
+                param.requires_grad = cr_language_on
+            elif ".image_vit.transformer.resblocks." in name:
+                param.requires_grad = _layer_idx_after(name, ".resblocks.") in cr_vt_layers
+            elif ".image_vit.patch_embedding" in name or ".image_vit.positional_embedding" in name:
+                param.requires_grad = cr_vision_on
+            elif ".image_pooling_2d" in name or ".image_projector" in name:
+                param.requires_grad = cr_vision_on
+            else:
+                param.requires_grad = False
 
     def get_optimizer_groups(self, policy: nn.Module, cfg) -> list[dict]:
         """
@@ -281,7 +394,8 @@ class MolmoAct2Trainer(Trainer):
             curr_out = _fwd_critic(curr_batch)
             v_curr = curr_out["value"].to(rewards.dtype)
 
-        raw_adv = rewards + discount * v_next * (1.0 - done.float()) - v_curr
+        td_target = rewards + discount * v_next * (1.0 - done.float())
+        raw_adv = td_target - v_curr
         squashed_adv = torch.tanh(raw_adv / adv_scale)
 
         value_info = {
@@ -289,6 +403,9 @@ class MolmoAct2Trainer(Trainer):
             "advantage_squashed_mean": squashed_adv.mean().item(),
             "v_curr_mean": v_curr.mean().item(),
             "v_next_mean": v_next.mean().item(),
+            "critic_values": v_curr.detach().float().view(-1),
+            "target_values": td_target.detach().float().view(-1),
+            "v_next_values": v_next.detach().float().view(-1),
         }
         return raw_adv, squashed_adv, value_info
 
@@ -312,11 +429,29 @@ class MolmoAct2Trainer(Trainer):
         so the prompt step bins it into a "negative"/"positive" clause.
         """
         from lerobot.types import TransitionKey
+        from lerobot.utils.constants import OBS_STATE
 
         action_dim = self._action_dim(cfg)
+        actions = actions[..., :action_dim]
+
+        action_encoding = getattr(cfg.policy, "action_encoding", "absolute")
+        if action_encoding in ("anchor", "delta"):
+            if OBS_STATE not in observations:
+                raise ValueError(f"action_encoding={action_encoding} requires {OBS_STATE} in observations")
+            anchor_state = observations[OBS_STATE][..., :action_dim]
+            if action_encoding == "anchor":
+                actions = actions - anchor_state[:, None, :]
+            else:
+                d_0 = actions[:, 0, :] - anchor_state
+                if actions.shape[1] > 1:
+                    d_rest = torch.diff(actions, dim=1)
+                    actions = torch.cat([d_0.unsqueeze(1), d_rest], dim=1)
+                else:
+                    actions = d_0.unsqueeze(1)
+
         pre_input: dict[str, Any] = {
             **observations,
-            "action": actions[..., :action_dim],
+            "action": actions,
             "task": cfg.policy.task,
         }
         if advantage is not None:
@@ -353,9 +488,9 @@ class MolmoAct2Trainer(Trainer):
         """
         Actor update: sample → [compute_advantage] → preprocess → forward → backward → step.
 
-        BC mode (skip_critic=True):  no advantage clause in the prompt.
-        RL mode (skip_critic=False): raw advantage is threaded into the batch and the
-                                     preprocessor inserts a "negative"/"positive" clause.
+        Actor-only mode (skip_critic=True): no critic-computed advantage clause in the prompt.
+        Critic-trained mode (skip_critic=False): raw advantage is threaded into the batch and
+                                                 the preprocessor inserts a label clause.
         Handles gradient accumulation.  Only the "policy" optimizer is touched here.
         """
         from lerobot.rl.buffer import concatenate_batch_transitions
@@ -372,10 +507,25 @@ class MolmoAct2Trainer(Trainer):
             "loss_actor": 0.0,
             "loss_flow": 0.0,
             "loss_discrete_ce": 0.0,
+            "loss_discrete_z": 0.0,
             "advantage_squashed_mean": 0.0,
         }
         squashed_adv_list: list[torch.Tensor] = []
         raw_adv_list: list[torch.Tensor] = []
+        actor_loss_list: list[torch.Tensor] = []
+        flow_loss_raw_list: list[torch.Tensor] = []
+        flow_loss_per_sample_list: list[torch.Tensor] = []
+        flow_loss_per_timestep_list: list[torch.Tensor] = []
+        flow_timesteps_list: list[torch.Tensor] = []
+        flow_loss_per_action_step_list: list[torch.Tensor] = []
+        discrete_ce_loss_list: list[torch.Tensor] = []
+        discrete_z_loss_list: list[torch.Tensor] = []
+        action_target_list: list[torch.Tensor] = []
+        reward_list: list[torch.Tensor] = []
+        done_list: list[torch.Tensor] = []
+        critic_values_actor_list: list[torch.Tensor] = []
+        target_values_actor_list: list[torch.Tensor] = []
+        v_next_values_actor_list: list[torch.Tensor] = []
 
         # Identify actor params for grad clipping (excludes critic).
         critic_param_ids: set[int] = set()
@@ -396,6 +546,17 @@ class MolmoAct2Trainer(Trainer):
 
             observations = raw.get("state", {})
             actions = raw[ACTION][..., :action_dim]
+            action_target_list.append(actions.detach().float().reshape(-1))
+            if "reward" in raw:
+                reward_tensor = raw["reward"]
+                if not isinstance(reward_tensor, torch.Tensor):
+                    reward_tensor = torch.tensor(reward_tensor, device=actions.device)
+                reward_list.append(reward_tensor.detach().float().view(-1))
+            if "done" in raw:
+                done_tensor = raw["done"]
+                if not isinstance(done_tensor, torch.Tensor):
+                    done_tensor = torch.tensor(done_tensor, device=actions.device)
+                done_list.append(done_tensor.detach().float().view(-1))
 
             # Advantage as prompt conditioning (RL mode only). Raw advantage is
             # threaded into the batch; the preprocessor bins it into a label.
@@ -408,7 +569,7 @@ class MolmoAct2Trainer(Trainer):
                     rewards = torch.tensor(rewards)
                 if not isinstance(done, torch.Tensor):
                     done = torch.tensor(done)
-                raw_adv, squashed_adv, _ = self.compute_advantage(
+                raw_adv, squashed_adv, value_info = self.compute_advantage(
                     policy,
                     batch=raw,  # type: ignore[arg-type]
                     observations=observations,
@@ -421,6 +582,9 @@ class MolmoAct2Trainer(Trainer):
                 accum["advantage_squashed_mean"] += squashed_adv.mean().item() / grad_accum
                 squashed_adv_list.append(squashed_adv.detach().float().view(-1))
                 raw_adv_list.append(raw_adv.detach().float().view(-1))
+                critic_values_actor_list.append(value_info["critic_values"])
+                target_values_actor_list.append(value_info["target_values"])
+                v_next_values_actor_list.append(value_info["v_next_values"])
 
             fwd_batch = self.build_training_batch(
                 raw_batch=raw,  # type: ignore[arg-type]
@@ -433,17 +597,100 @@ class MolmoAct2Trainer(Trainer):
             )
 
             # Keep actor loss clean: advantage is only a prompt label.
-            loss, metrics = policy.forward(fwd_batch)
-            (loss / grad_accum).backward()
+            loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
+            loss_for_backward = loss.mean() if isinstance(loss, torch.Tensor) else torch.as_tensor(loss, device=actions.device)
+            (loss_for_backward / grad_accum).backward()
 
-            accum["loss_actor"] += loss.item() / grad_accum
-            accum["loss_flow"] += metrics.get("action_flow_loss", 0.0) / grad_accum
-            accum["loss_discrete_ce"] += metrics.get("discrete_ce_loss", 0.0) / grad_accum
+            accum["loss_actor"] += float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
+            accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
+            accum["loss_discrete_ce"] += float(metrics.get("discrete_ce_loss", 0.0)) / grad_accum
+            if "discrete_z_loss" in metrics:
+                accum["loss_discrete_z"] += float(metrics["discrete_z_loss"]) / grad_accum
+
+            actor_loss_raw = metrics.get("loss_raw", loss.detach().float() if isinstance(loss, torch.Tensor) else None)
+            if isinstance(actor_loss_raw, torch.Tensor):
+                actor_loss_list.append(actor_loss_raw.detach().float().view(-1))
+            flow_loss_raw = metrics.get("flow_loss_raw")
+            if isinstance(flow_loss_raw, torch.Tensor):
+                flow_loss_raw_list.append(flow_loss_raw.detach().float().reshape(-1))
+            flow_loss_per_sample = metrics.get("flow_loss_per_sample")
+            if isinstance(flow_loss_per_sample, torch.Tensor):
+                flow_loss_per_sample_list.append(flow_loss_per_sample.detach().float().view(-1))
+            flow_loss_per_timestep = metrics.get("flow_loss_per_timestep")
+            flow_timesteps = metrics.get("flow_timesteps")
+            if isinstance(flow_loss_per_timestep, torch.Tensor) and isinstance(flow_timesteps, torch.Tensor):
+                flow_loss_per_timestep_list.append(flow_loss_per_timestep.detach().float().reshape(-1))
+                flow_timesteps_list.append(flow_timesteps.detach().float().reshape(-1))
+            flow_loss_per_action_step = metrics.get("flow_loss_per_action_step")
+            if isinstance(flow_loss_per_action_step, torch.Tensor):
+                flow_loss_per_action_step_list.append(flow_loss_per_action_step.detach().float())
+            discrete_ce_loss_raw = metrics.get("discrete_ce_loss_raw")
+            if isinstance(discrete_ce_loss_raw, torch.Tensor):
+                discrete_ce_loss_list.append(discrete_ce_loss_raw.detach().float().view(-1))
+            discrete_z_loss_raw = metrics.get("discrete_z_loss_raw")
+            if isinstance(discrete_z_loss_raw, torch.Tensor):
+                discrete_z_loss_list.append(discrete_z_loss_raw.detach().float().view(-1))
 
         actor_grad_norm = torch.nn.utils.clip_grad_norm_(actor_params, clip_norm).item()
         policy_opt.step()
 
         accum["actor_grad_norm"] = actor_grad_norm
+
+        if actor_loss_list:
+            all_actor_loss = torch.cat(actor_loss_list)
+            accum["actor_loss_histogram"] = all_actor_loss.cpu().numpy()
+        if flow_loss_raw_list:
+            all_flow_loss_raw = torch.cat(flow_loss_raw_list)
+            accum["flow_loss_histogram_flat"] = all_flow_loss_raw.cpu().numpy()
+        if flow_loss_per_sample_list:
+            all_flow_per_sample = torch.cat(flow_loss_per_sample_list)
+            accum["flow_loss_per_sample_mean"] = all_flow_per_sample.mean().item()
+            accum["flow_loss_per_sample_std"] = all_flow_per_sample.std().item() if all_flow_per_sample.numel() > 1 else 0.0
+            accum["flow_loss_per_sample_histogram"] = all_flow_per_sample.cpu().numpy()
+        if flow_loss_per_timestep_list and flow_timesteps_list:
+            all_flow_by_timestep = torch.cat(flow_loss_per_timestep_list)
+            all_flow_timesteps = torch.cat(flow_timesteps_list)
+            accum["flow_timestep_mean"] = all_flow_timesteps.mean().item()
+            accum["flow_timestep_std"] = all_flow_timesteps.std().item() if all_flow_timesteps.numel() > 1 else 0.0
+            accum["flow_timestep_histogram"] = all_flow_timesteps.cpu().numpy()
+            low_t = all_flow_timesteps < 0.3
+            high_t = all_flow_timesteps > 0.7
+            if bool(low_t.any()):
+                low_mean = all_flow_by_timestep[low_t].mean().item()
+                accum["flow_loss_timestep/mean_lt_0.3"] = low_mean
+                accum["flow_loss_noise/mean_low_noise_lt_0.3"] = low_mean
+            if bool(high_t.any()):
+                high_mean = all_flow_by_timestep[high_t].mean().item()
+                accum["flow_loss_timestep/mean_gt_0.7"] = high_mean
+                accum["flow_loss_noise/mean_high_noise_gt_0.7"] = high_mean
+        if flow_loss_per_action_step_list:
+            all_flow_by_action_step = torch.cat(flow_loss_per_action_step_list, dim=0)
+            horizon = int(all_flow_by_action_step.shape[1])
+            edge = min(10, horizon)
+            accum["flow_loss_time/mean_first_10"] = all_flow_by_action_step[:, :edge].mean().item()
+            accum["flow_loss_time/mean_last_10"] = all_flow_by_action_step[:, -edge:].mean().item()
+            accum["flow_loss_per_action_step_histogram"] = all_flow_by_action_step.cpu().numpy()
+        if discrete_ce_loss_list:
+            all_discrete_ce = torch.cat(discrete_ce_loss_list)
+            accum["discrete_ce_loss_histogram_flat"] = all_discrete_ce.cpu().numpy()
+        if discrete_z_loss_list:
+            all_discrete_z = torch.cat(discrete_z_loss_list)
+            accum["discrete_z_loss_histogram_flat"] = all_discrete_z.cpu().numpy()
+        if action_target_list:
+            all_actions = torch.cat(action_target_list)
+            accum["action_target_mean"] = all_actions.mean().item()
+            accum["action_target_std"] = all_actions.std().item() if all_actions.numel() > 1 else 0.0
+            accum["action_target_abs_mean"] = all_actions.abs().mean().item()
+            accum["action_target_abs_max"] = all_actions.abs().max().item()
+            accum["action_target_histogram"] = all_actions.cpu().numpy()
+        if reward_list:
+            all_rewards = torch.cat(reward_list)
+            accum["reward_mean"] = all_rewards.mean().item()
+            accum["reward_std"] = all_rewards.std().item() if all_rewards.numel() > 1 else 0.0
+            accum["reward_histogram"] = all_rewards.cpu().numpy()
+        if done_list:
+            all_done = torch.cat(done_list)
+            accum["done_fraction"] = all_done.float().mean().item()
 
         if squashed_adv_list:
             all_squashed = torch.cat(squashed_adv_list)
@@ -461,6 +708,24 @@ class MolmoAct2Trainer(Trainer):
             )
             accum["advantage_histogram"] = all_squashed.cpu().numpy()
             accum["advantage_raw_histogram"] = all_raw.cpu().numpy()
+        if critic_values_actor_list:
+            all_critic_actor = torch.cat(critic_values_actor_list)
+            accum["critic_value_mean_actor"] = all_critic_actor.mean().item()
+            accum["critic_value_std_actor"] = all_critic_actor.std().item() if all_critic_actor.numel() > 1 else 0.0
+            accum["critic_value_histogram_from_actor"] = all_critic_actor.cpu().numpy()
+        if target_values_actor_list:
+            all_target_actor = torch.cat(target_values_actor_list)
+            accum["target_value_mean_actor"] = all_target_actor.mean().item()
+            accum["target_value_std_actor"] = all_target_actor.std().item() if all_target_actor.numel() > 1 else 0.0
+            accum["target_value_histogram_actor"] = all_target_actor.cpu().numpy()
+        if v_next_values_actor_list:
+            all_v_next_actor = torch.cat(v_next_values_actor_list)
+            accum["v_next_mean_actor"] = all_v_next_actor.mean().item()
+            accum["v_next_std_actor"] = all_v_next_actor.std().item() if all_v_next_actor.numel() > 1 else 0.0
+            accum["v_next_histogram_actor"] = all_v_next_actor.cpu().numpy()
+
+        if accum["loss_discrete_z"] == 0.0:
+            accum.pop("loss_discrete_z", None)
 
         return accum
 
@@ -550,11 +815,16 @@ class MolmoAct2Trainer(Trainer):
         wandb_logger,
         _policy: nn.Module,
     ) -> None:
-        scalars = {k: v for k, v in training_infos.items() if isinstance(v, (int, float))}
-        if scalars:
+        console_keys = ("loss_flow", "actor_grad_norm", "loss_critic")
+        console_scalars = {
+            k: training_infos[k]
+            for k in console_keys
+            if isinstance(training_infos.get(k), (int, float))
+        }
+        if console_scalars:
             logging.info(
                 f"[MolmoAct2Trainer] step={step}  "
-                + "  ".join(f"{k}={v:.4f}" for k, v in scalars.items())
+                + "  ".join(f"{k}={v:.4f}" for k, v in console_scalars.items())
             )
         super().log_metrics(training_infos, step, wandb_logger, _policy)
 

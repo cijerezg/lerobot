@@ -26,7 +26,7 @@ Usage:
 
 Config fields required beyond the standard TrainRLServerPipelineConfig:
     policy.offline_steps    int     number of gradient steps
-    skip_critic             bool    True → actor-only / BC mode (default False)
+    skip_critic             bool    True → actor-only; no critic updates (default False)
 
 Compared to offline_learner_pi05.py this script:
   - Is model-agnostic (works for pi05_rl, molmoact2_rl, ...)
@@ -157,7 +157,6 @@ def _run_validation_probes(
     """
     p = cfg.probe_parameters
     output_root = os.path.join(cfg.output_dir, "probes", f"step_{step:08d}")
-
     was_training = policy.training
     policy.eval()
     try:
@@ -398,7 +397,7 @@ def run_offline_training(
     policy_update_freq = getattr(cfg.policy, "policy_update_freq", 1)
     skip_critic = getattr(cfg, "skip_critic", False)
     gradient_accumulation_steps = getattr(cfg.policy, "gradient_accumulation_steps", 1)
-    clip_grad_norm_value = getattr(cfg.policy, "grad_clip_norm", 1.0)
+    clip_grad_norm_value = getattr(cfg.policy, "optimizer_grad_clip_norm", 1.0)
     async_prefetch = getattr(cfg.policy, "async_prefetch", False)
     log_freq = cfg.log_freq
     save_freq = getattr(cfg, "offline_save_freq", None) or cfg.save_freq
@@ -545,8 +544,6 @@ def run_offline_training(
                     gradient_accumulation_steps=gradient_accumulation_steps,
                     clip_grad_norm_value=clip_grad_norm_value,
                     cast_to_bf16_fn=cast_to_bf16_fn,
-                    use_amp=False,
-                    scaler=None,
                 )
                 trainer.update_target_networks(policy)
 
@@ -554,7 +551,7 @@ def run_offline_training(
         training_infos: dict = {}
 
         if skip_critic:
-            # Actor-only / BC mode — no critic forward/backward
+            # Actor-only mode — no critic forward/backward in the offline loop.
             training_infos = trainer.update_actor(
                 policy=policy,
                 optimizers=optimizers,
@@ -568,8 +565,6 @@ def run_offline_training(
                 gradient_accumulation_steps=gradient_accumulation_steps,
                 clip_grad_norm_value=clip_grad_norm_value,
                 cast_to_bf16_fn=cast_to_bf16_fn,
-                use_amp=False,
-                scaler=None,
             )
         else:
             # Full RL: critic then actor (respecting critic_warmup_steps)
@@ -585,8 +580,6 @@ def run_offline_training(
                 gradient_accumulation_steps=gradient_accumulation_steps,
                 clip_grad_norm_value=clip_grad_norm_value,
                 cast_to_bf16_fn=cast_to_bf16_fn,
-                use_amp=False,
-                scaler=None,
             )
             trainer.update_target_networks(policy)
             training_infos.update(critic_infos)
@@ -608,8 +601,6 @@ def run_offline_training(
                     gradient_accumulation_steps=gradient_accumulation_steps,
                     clip_grad_norm_value=clip_grad_norm_value,
                     cast_to_bf16_fn=cast_to_bf16_fn,
-                    use_amp=False,
-                    scaler=None,
                 )
                 training_infos.update(actor_infos)
 

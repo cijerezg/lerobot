@@ -11,6 +11,7 @@ from lerobot.optim import (
     LRSchedulerConfig,
     OptimizerConfig,
 )
+from lerobot.rl.rl_trainer import TrainableParamsConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from ..rtc.configuration_rtc import RTCConfig
@@ -106,7 +107,7 @@ class MolmoAct2Config(PreTrainedConfig):
 
     action_mode: str = "both"
     inference_action_mode: str | None = None
-    discrete_action_tokenizer: str = "/home/user/.cache/huggingface/hub/models--allenai--MolmoAct2-FAST-Tokenizer/snapshots/d45593b4c863d0bc1ca064f8b352fa16b75c38e8"
+    discrete_action_tokenizer: str = "/home/user/Documents/Research/RL/LeRobot/outputs/MolmoAct-FAST-tokenizer"
     discrete_generation_max_steps: int | None = None
     norm_tag: str | None = "so100_so101_molmoact2"
 
@@ -148,12 +149,15 @@ class MolmoAct2Config(PreTrainedConfig):
     lora_dropout: float = 0.05
     lora_bias: str = "none"
     enable_lora_action_expert: bool = False
-    enable_knowledge_insulation: bool = False
+    knowledge_insulation: bool = False
     freeze_embedding: bool = True
     train_action_expert_only: bool = False
+    # Per-layer freeze schedule. None → fall back to train_action_expert_only / LoRA flags.
+    # See TrainableParamsConfig for schema. Action expert always trains regardless.
+    trainable_params: TrainableParamsConfig | None = None
     gradient_checkpointing: bool = False
 
-    model_dtype: str = "bfloat16"
+    dtype: str = "bfloat16"
     softmax_auxiliary_loss: bool = True
     softmax_auxiliary_loss_scale: float = 1e-4
     discrete_loss_token_weighting: str = "root_subsegments_root_tokens"
@@ -215,9 +219,9 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.expected_max_action_dim != 32:
             raise ValueError("MolmoAct2 released checkpoints use expected_max_action_dim=32.")
-        if self.model_dtype not in {"float32", "bfloat16", "float16"}:
+        if self.dtype not in {"float32", "bfloat16", "float16"}:
             raise ValueError(
-                f"Unsupported model_dtype={self.model_dtype!r}. Expected 'float32', 'bfloat16', or 'float16'."
+                f"Unsupported dtype={self.dtype!r}. Expected 'float32', 'bfloat16', or 'float16'."
             )
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}.")

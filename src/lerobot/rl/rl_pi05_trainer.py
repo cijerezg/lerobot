@@ -65,26 +65,24 @@ class PI05Trainer(Trainer):
     def freeze_model(self, policy: nn.Module, cfg) -> None:
         """
         Layer-granular freeze following cfg.policy.trainable_params.
-        Mirrors the inline freeze block in offline_learner_pi05.py.
+        See TrainableParamsConfig for the schema and implicit rules.
         """
         tp = cfg.policy.trainable_params
         critic_depth = cfg.policy.critic_llm_depth
 
-        lm_layers = (
-            list(range(tp.language_from_layer, _LANGUAGE_MODEL_DEPTH))
-            if tp.language_from_layer is not None else []
-        )
-        vt_layers = (
-            list(range(tp.vision_encoder_from_layer.vision_tower, _VISION_TOWER_DEPTH))
-            if tp.vision_encoder_from_layer.vision_tower is not None else []
-        )
+        vision_on = tp.vision_from_layer is not None
+        language_on = tp.language_from_layer is not None
+        critic_vision_on = tp.critic_vision_from_layer is not None
+
+        vt_layers = list(range(tp.vision_from_layer, _VISION_TOWER_DEPTH)) if vision_on else []
+        lm_layers = list(range(tp.language_from_layer, _LANGUAGE_MODEL_DEPTH)) if language_on else []
         cr_layers = (
             list(range(tp.critic_language_from_layer, critic_depth))
             if tp.critic_language_from_layer is not None else []
         )
         cr_vt_layers = (
-            list(range(tp.critic_vision_encoder_from_layer.vision_tower, _CRITIC_VISION_TOWER_DEPTH))
-            if tp.critic_vision_encoder_from_layer.vision_tower is not None else []
+            list(range(tp.critic_vision_from_layer, _CRITIC_VISION_TOWER_DEPTH))
+            if critic_vision_on else []
         )
 
         for name, param in policy.named_parameters():
@@ -95,23 +93,21 @@ class PI05Trainer(Trainer):
                 "time_mlp_in" in name or
                 "time_mlp_out" in name or
                 "gemma_expert" in name or
-                # Actor vision encoder
-                (tp.vision_encoder_from_layer.multi_modal_projector
-                 and "paligemma" in name and "multi_modal_project" in name) or
+                # Actor vision: ViT layers >= N, plus projector (tied to vision_on)
+                (vision_on and "paligemma" in name and "multi_modal_project" in name) or
                 ("paligemma" in name and "vision_tower" in name
                  and any(f".{i}." in name for i in vt_layers)) or
-                # Actor language model
+                # Actor language: blocks >= N, plus final norm (tied to language_on)
                 ("language_model" in name and any(f".{i}." in name for i in lm_layers)) or
-                ("language_model.norm" in name and bool(lm_layers)) or
+                ("language_model.norm" in name and language_on) or
                 # Critic value head + queries — always trainable
                 "critic.norm" in name or
                 "critic.value_head" in name or
                 "critic.value_queries" in name or
                 "critic.bin_logit_head" in name or
                 ("critic.layers" in name and any(f".{i}." in name for i in cr_layers)) or
-                # Critic vision encoder
-                (tp.critic_vision_encoder_from_layer.multi_modal_projector
-                 and name.startswith("critic.") and "multi_modal_project" in name) or
+                # Critic vision: ViT layers >= N, plus projector (tied to critic_vision_on)
+                (critic_vision_on and name.startswith("critic.") and "multi_modal_project" in name) or
                 (name.startswith("critic.vision_tower")
                  and any(f".{i}." in name for i in cr_vt_layers))
             )
@@ -120,8 +116,8 @@ class PI05Trainer(Trainer):
         return [
             {
                 "params": [p for p in policy.actor.parameters() if p.requires_grad],
-                "lr": cfg.policy.actor_lr,
-                "name": "actor",
+                "lr": cfg.policy.optimizer_lr,
+                "name": "policy",
             },
             {
                 "params": [p for p in policy.critic_ensemble.parameters() if p.requires_grad],
@@ -151,10 +147,8 @@ class PI05Trainer(Trainer):
             cfg=cfg,
             dataset_repo_id=kwargs.get("dataset_repo_id"),
             gradient_accumulation_steps=cfg.policy.gradient_accumulation_steps,
-            clip_grad_norm_value=cfg.policy.grad_clip_norm,
+            clip_grad_norm_value=cfg.policy.optimizer_grad_clip_norm,
             cast_to_bf16_fn=kwargs.get("cast_to_bf16_fn"),
-            use_amp=kwargs.get("use_amp", False),
-            scaler=kwargs.get("scaler"),
         )
 
     def compute_advantage(
@@ -265,11 +259,9 @@ class PI05Trainer(Trainer):
             dataset_repo_id=kwargs.get("dataset_repo_id"),
             gradient_accumulation_steps=cfg.policy.gradient_accumulation_steps,
             policy_update_freq=cfg.policy.policy_update_freq,
-            clip_grad_norm_value=cfg.policy.grad_clip_norm,
+            clip_grad_norm_value=cfg.policy.optimizer_grad_clip_norm,
             dataset=dataset,
             cast_to_bf16_fn=kwargs.get("cast_to_bf16_fn"),
-            use_amp=kwargs.get("use_amp", False),
-            scaler=kwargs.get("scaler"),
             preprocessor=preprocessor,
         )
 

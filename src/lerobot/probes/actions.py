@@ -54,6 +54,7 @@ from lerobot.probes.utils import (
     ax_style,
     frame_colors_rgba,
     get_frame_data,
+    dataset_display_name,
     get_subtask_idx,
     load_extra_dataset,
     makedirs,
@@ -723,7 +724,7 @@ def run(adapter, root_dataset, cfg, output_dir):
             raise ValueError("collect mode requires adapter and root_dataset.")
         pca_dir = os.path.join(output_dir, "pca_variance")
         makedirs(pca_dir)
-        root_name = os.path.basename(os.path.normpath(cfg.dataset.root))
+        root_name = dataset_display_name(root_dataset, cfg.dataset.root)
 
         ref_samples = sample_episodes_evenly(
             root_dataset,

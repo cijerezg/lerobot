@@ -322,8 +322,6 @@ def _update_critic(
     gradient_accumulation_steps: int,
     clip_grad_norm_value: float,
     cast_to_bf16_fn,
-    use_amp: bool,
-    scaler
 ) -> dict:
     accum_loss_critic = 0.0
     accum_loss_critic_ce = 0.0
@@ -356,20 +354,11 @@ def _update_critic(
         )
 
         # Forward Critic
-
-        if use_amp:
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                critic_output = policy.forward(forward_batch_critic, model="critic")
-                loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
-        else:
-            critic_output = policy.forward(forward_batch_critic, model="critic")
-            loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
+        critic_output = policy.forward(forward_batch_critic, model="critic")
+        loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
 
         # Backward
-        if scaler:
-            scaler.scale(loss_critic).backward()
-        else:
-            loss_critic.backward()
+        loss_critic.backward()
             
         # Accumulate metrics
         accum_loss_critic += critic_output["loss_critic"].detach().item()
@@ -660,7 +649,7 @@ def _update_actor(
     actor_infos = {}
     
     for _ in range(policy_update_freq):
-        optimizers["actor"].zero_grad(set_to_none=True)
+        optimizers["policy"].zero_grad(set_to_none=True)
         
         accum_loss_actor = 0.0
         accum_flow_loss = 0.0
@@ -795,7 +784,7 @@ def _update_actor(
 
         # Step Actor Optimizer
         if scaler:
-            scaler.unscale_(optimizers["actor"])
+            scaler.unscale_(optimizers["policy"])
         
         actor_grad_norm = torch.nn.utils.clip_grad_norm_(
             parameters=policy.actor.parameters(),
@@ -803,13 +792,13 @@ def _update_actor(
         ).item()
         
         if scaler:
-            scaler.step(optimizers["actor"])
+            scaler.step(optimizers["policy"])
             scaler.update()
         else:
-            optimizers["actor"].step()
+            optimizers["policy"].step()
             
         # Free actor gradients immediately to save memory for next steps
-        optimizers["actor"].zero_grad(set_to_none=True)
+        optimizers["policy"].zero_grad(set_to_none=True)
             
         # Aggregate Actor Metrics
         all_advantage_values = torch.cat(advantage_values_list, dim=0)
@@ -1071,9 +1060,9 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
                 logging.warning("use_dataset_stats is True but no dataset provided! Stats will be None.")
 
     # 2. Check if we are loading the base model (which implies we should use dataset stats)
-    elif "pi05_base" in cfg.policy.pi05_checkpoint:
+    elif "pi05_base" in cfg.policy.checkpoint_path:
         if is_main_process:
-            logging.info(f"Loading base model '{cfg.policy.pi05_checkpoint}'. Using dataset stats.")
+            logging.info(f"Loading base model '{cfg.policy.checkpoint_path}'. Using dataset stats.")
         if dataset is not None:
             dataset_stats = dataset.meta.stats
         else:
@@ -1081,9 +1070,9 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
                 logging.warning("Loading base model but no dataset provided! Stats will be None.")
 
     # 3. Otherwise, try to load stats from the checkpoint
-    elif cfg.policy.pi05_checkpoint:
+    elif cfg.policy.checkpoint_path:
         try:
-            checkpoint_path = Path(cfg.policy.pi05_checkpoint)
+            checkpoint_path = Path(cfg.policy.checkpoint_path)
             config_path = checkpoint_path / f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             
             if is_main_process:

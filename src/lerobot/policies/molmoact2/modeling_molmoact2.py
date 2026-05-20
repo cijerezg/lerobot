@@ -734,7 +734,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             revision=self.config.checkpoint_revision,
             force_download=bool(self.config.checkpoint_force_download),
         )
-        model_dtype = _torch_dtype(self.config.model_dtype)
+        model_dtype = _torch_dtype(self.config.dtype)
         self.model = AutoModelForImageTextToText.from_pretrained(
             checkpoint_location,
             trust_remote_code=self.config.trust_remote_code,
@@ -934,7 +934,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return groups
 
     def _model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        compute_dtype = _torch_dtype(self.config.model_dtype)
+        compute_dtype = _torch_dtype(self.config.dtype)
         return {
             key: value.to(dtype=compute_dtype) if value.is_floating_point() else value
             for key, value in batch.items()
@@ -1325,7 +1325,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
         timesteps: Tensor | None = None,
         noise: Tensor | None = None,
         reduction: str = "mean",
-    ) -> tuple[Tensor, Tensor]:
+        return_diagnostics: bool = False,
+    ) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, dict[str, Tensor]]:
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
         backbone = self._backbone()
@@ -1441,7 +1442,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             key_states, value_states = self._decoder_layer_kv_outputs(layer_outputs, output_attentions=False)
             key_states = backbone._cache_to_sequence(key_states)
             value_states = backbone._cache_to_sequence(value_states)
-            if self.config.enable_knowledge_insulation:
+            if self.config.knowledge_insulation:
                 key_states = key_states.detach()
                 value_states = value_states.detach()
 
@@ -1495,9 +1496,27 @@ class MolmoAct2Policy(PreTrainedPolicy):
         loss = self._apply_action_chunk_padding_mask(loss, batch.get("action_horizon_is_pad"))
         if self.config.mask_action_dim_padding:
             loss = self._apply_action_dim_padding_mask(loss, batch.get("action_dim_is_pad"))
-        loss = loss.reshape(batch_size, -1).mean(dim=1)
+        loss_by_example = loss.reshape(batch_size, -1).mean(dim=1)
+        diagnostics: dict[str, Tensor] = {}
+        if return_diagnostics:
+            loss_diag = loss.detach().float()
+            diagnostics = {
+                "flow_loss_raw": loss_diag,
+                "flow_loss_per_sample": loss_by_example.detach().float(),
+                "flow_loss_per_timestep": loss_diag.reshape(batch_size, num_flow_timesteps, -1).mean(dim=-1),
+                "flow_timesteps": timesteps.detach().float(),
+                "flow_loss_per_action_step": loss_diag.reshape(
+                    batch_size,
+                    num_flow_timesteps,
+                    actions.shape[1],
+                    -1,
+                ).mean(dim=(1, 3)),
+            }
+        loss = loss_by_example
         if reduction == "mean":
             loss = loss.mean()
+        if return_diagnostics:
+            return loss, hidden_states, diagnostics
         return loss, hidden_states
 
     def _discrete_token_weights(self, valid_positions: Tensor) -> Tensor | None:
@@ -1942,6 +1961,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self,
         batch: dict[str, Tensor],
         reduction: str = "mean",
+        return_diagnostics: bool = False,
     ) -> tuple[Tensor, dict[str, Any]]:
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
@@ -1968,20 +1988,33 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 metrics["discrete_z_loss"] = discrete_z_loss.detach().float().mean().item()
 
         elif self.config.action_mode == "continuous":
-            flow_loss, _ = self._compute_flow_matching_loss_joint_per_layer(
+            flow_result = self._compute_flow_matching_loss_joint_per_layer(
                 batch=batch,
                 model_inputs=model_inputs,
                 reduction=reduction,
+                return_diagnostics=return_diagnostics,
             )
+            if return_diagnostics:
+                flow_loss, _, flow_diagnostics = flow_result
+            else:
+                flow_loss, _ = flow_result
+                flow_diagnostics = {}
             losses.append(flow_loss)
             metrics["action_flow_loss"] = flow_loss.detach().float().mean().item()
+            metrics.update(flow_diagnostics)
 
         else:
-            flow_loss, hidden_states = self._compute_flow_matching_loss_joint_per_layer(
+            flow_result = self._compute_flow_matching_loss_joint_per_layer(
                 batch=batch,
                 model_inputs=model_inputs,
                 reduction=reduction,
+                return_diagnostics=return_diagnostics,
             )
+            if return_diagnostics:
+                flow_loss, hidden_states, flow_diagnostics = flow_result
+            else:
+                flow_loss, hidden_states = flow_result
+                flow_diagnostics = {}
             outputs = types.SimpleNamespace(last_hidden_state=hidden_states)
             discrete_ce_loss, discrete_z_loss = self._discrete_loss_from_backbone_outputs(
                 batch, outputs, reduction=reduction
@@ -1995,9 +2028,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 metrics["discrete_z_loss"] = discrete_z_loss.detach().float().mean().item()
             losses.append(flow_loss)
             metrics["action_flow_loss"] = flow_loss.detach().float().mean().item()
+            metrics.update(flow_diagnostics)
 
         loss = torch.stack(losses).sum(dim=0)
         metrics["loss"] = loss.detach().float().mean().item()
+        if reduction == "none" and return_diagnostics:
+            metrics["loss_raw"] = loss.detach().float()
+            if "discrete_ce_loss" in metrics and isinstance(discrete_ce_loss, torch.Tensor):
+                metrics["discrete_ce_loss_raw"] = discrete_ce_loss.detach().float()
+            if "discrete_z_loss" in metrics and discrete_z_loss is not None:
+                metrics["discrete_z_loss_raw"] = discrete_z_loss.detach().float()
         return loss, metrics
 
     @torch.no_grad()
@@ -2011,7 +2051,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         inference_action_mode = self._resolve_inference_action_mode(kwargs.get("inference_action_mode"))
         num_steps = kwargs.get("num_steps", getattr(self.config, "num_inference_steps", None))
         generator = kwargs.get("generator")
-        model_dtype = _torch_dtype(self.config.model_dtype)
+        model_dtype = _torch_dtype(self.config.dtype)
         device = next(self.parameters()).device
         batch_size = int(next(iter(model_inputs.values())).shape[0])
         if generator is None:

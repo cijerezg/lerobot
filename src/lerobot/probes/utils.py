@@ -75,6 +75,14 @@ def load_extra_dataset(repo_id: str, root: str) -> LeRobotDataset:
     return ds
 
 
+def dataset_display_name(dataset, fallback_root: str | os.PathLike | None = None) -> str:
+    """Return a stable short name for a dataset object or fallback root."""
+    root = getattr(dataset, "root", None) or fallback_root
+    if root is None:
+        return "dataset"
+    return os.path.basename(os.path.normpath(os.fspath(root)))
+
+
 def get_subtask_idx(dataset, global_idx: int) -> int:
     """Read the subtask index from a dataset frame; returns -1 if not present."""
     frame_row = dataset.hf_dataset[global_idx]

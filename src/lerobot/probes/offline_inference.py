@@ -96,6 +96,22 @@ def smooth_actions(actions: torch.Tensor, window_size: int) -> torch.Tensor:
     return torch.nn.functional.conv1d(x, weight).squeeze(1).t()
 
 
+def _policy_checkpoint_path(policy_cfg) -> str:
+    for field in ("checkpoint_path", "pi05_checkpoint", "pretrained_path"):
+        value = getattr(policy_cfg, field, None)
+        if value:
+            return str(value)
+    return "unknown"
+
+
+def _set_policy_checkpoint_path(policy_cfg, checkpoint: str) -> bool:
+    for field in ("checkpoint_path", "pi05_checkpoint", "pretrained_path"):
+        if hasattr(policy_cfg, field):
+            setattr(policy_cfg, field, checkpoint)
+            return True
+    return False
+
+
 def _load_dataset(cfg):
     """Load dataset, honouring cfg.val_dataset_path if set (works for both policies)."""
     from lerobot.datasets.factory import make_dataset
@@ -373,7 +389,7 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
         or getattr(p, "offline_inference_n_frames", 5)
     )
     chunk_size = adapter.chunk_size
-    path_str = path_str or str(getattr(cfg.policy, "pi05_checkpoint", None) or "unknown")
+    path_str = path_str or _policy_checkpoint_path(cfg.policy)
 
     samples = build_sample_list(
         dataset,
@@ -429,7 +445,7 @@ def eval_cli(cfg: EvalOfflineConfig):
     os.makedirs(output_dir, exist_ok=True)
     logging.info(f"Output dir: {output_dir}")
 
-    path_a = str(getattr(cfg.policy, "pi05_checkpoint", None) or "unknown")
+    path_a = _policy_checkpoint_path(cfg.policy)
     dataset = _load_dataset(cfg)
 
     logging.info("Loading policy A …")
@@ -439,11 +455,11 @@ def eval_cli(cfg: EvalOfflineConfig):
     if checkpoint_b:
         del adapter_a
         torch.cuda.empty_cache()
-        # ``pi05_checkpoint`` is the field both adapters honour; molmoact2 reads
-        # its checkpoint via the policy config's HF hub id. Only override if the
-        # field exists on the cfg.
-        if hasattr(cfg.policy, "pi05_checkpoint"):
-            cfg.policy.pi05_checkpoint = checkpoint_b
+        if not _set_policy_checkpoint_path(cfg.policy, checkpoint_b):
+            raise ValueError(
+                "eval_checkpoint_b was set, but this policy config has no known checkpoint field "
+                "(checkpoint_path, pi05_checkpoint, or pretrained_path)."
+            )
         logging.info("Loading policy B …")
         adapter_b = ProbablePolicy.for_config(cfg, device, dataset=dataset)
         # B writes to a sibling subdir; the original overlay-in-one-plot

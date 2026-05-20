@@ -37,7 +37,7 @@ dataset:
 # -----------------------------------------------------------------------------
 # RL flags (shared offline + online)
 # -----------------------------------------------------------------------------
-skip_critic: true                      # skip critic train step; pretrained critic still runs forward for logging
+skip_critic: true                      # skip critic updates; golden samples use fixed positive advantage
 treat_main_dataset_as_golden: true     # select true only if root dataset is of very high quality
 
 

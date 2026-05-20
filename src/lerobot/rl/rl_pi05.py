@@ -21,6 +21,7 @@ from lerobot.policies.pi05_full.modeling_pi05 import PI05FullPolicy, PI05Pytorch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05_full.processor_pi05 import Pi05FullPrepareStateTokenizerProcessorStep
 from lerobot.processor import TokenizerProcessorStep
+from lerobot.rl.rl_trainer import TrainableParamsConfig
 from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
@@ -39,18 +40,6 @@ from lerobot.policies.pi05_full.modeling_pi05 import make_att_2d_masks
         
 
 
-@dataclass
-class VisionEncoderTrainConfig:
-    vision_tower: int | None = None      # None=frozen, int=train from this layer index onwards
-    multi_modal_projector: bool = False  # True=train all, False=frozen
-
-@dataclass
-class TrainableParamsConfig:
-    vision_encoder_from_layer: VisionEncoderTrainConfig = field(default_factory=VisionEncoderTrainConfig)
-    language_from_layer: int | None = None         # None=frozen, int=train layers >= this index
-    critic_language_from_layer: int | None = None  # same; critic norm/value_head/queries always on
-    critic_vision_encoder_from_layer: VisionEncoderTrainConfig = field(default_factory=VisionEncoderTrainConfig)
-
 @PreTrainedConfig.register_subclass("pi05_rl")
 @dataclass
 class PI05RLConfig(PI05FullConfig):
@@ -62,7 +51,6 @@ class PI05RLConfig(PI05FullConfig):
     drop_n_last_frames: int = 2  # Drop the last n frames from the replay buffer
     critic_target_update_weight: float = 0.005
     critic_target_update_every: int = 1  # Run Polyak every N optimizer steps (batch updates with proportionally larger τ to clear BF16 ULP)
-    num_critics: int = 1
     discount: float = 0.97
     
     # Reward parameters
@@ -79,12 +67,12 @@ class PI05RLConfig(PI05FullConfig):
     online_step_before_learning: int = 100
     policy_update_freq: int = 1
     critic_warmup_steps: int = 0
-    grad_clip_norm: float = 40.0
+    optimizer_grad_clip_norm: float = 40.0
     gradient_accumulation_steps: int = 1
-    
+
     # Learning rates
     critic_lr: float = 3e-4
-    actor_lr: float = 3e-4
+    optimizer_lr: float = 3e-4
     
     # UTD
     utd_ratio: int = 1
@@ -104,7 +92,6 @@ class PI05RLConfig(PI05FullConfig):
     value_support_min: float = -1.2
     value_support_max: float = 0.0
     hl_gauss_sigma_ratio: float = 5.0  # σ in units of bin width
-    use_distributional_critic: bool = True  # toggle CE vs MSE loss; metrics always log both
 
     # Trainable parameter configuration
     trainable_params: TrainableParamsConfig = field(default_factory=TrainableParamsConfig)
@@ -132,7 +119,7 @@ class PI05RLConfig(PI05FullConfig):
     advantage_scaling: float = 1.0
     
     # Checkpoint
-    pi05_checkpoint: str | None = None
+    checkpoint_path: str | None = None
     
     # Dataset stats (inherited from PreTrainedConfig? No, SAC defines it explicitly)
     action_encoding_stats_path: str | None = None  # Path to precomputed action encoding stats (.pt)
@@ -157,7 +144,7 @@ class PI05RLConfig(PI05FullConfig):
         return MultiAdamConfig(
             weight_decay=self.optimizer_weight_decay,
             optimizer_groups={
-                "actor": {"lr": self.actor_lr},
+                "policy": {"lr": self.optimizer_lr},
                 "critic": {"lr": self.critic_lr},
             },
         )
@@ -771,16 +758,16 @@ class PI05RLPolicy(PI05FullPolicy):
         # Initialize Temperature (Alpha) - Unused but kept for interface
         self.actor = self.model
 
-        # Load pretrained weights if pi05_checkpoint is specified
-        if config.pi05_checkpoint:
-            print(f"Loading pretrained Pi05 weights from {config.pi05_checkpoint}")
-            
+        # Load pretrained weights if checkpoint_path is specified
+        if config.checkpoint_path:
+            print(f"Loading pretrained Pi05 weights from {config.checkpoint_path}")
+
             # Check if it's an RL checkpoint (has critic or advantage_mlp)
             # We peek at the state dict first
             from safetensors.torch import load_file
             import os
-            
-            checkpoint_path = config.pi05_checkpoint
+
+            checkpoint_path = config.checkpoint_path
             if os.path.isdir(checkpoint_path):
                 # Try to find model.safetensors or pytorch_model.bin
                 if os.path.exists(os.path.join(checkpoint_path, "model.safetensors")):
@@ -879,7 +866,7 @@ class PI05RLPolicy(PI05FullPolicy):
                 print("Loading as vanilla Pi05 checkpoint")
                 # Load a vanilla PI05Policy to get the pretrained weights
                 temp_policy = PI05FullPolicy.from_pretrained(
-                    config.pi05_checkpoint, 
+                    config.checkpoint_path,
                     config=config,
                     strict=False
                 )
@@ -1184,12 +1171,8 @@ class PI05RLPolicy(PI05FullPolicy):
             mse_per_sample = F.mse_loss(current_v, target_v, reduction="none").squeeze(-1)  # [B]
             loss_critic_mse = mse_per_sample.mean()
 
-            if self.config.use_distributional_critic:
-                loss_critic = loss_critic_ce
-                loss_critic_raw = ce_per_sample.detach().unsqueeze(-1)
-            else:
-                loss_critic = loss_critic_mse
-                loss_critic_raw = mse_per_sample.detach().unsqueeze(-1)
+            loss_critic = loss_critic_ce
+            loss_critic_raw = ce_per_sample.detach().unsqueeze(-1)
 
             td_error = torch.abs(current_v - target_v)
 

@@ -63,7 +63,7 @@ rl_actor_async.py  ←gRPC→  rl_learner.py
 | `rl_pi05_trainer.py` | `PI05Trainer` — thin wrapper over existing `pi05_train_utils.py` |
 | `rl_molmoact2.py` | `MolmoAct2RLConfig`, `MolmoAct2Critic`, and `MolmoAct2RLPolicy` |
 | `rl_molmoact2_trainer.py` | `MolmoAct2Trainer` — all abstract methods implemented |
-| `scripts/rl_offline.py` | Generic offline training loop (BC and offline RL) |
+| `scripts/rl_offline.py` | Generic offline training loop (actor-only and critic-trained) |
 | `rl_actor_async.py` | Generic online actor entrypoint; RTC is the default runtime |
 | `rtc_actor_runtime.py` | Generic RTC `ActionQueue` actor runtime ported from tested PI05 path |
 | `rl_learner.py` | Generic online learner |
@@ -124,14 +124,14 @@ advantage_scaling: 0.2
 
 ## Running
 
-### Offline BC (MolmoAct2, skip_critic: true)
+### Offline Actor-Only (MolmoAct2, skip_critic: true)
 ```bash
 cd lerobot
 uv run python -m lerobot.rl.rl_offline \
     --config_path src/lerobot/rl/config_rl.yaml
 ```
 
-### Offline RL / RECAP (skip_critic: false)
+### Offline Critic-Trained / RECAP (skip_critic: false)
 Edit `config_rl.yaml`: set `skip_critic: false`, then same command.
 
 ### Online (distributed)
@@ -151,7 +151,7 @@ Make sure `actor_learner_config` is uncommented in `config_rl.yaml` and `learner
 ## TODO
 
 ### Immediate (before first run)
-- [ ] **Smoke test offline BC** — run `scripts/rl_offline.py` with `skip_critic: true`, verify flow loss decreases over 500 steps.
+- [ ] **Smoke test offline actor-only** — run `scripts/rl_offline.py` with `skip_critic: true`, verify flow loss decreases over 500 steps.
 - [ ] **Smoke test RECAP** — run with `skip_critic: false`, verify critic CE loss decreases and `critic_value_mean` moves away from init.
 - [ ] **PI05 regression** — run `scripts/rl_offline.py` with `policy.type: pi05_rl`, verify same loss curve as original `learner_pi05.py`.
 

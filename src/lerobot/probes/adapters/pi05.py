@@ -158,6 +158,7 @@ class Pi05Adapter(ProbablePolicy):
         timestep: float = 0.5,
         layers: list[int] | None = None,
         requires_grad: bool = False,
+        gt_actions: Tensor | None = None,  # noqa: ARG002 - pi05 Jacobian uses ||pred action||
     ) -> AttentionCaptureResult:
         # Top-level dispatch — visualization vs Jacobian (causal map) capture.
         if requires_grad:

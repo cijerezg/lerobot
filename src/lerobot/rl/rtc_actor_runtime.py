@@ -364,15 +364,23 @@ def rtc_inference_worker(
                 original_actions = actions_chunk.squeeze(0).clone()[..., :action_dim]
                 action_encoding = getattr(policy.config, "action_encoding", "absolute")
 
+                # Keep original_actions normalized for RTC leftovers. The queue's
+                # processed_actions are robot-space actions, matching the PI05
+                # reference path before filtering/clamping and env execution.
+                unnormalized_actions = (
+                    postprocessor(original_actions)
+                    if postprocessor is not None
+                    else original_actions.clone()
+                )
+
                 if anchor_now is not None and action_encoding in {"anchor", "delta"}:
-                    d_abs = postprocessor(original_actions) if postprocessor is not None else original_actions
                     anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
                     if action_encoding == "anchor":
-                        processed_actions = d_abs + anchor_sq.to(d_abs.device)[None, :]
+                        processed_actions = unnormalized_actions + anchor_sq.to(unnormalized_actions.device)[None, :]
                     else:
-                        processed_actions = torch.cumsum(d_abs, dim=0) + anchor_sq.to(d_abs.device)[None, :]
+                        processed_actions = torch.cumsum(unnormalized_actions, dim=0) + anchor_sq.to(unnormalized_actions.device)[None, :]
                 else:
-                    processed_actions = original_actions.clone()
+                    processed_actions = unnormalized_actions
 
                 processed_actions = apply_butterworth_filter(processed_actions)
 
@@ -442,6 +450,7 @@ def rtc_env_worker(
     trainer: Trainer | None = None,
 ) -> None:
     """Environment interaction worker copied from the tested PI05 RTC path."""
+    _ = postprocessor  # queued actions are already postprocessed in rtc_inference_worker
     try:
         logger.info("[RTC_ENV] Thread started.")
         action_interval = 1.0 / cfg.env.fps
@@ -538,8 +547,6 @@ def rtc_env_worker(
                 action = action_queue.get()
                 if action is not None:
                     action = action[..., :action_dim].to(device)
-                    if postprocessor is not None and getattr(cfg.policy, "action_encoding", "absolute") == "absolute":
-                        action = postprocessor(action)
                 else:
                     action = _raw_joint_action(online_env, action_dim, device)
 

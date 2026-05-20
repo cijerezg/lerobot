@@ -2,7 +2,7 @@
 # Unified RL training config  —  PI05 and MolmoAct2
 # =============================================================================
 # Used by:
-#   - lerobot/src/lerobot/scripts/rl_offline.py   (offline BC / offline RL)
+#   - lerobot/src/lerobot/rl/rl_offline.py   (offline BC / offline RL)
 #   - lerobot/src/lerobot/rl/rl_learner.py   (online distributed learner)
 #   - lerobot/src/lerobot/rl/inference_async.py  (online distributed actor)
 #
@@ -24,6 +24,7 @@
 # -----------------------------------------------------------------------------
 offline_output_dir: outputs/molmoact2_bc_offline
 batch_size: 8
+buffer_cache_dir: outputs/buffer_cache-v7
 
 
 # -----------------------------------------------------------------------------
@@ -34,22 +35,56 @@ dataset:
   repo_id: cijerezg/yellow-car-offline-training-v2
   use_imagenet_stats: false
   max_episodes: null
+  additional_offline_dataset_paths: []   # datasets generated from inference
 
 
 # -----------------------------------------------------------------------------
 # RL flags (shared)
 # -----------------------------------------------------------------------------
-skip_critic: true
-treat_main_dataset_as_golden: false
+skip_critic: false
+treat_main_dataset_as_golden: true
 
 
 # -----------------------------------------------------------------------------
 # Validation (shared)
 # -----------------------------------------------------------------------------
-val_dataset_path: null
+val_dataset_path: outputs/annotated-dataset-validation-v7
 val_split: 0.0
 val_freq: 500
-val_on_start: false
+val_on_start: true     # run probes at step 0 to catch wiring bugs before training amortizes them
+
+
+# -----------------------------------------------------------------------------
+# Probes (run periodically inside rl_offline.py at val_freq)
+# -----------------------------------------------------------------------------
+# All probes enabled for validation diagnostics.
+# Note: critic probes still skip themselves when skip_critic=true / no critic is present.
+probe_parameters:
+  enable_actions: true
+  enable_offline_inference: true
+  enable_attention: true
+  enable_representations: true
+  enable_spatial_memorization: true
+  enable_action_drift_jacobian: true
+  enable_spatial_memorization_jacobian: true
+  enable_critic_values_distribution: true
+
+  # Cheap defaults — 1 episode, few frames — surfaces wiring bugs quickly.
+  # Bump these once the probes are validated.
+  max_episodes: 2
+  n_frames_per_episode: 16
+  ref_max_episodes: 3
+  ref_n_frames_per_episode: 32
+  random_seed: 42
+  timestep: 0.5
+  mode: all
+
+  # Layers / subsampling (relevant once attention / spatial / jacobian are on)
+  spatial_layers: "0"
+  attn_eval_subsample: 5
+
+  # offline_inference selects N random frames (see EvalOfflineConfig)
+  offline_inference_n_frames: 5
 
 
 # =============================================================================
@@ -60,22 +95,53 @@ policy:
 
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
-  checkpoint_path: /home/user/.cache/huggingface/hub/models--allenai--MolmoAct2-SO100_101/snapshots/d341b9e85ae433e0b0e4a0f871260658a71e443f
-
+  checkpoint_path: outputs/MolmoAct2-SO100_101
+  
   # ---- Training mode --------------------------------------------------------
-  # train_action_expert_only requires action_mode=continuous.
-  # Change to enable_lora_vlm=true (+ action_mode: both) for full fine-tuning.
-  action_mode: continuous
-  train_action_expert_only: true        # freeze VLM; train flow-matching head only
+  # KI-style training: VLM trained by discrete CE on FAST tokens, action expert
+  # trained by the flow loss. knowledge_insulation detaches K/V going
+  # into the action expert so its gradients do not leak back into the VLM.
+  # Set train_action_expert_only=true and action_mode=continuous to fall back
+  # to the original "freeze VLM, train action expert only" recipe.
+  action_mode: both
+  inference_action_mode: continuous
+  discrete_action_tokenizer: /home/user/Documents/Research/RL/LeRobot/outputs/MolmoAct-FAST-tokenizer
+  knowledge_insulation: true
+  train_action_expert_only: false
+  freeze_embedding: true                # we never train token embeddings
   gradient_checkpointing: true
+
+  # ---- Per-submodule freeze schedule ----------------------------------------
+  # null = freeze; int N = train layers with index >= N.
+  # ViT depth = 25 (resblocks 0..24); language transformer depth = 36.
+  # Implicit rules:
+  #   • vision_from_layer set → image_pooling_2d + image_projector train too
+  #   • language_from_layer set → final layer norm (ln_f) + lm_head train too
+  #   • action expert is always trained
+  # Critic_* knobs are ignored when skip_critic: true.
+  trainable_params:
+    vision_from_layer: null
+    language_from_layer: 18
+    critic_vision_from_layer: null
+    critic_language_from_layer: null
 
   # ---- Normalization --------------------------------------------------------
   norm_tag: so100_so101_molmoact2       # loads norm stats from HF checkpoint
+
+  # ---- Action encoding -----------------------------------------------------
+  # "absolute" (default) | "anchor" | "delta"
+  action_encoding: absolute
+  # Required when action_encoding is anchor/delta; ignored otherwise.
+  action_encoding_stats_path: null
+  # Per-joint safety clamp in degrees. Recommended before hardware runs.
+  action_clamp_limits: null
+  # Example (SO101): [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
 
   # ---- Sequence / chunking --------------------------------------------------
   n_obs_steps: 1
   chunk_size: 30
   n_action_steps: 30
+  num_inference_steps: 5                # flow-matching denoising steps
 
   # ---- Training loop --------------------------------------------------------
   offline_steps: 10000
@@ -94,7 +160,7 @@ policy:
   async_prefetch: false
 
   # ---- Architecture ---------------------------------------------------------
-  model_dtype: bfloat16
+  dtype: bfloat16
 
   # ---- Feature schema -------------------------------------------------------
   normalization_mapping:
@@ -122,6 +188,21 @@ policy:
   online_step_before_learning: 10         # transitions before first gradient step
   weights_push_interval: 180.0            # seconds between learner→actor weight sync
 
+  # ---- Retain update with base weights (periodic EMA pull toward init) ------
+  anchor_alpha: 0.2
+  anchor_every_n_steps: 2000
+  anchor_targets: [policy, critic]        # molmo optimizer group names
+
+  # ---- Inference -----------------------------------------------------------
+  inference_advantage: 1.0                # not yet wired (TODO: thread into build_inference_batch)
+  rtc_config:                             # real-time chunking
+    enabled: true
+    execution_horizon: 10
+    prefix_attention_schedule: LINEAR
+    max_guidance_weight: 10.0
+    debug: false
+    debug_maxlen: 100
+
   # ---- Distributional critic (online RL; skip_critic: true → ignored) -------
   critic_llm_depth: 12
   num_value_bins: 101
@@ -139,8 +220,8 @@ policy:
 
   # ---- Devices --------------------------------------------------------------
   device: cuda
+  actor_device: cuda:0
   learner_device: cuda:0
-  storage_device: cpu
 
   # ---- Distributed runtime (online actor↔learner) ---------------------------
   # Uncomment and fill in for distributed online training.
@@ -163,27 +244,23 @@ policy:
 # policy:
 #   type: pi05_rl
 #   task: "Pick up the red truck and put it in the bowl"
-#   pi05_checkpoint: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
+#   checkpoint_path: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
 #
 #   gradient_accumulation_steps: 2
 #
 #   trainable_params:
-#     vision_encoder_from_layer:
-#       vision_tower: 5
-#       multi_modal_projector: true
-#     language_from_layer: 5
+#     vision_from_layer: 5         # train SigLIP layers >= 5 (depth 27); projector trains too
+#     language_from_layer: 5       # train Gemma blocks >= 5 (depth 18); ln_f trains too
+#     critic_vision_from_layer: null
 #     critic_language_from_layer: 5
-#     critic_vision_encoder_from_layer:
-#       vision_tower: null
-#       multi_modal_projector: false
 #
 #   loss_weight_flow: 1.0
 #   loss_weight_action_ce: 1.0
 #   loss_weight_subtask_ce: 1.0
-#   actor_lr: 0.00005
+#   optimizer_lr: 0.00005
 #   critic_lr: 0.0001
 #   optimizer_weight_decay: 0.1
-#   grad_clip_norm: 2.0
+#   optimizer_grad_clip_norm: 2.0
 #
 #   reward_normalization_constant: 10.0
 #   terminal_failure_reward: -15.0
@@ -191,14 +268,12 @@ policy:
 #
 #   anchor_alpha: 0.2
 #   anchor_every_n_steps: 2000
-#   anchor_targets: [actor, critic]
+#   anchor_targets: [policy, critic]
 #
-#   use_distributional_critic: true
 #   num_value_bins: 201
 #   value_support_min: -2.0
 #   value_support_max: 0.0
 #   hl_gauss_sigma_ratio: 8
-#   num_critics: 1
 #   critic_target_update_weight: 0.02
 #   critic_target_update_every: 4
 #   discount: 0.97
@@ -234,7 +309,6 @@ policy:
 #   use_separate_critic: true
 #   dtype: bfloat16
 #   gradient_checkpointing: true
-#   use_amp: false
 #   action_encoding: anchor
 #   action_encoding_stats_path: outputs/stats/action_stats_anchor_annotated_dataset-v4.pt
 #   normalization_mapping:
@@ -287,8 +361,23 @@ seed: 42
 # -----------------------------------------------------------------------------
 log_freq: 20
 save_checkpoint: true
-offline_save_freq: 500
+save_freq: 100                # online checkpoint cadence (optimizer steps)
+offline_save_freq: 500        # offline checkpoint cadence
 use_rerun: false
+
+
+# -----------------------------------------------------------------------------
+# Episode-level logging (online actor)
+# -----------------------------------------------------------------------------
+episode_logging_freq: 4        # log every Nth episode
+episode_save_freq: 10          # save buffer snapshot every Nth episode
+video_logging_cameras: [top, wrist]
+
+
+# -----------------------------------------------------------------------------
+# Dataloader
+# -----------------------------------------------------------------------------
+num_workers: 4
 
 
 # -----------------------------------------------------------------------------

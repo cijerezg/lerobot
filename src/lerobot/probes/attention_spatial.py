@@ -47,7 +47,7 @@ import torch.nn.functional as F
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import build_episode_index, get_frame_data, load_extra_dataset
+from lerobot.probes.utils import build_episode_index, dataset_display_name, get_frame_data, load_extra_dataset
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
@@ -107,6 +107,76 @@ def _upsample_patches(patch_vals: torch.Tensor, n_p: int, img_h: int, img_w: int
                          mode="bicubic", align_corners=False).squeeze()
 
 
+def _pooled_tokens_to_patch_values(
+    per_head_token: torch.Tensor,
+    pooling,
+    patch_grid: int,
+) -> torch.Tensor:
+    """Scatter Molmo pooled-token values back to a crop's ViT patch grid."""
+    pooling_t = torch.as_tensor(pooling, dtype=torch.long)
+    if pooling_t.ndim == 1:
+        pooling_t = pooling_t[:, None]
+    if pooling_t.shape[0] != per_head_token.shape[1]:
+        raise ValueError(
+            f"pooling rows ({pooling_t.shape[0]}) do not match token values ({per_head_token.shape[1]})"
+        )
+
+    n_heads = per_head_token.shape[0]
+    n_patches = int(patch_grid) * int(patch_grid)
+    patch_values = torch.zeros((n_heads, n_patches), dtype=per_head_token.dtype)
+    patch_counts = torch.zeros(n_patches, dtype=per_head_token.dtype)
+    for token_idx in range(pooling_t.shape[0]):
+        valid = pooling_t[token_idx]
+        valid = valid[(valid >= 0) & (valid < n_patches)].unique()
+        if valid.numel() == 0:
+            continue
+        patch_values[:, valid] += per_head_token[:, token_idx : token_idx + 1]
+        patch_counts[valid] += 1.0
+    return patch_values / patch_counts.clamp_min(1.0).unsqueeze(0)
+
+
+def _image_hw_for_segment(result, cam_name: str, fallback_idx: int) -> tuple[int, int]:
+    tensors_by_segment = result.extras.get("image_tensors_by_segment", {})
+    img_t = tensors_by_segment.get(cam_name)
+    if img_t is None and fallback_idx < len(result.image_tensors):
+        img_t = result.image_tensors[fallback_idx]
+    if img_t is None:
+        return 224, 224
+    img_t = img_t.squeeze(0).cpu()
+    return int(img_t.shape[1]), int(img_t.shape[2])
+
+
+def _segment_attention_vector(attn: torch.Tensor, result, cam_name: str, cs, ce):
+    patch_indices = result.extras.get("image_patch_indices_by_segment", {})
+    pooling_by_segment = result.extras.get("image_pooling_by_segment", {})
+
+    indices = patch_indices.get(cam_name)
+    pooling = pooling_by_segment.get(cam_name)
+    if indices is not None and pooling is not None:
+        idx = torch.as_tensor(indices, dtype=torch.long)
+        per_head_token = attn.index_select(dim=2, index=idx).mean(dim=1)
+        patch_grid = int(pooling.get("patch_grid", 0))
+        pooling_rows = pooling.get("pooling")
+        if patch_grid <= 0 or pooling_rows is None:
+            raise ValueError(f"{cam_name}: missing pooled crop metadata")
+        return _pooled_tokens_to_patch_values(per_head_token, pooling_rows, patch_grid), patch_grid
+
+    if indices is not None:
+        n_p = int(len(indices) ** 0.5)
+        if n_p * n_p != len(indices):
+            raise ValueError(f"{cam_name}: patch count {len(indices)} is not square")
+        idx = torch.as_tensor(indices, dtype=torch.long)
+        return attn.index_select(dim=2, index=idx).mean(dim=1), n_p
+
+    if cs is None or ce is None:
+        raise ValueError(f"{cam_name}: missing contiguous segment bounds")
+    patch_count = int(ce - cs)
+    n_p = int(patch_count ** 0.5)
+    if n_p * n_p != patch_count:
+        raise ValueError(f"{cam_name}: patch count {patch_count} is not square")
+    return attn[:, :, cs:ce].mean(dim=1), n_p
+
+
 def _render_heatmap(values, title, img_h, img_w, vmin=None, vmax=None,
                     colormap=cv2.COLORMAP_VIRIDIS):
     if vmin is None:
@@ -151,16 +221,22 @@ def render_stat_panel(stat_map: torch.Tensor, n_heads: int, n_p: int,
 # Save / load cache
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _save_cache(pt_path, raw_results, n_frames, layers, img_h, img_w, n_p):
+def _save_cache(pt_path, raw_results, n_frames, layers, meta_by_key):
     save_dict: dict = {}
+    meta: dict[str, dict[str, int]] = {}
     for (layer_idx, cam_name), stats in raw_results.items():
         prefix = f"L{layer_idx}_action_{cam_name}"
         for stat_name, tensor in stats.items():
             save_dict[f"{prefix}_{stat_name}"] = tensor
+        panel_meta = meta_by_key.get((layer_idx, cam_name), {})
+        meta[prefix] = {
+            "n_p": int(panel_meta.get("n_p", 1)),
+            "img_h": int(panel_meta.get("img_h", 224)),
+            "img_w": int(panel_meta.get("img_w", 224)),
+        }
     save_dict["n_frames"] = torch.tensor(n_frames)
-    save_dict["layers"]   = torch.tensor(layers)
-    save_dict["img_hw"]   = torch.tensor([img_h, img_w])
-    save_dict["n_p"]      = torch.tensor(n_p)
+    save_dict["layers"] = torch.tensor(layers)
+    save_dict["meta"] = meta
     torch.save(save_dict, pt_path)
 
 
@@ -169,34 +245,53 @@ def _load_cache(pt_path):
         return None
     logging.info(f"Loading cached aggregates from {pt_path}")
     save_dict = torch.load(pt_path, map_location="cpu", weights_only=True)
-    img_hw = save_dict["img_hw"]
-    img_h, img_w = int(img_hw[0].item()), int(img_hw[1].item())
-    n_p = int(save_dict["n_p"].item())
 
     raw: dict = {}
     n_heads = None
+    meta_by_prefix = save_dict.get("meta") or {}
+    legacy_img_hw = save_dict.get("img_hw")
+    legacy_n_p = save_dict.get("n_p")
+    meta_by_key: dict[tuple[int, str], dict[str, int]] = {}
+
     for key, tensor in save_dict.items():
-        if key in ("n_frames", "layers", "img_hw", "n_p"):
+        if key in ("n_frames", "layers", "img_hw", "n_p", "meta"):
             continue
         for sn in ("mean", "mean_over_std"):
             if key.endswith(f"_{sn}"):
-                remainder = key[: -len(f"_{sn}")]      # e.g. "L0_action_img1"
+                prefix = key[: -len(f"_{sn}")]      # e.g. "L0_action_img1"
                 # Format: "L{layer}_action_{cam_name}".
-                parts = remainder.split("_", 2)
+                parts = prefix.split("_", 2)
                 layer_idx = int(parts[0][1:])
                 cam_name = parts[2]
                 rkey = (layer_idx, cam_name)
                 raw.setdefault(rkey, {})[sn] = tensor
                 if n_heads is None:
                     n_heads = tensor.shape[0]
+                if rkey not in meta_by_key:
+                    if prefix in meta_by_prefix:
+                        meta_by_key[rkey] = {
+                            "n_p": int(meta_by_prefix[prefix]["n_p"]),
+                            "img_h": int(meta_by_prefix[prefix]["img_h"]),
+                            "img_w": int(meta_by_prefix[prefix]["img_w"]),
+                        }
+                    elif legacy_img_hw is not None and legacy_n_p is not None:
+                        meta_by_key[rkey] = {
+                            "n_p": int(legacy_n_p.item()),
+                            "img_h": int(legacy_img_hw[0].item()),
+                            "img_w": int(legacy_img_hw[1].item()),
+                        }
                 break
-    return raw, n_heads, n_p, img_h, img_w
+    return raw, n_heads, meta_by_key
 
 
-def render_all(raw_results, n_heads, n_p, img_h, img_w, output_dir):
+def render_all(raw_results, n_heads, meta_by_key, output_dir):
     for (layer_idx, cam_name), stats in raw_results.items():
         layer_dir = os.path.join(output_dir, f"L{layer_idx:02d}")
         os.makedirs(layer_dir, exist_ok=True)
+        meta = meta_by_key.get((layer_idx, cam_name), {})
+        n_p = int(meta.get("n_p", 1))
+        img_h = int(meta.get("img_h", 224))
+        img_w = int(meta.get("img_w", 224))
         for stat_name in ("mean", "mean_over_std"):
             panel = render_stat_panel(
                 stats[stat_name], n_heads, n_p, img_h, img_w,
@@ -212,18 +307,18 @@ def render_all(raw_results, n_heads, n_p, img_h, img_w, output_dir):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def collect_aggregates(adapter: ProbablePolicy, dataset, samples, layers, timestep):
-    """Run capture_attention per frame; aggregate per (layer, camera) head maps.
+    """Run capture_attention per frame; aggregate per (layer, image view) head maps.
 
-    Sequential (one frame per call) because ``capture_attention`` is single-batch
-    by API. Batched capture would be a future API extension.
+    Molmo exposes both global image tokens and local crop tokens. Crop tokens are
+    pooled from ViT patches, so they are first scattered back to the crop patch
+    grid before aggregation.
     """
     chunk_size = adapter.chunk_size
 
     # collected[(layer_idx, cam_name)] = list of [H, K] tensors, one per frame
     collected: dict[tuple[int, str], list[torch.Tensor]] = {}
-    img_h = img_w = None
-    n_heads = n_p = None
-    patches_per_cam = None
+    meta_by_key: dict[tuple[int, str], dict[str, int]] = {}
+    n_heads = None
 
     for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
         logging.debug(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
@@ -238,52 +333,49 @@ def collect_aggregates(adapter: ProbablePolicy, dataset, samples, layers, timest
             logging.warning(f"  ep={ep_idx} fr={fr_idx}: no cross-attn captured, skipping.")
             continue
 
-        patch_indices = result.extras.get("image_patch_indices_by_segment", {})
-        cam_segs = [(name, s, e) for name, s, e in result.encoder_segments
-                    if name.startswith("img")]
-        if not cam_segs or (result.patches_per_cam <= 0 and not patch_indices):
+        segment_lookup = {name: (s, e) for name, s, e in result.encoder_segments}
+        overlay_segments = result.extras.get("image_overlay_segments")
+        if overlay_segments:
+            cam_segs = [
+                (str(name), *segment_lookup.get(str(name), (None, None)))
+                for name in overlay_segments
+            ]
+        else:
+            cam_segs = [(name, s, e) for name, s, e in result.encoder_segments
+                        if name.startswith("img")]
+        if not cam_segs:
             logging.warning(
                 f"  ep={ep_idx} fr={fr_idx}: no image patch segments available; "
                 "skipping spatial aggregation for this frame."
             )
             continue
 
-        if img_h is None and result.image_tensors:
-            img_t = result.image_tensors[0][0].cpu()
-            img_h = int(img_t.shape[1])
-            img_w = int(img_t.shape[2])
-        if patches_per_cam is None:
-            if patch_indices:
-                first_indices = next(iter(patch_indices.values()))
-                patches_per_cam = len(first_indices)
-            else:
-                patches_per_cam = result.patches_per_cam or (cam_segs[0][2] - cam_segs[0][1])
-            n_p = int(patches_per_cam ** 0.5) if patches_per_cam > 0 else 1
-            if n_p * n_p != patches_per_cam:
-                logging.warning(
-                    f"  ep={ep_idx} fr={fr_idx}: patch count {patches_per_cam} is not square; "
-                    "skipping spatial aggregation for this frame."
-                )
-                continue
-
         for layer_idx, cross in result.cross_attn_by_layer.items():
             # cross: [B=1, H, n_action, encoder_seq_len]
-            attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)   # [H, n_action, encoder_seq_len]
+            attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)
             if n_heads is None:
                 n_heads = attn.shape[0]
 
-            for cam_name, cs, ce in cam_segs:
-                indices = patch_indices.get(cam_name)
-                if indices is not None:
-                    idx = torch.as_tensor(indices, dtype=torch.long)
-                    vec = attn.index_select(dim=2, index=idx).mean(dim=1)
-                else:
-                    # Mean over action queries → [H, K=ce-cs]
-                    vec = attn[:, :, cs:ce].mean(dim=1)
+            for cam_idx, (cam_name, cs, ce) in enumerate(cam_segs):
+                try:
+                    vec, n_p = _segment_attention_vector(attn, result, cam_name, cs, ce)
+                except ValueError as exc:
+                    logging.warning(f"  ep={ep_idx} fr={fr_idx}: {exc}; skipping.")
+                    continue
+
+                img_h, img_w = _image_hw_for_segment(result, cam_name, cam_idx)
                 key = (layer_idx, cam_name)
+                current_meta = {"n_p": int(n_p), "img_h": int(img_h), "img_w": int(img_w)}
+                previous_meta = meta_by_key.setdefault(key, current_meta)
+                if previous_meta != current_meta:
+                    logging.warning(
+                        f"  ep={ep_idx} fr={fr_idx}: metadata changed for L{layer_idx} {cam_name} "
+                        f"({previous_meta} -> {current_meta}); skipping frame for this panel."
+                    )
+                    continue
                 collected.setdefault(key, []).append(vec)
 
-    return collected, n_heads, n_p, img_h or 224, img_w or 224
+    return collected, n_heads, meta_by_key
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -297,14 +389,14 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
 
     cached = _load_cache(pt_path)
     if cached is not None:
-        raw_results, n_heads, n_p, img_h, img_w = cached
+        raw_results, n_heads, meta_by_key = cached
         logging.info("Re-rendering from cache (delete .pt to recompute).")
-        render_all(raw_results, n_heads, n_p, img_h, img_w, ds_dir)
+        render_all(raw_results, n_heads, meta_by_key, ds_dir)
         return
 
     layers = [int(x.strip()) for x in p.spatial_layers.split(",")]
     timestep = float(getattr(p, "timestep", 0.5))
-    n_frames = int(getattr(p, "max_episodes", None) or 32)
+    n_frames = int(getattr(p, "spatial_n_frames", None) or getattr(p, "max_episodes", None) or 32)
     seed = int(getattr(p, "random_seed", 42))
 
     logging.info(
@@ -317,7 +409,7 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
         return
     logging.info(f"  Sampled {len(samples)} frames from {len(samples)} episodes")
 
-    collected, n_heads, n_p, img_h, img_w = collect_aggregates(
+    collected, n_heads, meta_by_key = collect_aggregates(
         adapter, dataset, samples, layers, timestep,
     )
 
@@ -334,9 +426,9 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
         logging.warning("  No aggregates produced; nothing to render.")
         return
 
-    _save_cache(pt_path, raw_results, len(samples), layers, img_h, img_w, n_p)
+    _save_cache(pt_path, raw_results, len(samples), layers, meta_by_key)
     logging.debug(f"  Saved cache → {pt_path}")
-    render_all(raw_results, n_heads, n_p, img_h, img_w, ds_dir)
+    render_all(raw_results, n_heads, meta_by_key, ds_dir)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -349,7 +441,7 @@ def run(adapter, primary_dataset, cfg, output_dir):
         return
     os.makedirs(output_dir, exist_ok=True)
 
-    primary_name = os.path.basename(os.path.normpath(cfg.dataset.root))
+    primary_name = dataset_display_name(primary_dataset, cfg.dataset.root)
     logging.info(f"=== Dataset: {primary_name} ===")
     _probe_one_dataset(adapter, primary_dataset,
                        os.path.join(output_dir, primary_name), cfg)

@@ -49,6 +49,7 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.attention import (
     _warn_overcommit_if_risky,
     build_episode_samples,
+    render_action_text_matrix,
     render_cross_matrix,
     render_image_overlays,
     render_self_matrix,
@@ -96,14 +97,14 @@ def _probe_dataset(adapter, ds, ds_output_dir, layers, timestep, cfg):
         csv_files: dict[int, tuple] = {}
 
         for fr_idx, global_idx in ep_frames:
-            obs, _, state, _, task_str, _, _ = get_frame_data(ds, global_idx, chunk_size)
+            obs, gt_actions, state, _, task_str, _, _ = get_frame_data(ds, global_idx, chunk_size)
 
             # Causal maps come back packed into cross_attn_by_layer /
             # self_attn_by_layer in the same shape as the regular attention
             # probe, so the renderers from attention.py work unchanged.
             result = adapter.capture_attention(
                 obs, task_str, state=state, timestep=timestep, layers=layers,
-                requires_grad=True,
+                requires_grad=True, gt_actions=gt_actions,
             )
 
             for layer_idx in layers:
@@ -123,7 +124,7 @@ def _probe_dataset(adapter, ds, ds_output_dir, layers, timestep, cfg):
 
                 panels: dict[str, np.ndarray] = {}
                 vmaxes: dict[str, float] = {}
-                for renderer in (render_image_overlays, render_cross_matrix, render_self_matrix):
+                for renderer in (render_image_overlays, render_cross_matrix, render_self_matrix, render_action_text_matrix):
                     p_frames, p_vmax = renderer(result, layer_idx)
                     # Prefix output keys with "causal_" so they don't collide
                     # if someone runs both probes into the same dir.
@@ -159,9 +160,7 @@ def run(adapter, primary_dataset, cfg, output_dir):
     logging.info(f"Jacobian layers: {layers} timestep: {timestep}")
     os.makedirs(output_dir, exist_ok=True)
 
-    primary_name = os.path.basename(os.path.normpath(cfg.dataset.root))
-    _probe_dataset(adapter, primary_dataset,
-                   os.path.join(output_dir, primary_name), layers, timestep, cfg)
+    _probe_dataset(adapter, primary_dataset, output_dir, layers, timestep, cfg)
 
     for extra_root in getattr(cfg.dataset, "additional_offline_dataset_paths", []) or []:
         logging.info(f"Additional dataset: {extra_root}")

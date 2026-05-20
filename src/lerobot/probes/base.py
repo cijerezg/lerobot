@@ -199,6 +199,7 @@ class ProbablePolicy(ABC):
         timestep: float = 0.5,
         layers: list[int] | None = None,
         requires_grad: bool = False,
+        gt_actions: Tensor | None = None,
     ) -> AttentionCaptureResult:
         """
         Run a probe-time forward and return per-layer attention plus the
@@ -214,6 +215,8 @@ class ProbablePolicy(ABC):
             requires_grad: keep captured attention in the autograd graph (for
                 future jacobian probes). Adapters may raise ``NotImplementedError``
                 until they implement this path.
+            gt_actions: optional raw GT action chunk, used by adapters whose
+                gradient probe is defined relative to a flow/action target.
         """
 
     # ── GT normalisation (for plotting in normalised space) ──────────────────

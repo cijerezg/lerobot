@@ -728,7 +728,7 @@ def eval_cli(cfg: EvalOfflineConfig):
 
     # Short labels used in plot legends; full paths shown in info panel
     label_a, label_b = "A", "B"
-    path_a = str(cfg.policy.pi05_checkpoint) if cfg.policy.pi05_checkpoint else "unknown"
+    path_a = str(cfg.policy.checkpoint_path) if cfg.policy.checkpoint_path else "unknown"
     path_b = str(checkpoint_b) if checkpoint_b else "unknown"
 
     # ── Load primary checkpoint ───────────────────────────────────────────────
@@ -799,7 +799,7 @@ def eval_cli(cfg: EvalOfflineConfig):
         torch.cuda.empty_cache()
 
         logging.info("Loading policy B ...")
-        cfg.policy.pi05_checkpoint = checkpoint_b
+        cfg.policy.checkpoint_path = checkpoint_b
         policy_b, pre_b, post_b, _ = _load_policy_and_processors(cfg, device, dataset=dataset)
 
         mse_b = {lbl: [] for lbl, _ in adv_conditions}
@@ -840,7 +840,7 @@ def eval_cli(cfg: EvalOfflineConfig):
         # Policy A must still be in scope (not deleted by ckpt-B path).
         # If checkpoint_b was used we already deleted policy_a above, so reload it.
         if checkpoint_b:
-            cfg.policy.pi05_checkpoint = path_a
+            cfg.policy.checkpoint_path = path_a
             policy_sub_a, pre_sub_a, post_sub_a, _ = _load_policy_and_processors(
                 cfg, device, dataset=dataset
             )
@@ -901,7 +901,7 @@ def eval_cli(cfg: EvalOfflineConfig):
 
         preds_sub_b = {}
         if checkpoint_b:
-            cfg.policy.pi05_checkpoint = path_b
+            cfg.policy.checkpoint_path = path_b
             policy_sub_b, pre_sub_b, post_sub_b, _ = _load_policy_and_processors(
                 cfg, device, dataset=dataset
             )

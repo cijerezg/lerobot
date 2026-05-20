@@ -816,6 +816,7 @@ def make_molmoact2_pre_post_processors(
     config: MolmoAct2Config,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
     dataset_meta: Any | None = None,
+    action_stats_override: dict[str, torch.Tensor] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
     PolicyProcessorPipeline[PolicyAction, PolicyAction],
@@ -832,6 +833,13 @@ def make_molmoact2_pre_post_processors(
             force_download=bool(config.checkpoint_force_download),
             norm_tag=config.norm_tag,
         )
+
+    if action_stats_override is not None:
+        if dataset_stats is None:
+            dataset_stats = {}
+        else:
+            dataset_stats = deepcopy(dataset_stats)
+        dataset_stats[ACTION] = action_stats_override
 
     image_keys = list(config.image_keys)
     if not image_keys and isinstance(hf_metadata.get("camera_keys"), list):
