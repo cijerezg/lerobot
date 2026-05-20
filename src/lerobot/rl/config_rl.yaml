@@ -398,6 +398,55 @@ env:
   name: real_robot
   fps: 30
 
+  # ---- Robot ----------------------------------------------------------------
+  robot:
+    type: so101_follower
+    port: /dev/ttyACM0
+    id: follower_arm_v3
+    cameras:
+      wrist:
+        type: opencv
+        index_or_path: 0
+        height: 480
+        width: 640
+        fps: 30
+      top:
+        type: opencv
+        index_or_path: 2
+        height: 480
+        width: 640
+        fps: 30
+
+  # ---- Teleop ---------------------------------------------------------------
+  teleop:
+    type: so101_leader
+    port: /dev/ttyACM1
+    id: leader_arm_v3
+
+  # ---- Processor (gym wrapper) ----------------------------------------------
+  processor:
+    control_mode: leader
+    observation:
+      display_cameras: false
+      add_joint_velocity_to_observation: false
+      add_current_to_observation: false
+    image_preprocessing:
+      resize_size: [224, 224]
+    gripper:
+      use_gripper: true
+      gripper_penalty: 0.00
+    reset:
+      fixed_reset_joint_positions: [0.54, -90.69, 99.55, 73.70, -50.23, 42.71]
+      reset_time_s: 10
+      control_time_s: 200.0
+      terminate_on_success: true
+    reward_classifier:
+      pretrained_path: null
+      success_threshold: 0.5
+      success_reward: 1.0
+    max_gripper_pos: 30
+
+
   # ---- Feature schema (used by make_policy to infer input/output shapes) ----
   features:
     observation.images.wrist:

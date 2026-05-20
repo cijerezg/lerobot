@@ -9,8 +9,6 @@ Usage:
     python -m lerobot.rl.inference_async \
         --config_path lerobot/src/lerobot/rl/config_rl.yaml
 """
-from __future__ import annotations
-
 import logging
 import os
 import signal
@@ -18,6 +16,7 @@ import signal
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.rl.rl_trainer import Trainer
+import lerobot.rl.gym_manipulator  # noqa: F401 - registers robot/camera/teleop config choices
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
 
