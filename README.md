@@ -21,6 +21,8 @@ This is an active project and we expect to continually add more features and cap
 
 ## Roadmap-ish
 
+**Currently working on integrating molmoact2 with all the current capabilities here**
+
 **This section is meant to describe the work currently being done with its context**
 
 Using this repo, I trained the policy shown in the video above to complete the task under several arrangements. However, there are still failure modes, all of which are related to grasping as it is the hardest part of the task. The goal now is to automatically identify these difficult moments and have the policy focus on them. The current idea is to use the critic. The hypothesis is that the critic variance and its gradient will be highest during the hard parts of the task because those moments determine success or failure. Weighting the flow loss with the critic gradient should then force the policy to focus on those critical steps.
