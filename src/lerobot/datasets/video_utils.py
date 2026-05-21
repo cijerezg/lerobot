@@ -33,7 +33,6 @@ import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
 
-
 _LOCAL_URL_SCHEMES = ("", "file")
 
 
@@ -667,7 +666,7 @@ class VideoEncodingManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Handle any remaining episodes that haven't been batch encoded
+        # finalize() handles remaining batched episodes before closing metadata.
         if self.dataset.episodes_since_last_encoding > 0:
             if exc_type is not None:
                 logging.info("Exception occurred. Encoding remaining episodes before exit...")
@@ -680,7 +679,6 @@ class VideoEncodingManager:
                 f"Encoding remaining {self.dataset.episodes_since_last_encoding} episodes, "
                 f"from episode {start_ep} to {end_ep - 1}"
             )
-            self.dataset._batch_save_episode_video(start_ep, end_ep)
 
         # Finalize the dataset to properly close all writers
         self.dataset.finalize()

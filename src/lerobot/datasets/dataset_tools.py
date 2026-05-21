@@ -136,6 +136,7 @@ def delete_episodes(
         delta_timestamps=dataset.delta_timestamps,
         tolerance_s=dataset.tolerance_s,
     )
+    new_dataset.validate_video_metadata()
 
     logging.info(f"Created new dataset with {len(episodes_to_keep)} episodes")
     return new_dataset
@@ -226,6 +227,7 @@ def split_dataset(
             delta_timestamps=dataset.delta_timestamps,
             tolerance_s=dataset.tolerance_s,
         )
+        new_dataset.validate_video_metadata()
 
         result_datasets[split_name] = new_dataset
 
@@ -274,6 +276,7 @@ def merge_datasets(
         delta_timestamps=datasets[0].delta_timestamps,
         tolerance_s=datasets[0].tolerance_s,
     )
+    merged_dataset.validate_video_metadata()
 
     return merged_dataset
 
@@ -378,6 +381,7 @@ def modify_features(
         delta_timestamps=dataset.delta_timestamps,
         tolerance_s=dataset.tolerance_s,
     )
+    new_dataset.validate_video_metadata()
 
     return new_dataset
 
@@ -1648,4 +1652,6 @@ def convert_image_to_video_dataset(
     logging.info(f"New dataset saved to: {output_dir}")
 
     # Return new dataset
-    return LeRobotDataset(repo_id=repo_id, root=output_dir)
+    new_dataset = LeRobotDataset(repo_id=repo_id, root=output_dir)
+    new_dataset.validate_video_metadata()
+    return new_dataset

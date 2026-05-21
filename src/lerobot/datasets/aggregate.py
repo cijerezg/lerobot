@@ -35,6 +35,7 @@ from lerobot.datasets.utils import (
     get_file_size_in_mb,
     get_hf_features_from_features,
     get_parquet_file_size_in_mb,
+    load_episodes,
     to_parquet_with_hf_images,
     update_chunk_file_indices,
     write_info,
@@ -42,6 +43,7 @@ from lerobot.datasets.utils import (
     write_tasks,
 )
 from lerobot.datasets.video_utils import concatenate_video_files, get_video_duration_in_s
+from lerobot.datasets.video_validation import validate_video_metadata
 
 
 def validate_all_metadata(all_metadata: list[LeRobotDatasetMetadata], robot_type: str | None = None):
@@ -290,6 +292,15 @@ def aggregate_datasets(
         dst_meta.info["total_frames"] += src_meta.total_frames
 
     finalize_aggregation(dst_meta, all_metadata)
+    if video_keys:
+        dst_meta.episodes = load_episodes(dst_meta.root)
+        validate_video_metadata(
+            root=dst_meta.root,
+            episodes=dst_meta.episodes,
+            video_keys=video_keys,
+            video_path=dst_meta.video_path,
+            fps=dst_meta.fps,
+        )
     logging.info("Aggregation complete.")
 
 

@@ -88,7 +88,7 @@ PY
     --dataset.episode_time_s=20 \
     --dataset.reset_time_s=5 \
     --dataset.video=true \
-    --dataset.video_encoding_batch_size=20 \
+    --dataset.video_encoding_batch_size=1 \
     --dataset.push_to_hub=false \
     --dataset.single_task="Grasp the motor, place it in the joint slot of the red arm" \
     --display_data=false \
