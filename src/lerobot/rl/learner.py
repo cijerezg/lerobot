@@ -74,7 +74,6 @@ from torch.optim.optimizer import Optimizer
 from lerobot.cameras import opencv  # noqa: F401
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
-    load_training_state as utils_load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
@@ -103,7 +102,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.io_utils import load_json, write_json
 from lerobot.utils.process import ProcessSignalHandler
-from lerobot.utils.random_utils import set_seed
+from lerobot.utils.random_utils import load_rng_state, set_seed
 from lerobot.utils.utils import (
     format_big_number,
     init_logging,
@@ -576,7 +575,7 @@ def save_training_checkpoint(
 
     This function performs the following steps:
     1. Creates a checkpoint directory with the current optimization step
-    2. Saves the policy model, configuration, and optimizer states
+    2. Saves the policy model and configuration
     3. Saves the current interaction step for resuming training
     4. Updates the "last" checkpoint symlink to point to this checkpoint
     5. Saves the replay buffer as a dataset for later use
@@ -588,7 +587,7 @@ def save_training_checkpoint(
         online_steps: Total number of online steps
         interaction_message: Dictionary containing interaction information
         policy: Policy model to save
-        optimizers: Dictionary of optimizers
+        optimizers: Dictionary of optimizers used for training; optimizer states are not checkpointed
         replay_buffer: Replay buffer to save as dataset
         offline_replay_buffer: Optional offline replay buffer to save
         dataset_repo_id: Repository ID for dataset
@@ -609,7 +608,7 @@ def save_training_checkpoint(
         step=optimization_step,
         cfg=cfg,
         policy=policy,
-        optimizer=optimizers,
+        optimizer=None,
         scheduler=None,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
@@ -736,8 +735,19 @@ def load_training_state(
     logging.info(f"Loading training state from {checkpoint_dir}")
 
     try:
-        # Restore optimizers + RNG + step from the standard `training_state/` folder
-        step, optimizers, _ = utils_load_training_state(checkpoint_dir, optimizers, None)
+        # Restore lightweight training metadata only. Optimizer states are intentionally
+        # not saved or loaded for RL checkpoints.
+        training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
+        if training_state_dir.is_dir():
+            try:
+                load_rng_state(training_state_dir)
+            except FileNotFoundError:
+                logging.info(f"No RNG state found in {training_state_dir}; continuing without it")
+
+        training_step_path = training_state_dir / TRAINING_STEP
+        training_step = load_json(training_step_path)
+        step = int(training_step["step"])
+        interaction_step = int(training_step.get("interaction_step", 0))
 
         # Restore algorithm-owned tensors
         if algorithm is not None:
@@ -749,13 +759,8 @@ def load_training_state(
             else:
                 logging.warning(
                     f"No algorithm state found at {algo_dir}; "
-                    "will keep their freshly-initialised values. Adam moments restored from the "
-                    "old optimizer state may not match these reset parameters."
+                    "will keep freshly-initialised algorithm-owned tensors."
                 )
-
-        # Read interaction_step from the enriched training_step.json
-        training_step_path = checkpoint_dir / TRAINING_STATE_DIR / TRAINING_STEP
-        interaction_step = int(load_json(training_step_path).get("interaction_step", 0))
 
         logging.info(f"Resuming from step {step}, interaction step {interaction_step}")
         return step, interaction_step

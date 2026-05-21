@@ -101,7 +101,6 @@ def _save_checkpoint(
     step: int,
     total_steps: int,
     policy: nn.Module,
-    optimizers: dict[str, torch.optim.Optimizer],
     preprocessor,
     postprocessor,
 ) -> None:
@@ -113,7 +112,7 @@ def _save_checkpoint(
         step=step,
         cfg=cfg,
         policy=policy,
-        optimizer=optimizers,
+        optimizer=None,
         scheduler=None,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
@@ -671,7 +670,6 @@ def run_offline_training(
                 step=optimization_step,
                 total_steps=offline_steps,
                 policy=policy,
-                optimizers=optimizers,
                 preprocessor=preprocessor,
                 postprocessor=postprocessor,
             )
