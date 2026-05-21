@@ -28,7 +28,11 @@ from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for num
 try:
     import pyrealsense2 as rs  # type: ignore  # TODO: add type stubs for pyrealsense2
 except Exception as e:
+    rs = None
+    _RS_IMPORT_ERROR = e
     logging.info(f"Could not import realsense: {e}")
+else:
+    _RS_IMPORT_ERROR = None
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
@@ -38,6 +42,11 @@ from ..utils import get_cv2_rotation
 from .configuration_realsense import RealSenseCameraConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _raise_if_pyrealsense2_unavailable() -> None:
+    if rs is None:
+        raise ImportError("pyrealsense2 library not found or not importable.") from _RS_IMPORT_ERROR
 
 
 class RealSenseCamera(Camera):
@@ -112,6 +121,7 @@ class RealSenseCamera(Camera):
         Args:
             config: The configuration settings for the camera.
         """
+        _raise_if_pyrealsense2_unavailable()
 
         super().__init__(config)
 
@@ -207,6 +217,8 @@ class RealSenseCamera(Camera):
             OSError: If pyrealsense2 is not installed.
             ImportError: If pyrealsense2 is not installed.
         """
+        _raise_if_pyrealsense2_unavailable()
+
         found_cameras_info = []
         context = rs.context()
         devices = context.query_devices()
