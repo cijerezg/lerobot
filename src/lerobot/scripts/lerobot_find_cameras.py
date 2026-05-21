@@ -81,7 +81,7 @@ def find_all_realsense_cameras() -> list[dict[str, Any]]:
             all_realsense_cameras_info.append(cam_info)
         logger.info(f"Found {len(realsense_cameras)} RealSense cameras.")
     except ImportError:
-        logger.warning("Skipping RealSense camera search: pyrealsense2 library not found or not importable.")
+        logger.info("Skipping RealSense camera search: pyrealsense2 library not found or not importable.")
     except Exception as e:
         logger.error(f"Error finding RealSense cameras: {e}")
 

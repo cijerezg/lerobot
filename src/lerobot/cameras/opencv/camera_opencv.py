@@ -48,6 +48,84 @@ MAX_OPENCV_INDEX = 60
 logger = logging.getLogger(__name__)
 
 
+def _has_v4l2_video_capture_capability(path: Path) -> bool:
+    import fcntl
+    import struct
+
+    # These constants come from Linux's videodev2.h. They let us avoid opening
+    # metadata-only nodes with OpenCV, which otherwise emits noisy probe warnings.
+    vidioc_querycap = 0x80685600
+    v4l2_cap_video_capture = 0x00000001
+    v4l2_cap_video_capture_mplane = 0x00001000
+    v4l2_cap_device_caps = 0x80000000
+    capability_struct = "16s32s32sIII3I"
+
+    try:
+        with path.open("rb", buffering=0) as fd:
+            data = bytearray(struct.calcsize(capability_struct))
+            fcntl.ioctl(fd, vidioc_querycap, data, True)
+    except OSError:
+        return False
+
+    _, _, _, _, capabilities, device_caps, *_ = struct.unpack(capability_struct, data)
+    effective_caps = device_caps if capabilities & v4l2_cap_device_caps else capabilities
+    return bool(effective_caps & (v4l2_cap_video_capture | v4l2_cap_video_capture_mplane))
+
+
+def _has_supported_v4l2_pixel_format(path: Path) -> bool:
+    import fcntl
+    import struct
+
+    vidioc_enum_fmt = 0xC0405602
+    v4l2_buf_type_video_capture = 1
+    fmtdesc_struct = "III32sII3I"
+    supported_formats = {
+        "BGR3",
+        "GREY",
+        "I420",
+        "MJPG",
+        "NV12",
+        "RGB3",
+        "UYVY",
+        "YUY2",
+        "YUYV",
+        "YV12",
+    }
+
+    try:
+        with path.open("rb", buffering=0) as fd:
+            index = 0
+            while True:
+                data = bytearray(struct.calcsize(fmtdesc_struct))
+                struct.pack_into(
+                    fmtdesc_struct,
+                    data,
+                    0,
+                    index,
+                    v4l2_buf_type_video_capture,
+                    0,
+                    b"",
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+                try:
+                    fcntl.ioctl(fd, vidioc_enum_fmt, data, True)
+                except OSError:
+                    return False
+
+                _, _, _, _, pixelformat, *_ = struct.unpack(fmtdesc_struct, data)
+                fourcc = pixelformat.to_bytes(4, "little").decode("latin1")
+                if fourcc in supported_formats:
+                    return True
+
+                index += 1
+    except OSError:
+        return False
+
+
 class OpenCVCamera(Camera):
     """
     Manages camera interactions using OpenCV for efficient frame recording.
@@ -322,7 +400,11 @@ class OpenCVCamera(Camera):
         targets_to_scan: list[str | int]
         if platform.system() == "Linux":
             possible_paths = sorted(Path("/dev").glob("video*"), key=lambda p: p.name)
-            targets_to_scan = [str(p) for p in possible_paths]
+            targets_to_scan = [
+                str(p)
+                for p in possible_paths
+                if _has_v4l2_video_capture_capability(p) and _has_supported_v4l2_pixel_format(p)
+            ]
         else:
             targets_to_scan = [int(i) for i in range(MAX_OPENCV_INDEX)]
 
