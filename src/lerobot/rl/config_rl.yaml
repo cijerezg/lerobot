@@ -95,7 +95,7 @@ policy:
 
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
-  checkpoint_path: outputs/MolmoAct2-SO100_101
+  checkpoint_path: outputs/molmoact2_offline/checkpoints/000500/pretrained_model/
   
   # ---- Training mode --------------------------------------------------------
   # KI-style training: VLM trained by discrete CE on FAST tokens, action expert
@@ -401,7 +401,7 @@ env:
   robot:
     type: so101_follower
     port: /dev/ttyACM0
-    id: follower_arm_v2
+    id: follower_arm_v3
     cameras:
       wrist:
         type: opencv
@@ -420,7 +420,7 @@ env:
   teleop:
     type: so101_leader
     port: /dev/ttyACM1
-    id: leader_arm_v2
+    id: leader_arm_v3
 
   # ---- Processor (gym wrapper) ----------------------------------------------
   processor:
