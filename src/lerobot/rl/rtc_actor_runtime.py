@@ -892,6 +892,10 @@ def act_with_policy_rtc_inference(
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
+    if getattr(cfg, "use_rerun", False):
+        import rerun as rr
+        rr.init("lerobot_inference", spawn=True)
+
     logger.info("[RTC_INFERENCE] Building policy and processors...")
     policy = trainer.make_policy(cfg)
     should_init_critic = not bool(getattr(cfg, "skip_critic", False)) and int(getattr(cfg, "episode_logging_freq", 0) or 0) > 0
@@ -948,20 +952,30 @@ def act_with_policy_rtc_inference(
         start_time = time.time()
         logger.info("[RTC_INFERENCE] Threads running. Supervisor loop active.")
         while not shutdown_event.is_set():
-            time.sleep(10)
+            time.sleep(20)
+
+            q_size = action_queue.qsize()
+            teleop_stat = "ON" if shared.is_intervening else "OFF"
             metrics = shared.get_and_reset_metrics()
-            env_steps = max(1, metrics.get("env_steps", 0))
+            inf_wait = metrics["inference_wait_time"]
+            env_wait = metrics["env_wait_time"]
+            env_steps = metrics["env_steps"]
+            avg_env_wait = env_wait / max(1, env_steps)
+            avg_env_active = metrics.get("env_active_time", 0.0) / max(1, env_steps)
             inf_lats = metrics.get("inference_latencies", [])
             lat_str = f"avg={sum(inf_lats)/len(inf_lats):.3f}s max={max(inf_lats):.3f}s" if inf_lats else "N/A"
+
             logger.info(
-                "[RTC_INFERENCE] runtime=%ss q=%s teleop=%s episode=%s env_steps=%s avg_env_active=%.4fs inf_latency=%s",
-                int(time.time() - start_time),
-                action_queue.qsize(),
-                "ON" if shared.is_intervening else "OFF",
-                "ON" if shared.episode_active else "OFF",
-                metrics.get("env_steps", 0),
-                metrics.get("env_active_time", 0.0) / env_steps,
-                lat_str,
+                "[MAIN LOG] Queue Buffer Length: %s | Teleop Intervention: %s | Runtime: %ss",
+                q_size, teleop_stat, int(time.time() - start_time),
+            )
+            logger.info(
+                "[metrics] Inference sleep time: %.2fs | Env active (camera/step) avg: %.4fs | Env sleep avg: %.4fs",
+                inf_wait, avg_env_active, avg_env_wait,
+            )
+            logger.info(
+                "[metrics] Inference latency: %s | Env steps: %s | Episode: %s",
+                lat_str, env_steps, "ACTIVE" if shared.episode_active else "IDLE",
             )
     except Exception:
         logger.error("[RTC_INFERENCE] Orchestrator error:\n%s", traceback.format_exc())

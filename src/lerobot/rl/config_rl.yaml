@@ -95,7 +95,7 @@ policy:
 
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
-  checkpoint_path: outputs/molmoact2_offline/checkpoints/000500/pretrained_model/
+  checkpoint_path: outputs/MolmoAct2-SO100_101
   
   # ---- Training mode --------------------------------------------------------
   # KI-style training: VLM trained by discrete CE on FAST tokens, action expert
@@ -126,7 +126,7 @@ policy:
     critic_language_from_layer: null
 
   # ---- Normalization --------------------------------------------------------
-  norm_tag: so100_so101_molmoact2       # loads norm stats from HF checkpoint
+  norm_tag: so100_so101_molmoact2      # loads norm stats from HF checkpoint
 
   # ---- Action encoding -----------------------------------------------------
   # "absolute" (default) | "anchor" | "delta"
@@ -362,7 +362,7 @@ log_freq: 20
 save_checkpoint: true
 save_freq: 100                # online checkpoint cadence (optimizer steps)
 offline_save_freq: 500        # offline checkpoint cadence
-use_rerun: false
+use_rerun: true
 
 
 # -----------------------------------------------------------------------------
@@ -435,7 +435,7 @@ env:
       use_gripper: true
       gripper_penalty: 0.00
     reset:
-      fixed_reset_joint_positions: [0.54, -90.69, 99.55, 73.70, -50.23, 42.71]
+      fixed_reset_joint_positions: [0.54, -90.69, 99.55, 73.70, -92.23, 42.71]
       reset_time_s: 10
       control_time_s: 200.0
       terminate_on_success: true
