@@ -47,7 +47,7 @@ import torch.nn.functional as F
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import build_episode_index, dataset_display_name, get_frame_data, load_extra_dataset
+from lerobot.probes.utils import build_episode_index, get_frame_data, load_extra_dataset
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
@@ -306,7 +306,15 @@ def render_all(raw_results, n_heads, meta_by_key, output_dir):
 # Collection
 # ──────────────────────────────────────────────────────────────────────────────
 
-def collect_aggregates(adapter: ProbablePolicy, dataset, samples, layers, timestep):
+def collect_aggregates(
+    adapter: ProbablePolicy,
+    dataset,
+    samples,
+    layers,
+    timestep,
+    *,
+    requires_grad: bool = False,
+):
     """Run capture_attention per frame; aggregate per (layer, image view) head maps.
 
     Molmo exposes both global image tokens and local crop tokens. Crop tokens are
@@ -322,11 +330,17 @@ def collect_aggregates(adapter: ProbablePolicy, dataset, samples, layers, timest
 
     for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
         logging.debug(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
-        obs, _, state, _, task_str, _, _ = get_frame_data(
+        obs, gt_actions, state, _, task_str, _, _ = get_frame_data(
             dataset, global_idx, chunk_size,
         )
         result = adapter.capture_attention(
-            obs, task_str, state=state, timestep=timestep, layers=layers,
+            obs,
+            task_str,
+            state=state,
+            timestep=timestep,
+            layers=layers,
+            requires_grad=requires_grad,
+            gt_actions=gt_actions if requires_grad else None,
         )
 
         if not result.cross_attn_by_layer:
@@ -382,10 +396,15 @@ def collect_aggregates(adapter: ProbablePolicy, dataset, samples, layers, timest
 # Per-dataset pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
+def _probe_one_dataset(adapter, dataset, ds_dir, cfg, *, requires_grad: bool = False):
     p = cfg.probe_parameters
     os.makedirs(ds_dir, exist_ok=True)
-    pt_path = os.path.join(ds_dir, "spatial_memorization_raw.pt")
+    cache_name = (
+        "spatial_memorization_jacobian_raw.pt"
+        if requires_grad
+        else "spatial_memorization_raw.pt"
+    )
+    pt_path = os.path.join(ds_dir, cache_name)
 
     cached = _load_cache(pt_path)
     if cached is not None:
@@ -400,7 +419,8 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
     seed = int(getattr(p, "random_seed", 42))
 
     logging.info(
-        f"  layers={layers} timestep={timestep} n_frames={n_frames}"
+        f"  layers={layers} timestep={timestep} n_frames={n_frames} "
+        f"requires_grad={requires_grad}"
     )
 
     samples = sample_one_per_episode(dataset, n_frames=n_frames, seed=seed)
@@ -410,7 +430,12 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
     logging.info(f"  Sampled {len(samples)} frames from {len(samples)} episodes")
 
     collected, n_heads, meta_by_key = collect_aggregates(
-        adapter, dataset, samples, layers, timestep,
+        adapter,
+        dataset,
+        samples,
+        layers,
+        timestep,
+        requires_grad=requires_grad,
     )
 
     raw_results: dict = {}
@@ -435,23 +460,26 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
-def run(adapter, primary_dataset, cfg, output_dir):
+def run(adapter, primary_dataset, cfg, output_dir, *, requires_grad: bool = False):
     """Run the spatial-memorization probe on primary + additional datasets."""
     if adapter is None or primary_dataset is None:
         return
     os.makedirs(output_dir, exist_ok=True)
 
-    primary_name = dataset_display_name(primary_dataset, cfg.dataset.root)
-    logging.info(f"=== Dataset: {primary_name} ===")
-    _probe_one_dataset(adapter, primary_dataset,
-                       os.path.join(output_dir, primary_name), cfg)
+    _probe_one_dataset(adapter, primary_dataset, output_dir, cfg, requires_grad=requires_grad)
 
     for extra_root in getattr(cfg.dataset, "additional_offline_dataset_paths", None) or []:
         ds_name = os.path.basename(os.path.normpath(extra_root))
         logging.info(f"=== Dataset: {ds_name} ===")
         extra_ds = load_extra_dataset(cfg.dataset.repo_id, extra_root)
         _probe_one_dataset(adapter, extra_ds,
-                           os.path.join(output_dir, ds_name), cfg)
+                           os.path.join(output_dir, ds_name), cfg,
+                           requires_grad=requires_grad)
+
+
+def run_jacobian(adapter, primary_dataset, cfg, output_dir):
+    """Run spatial memorization using causal A * |grad(A)| maps."""
+    return run(adapter, primary_dataset, cfg, output_dir, requires_grad=True)
 
 
 @parser.wrap()

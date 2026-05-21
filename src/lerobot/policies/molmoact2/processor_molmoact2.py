@@ -39,6 +39,7 @@ from lerobot.utils.constants import (
 from lerobot.utils.import_utils import require_package
 
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
+from .frame_so101 import SO101V3ToV21Step, SO101V21ToV3Step  # TODO(anchor): remove when anchor deltas land
 
 ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
 ACTION_START_TOKEN = "<action_start>"  # nosec B105
@@ -858,6 +859,7 @@ def make_molmoact2_pre_post_processors(
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
+        SO101V3ToV21Step(),  # TODO(anchor): remove when anchor deltas land
         MolmoAct2MaskedNormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -894,6 +896,7 @@ def make_molmoact2_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=masked_dataset_stats,
         ),
+        SO101V21ToV3Step(),  # TODO(anchor): remove when anchor deltas land
         DeviceProcessorStep(device="cpu"),
     ]
 

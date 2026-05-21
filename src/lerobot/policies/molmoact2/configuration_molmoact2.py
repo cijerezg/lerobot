@@ -114,6 +114,8 @@ class MolmoAct2Config(PreTrainedConfig):
     setup_type: str = ""
     control_mode: str = ""
     image_keys: list[str] = field(default_factory=list)
+    image_storage_dtype: str = "uint8"
+    image_storage_size: tuple[int, int] | None = None
     normalize_language: bool = True
     add_setup_tokens: bool = True
     add_control_tokens: bool = True

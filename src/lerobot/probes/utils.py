@@ -297,10 +297,12 @@ def run_pca(X: torch.Tensor, n_components: int, label: str, pca_dir: str):
     Returns (X_pca tensor float32, fitted sklearn PCA).
     """
     from sklearn.decomposition import PCA
+    from threadpoolctl import threadpool_limits
 
     n_components = min(n_components, X.shape[0], X.shape[1])
     pca = PCA(n_components=n_components, random_state=0)
-    X_pca = pca.fit_transform(X.numpy())
+    with threadpool_limits(limits=1, user_api="blas"):
+        X_pca = pca.fit_transform(X.numpy())
 
     cumvar = np.cumsum(pca.explained_variance_ratio_)
     comp90 = int(np.searchsorted(cumvar, 0.90)) + 1

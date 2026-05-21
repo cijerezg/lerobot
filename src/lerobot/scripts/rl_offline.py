@@ -141,6 +141,48 @@ def _build_validation_adapter(policy, preprocessor, postprocessor, device, cfg):
     return adapter_cls(policy, preprocessor, postprocessor, device, cfg)
 
 
+@dataclasses.dataclass(frozen=True)
+class _ValidationProbeSpec:
+    flag: str
+    module_path: str
+    output_subdir: str
+    run_attr: str = "run"
+
+
+_VALIDATION_PROBES = (
+    _ValidationProbeSpec("enable_actions", "lerobot.probes.actions", "actions"),
+    _ValidationProbeSpec("enable_offline_inference", "lerobot.probes.offline_inference", "offline_inference"),
+    _ValidationProbeSpec("enable_attention", "lerobot.probes.attention", "attention"),
+    _ValidationProbeSpec("enable_critic_values_distribution", "lerobot.probes.critic", "critic"),
+    _ValidationProbeSpec("enable_representations", "lerobot.probes.representations", "representations"),
+    _ValidationProbeSpec("enable_spatial_memorization", "lerobot.probes.attention_spatial", "attention_spatial"),
+    _ValidationProbeSpec("enable_action_drift_jacobian", "lerobot.probes.action_drift_jacobian", "action_drift_jacobian"),
+    _ValidationProbeSpec(
+        "enable_spatial_memorization_jacobian",
+        "lerobot.probes.spatial_memorization_jacobian",
+        "spatial_memorization_jacobian",
+    ),
+)
+
+
+def _enabled_validation_flags(probe_cfg) -> set[str]:
+    return {
+        field.name
+        for field in dataclasses.fields(probe_cfg)
+        if field.name.startswith("enable_") and bool(getattr(probe_cfg, field.name))
+    }
+
+
+def _validate_probe_registry(probe_cfg) -> None:
+    registered = {spec.flag for spec in _VALIDATION_PROBES}
+    unregistered = sorted(_enabled_validation_flags(probe_cfg) - registered)
+    if unregistered:
+        raise ValueError(
+            "Enabled validation probe flag(s) have no generic rl_offline handler: "
+            + ", ".join(unregistered)
+        )
+
+
 def _run_validation_probes(
     policy: nn.Module,
     preprocessor,
@@ -162,37 +204,26 @@ def _run_validation_probes(
     try:
         adapter = _build_validation_adapter(policy, preprocessor, postprocessor, device, cfg)
 
-        # Each entry: (enable flag, module-import path, output sub-folder).
-        # Lazy imports so an unused probe doesn't pay its import cost.
-        probes = [
-            (p.enable_actions,                "lerobot.probes.actions",                "actions"),
-            (p.enable_offline_inference,      "lerobot.probes.offline_inference",      "offline_inference"),
-            (p.enable_attention,              "lerobot.probes.attention",              "attention"),
-            (p.enable_critic_values_distribution, "lerobot.probes.critic",             "critic"),
-            (p.enable_representations,        "lerobot.probes.representations",        "representations"),
-            (p.enable_spatial_memorization,   "lerobot.probes.attention_spatial",      "attention_spatial"),
-            (p.enable_action_drift_jacobian,  "lerobot.probes.action_drift_jacobian",  "action_drift_jacobian"),
-        ]
+        _validate_probe_registry(p)
 
         import importlib
-        root_logger = logging.getLogger()
-        for enabled, module_path, subdir in probes:
-            if not enabled:
+        for spec in _VALIDATION_PROBES:
+            if not bool(getattr(p, spec.flag, False)):
                 continue
-            logging.info(f"[VAL step={step}] probe '{subdir}' started")
-            old_level = root_logger.level
+            logging.info(f"[VAL step={step}] probe '{spec.output_subdir}' started")
             try:
-                module = importlib.import_module(module_path)
-                root_logger.setLevel(max(old_level, logging.WARNING))
-                module.run(adapter, val_dataset, cfg, os.path.join(output_root, subdir))
+                module = importlib.import_module(spec.module_path)
+                run_probe = getattr(module, spec.run_attr)
+                run_probe(
+                    adapter,
+                    val_dataset,
+                    cfg,
+                    os.path.join(output_root, spec.output_subdir),
+                )
             except Exception as exc:
-                root_logger.setLevel(old_level)
-                logging.warning(f"[VAL step={step}] probe '{subdir}' failed: {exc}")
+                logging.warning(f"[VAL step={step}] probe '{spec.output_subdir}' failed: {exc}")
             else:
-                root_logger.setLevel(old_level)
-                logging.info(f"[VAL step={step}] probe '{subdir}' finished successfully")
-            finally:
-                root_logger.setLevel(old_level)
+                logging.info(f"[VAL step={step}] probe '{spec.output_subdir}' finished successfully")
 
         # Drop the adapter; the policy lives on in the training scope.
         del adapter

@@ -48,7 +48,6 @@ from lerobot.probes.utils import (
     ax_style,
     build_episode_index,
     frame_colors_rgba,
-    dataset_display_name,
     get_frame_data,
     get_subtask_idx,
     load_extra_dataset,
@@ -445,10 +444,7 @@ def run(adapter, primary_dataset, cfg, output_dir):
     p = cfg.probe_parameters
     makedirs(output_dir)
 
-    primary_name = dataset_display_name(primary_dataset, cfg.dataset.root)
-    logging.info(f"=== Dataset: {primary_name} ===")
-    _probe_one_dataset(adapter, primary_dataset,
-                       os.path.join(output_dir, primary_name), cfg)
+    _probe_one_dataset(adapter, primary_dataset, output_dir, cfg)
 
     for extra_root in getattr(cfg.dataset, "additional_offline_dataset_paths", None) or []:
         ds_name = os.path.basename(os.path.normpath(extra_root))

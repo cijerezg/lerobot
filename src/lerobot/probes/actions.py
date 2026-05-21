@@ -664,17 +664,15 @@ def run_plotting(cache, cfg, output_dir):
         gt_emb3   = ds_data["gt_emb3"]
         pred_emb3 = ds_data["pred_emb3"]
 
-        ds_dir2 = os.path.join(d2, ds_name)
-        ds_dir3 = os.path.join(d3, ds_name)
-        ep_dir  = os.path.join(ds_dir2, "episodes")
-        makedirs(ds_dir2, ds_dir3, ep_dir)
+        ep_dir = os.path.join(d2, "episodes")
+        makedirs(ep_dir)
 
         plot_2d_trajectories(ref_emb2, gt_emb2, pred_emb2, meta,
-                             os.path.join(ds_dir2, "trajectories.png"), ds_name)
+                             os.path.join(d2, "trajectories.png"), ds_name)
         plot_2d_by_frame(ref_emb2, gt_emb2, pred_emb2, meta,
-                         os.path.join(ds_dir2, "by_frame.png"), ds_name)
+                         os.path.join(d2, "by_frame.png"), ds_name)
         plot_2d_by_subtask(ref_emb2, gt_emb2, pred_emb2, meta,
-                           os.path.join(ds_dir2, "by_subtask.png"), ds_name)
+                           os.path.join(d2, "by_subtask.png"), ds_name)
 
         ep_ids = np.array([m["episode_idx"] for m in meta])
         for ep in np.unique(ep_ids):
@@ -691,13 +689,13 @@ def run_plotting(cache, cfg, output_dir):
             )
 
         plot_3d_by_episode(ref_emb3, gt_emb3, pred_emb3, meta,
-                           os.path.join(ds_dir3, "by_episode.html"), ds_name)
+                           os.path.join(d3, "by_episode.html"), ds_name)
         plot_3d_by_frame(ref_emb3, gt_emb3, pred_emb3, meta,
-                         os.path.join(ds_dir3, "by_frame.html"), ds_name)
+                         os.path.join(d3, "by_frame.html"), ds_name)
         plot_3d_by_subtask(ref_emb3, gt_emb3, pred_emb3, meta,
-                           os.path.join(ds_dir3, "by_subtask.html"), ds_name)
+                           os.path.join(d3, "by_subtask.html"), ds_name)
 
-        plot_nn_distances(ref_emb2, gt_emb2, pred_emb2, meta, ds_dir2, ds_name)
+        plot_nn_distances(ref_emb2, gt_emb2, pred_emb2, meta, d2, ds_name)
 
     plot_2d_overview(ref_emb2, cache["datasets"], os.path.join(d2, "overview.png"))
     plot_3d_overview(ref_emb3, cache["datasets"], os.path.join(d3, "overview.html"))
