@@ -173,8 +173,13 @@ class AsyncImageWriter:
         self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, compress_level: int = 1
     ):
         if isinstance(image, torch.Tensor):
-            # Convert tensor to numpy array to minimize main process time
-            image = image.cpu().numpy()
+            # Copy before enqueueing: threaded writers share memory with the
+            # caller, and some camera backends reuse frame buffers.
+            if image.dtype == torch.bfloat16:
+                image = image.float()
+            image = image.detach().cpu().clone().numpy()
+        elif isinstance(image, (np.ndarray, PIL.Image.Image)):
+            image = image.copy()
         self.queue.put((image, fpath, compress_level))
 
     def wait_until_done(self):

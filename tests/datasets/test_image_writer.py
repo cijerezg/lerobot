@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import queue
+import threading
 import time
 from multiprocessing import queues
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+import lerobot.datasets.image_writer as image_writer_module
 from lerobot.datasets.image_writer import (
     AsyncImageWriter,
     image_array_to_pil_image,
@@ -160,6 +162,38 @@ def test_save_image_numpy(tmp_path, img_array_factory):
         saved_image = np.array(Image.open(fpath))
         assert np.array_equal(image_array, saved_image)
     finally:
+        writer.stop()
+
+
+def test_save_image_numpy_copies_before_threaded_write(tmp_path, img_array_factory, monkeypatch):
+    block_write = threading.Event()
+    write_started = threading.Event()
+    original_write_image = image_writer_module.write_image
+
+    def delayed_write_image(image, fpath, compress_level=1):
+        write_started.set()
+        assert block_write.wait(timeout=5)
+        original_write_image(image, fpath, compress_level)
+
+    monkeypatch.setattr(image_writer_module, "write_image", delayed_write_image)
+
+    writer = AsyncImageWriter(num_processes=0, num_threads=1)
+    try:
+        image_array = img_array_factory()
+        expected_image = image_array.copy()
+        fpath = tmp_path / DUMMY_IMAGE
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+
+        writer.save_image(image_array, fpath)
+        assert write_started.wait(timeout=5)
+        image_array[...] = 0
+        block_write.set()
+        writer.wait_until_done()
+
+        saved_image = np.array(Image.open(fpath))
+        assert np.array_equal(expected_image, saved_image)
+    finally:
+        block_write.set()
         writer.stop()
 
 
