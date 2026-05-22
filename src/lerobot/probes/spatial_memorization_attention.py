@@ -17,7 +17,7 @@ aggregates per-head statistics across frames:
                                 high  = high mean + low variance  → memorized.
                                 low   = noisy / rarely attended.
 
-Output (under ``probe_parameters.output_dir/attention_spatial/``):
+Output (under ``probe_parameters.output_dir/spatial_memorization_attention/``):
   spatial_memorization_raw.pt   cached aggregates (delete to recompute)
   L{layer:02d}/
     mean_action_to_{cam}.png            per-head 2×4 grid
@@ -400,7 +400,7 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg, *, requires_grad: bool = F
     p = cfg.probe_parameters
     os.makedirs(ds_dir, exist_ok=True)
     cache_name = (
-        "spatial_memorization_jacobian_raw.pt"
+        "spatial_memorization_action_jacobian_raw.pt"
         if requires_grad
         else "spatial_memorization_raw.pt"
     )
@@ -487,7 +487,7 @@ def probe_cli(cfg: ProbeSpatialMemorizationConfig):
     init_logging()
     p = cfg.probe_parameters
     device = get_safe_torch_device(try_device=cfg.policy.device)
-    output_dir = os.path.join(p.output_dir, "attention_spatial")
+    output_dir = os.path.join(p.output_dir, "spatial_memorization_attention")
     os.makedirs(output_dir, exist_ok=True)
     logging.info(f"Output dir: {output_dir}")
 

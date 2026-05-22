@@ -622,14 +622,113 @@ def _text_blocks_for_action_matrix(result: AttentionCaptureResult):
     return blocks
 
 
+def _prompt_group_bounds(labels: list[str]) -> dict[str, tuple[int, int]]:
+    """Return compact prompt groups over decoded non-image token labels.
+
+    MolmoAct2 packs task, state, setup/control, advantage, and chat scaffolding
+    into one text stream. The grouping is only a visualization aid; it does not
+    imply separate model streams.
+    """
+    low = [label.lower() for label in labels]
+
+    def first(patterns, start=0):
+        for idx in range(start, len(low)):
+            if any(pattern in low[idx] for pattern in patterns):
+                return idx
+        return None
+
+    state_start = first(["state_start", "<state_"])
+    state_end = None
+    if state_start is not None:
+        state_end = first(["state_end"], state_start)
+        if state_end is None:
+            # Six state values plus start/end is the common SO-100 case; fall
+            # back conservatively if the tokenizer splits state tokens oddly.
+            state_end = min(len(labels) - 1, state_start + 7)
+
+    task_start = first(["task"])
+    task_end_candidates = []
+    if task_start is not None:
+        for pats in (["setup"], ["current"], ["state_start", "<state_"], ["expected"], ["control"], ["advantage"], ["given"]):
+            b = first(pats, task_start + 1)
+            if b is not None:
+                task_end_candidates.append(b)
+    task_end = min(task_end_candidates) if task_end_candidates else None
+
+    control_start_candidates = []
+    for pats in (["setup"], ["expected"], ["control"], ["advantage"]):
+        b = first(pats)
+        if b is not None:
+            control_start_candidates.append(b)
+    control_start = min(control_start_candidates) if control_start_candidates else None
+    control_end = first(["given"], control_start + 1) if control_start is not None else None
+
+    bounds: dict[str, tuple[int, int]] = {}
+    if task_start is not None:
+        bounds["task"] = (task_start, task_end if task_end is not None else len(labels))
+    if state_start is not None and state_end is not None:
+        bounds["state"] = (state_start, min(len(labels), state_end + 1))
+    if control_start is not None:
+        bounds["setup/control/adv"] = (control_start, control_end if control_end is not None else len(labels))
+    return bounds
+
+
+def _group_prompt_indices(result: AttentionCaptureResult, text_blocks, encoder_len, encoder_valid):
+    prompt_entries: list[tuple[int, str]] = []
+    for name, indices, seg_start in text_blocks:
+        if name == "subtask":
+            for idx in indices:
+                if 0 <= idx < encoder_len and (encoder_valid is None or bool(encoder_valid[idx])):
+                    prompt_entries.append((idx, "subtask"))
+            continue
+        for idx in indices:
+            if 0 <= idx < encoder_len and (encoder_valid is None or bool(encoder_valid[idx])):
+                prompt_entries.append((idx, _token_label_for_position(result, name, idx, seg_start)))
+
+    if not prompt_entries:
+        return []
+
+    labels = [label for _, label in prompt_entries]
+    bounds = _prompt_group_bounds(labels)
+    buckets: dict[str, list[int]] = {
+        "task": [],
+        "state": [],
+        "setup/control/adv": [],
+        "subtask": [],
+        "other prompt": [],
+    }
+
+    for local_pos, (idx, label) in enumerate(prompt_entries):
+        assigned = None
+        if label == "subtask":
+            assigned = "subtask"
+        else:
+            for group_name in ("state", "task", "setup/control/adv"):
+                if group_name in bounds:
+                    s, e = bounds[group_name]
+                    if s <= local_pos < e:
+                        assigned = group_name
+                        break
+        buckets[assigned or "other prompt"].append(idx)
+
+    order = ["task", "state", "setup/control/adv", "subtask", "other prompt"]
+    return [(name, buckets[name]) for name in order if buckets[name]]
+
+
 def render_action_text_matrix(result: AttentionCaptureResult, layer_idx: int):
-    """Action queries to action self-attention plus decoded language/subtask keys."""
+    """Compact action-query attention to prompt-token groups.
+
+    MolmoAct2 receives one packed text stream. This view groups the non-image
+    prompt tokens for readability; it is not a separate model pathway. The
+    rows are normalized across the displayed prompt groups only, so this panel
+    compares task/state/setup/etc. within the prompt, not prompt vs image vs
+    action self-attention.
+    """
     frames: dict[str, np.ndarray] = {}
     vmax_by_panel: dict[str, float] = {}
 
     cross = result.cross_attn_by_layer.get(layer_idx)
-    selfa = result.self_attn_by_layer.get(layer_idx)
-    if cross is None or selfa is None:
+    if cross is None:
         return frames, vmax_by_panel
 
     text_blocks = _text_blocks_for_action_matrix(result)
@@ -637,56 +736,47 @@ def render_action_text_matrix(result: AttentionCaptureResult, layer_idx: int):
         return frames, vmax_by_panel
 
     cross_attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)
-    self_attn = torch.nan_to_num(selfa[0].float().cpu(), nan=0.0)
-    n_action = int(self_attn.shape[-1])
     encoder_len = int(cross_attn.shape[-1])
     encoder_valid = None
     if torch.is_tensor(result.encoder_pad_masks) and result.encoder_pad_masks.ndim >= 2:
         encoder_valid = result.encoder_pad_masks[0].detach().cpu().to(torch.bool)
 
-    parts = [self_attn]
-    col_labels = [str(i) if i % 5 == 0 else "" for i in range(n_action)]
-    groups: list[tuple[str, int, int]] = [("action self", 0, n_action)]
-    col_pos = n_action
-
-    max_cols = {"language": 48, "subtask": 16}
-    for name, indices, seg_start in text_blocks:
-        budget = max_cols.get(name, 96)
-        kept = [idx for idx in indices[:budget] if 0 <= idx < encoder_len]
-        if not kept:
-            continue
-        idx_t = torch.as_tensor(kept, dtype=torch.long)
-        block = cross_attn.index_select(dim=-1, index=idx_t)
-        if encoder_valid is not None:
-            valid = encoder_valid.index_select(dim=0, index=idx_t).to(block.dtype)
-            block = block * valid.view(1, 1, -1)
-        parts.append(block)
-        for idx in kept:
-            if encoder_valid is not None and not bool(encoder_valid[idx]):
-                col_labels.append("")
-            else:
-                col_labels.append(_token_label_for_position(result, name, idx, seg_start))
-        groups.append((name, col_pos, col_pos + len(kept)))
-        col_pos += len(kept)
-
-    if len(parts) == 1:
+    prompt_groups = _group_prompt_indices(result, text_blocks, encoder_len, encoder_valid)
+    if not prompt_groups:
         return frames, vmax_by_panel
 
-    sliced = torch.cat(parts, dim=-1)
-    sliced = sliced / sliced.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-    mean = sliced.mean(dim=0)
+    grouped_parts = []
+    col_labels = []
+    groups: list[tuple[str, int, int]] = []
+    for col_pos, (name, indices) in enumerate(prompt_groups):
+        idx_t = torch.as_tensor(indices, dtype=torch.long)
+        # Sum attention mass over tokens in the group. This answers "how much
+        # of the displayed prompt attention goes to this prompt section?"
+        group_mass = cross_attn.index_select(dim=-1, index=idx_t).sum(dim=-1, keepdim=True)
+        grouped_parts.append(group_mass)
+        col_labels.append(f"{name}:{len(indices)}")
+        groups.append((name, col_pos, col_pos + 1))
 
-    mean_vmax = float(mean.max().item())
-    heads_vmax = float(sliced.max().item())
-    vmax_by_panel["action_text_matrix_mean"] = mean_vmax
-    vmax_by_panel["action_text_matrix_heads"] = heads_vmax
+    grouped = torch.cat(grouped_parts, dim=-1)
+    grouped = grouped / grouped.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    mean = grouped.mean(dim=0)
+
+    fixed_vmax = 1.0
+    vmax_by_panel["action_text_matrix_mean"] = fixed_vmax
+    vmax_by_panel["action_text_matrix_heads"] = fixed_vmax
     frames["action_text_matrix_mean"] = _render_action_text_panel(
-        mean, mean_vmax, col_labels, groups,
-        f"L{layer_idx}: action -> [action | language | subtask] (mean, row-normalized)",
+        mean,
+        fixed_vmax,
+        col_labels,
+        groups,
+        f"L{layer_idx}: action -> prompt groups (mean, rows sum over prompt groups, scale 0-1)",
     )
     frames["action_text_matrix_heads"] = _render_action_text_heads(
-        sliced, heads_vmax, col_labels, groups,
-        f"L{layer_idx}: action -> [action | language | subtask] (per-head, row-normalized)",
+        grouped,
+        fixed_vmax,
+        col_labels,
+        groups,
+        f"L{layer_idx}: action -> prompt groups (per-head, rows sum over prompt groups, scale 0-1)",
     )
     return frames, vmax_by_panel
 
@@ -728,6 +818,14 @@ def _attention_metadata_summary(result: AttentionCaptureResult, layer_idx: int) 
         display_segments = segments
         if idx is not None:
             raw_indices["cross_matrix_display_indices"] = _summarize_indices(idx.tolist())
+        text_blocks = _text_blocks_for_action_matrix(result)
+        encoder_valid = None
+        if torch.is_tensor(result.encoder_pad_masks) and result.encoder_pad_masks.ndim >= 2:
+            encoder_valid = result.encoder_pad_masks[0].detach().cpu().to(torch.bool)
+        prompt_groups = _group_prompt_indices(result, text_blocks, int(attn.shape[-1]), encoder_valid)
+        raw_indices["action_prompt_groups"] = {
+            name: _summarize_indices(indices) for name, indices in prompt_groups
+        }
 
     return {
         "layer": int(layer_idx),

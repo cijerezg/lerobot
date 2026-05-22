@@ -154,12 +154,12 @@ _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_attention", "lerobot.probes.attention", "attention"),
     _ValidationProbeSpec("enable_critic_values_distribution", "lerobot.probes.critic", "critic"),
     _ValidationProbeSpec("enable_representations", "lerobot.probes.representations", "representations"),
-    _ValidationProbeSpec("enable_spatial_memorization", "lerobot.probes.attention_spatial", "attention_spatial"),
+    _ValidationProbeSpec("enable_spatial_memorization", "lerobot.probes.spatial_memorization_attention", "spatial_memorization_attention"),
     _ValidationProbeSpec("enable_action_drift_jacobian", "lerobot.probes.action_drift_jacobian", "action_drift_jacobian"),
     _ValidationProbeSpec(
         "enable_spatial_memorization_jacobian",
-        "lerobot.probes.spatial_memorization_jacobian",
-        "spatial_memorization_jacobian",
+        "lerobot.probes.spatial_memorization_action_jacobian",
+        "spatial_memorization_action_jacobian",
     ),
 )
 
@@ -187,6 +187,7 @@ def _run_validation_probes(
     preprocessor,
     postprocessor,
     val_dataset,
+    reference_dataset,
     device,
     cfg: TrainRLServerPipelineConfig,
     step: int,
@@ -197,7 +198,7 @@ def _run_validation_probes(
     The policy is put into eval mode for the duration and restored at the end.
     """
     p = cfg.probe_parameters
-    output_root = os.path.join(cfg.output_dir, "probes", f"step_{step:08d}")
+    output_root = os.path.join(cfg.output_dir, "validation", f"step_{step:08d}")
     was_training = policy.training
     policy.eval()
     try:
@@ -213,12 +214,17 @@ def _run_validation_probes(
             try:
                 module = importlib.import_module(spec.module_path)
                 run_probe = getattr(module, spec.run_attr)
-                run_probe(
-                    adapter,
-                    val_dataset,
-                    cfg,
-                    os.path.join(output_root, spec.output_subdir),
-                )
+                probe_output_dir = os.path.join(output_root, spec.output_subdir)
+                if spec.output_subdir == "actions":
+                    run_probe(
+                        adapter,
+                        reference_dataset if reference_dataset is not None else val_dataset,
+                        cfg,
+                        probe_output_dir,
+                        eval_dataset=val_dataset,
+                    )
+                else:
+                    run_probe(adapter, val_dataset, cfg, probe_output_dir)
             except Exception as exc:
                 logging.warning(f"[VAL step={step}] probe '{spec.output_subdir}' failed: {exc}")
             else:
@@ -543,7 +549,8 @@ def run_offline_training(
     if val_on_start:
         _run_validation_probes(
             policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
-            val_dataset=val_dataset, device=device, cfg=cfg, step=0,
+            val_dataset=val_dataset, reference_dataset=offline_dataset,
+            device=device, cfg=cfg, step=0,
         )
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -680,7 +687,8 @@ def run_offline_training(
         if val_freq > 0 and optimization_step % val_freq == 0:
             _run_validation_probes(
                 policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
-                val_dataset=val_dataset, device=device, cfg=cfg, step=optimization_step,
+                val_dataset=val_dataset, reference_dataset=offline_dataset,
+                device=device, cfg=cfg, step=optimization_step,
             )
 
     logging.info(f"[RL_OFFLINE] Training complete after {optimization_step} steps.")

@@ -705,12 +705,16 @@ def run_plotting(cache, cfg, output_dir):
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
-def run(adapter, root_dataset, cfg, output_dir):
+def run(adapter, root_dataset, cfg, output_dir, *, eval_dataset=None):
     """Run the actions probe end-to-end (collect + plot).
 
     Called by both :func:`probe_cli` (standalone) and the rl_offline
     validation loop. ``adapter`` and ``root_dataset`` may be ``None`` when
     ``cfg.probe_parameters.mode == "plot"`` (cache-only re-plot).
+
+    ``root_dataset`` is the reference dataset used to fit the GT manifold.
+    ``eval_dataset`` is optional and lets validation evaluate a separate
+    dataset without shrinking the reference manifold.
     """
     p = cfg.probe_parameters
     makedirs(output_dir)
@@ -722,7 +726,7 @@ def run(adapter, root_dataset, cfg, output_dir):
             raise ValueError("collect mode requires adapter and root_dataset.")
         pca_dir = os.path.join(output_dir, "pca_variance")
         makedirs(pca_dir)
-        root_name = dataset_display_name(root_dataset, cfg.dataset.root)
+        ref_name = dataset_display_name(root_dataset, cfg.dataset.root)
 
         ref_samples = sample_episodes_evenly(
             root_dataset,
@@ -730,7 +734,7 @@ def run(adapter, root_dataset, cfg, output_dir):
             max_episodes=p.ref_max_episodes,
             seed=p.random_seed,
         )
-        logging.info(f"Collecting reference GT: {len(ref_samples)} frames from '{root_name}' …")
+        logging.info(f"Collecting reference GT: {len(ref_samples)} frames from '{ref_name}' …")
         ref_data = collect_gt_reference(root_dataset, ref_samples, cfg.policy.chunk_size)
 
         logging.info("Fitting PCA + UMAP manifold …")
@@ -746,7 +750,13 @@ def run(adapter, root_dataset, cfg, output_dir):
         }
 
         extra_paths = getattr(cfg.dataset, "additional_offline_dataset_paths", None) or []
-        all_datasets = [(root_name, root_dataset)] + [
+        primary_eval_dataset = eval_dataset if eval_dataset is not None else root_dataset
+        eval_name = dataset_display_name(
+            primary_eval_dataset,
+            getattr(cfg, "val_dataset_path", None) if eval_dataset is not None else cfg.dataset.root,
+        )
+
+        all_datasets = [(eval_name, primary_eval_dataset)] + [
             (os.path.basename(os.path.normpath(ep)),
              load_extra_dataset(cfg.dataset.repo_id, ep))
             for ep in extra_paths

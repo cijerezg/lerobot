@@ -41,7 +41,6 @@ class MolmoAct2Trainer(Trainer):
         "target_value_histogram": (-2.0, 0.1),
         "target_value_histogram_actor": (-2.0, 0.1),
         "v_next_histogram_actor": (-2.0, 0.1),
-        "flow_loss_histogram_flat": (0.0, 0.01),
         "flow_loss_per_sample_histogram": (0.0, 0.01),
         "loss_critic_histogram_flat": (0.0, 0.005),
     }
@@ -513,14 +512,12 @@ class MolmoAct2Trainer(Trainer):
         squashed_adv_list: list[torch.Tensor] = []
         raw_adv_list: list[torch.Tensor] = []
         actor_loss_list: list[torch.Tensor] = []
-        flow_loss_raw_list: list[torch.Tensor] = []
         flow_loss_per_sample_list: list[torch.Tensor] = []
         flow_loss_per_timestep_list: list[torch.Tensor] = []
         flow_timesteps_list: list[torch.Tensor] = []
         flow_loss_per_action_step_list: list[torch.Tensor] = []
         discrete_ce_loss_list: list[torch.Tensor] = []
         discrete_z_loss_list: list[torch.Tensor] = []
-        action_target_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
         critic_values_actor_list: list[torch.Tensor] = []
@@ -546,7 +543,6 @@ class MolmoAct2Trainer(Trainer):
 
             observations = raw.get("state", {})
             actions = raw[ACTION][..., :action_dim]
-            action_target_list.append(actions.detach().float().reshape(-1))
             if "reward" in raw:
                 reward_tensor = raw["reward"]
                 if not isinstance(reward_tensor, torch.Tensor):
@@ -610,9 +606,6 @@ class MolmoAct2Trainer(Trainer):
             actor_loss_raw = metrics.get("loss_raw", loss.detach().float() if isinstance(loss, torch.Tensor) else None)
             if isinstance(actor_loss_raw, torch.Tensor):
                 actor_loss_list.append(actor_loss_raw.detach().float().view(-1))
-            flow_loss_raw = metrics.get("flow_loss_raw")
-            if isinstance(flow_loss_raw, torch.Tensor):
-                flow_loss_raw_list.append(flow_loss_raw.detach().float().reshape(-1))
             flow_loss_per_sample = metrics.get("flow_loss_per_sample")
             if isinstance(flow_loss_per_sample, torch.Tensor):
                 flow_loss_per_sample_list.append(flow_loss_per_sample.detach().float().view(-1))
@@ -639,9 +632,6 @@ class MolmoAct2Trainer(Trainer):
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)
             accum["actor_loss_histogram"] = all_actor_loss.cpu().numpy()
-        if flow_loss_raw_list:
-            all_flow_loss_raw = torch.cat(flow_loss_raw_list)
-            accum["flow_loss_histogram_flat"] = all_flow_loss_raw.cpu().numpy()
         if flow_loss_per_sample_list:
             all_flow_per_sample = torch.cat(flow_loss_per_sample_list)
             accum["flow_loss_per_sample_mean"] = all_flow_per_sample.mean().item()
@@ -650,9 +640,6 @@ class MolmoAct2Trainer(Trainer):
         if flow_loss_per_timestep_list and flow_timesteps_list:
             all_flow_by_timestep = torch.cat(flow_loss_per_timestep_list)
             all_flow_timesteps = torch.cat(flow_timesteps_list)
-            accum["flow_timestep_mean"] = all_flow_timesteps.mean().item()
-            accum["flow_timestep_std"] = all_flow_timesteps.std().item() if all_flow_timesteps.numel() > 1 else 0.0
-            accum["flow_timestep_histogram"] = all_flow_timesteps.cpu().numpy()
             low_t = all_flow_timesteps < 0.3
             high_t = all_flow_timesteps > 0.7
             if bool(low_t.any()):
@@ -669,20 +656,12 @@ class MolmoAct2Trainer(Trainer):
             edge = min(10, horizon)
             accum["flow_loss_time/mean_first_10"] = all_flow_by_action_step[:, :edge].mean().item()
             accum["flow_loss_time/mean_last_10"] = all_flow_by_action_step[:, -edge:].mean().item()
-            accum["flow_loss_per_action_step_histogram"] = all_flow_by_action_step.cpu().numpy()
         if discrete_ce_loss_list:
             all_discrete_ce = torch.cat(discrete_ce_loss_list)
             accum["discrete_ce_loss_histogram_flat"] = all_discrete_ce.cpu().numpy()
         if discrete_z_loss_list:
             all_discrete_z = torch.cat(discrete_z_loss_list)
             accum["discrete_z_loss_histogram_flat"] = all_discrete_z.cpu().numpy()
-        if action_target_list:
-            all_actions = torch.cat(action_target_list)
-            accum["action_target_mean"] = all_actions.mean().item()
-            accum["action_target_std"] = all_actions.std().item() if all_actions.numel() > 1 else 0.0
-            accum["action_target_abs_mean"] = all_actions.abs().mean().item()
-            accum["action_target_abs_max"] = all_actions.abs().max().item()
-            accum["action_target_histogram"] = all_actions.cpu().numpy()
         if reward_list:
             all_rewards = torch.cat(reward_list)
             accum["reward_mean"] = all_rewards.mean().item()
