@@ -43,6 +43,7 @@ from lerobot.utils.transition import Transition, move_state_dict_to_device, move
 logger = logging.getLogger(__name__)
 
 
+
 def _action_dim(cfg) -> int:
     if hasattr(cfg.policy, "action_dim"):
         return int(cfg.policy.action_dim)
