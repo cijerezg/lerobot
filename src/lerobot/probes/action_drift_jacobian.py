@@ -47,12 +47,18 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.attention import (
+    _episode_matrix_vmax,
+    _episode_overlay_vmax,
+    _extract_action_text_data,
+    _extract_cross_matrix_data,
+    _extract_overlay_grids,
+    _extract_self_matrix_data,
+    _render_action_text_from_data,
+    _render_cross_matrix_from_data,
+    _render_overlays_from_grids,
+    _render_self_matrix_from_data,
     _warn_overcommit_if_risky,
     build_episode_samples,
-    render_action_text_matrix,
-    render_cross_matrix,
-    render_image_overlays,
-    render_self_matrix,
 )
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.utils import get_frame_data, load_extra_dataset
@@ -91,10 +97,13 @@ def _probe_dataset(adapter, ds, ds_output_dir, layers, timestep, cfg):
     t_str = f"{timestep:.2f}".replace(".", "p")
 
     for ep_idx, ep_frames in samples:
+        # Every panel uses an episode-fixed p98 vmax — see attention.py for
+        # the rationale. Pass 1 buffers raw extracts; pass 2 aggregates and renders.
         writers: dict[int, dict[str, "imageio.core.format.Writer"]] = {
             l: {} for l in layers  # noqa: E741
         }
         csv_files: dict[int, tuple] = {}
+        layer_buf: dict[int, list[dict]] = {l: [] for l in layers}  # noqa: E741
 
         for fr_idx, global_idx in ep_frames:
             obs, gt_actions, state, _, task_str, _, _ = get_frame_data(ds, global_idx, chunk_size)
@@ -120,12 +129,42 @@ def _probe_dataset(adapter, ds, ds_output_dir, layers, timestep, cfg):
                     if os.path.getsize(csv_path) == 0:
                         w.writerow(["ep", "fr", "layer", "panel", "vmax"])
                     csv_files[layer_idx] = (f, w)
-                csv_f, csv_w = csv_files[layer_idx]
 
+                layer_buf[layer_idx].append({
+                    "fr_idx": fr_idx,
+                    "overlay_grids": _extract_overlay_grids(result, layer_idx),
+                    "cross": _extract_cross_matrix_data(result, layer_idx),
+                    "self": _extract_self_matrix_data(result, layer_idx),
+                    "action_text": _extract_action_text_data(result, layer_idx),
+                })
+
+        for layer_idx, frames_buf in layer_buf.items():
+            if not frames_buf:
+                continue
+            overlay_buf = [(d["fr_idx"], d["overlay_grids"]) for d in frames_buf]
+            ep_overlay_vmax = _episode_overlay_vmax(overlay_buf, percentile=98.0)
+            ep_matrix_vmax = _episode_matrix_vmax(
+                [d["cross"] for d in frames_buf if d["cross"] is not None],
+                [d["self"] for d in frames_buf if d["self"] is not None],
+                [d["action_text"] for d in frames_buf if d["action_text"] is not None],
+                percentile=98.0,
+            )
+            all_vmax = {**ep_overlay_vmax, **ep_matrix_vmax}
+
+            csv_f, csv_w = csv_files[layer_idx]
+            ep_dir = os.path.join(
+                ds_output_dir, f"ep{ep_idx:04d}_t{t_str}", f"L{layer_idx:02d}",
+            )
+            for d in frames_buf:
+                fr_idx = d["fr_idx"]
                 panels: dict[str, np.ndarray] = {}
                 vmaxes: dict[str, float] = {}
-                for renderer in (render_image_overlays, render_cross_matrix, render_self_matrix, render_action_text_matrix):
-                    p_frames, p_vmax = renderer(result, layer_idx)
+                for p_frames, p_vmax in (
+                    _render_overlays_from_grids(d["overlay_grids"], vmax_overrides=all_vmax),
+                    _render_cross_matrix_from_data(d["cross"], layer_idx, vmax_overrides=all_vmax),
+                    _render_self_matrix_from_data(d["self"], layer_idx, vmax_overrides=all_vmax),
+                    _render_action_text_from_data(d["action_text"], layer_idx, vmax_overrides=all_vmax),
+                ):
                     # Prefix output keys with "causal_" so they don't collide
                     # if someone runs both probes into the same dir.
                     panels.update({f"causal_{k}": v for k, v in p_frames.items()})

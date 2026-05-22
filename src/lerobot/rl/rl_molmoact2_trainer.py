@@ -7,7 +7,9 @@ Critic-trained mode (skip_critic=False): update_critic (HL-Gauss distributional 
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import logging
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -15,7 +17,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from lerobot.rl.rl_trainer import Trainer
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import (
+    ACTION,
+    CHECKPOINTS_DIR,
+    LAST_CHECKPOINT_LINK,
+    POLICY_POSTPROCESSOR_DEFAULT_NAME,
+    POLICY_PREPROCESSOR_DEFAULT_NAME,
+    PRETRAINED_MODEL_DIR,
+)
 from lerobot.utils.transition import move_transition_to_device
 
 
@@ -28,6 +37,74 @@ _MOLMOACT2_LANGUAGE_DEPTH = 36   # transformer.blocks.{0..35}
 def _layer_idx_after(name: str, marker: str) -> int:
     """Parse the integer layer index immediately after `marker` in `name`."""
     return int(name.split(marker)[1].split(".")[0])
+
+
+def _dataset_stats(dataset: Any | None) -> dict[str, dict[str, Any]] | None:
+    if dataset is None:
+        return None
+    stats = getattr(dataset, "stats", None)
+    if stats is not None:
+        return stats
+    meta = getattr(dataset, "meta", None)
+    if meta is not None:
+        return getattr(meta, "stats", None)
+    return None
+
+
+def _has_saved_processors(path: Path) -> bool:
+    preprocessor_path = path / f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+    postprocessor_path = path / f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+    return preprocessor_path.exists() and postprocessor_path.exists()
+
+
+def _saved_processor_path(cfg: Any) -> Path | None:
+    candidates: list[Path] = []
+
+    pretrained_path = getattr(cfg.policy, "pretrained_path", None)
+    if pretrained_path is not None:
+        candidates.append(Path(pretrained_path).expanduser())
+
+    checkpoint_path = getattr(cfg, "checkpoint_path", None)
+    if checkpoint_path is not None:
+        checkpoint_path = Path(checkpoint_path).expanduser()
+        candidates.extend([checkpoint_path, checkpoint_path / PRETRAINED_MODEL_DIR])
+
+    if getattr(cfg, "output_dir", None):
+        candidates.append(
+            Path(cfg.output_dir).expanduser()
+            / CHECKPOINTS_DIR
+            / LAST_CHECKPOINT_LINK
+            / PRETRAINED_MODEL_DIR
+        )
+
+    for path in candidates:
+        if path.is_dir() and _has_saved_processors(path):
+            return path
+    return None
+
+
+def _override_action_stats(processors: tuple, action_stats: dict[str, Any]) -> tuple:
+    for pipeline in processors:
+        for step in getattr(pipeline, "steps", []):
+            stats = getattr(step, "stats", None)
+            if not isinstance(stats, dict):
+                continue
+            updated_stats = deepcopy(stats)
+            updated_action_stats = deepcopy(action_stats)
+            existing_action_stats = stats.get(ACTION)
+            if (
+                isinstance(updated_action_stats, dict)
+                and isinstance(existing_action_stats, dict)
+                and "mask" not in updated_action_stats
+                and "mask" in existing_action_stats
+            ):
+                updated_action_stats["mask"] = existing_action_stats["mask"]
+            updated_stats[ACTION] = updated_action_stats
+            step.stats = updated_stats
+            to_fn = getattr(step, "to", None)
+            if callable(to_fn):
+                to_fn(device=getattr(step, "device", None), dtype=getattr(step, "dtype", None))
+    return processors
 
 
 class MolmoAct2Trainer(Trainer):
@@ -49,7 +126,12 @@ class MolmoAct2Trainer(Trainer):
 
     def make_processors(self, cfg, dataset=None, is_main_process: bool = True) -> tuple:  # noqa: ARG002
         """
-        Build (preprocessor, postprocessor) using make_molmoact2_pre_post_processors.
+        Build MolmoAct2 processors with stable normalization stats.
+
+        Dataset stats initialize base/original MolmoAct2 runs. Once a LeRobot
+        checkpoint exists, its saved processor stats carry the normalization
+        contract forward. Anchor/delta action encoding stats are explicit and
+        always override ACTION stats.
 
         The standard MolmoAct2 preprocessor is already safe for batched replay-buffer
         inputs: AddBatchDimensionProcessorStep only adds a dim to 1-D / 3-D tensors,
@@ -57,11 +139,10 @@ class MolmoAct2Trainer(Trainer):
         """
         import os
 
+        from lerobot.policies.factory import make_pre_post_processors
         from lerobot.policies.molmoact2.processor_molmoact2 import make_molmoact2_pre_post_processors
 
-        dataset_stats = None
-        if dataset is not None and hasattr(dataset, "stats"):
-            dataset_stats = dataset.stats
+        dataset_stats = _dataset_stats(dataset)
         dataset_meta = getattr(dataset, "meta", None) if dataset is not None else None
 
         action_stats_override = None
@@ -77,12 +158,29 @@ class MolmoAct2Trainer(Trainer):
                 logging.info(f"Loading {action_encoding} action stats from {stats_path}")
             action_stats_override = torch.load(os.path.expanduser(stats_path), map_location="cpu")
 
-        result = make_molmoact2_pre_post_processors(
-            config=cfg.policy,
-            dataset_stats=dataset_stats,
-            dataset_meta=dataset_meta,
-            action_stats_override=action_stats_override,
-        )
+        saved_processor_path = _saved_processor_path(cfg)
+        if saved_processor_path is not None:
+            if is_main_process:
+                logging.info(f"MolmoAct2 stats source: saved checkpoint processors ({saved_processor_path})")
+            result = make_pre_post_processors(cfg.policy, pretrained_path=str(saved_processor_path))
+            if action_stats_override is not None:
+                if is_main_process:
+                    logging.info(f"MolmoAct2 ACTION stats override: {action_encoding} stats")
+                result = _override_action_stats(result, action_stats_override)
+        else:
+            if is_main_process:
+                if dataset_stats is not None:
+                    logging.info("MolmoAct2 stats source: dataset stats")
+                elif str(getattr(cfg.policy, "norm_tag", "") or "").strip():
+                    logging.info(f"MolmoAct2 stats source: norm_tag={cfg.policy.norm_tag!r}")
+                else:
+                    logging.info("MolmoAct2 stats source: none")
+            result = make_molmoact2_pre_post_processors(
+                config=cfg.policy,
+                dataset_stats=dataset_stats,
+                dataset_meta=dataset_meta,
+                action_stats_override=action_stats_override,
+            )
         self._preprocessor = result[0]  # cache for critic_value_for_logging
         return result
 

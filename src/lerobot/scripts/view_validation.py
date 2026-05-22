@@ -1,7 +1,9 @@
 """Side-by-side comparison of validation outputs across training steps."""
 
 import argparse
+import html as html_lib
 from pathlib import Path
+from urllib.parse import quote
 
 import gradio as gr
 
@@ -230,7 +232,11 @@ def file_url(path: Path) -> str:
     """
     if not path.exists():
         return ""
-    return f"/gradio_api/file={path}"
+    return f"/gradio_api/file={quote(str(path), safe='/')}"
+
+
+def not_loaded_html(kind: str) -> str:
+    return f'<p style="color:#888; margin:8px 0;">{html_lib.escape(kind)} view not loaded.</p>'
 
 
 def render_image_grid(paths_and_labels: list[tuple[Path, str]]) -> str:
@@ -243,7 +249,7 @@ def render_image_grid(paths_and_labels: list[tuple[Path, str]]) -> str:
     for path, label in paths_and_labels:
         uri = file_url(path)
         html += f'''<div style="text-align:center;">
-            <div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{label}</div>'''
+            <div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{html_lib.escape(label)}</div>'''
         if uri:
             html += f'<img src="{uri}" loading="lazy" style="width:100%; height:auto; border-radius:4px;" />'
         else:
@@ -309,9 +315,9 @@ def _video_seek_script(uid: str) -> str:
 def _render_video_item(path: Path, label: str) -> str:
     uri = file_url(path)
     html = f'<div style="text-align:center;">'
-    html += f'<div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{label}</div>'
+    html += f'<div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{html_lib.escape(label)}</div>'
     if uri:
-        html += f'<video src="{uri}" preload="metadata" style="width:100%; height:auto; border-radius:4px;"></video>'
+        html += f'<video src="{uri}" preload="none" style="width:100%; height:auto; border-radius:4px;"></video>'
     else:
         html += '<p style="color:#888;">Not found</p>'
     html += '</div>'
@@ -435,9 +441,14 @@ def build_app(run_dir: str):
         # Thumbnails are step-independent, so just find the first one that exists
         thumb_path = None
         for s in all_steps:
-            candidate = val_dir / s / "episode_thumbnails.png"
-            if candidate.exists():
-                thumb_path = candidate
+            for candidate in (
+                val_dir / s / "episode_thumbnails.png",
+                val_dir / s / "representations" / "episode_thumbnails.png",
+            ):
+                if candidate.exists():
+                    thumb_path = candidate
+                    break
+            if thumb_path:
                 break
         if thumb_path:
             thumb_uri = file_url(thumb_path)
@@ -487,7 +498,8 @@ def build_app(run_dir: str):
                     att_file_dd = gr.Dropdown(
                         choices=att_files, value=att_files[0], label="View"
                     )
-                att_html = gr.HTML()
+                att_load_btn = gr.Button("Load View", variant="primary")
+                att_html = gr.HTML(not_loaded_html("Attention"))
 
                 def render_attention(selected_steps, ep, layer, fname):
                     if not selected_steps or not ep or not layer or not fname:
@@ -499,11 +511,7 @@ def build_app(run_dir: str):
                     vertical = "mean" in fname or "summary" in fname
                     return render_video_grid(items, vertical=vertical)
 
-                att_ep_dd.change(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
-                att_layer_dd.change(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
-                att_file_dd.change(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
-                step_selector.change(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
-                app.load(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
+                att_load_btn.click(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
 
         # ---- Representations tab ----
         if repr_spaces:
@@ -511,7 +519,8 @@ def build_app(run_dir: str):
                 with gr.Row():
                     repr_space_dd = gr.Dropdown(choices=repr_spaces, value=repr_spaces[0], label="Space")
                     repr_color_dd = gr.Dropdown(choices=REPR_COLORINGS, value=REPR_COLORINGS[0], label="Coloring")
-                repr_html = gr.HTML()
+                repr_load_btn = gr.Button("Load View", variant="primary")
+                repr_html = gr.HTML(not_loaded_html("Representations"))
 
                 def render_repr(selected_steps, space, coloring):
                     if not selected_steps or not space or not coloring:
@@ -520,16 +529,14 @@ def build_app(run_dir: str):
                              for s in selected_steps]
                     return render_image_grid(items)
 
-                repr_space_dd.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
-                repr_color_dd.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
-                step_selector.change(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
-                app.load(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
+                repr_load_btn.click(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
 
                 # PCA scree
                 if scree_spaces:
                     gr.Markdown("### PCA scree")
                     scree_dd = gr.Dropdown(choices=scree_spaces, value=scree_spaces[0], label="Space")
-                    scree_html = gr.HTML()
+                    scree_load_btn = gr.Button("Load Scree")
+                    scree_html = gr.HTML(not_loaded_html("PCA scree"))
 
                     def render_scree(selected_steps, space):
                         if not selected_steps or not space:
@@ -539,9 +546,7 @@ def build_app(run_dir: str):
                                  for s in selected_steps]
                         return render_image_grid(items)
 
-                    scree_dd.change(render_scree, [step_selector, scree_dd], scree_html)
-                    step_selector.change(render_scree, [step_selector, scree_dd], scree_html)
-                    app.load(render_scree, [step_selector, scree_dd], scree_html)
+                    scree_load_btn.click(render_scree, [step_selector, scree_dd], scree_html)
 
         # ---- Offline Inference tab ----
         if offline_inference_frames:
@@ -557,7 +562,8 @@ def build_app(run_dir: str):
                         value=offline_inference_frames[0] if offline_inference_frames else None,
                         label="Frame",
                     )
-                oe_html = gr.HTML()
+                oe_load_btn = gr.Button("Load View", variant="primary")
+                oe_html = gr.HTML(not_loaded_html("Offline Inference"))
 
                 def render_offline_inference(selected_steps, space, frame):
                     if not selected_steps or not space or not frame:
@@ -573,10 +579,7 @@ def build_app(run_dir: str):
                     ]
                     return render_image_grid(items)
 
-                oe_space_dd.change(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
-                oe_frame_dd.change(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
-                step_selector.change(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
-                app.load(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                oe_load_btn.click(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
 
         # ---- Action Drift Jacobian tab ----
         if adj_groups and adj_layers and adj_files:
@@ -591,7 +594,8 @@ def build_app(run_dir: str):
                     adj_file_dd = gr.Dropdown(
                         choices=adj_files, value=adj_files[0], label="View"
                     )
-                adj_html = gr.HTML()
+                adj_load_btn = gr.Button("Load View", variant="primary")
+                adj_html = gr.HTML(not_loaded_html("Action Drift Jacobian"))
 
                 def render_adj(selected_steps, group, layer, fname):
                     if not selected_steps or not group or not layer or not fname:
@@ -606,11 +610,7 @@ def build_app(run_dir: str):
                     vertical = "summary" in fname or "mean" in fname
                     return render_video_grid(items, vertical=vertical)
 
-                adj_group_dd.change(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
-                adj_layer_dd.change(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
-                adj_file_dd.change(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
-                step_selector.change(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
-                app.load(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
+                adj_load_btn.click(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
 
         # ---- Spatial Memorization Attention tab ----
         if sm_layers and sm_files:
@@ -622,7 +622,8 @@ def build_app(run_dir: str):
                     sm_file_dd = gr.Dropdown(
                         choices=sm_files, value=sm_files[0], label="View"
                     )
-                sm_html = gr.HTML()
+                sm_load_btn = gr.Button("Load View", variant="primary")
+                sm_html = gr.HTML(not_loaded_html("Spatial Memorization Attention"))
 
                 def render_sm(selected_steps, layer, fname):
                     if not selected_steps or not layer or not fname:
@@ -633,10 +634,7 @@ def build_app(run_dir: str):
                     ]
                     return render_image_grid(items)
 
-                sm_layer_dd.change(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
-                sm_file_dd.change(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
-                step_selector.change(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
-                app.load(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
+                sm_load_btn.click(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
 
         # ---- Spatial Memorization Action-Jacobian tab ----
         if smj_layers and smj_files:
@@ -648,7 +646,8 @@ def build_app(run_dir: str):
                     smj_file_dd = gr.Dropdown(
                         choices=smj_files, value=smj_files[0], label="View"
                     )
-                smj_html = gr.HTML()
+                smj_load_btn = gr.Button("Load View", variant="primary")
+                smj_html = gr.HTML(not_loaded_html("Spatial Memorization Action-Jacobian"))
 
                 def render_smj(selected_steps, layer, fname):
                     if not selected_steps or not layer or not fname:
@@ -659,10 +658,7 @@ def build_app(run_dir: str):
                     ]
                     return render_image_grid(items)
 
-                smj_layer_dd.change(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
-                smj_file_dd.change(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
-                step_selector.change(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
-                app.load(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
+                smj_load_btn.click(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
 
         # ---- Critic Values tab ----
         if cv_files:
@@ -670,7 +666,8 @@ def build_app(run_dir: str):
                 cv_file_dd = gr.Dropdown(
                     choices=cv_files, value=cv_files[0], label="View"
                 )
-                cv_html = gr.HTML()
+                cv_load_btn = gr.Button("Load View", variant="primary")
+                cv_html = gr.HTML(not_loaded_html("Critic Values"))
 
                 def render_cv(selected_steps, fname):
                     if not selected_steps or not fname:
@@ -681,9 +678,7 @@ def build_app(run_dir: str):
                     ]
                     return render_image_grid(items)
 
-                cv_file_dd.change(render_cv, [step_selector, cv_file_dd], cv_html)
-                step_selector.change(render_cv, [step_selector, cv_file_dd], cv_html)
-                app.load(render_cv, [step_selector, cv_file_dd], cv_html)
+                cv_load_btn.click(render_cv, [step_selector, cv_file_dd], cv_html)
 
     return app
 

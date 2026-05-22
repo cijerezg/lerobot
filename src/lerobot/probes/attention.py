@@ -180,35 +180,31 @@ def _attn_values_to_image_heatmap(per_head: torch.Tensor, n_p: int, img_h: int, 
     return per_head_up, mean_up
 
 
-def _attn_to_image_heatmap(cross_attn_layer, k_start, k_end, n_p, img_h, img_w):
-    """Mean attention from all action queries to contiguous key positions."""
+def _attn_to_patch_grid(cross_attn_layer, k_start, k_end):
+    """Mean attention from all action queries to contiguous key positions.
+
+    Returns ``per_head`` at patch-grid resolution ``[H, n_patches]``. Upsampling
+    to image resolution is deferred to render time so episode-wide vmax stats
+    can be aggregated cheaply.
+    """
     slc = cross_attn_layer[:, :, k_start:k_end]      # [H, n_action, n_patches]
-    per_head = slc.mean(dim=1)                        # mean over actions → [H, n_patches]
-    return _attn_values_to_image_heatmap(per_head, n_p, img_h, img_w)
+    return slc.mean(dim=1)                            # [H, n_patches]
 
 
-def _attn_indices_to_image_heatmap(cross_attn_layer, indices, n_p, img_h, img_w):
+def _attn_indices_to_patch_grid(cross_attn_layer, indices):
     """Mean attention to explicit, possibly non-contiguous image patch indices."""
     idx = torch.as_tensor(indices, dtype=torch.long, device=cross_attn_layer.device)
     slc = cross_attn_layer.index_select(dim=2, index=idx)
-    per_head = slc.mean(dim=1)
-    return _attn_values_to_image_heatmap(per_head, n_p, img_h, img_w)
+    return slc.mean(dim=1)
 
 
-def _attn_indices_to_pooled_patch_heatmap(
-    cross_attn_layer,
-    indices,
-    pooling,
-    patch_grid,
-    img_h,
-    img_w,
-):
+def _attn_indices_to_pooled_patch_grid(cross_attn_layer, indices, pooling, patch_grid):
     """Project attention on pooled image tokens back to crop patch pixels.
 
     Molmo crop tokens are pooled from one or more ViT patches and are not always
     a square, contiguous token block. The adapter passes the local pooling rows
-    for a crop; this renderer scatters each token's attention back to the crop's
-    patch grid before upsampling to image size.
+    for a crop; this scatters each token's attention back to the crop's patch
+    grid. Returns ``[H, patch_grid*patch_grid]``.
     """
     idx = torch.as_tensor(indices, dtype=torch.long, device=cross_attn_layer.device)
     slc = cross_attn_layer.index_select(dim=2, index=idx)
@@ -235,22 +231,20 @@ def _attn_indices_to_pooled_patch_heatmap(
         patch_values[:, valid] += per_head_token[:, token_idx : token_idx + 1]
         patch_counts[valid] += 1.0
 
-    patch_values = patch_values / patch_counts.clamp_min(1.0).unsqueeze(0)
-    return _attn_values_to_image_heatmap(patch_values, int(patch_grid), img_h, img_w)
+    return patch_values / patch_counts.clamp_min(1.0).unsqueeze(0)
 
 
-def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
-    """Render per-camera overlays + per-head grids for a single layer.
+def _extract_overlay_grids(result: AttentionCaptureResult, layer_idx: int):
+    """Pass-1 helper for episode-wide vmax: extract per-camera image and per-head
+    patch-grid attention. Returns a list of dicts ready to feed ``_render_overlays_from_grids``.
 
-    Returns ``(frames, vmax)`` dicts keyed by panel name. Empty if there are no
-    ``img*`` segments (e.g. molmoact2 v1 with single 'encoder' segment).
+    Each entry: ``{cam_name, img_np, per_head_grid [H, n_p*n_p], n_p}``. The grids
+    live at patch resolution so an episode-wide percentile can be computed cheaply.
+    Upsampling to image size is deferred to the render pass.
     """
-    frames: dict[str, np.ndarray] = {}
-    vmax_by_panel: dict[str, float] = {}
-
     cross_attn = result.cross_attn_by_layer.get(layer_idx)
     if cross_attn is None:
-        return frames, vmax_by_panel
+        return []
     overlay_segments = result.extras.get("image_overlay_segments")
     if overlay_segments:
         image_segs = [(str(name), None, None) for name in overlay_segments]
@@ -263,13 +257,10 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
     if not image_segs or (
         result.patches_per_cam <= 0 and not patch_indices and not pooling_by_segment
     ):
-        return frames, vmax_by_panel
+        return []
 
     attn = torch.nan_to_num(cross_attn[0].float().cpu(), nan=0.0)  # [H, n_act, enc]
-    n_heads = attn.shape[0]
-    h_cols = 4
-    h_rows = (n_heads + h_cols - 1) // h_cols
-
+    out: list[dict] = []
     for cam_idx, (cam_name, cs, ce) in enumerate(image_segs):
         img_np = None
         img_t = tensors_by_segment.get(cam_name)
@@ -291,34 +282,81 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
             pooling_rows = pooling.get("pooling")
             if patch_grid <= 0 or pooling_rows is None:
                 continue
-            per_head, mean_map = _attn_indices_to_pooled_patch_heatmap(
-                attn, indices, pooling_rows, patch_grid, img_h, img_w
-            )
+            per_head_grid = _attn_indices_to_pooled_patch_grid(attn, indices, pooling_rows, patch_grid)
+            n_p = patch_grid
         elif indices is not None:
             n_p = int(len(indices) ** 0.5)
             if n_p * n_p != len(indices):
                 continue
-            per_head, mean_map = _attn_indices_to_image_heatmap(attn, indices, n_p, img_h, img_w)
+            per_head_grid = _attn_indices_to_patch_grid(attn, indices)
         else:
             if cs is None or ce is None:
                 continue
             n_p = int(result.patches_per_cam ** 0.5)
             if n_p * n_p != ce - cs:
                 continue
-            per_head, mean_map = _attn_to_image_heatmap(attn, cs, ce, n_p, img_h, img_w)
-        vmean = float(mean_map.max().item())
-        vheads = float(per_head.max().item())
-        vmax_by_panel[f"{cam_name}_mean"] = vmean
-        vmax_by_panel[f"{cam_name}_heads"] = vheads
+            per_head_grid = _attn_to_patch_grid(attn, cs, ce)
+        out.append({
+            "cam_name": cam_name,
+            "img_np": img_np,
+            "per_head_grid": per_head_grid.detach().cpu().float(),
+            "n_p": n_p,
+        })
+    return out
 
-        # Mean-over-heads summary strip
+
+def _render_overlays_from_grids(grids, vmax_overrides=None):
+    """Render image overlays from extracted grids.
+
+    ``vmax_overrides`` (optional) carries fixed scales:
+      - ``{cam}_mean`` → scalar vmax for the mean-over-heads panel.
+      - ``{cam}_heads`` → sequence of length ``n_heads`` with one vmax per head.
+    If absent for a key, the renderer falls back to that frame's local max.
+    Returns ``(frames, vmax_by_panel)``; ``vmax_by_panel`` records the scalar that
+    was actually used (for the heads panel, the max across the per-head values).
+    """
+    frames: dict[str, np.ndarray] = {}
+    vmax_by_panel: dict[str, float] = {}
+    if not grids:
+        return frames, vmax_by_panel
+    n_heads = int(grids[0]["per_head_grid"].shape[0])
+    h_cols = 4
+    h_rows = (n_heads + h_cols - 1) // h_cols
+    overrides = vmax_overrides or {}
+
+    for g in grids:
+        cam_name = g["cam_name"]
+        img_np = g["img_np"]
+        per_head_grid = g["per_head_grid"]
+        n_p = int(g["n_p"])
+        img_h, img_w = img_np.shape[:2]
+
+        per_head, mean_map = _attn_values_to_image_heatmap(per_head_grid, n_p, img_h, img_w)
+
+        mean_key = f"{cam_name}_mean"
+        if mean_key in overrides:
+            vmean = float(overrides[mean_key])
+        else:
+            vmean = float(mean_map.max().item())
+
+        heads_key = f"{cam_name}_heads"
+        if heads_key in overrides:
+            vheads_per = [float(v) for v in overrides[heads_key]]
+            if len(vheads_per) != n_heads:
+                vheads_per = (vheads_per + [vheads_per[-1]] * n_heads)[:n_heads]
+        else:
+            v_all = float(per_head.max().item())
+            vheads_per = [v_all] * n_heads
+
+        vmax_by_panel[mean_key] = vmean
+        vmax_by_panel[heads_key] = max(vheads_per) if vheads_per else 0.0
+
         summary = [img_np.copy()]
         cv2.putText(summary[0], f"{cam_name} (orig)", (5, 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
         summary.append(cv2_overlay(img_np, mean_map, f"mean: action→{cam_name}", vmax=vmean))
         frames[f"overlay_{cam_name}_summary"] = np.hstack(summary)
 
-        # Per-head grid
         rows = []
         for r in range(h_rows):
             row_imgs = []
@@ -326,13 +364,105 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
                 idx = r * h_cols + c
                 if idx < n_heads:
                     row_imgs.append(cv2_overlay(img_np, per_head[idx],
-                                                f"{cam_name} h{idx}", vmax=vheads))
+                                                f"{cam_name} h{idx}",
+                                                vmax=vheads_per[idx]))
                 else:
                     row_imgs.append(np.zeros_like(img_np))
             rows.append(np.hstack(row_imgs))
         frames[f"overlay_{cam_name}_heads"] = np.vstack(rows)
 
     return frames, vmax_by_panel
+
+
+def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
+    """Per-frame vmax image overlays. Returns ``(frames, vmax)`` dicts keyed by
+    panel name. Empty if there are no ``img*`` segments. The probe driver uses
+    the two-pass path (``_extract_overlay_grids`` + ``_render_overlays_from_grids``
+    with episode-wide vmax overrides); this wrapper preserves the original
+    single-frame contract for any external callers.
+    """
+    grids = _extract_overlay_grids(result, layer_idx)
+    return _render_overlays_from_grids(grids, vmax_overrides=None)
+
+
+def _episode_matrix_vmax(
+    cross_buf: list,
+    self_buf: list,
+    action_text_buf: list,
+    percentile: float = 98.0,
+) -> dict:
+    """Aggregate per-panel p98 across all per-frame matrix extracts in an episode.
+
+    Heads panels get per-head p98 (one vmax per head); mean panels get a single
+    p98 scalar.
+    """
+
+    def _flat_p98(tensors: list[torch.Tensor]) -> float:
+        if not tensors:
+            return 1e-8
+        flat = np.concatenate([t.numpy().reshape(-1) for t in tensors])
+        return max(float(np.percentile(flat, percentile)), 1e-8)
+
+    def _per_head_p98(per_frame_HxN: list[torch.Tensor]) -> list[float]:
+        if not per_frame_HxN:
+            return []
+        n_heads = int(per_frame_HxN[0].shape[0])
+        out = []
+        for h in range(n_heads):
+            flat = np.concatenate([t[h].numpy().reshape(-1) for t in per_frame_HxN])
+            out.append(max(float(np.percentile(flat, percentile)), 1e-8))
+        return out
+
+    out: dict[str, Any] = {}
+
+    if cross_buf:
+        mean_parts = [d["attn"].mean(dim=0) for d in cross_buf]
+        out["cross_matrix_mean"] = _flat_p98(mean_parts)
+        out["cross_matrix_heads"] = _per_head_p98([d["attn"] for d in cross_buf])
+
+    if self_buf:
+        mean_parts = [d["attn"].mean(dim=0) for d in self_buf]
+        out["self_matrix_mean"] = _flat_p98(mean_parts)
+
+    if action_text_buf:
+        mean_parts = [d["selected"].mean(dim=0) for d in action_text_buf]
+        out["action_text_matrix_mean"] = _flat_p98(mean_parts)
+        out["action_text_matrix_heads"] = _per_head_p98(
+            [d["selected"] for d in action_text_buf]
+        )
+
+    return out
+
+
+def _episode_overlay_vmax(buf, percentile: float = 98.0) -> dict:
+    """Aggregate per-camera p98 from buffered per-frame grids.
+
+    Returns a dict with ``{cam}_mean`` → scalar p98 of the mean-over-heads patch
+    grid across all frames, and ``{cam}_heads`` → list of per-head p98 across all
+    (frame, patch) values for that head.
+    """
+    mean_vals: dict[str, list[torch.Tensor]] = {}
+    head_vals: dict[str, list[torch.Tensor]] = {}
+    for _fr_idx, grids in buf:
+        for g in grids:
+            cam_name = g["cam_name"]
+            per_head_grid = g["per_head_grid"]  # [H, n_patches]
+            mean_vals.setdefault(cam_name, []).append(per_head_grid.mean(dim=0).flatten())
+            head_vals.setdefault(cam_name, []).append(per_head_grid)
+
+    out: dict[str, Any] = {}
+    for cam_name, parts in mean_vals.items():
+        cat = torch.cat(parts).numpy()
+        out[f"{cam_name}_mean"] = max(float(np.percentile(cat, percentile)), 1e-8)
+
+    for cam_name, parts in head_vals.items():
+        # Concat along the patch axis → [H, total_patches_across_frames]
+        stacked = torch.cat(parts, dim=1).numpy()
+        per_head_p = np.percentile(stacked, percentile, axis=1)
+        per_head_p = np.maximum(per_head_p, 1e-8)
+        out[f"{cam_name}_heads"] = per_head_p.tolist()
+
+    return out
 
 
 def _render_matrix(mat_2d, vmax, title, out_w=1200, out_h=600,
@@ -346,7 +476,7 @@ def _render_matrix(mat_2d, vmax, title, out_w=1200, out_h=600,
     arr = mat_2d.numpy() if hasattr(mat_2d, "numpy") else mat_2d
     norm = (arr / max(vmax, 1e-8)).clip(0, 1)
     gray = (norm * 255).astype(np.uint8)
-    color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_VIRIDIS), cv2.COLOR_BGR2RGB)
+    color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
 
     margin_top, margin_bottom, margin_left, margin_right = 32, 60, 40, 8
     hm_w = out_w - margin_left - margin_right
@@ -411,34 +541,54 @@ def _cross_matrix_attn_and_segments(result: AttentionCaptureResult, attn: torch.
     return attn.index_select(dim=-1, index=idx), segments
 
 
-def render_cross_matrix(result: AttentionCaptureResult, layer_idx: int):
-    """Mean cross-attention heatmap (rows=actions, cols=encoder)."""
-    frames: dict[str, np.ndarray] = {}
-    vmax_by_panel: dict[str, float] = {}
-
+def _extract_cross_matrix_data(result: AttentionCaptureResult, layer_idx: int):
+    """Pass-1 extract for the cross-attention matrix panels."""
     cross = result.cross_attn_by_layer.get(layer_idx)
     if cross is None:
-        return frames, vmax_by_panel
-
+        return None
     attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)   # [H, n_act, enc]
     attn, display_segments = _cross_matrix_attn_and_segments(result, attn)
-    mean = attn.mean(dim=0)                                     # [n_act, displayed_enc]
-    vmax = float(mean.max().item())
-    vmax_by_panel["cross_matrix_mean"] = vmax
+    return {"attn": attn, "display_segments": display_segments}
+
+
+def _render_cross_matrix_from_data(data, layer_idx, vmax_overrides=None):
+    frames: dict[str, np.ndarray] = {}
+    vmax_by_panel: dict[str, float] = {}
+    if data is None:
+        return frames, vmax_by_panel
+    overrides = vmax_overrides or {}
+    attn = data["attn"]
+    display_segments = data["display_segments"]
+    n_heads = int(attn.shape[0])
+    mean = attn.mean(dim=0)
+
+    mean_v = overrides.get("cross_matrix_mean")
+    if mean_v is None:
+        mean_v = float(mean.max().item())
+    mean_v = float(mean_v)
+    vmax_by_panel["cross_matrix_mean"] = mean_v
     frames["cross_matrix_mean"] = _render_matrix(
-        mean, vmax,
-        f"L{layer_idx}: cross-attn action→encoder (mean over heads)",
+        mean, mean_v,
+        f"L{layer_idx}: cross-attn action→encoder (mean over heads, vmax={mean_v:.3f})",
         col_segments=display_segments,
     )
 
-    # Per-head 2×4 grid
-    n_heads = attn.shape[0]
+    heads_override = overrides.get("cross_matrix_heads")
+    if heads_override is None:
+        v_all = float(attn.max().item())
+        head_vmax = [v_all] * n_heads
+    elif isinstance(heads_override, (list, tuple)):
+        head_vmax = [float(v) for v in heads_override]
+        if len(head_vmax) < n_heads:
+            head_vmax = head_vmax + [head_vmax[-1]] * (n_heads - len(head_vmax))
+    else:
+        head_vmax = [float(heads_override)] * n_heads
+
+    vmax_by_panel["cross_matrix_heads"] = float(max(head_vmax))
     h_cols, h_rows = 4, (n_heads + 3) // 4
     panel_w, panel_h = 1200, 600
     grid_w = panel_w * h_cols // 2
     grid_h = panel_h * h_rows // 2
-    head_vmax = float(attn.max().item())
-    vmax_by_panel["cross_matrix_heads"] = head_vmax
     canvas = np.zeros((grid_h + 36, grid_w, 3), dtype=np.uint8)
     cv2.putText(canvas, f"L{layer_idx}: cross-attn per head", (12, 26),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
@@ -446,34 +596,55 @@ def render_cross_matrix(result: AttentionCaptureResult, layer_idx: int):
     sub_h = grid_h // h_rows
     for h in range(n_heads):
         r, c = divmod(h, h_cols)
-        sub = _render_matrix(attn[h], head_vmax, f"head {h}",
+        sub = _render_matrix(attn[h], head_vmax[h],
+                             f"head {h} (vmax={head_vmax[h]:.3f})",
                              out_w=sub_w, out_h=sub_h,
                              col_segments=display_segments)
         canvas[36 + r * sub_h : 36 + (r + 1) * sub_h,
                c * sub_w : (c + 1) * sub_w] = sub
     frames["cross_matrix_heads"] = canvas
+    return frames, vmax_by_panel
 
+
+def render_cross_matrix(result: AttentionCaptureResult, layer_idx: int):
+    """Mean cross-attention heatmap (rows=actions, cols=encoder)."""
+    data = _extract_cross_matrix_data(result, layer_idx)
+    return _render_cross_matrix_from_data(data, layer_idx, vmax_overrides=None)
+
+
+def _extract_self_matrix_data(result: AttentionCaptureResult, layer_idx: int):
+    selfa = result.self_attn_by_layer.get(layer_idx)
+    if selfa is None:
+        return None
+    attn = torch.nan_to_num(selfa[0].float().cpu(), nan=0.0)
+    return {"attn": attn}
+
+
+def _render_self_matrix_from_data(data, layer_idx, vmax_overrides=None):
+    frames: dict[str, np.ndarray] = {}
+    vmax_by_panel: dict[str, float] = {}
+    if data is None:
+        return frames, vmax_by_panel
+    overrides = vmax_overrides or {}
+    attn = data["attn"]
+    mean = attn.mean(dim=0)
+    v = overrides.get("self_matrix_mean")
+    if v is None:
+        v = float(mean.max().item())
+    v = float(v)
+    vmax_by_panel["self_matrix_mean"] = v
+    frames["self_matrix_mean"] = _render_matrix(
+        mean, v,
+        f"L{layer_idx}: self-attn action↔action (mean over heads, vmax={v:.3f})",
+        out_w=900, out_h=900,
+    )
     return frames, vmax_by_panel
 
 
 def render_self_matrix(result: AttentionCaptureResult, layer_idx: int):
     """Mean self-attention heatmap (action ↔ action)."""
-    frames: dict[str, np.ndarray] = {}
-    vmax_by_panel: dict[str, float] = {}
-
-    selfa = result.self_attn_by_layer.get(layer_idx)
-    if selfa is None:
-        return frames, vmax_by_panel
-
-    attn = torch.nan_to_num(selfa[0].float().cpu(), nan=0.0)
-    mean = attn.mean(dim=0)
-    vmax = float(mean.max().item())
-    vmax_by_panel["self_matrix_mean"] = vmax
-    frames["self_matrix_mean"] = _render_matrix(
-        mean, vmax, f"L{layer_idx}: self-attn action↔action (mean over heads)",
-        out_w=900, out_h=900,
-    )
-    return frames, vmax_by_panel
+    data = _extract_self_matrix_data(result, layer_idx)
+    return _render_self_matrix_from_data(data, layer_idx, vmax_overrides=None)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -526,7 +697,7 @@ def _render_action_text_panel(
     n_rows, n_cols = arr.shape[:2]
     norm = (arr / max(float(vmax), 1e-8)).clip(0, 1)
     gray = (norm * 255).astype(np.uint8)
-    color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_VIRIDIS), cv2.COLOR_BGR2RGB)
+    color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
 
     margin_top, margin_bottom, margin_left, margin_right = 32, 140, 42, 8
     hm_w = out_w - margin_left - margin_right
@@ -569,8 +740,14 @@ def _render_action_text_panel(
     return canvas
 
 
-def _render_action_text_heads(per_head, vmax, col_labels, groups, title):
+def _render_action_text_heads(per_head, head_vmax, col_labels, groups, title):
+    """``head_vmax`` is a sequence of length n_heads; each head uses its own scale."""
     n_heads = int(per_head.shape[0])
+    if not isinstance(head_vmax, (list, tuple)):
+        head_vmax = [float(head_vmax)] * n_heads
+    head_vmax = list(head_vmax)
+    if len(head_vmax) < n_heads:
+        head_vmax = head_vmax + [head_vmax[-1]] * (n_heads - len(head_vmax))
     h_cols = 4
     h_rows = (n_heads + h_cols - 1) // h_cols
     panel_w, panel_h = 900, 520
@@ -581,7 +758,8 @@ def _render_action_text_heads(per_head, vmax, col_labels, groups, title):
     for head_idx in range(n_heads):
         r, c = divmod(head_idx, h_cols)
         sub = _render_action_text_panel(
-            per_head[head_idx], vmax, col_labels, groups, f"head {head_idx}",
+            per_head[head_idx], head_vmax[head_idx], col_labels, groups,
+            f"head {head_idx} (vmax={head_vmax[head_idx]:.3f})",
             out_w=panel_w, out_h=panel_h,
             title_font_scale=0.45, label_font_scale=0.30, group_font_scale=0.4,
         )
@@ -674,23 +852,25 @@ def _prompt_group_bounds(labels: list[str]) -> dict[str, tuple[int, int]]:
 
 
 def _group_prompt_indices(result: AttentionCaptureResult, text_blocks, encoder_len, encoder_valid):
-    prompt_entries: list[tuple[int, str]] = []
+    """Return prompt tokens grouped by section, each entry carrying its decoded label.
+
+    Shape: ``[(group_name, [(token_index, decoded_label), ...]), ...]``. The bounds
+    that split task/state/setup-control/adv are computed over language tokens only;
+    subtask tokens are assigned to their own group regardless of label content.
+    """
+    prompt_entries: list[tuple[int, str, str]] = []  # (idx, decoded_label, segment_name)
     for name, indices, seg_start in text_blocks:
-        if name == "subtask":
-            for idx in indices:
-                if 0 <= idx < encoder_len and (encoder_valid is None or bool(encoder_valid[idx])):
-                    prompt_entries.append((idx, "subtask"))
-            continue
         for idx in indices:
             if 0 <= idx < encoder_len and (encoder_valid is None or bool(encoder_valid[idx])):
-                prompt_entries.append((idx, _token_label_for_position(result, name, idx, seg_start)))
+                label = _token_label_for_position(result, name, idx, seg_start)
+                prompt_entries.append((idx, label, name))
 
     if not prompt_entries:
         return []
 
-    labels = [label for _, label in prompt_entries]
-    bounds = _prompt_group_bounds(labels)
-    buckets: dict[str, list[int]] = {
+    lang_labels = [label for _, label, seg in prompt_entries if seg == "language"]
+    bounds = _prompt_group_bounds(lang_labels)
+    buckets: dict[str, list[tuple[int, str]]] = {
         "task": [],
         "state": [],
         "setup/control/adv": [],
@@ -698,87 +878,117 @@ def _group_prompt_indices(result: AttentionCaptureResult, text_blocks, encoder_l
         "other prompt": [],
     }
 
-    for local_pos, (idx, label) in enumerate(prompt_entries):
+    lang_pos = 0
+    for idx, label, seg in prompt_entries:
         assigned = None
-        if label == "subtask":
+        if seg == "subtask":
             assigned = "subtask"
         else:
             for group_name in ("state", "task", "setup/control/adv"):
                 if group_name in bounds:
                     s, e = bounds[group_name]
-                    if s <= local_pos < e:
+                    if s <= lang_pos < e:
                         assigned = group_name
                         break
-        buckets[assigned or "other prompt"].append(idx)
+            lang_pos += 1
+        buckets[assigned or "other prompt"].append((idx, label))
 
     order = ["task", "state", "setup/control/adv", "subtask", "other prompt"]
     return [(name, buckets[name]) for name in order if buckets[name]]
 
 
-def render_action_text_matrix(result: AttentionCaptureResult, layer_idx: int):
-    """Compact action-query attention to prompt-token groups.
-
-    MolmoAct2 receives one packed text stream. This view groups the non-image
-    prompt tokens for readability; it is not a separate model pathway. The
-    rows are normalized across the displayed prompt groups only, so this panel
-    compares task/state/setup/etc. within the prompt, not prompt vs image vs
-    action self-attention.
-    """
-    frames: dict[str, np.ndarray] = {}
-    vmax_by_panel: dict[str, float] = {}
-
+def _extract_action_text_data(result: AttentionCaptureResult, layer_idx: int):
+    """Pass-1 extract: returns the row-normalized ``selected`` tensor + column metadata."""
     cross = result.cross_attn_by_layer.get(layer_idx)
     if cross is None:
-        return frames, vmax_by_panel
-
+        return None
     text_blocks = _text_blocks_for_action_matrix(result)
     if not text_blocks:
-        return frames, vmax_by_panel
-
+        return None
     cross_attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)
     encoder_len = int(cross_attn.shape[-1])
     encoder_valid = None
     if torch.is_tensor(result.encoder_pad_masks) and result.encoder_pad_masks.ndim >= 2:
         encoder_valid = result.encoder_pad_masks[0].detach().cpu().to(torch.bool)
-
     prompt_groups = _group_prompt_indices(result, text_blocks, encoder_len, encoder_valid)
     if not prompt_groups:
-        return frames, vmax_by_panel
+        return None
 
-    grouped_parts = []
-    col_labels = []
+    all_indices: list[int] = []
+    col_labels: list[str] = []
     groups: list[tuple[str, int, int]] = []
-    for col_pos, (name, indices) in enumerate(prompt_groups):
-        idx_t = torch.as_tensor(indices, dtype=torch.long)
-        # Sum attention mass over tokens in the group. This answers "how much
-        # of the displayed prompt attention goes to this prompt section?"
-        group_mass = cross_attn.index_select(dim=-1, index=idx_t).sum(dim=-1, keepdim=True)
-        grouped_parts.append(group_mass)
-        col_labels.append(f"{name}:{len(indices)}")
-        groups.append((name, col_pos, col_pos + 1))
+    for name, entries in prompt_groups:
+        if not entries:
+            continue
+        start = len(all_indices)
+        for idx, label in entries:
+            all_indices.append(idx)
+            col_labels.append(label if label else f"#{idx}")
+        groups.append((name, start, len(all_indices)))
 
-    grouped = torch.cat(grouped_parts, dim=-1)
-    grouped = grouped / grouped.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-    mean = grouped.mean(dim=0)
+    idx_t = torch.as_tensor(all_indices, dtype=torch.long)
+    selected = cross_attn.index_select(dim=-1, index=idx_t)
+    selected = selected / selected.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+    return {"selected": selected, "col_labels": col_labels, "groups": groups}
 
-    fixed_vmax = 1.0
-    vmax_by_panel["action_text_matrix_mean"] = fixed_vmax
-    vmax_by_panel["action_text_matrix_heads"] = fixed_vmax
+
+def _render_action_text_from_data(data, layer_idx, vmax_overrides=None):
+    """MolmoAct2 receives one packed text stream. This view groups the non-image
+    prompt tokens for readability; it is not a separate model pathway. Rows are
+    normalized across the displayed prompt tokens only, so this panel compares
+    task/state/setup/etc. within the prompt, not prompt vs image vs action
+    self-attention.
+    """
+    frames: dict[str, np.ndarray] = {}
+    vmax_by_panel: dict[str, float] = {}
+    if data is None:
+        return frames, vmax_by_panel
+    overrides = vmax_overrides or {}
+    selected = data["selected"]
+    col_labels = data["col_labels"]
+    groups = data["groups"]
+    n_heads = int(selected.shape[0])
+    mean = selected.mean(dim=0)
+
+    mean_v = overrides.get("action_text_matrix_mean")
+    if mean_v is None:
+        mean_v = max(float(mean.max().item()), 1e-3)
+    mean_v = float(mean_v)
+    vmax_by_panel["action_text_matrix_mean"] = mean_v
+
+    heads_override = overrides.get("action_text_matrix_heads")
+    if heads_override is None:
+        v_all = max(float(selected.max().item()), 1e-3)
+        head_vmax = [v_all] * n_heads
+    elif isinstance(heads_override, (list, tuple)):
+        head_vmax = [float(v) for v in heads_override]
+        if len(head_vmax) < n_heads:
+            head_vmax = head_vmax + [head_vmax[-1]] * (n_heads - len(head_vmax))
+    else:
+        head_vmax = [float(heads_override)] * n_heads
+    vmax_by_panel["action_text_matrix_heads"] = float(max(head_vmax))
+
     frames["action_text_matrix_mean"] = _render_action_text_panel(
         mean,
-        fixed_vmax,
+        mean_v,
         col_labels,
         groups,
-        f"L{layer_idx}: action -> prompt groups (mean, rows sum over prompt groups, scale 0-1)",
+        f"L{layer_idx}: action -> prompt tokens (mean, rows sum over tokens, vmax={mean_v:.3f})",
     )
     frames["action_text_matrix_heads"] = _render_action_text_heads(
-        grouped,
-        fixed_vmax,
+        selected,
+        head_vmax,
         col_labels,
         groups,
-        f"L{layer_idx}: action -> prompt groups (per-head, rows sum over prompt groups, scale 0-1)",
+        f"L{layer_idx}: action -> prompt tokens (per-head, rows sum over tokens, per-head vmax)",
     )
     return frames, vmax_by_panel
+
+
+def render_action_text_matrix(result: AttentionCaptureResult, layer_idx: int):
+    """Compact action-query attention to prompt tokens (per-frame vmax wrapper)."""
+    data = _extract_action_text_data(result, layer_idx)
+    return _render_action_text_from_data(data, layer_idx, vmax_overrides=None)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -824,7 +1034,7 @@ def _attention_metadata_summary(result: AttentionCaptureResult, layer_idx: int) 
             encoder_valid = result.encoder_pad_masks[0].detach().cpu().to(torch.bool)
         prompt_groups = _group_prompt_indices(result, text_blocks, int(attn.shape[-1]), encoder_valid)
         raw_indices["action_prompt_groups"] = {
-            name: _summarize_indices(indices) for name, indices in prompt_groups
+            name: _summarize_indices([idx for idx, _ in entries]) for name, entries in prompt_groups
         }
 
     return {
@@ -872,8 +1082,12 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
     _warn_overcommit_if_risky("ATTN")
 
     for ep_idx, ep_frames in samples:
+        # Every panel gets an episode-fixed p98 vmax so colors are comparable
+        # across frames within the video. Pass 1 extracts and buffers raw data;
+        # pass 2 aggregates p98 per panel and renders.
         writers: dict[int, dict[str, Any]] = {l: {} for l in attn_layers}  # noqa: E741
         csv_files: dict[int, Any] = {}
+        layer_buf: dict[int, list[dict]] = {l: [] for l in attn_layers}  # noqa: E741
 
         for fr_idx, global_idx in ep_frames:
             obs, _, state, _, task_str, _, _ = get_frame_data(ds, global_idx, chunk_size)
@@ -892,14 +1106,42 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
                     if os.path.getsize(csv_path) == 0:
                         w.writerow(["ep", "fr", "layer", "panel", "vmax"])
                     csv_files[layer_idx] = (f, w)
-                csv_f, csv_w = csv_files[layer_idx]
 
                 _append_attention_metadata(result, layer_idx, ep_idx, fr_idx, ep_dir)
 
+                layer_buf[layer_idx].append({
+                    "fr_idx": fr_idx,
+                    "overlay_grids": _extract_overlay_grids(result, layer_idx),
+                    "cross": _extract_cross_matrix_data(result, layer_idx),
+                    "self": _extract_self_matrix_data(result, layer_idx),
+                    "action_text": _extract_action_text_data(result, layer_idx),
+                })
+
+        for layer_idx, frames_buf in layer_buf.items():
+            if not frames_buf:
+                continue
+            overlay_buf = [(d["fr_idx"], d["overlay_grids"]) for d in frames_buf]
+            ep_overlay_vmax = _episode_overlay_vmax(overlay_buf, percentile=98.0)
+            ep_matrix_vmax = _episode_matrix_vmax(
+                [d["cross"] for d in frames_buf if d["cross"] is not None],
+                [d["self"] for d in frames_buf if d["self"] is not None],
+                [d["action_text"] for d in frames_buf if d["action_text"] is not None],
+                percentile=98.0,
+            )
+            all_vmax = {**ep_overlay_vmax, **ep_matrix_vmax}
+
+            csv_f, csv_w = csv_files[layer_idx]
+            ep_dir = os.path.join(ds_output_dir, f"ep{ep_idx:04d}_L{layer_idx:02d}")
+            for d in frames_buf:
+                fr_idx = d["fr_idx"]
                 panels: dict[str, np.ndarray] = {}
                 vmaxes: dict[str, float] = {}
-                for renderer in (render_image_overlays, render_cross_matrix, render_self_matrix, render_action_text_matrix):
-                    p_frames, p_vmax = renderer(result, layer_idx)
+                for p_frames, p_vmax in (
+                    _render_overlays_from_grids(d["overlay_grids"], vmax_overrides=all_vmax),
+                    _render_cross_matrix_from_data(d["cross"], layer_idx, vmax_overrides=all_vmax),
+                    _render_self_matrix_from_data(d["self"], layer_idx, vmax_overrides=all_vmax),
+                    _render_action_text_from_data(d["action_text"], layer_idx, vmax_overrides=all_vmax),
+                ):
                     panels.update(p_frames)
                     vmaxes.update(p_vmax)
 
