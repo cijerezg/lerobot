@@ -49,8 +49,8 @@ treat_main_dataset_as_golden: true
 # -----------------------------------------------------------------------------
 val_dataset_path: outputs/annotated-dataset-validation-v7
 val_split: 0.0
-val_freq: 500
-val_on_start: true     # run probes at step 0 to catch wiring bugs before training amortizes them
+val_freq: 200
+val_on_start: false     # run probes at step 0 to catch wiring bugs before training amortizes them
 
 
 # =============================================================================

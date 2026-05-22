@@ -134,11 +134,12 @@ def build_episode_samples(dataset, episodes_str, random_n, subsample, seed=None)
 # Rendering helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def cv2_overlay(img_np, heatmap, title, alpha=0.55, vmax=None):
+def cv2_overlay(img_np, heatmap, title, alpha=0.55, vmax=None, vmin=0.0):
     """Blend a heatmap onto a camera image."""
     if vmax is None:
         vmax = float(heatmap.max().item())
-    h_norm = heatmap / (vmax + 1e-8)
+    span = max(float(vmax) - float(vmin), 1e-8)
+    h_norm = (heatmap - float(vmin)) / span
     h_gray = (h_norm.clamp(0, 1) * 255).numpy().astype(np.uint8)
     h_color = cv2.applyColorMap(h_gray, cv2.COLORMAP_JET)
     h_rgb = cv2.cvtColor(h_color, cv2.COLOR_BGR2RGB)
@@ -150,11 +151,12 @@ def cv2_overlay(img_np, heatmap, title, alpha=0.55, vmax=None):
     return out
 
 
-def cv2_heatmap(heatmap, title, img_h, img_w, vmax=None):
+def cv2_heatmap(heatmap, title, img_h, img_w, vmax=None, vmin=0.0):
     """Render a standalone heatmap (no camera image)."""
     if vmax is None:
         vmax = float(heatmap.max().item())
-    h_norm = heatmap / (vmax + 1e-8)
+    span = max(float(vmax) - float(vmin), 1e-8)
+    h_norm = (heatmap - float(vmin)) / span
     h_gray = (h_norm.clamp(0, 1) * 255).numpy().astype(np.uint8)
     h_color = cv2.applyColorMap(h_gray, cv2.COLORMAP_JET)
     h_rgb = cv2.cvtColor(h_color, cv2.COLOR_BGR2RGB)
@@ -338,6 +340,7 @@ def _render_overlays_from_grids(grids, vmax_overrides=None):
             vmean = float(overrides[mean_key])
         else:
             vmean = float(mean_map.max().item())
+        vmean_min = float(overrides.get(f"{cam_name}_mean_vmin", 0.0))
 
         heads_key = f"{cam_name}_heads"
         if heads_key in overrides:
@@ -348,13 +351,22 @@ def _render_overlays_from_grids(grids, vmax_overrides=None):
             v_all = float(per_head.max().item())
             vheads_per = [v_all] * n_heads
 
+        heads_vmin_raw = overrides.get(f"{cam_name}_heads_vmin")
+        if heads_vmin_raw is None:
+            vheads_min_per = [0.0] * n_heads
+        else:
+            vheads_min_per = [float(v) for v in heads_vmin_raw]
+            if len(vheads_min_per) != n_heads:
+                vheads_min_per = (vheads_min_per + [vheads_min_per[-1]] * n_heads)[:n_heads]
+
         vmax_by_panel[mean_key] = vmean
         vmax_by_panel[heads_key] = max(vheads_per) if vheads_per else 0.0
 
         summary = [img_np.copy()]
         cv2.putText(summary[0], f"{cam_name} (orig)", (5, 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-        summary.append(cv2_overlay(img_np, mean_map, f"mean: action→{cam_name}", vmax=vmean))
+        summary.append(cv2_overlay(img_np, mean_map, f"mean: action→{cam_name}",
+                                    vmax=vmean, vmin=vmean_min))
         frames[f"overlay_{cam_name}_summary"] = np.hstack(summary)
 
         rows = []
@@ -365,7 +377,8 @@ def _render_overlays_from_grids(grids, vmax_overrides=None):
                 if idx < n_heads:
                     row_imgs.append(cv2_overlay(img_np, per_head[idx],
                                                 f"{cam_name} h{idx}",
-                                                vmax=vheads_per[idx]))
+                                                vmax=vheads_per[idx],
+                                                vmin=vheads_min_per[idx]))
                 else:
                     row_imgs.append(np.zeros_like(img_np))
             rows.append(np.hstack(row_imgs))
@@ -391,56 +404,64 @@ def _episode_matrix_vmax(
     action_text_buf: list,
     percentile: float = 98.0,
 ) -> dict:
-    """Aggregate per-panel p98 across all per-frame matrix extracts in an episode.
-
-    Heads panels get per-head p98 (one vmax per head); mean panels get a single
-    p98 scalar.
+    """Aggregate per-panel [p(100-percentile), p(percentile)] across all per-frame
+    matrix extracts. Heads panels get per-head ranges; mean panels get a single
+    range. ``{name}`` carries the upper bound; ``{name}_vmin`` carries the lower.
     """
+    upper = float(percentile)
+    lower = max(0.0, 100.0 - upper)
 
-    def _flat_p98(tensors: list[torch.Tensor]) -> float:
+    def _flat_p(tensors: list[torch.Tensor], p: float) -> float:
         if not tensors:
-            return 1e-8
+            return 0.0
         flat = np.concatenate([t.numpy().reshape(-1) for t in tensors])
-        return max(float(np.percentile(flat, percentile)), 1e-8)
+        return float(np.percentile(flat, p))
 
-    def _per_head_p98(per_frame_HxN: list[torch.Tensor]) -> list[float]:
+    def _per_head_p(per_frame_HxN: list[torch.Tensor], p: float) -> list[float]:
         if not per_frame_HxN:
             return []
         n_heads = int(per_frame_HxN[0].shape[0])
         out = []
         for h in range(n_heads):
             flat = np.concatenate([t[h].numpy().reshape(-1) for t in per_frame_HxN])
-            out.append(max(float(np.percentile(flat, percentile)), 1e-8))
+            out.append(float(np.percentile(flat, p)))
         return out
 
     out: dict[str, Any] = {}
 
     if cross_buf:
         mean_parts = [d["attn"].mean(dim=0) for d in cross_buf]
-        out["cross_matrix_mean"] = _flat_p98(mean_parts)
-        out["cross_matrix_heads"] = _per_head_p98([d["attn"] for d in cross_buf])
+        attn_parts = [d["attn"] for d in cross_buf]
+        out["cross_matrix_mean"] = max(_flat_p(mean_parts, upper), 1e-8)
+        out["cross_matrix_mean_vmin"] = _flat_p(mean_parts, lower)
+        out["cross_matrix_heads"] = [max(v, 1e-8) for v in _per_head_p(attn_parts, upper)]
+        out["cross_matrix_heads_vmin"] = _per_head_p(attn_parts, lower)
 
     if self_buf:
         mean_parts = [d["attn"].mean(dim=0) for d in self_buf]
-        out["self_matrix_mean"] = _flat_p98(mean_parts)
+        out["self_matrix_mean"] = max(_flat_p(mean_parts, upper), 1e-8)
+        out["self_matrix_mean_vmin"] = _flat_p(mean_parts, lower)
 
     if action_text_buf:
         mean_parts = [d["selected"].mean(dim=0) for d in action_text_buf]
-        out["action_text_matrix_mean"] = _flat_p98(mean_parts)
-        out["action_text_matrix_heads"] = _per_head_p98(
-            [d["selected"] for d in action_text_buf]
-        )
+        sel_parts = [d["selected"] for d in action_text_buf]
+        out["action_text_matrix_mean"] = max(_flat_p(mean_parts, upper), 1e-8)
+        out["action_text_matrix_mean_vmin"] = _flat_p(mean_parts, lower)
+        out["action_text_matrix_heads"] = [max(v, 1e-8) for v in _per_head_p(sel_parts, upper)]
+        out["action_text_matrix_heads_vmin"] = _per_head_p(sel_parts, lower)
 
     return out
 
 
 def _episode_overlay_vmax(buf, percentile: float = 98.0) -> dict:
-    """Aggregate per-camera p98 from buffered per-frame grids.
+    """Aggregate per-camera [p(100-percentile), p(percentile)] from buffered grids.
 
-    Returns a dict with ``{cam}_mean`` → scalar p98 of the mean-over-heads patch
-    grid across all frames, and ``{cam}_heads`` → list of per-head p98 across all
-    (frame, patch) values for that head.
+    Returns ``{cam}_mean`` / ``{cam}_mean_vmin`` (scalars) and
+    ``{cam}_heads`` / ``{cam}_heads_vmin`` (per-head lists).
     """
+    upper = float(percentile)
+    lower = max(0.0, 100.0 - upper)
+
     mean_vals: dict[str, list[torch.Tensor]] = {}
     head_vals: dict[str, list[torch.Tensor]] = {}
     for _fr_idx, grids in buf:
@@ -453,20 +474,22 @@ def _episode_overlay_vmax(buf, percentile: float = 98.0) -> dict:
     out: dict[str, Any] = {}
     for cam_name, parts in mean_vals.items():
         cat = torch.cat(parts).numpy()
-        out[f"{cam_name}_mean"] = max(float(np.percentile(cat, percentile)), 1e-8)
+        out[f"{cam_name}_mean"] = max(float(np.percentile(cat, upper)), 1e-8)
+        out[f"{cam_name}_mean_vmin"] = float(np.percentile(cat, lower))
 
     for cam_name, parts in head_vals.items():
         # Concat along the patch axis → [H, total_patches_across_frames]
         stacked = torch.cat(parts, dim=1).numpy()
-        per_head_p = np.percentile(stacked, percentile, axis=1)
-        per_head_p = np.maximum(per_head_p, 1e-8)
-        out[f"{cam_name}_heads"] = per_head_p.tolist()
+        per_head_upper = np.percentile(stacked, upper, axis=1)
+        per_head_lower = np.percentile(stacked, lower, axis=1)
+        out[f"{cam_name}_heads"] = np.maximum(per_head_upper, 1e-8).tolist()
+        out[f"{cam_name}_heads_vmin"] = per_head_lower.tolist()
 
     return out
 
 
 def _render_matrix(mat_2d, vmax, title, out_w=1200, out_h=600,
-                   col_segments=None):
+                   col_segments=None, vmin=0.0):
     """Render a 2D attention matrix as a heatmap with optional segment dividers.
 
     Args:
@@ -474,7 +497,8 @@ def _render_matrix(mat_2d, vmax, title, out_w=1200, out_h=600,
         col_segments:  optional list of (name, start, end) for column dividers.
     """
     arr = mat_2d.numpy() if hasattr(mat_2d, "numpy") else mat_2d
-    norm = (arr / max(vmax, 1e-8)).clip(0, 1)
+    span = max(float(vmax) - float(vmin), 1e-8)
+    norm = ((arr - float(vmin)) / span).clip(0, 1)
     gray = (norm * 255).astype(np.uint8)
     color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
 
@@ -566,11 +590,13 @@ def _render_cross_matrix_from_data(data, layer_idx, vmax_overrides=None):
     if mean_v is None:
         mean_v = float(mean.max().item())
     mean_v = float(mean_v)
+    mean_vmin = float(overrides.get("cross_matrix_mean_vmin", 0.0))
     vmax_by_panel["cross_matrix_mean"] = mean_v
     frames["cross_matrix_mean"] = _render_matrix(
         mean, mean_v,
-        f"L{layer_idx}: cross-attn action→encoder (mean over heads, vmax={mean_v:.3f})",
+        f"L{layer_idx}: cross-attn action→encoder (mean, vmin={mean_vmin:.3f}, vmax={mean_v:.3f})",
         col_segments=display_segments,
+        vmin=mean_vmin,
     )
 
     heads_override = overrides.get("cross_matrix_heads")
@@ -583,6 +609,16 @@ def _render_cross_matrix_from_data(data, layer_idx, vmax_overrides=None):
             head_vmax = head_vmax + [head_vmax[-1]] * (n_heads - len(head_vmax))
     else:
         head_vmax = [float(heads_override)] * n_heads
+
+    heads_vmin_override = overrides.get("cross_matrix_heads_vmin")
+    if heads_vmin_override is None:
+        head_vmin = [0.0] * n_heads
+    elif isinstance(heads_vmin_override, (list, tuple)):
+        head_vmin = [float(v) for v in heads_vmin_override]
+        if len(head_vmin) < n_heads:
+            head_vmin = head_vmin + [head_vmin[-1]] * (n_heads - len(head_vmin))
+    else:
+        head_vmin = [float(heads_vmin_override)] * n_heads
 
     vmax_by_panel["cross_matrix_heads"] = float(max(head_vmax))
     h_cols, h_rows = 4, (n_heads + 3) // 4
@@ -597,9 +633,10 @@ def _render_cross_matrix_from_data(data, layer_idx, vmax_overrides=None):
     for h in range(n_heads):
         r, c = divmod(h, h_cols)
         sub = _render_matrix(attn[h], head_vmax[h],
-                             f"head {h} (vmax={head_vmax[h]:.3f})",
+                             f"head {h} (vmin={head_vmin[h]:.3f}, vmax={head_vmax[h]:.3f})",
                              out_w=sub_w, out_h=sub_h,
-                             col_segments=display_segments)
+                             col_segments=display_segments,
+                             vmin=head_vmin[h])
         canvas[36 + r * sub_h : 36 + (r + 1) * sub_h,
                c * sub_w : (c + 1) * sub_w] = sub
     frames["cross_matrix_heads"] = canvas
@@ -632,11 +669,13 @@ def _render_self_matrix_from_data(data, layer_idx, vmax_overrides=None):
     if v is None:
         v = float(mean.max().item())
     v = float(v)
+    v_min = float(overrides.get("self_matrix_mean_vmin", 0.0))
     vmax_by_panel["self_matrix_mean"] = v
     frames["self_matrix_mean"] = _render_matrix(
         mean, v,
-        f"L{layer_idx}: self-attn action↔action (mean over heads, vmax={v:.3f})",
+        f"L{layer_idx}: self-attn action↔action (mean, vmin={v_min:.3f}, vmax={v:.3f})",
         out_w=900, out_h=900,
+        vmin=v_min,
     )
     return frames, vmax_by_panel
 
@@ -692,10 +731,12 @@ def _render_action_text_panel(
     title_font_scale=0.55,
     label_font_scale=0.35,
     group_font_scale=0.5,
+    vmin=0.0,
 ):
     arr = mat.numpy() if hasattr(mat, "numpy") else mat
     n_rows, n_cols = arr.shape[:2]
-    norm = (arr / max(float(vmax), 1e-8)).clip(0, 1)
+    span = max(float(vmax) - float(vmin), 1e-8)
+    norm = ((arr - float(vmin)) / span).clip(0, 1)
     gray = (norm * 255).astype(np.uint8)
     color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
 
@@ -740,14 +781,23 @@ def _render_action_text_panel(
     return canvas
 
 
-def _render_action_text_heads(per_head, head_vmax, col_labels, groups, title):
-    """``head_vmax`` is a sequence of length n_heads; each head uses its own scale."""
+def _render_action_text_heads(per_head, head_vmax, col_labels, groups, title, head_vmin=None):
+    """``head_vmax`` and ``head_vmin`` are sequences of length n_heads; each head
+    uses its own [vmin, vmax] range."""
     n_heads = int(per_head.shape[0])
-    if not isinstance(head_vmax, (list, tuple)):
-        head_vmax = [float(head_vmax)] * n_heads
-    head_vmax = list(head_vmax)
-    if len(head_vmax) < n_heads:
-        head_vmax = head_vmax + [head_vmax[-1]] * (n_heads - len(head_vmax))
+
+    def _norm_list(v, default):
+        if v is None:
+            return [float(default)] * n_heads
+        if not isinstance(v, (list, tuple)):
+            return [float(v)] * n_heads
+        v = list(v)
+        if len(v) < n_heads:
+            v = v + [v[-1]] * (n_heads - len(v))
+        return [float(x) for x in v]
+
+    head_vmax = _norm_list(head_vmax, 1.0)
+    head_vmin = _norm_list(head_vmin, 0.0)
     h_cols = 4
     h_rows = (n_heads + h_cols - 1) // h_cols
     panel_w, panel_h = 900, 520
@@ -759,9 +809,10 @@ def _render_action_text_heads(per_head, head_vmax, col_labels, groups, title):
         r, c = divmod(head_idx, h_cols)
         sub = _render_action_text_panel(
             per_head[head_idx], head_vmax[head_idx], col_labels, groups,
-            f"head {head_idx} (vmax={head_vmax[head_idx]:.3f})",
+            f"head {head_idx} (vmin={head_vmin[head_idx]:.3f}, vmax={head_vmax[head_idx]:.3f})",
             out_w=panel_w, out_h=panel_h,
             title_font_scale=0.45, label_font_scale=0.30, group_font_scale=0.4,
+            vmin=head_vmin[head_idx],
         )
         canvas[title_h + r * panel_h : title_h + (r + 1) * panel_h,
                c * panel_w : (c + 1) * panel_w] = sub
@@ -954,6 +1005,7 @@ def _render_action_text_from_data(data, layer_idx, vmax_overrides=None):
     if mean_v is None:
         mean_v = max(float(mean.max().item()), 1e-3)
     mean_v = float(mean_v)
+    mean_vmin = float(overrides.get("action_text_matrix_mean_vmin", 0.0))
     vmax_by_panel["action_text_matrix_mean"] = mean_v
 
     heads_override = overrides.get("action_text_matrix_heads")
@@ -966,6 +1018,16 @@ def _render_action_text_from_data(data, layer_idx, vmax_overrides=None):
             head_vmax = head_vmax + [head_vmax[-1]] * (n_heads - len(head_vmax))
     else:
         head_vmax = [float(heads_override)] * n_heads
+
+    heads_vmin_override = overrides.get("action_text_matrix_heads_vmin")
+    if heads_vmin_override is None:
+        head_vmin = [0.0] * n_heads
+    elif isinstance(heads_vmin_override, (list, tuple)):
+        head_vmin = [float(v) for v in heads_vmin_override]
+        if len(head_vmin) < n_heads:
+            head_vmin = head_vmin + [head_vmin[-1]] * (n_heads - len(head_vmin))
+    else:
+        head_vmin = [float(heads_vmin_override)] * n_heads
     vmax_by_panel["action_text_matrix_heads"] = float(max(head_vmax))
 
     frames["action_text_matrix_mean"] = _render_action_text_panel(
@@ -973,14 +1035,16 @@ def _render_action_text_from_data(data, layer_idx, vmax_overrides=None):
         mean_v,
         col_labels,
         groups,
-        f"L{layer_idx}: action -> prompt tokens (mean, rows sum over tokens, vmax={mean_v:.3f})",
+        f"L{layer_idx}: action -> prompt tokens (mean, rows sum over tokens, vmin={mean_vmin:.3f}, vmax={mean_v:.3f})",
+        vmin=mean_vmin,
     )
     frames["action_text_matrix_heads"] = _render_action_text_heads(
         selected,
         head_vmax,
         col_labels,
         groups,
-        f"L{layer_idx}: action -> prompt tokens (per-head, rows sum over tokens, per-head vmax)",
+        f"L{layer_idx}: action -> prompt tokens (per-head, rows sum over tokens, per-head vmin/vmax)",
+        head_vmin=head_vmin,
     )
     return frames, vmax_by_panel
 

@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from lerobot.policies.molmoact2.frame_so101 import stats_v3_to_v21
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.utils.constants import (
     ACTION,
@@ -43,12 +44,13 @@ def _dataset_stats(dataset: Any | None) -> dict[str, dict[str, Any]] | None:
     if dataset is None:
         return None
     stats = getattr(dataset, "stats", None)
-    if stats is not None:
-        return stats
-    meta = getattr(dataset, "meta", None)
-    if meta is not None:
-        return getattr(meta, "stats", None)
-    return None
+    if stats is None:
+        meta = getattr(dataset, "meta", None)
+        if meta is not None:
+            stats = getattr(meta, "stats", None)
+    # Dataset stats live in v3.0 joint frame; the MolmoAct2 normalizer sees
+    # tensors after SO101V3ToV21Step, so the stats must be converted to match.
+    return stats_v3_to_v21(stats)
 
 
 def _has_saved_processors(path: Path) -> bool:
