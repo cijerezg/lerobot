@@ -209,14 +209,13 @@ class RTCProcessor:
             .unsqueeze(-1)
         )
 
-        with torch.enable_grad():
-            v_t = original_denoise_step_partial(x_t)
-            x_t.requires_grad_(True)
-
-            x1_t = x_t - time * v_t  # noqa: N806
-            err = (prev_chunk_left_over - x1_t) * weights
-            grad_outputs = err.clone().detach()
-            correction = torch.autograd.grad(x1_t, x_t, grad_outputs, retain_graph=False)[0]
+        # Identity-gradient approximation: ∂x̂₁/∂xₜ ≈ I, so correction = err directly.
+        # This is equivalent to the autograd path when requires_grad is set after the
+        # forward (making ∂v/∂xₜ = 0), but avoids building a computation graph.
+        v_t = original_denoise_step_partial(x_t)
+        x1_t = x_t - time * v_t  # noqa: N806
+        err = (prev_chunk_left_over - x1_t) * weights
+        correction = err
 
         max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
         tau_tensor = torch.as_tensor(tau)

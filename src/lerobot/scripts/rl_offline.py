@@ -70,10 +70,11 @@ from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
+    get_step_identifier,
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.utils.constants import TRAINING_STATE_DIR
+from lerobot.utils.constants import CHECKPOINTS_DIR, TRAINING_STATE_DIR
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
@@ -124,6 +125,36 @@ def _save_checkpoint(
 
     update_last_checkpoint(checkpoint_dir)
     logging.info(f"[RL_OFFLINE] Checkpoint saved → {checkpoint_dir}")
+
+
+def _save_anchor_checkpoint(
+    cfg: TrainRLServerPipelineConfig,
+    step: int,
+    total_steps: int,
+    policy: nn.Module,
+    preprocessor,
+    postprocessor,
+    suffix: str,
+) -> None:
+    output_dir = Path(cfg.output_dir)
+    step_id = get_step_identifier(step, total_steps)
+    checkpoint_dir = output_dir / CHECKPOINTS_DIR / f"{step_id}_{suffix}"
+
+    save_checkpoint(
+        checkpoint_dir=checkpoint_dir,
+        step=step,
+        cfg=cfg,
+        policy=policy,
+        optimizer=None,
+        scheduler=None,
+        preprocessor=preprocessor,
+        postprocessor=postprocessor,
+    )
+
+    training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
+    training_state_dir.mkdir(parents=True, exist_ok=True)
+    torch.save({"step": step, "interaction_step": 0}, training_state_dir / "training_state.pt")
+    logging.info(f"[RL_OFFLINE] Anchor checkpoint ({suffix}) saved → {checkpoint_dir}")
 
 
 # ── Validation probes ─────────────────────────────────────────────────────────
@@ -641,7 +672,12 @@ def run_offline_training(
                 )
                 training_infos.update(actor_infos)
 
+        anchor_fires = any(a.should_merge(optimization_step) for a in weight_anchors.values())
+        if anchor_fires:
+            _save_anchor_checkpoint(cfg, optimization_step, offline_steps, policy, preprocessor, postprocessor, "pre_anchor")
         apply_weight_anchors(weight_anchors, optimizers, optimization_step)
+        if anchor_fires:
+            _save_anchor_checkpoint(cfg, optimization_step, offline_steps, policy, preprocessor, postprocessor, "post_anchor")
 
         # ── Logging ───────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:

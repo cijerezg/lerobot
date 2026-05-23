@@ -81,9 +81,14 @@ class RTCSharedState:
         self.env_wait_time = 0.0
         self.env_steps = 0
         self.env_active_time_total = 0.0
+        self.env_action_get_time = 0.0
+        self.env_step_time = 0.0
         self.inference_wait_time = 0.0
         self.inference_count = 0
         self.inference_latencies: list[float] = []
+        self.inference_preprocess_time = 0.0
+        self.inference_model_time = 0.0
+        self.inference_postprocess_time = 0.0
         self.current_step = 0
         self.cached_subtask_tokens: torch.Tensor | None = None
         self.cached_subtask_masks: torch.Tensor | None = None
@@ -108,6 +113,17 @@ class RTCSharedState:
             self.inference_count += 1
             self.inference_latencies.append(latency)
 
+    def add_inference_breakdown(self, preprocess: float, model: float, postprocess: float) -> None:
+        with self.lock:
+            self.inference_preprocess_time += preprocess
+            self.inference_model_time += model
+            self.inference_postprocess_time += postprocess
+
+    def add_env_step_breakdown(self, action_get: float, step: float) -> None:
+        with self.lock:
+            self.env_action_get_time += action_get
+            self.env_step_time += step
+
     def get_and_reset_metrics(self) -> dict:
         with self.lock:
             metrics = {
@@ -117,13 +133,23 @@ class RTCSharedState:
                 "env_active_time": self.env_active_time_total,
                 "inference_count": self.inference_count,
                 "inference_latencies": list(self.inference_latencies),
+                "inference_preprocess_time": self.inference_preprocess_time,
+                "inference_model_time": self.inference_model_time,
+                "inference_postprocess_time": self.inference_postprocess_time,
+                "env_action_get_time": self.env_action_get_time,
+                "env_step_time": self.env_step_time,
             }
             self.env_wait_time = 0.0
             self.env_steps = 0
             self.env_active_time_total = 0.0
+            self.env_action_get_time = 0.0
+            self.env_step_time = 0.0
             self.inference_wait_time = 0.0
             self.inference_count = 0
             self.inference_latencies = []
+            self.inference_preprocess_time = 0.0
+            self.inference_model_time = 0.0
+            self.inference_postprocess_time = 0.0
             return metrics
 
     def update_observation(self, obs: dict, is_intervening: bool) -> None:
@@ -281,6 +307,7 @@ def rtc_inference_worker(
     try:
         logger.info("[RTC_INFERENCE] Thread started.")
         latency_tracker = LatencyTracker()
+        inference_step = 0
         execution_horizon = policy.config.rtc_config.execution_horizon
         time_per_chunk = 1.0 / cfg.env.fps
         task_str = cfg.policy.task
@@ -409,6 +436,8 @@ def rtc_inference_worker(
             dt_preproc = t_preproc_end - t_preproc_start
             dt_gpu = t_gpu_end - t_gpu_start
             dt_post = new_latency - dt_preproc - dt_gpu
+            shared_state.add_inference_breakdown(dt_preproc, dt_gpu, dt_post)
+            inference_step += 1
             logger.debug(
                 "[RTC_INFERENCE] chunk latency %.3fs [pre=%.3f gpu=%.3f post=%.3f] delay=%d model_delay=%d qsize=%d",
                 new_latency, dt_preproc, dt_gpu, dt_post, new_delay, inference_delay, action_queue.qsize(),
@@ -542,6 +571,7 @@ def rtc_env_worker(
                 action_queue.clear()
             was_intervening = shared_state.is_intervening
 
+            _t_action_start = time.perf_counter()
             if was_intervening:
                 action = _raw_joint_action(online_env, action_dim, device)
             else:
@@ -550,7 +580,9 @@ def rtc_env_worker(
                     action = action[..., :action_dim].to(device)
                 else:
                     action = _raw_joint_action(online_env, action_dim, device)
+            _t_action_end = time.perf_counter()
 
+            _t_step_start = time.perf_counter()
             new_transition = step_env_and_process_transition(
                 env=online_env,
                 transition=transition,
@@ -558,6 +590,7 @@ def rtc_env_worker(
                 env_processor=env_processor,
                 action_processor=action_processor,
             )
+            _t_step_end = time.perf_counter()
 
             if TransitionKey.COMPLEMENTARY_DATA not in new_transition:
                 new_transition[TransitionKey.COMPLEMENTARY_DATA] = {}
@@ -717,6 +750,10 @@ def rtc_env_worker(
 
             dt_s = time.perf_counter() - start_time
             shared_state.env_active_time_total += dt_s
+            shared_state.add_env_step_breakdown(
+                action_get=_t_action_end - _t_action_start,
+                step=_t_step_end - _t_step_start,
+            )
             shared_state.add_env_wait_time(max(0.0, action_interval - dt_s))
             precise_sleep(max(0.0, action_interval - dt_s))
 
@@ -958,12 +995,16 @@ def act_with_policy_rtc_inference(
             q_size = action_queue.qsize()
             teleop_stat = "ON" if shared.is_intervening else "OFF"
             metrics = shared.get_and_reset_metrics()
-            inf_wait = metrics["inference_wait_time"]
-            env_wait = metrics["env_wait_time"]
-            env_steps = metrics["env_steps"]
-            avg_env_wait = env_wait / max(1, env_steps)
-            avg_env_active = metrics.get("env_active_time", 0.0) / max(1, env_steps)
-            inf_lats = metrics.get("inference_latencies", [])
+            env_steps = max(1, metrics["env_steps"])
+            inf_count = max(1, metrics["inference_count"])
+            avg_env_active = metrics["env_active_time"] / env_steps
+            avg_env_wait = metrics["env_wait_time"] / env_steps
+            avg_action_get = metrics["env_action_get_time"] / env_steps
+            avg_env_step = metrics["env_step_time"] / env_steps
+            avg_pre = metrics["inference_preprocess_time"] / inf_count
+            avg_model = metrics["inference_model_time"] / inf_count
+            avg_post = metrics["inference_postprocess_time"] / inf_count
+            inf_lats = metrics["inference_latencies"]
             lat_str = f"avg={sum(inf_lats)/len(inf_lats):.3f}s max={max(inf_lats):.3f}s" if inf_lats else "N/A"
 
             logger.info(
@@ -971,12 +1012,15 @@ def act_with_policy_rtc_inference(
                 q_size, teleop_stat, int(time.time() - start_time),
             )
             logger.info(
-                "[metrics] Inference sleep time: %.2fs | Env active (camera/step) avg: %.4fs | Env sleep avg: %.4fs",
-                inf_wait, avg_env_active, avg_env_wait,
+                "[metrics/inference] cycles=%d | sleep=%.2fs | preprocess=%.1fms | model=%.1fms | post=%.1fms | total=%s",
+                metrics["inference_count"], metrics["inference_wait_time"],
+                avg_pre * 1000, avg_model * 1000, avg_post * 1000, lat_str,
             )
             logger.info(
-                "[metrics] Inference latency: %s | Env steps: %s | Episode: %s",
-                lat_str, env_steps, "ACTIVE" if shared.episode_active else "IDLE",
+                "[metrics/env] steps=%d | action_get=%.1fms | env_step=%.1fms | active=%.1fms | sleep=%.1fms | episode=%s",
+                metrics["env_steps"], avg_action_get * 1000, avg_env_step * 1000,
+                avg_env_active * 1000, avg_env_wait * 1000,
+                "ACTIVE" if shared.episode_active else "IDLE",
             )
     except Exception:
         logger.error("[RTC_INFERENCE] Orchestrator error:\n%s", traceback.format_exc())

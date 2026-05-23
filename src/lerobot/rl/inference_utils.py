@@ -51,6 +51,14 @@ class SharedState:
         self.env_steps = 0
         self.inference_wait_time = 0.0
         
+        # Inference timing breakdown (accumulated per 20s window)
+        self.inference_preprocess_time = 0.0
+        self.inference_model_time = 0.0
+        self.inference_postprocess_time = 0.0
+        self.inference_cycles = 0
+        # Env timing breakdown
+        self.env_action_get_time = 0.0
+        self.env_step_time = 0.0
         # Recording and Logging
         self.episode_counter = 0
         self.is_logging_episode = False
@@ -73,12 +81,24 @@ class SharedState:
                 'env_wait_time': self.env_wait_time,
                 'env_steps': self.env_steps,
                 'inference_wait_time': self.inference_wait_time,
-                'env_active_time': getattr(self, 'env_active_time_total', 0.0)
+                'env_active_time': getattr(self, 'env_active_time_total', 0.0),
+                'inference_preprocess_time': self.inference_preprocess_time,
+                'inference_model_time': self.inference_model_time,
+                'inference_postprocess_time': self.inference_postprocess_time,
+                'inference_cycles': self.inference_cycles,
+                'env_action_get_time': self.env_action_get_time,
+                'env_step_time': self.env_step_time,
             }
             self.env_wait_time = 0.0
             self.env_steps = 0
             self.inference_wait_time = 0.0
             self.env_active_time_total = 0.0
+            self.inference_preprocess_time = 0.0
+            self.inference_model_time = 0.0
+            self.inference_postprocess_time = 0.0
+            self.inference_cycles = 0
+            self.env_action_get_time = 0.0
+            self.env_step_time = 0.0
             return metrics
 
     def update_observation(self, obs: dict, is_intervening: bool):
@@ -106,6 +126,18 @@ class SharedState:
                 self.policy_reset_requested = False
                 return True
             return False
+
+    def add_inference_breakdown(self, preprocess: float, model: float, postprocess: float):
+        with self.lock:
+            self.inference_preprocess_time += preprocess
+            self.inference_model_time += model
+            self.inference_postprocess_time += postprocess
+            self.inference_cycles += 1
+
+    def add_env_step_breakdown(self, action_get: float, step: float):
+        with self.lock:
+            self.env_action_get_time += action_get
+            self.env_step_time += step
 
     def request_reset(self):
         with self.lock:
@@ -315,10 +347,12 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
             current_time = time.perf_counter()
 
             with torch.no_grad():
+                _t_pre_start = time.perf_counter()
                 if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
                     processed_batch = policy.preprocessor(batch_for_preprocessor)
                 else:
                     processed_batch = batch_for_preprocessor
+                _t_pre_end = time.perf_counter()
 
                 action_index_before = action_queue.get_action_index()
                 prev_actions        = action_queue.get_left_over()
@@ -370,12 +404,14 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 # p95 latency avoids a single spike biasing the model to look too far ahead
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 
+                _t_model_start = time.perf_counter()
                 actions_chunk = policy.predict_action_chunk(
                     processed_batch,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_actions,
                     execution_horizon=execution_horizon,
                 )
+                _t_model_end = time.perf_counter()
 
                 # --- Subtask token decoding (for logging) ---
                 inference_step += 1
@@ -394,6 +430,7 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 except Exception as e:
                     logger.debug(f"[SUBTASK] Could not decode subtask tokens: {e}")
 
+                _t_post_start = time.perf_counter()
                 original_actions = actions_chunk.squeeze(0).clone()
 
                 # --- Unnormalization & absolute action reconstruction ---
@@ -434,11 +471,28 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 if not hasattr(policy, '_chunk_plot_counter'):
                     policy._chunk_plot_counter = 0
                 policy._chunk_plot_counter += 1
+                _t_post_end = time.perf_counter()
 
             # Track latency
             new_latency = time.perf_counter() - current_time
             new_delay   = math.ceil(new_latency / time_per_chunk)
             latency_tracker.add(new_latency)
+
+            _t_preprocess  = _t_pre_end   - _t_pre_start
+            _t_model_fwd   = _t_model_end - _t_model_start
+            _t_postprocess = _t_post_end  - _t_post_start
+            shared_state.add_inference_breakdown(_t_preprocess, _t_model_fwd, _t_postprocess)
+
+            if inference_step % 10 == 0:
+                logger.info(
+                    f"[INFERENCE step={inference_step}] "
+                    f"preprocess={1000*_t_preprocess:.1f}ms | "
+                    f"model={1000*_t_model_fwd:.1f}ms | "
+                    f"postprocess={1000*_t_postprocess:.1f}ms | "
+                    f"total={1000*new_latency:.1f}ms | "
+                    f"p95={1000*(latency_tracker.p95() or 0.0):.1f}ms | "
+                    f"queue={action_queue.qsize()}"
+                )
 
             # Constrain discarded delay by how many actions the env actually consumed
             # (avoids jerky start when the queue was starved on the first chunk)
@@ -705,7 +759,7 @@ def env_interaction_worker(
             was_intervening = shared_state.is_intervening
 
             # --- ACTION PREPARATION ---
-            _t_step0 = time.perf_counter() if _env_do_print else 0.0
+            _t_action_start = time.perf_counter()
             if was_intervening:
                 if hasattr(online_env, 'get_raw_joint_positions'):
                     raw_joints = online_env.get_raw_joint_positions()
@@ -739,11 +793,14 @@ def env_interaction_worker(
                         action = torch.zeros(6, dtype=torch.float32, device=cfg.policy.device)
                     logger.warning("[ENV] Action queue starved. Executing null ops.")
             
+            _t_action_end = time.perf_counter()
+
             # Save current transition before stepping for next_state later
             # No deep copy needed: step_env_and_process_transition never mutates transition in-place
             current_transition_data = transition
 
             # --- ENVIRONMENT STEP ---
+            _t_step_start = time.perf_counter()
             new_transition = step_env_and_process_transition(
                 env=online_env,
                 transition=transition,
@@ -751,6 +808,7 @@ def env_interaction_worker(
                 env_processor=env_processor,
                 action_processor=action_processor,
             )
+            _t_step_end = time.perf_counter()
             
             # --- RECORDING TO BUFFER ---
             if shared_state.replay_buffer is not None:
@@ -891,13 +949,26 @@ def env_interaction_worker(
             # Calculate tight strict Hz sleep
             dt_s = time.perf_counter() - start_time
             sleep_time = max(0, action_interval - dt_s)
-            
+
+            shared_state.add_env_step_breakdown(
+                action_get=_t_action_end - _t_action_start,
+                step=_t_step_end - _t_step_start,
+            )
+
             # --- DEBUG LOGGING ---
-            # Storing active time so the user can see exactly how long the environment took 
             if not hasattr(shared_state, 'env_active_time_total'):
                 shared_state.env_active_time_total = 0.0
             shared_state.env_active_time_total += dt_s
-            
+
+            if _env_do_print:
+                logger.info(
+                    f"[ENV step={interaction_step}] "
+                    f"action_prep={1000*(_t_action_end-_t_action_start):.1f}ms | "
+                    f"env_step={1000*(_t_step_end-_t_step_start):.1f}ms | "
+                    f"active={1000*dt_s:.1f}ms | "
+                    f"sleep={1000*sleep_time:.1f}ms"
+                )
+
             shared_state.add_env_wait_time(sleep_time)
             
             interaction_step += 1
