@@ -451,21 +451,38 @@ class MolmoAct2MaskedUnnormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixi
     pass
 
 
+def _masked_clamp(tensor: Tensor, mask: list[bool] | None) -> Tensor:
+    """Clamp to [-1, 1] only on dimensions where mask is True (normalized dims).
+    Dims where mask is False are in raw units (e.g. raw degrees) and must not be clamped."""
+    t = torch.as_tensor(tensor)
+    if mask is None:
+        return t.clamp(-1.0, 1.0)
+    m = torch.tensor(mask, dtype=torch.bool, device=t.device)
+    while m.ndim < t.ndim:
+        m = m.unsqueeze(0)
+    return torch.where(m, t.clamp(-1.0, 1.0), t)
+
+
 @ProcessorStepRegistry.register(name="molmoact2_clamp_normalized")
 @dataclass
 class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
-    """Clamp q01/q99-normalized state and action to the range used by the old trainer."""
+    """Clamp q01/q99-normalized state and action to the range used by the old trainer.
+    action_mask / state_mask mark which dims are actually normalized; unmasked (raw-unit)
+    dims are skipped so they are not corrupted by the [-1, 1] clamp."""
+
+    action_mask: list[bool] | None = None
+    state_mask: list[bool] | None = None
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
         observation = transition.get(TransitionKey.OBSERVATION)
         if isinstance(observation, dict) and OBS_STATE in observation:
             observation = observation.copy()
-            observation[OBS_STATE] = torch.as_tensor(observation[OBS_STATE]).clamp(-1.0, 1.0)
+            observation[OBS_STATE] = _masked_clamp(observation[OBS_STATE], self.state_mask)
             transition[TransitionKey.OBSERVATION] = observation
         action = transition.get(TransitionKey.ACTION)
         if action is not None:
-            transition[TransitionKey.ACTION] = torch.as_tensor(action).clamp(-1.0, 1.0)
+            transition[TransitionKey.ACTION] = _masked_clamp(action, self.action_mask)
         return transition
 
     def transform_features(
@@ -800,11 +817,16 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 @ProcessorStepRegistry.register(name="molmoact2_clamp_action")
 @dataclass
 class MolmoAct2ClampActionProcessorStep(ProcessorStep):
+    """Clamp model action output to [-1, 1] before unnormalization.
+    action_mask marks which dims are normalized; unmasked (raw-unit) dims are skipped."""
+
+    action_mask: list[bool] | None = None
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
         action = transition.get(TransitionKey.ACTION)
         if action is not None:
-            transition[TransitionKey.ACTION] = torch.as_tensor(action).clamp(-1.0, 1.0)
+            transition[TransitionKey.ACTION] = _masked_clamp(action, self.action_mask)
         return transition
 
     def transform_features(
@@ -856,6 +878,16 @@ def make_molmoact2_pre_post_processors(
         dataset_feature_names=config.dataset_feature_names,
     )
 
+    def _mask_list(key: str) -> list[bool] | None:
+        stats = (masked_dataset_stats or {}).get(key, {})
+        m = stats.get("mask") if isinstance(stats, dict) else None
+        if m is None:
+            return None
+        return [bool(v) for v in (m.tolist() if hasattr(m, "tolist") else m)]
+
+    action_mask = _mask_list(ACTION)
+    state_mask = _mask_list(OBS_STATE)
+
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
@@ -865,7 +897,7 @@ def make_molmoact2_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=masked_dataset_stats,
         ),
-        MolmoAct2ClampNormalizedProcessorStep(),
+        MolmoAct2ClampNormalizedProcessorStep(action_mask=action_mask, state_mask=state_mask),
         MolmoAct2PackInputsProcessorStep(
             checkpoint_path=config.checkpoint_path,
             checkpoint_revision=config.checkpoint_revision,
@@ -890,7 +922,7 @@ def make_molmoact2_pre_post_processors(
     ]
 
     output_steps: list[ProcessorStep] = [
-        MolmoAct2ClampActionProcessorStep(),
+        MolmoAct2ClampActionProcessorStep(action_mask=action_mask),
         MolmoAct2MaskedUnnormalizerProcessorStep(
             features=config.output_features,
             norm_map=config.normalization_mapping,

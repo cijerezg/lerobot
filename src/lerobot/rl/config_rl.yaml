@@ -61,7 +61,7 @@ policy:
 
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
-  pretrained_path: outputs/molmoact2_offline/checkpoints/003000/pretrained_model
+  pretrained_path: outputs/molmoact2_offline/checkpoints/000200/pretrained_model
   checkpoint_path: outputs/MolmoAct2-SO100_101
 
   # ---- Training mode --------------------------------------------------------
@@ -152,6 +152,7 @@ policy:
 
   # ---- Normalization --------------------------------------------------------
   norm_tag: so100_so101_molmoact2     # loads norm stats from HF checkpoint
+  normalize_gripper: true             # must match base model (False crushes gripper to 1.0 via post-norm clamp)
 
   # ---- Action encoding -----------------------------------------------------
   # "absolute" (default) | "anchor" | "delta"
@@ -412,7 +413,7 @@ env:
         fps: 30
       top:
         type: opencv
-        index_or_path: 1
+        index_or_path: 2
         height: 480
         width: 640
         fps: 30
