@@ -61,7 +61,7 @@ policy:
 
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
-  pretrained_path: outputs/molmoact2_offline/checkpoints/000200/pretrained_model
+  pretrained_path: outputs/molmoact2_offline/checkpoints/000600/pretrained_model
   checkpoint_path: outputs/MolmoAct2-SO100_101
 
   # ---- Training mode --------------------------------------------------------
