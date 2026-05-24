@@ -74,6 +74,7 @@ class AnchorEncodeStep(ProcessorStep):
         new = transition.copy()
         new[TransitionKey.ACTION] = encoded
         new[TransitionKey.COMPLEMENTARY_DATA] = comp
+
         return new
 
     def get_config(self) -> dict[str, Any]:

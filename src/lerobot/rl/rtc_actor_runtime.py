@@ -497,7 +497,8 @@ def rtc_inference_worker(
                     # SO101V21ToV3Step maps to v3.0 for the robot.
                     from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY
                     from lerobot.policies.molmoact2.frame_so101 import arm_to_model
-                    anchor_v21 = arm_to_model(anchor_now.to(original_actions.device))
+                    anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
+                    anchor_v21 = arm_to_model(anchor_sq.to(original_actions.device))
                     processed_actions = postprocessor(
                         {ACTION: original_actions, ANCHOR_KEY: anchor_v21}
                     )

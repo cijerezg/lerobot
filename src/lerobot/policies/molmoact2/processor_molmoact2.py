@@ -433,6 +433,7 @@ class _MolmoAct2MaskedNormalizationMixin:
     ) -> Tensor:
         transformed = super()._apply_transform(tensor, key, feature_type, inverse=inverse)
         stats = getattr(self, "_tensor_stats", {}).get(key, {})
+
         mask = stats.get("mask") if isinstance(stats, dict) else None
         if mask is None:
             return transformed
