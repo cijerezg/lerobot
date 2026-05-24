@@ -107,6 +107,9 @@ class OpenCVCamera(Camera):
         self.fps = config.fps
         self.color_mode = config.color_mode
         self.warmup_s = config.warmup_s
+        self.read_latest_max_age_ms = config.read_latest_max_age_ms
+        self.allow_stale_frames = config.allow_stale_frames
+        self._last_stale_frame_warning_s = 0.0
 
         self.videocapture: cv2.VideoCapture | None = None
 
@@ -234,8 +237,10 @@ class OpenCVCamera(Camera):
         success = self.videocapture.set(cv2.CAP_PROP_FPS, float(self.fps))
         actual_fps = self.videocapture.get(cv2.CAP_PROP_FPS)
         # Use math.isclose for robust float comparison
-        if not success or not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
+        if not math.isclose(self.fps, actual_fps, rel_tol=1e-3):
             raise RuntimeError(f"{self} failed to set fps={self.fps} ({actual_fps=}).")
+        if not success:
+            logger.warning(f"{self} reported failure setting fps={self.fps}, but actual_fps={actual_fps}.")
 
     def _validate_fourcc(self) -> None:
         """Validates and sets the camera's FOURCC code."""
@@ -271,15 +276,25 @@ class OpenCVCamera(Camera):
         height_success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
 
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        if not width_success or self.capture_width != actual_width:
+        if self.capture_width != actual_width:
             raise RuntimeError(
                 f"{self} failed to set capture_width={self.capture_width} ({actual_width=}, {width_success=})."
             )
+        if not width_success:
+            logger.warning(
+                f"{self} reported failure setting capture_width={self.capture_width}, "
+                f"but actual_width={actual_width}."
+            )
 
         actual_height = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        if not height_success or self.capture_height != actual_height:
+        if self.capture_height != actual_height:
             raise RuntimeError(
                 f"{self} failed to set capture_height={self.capture_height} ({actual_height=}, {height_success=})."
+            )
+        if not height_success:
+            logger.warning(
+                f"{self} reported failure setting capture_height={self.capture_height}, "
+                f"but actual_height={actual_height}."
             )
 
     @staticmethod
@@ -530,7 +545,7 @@ class OpenCVCamera(Camera):
         return frame
 
     @check_if_not_connected
-    def read_latest(self, max_age_ms: int = 500) -> NDArray[Any]:
+    def read_latest(self, max_age_ms: int | None = None) -> NDArray[Any]:
         """Return the most recent frame captured immediately (Peeking).
 
         This method is non-blocking and returns whatever is currently in the
@@ -556,8 +571,18 @@ class OpenCVCamera(Camera):
         if frame is None or timestamp is None:
             raise RuntimeError(f"{self} has not captured any frames yet.")
 
+        max_age_ms = self.read_latest_max_age_ms if max_age_ms is None else max_age_ms
         age_ms = (time.perf_counter() - timestamp) * 1e3
         if age_ms > max_age_ms:
+            if self.allow_stale_frames:
+                now_s = time.perf_counter()
+                if now_s - self._last_stale_frame_warning_s >= 5.0:
+                    logger.warning(
+                        f"{self} returning stale frame: {age_ms:.1f} ms old "
+                        f"(max configured: {max_age_ms} ms)."
+                    )
+                    self._last_stale_frame_warning_s = now_s
+                return frame
             raise TimeoutError(
                 f"{self} latest frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms)."
             )

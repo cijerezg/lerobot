@@ -70,6 +70,10 @@ class SOLeader(Teleoperator):
         self.bus_lock = Lock()
         self._terminal_listener_running = False
         self._terminal_thread: threading.Thread | None = None
+        self._terminal_settings_lock = threading.Lock()
+        self._terminal_fd: int | None = None
+        self._terminal_old_settings = None
+        self._terminal_settings_restored = True
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -123,6 +127,23 @@ class SOLeader(Teleoperator):
             self._start_terminal_listener()
 
         logger.info(f"{self} connected.")
+
+    def _restore_terminal_settings(self) -> None:
+        with self._terminal_settings_lock:
+            if self._terminal_settings_restored:
+                return
+            fd = self._terminal_fd
+            old_settings = self._terminal_old_settings
+            self._terminal_settings_restored = True
+            self._terminal_fd = None
+            self._terminal_old_settings = None
+
+        if fd is None or old_settings is None:
+            return
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except Exception as e:
+            logger.warning(f"Could not restore terminal settings: {e}")
 
     def _on_press(self, key):
         char = getattr(key, "char", None)
@@ -181,6 +202,10 @@ class SOLeader(Teleoperator):
                 return
 
             try:
+                with self._terminal_settings_lock:
+                    self._terminal_fd = fd
+                    self._terminal_old_settings = old_settings
+                    self._terminal_settings_restored = False
                 tty.setcbreak(fd)
                 logger.info(
                     "Terminal keyboard listener active. Press 5=toggle intervention, "
@@ -201,10 +226,7 @@ class SOLeader(Teleoperator):
                     except Exception as e:
                         logger.error(f"Error handling terminal key {ch!r}: {e}")
             finally:
-                try:
-                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-                except Exception:
-                    pass
+                self._restore_terminal_settings()
 
         self._terminal_thread = threading.Thread(
             target=_loop, daemon=True, name="so_leader_term_keys"
@@ -339,10 +361,13 @@ class SOLeader(Teleoperator):
             self.listener.stop()
             self.listener = None
 
-        if self._terminal_listener_running:
+        if self._terminal_listener_running or self._terminal_thread is not None:
             self._terminal_listener_running = False
+            self._restore_terminal_settings()
             if self._terminal_thread is not None:
                 self._terminal_thread.join(timeout=1.0)
+                if self._terminal_thread.is_alive():
+                    logger.warning("Terminal keyboard listener did not stop within 1s.")
                 self._terminal_thread = None
 
         with self.bus_lock:

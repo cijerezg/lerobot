@@ -64,6 +64,8 @@ class OpenCVCameraConfig(CameraConfig):
     warmup_s: int = 1
     fourcc: str | None = None
     backend: Cv2Backends = Cv2Backends.ANY
+    read_latest_max_age_ms: int = 500
+    allow_stale_frames: bool = False
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)
@@ -73,4 +75,8 @@ class OpenCVCameraConfig(CameraConfig):
         if self.fourcc is not None and (not isinstance(self.fourcc, str) or len(self.fourcc) != 4):
             raise ValueError(
                 f"`fourcc` must be a 4-character string (e.g., 'MJPG', 'YUYV'), but '{self.fourcc}' is provided."
+            )
+        if self.read_latest_max_age_ms <= 0:
+            raise ValueError(
+                f"`read_latest_max_age_ms` must be positive, but {self.read_latest_max_age_ms} is provided."
             )

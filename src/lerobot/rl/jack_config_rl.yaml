@@ -40,7 +40,7 @@ dataset:
 # -----------------------------------------------------------------------------
 # RL flags (shared)
 # -----------------------------------------------------------------------------
-skip_critic: false
+skip_critic: true
 treat_main_dataset_as_golden: true
 
 
@@ -61,7 +61,7 @@ policy:
 
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
-  pretrained_path: /mnt/2tb/models/molmoact2_so101_pickplace_160eps_10k_action_expert/checkpoints/007000/pretrained_model
+  pretrained_path: /home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e35trimidle_10k_action_expert_v4/checkpoints/020000/020000/pretrained_model
   checkpoint_path: allenai/MolmoAct2-SO100_101
 
   # ---- Training mode --------------------------------------------------------
@@ -167,12 +167,12 @@ policy:
     STATE: QUANTILES
     ACTION: QUANTILES
   input_features:
-    observation.images.side:
+    observation.images.scene:
       type: VISUAL
-      shape: [3, 378, 378]
-    observation.images.top:
+      shape: [3, 600, 800]
+    observation.images.wrist:
       type: VISUAL
-      shape: [3, 378, 378]
+      shape: [3, 600, 800]
     observation.state:
       type: STATE
       shape: [6]
@@ -313,8 +313,8 @@ policy:
 # -----------------------------------------------------------------------------
 # Run identity & I/O
 # -----------------------------------------------------------------------------
-output_dir: outputs/baseline_molmoact2_so101_007000
-job_name: baseline_molmoact2_so101_007000
+output_dir: null
+job_name: jack_config_rl
 resume: false
 seed: 42
 
@@ -327,7 +327,7 @@ save_checkpoint: true
 save_freq: 100                # online checkpoint cadence (optimizer steps)
 offline_save_freq: 500        # offline checkpoint cadence
 buffer_cache_dir: outputs/buffer_cache-v7
-use_rerun: true
+use_rerun: false
 
 
 # -----------------------------------------------------------------------------
@@ -335,7 +335,7 @@ use_rerun: true
 # -----------------------------------------------------------------------------
 episode_logging_freq: 4        # log every Nth episode
 episode_save_freq: 10          # save buffer snapshot every Nth episode
-video_logging_cameras: [top, side]
+video_logging_cameras: [scene, wrist]
 
 
 # -----------------------------------------------------------------------------
@@ -406,20 +406,24 @@ env:
     port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
     id: so101_follower_2026_04_26_v0
     cameras:
-      side:
+      wrist:
         type: opencv
         index_or_path: /dev/video0
         height: 600
         width: 800
         fps: 30
         fourcc: MJPG
-      top:
+        backend: V4L2
+        allow_stale_frames: true
+        read_latest_max_age_ms: 500
+      scene:
         type: opencv
         index_or_path: /dev/video4
-        height: 600
-        width: 800
+        height: 480
+        width: 640
         fps: 30
-        fourcc: MJPG
+        allow_stale_frames: true
+        read_latest_max_age_ms: 500
 
   # ---- Teleop ---------------------------------------------------------------
   teleop:
@@ -435,7 +439,7 @@ env:
       add_joint_velocity_to_observation: false
       add_current_to_observation: false
     image_preprocessing:
-      resize_size: [378, 378]
+      resize_size: [600, 800]
     gripper:
       use_gripper: true
       gripper_penalty: 0.00
@@ -453,12 +457,12 @@ env:
 
   # ---- Feature schema (used by make_policy to infer input/output shapes) ----
   features:
-    observation.images.side:
+    observation.images.scene:
       type: VISUAL
-      shape: [3, 378, 378]
-    observation.images.top:
+      shape: [3, 600, 800]
+    observation.images.wrist:
       type: VISUAL
-      shape: [3, 378, 378]
+      shape: [3, 600, 800]
     observation.state:
       type: STATE
       shape: [6]
@@ -466,7 +470,7 @@ env:
       type: ACTION
       shape: [6]
   features_map:
-    observation.images.side: observation.images.side
-    observation.images.top: observation.images.top
+    observation.images.scene: observation.images.scene
+    observation.images.wrist: observation.images.wrist
     observation.state: observation.state
     action: action
