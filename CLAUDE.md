@@ -48,6 +48,33 @@ pre-commit run --all-files                           # Lint + format (ruff, typo
 - **`benchmarks/`** — Performance benchmarking scripts.
 - **Root files**: `pyproject.toml` (single source of truth for deps, build, tool config), `Makefile` (E2E test targets), `uv.lock`, `CONTRIBUTING.md` & `README.md` (general information).
 
+## MolmoAct2 — SO-101 Joint Frame Convention (CRITICAL)
+
+MolmoAct2 was pretrained on SO-100/101 data in the **v2.1 joint convention**.
+All datasets recorded with LeRobot v3.0 (this repo) are in the **v3.0 convention**.
+Two joints differ between conventions:
+
+| Joint | Transform: v3.0 → v2.1 |
+|-------|------------------------|
+| 1 · shoulder_lift | `v2.1 = −v3.0 + 90` |
+| 2 · elbow_flex    | `v2.1 =  v3.0 + 90` |
+| 0, 3, 4, 5        | unchanged              |
+
+**Where this is handled:** `src/lerobot/policies/molmoact2/frame_so101.py`
+- `SO101V3ToV21Step` — inserted before the normalizer in the input pipeline (converts state + action in training data and live observations)
+- `SO101V21ToV3Step` — inserted after the unnormalizer in the output pipeline (converts model actions back to arm frame before sending to robot)
+
+**Implications for training:**
+- Training datasets recorded with LeRobot v3.0 are in v3.0 convention → the processor transform is correct and must stay in place.
+- If you ever use a dataset recorded in v2.1 convention (e.g., raw HF hub datasets from before PR-777), remove or bypass `SO101V3ToV21Step` in the input pipeline — otherwise joint angles will be double-converted.
+- To verify a dataset's convention: check `observation.state` mean for joint 1 (shoulder_lift). v3.0 ≈ −30° to +10°; v2.1 ≈ 90° to 130°.
+
+**Implications for inference:**
+- `norm_tag: so100_so101_molmoact2` is required when loading the zero-shot base checkpoint (`outputs/MolmoAct2-SO100_101`) because norm stats are not embedded in that checkpoint directory. Set `norm_tag: null` only when loading a fine-tuned checkpoint that already has norm stats in its `policy_preprocessor_*.safetensors`.
+- `action_clamp_limits` in `config_rl.yaml` are defined in **v3.0 arm frame** (clamping runs after `SO101V21ToV3Step`).
+
+**The TODO anchors** (`# TODO(anchor): remove when anchor deltas land`) in `frame_so101.py` and `processor_molmoact2.py` mark where to remove this transform once the model switches to anchor/delta action encoding, which is inherently frame-agnostic.
+
 ## Notes
 
 - **Mypy is gradual**: strict only for `lerobot.envs`, `lerobot.configs`, `lerobot.optim`, `lerobot.model`, `lerobot.cameras`, `lerobot.motors`, `lerobot.transport`. Add type annotations when modifying these modules.

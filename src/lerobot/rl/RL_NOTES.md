@@ -1,0 +1,167 @@
+# RL Infrastructure Notes
+
+Generic value-based RL training for LeRobot.  
+Supports MolmoAct2 and PI05.  All model-specific logic is isolated behind the `Trainer` ABC.
+
+---
+
+## Architecture
+
+```
+config_rl.yaml
+      │
+      ▼
+Trainer.for_config(cfg)          ← dispatches to MolmoAct2Trainer or PI05Trainer
+      │
+      ├── make_policy()          ← loads HF checkpoint + applies freeze schedule
+      ├── make_processors()      ← (pre, post) processor pipeline
+      ├── freeze_model()         ← actor frozen per config; critic unfrozen in RL mode
+      ├── get_optimizer_groups() ← [actor group, critic group] with per-group LRs
+      │
+      ├── update_critic()        ← HL-Gauss distributional TD, Polyak target update
+      ├── compute_advantage()    ← r + γV'(s') − V(s), tanh squash
+      ├── build_training_batch() ← model-specific batch assembly (subtask inject for PI05)
+      ├── actor_forward()        ← policy loss; advantage remains prompt conditioning only
+      ├── update_actor()         ← full actor gradient step
+      ├── update_target_networks()
+      │
+      ├── build_inference_batch() ← model-specific obs → tokenised batch for select_action
+      ├── push_weights()          ← serialize trainable params → actor queue
+      └── log_metrics()           ← W&B scalar logging
+```
+
+### Offline loop (`scripts/rl_offline.py`)
+```
+rl_offline.py
+  └── Trainer.for_config()
+        ├── make_policy / freeze_model / init_critic (if !skip_critic)
+        ├── make_processors / get_optimizer_groups
+        └── loop:
+              update_critic (UTD−1 extra) + update_target_networks
+              update_actor  (if step ≥ critic_warmup and step % policy_update_freq == 0)
+              apply_weight_anchors (if enabled)
+```
+
+### Online loop
+```
+rl_actor_async.py  ←gRPC→  rl_learner.py
+      │                           │
+  rtc_actor_runtime          Trainer.for_config()
+  (ActionQueue / RTC)        update_critic / update_actor
+  env_worker                 push_weights → parameters_queue
+  → transitions_queue
+  → interactions_queue
+```
+
+---
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `rl_trainer.py` | Abstract `Trainer` base class + `for_config()` dispatch |
+| `rl_pi05_trainer.py` | `PI05Trainer` — thin wrapper over existing `pi05_train_utils.py` |
+| `rl_molmoact2.py` | `MolmoAct2RLConfig`, `MolmoAct2Critic`, and `MolmoAct2RLPolicy` |
+| `rl_molmoact2_trainer.py` | `MolmoAct2Trainer` — all abstract methods implemented |
+| `scripts/rl_offline.py` | Generic offline training loop (actor-only and critic-trained) |
+| `rl_actor_async.py` | Generic online actor entrypoint; RTC is the default runtime |
+| `rtc_actor_runtime.py` | Generic RTC `ActionQueue` actor runtime ported from tested PI05 path |
+| `rl_learner.py` | Generic online learner |
+| `config_rl.yaml` | Unified config for both models (offline + online sections) |
+| `inference_async.py` | Standalone VLA inference (no learner, no gRPC) |
+
+**Unchanged PI05 files** (still active, not replaced):  
+`actor_pi05_async.py`, `learner_pi05.py`, `pi05_train_utils.py`, `inference_pi05_async.py`
+
+---
+
+## MolmoAct2 Critic — Design
+
+- Full deepcopy of actor's ViT + adapter (vision_backbone).
+- First `critic_llm_depth` (default 12) text transformer blocks from the actor.
+- Learnable value queries `[1, num_value_bins, 2560]` appended to token sequence.
+- Bidirectional 4D attention (no causal mask).
+- `bin_logit_head Linear(2560 → 1)` per query → `[B, num_bins]` logits.
+- **HL-Gauss** soft target: Gaussian CDF over bin edges.
+- Critic parameters inherit `requires_grad=False` from the frozen backbone deepcopy.  
+  `freeze_model()` explicitly calls `requires_grad_(True)` on all critic params after `init_critic()`.
+
+Key config fields (in `MolmoAct2RLConfig`):
+```yaml
+critic_llm_depth: 12
+num_value_bins: 101
+value_support_min: -2.0
+value_support_max: 0.0
+hl_gauss_sigma_ratio: 5.0
+critic_lr: 1.0e-4
+critic_target_update_weight: 0.005   # Polyak τ
+discount: 0.97
+advantage_scaling: 0.2
+```
+
+---
+
+## Actor / Learner — Online RL
+
+### `rl_actor_async.py`
+- Default runtime uses `rtc_actor_runtime.py`: `ActionQueue`, latency-aware replanning, intervention resets, and smooth execution.
+- `trainer.build_inference_batch()` is the model-agnostic isolation point:
+  - **MolmoAct2**: calls preprocessor, returns `{input_ids, pixel_values, ...}`
+  - **PI05** (future): injects subtask tokens + advantage into complementary_data
+- `policy.select_action(batch)` is called `chunk_size` times per chunk:
+  first call runs model + caches; subsequent calls pop from cache (MolmoAct2 behaviour).
+- The old simple chunk-deque runtime remains as a debug fallback. PI05-specific `actor_pi05_async.py` remains as a reference until generic RTC is validated on robot.
+
+### `rl_learner.py`
+- Identical loop structure for any registered model.
+- `trainer.push_weights()` sends only trainable params (`requires_grad=True`) to actor.
+- Weight push interval: `cfg.policy.weights_push_interval` (default 180 s).
+- Weight anchors are supported via `anchor_alpha`, `anchor_every_n_steps`, and `anchor_targets`.
+- Additional offline datasets are supported via `dataset.additional_offline_dataset_paths`; they are merged into the offline replay buffer with subtask-index remapping when metadata is available.
+- Supports offline buffer mix (half online / half offline batches when `cfg.dataset` set).
+
+---
+
+## Running
+
+### Offline Actor-Only (MolmoAct2, skip_critic: true)
+```bash
+cd lerobot
+uv run python -m lerobot.rl.rl_offline \
+    --config_path src/lerobot/rl/config_rl.yaml
+```
+
+### Offline Critic-Trained / RECAP (skip_critic: false)
+Edit `config_rl.yaml`: set `skip_critic: false`, then same command.
+
+### Online (distributed)
+```bash
+# Learner (runs on GPU machine with dataset)
+uv run python -m lerobot.rl.rl_learner \
+    --config_path src/lerobot/rl/config_rl.yaml
+
+# Actor (runs on robot machine)
+uv run python -m lerobot.rl.rl_actor_async \
+    --config_path src/lerobot/rl/config_rl.yaml
+```
+Make sure `actor_learner_config` is uncommented in `config_rl.yaml` and `learner_host` / `learner_port` point to the learner machine.
+
+---
+
+## TODO
+
+### Immediate (before first run)
+- [ ] **Smoke test offline actor-only** — run `scripts/rl_offline.py` with `skip_critic: true`, verify flow loss decreases over 500 steps.
+- [ ] **Smoke test RECAP** — run with `skip_critic: false`, verify critic CE loss decreases and `critic_value_mean` moves away from init.
+- [ ] **PI05 regression** — run `scripts/rl_offline.py` with `policy.type: pi05_rl`, verify same loss curve as original `learner_pi05.py`.
+
+### Short term
+- [ ] **RTC for MolmoAct2** — implement `predict_action_chunk` + `ActionQueue` support in `MolmoAct2Policy`/`MolmoAct2RLPolicy`.  Once done, `rl_actor_async.py` can route through RTC for both models and `actor_pi05_async.py` can be retired.
+- [ ] **`rl_pi05_trainer.py` full implementation** — currently a thin stub that delegates to `pi05_train_utils.py`.  Flesh out so PI05 can run through `scripts/rl_offline.py` and `rl_learner.py` fully.
+- [ ] **`inference_async.py` cleanup** — strip gRPC transport; make it pure standalone inference only (the distributed path now lives in `rl_actor_async.py`).
+- [ ] **`config_rl.yaml` — fill in `actor_learner_config`** with real IPs for the lab machines.
+
+### Longer term
+- [ ] **Unified actor** — once RTC lands for MolmoAct2, merge `actor_pi05_async.py` logic into `rl_actor_async.py` and retire the PI05-specific file.
+- [ ] **`rl_pi05_trainer.py` — `build_inference_batch`** — implement subtask token injection + advantage for PI05 so the generic actor works for PI05 without RTC too.
+- [ ] **Online training run** — full HILSERL loop: learner + actor on robot, verify policy improves over episodes.

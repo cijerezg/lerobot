@@ -51,6 +51,14 @@ class SharedState:
         self.env_steps = 0
         self.inference_wait_time = 0.0
         
+        # Inference timing breakdown (accumulated per 20s window)
+        self.inference_preprocess_time = 0.0
+        self.inference_model_time = 0.0
+        self.inference_postprocess_time = 0.0
+        self.inference_cycles = 0
+        # Env timing breakdown
+        self.env_action_get_time = 0.0
+        self.env_step_time = 0.0
         # Recording and Logging
         self.episode_counter = 0
         self.is_logging_episode = False
@@ -73,12 +81,24 @@ class SharedState:
                 'env_wait_time': self.env_wait_time,
                 'env_steps': self.env_steps,
                 'inference_wait_time': self.inference_wait_time,
-                'env_active_time': getattr(self, 'env_active_time_total', 0.0)
+                'env_active_time': getattr(self, 'env_active_time_total', 0.0),
+                'inference_preprocess_time': self.inference_preprocess_time,
+                'inference_model_time': self.inference_model_time,
+                'inference_postprocess_time': self.inference_postprocess_time,
+                'inference_cycles': self.inference_cycles,
+                'env_action_get_time': self.env_action_get_time,
+                'env_step_time': self.env_step_time,
             }
             self.env_wait_time = 0.0
             self.env_steps = 0
             self.inference_wait_time = 0.0
             self.env_active_time_total = 0.0
+            self.inference_preprocess_time = 0.0
+            self.inference_model_time = 0.0
+            self.inference_postprocess_time = 0.0
+            self.inference_cycles = 0
+            self.env_action_get_time = 0.0
+            self.env_step_time = 0.0
             return metrics
 
     def update_observation(self, obs: dict, is_intervening: bool):
@@ -106,6 +126,18 @@ class SharedState:
                 self.policy_reset_requested = False
                 return True
             return False
+
+    def add_inference_breakdown(self, preprocess: float, model: float, postprocess: float):
+        with self.lock:
+            self.inference_preprocess_time += preprocess
+            self.inference_model_time += model
+            self.inference_postprocess_time += postprocess
+            self.inference_cycles += 1
+
+    def add_env_step_breakdown(self, action_get: float, step: float):
+        with self.lock:
+            self.env_action_get_time += action_get
+            self.env_step_time += step
 
     def request_reset(self):
         with self.lock:
@@ -315,10 +347,12 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
             current_time = time.perf_counter()
 
             with torch.no_grad():
+                _t_pre_start = time.perf_counter()
                 if hasattr(policy, 'preprocessor') and policy.preprocessor is not None:
                     processed_batch = policy.preprocessor(batch_for_preprocessor)
                 else:
                     processed_batch = batch_for_preprocessor
+                _t_pre_end = time.perf_counter()
 
                 action_index_before = action_queue.get_action_index()
                 prev_actions        = action_queue.get_left_over()
@@ -370,12 +404,14 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 # p95 latency avoids a single spike biasing the model to look too far ahead
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 
+                _t_model_start = time.perf_counter()
                 actions_chunk = policy.predict_action_chunk(
                     processed_batch,
                     inference_delay=inference_delay,
                     prev_chunk_left_over=prev_actions,
                     execution_horizon=execution_horizon,
                 )
+                _t_model_end = time.perf_counter()
 
                 # --- Subtask token decoding (for logging) ---
                 inference_step += 1
@@ -394,6 +430,7 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 except Exception as e:
                     logger.debug(f"[SUBTASK] Could not decode subtask tokens: {e}")
 
+                _t_post_start = time.perf_counter()
                 original_actions = actions_chunk.squeeze(0).clone()
 
                 # --- Unnormalization & absolute action reconstruction ---
@@ -415,14 +452,47 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 # --- Zero-phase Butterworth low-pass filter ---
                 processed_actions = apply_butterworth_filter(processed_actions)
 
+                # --- Per-joint safety clamp ---
+                clamp_limits = getattr(policy.config, "action_clamp_limits", None)
+                if clamp_limits is not None:
+                    limits = torch.tensor(clamp_limits, dtype=processed_actions.dtype, device=processed_actions.device)
+                    exceeded = (processed_actions < limits[:, 0]) | (processed_actions > limits[:, 1])
+                    if exceeded.any():
+                        joints_exceeded = exceeded.any(dim=0).nonzero(as_tuple=True)[0].tolist()
+                        raw_min = processed_actions[:, joints_exceeded].min(dim=0).values.tolist()
+                        raw_max = processed_actions[:, joints_exceeded].max(dim=0).values.tolist()
+                        logger.warning(
+                            f"[CLAMP] Action exceeded limits on joints {joints_exceeded} — "
+                            f"raw range: min={[f'{v:.1f}' for v in raw_min]}, max={[f'{v:.1f}' for v in raw_max]}. "
+                            f"Clamping to safe limits."
+                        )
+                    processed_actions = torch.clamp(processed_actions, min=limits[:, 0], max=limits[:, 1])
+
                 if not hasattr(policy, '_chunk_plot_counter'):
                     policy._chunk_plot_counter = 0
                 policy._chunk_plot_counter += 1
+                _t_post_end = time.perf_counter()
 
             # Track latency
             new_latency = time.perf_counter() - current_time
             new_delay   = math.ceil(new_latency / time_per_chunk)
             latency_tracker.add(new_latency)
+
+            _t_preprocess  = _t_pre_end   - _t_pre_start
+            _t_model_fwd   = _t_model_end - _t_model_start
+            _t_postprocess = _t_post_end  - _t_post_start
+            shared_state.add_inference_breakdown(_t_preprocess, _t_model_fwd, _t_postprocess)
+
+            if inference_step % 10 == 0:
+                logger.info(
+                    f"[INFERENCE step={inference_step}] "
+                    f"preprocess={1000*_t_preprocess:.1f}ms | "
+                    f"model={1000*_t_model_fwd:.1f}ms | "
+                    f"postprocess={1000*_t_postprocess:.1f}ms | "
+                    f"total={1000*new_latency:.1f}ms | "
+                    f"p95={1000*(latency_tracker.p95() or 0.0):.1f}ms | "
+                    f"queue={action_queue.qsize()}"
+                )
 
             # Constrain discarded delay by how many actions the env actually consumed
             # (avoids jerky start when the queue was starved on the first chunk)
@@ -452,17 +522,23 @@ def _finalize_episode_log(
     episode_counter,
     video_logging_cameras,
     critic_batch_size=40,
+    critic_subsample=1,
 ):
     """
     Process a buffered episode's frames after the episode ends.
     Called during the natural pause between episodes — no env loop impact.
     Runs critic inference, saves PNGs, and generates the overlay video,
     all behind tqdm progress bars.
+
+    critic_subsample: stride at which the critic forward is run relative to
+    video frames. The video uses every saved frame; only the V(s) curve has
+    fewer samples. Defaults to 1 (legacy 1:1 behavior).
     """
     if not episode_log_buffer:
         return
 
     os.makedirs(log_dir, exist_ok=True)
+    critic_subsample = max(1, int(critic_subsample))
     n_steps = len(episode_log_buffer)
     subtask_texts = [frame['subtask_text'] for frame in episode_log_buffer]
 
@@ -493,11 +569,17 @@ def _finalize_episode_log(
         adv_val = torch.tensor([[cfg.policy.inference_advantage]], device=torch.device('cpu'), dtype=torch.float32)
         robot_type = cfg.env.robot.type if hasattr(cfg.env, 'robot') else ""
 
-        n_batches = (n_steps + critic_batch_size - 1) // critic_batch_size
-        logger.info(f"[ENV] Running critic inference: {n_steps} steps in {n_batches} batches (batch_size={critic_batch_size})...")
+        critic_indices = list(range(0, n_steps, critic_subsample))
+        n_critic = len(critic_indices)
+        n_batches = (n_critic + critic_batch_size - 1) // critic_batch_size
+        logger.info(
+            f"[ENV] Running critic inference: {n_critic}/{n_steps} steps "
+            f"(subsample={critic_subsample}) in {n_batches} batches (batch_size={critic_batch_size})..."
+        )
         with torch.no_grad():
-            for batch_start in tqdm(range(0, n_steps, critic_batch_size), desc="Critic inference", unit="batch"):
-                for frame in episode_log_buffer[batch_start:batch_start + critic_batch_size]:
+            for batch_start in tqdm(range(0, n_critic, critic_batch_size), desc="Critic inference", unit="batch"):
+                for ci in critic_indices[batch_start:batch_start + critic_batch_size]:
+                    frame = episode_log_buffer[ci]
                     batch_for_preprocessor = {
                         k: v for k, v in frame['obs'].items()
                         if k in cfg.policy.input_features
@@ -540,7 +622,13 @@ def _finalize_episode_log(
 
     # --- 4. Generate video ---
     try:
-        save_video_with_critic_overlay(log_dir, critic_values, camera_names=video_logging_cameras, fps=cfg.env.fps, subtask_texts=subtask_texts)
+        save_video_with_critic_overlay(
+            log_dir, critic_values,
+            camera_names=video_logging_cameras,
+            fps=cfg.env.fps,
+            subtask_texts=subtask_texts,
+            subsample=critic_subsample,
+        )
         logger.info(f"[ENV] Video generated for episode {episode_counter}")
     except Exception as e:
         logger.error(f"[ENV] Failed to generate video: {e}")
@@ -568,28 +656,28 @@ def env_interaction_worker(
         action_interval = 1.0 / cfg.env.fps
         was_intervening = False
         
-        # Wait for initial episode start
+        # Wait for initial episode start, then reset and populate obs BEFORE signalling
+        # episode_active=True — so the inference thread never spins on latest_obs=None
+        # during the robot reset (which can take several seconds).
         logger.info("[ENV] Waiting for '2' on the teleop device to start episode...")
-        while shared_state.running and not shared_state.episode_active:
+        _episode_requested = False
+        while shared_state.running and not _episode_requested:
             if teleop_device.get_teleop_events().get(TeleopEvents.START_EPISODE, False):
-                shared_state.episode_active = True
-                break
+                _episode_requested = True
             time.sleep(0.1)
 
-        # Extract initial state observation immediately to bootstrap the shared state
-        # (Assuming the env was reset right before spawning threads)
         obs, info = online_env.reset()
         env_processor.reset()
         action_processor.reset()
-        
+
         from lerobot.rl.gym_manipulator import create_transition
         transition = create_transition(observation=obs, info=info)
         transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
         transition = env_processor(transition)
-        
-        # Push initial to shared state
+
         policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
         shared_state.update_observation(policy_fmt_obs, False)
+        shared_state.episode_active = True  # signal inference only after obs is ready
 
         interaction_step = 0
         video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
@@ -652,7 +740,11 @@ def env_interaction_worker(
                 shared_state.episode_active = True
 
             start_time = time.perf_counter()
-            
+            if not hasattr(shared_state, '_env_step_count'):
+                shared_state._env_step_count = 0
+            shared_state._env_step_count += 1
+            _env_do_print = (shared_state._env_step_count % 30 == 1)
+
             # --- TELEOP AND STATE OVERRIDES ---
             # If we were intervening but teleop stopped, we trigger a policy reset
             if was_intervening and not shared_state.is_intervening:
@@ -667,6 +759,7 @@ def env_interaction_worker(
             was_intervening = shared_state.is_intervening
 
             # --- ACTION PREPARATION ---
+            _t_action_start = time.perf_counter()
             if was_intervening:
                 if hasattr(online_env, 'get_raw_joint_positions'):
                     raw_joints = online_env.get_raw_joint_positions()
@@ -700,11 +793,14 @@ def env_interaction_worker(
                         action = torch.zeros(6, dtype=torch.float32, device=cfg.policy.device)
                     logger.warning("[ENV] Action queue starved. Executing null ops.")
             
+            _t_action_end = time.perf_counter()
+
             # Save current transition before stepping for next_state later
             # No deep copy needed: step_env_and_process_transition never mutates transition in-place
             current_transition_data = transition
 
             # --- ENVIRONMENT STEP ---
+            _t_step_start = time.perf_counter()
             new_transition = step_env_and_process_transition(
                 env=online_env,
                 transition=transition,
@@ -712,6 +808,7 @@ def env_interaction_worker(
                 env_processor=env_processor,
                 action_processor=action_processor,
             )
+            _t_step_end = time.perf_counter()
             
             # --- RECORDING TO BUFFER ---
             if shared_state.replay_buffer is not None:
@@ -852,13 +949,26 @@ def env_interaction_worker(
             # Calculate tight strict Hz sleep
             dt_s = time.perf_counter() - start_time
             sleep_time = max(0, action_interval - dt_s)
-            
+
+            shared_state.add_env_step_breakdown(
+                action_get=_t_action_end - _t_action_start,
+                step=_t_step_end - _t_step_start,
+            )
+
             # --- DEBUG LOGGING ---
-            # Storing active time so the user can see exactly how long the environment took 
             if not hasattr(shared_state, 'env_active_time_total'):
                 shared_state.env_active_time_total = 0.0
             shared_state.env_active_time_total += dt_s
-            
+
+            if _env_do_print:
+                logger.info(
+                    f"[ENV step={interaction_step}] "
+                    f"action_prep={1000*(_t_action_end-_t_action_start):.1f}ms | "
+                    f"env_step={1000*(_t_step_end-_t_step_start):.1f}ms | "
+                    f"active={1000*dt_s:.1f}ms | "
+                    f"sleep={1000*sleep_time:.1f}ms"
+                )
+
             shared_state.add_env_wait_time(sleep_time)
             
             interaction_step += 1

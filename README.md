@@ -8,7 +8,7 @@ This repo is a research-oriented version of [LeRobot](https://github.com/hugging
 
 This is an active project and we expect to continually add more features and capabilities. Happy to take requests.
 
-<video src="https://github.com/user-attachments/assets/9461ba1e-725b-4ee4-8d32-173fa6a86600" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/9c5330a9-27bf-4aab-98df-ea142f40093d" controls width="100%"></video>
 
 
 ## Key features
@@ -17,6 +17,28 @@ This is an active project and we expect to continually add more features and cap
 - End-to-end implementation of [RECAP](https://arxiv.org/pdf/2511.14759)-like algorithm for offline and online training
 - Asynchronous inference with RTC that runs up to 30Hz with leader guided human invervention. In addition, a live inference script where a user can write subtasks for $\pi_{0.5}$ on the fly.
 - A suite of metrics and validation tools to examine the model's internals like attention maps, clusters of representation, among others.
+
+
+## How to run MolmoAct2 inference
+
+The script is `lerobot/rl/inference_async.py`. It uses the `config_rl.yaml`. You can copy it and modify the key values:
+
+- `torch_compile`: make sure it's set to true
+- `inference_action_mode`: set to `continuous`
+- `checkpoint_path`: must be a local path to the original model. You can use `hf download allenai/MolmoAct2-SO100_101` to get it.
+- `pretrained_path`: Path to finetuned model if you are using one. Note that `checkpoint_path` still must be passed. When using a pretrained model, the stats come from it. If a pretrained model doesn't have stats, then the fallback is the stats from HF original model in `checkpoint_path`.
+
+
+
+
+## Roadmap-ish
+
+**Currently working on integrating molmoact2 with all the current capabilities here**
+
+**This section is meant to describe the work currently being done with its context**
+
+Using this repo, I trained the policy shown in the video above to complete the task under several arrangements. However, there are still failure modes, all of which are related to grasping as it is the hardest part of the task. The goal now is to automatically identify these difficult moments and have the policy focus on them. The current idea is to use the critic. The hypothesis is that the critic variance and its gradient will be highest during the hard parts of the task because those moments determine success or failure. Weighting the flow loss with the critic gradient should then force the policy to focus on those critical steps.
+
 
 
 ## How to install
@@ -66,7 +88,7 @@ python -m lerobot.policies.pi05_full.annotate.subtask_annotate_gemma_4 \
 
 #### Config file
 
-This is the file used for all the scripts in this repo. An example of the config file can be found in the [`rl/config-hiserl.json`](src/lerobot/rl/config-hiserl.json)
+This is the file used for all the scripts in this repo. An example of the config file can be found in the [`rl/config-hiserl.yaml`](src/lerobot/rl/config-hiserl.yaml)
 
 To get started with training, the key fields to change are:
 - `root`: this is the path to your dataset.
@@ -89,7 +111,7 @@ Set the choice via `policy.action_encoding` in the config. `anchor` and `delta` 
 We suggest to start with a round of offline training so that the policy has a decent starting point. To run it use:
 
 ```bash
-python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.json
+python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.yaml
 ```
 
 Once the offline training has run for a while, update the checkpoint in the config and proceed to online training.
@@ -97,13 +119,13 @@ Once the offline training has run for a while, update the checkpoint in the conf
 First run the learner script:
 
 ```bash
-python -m lerobot.rl.learner_pi05 --config path/to/config.json
+python -m lerobot.rl.learner_pi05 --config path/to/config.yaml
 ```
 
 and then on another terminal run the actor script:
 
 ```bash
-python -m lerobot.rl.actor_pi05_async --config path/to/config.json
+python -m lerobot.rl.actor_pi05_async --config path/to/config.yaml
 ```
 
 The learner will automatically save buffers to disk with the online data. After processing, those can be reused for the next round of offline or online training.
@@ -119,11 +141,24 @@ Following the suggestions from the RECAP paper, we suggest to retrain every time
 
 ### Inference
 
+> **Highly recommended before first inference: set `action_clamp_limits`.**
+> Without joint clamping, a misbehaving policy can send extreme position targets and damage the hardware. Before running any policy on a physical robot, teleop the arm through its full safe range of motion and record the min/max joint positions observed. Then set `policy.action_clamp_limits` in your config as a list of `[min, max]` pairs in degrees, one per joint:
+> ```yaml
+> policy:
+>   action_clamp_limits:
+>     - [-150, 150]  # joint 1
+>     - [-150,   0]  # joint 2
+>     - [   0, 150]  # joint 3
+>     - [-150, 150]  # joint 4
+>     - [-150, 150]  # joint 5
+>     - [   0,  60]  # gripper
+> ```
+> Replace the example values with the limits you measured for your robot. Any action outside these bounds will be silently clamped before it reaches the servos.
 
 Once you have a trained model, your camera indices and follower and leader ports in the config file, and then you can run inference using:
 
 ```bash
-python -m lerobot.rl.inference_pi05_async --config path/to/config.json
+python -m lerobot.rl.inference_pi05_async --config path/to/config.yaml
 ```
 
 

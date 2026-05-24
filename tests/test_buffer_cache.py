@@ -40,6 +40,8 @@ def _write_synthetic_cache(
     non_image_state_keys: list[str] | None = None,
     action_dim: int = 6,
     inject_golden: bool = True,
+    image_storage_dtype: str = "bfloat16",
+    image_size: tuple[int, int] = IMAGE_SIZE,
 ) -> dict:
     """
     Write a minimal memmap cache that mirrors what predecode_dataset.py produces.
@@ -58,8 +60,8 @@ def _write_synthetic_cache(
     dtypes_np: dict[str, np.dtype] = {}
 
     for key in image_keys:
-        shapes[key] = (3, *IMAGE_SIZE)
-        dtypes_np[key] = np.uint16
+        shapes[key] = (3, *image_size)
+        dtypes_np[key] = np.uint8 if image_storage_dtype == "uint8" else np.uint16
 
     for key in non_image_state_keys:
         shapes[key] = (14,)
@@ -103,9 +105,14 @@ def _write_synthetic_cache(
     raw: dict[str, torch.Tensor] = {}
 
     for key in image_keys:
-        imgs = torch.rand(n, 3, *IMAGE_SIZE).clamp(0.0, 1.0)
-        memmaps[_sanitize(key)][:] = _bf16_to_uint16(imgs)
-        raw[key] = imgs.to(torch.bfloat16)
+        if image_storage_dtype == "uint8":
+            imgs = torch.randint(0, 256, (n, 3, *image_size), dtype=torch.uint8)
+            memmaps[_sanitize(key)][:] = imgs.numpy()
+            raw[key] = imgs
+        else:
+            imgs = torch.rand(n, 3, *image_size).clamp(0.0, 1.0)
+            memmaps[_sanitize(key)][:] = _bf16_to_uint16(imgs)
+            raw[key] = imgs.to(torch.bfloat16)
 
     for key in non_image_state_keys:
         states = torch.randn(n, 14)
@@ -146,7 +153,10 @@ def _write_synthetic_cache(
         "dataset_root": "/tmp/fake_dataset",
         "total_frames": n,
         "total_episodes": num_episodes,
-        "image_size": list(IMAGE_SIZE),
+        "cache_schema_version": 2,
+        "image_storage_dtype": image_storage_dtype,
+        "image_storage_size": list(image_size),
+        "image_size": list(image_size),
         "state_keys": state_keys,
         "image_keys": image_keys,
         "non_image_state_keys": non_image_state_keys,
@@ -200,6 +210,21 @@ class TestFromCache:
         expected = raw["observation.images.top"]
         assert loaded.shape == expected.shape
         assert loaded.dtype == torch.bfloat16
+        assert torch.equal(loaded, expected)
+
+
+    def test_uint8_image_cache_fidelity(self, cache_dir):
+        raw = _write_synthetic_cache(
+            cache_dir,
+            num_transitions=50,
+            image_storage_dtype="uint8",
+            image_size=(48, 64),
+        )
+        buf = ReplayBuffer.from_cache(cache_dir, device="cpu", use_drq=False)
+        loaded = buf.states["observation.images.top"]
+        expected = raw["observation.images.top"]
+        assert loaded.shape == expected.shape
+        assert loaded.dtype == torch.uint8
         assert torch.equal(loaded, expected)
 
     def test_state_data_fidelity(self, cache_dir):

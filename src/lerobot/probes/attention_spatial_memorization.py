@@ -59,7 +59,7 @@ ATTN_LAYERS = [0, 9, 17]
 TIMESTEP = 0.5
 N_FRAMES = 32          # total frames to sample (1 per unique episode)
 BATCH_SIZE = 8         # forward-pass batch size (memory)
-OUTPUT_DIR = os.path.join("outputs", "attention_spatial")
+OUTPUT_DIR = os.path.join("outputs", "spatial_memorization_attention")
 STD_EPS = 1e-8         # floor for std in mean/std ratio
 
 

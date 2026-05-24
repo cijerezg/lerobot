@@ -206,7 +206,7 @@ def load_additional_offline_datasets(
     if not (hasattr(cfg.dataset, "additional_offline_dataset_paths") and cfg.dataset.additional_offline_dataset_paths):
         return
 
-    expected_height, expected_width = 224, 224
+    image_storage_size = getattr(cfg.policy, "image_storage_size", (224, 224))
 
     for path in cfg.dataset.additional_offline_dataset_paths:
         if is_main_process:
@@ -237,10 +237,10 @@ def load_additional_offline_datasets(
                 if isinstance(v, dict):
                     for key, tensor in v.items():
                         if "images" in key:
-                            if tensor.shape[-2:] != (expected_height, expected_width):
-                                tensor = F_vision.resize(tensor, (expected_height, expected_width))
+                            if image_storage_size is not None and tensor.shape[-2:] != tuple(image_storage_size):
+                                tensor = F_vision.resize(tensor, tuple(image_storage_size))
                                 tensor = tensor.clamp(0.0, 1.0)
-                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
+                            v[key] = tensor.to(device=storage_device)
                         else:
                             v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
                 elif isinstance(v, torch.Tensor):
@@ -322,10 +322,10 @@ def _update_critic(
     gradient_accumulation_steps: int,
     clip_grad_norm_value: float,
     cast_to_bf16_fn,
-    use_amp: bool,
-    scaler
 ) -> dict:
     accum_loss_critic = 0.0
+    accum_loss_critic_ce = 0.0
+    accum_loss_critic_mse = 0.0
     critic_values_list = []
     td_error_list = []
     target_values_list = []
@@ -341,7 +341,7 @@ def _update_critic(
         )
 
         # Preprocess for Critic
-        
+
         # Note: No subtask hydration needed here — critic doesn't use subtasks.
         forward_batch_critic = preprocess_batch_for_pi05(
             policy=policy,
@@ -354,23 +354,18 @@ def _update_critic(
         )
 
         # Forward Critic
-
-        if use_amp:
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                critic_output = policy.forward(forward_batch_critic, model="critic")
-                loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
-        else:
-            critic_output = policy.forward(forward_batch_critic, model="critic")
-            loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
+        critic_output = policy.forward(forward_batch_critic, model="critic")
+        loss_critic = critic_output["loss_critic"] / gradient_accumulation_steps
 
         # Backward
-        if scaler:
-            scaler.scale(loss_critic).backward()
-        else:
-            loss_critic.backward()
+        loss_critic.backward()
             
         # Accumulate metrics
         accum_loss_critic += critic_output["loss_critic"].detach().item()
+        if "loss_critic_ce" in critic_output:
+            accum_loss_critic_ce += critic_output["loss_critic_ce"].detach().item()
+        if "loss_critic_mse" in critic_output:
+            accum_loss_critic_mse += critic_output["loss_critic_mse"].detach().item()
         critic_values_list.append(critic_output["critic_values"].detach())
         td_error_list.append(critic_output["td_error"].detach())
         target_values_list.append(critic_output["target_values"].detach())
@@ -403,6 +398,8 @@ def _update_critic(
     
     training_infos = {
         "loss_critic": accum_loss_critic / gradient_accumulation_steps,
+        "loss_critic_ce": accum_loss_critic_ce / gradient_accumulation_steps,
+        "loss_critic_mse": accum_loss_critic_mse / gradient_accumulation_steps,
         "critic_grad_norm": critic_grad_norm,
         "td_error_mean": all_td_errors.mean().item(),
         "td_error_std": all_td_errors.std().item() if all_td_errors.numel() > 1 else 0.0,
@@ -652,7 +649,7 @@ def _update_actor(
     actor_infos = {}
     
     for _ in range(policy_update_freq):
-        optimizers["actor"].zero_grad(set_to_none=True)
+        optimizers["policy"].zero_grad(set_to_none=True)
         
         accum_loss_actor = 0.0
         accum_flow_loss = 0.0
@@ -713,7 +710,7 @@ def _update_actor(
                 device=device,
                 cast_to_bf16_fn=cast_to_bf16_fn
             )
-            
+
             # External Metrics for Efficiency
             # We calculate squashed advantage here to log consistent with what the model *would* report
             # But we pass the RAW advantage and values to the model to skip re-computation
@@ -734,7 +731,7 @@ def _update_actor(
             else:
                 actor_output = policy.forward(forward_batch_actor, model="actor", external_metrics=external_metrics)
                 loss_actor = actor_output["loss_actor"] / gradient_accumulation_steps
-            
+
             loss_actor_mean = loss_actor.mean()
             
             accum_loss_actor += actor_output["loss_actor"].mean().item()
@@ -787,7 +784,7 @@ def _update_actor(
 
         # Step Actor Optimizer
         if scaler:
-            scaler.unscale_(optimizers["actor"])
+            scaler.unscale_(optimizers["policy"])
         
         actor_grad_norm = torch.nn.utils.clip_grad_norm_(
             parameters=policy.actor.parameters(),
@@ -795,13 +792,13 @@ def _update_actor(
         ).item()
         
         if scaler:
-            scaler.step(optimizers["actor"])
+            scaler.step(optimizers["policy"])
             scaler.update()
         else:
-            optimizers["actor"].step()
+            optimizers["policy"].step()
             
         # Free actor gradients immediately to save memory for next steps
-        optimizers["actor"].zero_grad(set_to_none=True)
+        optimizers["policy"].zero_grad(set_to_none=True)
             
         # Aggregate Actor Metrics
         all_advantage_values = torch.cat(advantage_values_list, dim=0)
@@ -898,7 +895,8 @@ def pi05_update_step(
     # -------------------------------------------------------------------------
     # 2. Actor Update Loop (Conditional)
     # -------------------------------------------------------------------------
-    
+
+    actor_infos: dict = {}
     if optimization_step >= critic_warmup_steps and optimization_step % policy_update_freq == 0:
         actor_infos = _update_actor(
             policy=policy,
@@ -965,14 +963,14 @@ def log_pi05_training_metrics(
                 "Optimization step": optimization_step
             })
         if critic_hist is not None:
-            critic_vals = np.clip(critic_hist, -1, .5)
+            critic_vals = np.clip(critic_hist, -2, .1)
             wandb_logger._wandb.log({
                 "train/critic_value_histogram": wandb.Histogram(critic_vals),
                 "Optimization step": optimization_step
             })
         
         if target_value_hist is not None:
-             target_vals = np.clip(target_value_hist, -1, .5)
+             target_vals = np.clip(target_value_hist, -2, .1)
              wandb_logger._wandb.log({
                 "train/target_value_histogram": wandb.Histogram(target_vals),
                 "Optimization step": optimization_step
@@ -980,7 +978,7 @@ def log_pi05_training_metrics(
         
         # Log critic histogram from critic update
         if critic_hist_from_critic is not None:
-            critic_vals_from_critic = np.clip(critic_hist_from_critic, -1, .5)
+            critic_vals_from_critic = np.clip(critic_hist_from_critic, -2, .1)
             wandb_logger._wandb.log({
                 "train/critic_value_histogram_from_critic": wandb.Histogram(critic_vals_from_critic),
                 "Optimization step": optimization_step
@@ -988,13 +986,13 @@ def log_pi05_training_metrics(
 
         if flow_loss_raw is not None:
             wandb_logger._wandb.log({
-                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.04)),
+                "train/flow_loss_histogram_flat": wandb.Histogram(np.clip(flow_loss_raw.flatten(), 0, 0.01)),
                 "Optimization step": optimization_step
             })
 
         if loss_critic_raw is not None:
             wandb_logger._wandb.log({
-                "train/loss_critic_histogram_flat": wandb.Histogram(np.clip(loss_critic_raw.flatten(), 0, .02)),
+                "train/loss_critic_histogram_flat": wandb.Histogram(np.clip(loss_critic_raw.flatten(), 0, .005)),
                 "Optimization step": optimization_step
             })
 
@@ -1062,9 +1060,9 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
                 logging.warning("use_dataset_stats is True but no dataset provided! Stats will be None.")
 
     # 2. Check if we are loading the base model (which implies we should use dataset stats)
-    elif "pi05_base" in cfg.policy.pi05_checkpoint:
+    elif "pi05_base" in cfg.policy.checkpoint_path:
         if is_main_process:
-            logging.info(f"Loading base model '{cfg.policy.pi05_checkpoint}'. Using dataset stats.")
+            logging.info(f"Loading base model '{cfg.policy.checkpoint_path}'. Using dataset stats.")
         if dataset is not None:
             dataset_stats = dataset.meta.stats
         else:
@@ -1072,9 +1070,9 @@ def make_pi05_full_processors_with_upgrade(cfg, dataset=None, is_main_process=Tr
                 logging.warning("Loading base model but no dataset provided! Stats will be None.")
 
     # 3. Otherwise, try to load stats from the checkpoint
-    elif cfg.policy.pi05_checkpoint:
+    elif cfg.policy.checkpoint_path:
         try:
-            checkpoint_path = Path(cfg.policy.pi05_checkpoint)
+            checkpoint_path = Path(cfg.policy.checkpoint_path)
             config_path = checkpoint_path / f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
             
             if is_main_process:

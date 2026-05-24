@@ -19,7 +19,6 @@ from collections.abc import Callable
 
 import pytest
 
-pytest.importorskip("grpc")
 pytest.importorskip("datasets", reason="datasets is required (install lerobot[dataset])")
 
 import torch  # noqa: E402
@@ -187,6 +186,30 @@ def test_zero_capacity_buffer_raises_error():
     with pytest.raises(ValueError, match="Capacity must be greater than 0."):
         ReplayBuffer(0, "cpu", [OBS_STR, "next_observation"])
 
+
+
+def test_uint8_image_storage_quantizes_float_images(dummy_action):
+    replay_buffer = ReplayBuffer(
+        4,
+        "cpu",
+        state_dims(),
+        optimize_memory=True,
+        use_drq=False,
+        image_storage_dtype="uint8",
+        image_storage_size=None,
+    )
+    image = torch.linspace(0.0, 1.0, 3 * 8 * 8).reshape(3, 8, 8)
+    state = {OBS_IMAGE: image, OBS_STATE: torch.randn(10)}
+
+    replay_buffer.add(state, dummy_action, 1.0, state, False, False)
+
+    expected = (image * 255.0).round().to(torch.uint8)
+    assert replay_buffer.states[OBS_IMAGE].dtype == torch.uint8
+    assert torch.equal(replay_buffer.states[OBS_IMAGE][0], expected)
+
+    batch = replay_buffer.sample(1, action_chunk_size=1)
+    assert batch["state"][OBS_IMAGE].dtype == torch.uint8
+    assert torch.equal(batch["state"][OBS_IMAGE][0], expected)
 
 def test_add_transition(replay_buffer, dummy_state, dummy_action):
     replay_buffer.add(dummy_state, dummy_action, 1.0, dummy_state, False, False)

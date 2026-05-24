@@ -47,6 +47,7 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.policies.factory import make_policy
 from lerobot.types import TransitionKey
+from lerobot.rl.inference_utils import apply_butterworth_filter
 from lerobot.rl.pi05_train_utils import (
     hydrate_subtasks,
     make_pi05_full_processors_with_upgrade,
@@ -488,6 +489,10 @@ MANUAL_SUBTASKS: dict[tuple[int, int], str] = {
 # Advantage conditions used when eval_compare_advantage=True.
 _ADVANTAGE_CONDITIONS = [("pos", 1.0), ("neg", -1.0)]
 
+# Style for the butterworth-filtered companion trace — faint + dashed, mirrors
+# what apply_butterworth_filter() produces during real inference.
+_BUTTER_STYLE = {"linewidth": 1.0, "linestyle": "--", "alpha": 0.4}
+
 
 def smooth_actions(actions, window_size):
     """Applies a centered moving average over the sequence dimension."""
@@ -723,7 +728,7 @@ def eval_cli(cfg: EvalOfflineConfig):
 
     # Short labels used in plot legends; full paths shown in info panel
     label_a, label_b = "A", "B"
-    path_a = str(cfg.policy.pi05_checkpoint) if cfg.policy.pi05_checkpoint else "unknown"
+    path_a = str(cfg.policy.checkpoint_path) if cfg.policy.checkpoint_path else "unknown"
     path_b = str(checkpoint_b) if checkpoint_b else "unknown"
 
     # ── Load primary checkpoint ───────────────────────────────────────────────
@@ -794,7 +799,7 @@ def eval_cli(cfg: EvalOfflineConfig):
         torch.cuda.empty_cache()
 
         logging.info("Loading policy B ...")
-        cfg.policy.pi05_checkpoint = checkpoint_b
+        cfg.policy.checkpoint_path = checkpoint_b
         policy_b, pre_b, post_b, _ = _load_policy_and_processors(cfg, device, dataset=dataset)
 
         mse_b = {lbl: [] for lbl, _ in adv_conditions}
@@ -835,7 +840,7 @@ def eval_cli(cfg: EvalOfflineConfig):
         # Policy A must still be in scope (not deleted by ckpt-B path).
         # If checkpoint_b was used we already deleted policy_a above, so reload it.
         if checkpoint_b:
-            cfg.policy.pi05_checkpoint = path_a
+            cfg.policy.checkpoint_path = path_a
             policy_sub_a, pre_sub_a, post_sub_a, _ = _load_policy_and_processors(
                 cfg, device, dataset=dataset
             )
@@ -896,7 +901,7 @@ def eval_cli(cfg: EvalOfflineConfig):
 
         preds_sub_b = {}
         if checkpoint_b:
-            cfg.policy.pi05_checkpoint = path_b
+            cfg.policy.checkpoint_path = path_b
             policy_sub_b, pre_sub_b, post_sub_b, _ = _load_policy_and_processors(
                 cfg, device, dataset=dataset
             )
@@ -914,11 +919,18 @@ def eval_cli(cfg: EvalOfflineConfig):
         def build_subtask_traces(ckpt_preds, color_idx, ckpt_label, val_idx):
             traces = []
             for cond_label, vals in ckpt_preds.items():
+                actions = vals[val_idx]
                 traces.append({
-                    "actions": vals[val_idx],
+                    "actions": actions,
                     "label": f"{ckpt_label} {cond_label}",
                     "color_idx": color_idx,
                     "kwargs": _CONDITION_STYLE.get(cond_label, _CONDITION_STYLE["pred"]),
+                })
+                traces.append({
+                    "actions": apply_butterworth_filter(actions),
+                    "label": f"{ckpt_label} {cond_label} butter",
+                    "color_idx": color_idx,
+                    "kwargs": _BUTTER_STYLE,
                 })
             return traces
 
@@ -999,6 +1011,11 @@ def eval_cli(cfg: EvalOfflineConfig):
                     "actions": actions, "label": label, "color_idx": color_idx,
                     "kwargs": _CONDITION_STYLE.get(adv_label, _CONDITION_STYLE["pred"]),
                 })
+                traces.append({
+                    "actions": apply_butterworth_filter(actions),
+                    "label": f"{label} butter", "color_idx": color_idx,
+                    "kwargs": _BUTTER_STYLE,
+                })
             else:
                 # Single condition: show raw + smooth, same as original behavior.
                 traces.append({
@@ -1009,6 +1026,11 @@ def eval_cli(cfg: EvalOfflineConfig):
                     "actions": smooth_actions(actions, 5), "label": f"{ckpt_label} (w=5)",
                     "color_idx": color_idx,
                     "kwargs": {"linewidth": 1.0, "linestyle": "-", "alpha": 0.4},
+                })
+                traces.append({
+                    "actions": apply_butterworth_filter(actions),
+                    "label": f"{ckpt_label} butter", "color_idx": color_idx,
+                    "kwargs": _BUTTER_STYLE,
                 })
         return traces
 

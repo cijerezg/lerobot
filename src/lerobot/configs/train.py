@@ -13,7 +13,9 @@
 # limitations under the License.
 import builtins
 import datetime as dt
+import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,16 +25,52 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import HfHubHTTPError
 
 from lerobot import envs
-from lerobot.configs import parser
 from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.hub import HubMixin
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
+from . import parser
 from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
+
+
+def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Return migrated payload for legacy RA-BC fields, or None when no migration is needed."""
+    legacy_fields = (
+        "use_rabc",
+        "rabc_progress_path",
+        "rabc_kappa",
+        "rabc_epsilon",
+        "rabc_head_mode",
+    )
+    if not any(key in config for key in legacy_fields):
+        return None
+
+    migrated_config = dict(config)
+    use_rabc = bool(migrated_config.pop("use_rabc", False))
+    rabc_progress_path = migrated_config.pop("rabc_progress_path", None)
+    rabc_kappa = migrated_config.pop("rabc_kappa", None)
+    rabc_epsilon = migrated_config.pop("rabc_epsilon", None)
+    rabc_head_mode = migrated_config.pop("rabc_head_mode", None)
+
+    # New configs may already define sample_weighting explicitly. In that case,
+    # legacy fields are ignored after being stripped from the payload.
+    if migrated_config.get("sample_weighting") is None and use_rabc:
+        sample_weighting: dict[str, Any] = {"type": "rabc"}
+        if rabc_progress_path is not None:
+            sample_weighting["progress_path"] = rabc_progress_path
+        if rabc_kappa is not None:
+            sample_weighting["kappa"] = rabc_kappa
+        if rabc_epsilon is not None:
+            sample_weighting["epsilon"] = rabc_epsilon
+        if rabc_head_mode is not None:
+            sample_weighting["head_mode"] = rabc_head_mode
+        migrated_config["sample_weighting"] = sample_weighting
+
+    return migrated_config
 
 
 @dataclass
@@ -106,8 +144,11 @@ class TrainPipelineConfig(HubMixin):
             )
             self.reward_model.pretrained_path = str(Path(reward_model_path))
         elif policy_path:
-            cli_overrides = parser.get_cli_overrides("policy")
-            self.policy = PreTrainedConfig.from_pretrained(policy_path, cli_overrides=cli_overrides)
+            yaml_overrides = parser.get_yaml_overrides("policy")
+            cli_overrides = parser.get_cli_overrides("policy") or []
+            self.policy = PreTrainedConfig.from_pretrained(
+                policy_path, cli_overrides=yaml_overrides + cli_overrides
+            )
             self.policy.pretrained_path = Path(policy_path)
         elif self.resume:
             config_path = parser.parse_arg("config_path")
@@ -218,6 +259,17 @@ class TrainPipelineConfig(HubMixin):
                 ) from e
 
         cli_args = kwargs.pop("cli_args", [])
+        # Legacy RA-BC migration only applies to framework-saved checkpoints (always JSON).
+        # Hand-written YAML/TOML configs are expected to use the current sample_weighting schema.
+        if config_file is not None and config_file.endswith(".json"):
+            with open(config_file) as f:
+                config = json.load(f)
+            migrated_config = _migrate_legacy_rabc_fields(config)
+            if migrated_config is not None:
+                with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
+                    json.dump(migrated_config, f)
+                    config_file = f.name
+
         with draccus.config_type("json"):
             return draccus.parse(cls, config_file, args=cli_args)
 
@@ -235,6 +287,7 @@ class ProbeConfig:
     enable_spatial_memorization: bool = True
     enable_action_drift_jacobian: bool = False  # per-frame causal A*J maps (needs backward)
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
+    enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
 
     # Common
     output_dir: str = "outputs/probe"
@@ -265,6 +318,10 @@ class ProbeConfig:
     spatial_layers: str = "0,9,17"
     spatial_n_frames: int = 32  # total frames (1 per unique episode)
 
+    # Critic values distribution
+    critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution
+    critic_grad_frames: int = 200  # frames sampled for ||dV/dvision|| (forward+backward)
+
 
 @dataclass(kw_only=True)
 class TrainRLServerPipelineConfig(TrainPipelineConfig):
@@ -275,7 +332,7 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     offline_save_freq: int | None = None
     buffer_cache_dir: str | None = None
     use_rerun: bool = True
-    video_logging_cameras: list[str] = field(default_factory=lambda: ["top", "side"])
+    video_logging_cameras: list[str] | None = None  # derived from policy.image_features in validate() when unset
     episode_logging_freq: int = 4
     episode_save_freq: int = 10
     probe_parameters: ProbeConfig = field(default_factory=ProbeConfig)
@@ -286,3 +343,9 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     val_freq: int = 1000
     val_on_start: bool = False
     skip_critic: bool = False             # skip all critic training (forward+backward); actor advantage uses golden bypass
+    treat_main_dataset_as_golden: bool = True  # tag main offline dataset frames is_golden=True (advantage bypass); set False for non-expert main datasets
+
+    def validate(self) -> None:
+        super().validate()
+        if self.video_logging_cameras is None and self.policy is not None:
+            self.video_logging_cameras = [k.split(".")[-1] for k in self.policy.image_features]

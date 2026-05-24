@@ -27,9 +27,9 @@ Output layout (all under probe_parameters.output_dir/representations/):
   {dataset}/subtask_injection/generated_subtasks.csv  per-frame GT and model-generated subtask text
 
 Usage:
-    python representations_pi05.py config-hiserl.json
-    python representations_pi05.py config-hiserl.json --probe_parameters.output_dir outputs/probe
-    python representations_pi05.py config-hiserl.json --probe_parameters.mode plot
+    python representations_pi05.py config-hiserl.yaml
+    python representations_pi05.py config-hiserl.yaml --probe_parameters.output_dir outputs/probe
+    python representations_pi05.py config-hiserl.yaml --probe_parameters.mode plot
 """
 
 import logging
@@ -852,22 +852,14 @@ def probe_cli(cfg: ProbeRepresentationsConfig):
         logging.info("Loading policy and primary dataset …")
         policy, preprocessor, _, primary_dataset = load_policy_and_processors(cfg, device)
 
-    # ── Primary dataset ────────────────────────────────────────────────────────
-    primary_name = os.path.basename(os.path.normpath(cfg.dataset.root))
-    logging.info(f"=== Dataset: {primary_name} ===")
-    _probe_one_dataset(policy, preprocessor, primary_dataset,
-                       os.path.join(output_dir, primary_name), cfg, device)
+    _probe_one_dataset(policy, preprocessor, primary_dataset, output_dir, cfg, device)
 
-    # ── Additional datasets ────────────────────────────────────────────────────
     extra_paths = getattr(cfg.dataset, "additional_offline_dataset_paths", None) or []
     for extra_root in extra_paths:
-        ds_name  = os.path.basename(os.path.normpath(extra_root))
-        logging.info(f"=== Dataset: {ds_name} ===")
         extra_ds = None
         if p.mode in ("collect", "all"):
             extra_ds = load_extra_dataset(cfg, extra_root)
-        _probe_one_dataset(policy, preprocessor, extra_ds,
-                           os.path.join(output_dir, ds_name), cfg, device)
+        _probe_one_dataset(policy, preprocessor, extra_ds, output_dir, cfg, device)
 
     logging.info("All datasets done.")
 

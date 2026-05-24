@@ -66,14 +66,16 @@ Options:
     --cache-dir      Where to write the memmap cache (required)
     --video-backend  Video decoder: "pyav" (default) or "torchcodec"
     --num-workers    DataLoader workers for parallel decoding (default: min(4, cpu_count))
+    --flush-every    Flush output files every N frames (default: 512; 0 disables periodic flush)
+    --drop-cache     After periodic flush, ask Linux to evict already-written cache pages
     --inject-golden  Tag every frame with is_golden=True (default: True)
 """
 
 import argparse
-import hashlib
 import json
 import logging
 import multiprocessing
+import os
 from pathlib import Path
 
 import numpy as np
@@ -83,21 +85,58 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.utils.constants import ACTION, DONE, REWARD
+from lerobot.rl.buffer import (
+    CACHE_SCHEMA_VERSION,
+    IMAGE_STORAGE_DTYPE_BFLOAT16,
+    IMAGE_STORAGE_DTYPE_UINT8,
+    ReplayBuffer,
+)
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-IMAGE_SIZE = (224, 224)
+DEFAULT_IMAGE_SIZE = (224, 224)
 
 
-def dataset_fingerprint(dataset: LeRobotDataset) -> str:
-    key = f"{dataset.root}|{dataset.meta.total_frames}|{dataset.meta.total_episodes}"
-    return hashlib.sha256(key.encode()).hexdigest()[:16]
+def parse_image_storage_size(raw: list[str]) -> tuple[int, int] | None:
+    if len(raw) == 1 and raw[0].lower() == "raw":
+        return None
+    if len(raw) != 2:
+        raise argparse.ArgumentTypeError("--image-storage-size must be 'raw' or two integers: HEIGHT WIDTH")
+    height, width = int(raw[0]), int(raw[1])
+    if height <= 0 or width <= 0:
+        raise argparse.ArgumentTypeError("--image-storage-size values must be positive")
+    return height, width
 
 
 def sanitize_key(key: str) -> str:
     return key.replace("/", "_")
+
+
+
+def write_array(outputs: dict[str, object], key: str, value: np.ndarray | np.generic | bool) -> None:
+    """Append one transition value to a raw .bin output file."""
+    array = np.asarray(value)
+    if not array.flags.c_contiguous:
+        array = np.ascontiguousarray(array)
+    outputs[sanitize_key(key)].write(array.tobytes(order="C"))
+
+
+def flush_outputs(outputs: dict[str, object], *, sync: bool = False, drop_cache: bool = False) -> None:
+    """Flush streamed cache files and optionally ask the OS to drop clean cache pages."""
+    for handle in outputs.values():
+        handle.flush()
+        if sync:
+            if hasattr(os, "fdatasync"):
+                os.fdatasync(handle.fileno())
+            else:
+                os.fsync(handle.fileno())
+        if drop_cache and hasattr(os, "posix_fadvise") and hasattr(os, "POSIX_FADV_DONTNEED"):
+            try:
+                os.posix_fadvise(handle.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+            except OSError:
+                logger.debug("posix_fadvise(DONTNEED) failed", exc_info=True)
 
 
 def main():
@@ -107,6 +146,36 @@ def main():
     parser.add_argument("--cache-dir", type=str, required=True)
     parser.add_argument("--video-backend", type=str, default="pyav", choices=["pyav", "torchcodec"])
     parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument(
+        "--flush-every",
+        type=int,
+        default=512,
+        help="Flush output files every N frames. Use 0 to disable periodic flush.",
+    )
+    parser.add_argument(
+        "--fsync-every",
+        type=int,
+        default=0,
+        help="Force dirty pages to disk every N frames. 0 disables unless --drop-cache is used.",
+    )
+    parser.add_argument(
+        "--drop-cache",
+        action="store_true",
+        help="After periodic flush, sync and ask Linux to evict already-written output pages.",
+    )
+    parser.add_argument(
+        "--image-storage-dtype",
+        type=str,
+        default=IMAGE_STORAGE_DTYPE_BFLOAT16,
+        choices=[IMAGE_STORAGE_DTYPE_BFLOAT16, IMAGE_STORAGE_DTYPE_UINT8],
+        help="Storage dtype for image memmaps. Use uint8 for raw camera images.",
+    )
+    parser.add_argument(
+        "--image-storage-size",
+        nargs="+",
+        default=[str(DEFAULT_IMAGE_SIZE[0]), str(DEFAULT_IMAGE_SIZE[1])],
+        help="Image storage size as HEIGHT WIDTH, or 'raw' to keep dataset resolution.",
+    )
     parser.add_argument("--inject-golden", action="store_true", default=True,
                         help="Inject is_golden=True for all frames (matches offline training)")
     args = parser.parse_args()
@@ -125,16 +194,24 @@ def main():
         dataset = LeRobotDataset(repo_id=args.repo_id, video_backend=args.video_backend)
 
     num_frames = len(dataset)
-    fingerprint = dataset_fingerprint(dataset)
+    image_storage_size = parse_image_storage_size(args.image_storage_size)
+    image_storage_dtype = ReplayBuffer._normalize_image_storage_dtype(args.image_storage_dtype)
+    sample = dataset[0]
+
+    state_keys = [k for k in sample if k.startswith("observation.")]
+    fingerprint = ReplayBuffer._dataset_fingerprint(
+        dataset,
+        state_keys=state_keys,
+        image_storage_dtype=image_storage_dtype,
+        image_storage_size=image_storage_size,
+    )
     cache_path = Path(args.cache_dir) / fingerprint
     cache_path.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Dataset: {num_frames} frames, fingerprint={fingerprint}")
     logger.info(f"Cache directory: {cache_path}")
+    logger.info(f"Image storage: dtype={image_storage_dtype}, size={image_storage_size or 'raw'}")
 
-    sample = dataset[0]
-
-    state_keys = [k for k in sample if k.startswith("observation.")]
     complementary_info_keys = [k for k in sample if k.startswith("complementary_info.")]
     if "subtask_index" in sample:
         complementary_info_keys.append("subtask_index")
@@ -143,8 +220,9 @@ def main():
     if not has_done_key:
         logger.info("'next.done' not in dataset, inferring from episode boundaries")
 
-    image_keys = [k for k in state_keys if "images" in k]
-    non_image_state_keys = [k for k in state_keys if "images" not in k]
+    image_keys = [k for k in state_keys if k.startswith(OBS_IMAGE) or "images" in k]
+    image_key_set = set(image_keys)
+    non_image_state_keys = [k for k in state_keys if k not in image_key_set]
 
     logger.info(f"Image keys: {image_keys}")
     logger.info(f"Non-image state keys: {non_image_state_keys}")
@@ -155,8 +233,11 @@ def main():
     dtypes_np = {}
 
     for key in image_keys:
-        shapes[key] = (3, IMAGE_SIZE[0], IMAGE_SIZE[1])
-        dtypes_np[key] = np.uint16  # bf16 stored as uint16
+        if image_storage_size is None:
+            shapes[key] = tuple(sample[key].shape)
+        else:
+            shapes[key] = (3, image_storage_size[0], image_storage_size[1])
+        dtypes_np[key] = np.uint8 if image_storage_dtype == IMAGE_STORAGE_DTYPE_UINT8 else np.uint16
 
     for key in non_image_state_keys:
         val = sample[key]
@@ -201,22 +282,15 @@ def main():
     # (the last one has next_state = current_state when done).
     N = num_frames
 
-    logger.info(f"Allocating memmap files for {N} transitions...")
+    logger.info(f"Opening streamed .bin writers for {N} transitions...")
 
-    memmaps = {}
+    outputs = {}
     for key, shape in shapes.items():
         safe_key = sanitize_key(key)
-        full_shape = (N, *shape) if shape else (N,)
-        fp = np.memmap(
-            str(cache_path / f"{safe_key}.bin"),
-            dtype=dtypes_np[key],
-            mode="w+",
-            shape=full_shape,
-        )
-        memmaps[safe_key] = fp
+        outputs[safe_key] = open(cache_path / f"{safe_key}.bin", "wb", buffering=1024 * 1024)
 
     # Set up data loader
-    num_workers = args.num_workers or min(4, multiprocessing.cpu_count() or 1)
+    num_workers = args.num_workers if args.num_workers is not None else min(4, multiprocessing.cpu_count() or 1)
     loader = DataLoader(
         dataset,
         batch_size=None,
@@ -227,6 +301,22 @@ def main():
     def to_bf16_uint16(tensor: torch.Tensor) -> np.ndarray:
         return tensor.to(torch.bfloat16).view(torch.uint16).numpy()
 
+    def image_to_numpy(tensor: torch.Tensor) -> np.ndarray:
+        if image_storage_size is not None and tensor.shape[-2:] != image_storage_size:
+            tensor = F_vision.resize(tensor, image_storage_size)
+        if image_storage_dtype == IMAGE_STORAGE_DTYPE_UINT8:
+            if tensor.dtype == torch.uint8:
+                return tensor.numpy()
+            if tensor.is_floating_point():
+                max_value = float(tensor.detach().max().item()) if tensor.numel() else 1.0
+                if max_value <= 1.0:
+                    tensor = tensor * 255.0
+                return tensor.round().clamp(0, 255).to(torch.uint8).numpy()
+            return tensor.clamp(0, 255).to(torch.uint8).numpy()
+        if tensor.dtype == torch.uint8:
+            tensor = tensor.to(torch.float32) / 255.0
+        return to_bf16_uint16(tensor.clamp(0.0, 1.0))
+
     logger.info("Decoding frames...")
     iterator = iter(loader)
     prev_sample = next(iterator)
@@ -235,28 +325,32 @@ def main():
     for current_sample in tqdm(iterator, total=num_frames - 1, desc="Decoding"):
         is_last = False
         _write_transition(
-            memmaps, idx, prev_sample, current_sample, is_last,
+            outputs, idx, prev_sample, current_sample, is_last,
             state_keys, image_keys, non_image_state_keys,
             complementary_info_keys, has_done_key, args.inject_golden,
-            to_bf16_uint16,
+            to_bf16_uint16, image_to_numpy,
         )
         prev_sample = current_sample
         idx += 1
 
+        if args.flush_every > 0 and idx % args.flush_every == 0:
+            sync_now = args.drop_cache or (args.fsync_every > 0 and idx % args.fsync_every == 0)
+            flush_outputs(outputs, sync=sync_now, drop_cache=args.drop_cache)
+
     # Last transition
     _write_transition(
-        memmaps, idx, prev_sample, None, True,
+        outputs, idx, prev_sample, None, True,
         state_keys, image_keys, non_image_state_keys,
         complementary_info_keys, has_done_key, args.inject_golden,
-        to_bf16_uint16,
+        to_bf16_uint16, image_to_numpy,
     )
     idx += 1
 
-    # Flush all memmaps
-    for mm in memmaps.values():
-        mm.flush()
-        del mm
-    memmaps.clear()
+    # Flush and close all streamed output files before writing metadata.
+    flush_outputs(outputs, sync=True, drop_cache=args.drop_cache)
+    for handle in outputs.values():
+        handle.close()
+    outputs.clear()
 
     # Write metadata
     metadata = {
@@ -265,7 +359,10 @@ def main():
         "dataset_root": str(dataset.root),
         "total_frames": dataset.meta.total_frames,
         "total_episodes": dataset.meta.total_episodes,
-        "image_size": list(IMAGE_SIZE),
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
+        "image_storage_dtype": image_storage_dtype,
+        "image_storage_size": list(image_storage_size) if image_storage_size is not None else None,
+        "image_size": list(image_storage_size) if image_storage_size is not None else None,
         "state_keys": state_keys,
         "image_keys": image_keys,
         "non_image_state_keys": non_image_state_keys,
@@ -282,30 +379,25 @@ def main():
 
 
 def _write_transition(
-    memmaps, idx, current_sample, next_sample, is_last,
+    outputs, idx, current_sample, next_sample, is_last,
     state_keys, image_keys, non_image_state_keys,
     complementary_info_keys, has_done_key, inject_golden,
     to_bf16_uint16,
+    image_to_numpy,
 ):
-    expected_h, expected_w = IMAGE_SIZE
-
     # State images
     for key in image_keys:
-        tensor = current_sample[key]
-        if tensor.shape[-2:] != (expected_h, expected_w):
-            tensor = F_vision.resize(tensor, (expected_h, expected_w))
-            tensor = tensor.clamp(0.0, 1.0)
-        memmaps[sanitize_key(key)][idx] = to_bf16_uint16(tensor)
+        write_array(outputs, key, image_to_numpy(current_sample[key]))
 
     # Non-image state
     for key in non_image_state_keys:
-        memmaps[sanitize_key(key)][idx] = to_bf16_uint16(current_sample[key])
+        write_array(outputs, key, to_bf16_uint16(current_sample[key]))
 
     # Action
     action = current_sample[ACTION]
     if action.ndim == 2:
         action = action[0]
-    memmaps["actions"][idx] = to_bf16_uint16(action)
+    write_array(outputs, "actions", to_bf16_uint16(action))
 
     # Done
     if has_done_key:
@@ -315,31 +407,31 @@ def _write_transition(
         if is_last or next_sample is not None and next_sample["episode_index"] != current_sample["episode_index"]:
             done = True
 
-    memmaps["dones"][idx] = done
-    memmaps["truncateds"][idx] = done
-    memmaps["episode_ends"][idx] = done
+    done_np = np.asarray(done, dtype=np.bool_)
+    write_array(outputs, "dones", done_np)
+    write_array(outputs, "truncateds", done_np)
+    write_array(outputs, "episode_ends", done_np)
 
     # Reward
     if REWARD in current_sample:
         reward = current_sample[REWARD].item()
     else:
         reward = 1.0 if done else 0.0
-    memmaps["rewards"][idx] = to_bf16_uint16(torch.tensor(reward, dtype=torch.float32))
+    write_array(outputs, "rewards", to_bf16_uint16(torch.tensor(reward, dtype=torch.float32)))
 
     # Complementary info
     for key in complementary_info_keys:
         safe_key = sanitize_key(f"complementary_info.{key}")
-        if safe_key not in memmaps:
+        if safe_key not in outputs:
             continue
         val = current_sample[key]
         if isinstance(val, torch.Tensor):
-            memmaps[safe_key][idx] = to_bf16_uint16(val)
+            write_array(outputs, f"complementary_info.{key}", to_bf16_uint16(val))
         else:
-            memmaps[safe_key][idx] = to_bf16_uint16(torch.tensor(val, dtype=torch.float32))
+            write_array(outputs, f"complementary_info.{key}", to_bf16_uint16(torch.tensor(val, dtype=torch.float32)))
 
     if inject_golden:
-        safe_key = "complementary_info.is_golden"
-        memmaps[safe_key][idx] = to_bf16_uint16(torch.tensor(True, dtype=torch.float32))
+        write_array(outputs, "complementary_info.is_golden", to_bf16_uint16(torch.tensor(True, dtype=torch.float32)))
 
 
 if __name__ == "__main__":

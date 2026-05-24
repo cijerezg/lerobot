@@ -27,6 +27,7 @@ from typing import TypedDict
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
+import torchvision.transforms.functional as F_vision
 from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
@@ -34,6 +35,10 @@ from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
 from lerobot.utils.transition import Transition
 
 logger = logging.getLogger(__name__)
+
+IMAGE_STORAGE_DTYPE_BFLOAT16 = "bfloat16"
+IMAGE_STORAGE_DTYPE_UINT8 = "uint8"
+CACHE_SCHEMA_VERSION = 2
 
 
 class BatchTransition(TypedDict):
@@ -97,6 +102,8 @@ class ReplayBuffer:
         optimize_memory: bool = True,
         reward_normalization_constant: float = 1.0,
         terminal_failure_reward: float = -1.0,
+        image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
+        image_storage_size: tuple[int, int] | None = None,
     ):
         """
         Replay buffer for storing transitions.
@@ -106,14 +113,19 @@ class ReplayBuffer:
         Args:
             capacity (int): Maximum number of transitions to store in the buffer.
             device (str): The device where the tensors will be moved when sampling ("cuda:0" or "cpu").
-            state_keys (List[str]): The list of keys that appear in `state` and `next_state`.
-            image_augmentation_function (Optional[Callable]): A function that takes a batch of images
+            state_keys (list[str]): The list of keys that appear in `state` and `next_state`.
+            image_augmentation_function (Callable | None): A function that takes a batch of images
                 and returns a batch of augmented images. If None, a default augmentation function is used.
             use_drq (bool): Whether to use the default DRQ image augmentation style, when sampling in the buffer.
             storage_device: The device (e.g. "cpu" or "cuda:0") where the data will be stored.
                 Using "cpu" can help save GPU memory.
             optimize_memory (bool): If True, optimizes memory by not storing duplicate next_states when
                 they can be derived from states. This is useful for large datasets where next_state[i] = state[i+1].
+            image_storage_dtype: Dtype used for image observations in storage. "uint8" stores raw
+                camera-like bytes and converts float [0, 1] inputs to [0, 255]; "bfloat16" preserves the
+                previous normalized-float storage behavior.
+            image_storage_size: Optional (height, width) resize applied before image storage. None keeps
+                the input resolution.
         """
         if capacity <= 0:
             raise ValueError("Capacity must be greater than 0.")
@@ -127,6 +139,8 @@ class ReplayBuffer:
         self.optimize_memory = optimize_memory
         self.reward_normalization_constant = reward_normalization_constant
         self.terminal_failure_reward = terminal_failure_reward
+        self.image_storage_dtype = self._normalize_image_storage_dtype(image_storage_dtype)
+        self.image_storage_size = self._normalize_image_storage_size(image_storage_size)
         self._lock = threading.Lock()
 
         # Track episode boundaries for memory optimization
@@ -142,6 +156,78 @@ class ReplayBuffer:
             self.image_augmentation_function = torch.compile(base_function)
         self.use_drq = use_drq
 
+
+    @staticmethod
+    def _normalize_image_storage_dtype(dtype: str) -> str:
+        normalized = str(dtype).lower()
+        if normalized in {"bf16", "torch.bfloat16"}:
+            normalized = IMAGE_STORAGE_DTYPE_BFLOAT16
+        if normalized not in {IMAGE_STORAGE_DTYPE_BFLOAT16, IMAGE_STORAGE_DTYPE_UINT8}:
+            raise ValueError(
+                f"Unsupported image_storage_dtype={dtype!r}. "
+                f"Expected '{IMAGE_STORAGE_DTYPE_UINT8}' or '{IMAGE_STORAGE_DTYPE_BFLOAT16}'."
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_image_storage_size(size: tuple[int, int] | Sequence[int] | None) -> tuple[int, int] | None:
+        if size is None:
+            return None
+        if len(size) != 2:
+            raise ValueError(f"image_storage_size must be (height, width) or None, got {size!r}")
+        height, width = int(size[0]), int(size[1])
+        if height <= 0 or width <= 0:
+            raise ValueError(f"image_storage_size values must be positive, got {size!r}")
+        return height, width
+
+    @staticmethod
+    def _is_image_key(key: str) -> bool:
+        return key.startswith(OBS_IMAGE) or "images" in key
+
+    def _prepare_image_for_storage(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self.image_storage_size is not None and tensor.shape[-2:] != self.image_storage_size:
+            tensor = F_vision.resize(tensor, self.image_storage_size)
+
+        if self.image_storage_dtype == IMAGE_STORAGE_DTYPE_UINT8:
+            if tensor.dtype == torch.uint8:
+                return tensor.to(device=self.storage_device)
+            if tensor.is_floating_point():
+                # LeRobot images are normally normalized to [0, 1]. Actor paths can occasionally
+                # hand us byte-scale floats, so preserve those instead of multiplying twice.
+                max_value = float(tensor.detach().max().item()) if tensor.numel() else 1.0
+                if max_value <= 1.0:
+                    tensor = tensor * 255.0
+                return tensor.round().clamp(0, 255).to(dtype=torch.uint8, device=self.storage_device)
+            return tensor.clamp(0, 255).to(dtype=torch.uint8, device=self.storage_device)
+
+        if tensor.dtype == torch.uint8:
+            tensor = tensor.to(torch.float32) / 255.0
+        return tensor.to(dtype=torch.bfloat16, device=self.storage_device)
+
+    def _prepare_tensor_for_storage(self, key: str, tensor: torch.Tensor) -> torch.Tensor:
+        if self._is_image_key(key):
+            return self._prepare_image_for_storage(tensor)
+        return tensor.to(dtype=torch.bfloat16, device=self.storage_device)
+
+    def _prepare_state_for_storage(self, state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        return {key: self._prepare_tensor_for_storage(key, value) for key, value in state.items()}
+
+    def _prepare_action_for_storage(self, action: torch.Tensor) -> torch.Tensor:
+        return action.to(dtype=torch.bfloat16, device=self.storage_device)
+
+    def _prepare_complementary_info_for_storage(
+        self, complementary_info: dict[str, torch.Tensor] | None
+    ) -> dict[str, torch.Tensor | float | int] | None:
+        if complementary_info is None:
+            return None
+        prepared = {}
+        for key, value in complementary_info.items():
+            if isinstance(value, torch.Tensor):
+                prepared[key] = value.to(dtype=torch.bfloat16, device=self.storage_device)
+            else:
+                prepared[key] = value
+        return prepared
+
     def _initialize_storage(
         self,
         state: dict[str, torch.Tensor],
@@ -156,7 +242,7 @@ class ReplayBuffer:
         # Pre-allocate tensors for storage
         self.states = {
             key: torch.empty(
-                (self.capacity, *shape), dtype=torch.bfloat16, device=self.storage_device)
+                (self.capacity, *shape), dtype=state[key].dtype, device=self.storage_device)
             for key, shape in state_shapes.items()
         }
         self.actions = torch.empty((self.capacity, *action_shape), dtype=torch.bfloat16, device=self.storage_device)
@@ -165,7 +251,7 @@ class ReplayBuffer:
         if not self.optimize_memory:
             # Standard approach: store states and next_states separately
             self.next_states = {
-                key: torch.empty((self.capacity, *shape), dtype=torch.bfloat16, device=self.storage_device)
+                key: torch.empty((self.capacity, *shape), dtype=state[key].dtype, device=self.storage_device)
                 for key, shape in state_shapes.items()
             }
         else:
@@ -206,13 +292,21 @@ class ReplayBuffer:
         state: dict[str, torch.Tensor],
         action: torch.Tensor,
         reward: float,
-        next_state: dict[str, torch.Tensor],
+        next_state: dict[str, torch.Tensor] | None,
         done: bool,
         truncated: bool,
         complementary_info: dict[str, torch.Tensor] | None = None,
     ):
         """Saves a transition, ensuring tensors are stored on the designated storage device."""
         with self._lock:
+            state = self._prepare_state_for_storage(state)
+            action = self._prepare_action_for_storage(action)
+            complementary_info = self._prepare_complementary_info_for_storage(complementary_info)
+            if not self.optimize_memory:
+                if next_state is None:
+                    raise ValueError("next_state must be provided when optimize_memory=False")
+                next_state = self._prepare_state_for_storage(next_state)
+
             # Initialize storage if this is the first transition
             if not self.initialized:
                 self._initialize_storage(state=state, action=action, complementary_info=complementary_info)
@@ -297,8 +391,6 @@ class ReplayBuffer:
             # First pass: load all state tensors to target device
             for key in self.states:
                 state_arr = self.states[key][idx]
-                if "images" in key:
-                    state_arr = state_arr.to(torch.bfloat16)
                 batch_state[key] = state_arr.to(self.device)
 
                 if not self.optimize_memory:
@@ -354,6 +446,8 @@ class ReplayBuffer:
                 all_images.append(batch_next_state[key])
 
             all_images_tensor = torch.cat(all_images, dim=0)
+            if not all_images_tensor.is_floating_point():
+                all_images_tensor = all_images_tensor.to(torch.float32) / 255.0
             augmented_images = self.image_augmentation_function(all_images_tensor)
 
             for i, key in enumerate(image_keys):
@@ -501,6 +595,7 @@ class ReplayBuffer:
         use_drq: bool = True,
         reward_normalization_constant: float = 1.0,
         terminal_failure_reward: float = -1.0,
+        inject_complementary_info: dict | None = None,
     ) -> "ReplayBuffer":
         """
         Load a ReplayBuffer from pre-decoded memmap cache files.
@@ -520,6 +615,8 @@ class ReplayBuffer:
         state_keys = meta["state_keys"]
         image_keys = meta["image_keys"]
         non_image_state_keys = meta["non_image_state_keys"]
+        image_storage_dtype = meta.get("image_storage_dtype", IMAGE_STORAGE_DTYPE_BFLOAT16)
+        image_storage_size = meta.get("image_storage_size", meta.get("image_size", [224, 224]))
 
         logger.info(f"Loading buffer cache from {cache_dir} ({num_transitions} transitions)")
 
@@ -533,6 +630,8 @@ class ReplayBuffer:
             optimize_memory=True,
             reward_normalization_constant=reward_normalization_constant,
             terminal_failure_reward=terminal_failure_reward,
+            image_storage_dtype=image_storage_dtype,
+            image_storage_size=image_storage_size,
         )
 
         def _sanitize(key: str) -> str:
@@ -554,11 +653,15 @@ class ReplayBuffer:
             t = _load_memmap(key, (), as_torch_dtype=as_torch_dtype)
             return t.clone() if clone else t
 
-        # Image keys: keep as memmap-backed tensors
+        def _bf16_view_if_uint16(key: str) -> torch.dtype | None:
+            return torch.bfloat16 if np.dtype(meta["dtypes"][_sanitize(key)]) == np.uint16 else None
+
+        # Image keys: keep as memmap-backed tensors. uint8 caches load as uint8; old bf16
+        # caches are stored as uint16 and viewed back as torch.bfloat16.
         replay_buffer.states = {}
         for key in image_keys:
-            replay_buffer.states[key] = _load_memmap(key, (), as_torch_dtype=torch.bfloat16)
-            logger.info(f"  {key}: memmap {replay_buffer.states[key].shape}")
+            replay_buffer.states[key] = _load_memmap(key, (), as_torch_dtype=_bf16_view_if_uint16(key))
+            logger.info(f"  {key}: memmap {replay_buffer.states[key].shape} {replay_buffer.states[key].dtype}")
 
         # Non-image state: small, clone into RAM
         for key in non_image_state_keys:
@@ -579,15 +682,29 @@ class ReplayBuffer:
         comp_keys = meta.get("complementary_info_keys", [])
         has_golden = meta.get("inject_golden", False)
 
+        # Caller-side override: if inject_complementary_info explicitly sets
+        # is_golden, honor it over the cache's baked-in flag.
+        caller_wants_golden: bool | None = None
+        if inject_complementary_info is not None and "is_golden" in inject_complementary_info:
+            caller_wants_golden = bool(inject_complementary_info["is_golden"])
+
         all_comp_keys = []
         for k in comp_keys:
+            if k == "is_golden" and caller_wants_golden is False:
+                continue
             safe = _sanitize(f"complementary_info.{k}")
             if (cache_dir / f"{safe}.bin").exists():
                 all_comp_keys.append(k)
-        if has_golden and "is_golden" not in all_comp_keys:
+        load_golden = has_golden if caller_wants_golden is None else caller_wants_golden
+        if load_golden and "is_golden" not in all_comp_keys:
             safe = _sanitize("complementary_info.is_golden")
             if (cache_dir / f"{safe}.bin").exists():
                 all_comp_keys.append("is_golden")
+            elif caller_wants_golden is True:
+                logger.warning(
+                    "treat_main_dataset_as_golden=True but cache has no is_golden column; "
+                    "proceeding without golden bypass. Rebuild the cache with --inject-golden to enable."
+                )
 
         replay_buffer.has_complementary_info = len(all_comp_keys) > 0
         replay_buffer.complementary_info_keys = list(all_comp_keys)
@@ -608,26 +725,77 @@ class ReplayBuffer:
         return replay_buffer
 
     @staticmethod
-    def _dataset_fingerprint(dataset: LeRobotDataset) -> str:
+    def _dataset_fingerprint(
+        dataset: LeRobotDataset,
+        state_keys: Sequence[str] | None = None,
+        image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
+        image_storage_size: tuple[int, int] | Sequence[int] | None = (224, 224),
+    ) -> str:
+        """Hash dataset identity plus replay-cache storage semantics."""
+        storage_size = ReplayBuffer._normalize_image_storage_size(image_storage_size)
+        key_payload = {
+            "schema_version": CACHE_SCHEMA_VERSION,
+            "dataset_root": str(dataset.root),
+            "total_frames": int(dataset.meta.total_frames),
+            "total_episodes": int(dataset.meta.total_episodes),
+            "state_keys": sorted(str(k) for k in state_keys) if state_keys is not None else None,
+            "image_storage_dtype": ReplayBuffer._normalize_image_storage_dtype(image_storage_dtype),
+            "image_storage_size": list(storage_size) if storage_size is not None else None,
+        }
+        key = json.dumps(key_payload, sort_keys=True)
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    @staticmethod
+    def _legacy_dataset_fingerprint(dataset: LeRobotDataset) -> str:
         key = f"{dataset.root}|{dataset.meta.total_frames}|{dataset.meta.total_episodes}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     @classmethod
-    def find_cache(cls, dataset: LeRobotDataset, cache_dir: str | Path) -> Path | None:
-        """Check if a valid cache exists for this dataset."""
+    def find_cache(
+        cls,
+        dataset: LeRobotDataset,
+        cache_dir: str | Path,
+        state_keys: Sequence[str] | None = None,
+        image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
+        image_storage_size: tuple[int, int] | Sequence[int] | None = (224, 224),
+    ) -> Path | None:
+        """Check if a valid cache exists for this dataset and image storage spec."""
         cache_dir = Path(cache_dir)
-        fingerprint = cls._dataset_fingerprint(dataset)
-        candidate = cache_dir / fingerprint
-        meta_path = candidate / "metadata.json"
-        if not meta_path.exists():
-            return None
-        with open(meta_path) as f:
-            meta = json.load(f)
-        if meta.get("fingerprint") != fingerprint:
-            return None
-        if meta.get("num_transitions", 0) == 0:
-            return None
-        return candidate
+        fingerprint = cls._dataset_fingerprint(
+            dataset,
+            state_keys=state_keys,
+            image_storage_dtype=image_storage_dtype,
+            image_storage_size=image_storage_size,
+        )
+        candidates = [cache_dir / fingerprint]
+
+        # Backward-compatible lookup for old 224/bf16 caches produced before storage settings
+        # were part of the fingerprint.
+        storage_size = cls._normalize_image_storage_size(image_storage_size)
+        if (
+            cls._normalize_image_storage_dtype(image_storage_dtype) == IMAGE_STORAGE_DTYPE_BFLOAT16
+            and storage_size == (224, 224)
+        ):
+            candidates.append(cache_dir / cls._legacy_dataset_fingerprint(dataset))
+
+        for candidate in candidates:
+            meta_path = candidate / "metadata.json"
+            if not meta_path.exists():
+                continue
+            with open(meta_path) as f:
+                meta = json.load(f)
+            if meta.get("fingerprint") not in {fingerprint, cls._legacy_dataset_fingerprint(dataset)}:
+                continue
+            if meta.get("num_transitions", 0) == 0:
+                continue
+            meta_dtype = meta.get("image_storage_dtype", IMAGE_STORAGE_DTYPE_BFLOAT16)
+            meta_size = meta.get("image_storage_size", meta.get("image_size", [224, 224]))
+            if cls._normalize_image_storage_dtype(meta_dtype) != cls._normalize_image_storage_dtype(image_storage_dtype):
+                continue
+            if cls._normalize_image_storage_size(meta_size) != storage_size:
+                continue
+            return candidate
+        return None
 
     @classmethod
     def from_lerobot_dataset(
@@ -644,6 +812,8 @@ class ReplayBuffer:
         terminal_failure_reward: float = -1.0,
         inject_complementary_info: dict | None = None,
         cache_dir: str | Path | None = None,
+        image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
+        image_storage_size: tuple[int, int] | None = (224, 224),
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -665,7 +835,13 @@ class ReplayBuffer:
         """
         # Check for memmap cache before doing the expensive video decode
         if cache_dir is not None:
-            cached = cls.find_cache(lerobot_dataset, cache_dir)
+            cached = cls.find_cache(
+                lerobot_dataset,
+                cache_dir,
+                state_keys=state_keys,
+                image_storage_dtype=image_storage_dtype,
+                image_storage_size=image_storage_size,
+            )
             if cached is not None:
                 logger.info(f"Found memmap cache at {cached}, loading from disk...")
                 return cls.from_cache(
@@ -675,6 +851,7 @@ class ReplayBuffer:
                     use_drq=use_drq,
                     reward_normalization_constant=reward_normalization_constant,
                     terminal_failure_reward=terminal_failure_reward,
+                    inject_complementary_info=inject_complementary_info,
                 )
             else:
                 logger.info(f"No valid cache found in {cache_dir}, falling back to video decode")
@@ -698,6 +875,8 @@ class ReplayBuffer:
             optimize_memory=optimize_memory,
             reward_normalization_constant=reward_normalization_constant,
             terminal_failure_reward=terminal_failure_reward,
+            image_storage_dtype=image_storage_dtype,
+            image_storage_size=image_storage_size,
         )
 
         # Process dataset transitions one at a time to save memory
@@ -710,93 +889,23 @@ class ReplayBuffer:
         # Get first transition for initialization
         first_transition = next(transition_generator, None)
 
-
-
         if first_transition is not None:
-            # Resize images in first transition BEFORE initializing storage
-            # This ensures buffer allocates correct size (224x224) not original size (640x480)
-            import torchvision.transforms.functional as F_vision  # noqa: N812
-            expected_height, expected_width = 224, 224
-
-            first_state = {}
-            for k, v in first_transition["state"].items():
-                tensor = v.to(device)
-                if "images" in k and tensor.shape[-2:] != (expected_height, expected_width):
-                    tensor = F_vision.resize(tensor, (expected_height, expected_width))
-                    tensor = tensor.clamp(0.0, 1.0)
-                first_state[k] = tensor
-
-            first_action = first_transition[ACTION].to(device)
-
-            # Get complementary info if available
-            first_complementary_info = None
-            if (
-                "complementary_info" in first_transition
-                and first_transition["complementary_info"] is not None
-            ):
-                first_complementary_info = {
-                    k: v.to(device) for k, v in first_transition["complementary_info"].items()
-                }
-
-            replay_buffer._initialize_storage(
-                state=first_state, action=first_action, complementary_info=first_complementary_info
+            replay_buffer.add(
+                state=first_transition["state"],
+                action=first_transition[ACTION],
+                reward=first_transition["reward"],
+                next_state=first_transition["next_state"],
+                done=first_transition["done"],
+                truncated=False,
+                complementary_info=first_transition.get("complementary_info", None),
             )
 
-            # Process first transition
-            data = first_transition
-            for k, v in data.items():
-                if isinstance(v, dict):
-                    for key, tensor in v.items():
-                        # Convert images and other state data to bfloat16
-                        if "images" in key:
-                            # Resize images to 224x224 before storing (offline dataset may have different size)
-                            import torchvision.transforms.functional as F_vision  # noqa: N812
-                            expected_height, expected_width = 224, 224
-                            if tensor.shape[-2:] != (expected_height, expected_width):
-                                tensor = F_vision.resize(tensor, (expected_height, expected_width))
-                                tensor = tensor.clamp(0.0, 1.0)
-                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
-                        else:
-                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
-                elif isinstance(v, torch.Tensor):
-                    # Convert action and other tensors to bfloat16
-                    data[k] = v.to(dtype=torch.bfloat16, device=storage_device)
-
+        # Process remaining transitions one at a time. Storage dtype/resize policy is centralized
+        # in ReplayBuffer.add(), so online and offline data use the same conversion path.
+        for _i, data in enumerate(transition_generator):
             replay_buffer.add(
                 state=data["state"],
                 action=data[ACTION],
-                reward=data["reward"],
-                next_state=data["next_state"],
-                done=data["done"],
-                truncated=False,
-                complementary_info=data.get("complementary_info", None),
-            )
-
-        # Process remaining transitions one at a time
-        for _i, data in enumerate(transition_generator):
-            for k, v in data.items():
-                if isinstance(v, dict):
-                    for key, tensor in v.items():
-                        # Convert images and other state data to bfloat16
-                        if "images" in key:
-                            # Resize images to 224x224 before storing (offline dataset may have different size)
-                            import torchvision.transforms.functional as F_vision  # noqa: N812
-                            expected_height, expected_width = 224, 224
-                            if tensor.shape[-2:] != (expected_height, expected_width):
-                                tensor = F_vision.resize(tensor, (expected_height, expected_width))
-                                tensor = tensor.clamp(0.0, 1.0)
-                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
-                        else:
-                            v[key] = tensor.to(dtype=torch.bfloat16, device=storage_device)
-                elif isinstance(v, torch.Tensor):
-                    # Convert action and other tensors to bfloat16
-                    data[k] = v.to(dtype=torch.bfloat16, device=storage_device)
-
-            action = data[ACTION]
-
-            replay_buffer.add(
-                state=data["state"],
-                action=action,
                 reward=data["reward"],
                 next_state=data["next_state"],
                 done=data["done"],

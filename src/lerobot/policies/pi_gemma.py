@@ -168,6 +168,7 @@ def _get_pi_gemma_decoder_layer_base():
         ) -> torch.Tensor:
             residual = hidden_states
             hidden_states, gate = self.input_layernorm(hidden_states, cond=adarms_cond)
+
             hidden_states, _ = self.self_attn(
                 hidden_states,
                 attention_mask=attention_mask,
@@ -180,11 +181,13 @@ def _get_pi_gemma_decoder_layer_base():
             )
 
             hidden_states = _gated_residual(residual, hidden_states, gate)
-
             residual = hidden_states
             hidden_states, gate = self.post_attention_layernorm(hidden_states, cond=adarms_cond)
+
             hidden_states = self.mlp(hidden_states)
+
             hidden_states = _gated_residual(residual, hidden_states, gate)
+
             return hidden_states
 
     return _PiGemmaDecoderLayerBase

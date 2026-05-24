@@ -65,7 +65,7 @@ This iterates over all episodes, computes anchor (or delta) representations for 
 Offline training initializes the policy and critic from demonstrations before any robot interaction. Skipping this step makes online learning highly unstable.
 
 ```bash
-python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.json
+python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.yaml
 ```
 
 This script:
@@ -82,12 +82,12 @@ Update `pi05_checkpoint` in the config to point to your offline checkpoint, then
 
 **Learner** (gRPC server, runs on GPU machine):
 ```bash
-python -m lerobot.rl.learner_pi05 --config path/to/config.json
+python -m lerobot.rl.learner_pi05 --config path/to/config.yaml
 ```
 
 **Actor** (gRPC client, runs on robot machine):
 ```bash
-python -m lerobot.rl.actor_pi05_async --config path/to/config.json
+python -m lerobot.rl.actor_pi05_async --config path/to/config.yaml
 ```
 
 The actor collects transitions at 30Hz and streams them to the learner. The learner mixes online and offline data 50/50 per batch. Updated policy weights are pushed back to the actor every `policy_parameters_push_frequency` steps (default: 180).
@@ -98,7 +98,7 @@ The learner writes an episode video to `output_dir` every `episode_logging_freq`
 
 ## Configuration Reference
 
-The config file (`config-hiserl.json`) drives all scripts. The fields below are the ones worth tuning — the rest of the config is either self-explanatory or rarely needs changing from the defaults.
+The config file (`config-hiserl.yaml`) drives all scripts. The fields below are the ones worth tuning — the rest of the config is either self-explanatory or rarely needs changing from the defaults.
 
 ### Top-Level
 
@@ -439,14 +439,14 @@ Two standalone scripts run the policy without any learner or gRPC connection —
 
 **Standard async inference:**
 ```bash
-python -m lerobot.rl.inference_pi05_async --config path/to/config.json
+python -m lerobot.rl.inference_pi05_async --config path/to/config.yaml
 ```
 
 Same threading model and action queue as the actor, but no transitions are streamed anywhere. The script still writes episode videos every `episode_logging_freq` episodes and dumps the buffer every `episode_save_freq` episodes, so a session can be reviewed afterward.
 
 **Interactive subtask injection:**
 ```bash
-python -m lerobot.rl.inference_pi05_async_interactive --config path/to/config.json
+python -m lerobot.rl.inference_pi05_async_interactive --config path/to/config.yaml
 ```
 
 Identical to the standard script, except the operator can type a subtask string into the terminal at any time. The text is tokenized and injected into the policy's subtask token cache, taking effect on the very next action chunk; the model's normal time-based subtask cache then resumes. Requires `subtask_regeneration_interval > 0` (e.g. 30) — otherwise the model regenerates subtask tokens every cycle and the override is overwritten before it takes effect.

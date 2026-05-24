@@ -78,7 +78,7 @@ class PI05FullConfig(PreTrainedConfig):
     fast_skip_tokens: int = 128
 
     # subtask stuff
-    max_decoding_steps: int = 200
+    max_decoding_steps: int = 24
     temperature: float = 0.0
     subtask_regeneration_interval: float = 2  # Regenerate subtask tokens every N seconds (0 = every call)
 

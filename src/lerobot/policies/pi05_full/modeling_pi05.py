@@ -998,7 +998,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         
         # Process images
         for img, img_mask in zip(images, img_masks, strict=True):
-
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
@@ -1328,7 +1327,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             images=images, img_masks=img_masks, tokens=high_level_task_tokens, subtask_tokens=subtask_tokens,
             masks=high_level_task_masks, subtask_masks=subtask_masks, fast_action_tokens=None, fast_action_masks=None
         )
-        
+
         # Ensure prefix_embs matches model dtype
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -1340,8 +1339,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_att_2d_masks = prefix_att_masks
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
-        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks, dtype=prefix_embs.dtype)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "sdpa"  # noqa: SLF001
 
         _, past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
@@ -1357,7 +1356,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         for step in range(num_steps):
             time = 1.0 + step * dt
             time_tensor = torch.tensor(time, dtype=torch.float32, device=device).expand(bsize)
-            
+
             # Ensure time_tensor matches model dtype
             if (
                 self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -1415,7 +1414,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 - generated_subtask_masks: (B, max_decoding_steps) bool mask (True for valid tokens, False for padding)
         """
         if max_decoding_steps is None:
-            max_decoding_steps = self.config.tokenizer_max_length
+            max_decoding_steps = self.config.max_decoding_steps
 
         bsize = tokens.shape[0]
         device = tokens.device
@@ -1493,7 +1492,6 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         #2. decoding phase
         # Generate remaining tokens one by one using the cache.
-
         for t in range(1, max_decoding_steps):
             # Embed the single previous token
             # We use embed_language_tokens directly to avoid overhead of full prefix embedding
@@ -1550,6 +1548,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             if finished.all():
                 break
 
+
         # pad rest only if shape less than max_decoding_steps, we should always return a shape of (bsize, max_decoding_steps)
         if generated_subtask_tokens.shape[1] < max_decoding_steps:
             generated_subtask_tokens = torch.cat([generated_subtask_tokens, torch.zeros((bsize, max_decoding_steps - generated_subtask_tokens.shape[1]), dtype=torch.long, device=device)], dim=1)
@@ -1587,14 +1586,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         prefix_offsets = torch.sum(prefix_pad_masks, dim=-1)[:, None]
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
-        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "eager"  # noqa: SLF001
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks, dtype=suffix_embs.dtype)
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = "sdpa"  # noqa: SLF001
 
         # HF attention layers append new K/V to a Cache object even when use_cache=False,
         # so the prefill cache would grow by suffix_len each denoise iteration. Snapshot
         # the prefix length and crop back after the forward to keep the cache stable.
         prefix_cache_len = past_key_values.get_seq_length()
-
         outputs_embeds, _ = self.paligemma_with_expert.forward(
             attention_mask=full_att_2d_masks_4d,
             position_ids=position_ids,
@@ -1603,6 +1601,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             use_cache=False,
             adarms_cond=[None, adarms_cond],
         )
+
         past_key_values.crop(prefix_cache_len)
 
         suffix_out = outputs_embeds[1]
@@ -1943,8 +1942,9 @@ class PI05FullPolicy(PreTrainedPolicy):
             if img.device != device:
                 img = img.to(device)
 
-            # Ensure float32 dtype for consistency
-            if img.dtype != torch.float32:
+            if img.dtype == torch.uint8:
+                img = img.to(torch.float32) / 255.0
+            elif img.dtype != torch.float32:
                 img = img.to(torch.float32)
 
             # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats
@@ -2027,7 +2027,7 @@ class PI05FullPolicy(PreTrainedPolicy):
         if should_regenerate:
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
                 images, img_masks, high_level_task_tokens, high_level_task_masks,
-                max_decoding_steps=self.config.tokenizer_max_length
+                max_decoding_steps=self.config.max_decoding_steps
             )
             self._cached_subtask_tokens = subtask_tokens
             self._cached_subtask_masks = subtask_masks

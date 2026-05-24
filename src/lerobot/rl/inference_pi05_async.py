@@ -22,7 +22,7 @@ and strictly avoids communicating with distributed learner servers, acting
 as an isolated test bed for Pi05 robotics deployment.
 
 Usage:
-    python lerobot/src/lerobot/rl/inference_pi05_async.py --config-path=config-hiserl.json
+    python lerobot/src/lerobot/rl/inference_pi05_async.py --config-path=config-hiserl.yaml
 """
 
 import logging
