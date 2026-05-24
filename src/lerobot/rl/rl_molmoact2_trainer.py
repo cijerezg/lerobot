@@ -85,6 +85,49 @@ def _saved_processor_path(cfg: Any) -> Path | None:
     return None
 
 
+_EXPECTED_FRAME_CONVERSION = "so101_v3_to_v21"
+_STATS_METADATA_KEYS = ("encoding", "frame_conversion", "chunk_size")
+
+
+def _validate_and_strip_anchor_stats_metadata(
+    stats: dict[str, Any], stats_path: str, cfg_policy: Any
+) -> dict[str, Any]:
+    """Pop metadata stamped by compute_delta_stats.py, validating against the policy config.
+
+    MolmoAct2 always trains on v2.1-frame stats, so frame_conversion must be
+    ``so101_v3_to_v21``. Raises with a clear message on any mismatch so a wrong
+    stats file fails before training rather than silently mis-aligning.
+    """
+    meta = {k: stats.pop(k, None) for k in _STATS_METADATA_KEYS}
+    expected_encoding = getattr(cfg_policy, "action_encoding", "absolute")
+    expected_chunk = getattr(cfg_policy, "chunk_size", None)
+
+    if meta["encoding"] is None and meta["frame_conversion"] is None:
+        raise ValueError(
+            f"Stats file {stats_path} has no encoding/frame_conversion metadata. "
+            f"It was likely produced by an older compute_delta_stats.py; re-run with "
+            f"--encoding {expected_encoding} --frame-conversion {_EXPECTED_FRAME_CONVERSION}."
+        )
+
+    if meta["encoding"] != expected_encoding:
+        raise ValueError(
+            f"Stats file {stats_path} has encoding={meta['encoding']!r} but "
+            f"cfg.policy.action_encoding={expected_encoding!r}."
+        )
+    if meta["frame_conversion"] != _EXPECTED_FRAME_CONVERSION:
+        raise ValueError(
+            f"Stats file {stats_path} has frame_conversion={meta['frame_conversion']!r} but "
+            f"MolmoAct2 requires {_EXPECTED_FRAME_CONVERSION!r}. Re-run compute_delta_stats.py "
+            f"with --frame-conversion {_EXPECTED_FRAME_CONVERSION}."
+        )
+    if meta["chunk_size"] is not None and expected_chunk is not None and meta["chunk_size"] != expected_chunk:
+        raise ValueError(
+            f"Stats file {stats_path} has chunk_size={meta['chunk_size']} but "
+            f"cfg.policy.chunk_size={expected_chunk}."
+        )
+    return stats
+
+
 def _override_action_stats(processors: tuple, action_stats: dict[str, Any]) -> tuple:
     for pipeline in processors:
         for step in getattr(pipeline, "steps", []):
@@ -159,6 +202,9 @@ class MolmoAct2Trainer(Trainer):
             if is_main_process:
                 logging.info(f"Loading {action_encoding} action stats from {stats_path}")
             action_stats_override = torch.load(os.path.expanduser(stats_path), map_location="cpu")
+            action_stats_override = _validate_and_strip_anchor_stats_metadata(
+                action_stats_override, stats_path, cfg.policy
+            )
 
         saved_processor_path = _saved_processor_path(cfg)
         if saved_processor_path is not None:
@@ -528,25 +574,9 @@ class MolmoAct2Trainer(Trainer):
         so the prompt step bins it into a "negative"/"positive" clause.
         """
         from lerobot.types import TransitionKey
-        from lerobot.utils.constants import OBS_STATE
 
         action_dim = self._action_dim(cfg)
         actions = actions[..., :action_dim]
-
-        action_encoding = getattr(cfg.policy, "action_encoding", "absolute")
-        if action_encoding in ("anchor", "delta"):
-            if OBS_STATE not in observations:
-                raise ValueError(f"action_encoding={action_encoding} requires {OBS_STATE} in observations")
-            anchor_state = observations[OBS_STATE][..., :action_dim]
-            if action_encoding == "anchor":
-                actions = actions - anchor_state[:, None, :]
-            else:
-                d_0 = actions[:, 0, :] - anchor_state
-                if actions.shape[1] > 1:
-                    d_rest = torch.diff(actions, dim=1)
-                    actions = torch.cat([d_0.unsqueeze(1), d_rest], dim=1)
-                else:
-                    actions = d_0.unsqueeze(1)
 
         pre_input: dict[str, Any] = {
             **observations,

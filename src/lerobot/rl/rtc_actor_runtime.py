@@ -44,6 +44,21 @@ from lerobot.utils.transition import Transition, move_state_dict_to_device, move
 logger = logging.getLogger(__name__)
 
 
+def _has_anchor_decode(postprocessor) -> bool:
+    """True when the postprocessor contains an AnchorDecodeStep (molmoact2 anchor/delta path)."""
+    return any(
+        getattr(step, "_registry_name", None) == "anchor_decode"
+        for step in getattr(postprocessor, "steps", [])
+    )
+
+
+def _has_v3_to_v21_frame_step(preprocessor) -> bool:
+    """True when the preprocessor maps v3.0 → v2.1, i.e. the model lives in v2.1 frame."""
+    return any(
+        getattr(step, "_registry_name", None) == "so101_v3_to_v21"
+        for step in getattr(preprocessor, "steps", [])
+    )
+
 
 def _action_dim(cfg) -> int:
     if hasattr(cfg.policy, "action_dim"):
@@ -276,10 +291,14 @@ def align_prev_actions(
     anchor_now: torch.Tensor,
     action_encoding: str,
     chunk_size: int,
-    postprocessor,
     normalizer,
 ) -> torch.Tensor:
-    """Re-align leftover normalized actions when anchor state changes."""
+    """Re-align leftover normalized actions when anchor state changes.
+
+    Operates entirely in the model's encoded-delta frame: uses the normalizer for
+    both directions (inverse to unnormalize, forward to renormalize). anchor_old
+    and anchor_now must be in the same frame as the normalizer stats.
+    """
     n_left = prev_actions.shape[0]
     action_dim = prev_actions.shape[1]
     offset = chunk_size - n_left
@@ -289,7 +308,7 @@ def align_prev_actions(
 
     right_padded = torch.zeros(chunk_size, action_dim, device=prev_actions.device, dtype=prev_actions.dtype)
     right_padded[offset:] = prev_actions
-    d_abs = postprocessor(right_padded)
+    d_abs = normalizer._normalize_action(right_padded, inverse=True)
 
     dev = d_abs.device
     delta_s = anchor_old.squeeze(0).to(dev) - anchor_now.squeeze(0).to(dev)
@@ -303,14 +322,20 @@ def align_prev_actions(
     return normalizer._normalize_action(left_padded, inverse=False)[:n_left]
 
 
-def _maybe_align_prev_actions(
+def _resolve_prev_actions_and_anchor(
     *,
     prev_actions: torch.Tensor | None,
     action_queue: ActionQueue,
     latest_obs: dict,
     policy,
-    postprocessor,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Return (prev_actions, anchor_now) ready for the next RTC inference call.
+
+    Aligns prev_actions to the current anchor when the encoded delta references
+    a stale s_0. For molmoact2 (pipeline ends in v2.1) both anchors are mapped
+    into v2.1 before being subtracted, so delta_s matches the normalizer frame.
+    Returns (prev_actions, None) for absolute encoding or when OBS_STATE is missing.
+    """
     action_encoding = getattr(policy.config, "action_encoding", "absolute")
     anchor_now = None
     if action_encoding not in {"anchor", "delta"}:
@@ -336,14 +361,22 @@ def _maybe_align_prev_actions(
         return prev_actions, anchor_now
 
     anchor_old = action_queue.anchor_state
-    logger.debug("[RTC] Alignment offset: %.3f", (anchor_old.to(anchor_now.device) - anchor_now).norm().item())
+    anchor_old_aligned, anchor_now_aligned = anchor_old, anchor_now
+    if _has_v3_to_v21_frame_step(policy.preprocessor):
+        from lerobot.policies.molmoact2.frame_so101 import arm_to_model
+        anchor_old_aligned = arm_to_model(anchor_old)
+        anchor_now_aligned = arm_to_model(anchor_now)
+
+    logger.debug(
+        "[RTC] Alignment offset: %.3f",
+        (anchor_old_aligned.to(anchor_now_aligned.device) - anchor_now_aligned).norm().item(),
+    )
     return align_prev_actions(
         prev_actions=prev_actions,
-        anchor_old=anchor_old,
-        anchor_now=anchor_now,
+        anchor_old=anchor_old_aligned,
+        anchor_now=anchor_now_aligned,
         action_encoding=action_encoding,
         chunk_size=policy.config.chunk_size,
-        postprocessor=postprocessor,
         normalizer=normalizer,
     ), anchor_now
 
@@ -419,12 +452,11 @@ def rtc_inference_worker(
 
                 action_index_before = action_queue.get_action_index()
                 prev_actions = action_queue.get_left_over()
-                prev_actions, anchor_now = _maybe_align_prev_actions(
+                prev_actions, anchor_now = _resolve_prev_actions_and_anchor(
                     prev_actions=prev_actions,
                     action_queue=action_queue,
                     latest_obs=latest_obs,
                     policy=policy,
-                    postprocessor=postprocessor,
                 )
 
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
@@ -454,20 +486,35 @@ def rtc_inference_worker(
                 # Keep original_actions normalized for RTC leftovers. The queue's
                 # processed_actions are robot-space actions, matching the PI05
                 # reference path before filtering/clamping and env execution.
-                unnormalized_actions = (
-                    postprocessor(original_actions)
-                    if postprocessor is not None
-                    else original_actions.clone()
-                )
-
-                if anchor_now is not None and action_encoding in {"anchor", "delta"}:
-                    anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
-                    if action_encoding == "anchor":
-                        processed_actions = unnormalized_actions + anchor_sq.to(unnormalized_actions.device)[None, :]
-                    else:
-                        processed_actions = torch.cumsum(unnormalized_actions, dim=0) + anchor_sq.to(unnormalized_actions.device)[None, :]
+                if (
+                    postprocessor is not None
+                    and anchor_now is not None
+                    and action_encoding in {"anchor", "delta"}
+                    and _has_anchor_decode(postprocessor)
+                ):
+                    # molmoact2: thread the v2.1 anchor through the postprocessor so
+                    # AnchorDecodeStep reconstructs the absolute v2.1 action, then
+                    # SO101V21ToV3Step maps to v3.0 for the robot.
+                    from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY
+                    from lerobot.policies.molmoact2.frame_so101 import arm_to_model
+                    anchor_v21 = arm_to_model(anchor_now.to(original_actions.device))
+                    processed_actions = postprocessor(
+                        {ACTION: original_actions, ANCHOR_KEY: anchor_v21}
+                    )
                 else:
-                    processed_actions = unnormalized_actions
+                    unnormalized_actions = (
+                        postprocessor(original_actions)
+                        if postprocessor is not None
+                        else original_actions.clone()
+                    )
+                    if anchor_now is not None and action_encoding in {"anchor", "delta"}:
+                        anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
+                        if action_encoding == "anchor":
+                            processed_actions = unnormalized_actions + anchor_sq.to(unnormalized_actions.device)[None, :]
+                        else:
+                            processed_actions = torch.cumsum(unnormalized_actions, dim=0) + anchor_sq.to(unnormalized_actions.device)[None, :]
+                    else:
+                        processed_actions = unnormalized_actions
 
                 processed_actions = apply_butterworth_filter(processed_actions)
 

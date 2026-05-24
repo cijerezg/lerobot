@@ -39,7 +39,12 @@ from lerobot.utils.constants import (
 from lerobot.utils.import_utils import require_package
 
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
-from .frame_so101 import SO101V3ToV21Step, SO101V21ToV3Step  # TODO(anchor): remove when anchor deltas land
+from .frame_so101 import SO101V3ToV21Step, SO101V21ToV3Step
+from .anchor_encoding import (
+    AnchorDecodeStep,
+    AnchorEncodeStep,
+    policy_action_with_anchor_to_transition,
+)
 
 ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
 ACTION_START_TOKEN = "<action_start>"  # nosec B105
@@ -888,10 +893,14 @@ def make_molmoact2_pre_post_processors(
     action_mask = _mask_list(ACTION)
     state_mask = _mask_list(OBS_STATE)
 
+    action_encoding = getattr(config, "action_encoding", "absolute")
+    use_anchor = action_encoding in ("anchor", "delta")
+
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
-        SO101V3ToV21Step(),  # TODO(anchor): remove when anchor deltas land
+        SO101V3ToV21Step(),
+        *([AnchorEncodeStep(encoding=action_encoding)] if use_anchor else []),
         MolmoAct2MaskedNormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
@@ -928,9 +937,14 @@ def make_molmoact2_pre_post_processors(
             norm_map=config.normalization_mapping,
             stats=masked_dataset_stats,
         ),
-        SO101V21ToV3Step(),  # TODO(anchor): remove when anchor deltas land
+        *([AnchorDecodeStep(encoding=action_encoding)] if use_anchor else []),
+        SO101V21ToV3Step(),
         DeviceProcessorStep(device="cpu"),
     ]
+
+    post_to_transition = (
+        policy_action_with_anchor_to_transition if use_anchor else policy_action_to_transition
+    )
 
     return (
         PolicyProcessorPipeline[dict[str, Any], dict[str, Any]](
@@ -940,7 +954,7 @@ def make_molmoact2_pre_post_processors(
         PolicyProcessorPipeline[PolicyAction, PolicyAction](
             steps=output_steps,
             name=POLICY_POSTPROCESSOR_DEFAULT_NAME,
-            to_transition=policy_action_to_transition,
+            to_transition=post_to_transition,
             to_output=transition_to_policy_action,
         ),
     )

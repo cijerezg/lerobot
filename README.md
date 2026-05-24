@@ -19,6 +19,18 @@ This is an active project and we expect to continually add more features and cap
 - A suite of metrics and validation tools to examine the model's internals like attention maps, clusters of representation, among others.
 
 
+## How to run MolmoAct2 inference
+
+The script is `lerobot/rl/inference_async.py`. It uses the `config_rl.yaml`. You can copy it and modify the key values:
+
+- `torch_compile`: make sure it's set to true
+- `inference_action_mode`: set to `continuous`
+- `checkpoint_path`: must be a local path to the original model. You can use `hf download allenai/MolmoAct2-SO100_101` to get it.
+- `pretrained_path`: Path to finetuned model if you are using one. Note that `checkpoint_path` still must be passed. When using a pretrained model, the stats come from it. If a pretrained model doesn't have stats, then the fallback is the stats from HF original model in `checkpoint_path`.
+
+
+
+
 ## Roadmap-ish
 
 **Currently working on integrating molmoact2 with all the current capabilities here**
