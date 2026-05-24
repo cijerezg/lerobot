@@ -1,43 +1,42 @@
+import copy
+import math
+from dataclasses import dataclass, field
+from typing import Literal
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from dataclasses import dataclass, field
-from typing import Literal
-import math
-import copy
 from transformers.models.gemma import modeling_gemma
 
-from lerobot.policies.pi_gemma import (
-    PiGemmaRMSNorm,
-    _gated_residual,
-    _get_pi_gemma_decoder_layer_base,
-)
-from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
+from lerobot.configs.policies import PreTrainedConfig
 from lerobot.optim.optimizers import AdamWConfig, MultiAdamConfig
 from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
-from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.policies.pi05_full.modeling_pi05 import PI05FullPolicy, PI05Pytorch, get_gemma_config, create_sinusoidal_pos_embedding
-from lerobot.configs.policies import PreTrainedConfig
+from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
+from lerobot.policies.pi05_full.modeling_pi05 import (
+    PI05FullPolicy,
+    PI05Pytorch,
+    get_gemma_config,
+    create_sinusoidal_pos_embedding,
+)
 from lerobot.policies.pi05_full.processor_pi05 import Pi05FullPrepareStateTokenizerProcessorStep
 from lerobot.processor import TokenizerProcessorStep
 from lerobot.rl.rl_trainer import TrainableParamsConfig
 from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig
 from lerobot.types import EnvTransition, TransitionKey
 from lerobot.utils.constants import (
-    OBS_STATE, 
-    OBS_LANGUAGE_TOKENS, 
-    OBS_LANGUAGE_ATTENTION_MASK, 
+    OBS_STATE,
+    OBS_LANGUAGE_TOKENS,
+    OBS_LANGUAGE_ATTENTION_MASK,
     ACTION,
     OBS_LANGUAGE_SUBTASK_TOKENS,
     OBS_LANGUAGE_SUBTASK_ATTENTION_MASK,
     ACTION_TOKENS,
     ACTION_TOKEN_MASK,
 )
-        
+
 
 from lerobot.policies.pi05_full.modeling_pi05 import make_att_2d_masks
-        
 
 
 @PreTrainedConfig.register_subclass("pi05_rl")
@@ -50,13 +49,15 @@ class PI05RLConfig(PI05FullConfig):
     action_dim: int = 6
     drop_n_last_frames: int = 2  # Drop the last n frames from the replay buffer
     critic_target_update_weight: float = 0.005
-    critic_target_update_every: int = 1  # Run Polyak every N optimizer steps (batch updates with proportionally larger τ to clear BF16 ULP)
+    critic_target_update_every: int = (
+        1  # Run Polyak every N optimizer steps (batch updates with proportionally larger τ to clear BF16 ULP)
+    )
     discount: float = 0.97
-    
+
     # Reward parameters
     reward_normalization_constant: float = 1.0
     terminal_failure_reward: float = -10.0
-    
+
     # Training parameter
     online_steps: int = 1000000
     online_buffer_capacity: int = 100000
@@ -73,10 +74,10 @@ class PI05RLConfig(PI05FullConfig):
     # Learning rates
     critic_lr: float = 3e-4
     optimizer_lr: float = 3e-4
-    
+
     # UTD
     utd_ratio: int = 1
-    
+
     # Device configuration
     actor_device: str | None = None
     learner_device: str | None = None
@@ -117,25 +118,25 @@ class PI05RLConfig(PI05FullConfig):
     # Advantage parameters
     inference_advantage: float = 1.0
     advantage_scaling: float = 1.0
-    
+
     # Checkpoint
     checkpoint_path: str | None = None
-    
+
     # Dataset stats (inherited from PreTrainedConfig? No, SAC defines it explicitly)
     action_encoding_stats_path: str | None = None  # Path to precomputed action encoding stats (.pt)
     dataset_stats: dict | None = None
-    
+
     # Storage device
     storage_device: str = "cpu"
-    
+
     # Shared encoder (required by learner.py logic, set to False for Pi05)
     shared_encoder: bool = False
-    
+
     # SAC compatibility (required by learner.py logic)
     num_discrete_actions: int | None = None
     vision_encoder_name: str | None = None
     freeze_vision_encoder: bool = False
-    
+
     # Actor-Learner
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
@@ -152,22 +153,25 @@ class PI05RLConfig(PI05FullConfig):
     def get_scheduler_preset(self) -> None:
         return None
 
+
 from transformers import CONFIG_MAPPING
 from transformers.models.gemma.modeling_gemma import GemmaRotaryEmbedding
 from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE
 
 # Hardcoded vocabulary size matching PaliGemmaWithExpertModel in modeling_pi05.py
 PALIGEMMA_VOCAB_SIZE = 257152
-PALIGEMMA_PAD_TOKEN_ID = 0 # Standard for Gemma/PaliGemma
+PALIGEMMA_PAD_TOKEN_ID = 0  # Standard for Gemma/PaliGemma
+
 
 class SwiGLU(nn.Module):
     def forward(self, x):
         x, gate = x.chunk(2, dim=-1)
         return F.silu(gate) * x
 
+
 class Pi05TransformerCritic(nn.Module):
     """Transformer-based Value Critic using Gemma architecture.
-    
+
     Features:
     - Separate 6-layer Gemma LLM (configurable).
     - Uses shared vision features from the actor (detached).
@@ -175,21 +179,22 @@ class Pi05TransformerCritic(nn.Module):
     - Uses multiple value query tokens (8) to avoid bottlenecks.
     - Input: Vision features + Text tokens (without advantage).
     """
+
     def __init__(self, config: PI05RLConfig):
         super().__init__()
         self.config = config
         self.dtype = getattr(torch, config.dtype) if hasattr(torch, config.dtype) else torch.float32
-        
+
         # Get Gemma config to match actor architecture
         paligemma_config = get_gemma_config(config.paligemma_variant)
         hidden_dim = paligemma_config.width
         vocab_size = PALIGEMMA_VOCAB_SIZE
-        
+
         # Configurable dimensions
         # Default to 6 layers as per PI06 design
         num_layers = getattr(config, "critic_llm_depth", 6)
         mlp_dim = paligemma_config.mlp_dim
-        
+
         critic_gemma_config = CONFIG_MAPPING["gemma"](
             head_dim=256,
             hidden_size=hidden_dim,
@@ -223,10 +228,9 @@ class Pi05TransformerCritic(nn.Module):
         # Transformer layers — PiGemma so the bare init stays compatible with the actor's
         # adaRMS / gated-residual layers that initialize_weights_from_actor copies in.
         pi_gemma_decoder_layer_base = _get_pi_gemma_decoder_layer_base()
-        self.layers = nn.ModuleList([
-            pi_gemma_decoder_layer_base(critic_gemma_config, layer_idx=i)
-            for i in range(num_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [pi_gemma_decoder_layer_base(critic_gemma_config, layer_idx=i) for i in range(num_layers)]
+        )
 
         # Final normalization
         self.norm = PiGemmaRMSNorm(hidden_dim, eps=critic_gemma_config.rms_norm_eps)
@@ -237,9 +241,7 @@ class Pi05TransformerCritic(nn.Module):
         self.bin_logit_head = nn.Linear(hidden_dim, 1)
 
         # Bin support and HL-Gauss bandwidth as buffers so they move with .to(device).
-        bin_centers = torch.linspace(
-            config.value_support_min, config.value_support_max, self.num_value_bins
-        )
+        bin_centers = torch.linspace(config.value_support_min, config.value_support_max, self.num_value_bins)
         self.register_buffer("bin_centers", bin_centers, persistent=False)
         bin_width = (config.value_support_max - config.value_support_min) / (self.num_value_bins - 1)
         self.hl_gauss_sigma = float(config.hl_gauss_sigma_ratio * bin_width)
@@ -247,32 +249,32 @@ class Pi05TransformerCritic(nn.Module):
         # Vision components (initialized in initialize_weights_from_actor)
         self.vision_tower = None
         self.multi_modal_projector = None
-        
+
     def initialize_weights_from_actor(self, actor_model):
         """Initialize critic weights from the actor's pretrained weights."""
         # Access the underlying PaliGemma model
         if hasattr(actor_model, "paligemma_with_expert"):
-             paligemma_model = actor_model.paligemma_with_expert.paligemma
+            paligemma_model = actor_model.paligemma_with_expert.paligemma
         elif hasattr(actor_model, "paligemma"):
-             paligemma_model = actor_model.paligemma
+            paligemma_model = actor_model.paligemma
         else:
-             raise ValueError(f"Could not find paligemma in actor model of type {type(actor_model)}")
-             
+            raise ValueError(f"Could not find paligemma in actor model of type {type(actor_model)}")
+
         source_model = paligemma_model.model.language_model
 
         # Rotary embeddings are tiny and needed locally, deepcopy to avoid EMA bug
         self.rotary_emb = copy.deepcopy(source_model.rotary_emb)
-        
+
         # Copy Layers (Deepcopy to ensure we get the exact same class and weights)
         num_critic_layers = self.critic_gemma_config.num_hidden_layers
         self.layers = nn.ModuleList([copy.deepcopy(source_model.layers[i]) for i in range(num_critic_layers)])
-        
+
         # Copy Norm
         self.norm = copy.deepcopy(source_model.norm)
-        
+
         # Copy Vision Components and truncate layers to 13
         self.vision_tower = copy.deepcopy(paligemma_model.model.vision_tower)
-        if hasattr(self.vision_tower, 'vision_model') and hasattr(self.vision_tower.vision_model, 'encoder'):
+        if hasattr(self.vision_tower, "vision_model") and hasattr(self.vision_tower.vision_model, "encoder"):
             self.vision_tower.vision_model.encoder.layers = self.vision_tower.vision_model.encoder.layers[:13]
         self.multi_modal_projector = copy.deepcopy(paligemma_model.model.multi_modal_projector)
 
@@ -307,34 +309,34 @@ class Pi05TransformerCritic(nn.Module):
                 probs:  [B, num_value_bins] — softmax distribution over the value support
                 value:  [B, 1] — expected value E[V] under `probs`
         """
-        
+
         batch_size = text_embs.shape[0]
-        
+
         # Expand queries
-        queries = self.value_queries.repeat(batch_size, 1, 1) # [B, num_queries, D]
-        
+        queries = self.value_queries.repeat(batch_size, 1, 1)  # [B, num_queries, D]
+
         # Concatenate: [Vision, Text, Queries]
         hidden_states = torch.cat([vision_features, text_embs, queries], dim=1)
-        
+
         # Create Attention Mask
         vision_len = vision_features.shape[1]
         vision_mask = torch.ones(batch_size, vision_len, dtype=torch.bool, device=text_embs.device)
         query_mask = torch.ones(batch_size, self.num_query_tokens, dtype=torch.bool, device=text_embs.device)
-        
+
         # Full mask: [Vision, Text, Queries]
         full_mask = torch.cat([vision_mask, token_masks, query_mask], dim=1)
-        
+
         # Create 4D attention mask
         full_seq_len = full_mask.shape[1]
         attention_mask = full_mask[:, None, None, :].expand(batch_size, 1, full_seq_len, full_seq_len)
         attention_mask = torch.where(attention_mask, 0.0, OPENPI_ATTENTION_MASK_VALUE)
-        
+
         # Position IDs
         position_ids = torch.cumsum(full_mask, dim=1) - 1
-        
+
         # Rotary Embeddings
         cos, sin = self.rotary_emb(hidden_states, position_ids)
-        
+
         # Apply layers manually to support gated residuals from pretrained weights
         for i, layer in enumerate(self.layers):
             # Input Norm
@@ -347,16 +349,16 @@ class Pi05TransformerCritic(nn.Module):
             # Attention Projections
             input_shape = hidden_states_norm.shape[:-1]
             hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
-            
+
             query_states = layer.self_attn.q_proj(hidden_states_norm).view(hidden_shape).transpose(1, 2)
             key_states = layer.self_attn.k_proj(hidden_states_norm).view(hidden_shape).transpose(1, 2)
             value_states = layer.self_attn.v_proj(hidden_states_norm).view(hidden_shape).transpose(1, 2)
-            
+
             # Apply RoPE
             query_states, key_states = modeling_gemma.apply_rotary_pos_emb(
                 query_states, key_states, cos, sin, unsqueeze_dim=1
             )
-            
+
             # Attention Forward
             att_output, _ = modeling_gemma.eager_attention_forward(
                 layer.self_attn,
@@ -366,40 +368,40 @@ class Pi05TransformerCritic(nn.Module):
                 attention_mask,
                 layer.self_attn.scaling,
             )
-            
+
             # Reshape back and Project
             att_output = att_output.reshape(batch_size, -1, self.critic_gemma_config.hidden_size)
             out_emb = layer.self_attn.o_proj(att_output)
-            
+
             # First Residual (Gated)
             if gate is not None:
                 out_emb = _gated_residual(hidden_states, out_emb, gate)
             else:
                 out_emb = hidden_states + out_emb
-                
+
             after_first_residual = out_emb.clone()
-            
+
             # Post Attention Norm
             norm_out = layer.post_attention_layernorm(out_emb, cond=None)
             if isinstance(norm_out, tuple):
                 out_emb, gate = norm_out
             else:
                 out_emb, gate = norm_out, None
-                
+
             # MLP
             out_emb = layer.mlp(out_emb)
-            
+
             # Second Residual (Gated)
             if gate is not None:
                 hidden_states = _gated_residual(after_first_residual, out_emb, gate)
             else:
                 hidden_states = after_first_residual + out_emb
-            
+
         # Final Norm
         hidden_states = self.norm(hidden_states)
         if isinstance(hidden_states, tuple):
             hidden_states = hidden_states[0]
-        
+
         # Extract Queries (At the END)
         start_idx = vision_features.shape[1] + text_embs.shape[1]
         queries_out = hidden_states[:, start_idx:, :]  # [B, num_value_bins, D]
@@ -432,9 +434,7 @@ class Pi05TransformerCritic(nn.Module):
         # Internal edges: midpoints between consecutive bin centers.
         internal_edges = 0.5 * (self.bin_centers[:-1] + self.bin_centers[1:])  # [num_value_bins - 1]
         # CDF at each internal edge under N(target_v, σ²)
-        z = (internal_edges.unsqueeze(0) - target_v.unsqueeze(-1)) / (
-            self.hl_gauss_sigma * math.sqrt(2)
-        )
+        z = (internal_edges.unsqueeze(0) - target_v.unsqueeze(-1)) / (self.hl_gauss_sigma * math.sqrt(2))
         cdf_internal = 0.5 * (1.0 + torch.erf(z))  # [B, num_value_bins - 1]
 
         # Pad with 0 at -∞ and 1 at +∞ so boundary bins absorb the tails.
@@ -463,14 +463,15 @@ class Pi05TransformerCritic(nn.Module):
         idx = torch.argmin(torch.abs(self.bin_centers.unsqueeze(0) - target_v.unsqueeze(-1)), dim=-1)
         return F.one_hot(idx, num_classes=self.bin_centers.shape[0]).to(dtype=self.bin_centers.dtype)
 
+
 class PI05RLPytorch(PI05Pytorch):
     """Subclass of PI05Pytorch to inject Advantage Conditioning."""
-    
+
     def __init__(self, config: PI05RLConfig, rtc_processor=None):
         super().__init__(config, rtc_processor)
         self.log_counter = 0
         self.suppress_debug_log = False
-        
+
     def embed_suffix(self, noisy_actions, timestep):
         """Embed noisy_actions, timestep."""
         # Call parent to get standard embeddings and time embedding (as adarms_cond)
@@ -513,7 +514,14 @@ class PI05RLPytorch(PI05Pytorch):
 
         if prefix_embs is None:
             prefix_embs, prefix_pad_masks, prefix_att_masks, image_len = self.embed_prefix(
-                images, img_masks, high_level_task_tokens, subtask_tokens, high_level_task_masks, subtask_masks, action_tokens, action_masks
+                images,
+                img_masks,
+                high_level_task_tokens,
+                subtask_tokens,
+                high_level_task_masks,
+                subtask_masks,
+                action_tokens,
+                action_masks,
             )
         else:
             # Assume prefix_embs already contains everything needed
@@ -523,7 +531,7 @@ class PI05RLPytorch(PI05Pytorch):
             task_len_temp = high_level_task_tokens.shape[1] if high_level_task_tokens is not None else 0
             subtask_len_temp = subtask_tokens.shape[1] if subtask_tokens is not None else 0
             fast_len_temp = action_tokens.shape[1] if action_tokens is not None else 0
-            
+
             image_len = prefix_len - task_len_temp - subtask_len_temp - fast_len_temp
 
             # The new forward constructs "combined_att_2d_masks" using this image_len implicitly (via previous logic if we were to reuse it)
@@ -541,22 +549,24 @@ class PI05RLPytorch(PI05Pytorch):
 
         # Re-create attention masks logic from PI05Pytorch.forward (new)
         # But adapted to use provided prefix_att_masks
-        
+
         suffix_att_masks = make_att_2d_masks(suffix_pad_masks, suffix_att_masks)
-        
+
         bsize = prefix_embs.shape[0]
         prefix_len = prefix_pad_masks.shape[1]
         suffix_len = suffix_pad_masks.shape[1]
         total_len = prefix_len + suffix_len
-        
-        combined_att_2d_masks = torch.zeros(bsize, total_len, total_len, dtype=torch.bool, device=prefix_embs.device)
-        
+
+        combined_att_2d_masks = torch.zeros(
+            bsize, total_len, total_len, dtype=torch.bool, device=prefix_embs.device
+        )
+
         # top-left: prefix attends to prefix
         combined_att_2d_masks[:, :prefix_len, :prefix_len] = prefix_att_masks
-        
+
         # bottom-right: suffix attends to suffix
         combined_att_2d_masks[:, prefix_len:, prefix_len:] = suffix_att_masks
-        
+
         # bottom-left: suffix attends to prefix EXCEPT FAST tokens
         # We need to know where FAST tokens are.
         # If we passed None for action_tokens, fast_len is 0.
@@ -568,14 +578,13 @@ class PI05RLPytorch(PI05Pytorch):
             prefix_without_fast_len = prefix_len - fast_len
         else:
             prefix_without_fast_len = prefix_len
-            
+
         combined_att_2d_masks[:, prefix_len:, :prefix_without_fast_len] = True
-        
+
         combined_pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         pad_2d_masks = combined_pad_masks[:, None, :] * combined_pad_masks[:, :, None]
         att_2d_masks = combined_att_2d_masks & pad_2d_masks
-        
-        
+
         position_ids = torch.cumsum(combined_pad_masks, dim=1) - 1
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
@@ -597,7 +606,9 @@ class PI05RLPytorch(PI05Pytorch):
         # Calculate losses
         # Flow loss
         suffix_out = suffix_out[:, -self.config.chunk_size :]
-        suffix_out = suffix_out.to(dtype=self.action_out_proj.weight.dtype) # Ensure float32 if proj is float32
+        suffix_out = suffix_out.to(
+            dtype=self.action_out_proj.weight.dtype
+        )  # Ensure float32 if proj is float32
 
         def action_out_proj_func(suffix_out):
             return self.action_out_proj(suffix_out)
@@ -609,7 +620,7 @@ class PI05RLPytorch(PI05Pytorch):
         flow_loss = F.mse_loss(u_t[:, :, :action_dim], v_t[:, :, :action_dim], reduction="none")
 
         flow_loss_mean = flow_loss.mean()
-        
+
         subtask_ce_loss = torch.tensor(0.0, device=actions.device)
         action_ce_loss = torch.tensor(0.0, device=actions.device)
 
@@ -631,18 +642,18 @@ class PI05RLPytorch(PI05Pytorch):
             if subtask_tokens is not None:
                 task_len = high_level_task_tokens.shape[1]
                 # Indices: Image + Task -> Subtask
-                
+
                 start_idx = image_len + task_len
                 end_idx = start_idx + subtask_len
-                 
-                 # Logits range: start_idx-1 to end_idx-1
+
+                # Logits range: start_idx-1 to end_idx-1
                 subtask_logits = logits[:, start_idx - 1 : end_idx - 1, :].contiguous()
                 subtask_labels = subtask_tokens.contiguous()
 
                 loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
                 st_loss = loss_fct(subtask_logits.view(-1, PALIGEMMA_VOCAB_SIZE), subtask_labels.view(-1))
-                 
-                 # Reshape and mask
+
+                # Reshape and mask
                 st_loss = st_loss.view(subtask_labels.shape)
                 st_loss = st_loss.clamp(max=15.0)
                 if subtask_masks is not None:
@@ -651,21 +662,21 @@ class PI05RLPytorch(PI05Pytorch):
                 else:
                     subtask_ce_loss = st_loss.mean()
 
-             # Calculate Fast Action Loss
+            # Calculate Fast Action Loss
             if action_tokens is not None:
                 task_len = high_level_task_tokens.shape[1]
                 prev_len = image_len + task_len + subtask_len
-                 
+
                 start_idx = prev_len
                 end_idx = start_idx + fast_len
-                 
-                 # Logits range: start_idx-1 to end_idx-1
+
+                # Logits range: start_idx-1 to end_idx-1
                 action_logits = logits[:, start_idx - 1 : end_idx - 1, :].contiguous()
                 action_labels = action_tokens.contiguous()
-                 
+
                 loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
                 act_loss = loss_fct(action_logits.view(-1, PALIGEMMA_VOCAB_SIZE), action_labels.view(-1))
-                
+
                 # Reshape to [B, T] to match mask
                 act_loss = act_loss.view(action_labels.shape)
                 act_loss = act_loss.clamp(max=15.0)
@@ -686,18 +697,22 @@ class PI05RLPytorch(PI05Pytorch):
 
         self.log_counter += 1
         if self.log_counter % 240 == 0 and not self.suppress_debug_log:
-            print(f"[Actor Loss] Total: {total_loss.item():.4f} | Flow: {flow_loss.mean().item():.4f} | ActionCE: {action_ce_loss.item():.4f} | SubtaskCE: {subtask_ce_loss.item():.4f}")
+            print(
+                f"[Actor Loss] Total: {total_loss.item():.4f} | Flow: {flow_loss.mean().item():.4f} | ActionCE: {action_ce_loss.item():.4f} | SubtaskCE: {subtask_ce_loss.item():.4f}"
+            )
             if subtask_tokens is not None:
                 pred_ids = subtask_logits.argmax(dim=-1)  # [B, subtask_len]
                 for i in range(min(2, pred_ids.shape[0])):
-                    tgt  = self._paligemma_tokenizer.decode(subtask_labels[i], skip_special_tokens=True).strip()
+                    tgt = self._paligemma_tokenizer.decode(
+                        subtask_labels[i], skip_special_tokens=True
+                    ).strip()
                     pred = self._paligemma_tokenizer.decode(pred_ids[i], skip_special_tokens=True).strip()
                     print(f"  [subtask {i}] target: {tgt!r}  pred: {pred!r}")
             if action_tokens is not None:
                 act_pred_ids = action_logits.argmax(dim=-1)  # [B, fast_len]
                 for i in range(min(2, act_pred_ids.shape[0])):
                     mask_i = action_masks[i].bool() if action_masks is not None else slice(None)
-                    tgt  = action_labels[i][mask_i].tolist()
+                    tgt = action_labels[i][mask_i].tolist()
                     pred = act_pred_ids[i][mask_i].tolist()
                     pairs = list(zip(tgt, pred))
                     print(f"  [action  {i}] (target,pred): {pairs}")
@@ -711,16 +726,33 @@ class PI05RLPytorch(PI05Pytorch):
             "subtask_ce_loss": subtask_ce_loss,
         }
 
-
-
-    def sample_actions(self, images, img_masks, high_level_task_tokens, high_level_task_masks, subtask_tokens, subtask_masks, noise=None, num_steps=None, **kwargs) -> Tensor:
+    def sample_actions(
+        self,
+        images,
+        img_masks,
+        high_level_task_tokens,
+        high_level_task_masks,
+        subtask_tokens,
+        subtask_masks,
+        noise=None,
+        num_steps=None,
+        **kwargs,
+    ) -> Tensor:
         """Sample actions."""
         # Just call super but handle None for subtasks if needed
         # The base implementation handles None for subtasks/fast tokens in embed_prefix
         return super().sample_actions(
-            images, img_masks, high_level_task_tokens, high_level_task_masks, 
-            subtask_tokens, subtask_masks, noise=noise, num_steps=num_steps, **kwargs
+            images,
+            img_masks,
+            high_level_task_tokens,
+            high_level_task_masks,
+            subtask_tokens,
+            subtask_masks,
+            noise=noise,
+            num_steps=num_steps,
+            **kwargs,
         )
+
 
 class PI05RLPolicy(PI05FullPolicy):
     config_class = PI05RLConfig
@@ -729,7 +761,7 @@ class PI05RLPolicy(PI05FullPolicy):
         # We need to initialize the base class but swap the model for our RL version
         # PreTrainedPolicy.__init__ calls self.model = ...
         # So we override __init__ to use PI05RLPytorch
-        
+
         # Skip PI05FullPolicy.__init__ to avoid creating PI05Pytorch
         # Call PreTrainedPolicy.__init__ directly
         super(PI05FullPolicy, self).__init__(config)
@@ -739,7 +771,7 @@ class PI05RLPolicy(PI05FullPolicy):
         self.init_rtc_processor()
         # Use our subclassed model
         self.model = PI05RLPytorch(config, rtc_processor=self.rtc_processor)
-        
+
         self.critic_log_counter = 0
 
         # --- RL Integration ---
@@ -749,12 +781,12 @@ class PI05RLPolicy(PI05FullPolicy):
             self.critic_target = Pi05TransformerCritic(config)
             # We will sync weights after loading the actor (if pretrained)
             # or initialize from actor now if not loading from checkpoint
-            
+
             # Note: Device placement is handled by the caller
             # Do not call self.critic.to(device) here
-            
-            self.critic_ensemble = self.critic 
-        
+
+            self.critic_ensemble = self.critic
+
         # Initialize Temperature (Alpha) - Unused but kept for interface
         self.actor = self.model
 
@@ -772,19 +804,19 @@ class PI05RLPolicy(PI05FullPolicy):
                 # Try to find model.safetensors or pytorch_model.bin
                 if os.path.exists(os.path.join(checkpoint_path, "model.safetensors")):
                     checkpoint_file = os.path.join(checkpoint_path, "model.safetensors")
-                    state_dict = load_file(checkpoint_file)
+                    state_dict = _load_with_progress(checkpoint_file, "safetensors checkpoint")
                 elif os.path.exists(os.path.join(checkpoint_path, "pytorch_model.bin")):
                     checkpoint_file = os.path.join(checkpoint_path, "pytorch_model.bin")
-                    state_dict = torch.load(checkpoint_file, map_location="cpu")
+                    state_dict = _load_with_progress(checkpoint_file, "torch checkpoint")
                 else:
                     # Fallback to vanilla loading if no weight file found directly
-                    print("No weight file found directly, falling back to vanilla loading")
+                    print("[pi05_rl] No weight file found directly, falling back to vanilla loading")
                     state_dict = None
             elif os.path.isfile(checkpoint_path):
                 if checkpoint_path.endswith(".safetensors"):
-                    state_dict = load_file(checkpoint_path)
+                    state_dict = _load_with_progress(checkpoint_path, "safetensors checkpoint")
                 else:
-                    state_dict = torch.load(checkpoint_path, map_location="cpu")
+                    state_dict = _load_with_progress(checkpoint_path, "torch checkpoint")
             else:
                 # Path looks local (contains os.sep or starts with '.') but doesn't exist — error out.
                 if os.sep in checkpoint_path or checkpoint_path.startswith("."):
@@ -798,48 +830,59 @@ class PI05RLPolicy(PI05FullPolicy):
             is_rl_checkpoint = False
             if state_dict is not None:
                 # Check for RL-specific keys
-                if any("critic" in k for k in state_dict.keys()) or any("advantage_mlp" in k for k in state_dict.keys()):
+                if any("critic" in k for k in state_dict.keys()) or any(
+                    "advantage_mlp" in k for k in state_dict.keys()
+                ):
                     is_rl_checkpoint = True
                     print("Detected RL checkpoint (contains critic/advantage layers)")
-            
+
             if is_rl_checkpoint:
                 # Load components separately to avoid aliasing issues (critic vs critic_ensemble)
-                print("Loading actor and critic components separately...")
-                
+                print("[pi05_rl] Loading actor and critic components separately...")
+
                 actor_state_dict = {}
                 critic_state_dict = {}
-                
+
                 for k, v in state_dict.items():
                     if k.startswith("actor."):
                         # Strip 'actor.' prefix for loading into self.model
-                        new_key = k[6:] # len("actor.") == 6
+                        new_key = k[6:]  # len("actor.") == 6
                         actor_state_dict[new_key] = v
                     elif k.startswith("critic."):
                         # Strip 'critic.' prefix for loading into self.critic
-                        new_key = k[7:] # len("critic.") == 7
+                        new_key = k[7:]  # len("critic.") == 7
                         critic_state_dict[new_key] = v
-                
+                print(
+                    f"[pi05_rl] Split state dict: {len(actor_state_dict)} actor tensors, "
+                    f"{len(critic_state_dict)} critic tensors."
+                )
+
                 # Handle tied weights for actor
                 # Check for missing embed_tokens and populate from lm_head
                 embed_key_suffix = "paligemma.model.language_model.embed_tokens.weight"
                 lm_head_suffix = "paligemma.lm_head.weight"
-                
+
                 keys_to_add = {}
                 for k, v in actor_state_dict.items():
                     if k.endswith(lm_head_suffix):
-                        prefix = k[:-len(lm_head_suffix)]
+                        prefix = k[: -len(lm_head_suffix)]
                         embed_key = prefix + embed_key_suffix
                         if embed_key not in actor_state_dict:
-                             print(f"Populating missing {embed_key} from {k} (tied weights)")
-                             keys_to_add[embed_key] = v
+                            print(f"Populating missing {embed_key} from {k} (tied weights)")
+                            keys_to_add[embed_key] = v
                 actor_state_dict.update(keys_to_add)
 
                 # Load actor
+                _t = _time.time()
+                print("[pi05_rl] Loading actor state dict into model...")
                 missing_actor, unexpected_actor = self.model.load_state_dict(actor_state_dict, strict=False)
-                print(f"Actor loaded. Missing: {len(missing_actor)}, Unexpected: {len(unexpected_actor)}")
+                print(
+                    f"[pi05_rl] Actor loaded in {_time.time() - _t:.1f}s. "
+                    f"Missing: {len(missing_actor)}, Unexpected: {len(unexpected_actor)}"
+                )
                 if missing_actor:
-                    print(f"Sample missing actor: {missing_actor[:5]}")
-                
+                    print(f"[pi05_rl] Sample missing actor: {missing_actor[:5]}")
+
                 # Load critic
                 if hasattr(self, "critic"):
                     # Must initialize vision tower structure (nn.Module) from actor before
@@ -849,38 +892,45 @@ class PI05RLPolicy(PI05FullPolicy):
                     self._init_critic_from_actor()
 
                     # Now override all structure with the trained checkpoint weights.
-                    missing_critic, unexpected_critic = self.critic.load_state_dict(critic_state_dict, strict=False)
-                    print(f"Critic loaded. Missing: {len(missing_critic)}, Unexpected: {len(unexpected_critic)}")
+                    missing_critic, unexpected_critic = self.critic.load_state_dict(
+                        critic_state_dict, strict=False
+                    )
+                    print(
+                        f"[pi05_rl] Critic loaded in {_time.time() - _t:.1f}s. "
+                        f"Missing: {len(missing_critic)}, Unexpected: {len(unexpected_critic)}"
+                    )
                     if missing_critic:
-                        print(f"Sample missing critic: {missing_critic[:5]}")
+                        print(f"[pi05_rl] Sample missing critic: {missing_critic[:5]}")
 
                     # Sync critic_target
-                    print("Syncing critic_target with loaded critic...")
+                    _t = _time.time()
+                    print("[pi05_rl] Syncing critic_target with loaded critic...")
                     self.critic_target.load_state_dict(self.critic.state_dict())
+                    print(f"[pi05_rl] critic_target synced in {_time.time() - _t:.1f}s.")
 
                 # NOTE: PI05 uses external preprocessors for normalization instead of internal modules.
-                print("✓ RL components loaded (Normalization is handled by external preprocessor)")
-                    
+                print(
+                    f"[pi05_rl] ✓ RL components loaded in {_time.time() - _t_total:.1f}s "
+                    "(Normalization is handled by external preprocessor)"
+                )
+
             else:
                 # Vanilla checkpoint loading (original logic)
                 print("Loading as vanilla Pi05 checkpoint")
                 # Load a vanilla PI05Policy to get the pretrained weights
                 temp_policy = PI05FullPolicy.from_pretrained(
-                    config.checkpoint_path,
-                    config=config,
-                    strict=False
+                    config.checkpoint_path, config=config, strict=False
                 )
                 # Copy weights to our RL model (strict=False allows RL-specific layers to keep their init)
                 missing_keys, unexpected_keys = self.model.load_state_dict(
-                    temp_policy.model.state_dict(), 
-                    strict=False
+                    temp_policy.model.state_dict(), strict=False
                 )
-                
+
                 # Initialize critic from actor weights since we don't have a trained critic
                 if config.use_separate_critic:
                     print("Initializing critic from pretrained actor weights...")
                     self._init_critic_from_actor()
-                
+
                 print("✓ Pretrained Pi05 weights loaded successfully")
                 print("  (Normalization is handled by external preprocessor, not policy)")
                 del temp_policy  # Free memory
@@ -896,7 +946,7 @@ class PI05RLPolicy(PI05FullPolicy):
             self.critic_target.load_state_dict(self.critic.state_dict())
             self.critic_target.requires_grad_(False)
             self.critic_target.eval()
-            
+
             # Handle dtype
             if config.dtype == "bfloat16":
                 self.critic = self.critic.to(dtype=torch.bfloat16)
@@ -916,17 +966,17 @@ class PI05RLPolicy(PI05FullPolicy):
             self._share_critic_embeddings()
 
         self.reset()
-        
+
     def _init_critic_from_actor(self):
         """Initialize critic weights from the actor's pretrained weights."""
-        if not hasattr(self, 'critic'):
+        if not hasattr(self, "critic"):
             return
-            
+
         # Use the helper method in Pi05TransformerCritic
         self.critic.initialize_weights_from_actor(self.model)
-        
+
         # Initialize target critic to match
-        if hasattr(self, 'critic_target'):
+        if hasattr(self, "critic_target"):
             # Initialize structure first
             self.critic_target.initialize_weights_from_actor(self.model)
             # Then load weights (redundant but safe)
@@ -968,38 +1018,40 @@ class PI05RLPolicy(PI05FullPolicy):
                 target_param.data.mul_(1 - self.config.critic_target_update_weight)
                 target_param.data.add_(param.data * self.config.critic_target_update_weight)
 
-    def get_vision_features(self, batch: dict[str, Tensor], use_grad: bool = True, encoder_module=None) -> tuple[Tensor, Tensor]:
+    def get_vision_features(
+        self, batch: dict[str, Tensor], use_grad: bool = True, encoder_module=None
+    ) -> tuple[Tensor, Tensor]:
         """Extract vision features and their padding masks from the batch."""
         with torch.set_grad_enabled(use_grad):
             current_batch = batch.copy()
             if "state" in batch:
                 current_batch.update(batch["state"])
             images, img_masks = self._preprocess_images(current_batch)
-            
+
             vision_features = []
             vision_pad_masks = []
-            
+
             encoder = encoder_module if encoder_module is not None else self.model.paligemma_with_expert
-            
+
             for img, img_mask in zip(images, img_masks):
                 # img: [B, C, H, W]
                 # img_mask: [B]
-                feat = encoder.embed_image(img) # [B, N, D]
+                feat = encoder.embed_image(img)  # [B, N, D]
                 vision_features.append(feat)
-                
+
                 B, N, _ = feat.shape
                 # Create mask: [B, N]
                 mask = img_mask[:, None].expand(B, N)
                 vision_pad_masks.append(mask)
-            
+
             vision_features = torch.cat(vision_features, dim=1)
             vision_pad_masks = torch.cat(vision_pad_masks, dim=1)
-            
+
             return vision_features, vision_pad_masks
 
     def forward(
-        self, 
-        batch: dict[str, Tensor], 
+        self,
+        batch: dict[str, Tensor],
         model: Literal["actor", "critic", "critic_value"] | None = None,
         external_metrics: dict[str, Tensor] | None = None,
     ) -> tuple[Tensor, dict] | dict[str, Tensor]:
@@ -1008,11 +1060,13 @@ class PI05RLPolicy(PI05FullPolicy):
         # We always need vision features.
         # For 'actor', we need gradients.
         # For 'critic', we DO NOT need gradients for the vision encoder (it's detached).
-        use_grad = (model != "critic")
-        
+        use_grad = model != "critic"
+
         # Actor computes vision features inside embed_prefix; only critic/critic_value need them here.
         if model != "actor":
-            vision_features, vision_pad_masks = self.get_vision_features(batch, use_grad=use_grad, encoder_module=self.critic)
+            vision_features, vision_pad_masks = self.get_vision_features(
+                batch, use_grad=use_grad, encoder_module=self.critic
+            )
             critic_vision_features = vision_features
             critic_vision_masks = vision_pad_masks
 
@@ -1025,23 +1079,22 @@ class PI05RLPolicy(PI05FullPolicy):
 
         # 2. Critic Tokens (No Advantage)
         critic_tokens = current_batch["critic_tokens"]
-        critic_token_masks = current_batch["critic_pad_mask"] # Assuming this key
-    
+        critic_token_masks = current_batch["critic_pad_mask"]  # Assuming this key
+
         # Embed critic tokens using Actor's embedding layer
         # We use the actor's embedding layer which is shared/frozen
         # We need to access it from the model
         actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
         critic_text_embs = actor_embed_layer(critic_tokens)
-        
+
         # Detach embeddings to prevent critic updates from affecting the actor's language model.
         critic_text_embs = critic_text_embs.detach()
-
 
         if model != "critic":
             # Compute full prefix embeddings for actor
             # We need images and img_masks for embed_prefix, so re-extract them
             images, img_masks = self._preprocess_images(current_batch)
-            
+
             # Extract subtask and action tokens from batch if available
             subtask_tokens = current_batch.get(OBS_LANGUAGE_SUBTASK_TOKENS, None)
             subtask_masks = current_batch.get(OBS_LANGUAGE_SUBTASK_ATTENTION_MASK, None)
@@ -1049,12 +1102,18 @@ class PI05RLPolicy(PI05FullPolicy):
             action_masks = current_batch.get(ACTION_TOKEN_MASK, None)
 
             prefix_embs, prefix_pad_masks, prefix_att_masks, image_len = self.model.embed_prefix(
-                images, img_masks, actor_tokens, subtask_tokens, actor_masks, subtask_masks, action_tokens, action_masks
+                images,
+                img_masks,
+                actor_tokens,
+                subtask_tokens,
+                actor_masks,
+                subtask_masks,
+                action_tokens,
+                action_masks,
             )
-            
+
         # --- Branching Logic ---
-        
-        
+
         if model == "actor":
             # Calculate Advantage
             # If external metrics provided, use them to avoid redundant computation
@@ -1064,25 +1123,25 @@ class PI05RLPolicy(PI05FullPolicy):
             reward = external_metrics.get("rewards", torch.tensor(0.0))
 
             actions = self.prepare_action(batch)
-            
+
             # We pass precomputed prefix embeddings to avoid re-computation
             actor_output = self.model(
-                images=None, 
+                images=None,
                 img_masks=None,
                 high_level_task_tokens=actor_tokens,
                 high_level_task_masks=actor_masks,
-                subtask_tokens=subtask_tokens, # Pass captured subtask tokens
+                subtask_tokens=subtask_tokens,  # Pass captured subtask tokens
                 subtask_masks=subtask_masks,
-                action_tokens=action_tokens, # Pass captured action tokens
+                action_tokens=action_tokens,  # Pass captured action tokens
                 action_masks=action_masks,
                 actions=actions,
-                noise=None, 
+                noise=None,
                 time=None,
                 prefix_embs=prefix_embs,
                 prefix_pad_masks=prefix_pad_masks,
-                prefix_att_masks=prefix_att_masks
+                prefix_att_masks=prefix_att_masks,
             )
-            
+
             return {
                 "loss_actor": actor_output["loss_actor"],
                 "flow_mse_loss": actor_output["flow_mse_loss"],
@@ -1097,9 +1156,9 @@ class PI05RLPolicy(PI05FullPolicy):
                 "advantage_values": advantage,
                 "critic_values": current_v,
                 "target_values": target_v,
-                "rewards": reward
+                "rewards": reward,
             }
-            
+
         elif model == "critic":
             # Critic Update
             critic_out = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)
@@ -1111,7 +1170,7 @@ class PI05RLPolicy(PI05FullPolicy):
                 if "next_state" in batch:
                     next_batch = batch["next_state"].copy()
                     next_images, next_img_masks = self._preprocess_images(next_batch)
-                    
+
                     # Next vision features
                     next_vision_features = []
                     next_vision_pad_masks = []
@@ -1123,21 +1182,25 @@ class PI05RLPolicy(PI05FullPolicy):
                         next_vision_pad_masks.append(mask)
                     next_vision_features = torch.cat(next_vision_features, dim=1).detach()
                     next_vision_pad_masks = torch.cat(next_vision_pad_masks, dim=1)
-                    
+
                     # Next critic tokens
                     next_critic_tokens = next_batch["critic_tokens"]
                     next_critic_token_masks = next_batch["critic_pad_mask"]
-                
+
                     # Embed next critic tokens
-                    actor_embed_layer = self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
+                    actor_embed_layer = (
+                        self.model.paligemma_with_expert.paligemma.model.language_model.embed_tokens
+                    )
                     next_critic_text_embs = actor_embed_layer(next_critic_tokens).detach()
-                        
-                    next_v = self.critic_target(next_vision_features, next_critic_text_embs, next_critic_token_masks)["value"]
+
+                    next_v = self.critic_target(
+                        next_vision_features, next_critic_text_embs, next_critic_token_masks
+                    )["value"]
                 else:
                     # Handle case where next_state is missing (e.g. end of episode or not provided)
                     # For now, we assume next_state is always provided in RL batch
                     raise ValueError("next_state is required for critic update")
-            
+
             # TD scalar target
             reward = batch["reward"]
             done = batch["next.done"]
@@ -1200,14 +1263,10 @@ class PI05RLPolicy(PI05FullPolicy):
 
         elif model == "critic_value":
             values = self.critic(critic_vision_features, critic_text_embs, critic_token_masks)["value"]
-            return {
-                "critic_values": values,
-                "critic_value_mean": values.mean().item()
-            }
+            return {"critic_values": values, "critic_value_mean": values.mean().item()}
 
         else:
             raise ValueError(f"Unknown model: {model}")
-
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -1231,6 +1290,7 @@ class PI05RLPolicy(PI05FullPolicy):
         images, img_masks = self._preprocess_images(batch)
 
         from lerobot.utils.constants import OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
+
         tokens = batch[OBS_LANGUAGE_TOKENS]
         masks = batch[OBS_LANGUAGE_ATTENTION_MASK]
 
@@ -1246,8 +1306,7 @@ class PI05RLPolicy(PI05FullPolicy):
 
         if should_regenerate:
             subtask_tokens, subtask_masks = self.model.generate_subtask_tokens(
-                images, img_masks, tokens, masks,
-                max_decoding_steps=self.config.max_decoding_steps
+                images, img_masks, tokens, masks, max_decoding_steps=self.config.max_decoding_steps
             )
             self._cached_subtask_tokens = subtask_tokens
             self._cached_subtask_masks = subtask_masks
@@ -1258,8 +1317,7 @@ class PI05RLPolicy(PI05FullPolicy):
 
         # Sample actions with subtask conditioning
         actions = self.model.sample_actions(
-            images, img_masks, tokens, masks,
-            subtask_tokens, subtask_masks, **kwargs
+            images, img_masks, tokens, masks, subtask_tokens, subtask_masks, **kwargs
         )
 
         # Unpad actions to actual action dimension
@@ -1268,4 +1326,3 @@ class PI05RLPolicy(PI05FullPolicy):
         actions = actions[:, :, :original_action_dim]
 
         return actions
-

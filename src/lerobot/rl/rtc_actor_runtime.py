@@ -1165,7 +1165,8 @@ def act_with_policy_rtc_inference(
         start_time = time.time()
         logger.info("[RTC_INFERENCE] Threads running. Supervisor loop active.")
         while not shutdown_event.is_set():
-            time.sleep(20)
+            if shutdown_event.wait(20):
+                break
 
             q_size = action_queue.qsize()
             teleop_stat = "ON" if shared.is_intervening else "OFF"
@@ -1216,6 +1217,11 @@ def act_with_policy_rtc_inference(
         shared.running = False
         for thread in (inf_thread, env_thread):
             thread.join(timeout=5.0)
+        try:
+            if teleop_device is not None and getattr(teleop_device, "is_connected", False):
+                teleop_device.disconnect()
+        except Exception:
+            logger.warning("[RTC_INFERENCE] Teleop disconnect failed:\n%s", traceback.format_exc())
         try:
             online_env.close()
         except Exception:
@@ -1286,7 +1292,8 @@ def act_with_policy_rtc(
         logger.info("[RTC_ACTOR] Supervisor loop active.")
         t_start = time.time()
         while not shutdown_event.is_set():
-            time.sleep(5)
+            if shutdown_event.wait(5):
+                break
             q_size = action_queue.qsize()
             teleop_stat = "ON" if shared.is_intervening else "OFF"
             episode_stat = "ON" if shared.episode_active else "OFF"
@@ -1309,6 +1316,11 @@ def act_with_policy_rtc(
         shared.running = False
         for t in (inf_thread, env_thread):
             t.join(timeout=5.0)
+        try:
+            if teleop_device is not None and getattr(teleop_device, "is_connected", False):
+                teleop_device.disconnect()
+        except Exception:
+            logger.warning("[RTC_ACTOR] Teleop disconnect failed:\n%s", traceback.format_exc())
         try:
             online_env.close()
         except Exception:
