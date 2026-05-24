@@ -79,7 +79,7 @@ def get_cv2_backend(index_or_path: int | str | Path | None = None) -> int:
     # elif platform.system() == "Darwin":  # macOS
     #     return cv2.CAP_AVFOUNDATION
     elif platform.system() == "Linux" and (
-        isinstance(index_or_path, int) or str(index_or_path).startswith("/dev/video")
+        isinstance(index_or_path, int) or str(index_or_path).startswith(("/dev/video", "/dev/v4l/"))
     ):
         return int(cv2.CAP_V4L2)
     else:

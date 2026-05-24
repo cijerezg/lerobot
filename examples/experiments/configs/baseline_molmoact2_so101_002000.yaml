@@ -18,11 +18,12 @@ robot_id: so101_follower_2026_04_26_v0
 
 # The checkpoint config expects observation.images.{top,side}. DRTC maps by
 # camera name, so this avoids the image-order ambiguity from the standalone
-# MolmoAct script.
+# MolmoAct script. Use stable V4L symlinks instead of /dev/videoN, since
+# numeric video nodes can change across restarts.
 camera1_name: scene
-camera1_path: /dev/video0
+camera1_path: /dev/v4l/by-id/usb-H264_USB_Camera_H264_USB_Camera_2020032801-video-index0
 camera2_name: wrist
-camera2_path: /dev/video2
+camera2_path: /dev/v4l/by-id/usb-5MP_USB_Camera_5MP_USB_Camera_01.00.00-video-index0
 camera_width: 800
 camera_height: 600
 camera_fps: 30

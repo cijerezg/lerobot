@@ -27,6 +27,7 @@ import pytest
 
 from lerobot.cameras.configs import Cv2Rotation
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
+from lerobot.cameras.utils import get_cv2_backend
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 # NOTE(Steven): more tests + assertions?
@@ -106,6 +107,20 @@ def test_validate_width_and_height_accepts_matching_actual_values_when_set_repor
 
     assert "reported failure while setting capture_width=800" in caplog.text
     assert "reported failure while setting capture_height=600" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "index_or_path",
+    [
+        "/dev/video0",
+        "/dev/v4l/by-id/usb-Test_Camera-video-index0",
+        Path("/dev/v4l/by-path/pci-0000:00:14.0-usb-0:5:1.0-video-index0"),
+    ],
+)
+def test_get_cv2_backend_uses_v4l2_for_linux_video_devices(monkeypatch, index_or_path):
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+
+    assert get_cv2_backend(index_or_path) == cv2.CAP_V4L2
 
 
 @pytest.mark.parametrize("index_or_path", TEST_IMAGE_PATHS, ids=TEST_IMAGE_SIZES)
