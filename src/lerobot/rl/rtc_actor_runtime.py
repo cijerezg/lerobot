@@ -121,6 +121,9 @@ class RTCSharedState:
         self.replay_buffer: ReplayBuffer | None = None
         self.params_loaded_event = threading.Event()
         self.params_loaded_event.set()
+        self.warmup_obs_event = threading.Event()
+        self.warmup_obs: dict | None = None
+        self.policy_ready_event = threading.Event()
 
     def add_env_wait_time(self, wait_time: float) -> None:
         with self.lock:
@@ -396,7 +399,8 @@ def rtc_inference_worker(
     try:
         logger.info("[RTC_INFERENCE] Thread started.")
         if getattr(cfg.policy, "torch_compile", False):
-            _warmup_compiled_policy(policy, trainer, preprocessor, cfg, device)
+            _warmup_compiled_policy(policy, trainer, preprocessor, cfg, device, shared_state)
+        shared_state.policy_ready_event.set()
         latency_tracker = LatencyTracker()
         inference_step = 0
         execution_horizon = policy.config.rtc_config.execution_horizon
@@ -605,7 +609,20 @@ def rtc_env_worker(
         episode_logging_freq = int(getattr(cfg, "episode_logging_freq", 0) or 0)
         shared_state.is_logging_episode = (episode_logging_freq > 0 and shared_state.episode_counter % episode_logging_freq == 0)
 
-        logger.info("[ACTOR] Waiting for '2' on the teleop device to start episode...")
+        try:
+            warmup_raw = online_env._get_observation()
+            warmup_transition = create_transition(
+                observation=warmup_raw, complementary_data={"subtask": [""]}
+            )
+            warmup_transition = env_processor(warmup_transition)
+            shared_state.warmup_obs = convert_env_obs_to_policy_format(warmup_transition[TransitionKey.OBSERVATION])
+        except Exception as e:
+            logger.warning("[RTC_ENV] Could not get warmup observation: %s", e)
+        finally:
+            shared_state.warmup_obs_event.set()
+
+        shared_state.policy_ready_event.wait()
+        logger.info("[ACTOR] Press '2' to start episode.")
         while shared_state.running:
             if teleop_device.get_teleop_events().get(TeleopEvents.START_EPISODE, False):
                 break
@@ -1042,21 +1059,27 @@ def _maybe_save_inference_dataset(shared_state: RTCSharedState, cfg) -> None:
         logger.error("[RTC_INFERENCE] Failed to save inference dataset: %s", exc)
 
 
-def _warmup_compiled_policy(policy, trainer, preprocessor, cfg, device, n_calls: int = 3) -> None:
+def _warmup_compiled_policy(
+    policy, trainer, preprocessor, cfg, device, shared_state: RTCSharedState, n_calls: int = 3
+) -> None:
+    logger.info("[RTC_INFERENCE] Waiting for real observation to warm up compiled policy...")
+    if not shared_state.warmup_obs_event.wait(timeout=30.0):
+        logger.warning("[RTC_INFERENCE] Timed out waiting for warmup obs; skipping warmup.")
+        return
+    real_obs = shared_state.warmup_obs
+    if real_obs is None:
+        logger.warning("[RTC_INFERENCE] Warmup obs unavailable; first inference call will be slow.")
+        return
     logger.info("[RTC_INFERENCE] Warming up compiled policy (%d calls) — please wait...", n_calls)
     task_str = cfg.policy.task
     execution_horizon = policy.config.rtc_config.execution_horizon
-    dummy_obs = {
-        key: torch.zeros(tuple(feat.shape), dtype=torch.float32)
-        for key, feat in cfg.policy.input_features.items()
-    }
     try:
-        dummy_batch = trainer.build_inference_batch(dummy_obs, task_str, cfg, preprocessor=preprocessor)
+        real_batch = trainer.build_inference_batch(real_obs, task_str, cfg, preprocessor=preprocessor)
         with torch.no_grad():
             for i in range(n_calls):
                 torch.compiler.cudagraph_mark_step_begin()
                 policy.predict_action_chunk(
-                    dummy_batch,
+                    real_batch,
                     inference_delay=0,
                     prev_chunk_left_over=None,
                     execution_horizon=execution_horizon,
