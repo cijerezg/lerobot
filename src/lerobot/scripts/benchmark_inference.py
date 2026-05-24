@@ -319,6 +319,9 @@ def _action_dim(cfg) -> int:
 @parser.wrap()
 def main(cfg: TrainRLServerPipelineConfig):
     logging.basicConfig(level=logging.WARNING)
+    logging.getLogger().setLevel(logging.WARNING)
+    for _noisy in ("transformers", "lerobot", "torch", "PIL"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
 
     set_seed(cfg.seed)
     device = get_safe_torch_device(
@@ -330,9 +333,11 @@ def main(cfg: TrainRLServerPipelineConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
 
     # Capture [TIMING] lines emitted by _generate_actions_from_inputs_with_rtc.
+    # propagate=False keeps the raw INFO lines off the console; only timing_agg sees them.
     timing_agg = TimingAggregator()
     model_logger = logging.getLogger("lerobot.policies.molmoact2.modeling_molmoact2")
     model_logger.setLevel(logging.INFO)
+    model_logger.propagate = False
     model_logger.addHandler(timing_agg)
 
     fps = cfg.env.fps

@@ -49,8 +49,8 @@ treat_main_dataset_as_golden: true
 # -----------------------------------------------------------------------------
 val_dataset_path: outputs/annotated-dataset-validation-v7
 val_split: 0.0
-val_freq: 200
-val_on_start: false     # run probes at step 0 to catch wiring bugs before training amortizes them
+val_freq: 500
+val_on_start: true     # run probes at step 0 to catch wiring bugs before training amortizes them
 
 
 # =============================================================================
@@ -61,7 +61,7 @@ policy:
 
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
-  pretrained_path: outputs/molmoact2_offline/checkpoints/000600/pretrained_model
+  pretrained_path: outputs/molmoact2_bc_offline/checkpoints/002000/pretrained_model
   checkpoint_path: outputs/MolmoAct2-SO100_101
 
   # ---- Training mode --------------------------------------------------------
@@ -131,12 +131,13 @@ policy:
   storage_device: cpu
 
   # ---- Inference -----------------------------------------------------------
+  torch_compile: true                     # compile action expert + backbone with reduce-overhead
   action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
   inference_advantage: 1.0                # not yet wired (TODO: thread into build_inference_batch)
   weights_push_interval: 180.0            # seconds between learner→actor weight sync
   rtc_config:                             # real-time chunking
     enabled: true
-    execution_horizon: 5
+    execution_horizon: 10
     prefix_attention_schedule: LINEAR
     max_guidance_weight: 10.0
     debug: false
