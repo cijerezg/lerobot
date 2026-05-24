@@ -16,14 +16,9 @@ from lerobot.policies.pi05_full.configuration_pi05 import PI05FullConfig
 from lerobot.policies.pi05_full.modeling_pi05 import (
     PI05FullPolicy,
     PI05Pytorch,
-    create_sinusoidal_pos_embedding,
-from lerobot.policies.pi05_full.modeling_pi05 import (
-    PI05FullPolicy,
-    PI05Pytorch,
     get_gemma_config,
     create_sinusoidal_pos_embedding,
 )
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pi05_full.processor_pi05 import Pi05FullPrepareStateTokenizerProcessorStep
 from lerobot.processor import TokenizerProcessorStep
 from lerobot.rl.rl_trainer import TrainableParamsConfig
@@ -1323,12 +1318,6 @@ class PI05RLPolicy(PI05FullPolicy):
         # Sample actions with subtask conditioning
         actions = self.model.sample_actions(
             images, img_masks, tokens, masks, subtask_tokens, subtask_masks, **kwargs
-        )
-
-        # Unpad actions to actual action dimension
-        from lerobot.utils.constants import ACTION
-
-            subtask_tokens, subtask_masks, **kwargs
         )
 
         # Unpad actions to actual action dimension
