@@ -44,6 +44,7 @@ class RTCProcessor:
 
     def __init__(self, rtc_config: RTCConfig):
         self.rtc_config = rtc_config
+        self._prefix_weights_cache: tuple[tuple, Tensor] | None = None
 
         self.tracker = None
 
@@ -169,7 +170,7 @@ class RTCProcessor:
             v_t = original_denoise_step_partial(x_t)
             return v_t
 
-        x_t = x_t.clone().detach()
+        x_t = x_t.detach()  # no clone — we never modify x_t in-place
 
         squeezed = False
         if len(x_t.shape) < 3:
@@ -202,12 +203,17 @@ class RTCProcessor:
             "The padded previous chunk must be the same size as the input tensor"
         )
 
-        weights = (
-            self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
-            .to(x_t.device)
-            .unsqueeze(0)
-            .unsqueeze(-1)
-        )
+        # Cache prefix weights — same shape/device/dtype every step within one inference call.
+        weights_key = (inference_delay, execution_horizon, action_chunk_size, x_t.device, x_t.dtype)
+        if self._prefix_weights_cache is None or self._prefix_weights_cache[0] != weights_key:
+            self._prefix_weights_cache = (
+                weights_key,
+                self.get_prefix_weights(inference_delay, execution_horizon, action_chunk_size)
+                .to(device=x_t.device, dtype=x_t.dtype)
+                .unsqueeze(0)
+                .unsqueeze(-1),
+            )
+        weights = self._prefix_weights_cache[1]
 
         # Identity-gradient approximation: ∂x̂₁/∂xₜ ≈ I, so correction = err directly.
         # This is equivalent to the autograd path when requires_grad is set after the
@@ -215,29 +221,29 @@ class RTCProcessor:
         v_t = original_denoise_step_partial(x_t)
         x1_t = x_t - time * v_t  # noqa: N806
         err = (prev_chunk_left_over - x1_t) * weights
-        correction = err
 
-        max_guidance_weight = torch.as_tensor(self.rtc_config.max_guidance_weight)
-        tau_tensor = torch.as_tensor(tau)
-        squared_one_minus_tau = (1 - tau_tensor) ** 2
-        inv_r2 = (squared_one_minus_tau + tau_tensor**2) / (squared_one_minus_tau)
-        c = torch.nan_to_num((1 - tau_tensor) / tau_tensor, posinf=max_guidance_weight)
-        guidance_weight = torch.nan_to_num(c * inv_r2, posinf=max_guidance_weight)
-        guidance_weight = torch.minimum(guidance_weight, max_guidance_weight)
+        # Guidance weight as plain Python float — avoids 0-dim tensor allocs per step.
+        max_gw = float(self.rtc_config.max_guidance_weight)
+        one_minus_tau = 1.0 - tau
+        sq_one_minus_tau = one_minus_tau * one_minus_tau
+        # inv_r2: 0/0 at tau=1 → nan_to_num gives 0 → guidance_weight=0 (no guidance at end)
+        inv_r2 = (sq_one_minus_tau + tau * tau) / sq_one_minus_tau if sq_one_minus_tau > 0.0 else 0.0
+        # c: 1/0 at tau=0 → clamp to max_gw
+        c = min(one_minus_tau / tau, max_gw) if tau > 0.0 else max_gw
+        guidance_weight = min(c * inv_r2, max_gw)
 
-        result = v_t - guidance_weight * correction
+        result = v_t - guidance_weight * err
 
         # Remove the batch dimension if it was added
         if squeezed:
             result = result.squeeze(0)
-            correction = correction.squeeze(0)
             x1_t = x1_t.squeeze(0)
             err = err.squeeze(0)
 
         self.track(
             time=time,
             x1_t=x1_t,
-            correction=correction,
+            correction=err,
             err=err,
             weights=weights,
             guidance_weight=guidance_weight,

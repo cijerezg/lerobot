@@ -1854,24 +1854,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
         prev_chunk_left_over: Tensor | None,
         execution_horizon: int | None,
     ) -> Tensor:
-        import time as _time
-
         backbone = self._backbone()
         action_expert = self._action_expert()
-        timing_device = next(action_expert.parameters()).device
 
-        def _sync_cuda() -> None:
-            if timing_device.type == "cuda":
-                torch.cuda.synchronize(timing_device)
-
-        _sync_cuda(); _t0 = _time.perf_counter()
         outputs = backbone(
             **model_inputs,
             use_cache=True,
             output_attentions=False,
             output_hidden_states=False,
         )
-        _sync_cuda(); _t1 = _time.perf_counter()
 
         encoder_kv_states = backbone._extract_kv_states(outputs.past_key_values)
         encoder_attention_mask = self._encoder_attention_mask_for_action_expert(
@@ -1888,7 +1879,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
             depth_mask,
             depth_gate,
         )
-        _sync_cuda(); _t2 = _time.perf_counter()
 
         steps = int(num_steps or backbone.config.flow_matching_num_steps)
         if steps <= 0:
@@ -1924,13 +1914,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
             flow_timesteps,
             cache_key=(steps, batch_size, device, trajectory.dtype),
         )
-        _sync_cuda(); _t3 = _time.perf_counter()
 
-        _step_times: list[float] = []
         dt = 1.0 / steps
         mask_enabled = self.config.mask_action_dim_padding
-        for idx, flow_timestep in enumerate(flow_timesteps):
-            _sync_cuda(); _ts = _time.perf_counter()
+        rtc_enabled = self._rtc_enabled()
+        for idx, _ in enumerate(flow_timesteps):
             modulation = modulation_cache[idx]
 
             def denoise_step(input_trajectory: Tensor, step_modulation=modulation) -> Tensor:
@@ -1944,19 +1932,18 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     velocity = self._mask_action_dim_tensor(velocity, action_dim_is_pad)
                 return velocity
 
-            if self._rtc_enabled():
+            if rtc_enabled:
                 if self.rtc_processor is None:
                     raise RuntimeError("RTC is enabled but rtc_processor is not initialized.")
 
                 def rtc_denoise_step(input_trajectory: Tensor) -> Tensor:
                     return -denoise_step(input_trajectory)
 
-                rtc_time = 1.0 - float(flow_timestep[0].item())
                 rtc_velocity = self.rtc_processor.denoise_step(
                     x_t=trajectory,
                     prev_chunk_left_over=prev_chunk_left_over,
                     inference_delay=int(inference_delay or 0),
-                    time=rtc_time,
+                    time=1.0 - idx / steps,
                     original_denoise_step_partial=rtc_denoise_step,
                     execution_horizon=execution_horizon,
                 )
@@ -1968,19 +1955,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if mask_enabled:
                 trajectory = self._mask_action_dim_tensor(trajectory, action_dim_is_pad)
             if self.rtc_processor is not None and self.rtc_processor.is_debug_enabled():
-                self.rtc_processor.track(time=float(flow_timestep[0].item()), x_t=trajectory, v_t=velocity)
-            _sync_cuda(); _step_times.append((_time.perf_counter() - _ts) * 1000)
+                self.rtc_processor.track(time=idx / steps, x_t=trajectory, v_t=velocity)
 
-        _bb_ms   = (_t1 - _t0) * 1000
-        _kv_ms   = (_t2 - _t1) * 1000
-        _init_ms = (_t3 - _t2) * 1000
-        import logging as _logging
-        _logging.getLogger(__name__).info(
-            "[TIMING] backbone=%.1fms  kv_setup=%.1fms  init=%.1fms  steps=%s  total=%.1fms",
-            _bb_ms, _kv_ms, _init_ms,
-            [f"{t:.0f}" for t in _step_times],
-            _bb_ms + _kv_ms + _init_ms + sum(_step_times),
-        )
         return trajectory
 
     def forward(

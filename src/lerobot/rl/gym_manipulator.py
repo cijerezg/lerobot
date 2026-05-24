@@ -536,6 +536,7 @@ def step_env_and_process_transition(
     action: torch.Tensor,
     env_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
     action_processor: DataProcessorPipeline[EnvTransition, EnvTransition],
+    timings: dict | None = None,
 ) -> EnvTransition:
     """
     Execute one step with processor pipeline.
@@ -546,6 +547,7 @@ def step_env_and_process_transition(
         action: Action to execute
         env_processor: Environment processor
         action_processor: Action processor
+        timings: Optional dict populated with robot_step and obs_proc seconds.
 
     Returns:
         Processed transition with updated state.
@@ -557,10 +559,16 @@ def step_env_and_process_transition(
         env.get_raw_joint_positions() if hasattr(env, "get_raw_joint_positions") else {}
     )
 
+    _t_action_proc = time.perf_counter() if timings is not None else 0.0
     processed_action_transition = action_processor(aux_transition)
+    if timings is not None:
+        timings["action_proc"] = time.perf_counter() - _t_action_proc
     processed_action = processed_action_transition[TransitionKey.ACTION]
 
+    _t0 = time.perf_counter() if timings is not None else 0.0
     obs, reward, terminated, truncated, info = env.step(processed_action)
+    if timings is not None:
+        timings["robot_step"] = time.perf_counter() - _t0
 
     reward = reward + processed_action_transition[TransitionKey.REWARD]
     terminated = terminated or processed_action_transition[TransitionKey.DONE]
@@ -590,7 +598,10 @@ def step_env_and_process_transition(
         complementary_data=complementary_data,
     )
 
+    _t1 = time.perf_counter() if timings is not None else 0.0
     new_transition = env_processor(new_transition)
+    if timings is not None:
+        timings["obs_proc"] = time.perf_counter() - _t1
 
     return new_transition
 

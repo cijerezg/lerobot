@@ -97,6 +97,7 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # Constant advantage value injected as prompt conditioning at inference.
     # NOTE: not yet consumed by build_inference_batch — placeholder for future wiring.
     inference_advantage: float = 1.0
+    torch_compile: bool = False
 
     # ── Action encoding ───────────────────────────────────────────────────
     # "absolute" (default) - network predicts a_t directly.

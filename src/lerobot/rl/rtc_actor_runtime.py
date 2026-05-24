@@ -83,6 +83,13 @@ class RTCSharedState:
         self.env_active_time_total = 0.0
         self.env_action_get_time = 0.0
         self.env_step_time = 0.0
+        self.env_robot_step_time = 0.0
+        self.env_obs_proc_time = 0.0
+        self.env_action_proc_time = 0.0
+        self.env_post_step_time = 0.0
+        self.env_move_cpu_time = 0.0
+        self.env_rerun_time = 0.0
+        self.queue_starvation_count = 0
         self.inference_wait_time = 0.0
         self.inference_count = 0
         self.inference_latencies: list[float] = []
@@ -124,6 +131,22 @@ class RTCSharedState:
             self.env_action_get_time += action_get
             self.env_step_time += step
 
+    def add_env_step_detail(self, robot_step: float, obs_proc: float, action_proc: float = 0.0) -> None:
+        with self.lock:
+            self.env_robot_step_time += robot_step
+            self.env_obs_proc_time += obs_proc
+            self.env_action_proc_time += action_proc
+
+    def add_env_post_step_detail(self, post_step: float, move_cpu: float, rerun: float) -> None:
+        with self.lock:
+            self.env_post_step_time += post_step
+            self.env_move_cpu_time += move_cpu
+            self.env_rerun_time += rerun
+
+    def add_queue_starvation(self) -> None:
+        with self.lock:
+            self.queue_starvation_count += 1
+
     def get_and_reset_metrics(self) -> dict:
         with self.lock:
             metrics = {
@@ -138,12 +161,26 @@ class RTCSharedState:
                 "inference_postprocess_time": self.inference_postprocess_time,
                 "env_action_get_time": self.env_action_get_time,
                 "env_step_time": self.env_step_time,
+                "env_robot_step_time": self.env_robot_step_time,
+                "env_obs_proc_time": self.env_obs_proc_time,
+                "env_action_proc_time": self.env_action_proc_time,
+                "env_post_step_time": self.env_post_step_time,
+                "env_move_cpu_time": self.env_move_cpu_time,
+                "env_rerun_time": self.env_rerun_time,
+                "queue_starvation_count": self.queue_starvation_count,
             }
             self.env_wait_time = 0.0
             self.env_steps = 0
             self.env_active_time_total = 0.0
             self.env_action_get_time = 0.0
             self.env_step_time = 0.0
+            self.env_robot_step_time = 0.0
+            self.env_obs_proc_time = 0.0
+            self.env_action_proc_time = 0.0
+            self.env_post_step_time = 0.0
+            self.env_move_cpu_time = 0.0
+            self.env_rerun_time = 0.0
+            self.queue_starvation_count = 0
             self.inference_wait_time = 0.0
             self.inference_count = 0
             self.inference_latencies = []
@@ -306,6 +343,8 @@ def rtc_inference_worker(
     """Background inference worker using RTC ActionQueue semantics."""
     try:
         logger.info("[RTC_INFERENCE] Thread started.")
+        if getattr(cfg.policy, "torch_compile", False):
+            _warmup_compiled_policy(policy, trainer, preprocessor, cfg, device)
         latency_tracker = LatencyTracker()
         inference_step = 0
         execution_horizon = policy.config.rtc_config.execution_horizon
@@ -373,6 +412,7 @@ def rtc_inference_worker(
 
                 if device.type == "cuda":
                     torch.cuda.synchronize()
+                torch.compiler.cudagraph_mark_step_begin()
                 t_gpu_start = time.perf_counter()
                 actions_chunk = policy.predict_action_chunk(
                     processed_batch,
@@ -579,18 +619,27 @@ def rtc_env_worker(
                 if action is not None:
                     action = action[..., :action_dim].to(device)
                 else:
+                    shared_state.add_queue_starvation()
                     action = _raw_joint_action(online_env, action_dim, device)
             _t_action_end = time.perf_counter()
 
             _t_step_start = time.perf_counter()
+            _step_timings: dict = {}
             new_transition = step_env_and_process_transition(
                 env=online_env,
                 transition=transition,
                 action=action,
                 env_processor=env_processor,
                 action_processor=action_processor,
+                timings=_step_timings,
             )
             _t_step_end = time.perf_counter()
+            shared_state.add_env_step_detail(
+                robot_step=_step_timings.get("robot_step", 0.0),
+                obs_proc=_step_timings.get("obs_proc", 0.0),
+                action_proc=_step_timings.get("action_proc", 0.0),
+            )
+            _t_post_step_start = time.perf_counter()
 
             if TransitionKey.COMPLEMENTARY_DATA not in new_transition:
                 new_transition[TransitionKey.COMPLEMENTARY_DATA] = {}
@@ -665,7 +714,9 @@ def rtc_env_worker(
                 truncated=truncated,
                 complementary_info=complementary_info,
             )
+            _t_move_cpu_start = time.perf_counter()
             transition_cpu = move_transition_to_device(transition_to_send, "cpu")
+            _t_move_cpu_end = time.perf_counter()
             transitions_to_send.append(transition_cpu)
 
             if standalone and shared_state.replay_buffer is not None:
@@ -680,6 +731,7 @@ def rtc_env_worker(
                     "done": bool(done),
                     "subtask_text": "",
                 })
+            _t_rerun_start = time.perf_counter()
             if getattr(cfg, "use_rerun", False):
                 import rerun as rr
                 rr.set_time_sequence("step", interaction_step)
@@ -691,6 +743,7 @@ def rtc_env_worker(
                     joints = online_env.get_raw_joint_positions()
                     for j_name, j_val in joints.items():
                         rr.log(f"world/robot_joints/{j_name}", rr.Scalars(float(j_val)))
+            _t_rerun_end = time.perf_counter()
 
             shared_state.update_observation(next_policy_fmt_obs, is_intervening)
             transition = new_transition
@@ -747,6 +800,13 @@ def rtc_env_worker(
                 sum_reward_episode = 0.0
                 episode_intervention_steps = 0
                 episode_total_steps = 0
+
+            _t_post_step_end = time.perf_counter()
+            shared_state.add_env_post_step_detail(
+                post_step=_t_post_step_end - _t_post_step_start,
+                move_cpu=_t_move_cpu_end - _t_move_cpu_start,
+                rerun=_t_rerun_end - _t_rerun_start,
+            )
 
             dt_s = time.perf_counter() - start_time
             shared_state.env_active_time_total += dt_s
@@ -912,6 +972,35 @@ def _maybe_save_inference_dataset(shared_state: RTCSharedState, cfg) -> None:
         logger.error("[RTC_INFERENCE] Failed to save inference dataset: %s", exc)
 
 
+def _warmup_compiled_policy(policy, trainer, preprocessor, cfg, device, n_calls: int = 3) -> None:
+    logger.info("[RTC_INFERENCE] Warming up compiled policy (%d calls) — please wait...", n_calls)
+    task_str = cfg.policy.task
+    execution_horizon = policy.config.rtc_config.execution_horizon
+    dummy_obs = {
+        key: torch.zeros(tuple(feat.shape), dtype=torch.float32)
+        for key, feat in cfg.policy.input_features.items()
+    }
+    try:
+        dummy_batch = trainer.build_inference_batch(dummy_obs, task_str, cfg, preprocessor=preprocessor)
+        with torch.no_grad():
+            for i in range(n_calls):
+                torch.compiler.cudagraph_mark_step_begin()
+                policy.predict_action_chunk(
+                    dummy_batch,
+                    inference_delay=0,
+                    prev_chunk_left_over=None,
+                    execution_horizon=execution_horizon,
+                )
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                logger.info("[RTC_INFERENCE] Warmup %d/%d complete.", i + 1, n_calls)
+        if hasattr(policy, "reset"):
+            policy.reset()
+        logger.info("[RTC_INFERENCE] Warmup done. Policy is ready.")
+    except Exception as e:
+        logger.warning("[RTC_INFERENCE] Warmup failed (%s); first inference call will be slow.", e)
+
+
 def act_with_policy_rtc_inference(
     cfg,
     trainer: Trainer,
@@ -946,6 +1035,19 @@ def act_with_policy_rtc_inference(
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
 
+    if getattr(cfg.policy, "torch_compile", False):
+        import torch._dynamo as _dynamo
+        _dynamo.config.suppress_errors = True
+        try:
+            action_expert = policy._action_expert()
+            action_expert.forward_with_context = torch.compile(
+                getattr(action_expert, "forward_with_context"),
+                mode="reduce-overhead",
+                fullgraph=False,
+            )
+            logger.info("[RTC_INFERENCE] torch.compile applied to action expert.")
+        except Exception as e:
+            logger.warning("[RTC_INFERENCE] Could not compile action expert: %s", e)
     if getattr(policy.config, "rtc_config", None) is None or not policy.config.rtc_config.enabled:
         raise RuntimeError("RTC inference requires policy.config.rtc_config.enabled=True")
 
@@ -1001,6 +1103,12 @@ def act_with_policy_rtc_inference(
             avg_env_wait = metrics["env_wait_time"] / env_steps
             avg_action_get = metrics["env_action_get_time"] / env_steps
             avg_env_step = metrics["env_step_time"] / env_steps
+            avg_robot_step = metrics["env_robot_step_time"] / env_steps
+            avg_obs_proc = metrics["env_obs_proc_time"] / env_steps
+            avg_action_proc = metrics["env_action_proc_time"] / env_steps
+            avg_post_step = metrics["env_post_step_time"] / env_steps
+            avg_move_cpu = metrics["env_move_cpu_time"] / env_steps
+            avg_rerun = metrics["env_rerun_time"] / env_steps
             avg_pre = metrics["inference_preprocess_time"] / inf_count
             avg_model = metrics["inference_model_time"] / inf_count
             avg_post = metrics["inference_postprocess_time"] / inf_count
@@ -1017,10 +1125,16 @@ def act_with_policy_rtc_inference(
                 avg_pre * 1000, avg_model * 1000, avg_post * 1000, lat_str,
             )
             logger.info(
-                "[metrics/env] steps=%d | action_get=%.1fms | env_step=%.1fms | active=%.1fms | sleep=%.1fms | episode=%s",
+                "[metrics/env] steps=%d | action_get=%.1fms | env_step=%.1fms (action_proc=%.1fms robot_step=%.1fms obs_proc=%.1fms) | active=%.1fms | sleep=%.1fms | starved=%d | episode=%s",
                 metrics["env_steps"], avg_action_get * 1000, avg_env_step * 1000,
-                avg_env_active * 1000, avg_env_wait * 1000,
+                avg_action_proc * 1000, avg_robot_step * 1000, avg_obs_proc * 1000,
+                avg_env_active * 1000, avg_env_wait * 1000, metrics["queue_starvation_count"],
                 "ACTIVE" if shared.episode_active else "IDLE",
+            )
+            logger.info(
+                "[metrics/env_post] post_step=%.1fms (move_cpu=%.1fms rerun=%.1fms other=%.1fms)",
+                avg_post_step * 1000, avg_move_cpu * 1000, avg_rerun * 1000,
+                (avg_post_step - avg_move_cpu - avg_rerun) * 1000,
             )
     except Exception:
         logger.error("[RTC_INFERENCE] Orchestrator error:\n%s", traceback.format_exc())
