@@ -831,7 +831,7 @@ class MolmoAct2Trainer(Trainer):
         self,
         observation: dict,
         task_str: str,
-        cfg,  # noqa: ARG002
+        cfg,
         **context,
     ) -> dict[str, Any]:
         """
@@ -839,11 +839,15 @@ class MolmoAct2Trainer(Trainer):
 
         observation: flat dict with image/state keys (no batch dim).
         The preprocessor's AddBatchDimensionProcessorStep adds the batch dim.
+        Tensors are moved to the policy device after preprocessing so the env
+        processor no longer needs a DeviceProcessorStep.
         """
         preprocessor = context["preprocessor"]
+        device = getattr(cfg.policy, "device", "cpu")
         pre_input: dict[str, Any] = {**observation, "task": task_str}
         with torch.no_grad():
-            return preprocessor(pre_input)
+            batch = preprocessor(pre_input)
+        return {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
     # ── Online loop ───────────────────────────────────────────────────────────
 

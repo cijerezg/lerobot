@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import queue
 import shutil
 import time
 import traceback
@@ -233,6 +234,24 @@ class RTCSharedState:
         with self.lock:
             self.cached_subtask_tokens = tokens.clone()
             self.cached_subtask_masks = masks.clone()
+
+
+def _rerun_log_worker(q) -> None:
+    """Daemon thread: drains the rerun queue and calls rr.log without blocking the env loop."""
+    import rerun as rr
+    while True:
+        try:
+            item = q.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        if item is None:
+            break
+        step, images, joints = item
+        rr.set_time_sequence("step", step)
+        for key, img_hwc in images.items():
+            rr.log(f"world/cameras/{key}", rr.Image(img_hwc))
+        for j_name, j_val in joints.items():
+            rr.log(f"world/robot_joints/{j_name}", rr.Scalars(j_val))
 
 
 def pull_new_policy_weights(policy: nn.Module, parameters_queue, device: torch.device) -> None:
@@ -518,6 +537,7 @@ def rtc_env_worker(
     standalone: bool = False,
     policy: nn.Module | None = None,
     trainer: Trainer | None = None,
+    rerun_queue=None,
 ) -> None:
     """Environment interaction worker copied from the tested PI05 RTC path."""
     _ = postprocessor  # queued actions are already postprocessed in rtc_inference_worker
@@ -525,7 +545,6 @@ def rtc_env_worker(
         logger.info("[RTC_ENV] Thread started.")
         action_interval = 1.0 / cfg.env.fps
         action_dim = _action_dim(cfg)
-        device = cfg.policy.device
 
         was_intervening = False
         sum_reward_episode = 0.0
@@ -613,14 +632,14 @@ def rtc_env_worker(
 
             _t_action_start = time.perf_counter()
             if was_intervening:
-                action = _raw_joint_action(online_env, action_dim, device)
+                action = _raw_joint_action(online_env, action_dim, "cpu")
             else:
                 action = action_queue.get()
                 if action is not None:
-                    action = action[..., :action_dim].to(device)
+                    action = action[..., :action_dim]
                 else:
                     shared_state.add_queue_starvation()
-                    action = _raw_joint_action(online_env, action_dim, device)
+                    action = _raw_joint_action(online_env, action_dim, "cpu")
             _t_action_end = time.perf_counter()
 
             _t_step_start = time.perf_counter()
@@ -722,7 +741,7 @@ def rtc_env_worker(
             if standalone and shared_state.replay_buffer is not None:
                 _add_transition_to_replay_buffer(shared_state.replay_buffer, transition_cpu, action_dim)
 
-            next_policy_fmt_obs = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
+            next_policy_fmt_obs = next_observation
             if standalone and shared_state.is_logging_episode:
                 episode_log_buffer.append({
                     "obs": {k: v.detach().cpu().clone() for k, v in next_policy_fmt_obs.items()},
@@ -732,17 +751,20 @@ def rtc_env_worker(
                     "subtask_text": "",
                 })
             _t_rerun_start = time.perf_counter()
-            if getattr(cfg, "use_rerun", False):
-                import rerun as rr
-                rr.set_time_sequence("step", interaction_step)
+            if getattr(cfg, "use_rerun", False) and rerun_queue is not None:
+                images = {}
                 for key, val in next_policy_fmt_obs.items():
                     if "image" in key:
                         val_np = val[0].cpu().numpy() if val.ndim == 4 else val.cpu().numpy()
-                        rr.log(f"world/cameras/{key}", rr.Image(val_np.transpose(1, 2, 0)))
+                        images[key] = val_np.transpose(1, 2, 0)
+                joints = {}
                 if hasattr(online_env, "get_raw_joint_positions"):
-                    joints = online_env.get_raw_joint_positions()
-                    for j_name, j_val in joints.items():
-                        rr.log(f"world/robot_joints/{j_name}", rr.Scalars(float(j_val)))
+                    raw = online_env.get_raw_joint_positions()
+                    joints = {j_name: float(j_val) for j_name, j_val in raw.items()}
+                try:
+                    rerun_queue.put_nowait((interaction_step, images, joints))
+                except queue.Full:
+                    pass  # drop frame rather than block the env loop
             _t_rerun_end = time.perf_counter()
 
             shared_state.update_observation(next_policy_fmt_obs, is_intervening)
@@ -1019,9 +1041,12 @@ def act_with_policy_rtc_inference(
     torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
 
+    rerun_queue = None
     if getattr(cfg, "use_rerun", False):
         import rerun as rr
         rr.init("lerobot_inference", spawn=True)
+        rerun_queue = queue.Queue(maxsize=2)
+        Thread(target=_rerun_log_worker, args=(rerun_queue,), daemon=True, name="rerun_log").start()
 
     logger.info("[RTC_INFERENCE] Building policy and processors...")
     policy = trainer.make_policy(cfg)
@@ -1079,7 +1104,7 @@ def act_with_policy_rtc_inference(
             online_env, env_processor, action_processor, action_queue, shared,
             teleop_device, None, None, cfg, postprocessor,
         ),
-        kwargs={"standalone": True, "policy": policy, "trainer": trainer},
+        kwargs={"standalone": True, "policy": policy, "trainer": trainer, "rerun_queue": rerun_queue},
         daemon=True,
         name="rtc_env",
     )

@@ -482,7 +482,6 @@ def make_processors(
         )
 
     env_pipeline_steps.append(AddBatchDimensionProcessorStep())
-    env_pipeline_steps.append(DeviceProcessorStep(device=device))
 
     action_pipeline_steps = [
         AddTeleopActionAsComplimentaryDataStep(teleop_device=teleop_device),
