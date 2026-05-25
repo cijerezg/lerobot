@@ -82,7 +82,7 @@ PY
     --teleop.type=so101_leader \
     --teleop.port="${LEADER_PORT}" \
     --teleop.id=so101_leader_2026_04_16_v2 \
-    --dataset.repo_id="jackvial/so101_placemotor_20260521_${RUN_ID}" \
+    --dataset.repo_id="jackvial/so101_placemotor_20260525_${RUN_ID}" \
     --dataset.num_episodes=20 \
     --dataset.fps=30 \
     --dataset.episode_time_s=20 \
