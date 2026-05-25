@@ -46,7 +46,7 @@ treat_main_dataset_as_golden: true
 val_dataset_path: outputs/annotated-dataset-validation-v7
 val_split: 0.0
 val_freq: 1000             # well past our smoke-test step count
-val_on_start: false
+val_on_start: true
 
 
 # =============================================================================
