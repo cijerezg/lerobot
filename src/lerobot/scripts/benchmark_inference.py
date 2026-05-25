@@ -32,7 +32,7 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
 
-import lerobot.rl.rl_molmoact2  # noqa: F401 - registers MolmoAct2RLConfig
+import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 - registers MolmoAct2RLConfig
 import lerobot.rl.gym_manipulator  # noqa: F401 - registers robots, cameras, teleops
 
 logger = logging.getLogger(__name__)
@@ -355,7 +355,7 @@ def main(cfg: TrainRLServerPipelineConfig):
     print(f"{'='*70}")
 
     print("Loading policy...")
-    from lerobot.rl.rl_molmoact2_trainer import MolmoAct2Trainer
+    from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
 
     trainer = MolmoAct2Trainer()
     policy = trainer.make_policy(cfg).to(device).eval()

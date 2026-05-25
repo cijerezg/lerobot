@@ -19,6 +19,7 @@ from PIL import Image
 
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
+from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.processor import TransitionKey
 from lerobot.rl.buffer import ReplayBuffer
@@ -121,8 +122,6 @@ class RTCSharedState:
         self.replay_buffer: ReplayBuffer | None = None
         self.params_loaded_event = threading.Event()
         self.params_loaded_event.set()
-        self.warmup_obs_event = threading.Event()
-        self.warmup_obs: dict | None = None
         self.policy_ready_event = threading.Event()
 
     def add_env_wait_time(self, wait_time: float) -> None:
@@ -399,7 +398,7 @@ def rtc_inference_worker(
     try:
         logger.info("[RTC_INFERENCE] Thread started.")
         if getattr(cfg.policy, "torch_compile", False):
-            _warmup_compiled_policy(policy, trainer, preprocessor, cfg, device, shared_state)
+            _warmup_compiled_policy(policy, trainer, preprocessor, cfg, device)
         shared_state.policy_ready_event.set()
         latency_tracker = LatencyTracker()
         inference_step = 0
@@ -462,6 +461,8 @@ def rtc_inference_worker(
                     latest_obs=latest_obs,
                     policy=policy,
                 )
+                if prev_actions is not None:
+                    prev_actions = _normalize_prev_actions_length(prev_actions, target_steps=execution_horizon)
 
                 inference_delay = math.ceil(latency_tracker.p95() / time_per_chunk)
 
@@ -608,18 +609,6 @@ def rtc_env_worker(
         episode_log_buffer: list[dict] = []
         episode_logging_freq = int(getattr(cfg, "episode_logging_freq", 0) or 0)
         shared_state.is_logging_episode = (episode_logging_freq > 0 and shared_state.episode_counter % episode_logging_freq == 0)
-
-        try:
-            warmup_raw = online_env._get_observation()
-            warmup_transition = create_transition(
-                observation=warmup_raw, complementary_data={"subtask": [""]}
-            )
-            warmup_transition = env_processor(warmup_transition)
-            shared_state.warmup_obs = convert_env_obs_to_policy_format(warmup_transition[TransitionKey.OBSERVATION])
-        except Exception as e:
-            logger.warning("[RTC_ENV] Could not get warmup observation: %s", e)
-        finally:
-            shared_state.warmup_obs_event.set()
 
         shared_state.policy_ready_event.wait()
         logger.info("[ACTOR] Press '2' to start episode.")
@@ -1060,33 +1049,50 @@ def _maybe_save_inference_dataset(shared_state: RTCSharedState, cfg) -> None:
 
 
 def _warmup_compiled_policy(
-    policy, trainer, preprocessor, cfg, device, shared_state: RTCSharedState, n_calls: int = 3
+    policy, trainer, preprocessor, cfg, device, n_calls: int = 3
 ) -> None:
-    logger.info("[RTC_INFERENCE] Waiting for real observation to warm up compiled policy...")
-    if not shared_state.warmup_obs_event.wait(timeout=30.0):
-        logger.warning("[RTC_INFERENCE] Timed out waiting for warmup obs; skipping warmup.")
-        return
-    real_obs = shared_state.warmup_obs
-    if real_obs is None:
-        logger.warning("[RTC_INFERENCE] Warmup obs unavailable; first inference call will be slow.")
-        return
     logger.info("[RTC_INFERENCE] Warming up compiled policy (%d calls) — please wait...", n_calls)
     task_str = cfg.policy.task
     execution_horizon = policy.config.rtc_config.execution_horizon
+    action_dim = _action_dim(cfg)
+    robot_type = cfg.env.robot.type if hasattr(cfg.env, "robot") else ""
     try:
-        real_batch = trainer.build_inference_batch(real_obs, task_str, cfg, preprocessor=preprocessor)
+        dummy_obs = {
+            key: np.zeros(feature.shape, dtype=np.float32)
+            for key, feature in cfg.policy.input_features.items()
+        }
+        dummy_batch = trainer.build_inference_batch(
+            dummy_obs, task_str, cfg, preprocessor=preprocessor, robot_type=robot_type
+        )
+        dummy_prev = torch.zeros(execution_horizon, action_dim, device=device, dtype=torch.float32)
         with torch.no_grad():
+            # Pre-capture None-branch graph (first call of each episode).
             for i in range(n_calls):
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
                 torch.compiler.cudagraph_mark_step_begin()
                 policy.predict_action_chunk(
-                    real_batch,
+                    dummy_batch,
                     inference_delay=0,
                     prev_chunk_left_over=None,
                     execution_horizon=execution_horizon,
                 )
                 if device.type == "cuda":
                     torch.cuda.synchronize()
-                logger.info("[RTC_INFERENCE] Warmup %d/%d complete.", i + 1, n_calls)
+                logger.info("[RTC_INFERENCE] Warmup call %d/%d (no-prefix) complete.", i + 1, n_calls)
+            # Pre-capture non-None branch graph (all calls after first, once padding is applied).
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            torch.compiler.cudagraph_mark_step_begin()
+            policy.predict_action_chunk(
+                dummy_batch,
+                inference_delay=0,
+                prev_chunk_left_over=dummy_prev,
+                execution_horizon=execution_horizon,
+            )
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            logger.info("[RTC_INFERENCE] Warmup call (with-prefix) complete.")
         if hasattr(policy, "reset"):
             policy.reset()
         logger.info("[RTC_INFERENCE] Warmup done. Policy is ready.")

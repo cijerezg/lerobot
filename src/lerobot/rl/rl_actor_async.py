@@ -64,8 +64,8 @@ from lerobot.utils.transition import (
 )
 from lerobot.utils.utils import init_logging
 
-import lerobot.rl.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
-import lerobot.rl.rl_pi05        # noqa: F401 — registers PI05RLConfig
+import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
+import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
 
 logger = logging.getLogger(__name__)
 

@@ -373,8 +373,8 @@ def main() -> None:
     3. Delegate to offline_train_cli (parser.wrap handles config parsing).
     """
     # Register before parsing so draccus can resolve policy.type.
-    import lerobot.rl.rl_pi05       # noqa: F401 — registers PI05RLConfig
-    import lerobot.rl.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
+    import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
+    import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
     from lerobot.robots import so_follower         # noqa: F401 — registers so101_follower
     from lerobot.teleoperators import so_leader    # noqa: F401 — registers so101_leader
 

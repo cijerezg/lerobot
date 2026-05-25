@@ -347,11 +347,11 @@ class Trainer(ABC):
         """
         policy_type = getattr(cfg.policy, "type", None)
         if policy_type == "pi05_rl":
-            from lerobot.rl.rl_pi05_trainer import PI05Trainer
+            from lerobot.rl.pi05.rl_pi05_trainer import PI05Trainer
             return PI05Trainer()
         if policy_type == "molmoact2_rl":
-            from lerobot.rl.rl_molmoact2_trainer import MolmoAct2Trainer  # noqa: F401 — registers MolmoAct2RLConfig
-            import lerobot.rl.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
+            from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer  # noqa: F401 — registers MolmoAct2RLConfig
+            import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
             return MolmoAct2Trainer()
         raise ValueError(
             f"No Trainer registered for policy type {policy_type!r}. "
