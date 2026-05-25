@@ -16,7 +16,7 @@ Queues:
   parameters_queue          — learner → actor: updated weights
 
 Usage:
-    python -m lerobot.rl.learner_vla \
+    python -m lerobot.rl.rl_learner \
         --config_path lerobot/src/lerobot/rl/config_rl.yaml
 """
 from __future__ import annotations
@@ -423,6 +423,8 @@ def add_actor_information_and_train(
                 offline_replay_buffer=offline_replay_buffer,
                 dataset_repo_id=dataset_repo_id,
                 fps=fps,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
             )
 
         # ── Online buffer save ─────────────────────────────────────────────

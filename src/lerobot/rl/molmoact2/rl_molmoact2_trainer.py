@@ -206,12 +206,7 @@ class MolmoAct2Trainer(Trainer):
                 action_stats_override, stats_path, cfg.policy
             )
 
-        # Saved-processor specs were serialized before AnchorEncodeStep existed; for
-        # anchor/delta encoding we must rebuild from scratch so the step is present.
-        # Absolute encoding keeps the old fast-path.
-        saved_processor_path = (
-            None if action_encoding in ("anchor", "delta") else _saved_processor_path(cfg)
-        )
+        saved_processor_path = _saved_processor_path(cfg)
         if saved_processor_path is not None:
             if is_main_process:
                 logging.info(f"MolmoAct2 stats source: saved checkpoint processors ({saved_processor_path})")

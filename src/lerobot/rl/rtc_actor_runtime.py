@@ -1284,6 +1284,20 @@ def act_with_policy_rtc(
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
 
+    if getattr(cfg.policy, "torch_compile", False):
+        import torch._dynamo as _dynamo
+        _dynamo.config.suppress_errors = True
+        try:
+            action_expert = policy._action_expert()
+            action_expert.forward_with_context = torch.compile(
+                action_expert.forward_with_context,
+                mode="reduce-overhead",
+                fullgraph=False,
+            )
+            logger.info("[RTC_ACTOR] torch.compile applied to action expert.")
+        except Exception as e:
+            logger.warning("[RTC_ACTOR] Could not compile action expert: %s", e)
+
     if getattr(policy.config, "rtc_config", None) is None or not policy.config.rtc_config.enabled:
         raise RuntimeError("RTC runtime requires policy.config.rtc_config.enabled=True")
 
