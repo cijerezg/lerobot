@@ -772,9 +772,13 @@ def rtc_env_worker(
                 ]),
                 TeleopEvents.IS_INTERVENTION.value: torch.tensor([float(is_intervening)], dtype=torch.float32),
                 "subtask_index": torch.tensor([-1], dtype=torch.long),
-                "subtask_tokens": subtask_tokens,
-                "subtask_masks": subtask_masks,
             }
+            # Only carry subtask tensors when the policy actually generates them
+            # (pi05: max_decoding_steps>0). Empty (0,) tensors would later trip
+            # compute_episode_stats during buffer→dataset serialization.
+            if subtask_tokens.numel() > 0:
+                complementary_info["subtask_tokens"] = subtask_tokens
+                complementary_info["subtask_masks"] = subtask_masks
 
             observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
             next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
