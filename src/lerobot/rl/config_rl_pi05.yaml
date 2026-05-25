@@ -1,0 +1,329 @@
+# =============================================================================
+# RL training config — PI05 smoke test (rl_offline.py)
+# =============================================================================
+# Mirrors config_rl.yaml but with policy.type: pi05_rl active.
+# Goal: train a few steps to verify the loop, then run inference.
+#
+# Run:
+#   uv run python -m lerobot.scripts.rl_offline --config config_rl_pi05.yaml
+#
+# Notes vs. config_rl.yaml (molmoact2):
+#   • Different pretrained checkpoint, dataset stats path, buffer cache dir.
+#   • Images stored at 224x224 uint8 (pi05 native res), not 480x640.
+#   • No `norm_tag` (pi05 reads norm stats from checkpoint dir).
+#   • No v3→v2.1 frame conversion (that is molmoact2-only).
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Hot knobs
+# -----------------------------------------------------------------------------
+offline_output_dir: outputs/pi05_rl_offline_smoketest
+batch_size: 8
+
+
+# -----------------------------------------------------------------------------
+# Dataset
+# -----------------------------------------------------------------------------
+dataset:
+  root: outputs/annotated_dataset
+  repo_id: cijerezg/yellow-car-offline-training-v2
+  use_imagenet_stats: false
+  max_episodes: null
+  additional_offline_dataset_paths: []
+
+
+# -----------------------------------------------------------------------------
+# RL flags
+# -----------------------------------------------------------------------------
+skip_critic: true
+treat_main_dataset_as_golden: true
+
+
+# -----------------------------------------------------------------------------
+# Validation
+# -----------------------------------------------------------------------------
+val_dataset_path: outputs/annotated-dataset-validation-v7
+val_split: 0.0
+val_freq: 1000             # well past our smoke-test step count
+val_on_start: false
+
+
+# =============================================================================
+# Policy: PI05
+# =============================================================================
+policy:
+  type: pi05_rl
+
+  # ---- Identity & checkpoint ------------------------------------------------
+  task: "Pick up the red truck and put it in the bowl"
+  pretrained_path: outputs/pi05_full_offline_training_diverse-v2/checkpoints/last/pretrained_model
+
+  # ---- Trainable params -----------------------------------------------------
+  # PaliGemma vision depth = 27 (SigLIP). Language (Gemma 2B) depth = 18.
+  trainable_params:
+    vision_from_layer: 5
+    language_from_layer: 5
+    critic_vision_from_layer: null
+    critic_language_from_layer: null
+
+  # ---- Losses & optimizer ---------------------------------------------------
+  loss_weight_flow: 1.0
+  loss_weight_action_ce: 1.0
+  loss_weight_subtask_ce: 1.0
+  optimizer_lr: 5.0e-5
+  optimizer_weight_decay: 0.1
+  optimizer_grad_clip_norm: 2.0
+  gradient_accumulation_steps: 1
+
+  # ---- Reward shaping (unused when skip_critic, kept for parity) ------------
+  reward_normalization_constant: 10.0
+  terminal_failure_reward: -15.0
+  advantage_scaling: 0.20
+
+  # ---- Anchor (disabled for smoke test) -------------------------------------
+  anchor_alpha: 0.0
+  anchor_every_n_steps: 0
+  anchor_targets: [policy, critic]
+
+  # ---- Distributional critic (ignored when skip_critic: true) ---------------
+  critic_lr: 1.0e-4
+  num_value_bins: 201
+  value_support_min: -2.0
+  value_support_max: 0.0
+  hl_gauss_sigma_ratio: 8.0
+  critic_target_update_weight: 0.02
+  critic_target_update_every: 4
+  discount: 0.97
+  critic_llm_depth: 6
+  use_separate_critic: true
+
+  # ---- Buffer & schedule ----------------------------------------------------
+  offline_buffer_capacity: 100000
+  online_buffer_capacity: 5000
+  online_step_before_learning: 10
+  online_steps: 20000
+  offline_steps: 100             # smoke test: short
+  policy_update_freq: 1
+  critic_warmup_steps: 0
+  utd_ratio: 1
+  async_prefetch: false
+  storage_device: cpu
+
+  # ---- Image storage (fingerprinted into buffer_cache_dir) ------------------
+  image_storage_dtype: uint8
+  image_storage_size: [224, 224]
+
+  # ---- Inference ------------------------------------------------------------
+  action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
+  inference_advantage: 1.0
+  subtask_regeneration_interval: 1.5
+  rtc_config:
+    enabled: true
+    execution_horizon: 10
+    prefix_attention_schedule: LINEAR
+    max_guidance_weight: 10.0
+    debug: false
+    debug_maxlen: 100
+
+  # ---- Architecture ---------------------------------------------------------
+  tokenizer_max_length: 64
+  max_state_dim: 6
+  max_action_dim: 6
+  action_dim: 6
+  n_obs_steps: 1
+  chunk_size: 50
+  n_action_steps: 50
+  num_inference_steps: 5
+  max_decoding_steps: 24
+  knowledge_insulation: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+
+  # ---- Action encoding ------------------------------------------------------
+  action_encoding: anchor
+  action_encoding_stats_path: outputs/stats/action_stats_anchor_annotated_dataset-v7.pt
+
+  # ---- Feature schema -------------------------------------------------------
+  normalization_mapping:
+    VISUAL: IDENTITY
+    STATE: MIN_MAX
+    ENV: MIN_MAX
+    ACTION: QUANTILES
+  input_features:
+    observation.images.wrist:
+      type: VISUAL
+      shape: [3, 224, 224]
+    observation.images.top:
+      type: VISUAL
+      shape: [3, 224, 224]
+    observation.state:
+      type: STATE
+      shape: [6]
+  output_features:
+    action:
+      type: ACTION
+      shape: [6]
+
+  # ---- Devices --------------------------------------------------------------
+  device: cuda
+  actor_device: cuda:0
+  learner_device: cuda:0
+
+  # ---- Distributed runtime (unused by rl_offline.py; kept for online) -------
+  actor_learner_config:
+    learner_host: 0.0.0.0
+    learner_port: 50051
+    policy_parameters_push_frequency: 180
+  concurrency:
+    actor: threads
+    learner: threads
+
+  # ---- Hub (required by validate(); not pushed) -----------------------------
+  repo_id: cijerezg/multi-task-toys-merged-v2
+
+
+# -----------------------------------------------------------------------------
+# Run identity & I/O
+# -----------------------------------------------------------------------------
+output_dir: null
+job_name: pi05_bc_smoketest
+resume: false
+seed: 42
+
+
+# -----------------------------------------------------------------------------
+# Logging / checkpointing
+# -----------------------------------------------------------------------------
+log_freq: 10
+save_checkpoint: true
+save_freq: 100
+offline_save_freq: 50          # one mid-run + one final
+buffer_cache_dir: outputs/buffer_cache-v7      # shared; pi05 vs molmo distinguished by fingerprint
+use_rerun: false
+
+
+# -----------------------------------------------------------------------------
+# Episode-level logging (online actor — unused in rl_offline)
+# -----------------------------------------------------------------------------
+episode_logging_freq: 1
+episode_save_freq: 2
+video_logging_cameras: [top, wrist]
+
+
+# -----------------------------------------------------------------------------
+# Dataloader
+# -----------------------------------------------------------------------------
+num_workers: 4
+
+
+# -----------------------------------------------------------------------------
+# Weights & Biases
+# -----------------------------------------------------------------------------
+wandb:
+  enable: true
+  project: so101_real-v1
+  offline_project: so101_real_offline-v1
+  disable_artifact: true
+
+
+# =============================================================================
+# Probes — kept enabled but won't fire (val_freq=1000, offline_steps=100)
+# =============================================================================
+probe_parameters:
+  enable_actions: true
+  enable_representations: true
+  enable_attention: true
+  enable_offline_inference: true
+  enable_spatial_memorization: true
+  enable_action_drift_jacobian: true
+  enable_spatial_memorization_jacobian: true
+  enable_critic_values_distribution: false
+
+  output_dir: outputs/probe_pi05
+  mode: all
+  max_episodes: 5
+  n_frames_per_episode: 64
+  random_seed: 42
+  timestep: 0.5
+
+  ref_max_episodes: 50
+  ref_n_frames_per_episode: 128
+
+  spatial_layers: "0"
+  attn_eval_subsample: 4
+
+  offline_inference_n_frames: 5
+
+
+# =============================================================================
+# Environment (unused by rl_offline.py; required by schema)
+# =============================================================================
+env:
+  type: gym_manipulator
+  name: real_robot
+  fps: 30
+
+  robot:
+    type: so101_follower
+    port: /dev/ttyACM0
+    id: follower_arm_v3
+    cameras:
+      wrist:
+        type: opencv
+        index_or_path: 0
+        height: 480
+        width: 640
+        fps: 30
+      top:
+        type: opencv
+        index_or_path: 2
+        height: 480
+        width: 640
+        fps: 30
+
+  teleop:
+    type: so101_leader
+    port: /dev/ttyACM1
+    id: leader_arm_v3
+
+  processor:
+    control_mode: leader
+    observation:
+      display_cameras: false
+      add_joint_velocity_to_observation: false
+      add_current_to_observation: false
+    image_preprocessing:
+      resize_size: [224, 224]
+    gripper:
+      use_gripper: true
+      gripper_penalty: 0.00
+    reset:
+      fixed_reset_joint_positions: [0.54, -90.69, 99.55, 73.70, -92.23, 42.71]
+      reset_time_s: 10
+      control_time_s: 200.0
+      terminate_on_success: true
+    reward_classifier:
+      pretrained_path: null
+      success_threshold: 0.5
+      success_reward: 1.0
+    max_gripper_pos: 30
+
+  features:
+    observation.images.wrist:
+      type: VISUAL
+      shape: [3, 224, 224]
+    observation.images.top:
+      type: VISUAL
+      shape: [3, 224, 224]
+    observation.state:
+      type: STATE
+      shape: [6]
+    action:
+      type: ACTION
+      shape: [6]
+  features_map:
+    observation.images.wrist: observation.images.wrist
+    observation.images.top: observation.images.top
+    observation.state: observation.state
+    action: action
