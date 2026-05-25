@@ -1232,16 +1232,11 @@ def act_with_policy_rtc_inference(
                 avg_pre * 1000, avg_model * 1000, avg_post * 1000, lat_str,
             )
             logger.info(
-                "[metrics/env] steps=%d | action_get=%.1fms | env_step=%.1fms (action_proc=%.1fms robot_step=%.1fms obs_proc=%.1fms) | active=%.1fms | sleep=%.1fms | starved=%d | episode=%s",
+                "[metrics/env] steps=%d | action_get=%.1fms | env_step=%.1fms (action_proc=%.1fms robot_step=%.1fms obs_proc=%.1fms) | active=%.1fms | sleep=%.1fms | starved=%d | post_step=%.1fms | episode=%s",
                 metrics["env_steps"], avg_action_get * 1000, avg_env_step * 1000,
                 avg_action_proc * 1000, avg_robot_step * 1000, avg_obs_proc * 1000,
                 avg_env_active * 1000, avg_env_wait * 1000, metrics["queue_starvation_count"],
-                "ACTIVE" if shared.episode_active else "IDLE",
-            )
-            logger.info(
-                "[metrics/env_post] post_step=%.1fms (move_cpu=%.1fms rerun=%.1fms other=%.1fms)",
-                avg_post_step * 1000, avg_move_cpu * 1000, avg_rerun * 1000,
-                (avg_post_step - avg_move_cpu - avg_rerun) * 1000,
+                avg_post_step * 1000, "ACTIVE" if shared.episode_active else "IDLE",
             )
     except Exception:
         logger.error("[RTC_INFERENCE] Orchestrator error:\n%s", traceback.format_exc())

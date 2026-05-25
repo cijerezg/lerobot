@@ -16,8 +16,6 @@ Usage:
     python -m lerobot.rl.rl_actor_async \
         --config_path lerobot/src/lerobot/rl/config_rl.yaml
 """
-from __future__ import annotations
-
 import logging
 import os
 from threading import Thread

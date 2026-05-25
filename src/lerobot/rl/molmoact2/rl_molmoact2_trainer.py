@@ -215,6 +215,9 @@ class MolmoAct2Trainer(Trainer):
                 if is_main_process:
                     logging.info(f"MolmoAct2 ACTION stats override: {action_encoding} stats")
                 result = _override_action_stats(result, action_stats_override)
+            if action_encoding in ("anchor", "delta"):
+                from lerobot.policies.molmoact2.anchor_encoding import policy_action_with_anchor_to_transition
+                result[1].to_transition = policy_action_with_anchor_to_transition
         else:
             if is_main_process:
                 if dataset_stats is not None:
