@@ -61,8 +61,8 @@ dependencies = [
     # Hugging Face dependencies
     "datasets>=4.0.0,<4.2.0",
     "diffusers>=0.27.2,<0.36.0",
-    "huggingface-hub[hf-transfer,cli]>=0.34.2,<0.36.0",
-    "accelerate>=1.10.0,<2.0.0",
+    "huggingface-hub[hf-transfer,cli]==1.14.0",
+    "accelerate==1.13.0",
 
     # Core dependencies
     "setuptools>=71.0.0,<81.0.0",
@@ -76,12 +76,11 @@ dependencies = [
     "pyserial>=3.5,<4.0",
     "wandb>=0.24.0,<0.25.0",
 
-    # Pinned to the CUDA 12.4 wheel set; resolved from the pytorch-cu124 index
-    # (see [tool.uv.sources] / [[tool.uv.index]] below). Newer torch (>=2.7)
-    # ships only cu13 wheels, which break on hosts running CUDA 12 drivers.
-    "torch>=2.6.0,<2.7.0",
-    "torchcodec>=0.2.1,<0.3.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
-    "torchvision>=0.21.0,<0.22.0",
+    # Pinned to the CUDA 12.8 wheel set used by the working training environment.
+    # Resolved from the pytorch-cu128 index below.
+    "torch==2.11.0",
+    "torchcodec==0.2.1; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+    "torchvision==0.26.0",
 
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=1.1.1,<2.0.0",
@@ -99,7 +98,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
-transformers-dep = ["transformers>=4.57.1,<5.0.0"]
+transformers-dep = ["transformers==5.3.0", "tokenizers==0.22.2"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf>=6.31.1,<6.32.0"]
 scipy-dep = ["scipy>=1.11.0,<2.0.0"]
 
@@ -133,7 +132,7 @@ wallx = [
 ]
 pi = ["lerobot[transformers-dep]", "lerobot[scipy-dep]"]
 smolvla = ["lerobot[transformers-dep]", "num2words>=0.5.14,<0.6.0", "accelerate>=1.7.0,<2.0.0", "safetensors>=0.4.3,<1.0.0"]
-molmoact2 = ["lerobot[transformers-dep]", "peft>=0.18.0,<1.0.0", "safetensors>=0.4.3,<1.0.0", "Pillow>=10.0.0,<13.0.0"]
+molmoact2 = ["lerobot[transformers-dep]", "peft==0.19.1", "safetensors==0.7.0", "Pillow==12.2.0"]
 groot = [
     "lerobot[transformers-dep]",
     "peft>=0.13.0,<1.0.0",
@@ -488,18 +487,17 @@ conflicts = [
     ],
 ]
 
-# Resolve torch/torchvision from the official PyTorch CUDA 12.4 wheel index so
-# `uv sync`/`uv run` produce a CUDA-12-compatible build on hosts whose NVIDIA
-# driver predates CUDA 13.
+# Resolve torch/torchvision from the official PyTorch CUDA 12.8 wheel index so
+# `uv sync`/`uv run` reproduce the known-working local training environment.
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 torchvision = [
-    { index = "pytorch-cu124", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
 explicit = true
