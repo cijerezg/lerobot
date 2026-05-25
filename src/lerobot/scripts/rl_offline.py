@@ -63,7 +63,10 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.rl.buffer import ReplayBuffer
-from lerobot.rl.offline_dataset_utils import load_additional_offline_datasets
+from lerobot.rl.offline_dataset_utils import (
+    load_additional_offline_buffers,
+    make_combined_offline_iterator,
+)
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.utils import cast_to_bf16
 from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
@@ -538,14 +541,18 @@ def run_offline_training(
         image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
     )
     offline_replay_buffer.dataset = offline_dataset
-    load_additional_offline_datasets(
+    additional_buffers = load_additional_offline_buffers(
         cfg=cfg,
-        offline_dataset=offline_dataset,
-        offline_replay_buffer=offline_replay_buffer,
+        main_dataset=offline_dataset,
+        device=device,
         storage_device=storage_device,
         is_main_process=True,
     )
-    logging.info(f"[RL_OFFLINE] Buffer: {len(offline_replay_buffer)} samples")
+    offline_buffers = [offline_replay_buffer, *additional_buffers]
+    logging.info(
+        f"[RL_OFFLINE] Buffer: {sum(len(b) for b in offline_buffers)} samples "
+        f"({len(offline_buffers)} sources)"
+    )
 
     # Share frozen critic-target params to save VRAM
     if not skip_critic and hasattr(policy, "critic") and hasattr(policy, "critic_target"):
@@ -567,7 +574,8 @@ def run_offline_training(
     logging.info(colored("=" * 70, "yellow", attrs=["bold"]))
 
     # ── Iterator ─────────────────────────────────────────────────────────────
-    buf_iter = offline_replay_buffer.get_iterator(
+    buf_iter = make_combined_offline_iterator(
+        buffers=offline_buffers,
         batch_size=cfg.batch_size,
         async_prefetch=async_prefetch,
         queue_size=2,
@@ -683,7 +691,7 @@ def run_offline_training(
 
         # ── Logging ───────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:
-            training_infos["offline_buffer_size"] = len(offline_replay_buffer)
+            training_infos["offline_buffer_size"] = sum(len(b) for b in offline_buffers)
             training_infos["Optimization step"] = optimization_step
             trainer.log_metrics(
                 training_infos=training_infos,

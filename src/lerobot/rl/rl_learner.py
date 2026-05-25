@@ -40,17 +40,17 @@ from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
 import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
 from lerobot.robots import so_follower        # noqa: F401 — registers so101_follower
 from lerobot.teleoperators import so_leader   # noqa: F401 — registers so101_leader
 from lerobot.rl.buffer import ReplayBuffer
-from lerobot.rl.offline_dataset_utils import load_additional_offline_datasets
+from lerobot.rl.offline_dataset_utils import (
+    load_additional_offline_buffers,
+    make_combined_offline_iterator,
+)
 from lerobot.rl.learner import (
     check_nan_in_transition,
-    handle_resume_logic,
-    load_training_state,
     log_training_info,
     process_interaction_messages,
     save_training_checkpoint,
@@ -116,7 +116,6 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None) -> None
         wandb_logger = None
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
-    cfg = handle_resume_logic(cfg)
     set_seed(seed=cfg.seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -236,8 +235,6 @@ def add_actor_information_and_train(
         every_n_steps=int(getattr(cfg.policy, "anchor_every_n_steps", 0)),
         targets=list(getattr(cfg.policy, "anchor_targets", [])),
     )
-    resume_optimization_step, resume_interaction_step = load_training_state(cfg=cfg, optimizers=optimizers)
-
     # ── Processors ───────────────────────────────────────────────────────────
     offline_dataset = None
     dataset_repo_id = getattr(cfg.dataset, "repo_id", None) if cfg.dataset is not None else None
@@ -256,18 +253,20 @@ def add_actor_information_and_train(
     )
 
     offline_replay_buffer = None
+    offline_buffers: list[ReplayBuffer] = []
     batch_size = cfg.batch_size
 
     if cfg.dataset is not None:
         offline_replay_buffer = _init_offline_buffer(cfg, device, storage_device)
         offline_dataset = offline_replay_buffer.dataset
-        load_additional_offline_datasets(
+        additional_buffers = load_additional_offline_buffers(
             cfg=cfg,
-            offline_dataset=offline_dataset,
-            offline_replay_buffer=offline_replay_buffer,
+            main_dataset=offline_dataset,
+            device=device,
             storage_device=storage_device,
             is_main_process=True,
         )
+        offline_buffers = [offline_replay_buffer, *additional_buffers]
         batch_size = batch_size // 2
 
     # ── Initial weight push ───────────────────────────────────────────────────
@@ -275,8 +274,8 @@ def add_actor_information_and_train(
     last_weights_pushed = time.time()
 
     # ── Training state ────────────────────────────────────────────────────────
-    optimization_step: int = resume_optimization_step or 0
-    interaction_step_shift: int = resume_interaction_step or 0
+    optimization_step: int = 0
+    interaction_step_shift: int = 0
     online_iterator = None
     offline_iterator = None
     interaction_message = None
@@ -320,8 +319,9 @@ def add_actor_information_and_train(
                 queue_size=2,
                 action_chunk_size=cfg.policy.n_action_steps,
             )
-        if offline_replay_buffer is not None and offline_iterator is None:
-            offline_iterator = offline_replay_buffer.get_iterator(
+        if offline_buffers and offline_iterator is None:
+            offline_iterator = make_combined_offline_iterator(
+                buffers=offline_buffers,
                 batch_size=batch_size,
                 async_prefetch=async_prefetch,
                 queue_size=2,
@@ -386,8 +386,8 @@ def add_actor_information_and_train(
         # ── Logging ────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:
             training_infos["replay_buffer_size"] = len(replay_buffer)
-            if offline_replay_buffer is not None:
-                training_infos["offline_replay_buffer_size"] = len(offline_replay_buffer)
+            if offline_buffers:
+                training_infos["offline_replay_buffer_size"] = sum(len(b) for b in offline_buffers)
             training_infos["Optimization step"] = optimization_step
 
             trainer.log_metrics(
@@ -635,29 +635,14 @@ def _init_online_buffer(
     device,
     storage_device,
 ) -> ReplayBuffer:
-    if not cfg.resume:
-        return ReplayBuffer(
-            capacity=cfg.policy.online_buffer_capacity,
-            device=device,
-            state_keys=cfg.policy.input_features.keys(),
-            storage_device=storage_device,
-            optimize_memory=True,
-            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
-            image_storage_size=getattr(cfg.policy, "image_storage_size", None),
-        )
-    logging.info("Resuming: loading online buffer from disk")
-    dataset = LeRobotDataset(
-        repo_id=getattr(cfg.dataset, "repo_id", None),
-        root=os.path.join(cfg.output_dir, "dataset"),
-    )
-    return ReplayBuffer.from_lerobot_dataset(
-        lerobot_dataset=dataset,
+    return ReplayBuffer(
         capacity=cfg.policy.online_buffer_capacity,
         device=device,
         state_keys=cfg.policy.input_features.keys(),
+        storage_device=storage_device,
         optimize_memory=True,
         image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
-        image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
+        image_storage_size=getattr(cfg.policy, "image_storage_size", None),
     )
 
 
@@ -666,18 +651,7 @@ def _init_offline_buffer(
     device,
     storage_device,
 ) -> ReplayBuffer:
-    if not cfg.resume:
-        offline_dataset = make_dataset(cfg)
-    else:
-        episodes = cfg.dataset.episodes
-        if episodes is None and cfg.dataset.max_episodes is not None:
-            episodes = list(range(cfg.dataset.max_episodes))
-        offline_dataset = LeRobotDataset(
-            repo_id=cfg.dataset.repo_id,
-            root=os.path.join(cfg.output_dir, "dataset_offline"),
-            episodes=episodes,
-        )
-
+    offline_dataset = make_dataset(cfg)
     offline_dataset.delta_timestamps = None
     offline_dataset.delta_indices = None
 
