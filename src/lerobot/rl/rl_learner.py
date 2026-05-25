@@ -19,8 +19,6 @@ Usage:
     python -m lerobot.rl.rl_learner \
         --config_path lerobot/src/lerobot/rl/config_rl.yaml
 """
-from __future__ import annotations
-
 import logging
 import json
 import os
@@ -43,6 +41,10 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
+import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
+from lerobot.robots import so_follower        # noqa: F401 — registers so101_follower
+from lerobot.teleoperators import so_leader   # noqa: F401 — registers so101_leader
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.offline_dataset_utils import load_additional_offline_datasets
 from lerobot.rl.learner import (

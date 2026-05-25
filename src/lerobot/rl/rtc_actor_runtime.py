@@ -778,11 +778,15 @@ def rtc_env_worker(
 
             observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
             next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
+            # Images go on-wire as uint8 to match the offline buffer's uint8 storage
+            # (so online/offline batches concatenate) and to shrink the gRPC payload 4x.
+            state_send = {k: v.mul(255).clamp(0, 255).to(torch.uint8) if "image" in k else v for k, v in observation.items()}
+            next_state_send = {k: v.mul(255).clamp(0, 255).to(torch.uint8) if "image" in k else v for k, v in next_observation.items()}
             transition_to_send = Transition(
-                state=observation,
+                state=state_send,
                 action=executed_action[..., :action_dim],
                 reward=reward,
-                next_state=next_observation,
+                next_state=next_state_send,
                 done=done,
                 truncated=truncated,
                 complementary_info=complementary_info,
