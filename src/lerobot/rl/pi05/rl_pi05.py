@@ -156,6 +156,7 @@ class PI05RLConfig(PI05FullConfig):
 
 from transformers import CONFIG_MAPPING
 from transformers.models.gemma.modeling_gemma import GemmaRotaryEmbedding
+from lerobot.policies.pi_gemma import PiGemmaRMSNorm, _get_pi_gemma_decoder_layer_base
 from lerobot.utils.constants import OPENPI_ATTENTION_MASK_VALUE
 
 # Hardcoded vocabulary size matching PaliGemmaWithExpertModel in modeling_pi05.py

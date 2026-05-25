@@ -617,15 +617,15 @@ def _finish_logging_episode(log_ctx: dict, episode: int) -> None:
         plt.savefig(os.path.join(log_dir, "critic_plot.png"))
         plt.close()
 
-        try:
-            save_video_with_critic_overlay(
-                log_dir,
-                critic_values,
-                camera_names=log_ctx["camera_names"],
-            )
-            logging.info(f"[LEARNER] Video generated for episode {episode}")
-        except Exception as exc:
-            logging.error(f"[LEARNER] Failed to generate video: {exc}")
+    try:
+        save_video_with_critic_overlay(
+            log_dir,
+            critic_values,
+            camera_names=log_ctx["camera_names"],
+        )
+        logging.info(f"[LEARNER] Video generated for episode {episode}")
+    except Exception as exc:
+        logging.error(f"[LEARNER] Failed to generate video: {exc}")
 
     logging.info(f"[LEARNER] Finished logging episode {episode}")
 
