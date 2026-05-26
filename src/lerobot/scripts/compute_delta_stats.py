@@ -147,12 +147,14 @@ def compute_action_stats(
     return stats
 
 def plot_stats(stats: dict, output_path: Path, repo_id: str, encoding: str):
-    """Plot the min/max range of all 6 joints in a 3x2 grid."""
+    """Plot the min/max range of all joints in a 2-column grid."""
     t = np.arange(len(stats["min"]))
     num_joints = stats["min"].shape[1]
-    
-    fig, axes = plt.subplots(3, 2, figsize=(15, 12), constrained_layout=True)
-    axes = axes.flatten()
+
+    ncols = 2
+    nrows = (num_joints + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(15, 4 * nrows), constrained_layout=True)
+    axes = np.atleast_1d(axes).flatten()
     
     for i in range(num_joints):
         ax = axes[i]
