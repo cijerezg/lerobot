@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, force=True)
 logger = logging.getLogger(__name__)
 
 FRAME_CONVERSIONS = ("none", "so101_v3_to_v21")
