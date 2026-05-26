@@ -256,10 +256,15 @@ class PlaceMotor(SceneWristCameraEnv):
             PlaceMotorRandomizationConfig, dict
         ] = PlaceMotorRandomizationConfig(),
         domain_randomization=False,
+        marker_xy_offset: Sequence[float] | None = None,
+        marker_yaw_degrees: float = 0.0,
+        show_gripper_contact_markers: bool = False,
+        use_marker_grasp_assist: bool = False,
         **kwargs,
     ):
         if robot_uids != "so101":
             raise NotImplementedError("SO101PlaceMotor-v1 currently supports robot_uids='so101' only")
+        del marker_xy_offset, marker_yaw_degrees, show_gripper_contact_markers, use_marker_grasp_assist
 
         self.base_z_rot = 0
         self.rest_qpos = SO101.keyframes["start"].qpos.tolist()
@@ -333,7 +338,7 @@ class PlaceMotor(SceneWristCameraEnv):
                 dynamic_friction=friction,
                 restitution=0,
             )
-            builder.add_multiple_convex_collisions_from_file(
+            builder.add_convex_collision_from_file(
                 filename=MOTOR_MESH_FILE,
                 scale=MESH_SCALE,
                 pose=MOTOR_MESH_POSE,
