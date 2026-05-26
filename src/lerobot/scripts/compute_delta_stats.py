@@ -185,7 +185,7 @@ def plot_stats(stats: dict, output_path: Path, repo_id: str, encoding: str):
     
     save_path = output_path / f"stats_plot_{encoding}_{repo_id.replace('/', '_')}.png"
     plt.savefig(save_path)
-    logger.info(f"Plot saved to {save_path}")
+    logger.info(f"Plot saved to {save_path.resolve()}")
     plt.close()
 
 def main():
@@ -220,7 +220,7 @@ def main():
             / f"action_stats_{args.encoding}_{args.frame_conversion}_{repo_id.replace('/', '_')}.pt"
         )
         torch.save(stats, save_file)
-        logger.info(f"Stats saved to {save_file}")
+        logger.info(f"Stats saved to {save_file.resolve()}")
 
         plot_stats(stats, output_path, repo_id, args.encoding)
 
