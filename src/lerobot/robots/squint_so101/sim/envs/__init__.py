@@ -3,4 +3,4 @@
 from .robot import so100, so101  # noqa: F401
 
 # Custom envs.
-from . import lift, place, reach, stack  # noqa: F401
+from . import lift, place, place_motor, reach, stack  # noqa: F401

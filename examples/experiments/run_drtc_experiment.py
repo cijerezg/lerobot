@@ -100,6 +100,11 @@ class ExperimentConfig:
     sim_video_max_episodes: int = 20
     sim_video_max_frames: int = 300
     sim_white_x_background: bool = True
+    sim_web_viewer: bool = False
+    sim_web_viewer_http_port: int = 8098
+    sim_web_viewer_ws_port: int = 8099
+    sim_web_viewer_max_width: int = 720
+    sim_web_viewer_jpeg_quality: int = 82
     sim_max_episode_steps: int | None = None
     sim_success_reward_threshold: float = 0.5
     sim_action_clip: float | None = None
@@ -257,7 +262,10 @@ _SCALAR_FIELDS = frozenset({
     "sim_seed", "sim_sensor_width", "sim_sensor_height", "sim_camera_pose_path",
     "sim_video_dir", "sim_video_fps", "sim_video_every_episodes",
     "sim_video_max_episodes", "sim_video_max_frames",
-    "sim_white_x_background", "sim_max_episode_steps",
+    "sim_white_x_background",
+    "sim_web_viewer", "sim_web_viewer_http_port", "sim_web_viewer_ws_port",
+    "sim_web_viewer_max_width", "sim_web_viewer_jpeg_quality",
+    "sim_max_episode_steps",
     "sim_success_reward_threshold", "sim_action_clip", "sim_headless",
     "sim_reset_seed_on_terminal", "sim_use_dataset_initial_state",
     "sim_show_gripper_contact_markers", "sim_use_marker_grasp_assist",
@@ -421,6 +429,11 @@ def create_robot_config(config: ExperimentConfig) -> SO100FollowerConfig | SO101
             camera_height=config.camera_height,
             top_camera_name=config.camera2_name,
             side_camera_name=config.camera1_name,
+            web_viewer=config.sim_web_viewer,
+            web_viewer_http_port=config.sim_web_viewer_http_port,
+            web_viewer_ws_port=config.sim_web_viewer_ws_port,
+            web_viewer_max_width=config.sim_web_viewer_max_width,
+            web_viewer_jpeg_quality=config.sim_web_viewer_jpeg_quality,
             video_dir=config.sim_video_dir,
             video_fps=config.sim_video_fps,
             video_every_episodes=config.sim_video_every_episodes,
@@ -840,7 +853,7 @@ def main():
             output_dir,
             server_address=args.server_address,
             trajectory_viz_ws_url=args.trajectory_viz_ws_url,
-            task=DEFAULT_TASK,
+            task=config.sim_task or DEFAULT_TASK,
             experiment_name=experiment_name if len(configs) == 1 else None,
         )
         results.append(result)

@@ -1,0 +1,110 @@
+# DRTC sim evaluation config for the MolmoAct2 SO101 placemotor checkpoint.
+#
+# Runs the vendored Squint SO101 ManiSkill simulator with the SO101PlaceMotor-v1
+# task and streams scene+wrist frames to the browser viewer.
+#
+# Run with:
+#   ./scripts/run_drtc_experiment.sh --config baseline_molmoact2_so101_placemotor_sim
+name: baseline_molmoact2_so101_placemotor_sim
+
+# Simulator
+robot_type: squint_so101
+gpu: ""
+client_host: "local squint sim"
+server_host: "local policy server"
+robot_id: squint_so101_placemotor_molmoact2_020000
+sim_headless: true
+sim_web_viewer: true
+sim_web_viewer_http_port: 8098
+sim_web_viewer_ws_port: 8099
+sim_web_viewer_max_width: 900
+sim_web_viewer_jpeg_quality: 82
+sim_squint_root: ""
+sim_env_id: SO101PlaceMotor-v1
+sim_task: Place the Feetech 3215 motor into the slot of the SO101 underarm
+sim_dataset_root:
+sim_dataset_repo_id: jackvial/so101_placemotor_20260521_e35trimidle
+sim_control_mode: pd_joint_target_delta_pos
+sim_obs_mode: rgb+segmentation
+sim_render_mode: rgb_array
+sim_domain_randomization: false
+sim_seed: 1000
+sim_sensor_width: 800
+sim_sensor_height: 600
+sim_camera_pose_path:
+sim_white_x_background: false
+sim_max_episode_steps: 120
+sim_success_reward_threshold: 0.5
+sim_reset_seed_on_terminal: true
+sim_use_dataset_initial_state: false
+sim_follow_calibration_path:
+sim_show_gripper_contact_markers: false
+sim_use_marker_grasp_assist: false
+sim_bootstrap_dataset_episode:
+sim_bootstrap_dataset_episodes:
+sim_bootstrap_dataset_episode_interval: 1
+sim_bootstrap_dataset_action_stride: 1
+sim_marker_xy_offset:
+sim_marker_yaw_degrees: 0.0
+sim_video_dir: outputs/molmoact2_so101_placemotor_sim/videos
+sim_video_fps: 20
+sim_video_every_episodes: 1
+sim_video_max_episodes: 20
+sim_video_max_frames: 160
+
+# The checkpoint expects observation.images.{scene,wrist}.
+camera1_name: wrist
+camera2_name: scene
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc:
+camera_use_threaded_async_read: false
+camera_allow_stale_frames: true
+
+# Policy
+policy_type: molmoact2
+pretrained_name_or_path: /home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e35trimidle_10k_action_expert_v4/checkpoints/020000/020000/pretrained_model
+subtask_generation_enabled: false
+subtask_regeneration_interval: 0
+
+# DRTC parameters. MolmoAct2's checkpoint chunk_size/n_action_steps is 30.
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+actions_per_chunk: 30
+s_min: 2
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing
+duration_s: 1000.0
+run_until_interrupt: true
+fps: 10
+
+# Flow matching / RTC
+num_flow_matching_steps: 3
+rtc_enabled: true
+rtc_max_guidance_weight:
+rtc_prefix_attention_schedule: linear
+rtc_sigma_d: 1.0
+rtc_full_trajectory_alignment: false
+
+# Action smoothing
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 4.0
+action_filter_butterworth_order: 2
+action_filter_gain: 1.0
+action_max_step_deg: 5.0
+
+# Diagnostics
+full_diagnostics: true
+trajectory_viz_enabled: false
+
+# No manual teleop in sim evaluation.
+teleop_enabled: false
+teleop_type:
+teleop_port:
+teleop_id:
+teleop_send_feedback: false

@@ -23,6 +23,12 @@ def test_infer_squint_env_id_from_pick_place_task():
     assert infer_squint_env_id(task) == "SO101PlaceCubeMarker-v1"
 
 
+def test_infer_squint_env_id_from_motor_slot_task():
+    task = "Place the Feetech 3215 motor into the slot of the SO101 underarm"
+
+    assert infer_squint_env_id(task) == "SO101PlaceMotor-v1"
+
+
 def test_read_dataset_task_from_lerobot_v3_tasks_parquet(tmp_path):
     dataset_root = tmp_path / "dataset"
     meta_dir = dataset_root / "meta"
@@ -115,6 +121,9 @@ def test_create_robot_config_builds_squint_config():
             "sim_bootstrap_dataset_episodes": [0, 2, 3],
             "sim_bootstrap_dataset_episode_interval": 6,
             "sim_bootstrap_dataset_action_stride": 3,
+            "sim_web_viewer": True,
+            "sim_web_viewer_http_port": 8198,
+            "sim_web_viewer_ws_port": 8199,
         }
     )
 
@@ -130,6 +139,9 @@ def test_create_robot_config_builds_squint_config():
     assert robot_cfg.bootstrap_dataset_episodes == [0, 2, 3]
     assert robot_cfg.bootstrap_dataset_episode_interval == 6
     assert robot_cfg.bootstrap_dataset_action_stride == 3
+    assert robot_cfg.web_viewer is True
+    assert robot_cfg.web_viewer_http_port == 8198
+    assert robot_cfg.web_viewer_ws_port == 8199
 
 
 def test_squint_robot_schedules_bootstrap_dataset_episodes():

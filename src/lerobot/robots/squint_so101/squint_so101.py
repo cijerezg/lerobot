@@ -39,6 +39,8 @@ def infer_squint_env_id(task: str | None, fallback: str | None = None) -> str:
     if fallback:
         return fallback
     task_l = (task or "").lower()
+    if "motor" in task_l and any(token in task_l for token in ("underarm", "under arm", "slot")):
+        return "SO101PlaceMotor-v1"
     item = "Can" if "can" in task_l else "Cube"
     if "stack" in task_l:
         verb = "Stack"
@@ -334,6 +336,8 @@ class SquintSO101Robot(Robot):
         self._video_dir = Path(config.video_dir)
         self._last_timing: dict[str, dict[str, float]] = {}
         self._camera_pose_payload: dict[str, Any] | None = None
+        self._web_viewer = None
+        self._web_viewer_step = 0
 
         dataset_task = read_dataset_task(config.dataset_root)
         self.task_instruction = config.task or dataset_task
@@ -372,6 +376,7 @@ class SquintSO101Robot(Robot):
         self._create_env()
         self._connected = True
         self._reset_episode(seed=self.config.seed)
+        self._start_web_viewer()
         logger.info(
             "Connected Squint SO101 simulator env_id=%s task=%r dataset_root=%s action_unit_range=(%s, %s)",
             self.env_id,
@@ -420,6 +425,7 @@ class SquintSO101Robot(Robot):
         obs: dict[str, Any] = {key: float(value) for key, value in zip(ACTION_KEYS, state, strict=True)}
         obs[self.config.top_camera_name] = top_image
         obs[self.config.side_camera_name] = side_image
+        self._publish_web_viewer_frame(obs)
         timing["total_ms"] = (time.perf_counter() - total_start) * 1000.0
         self._last_timing["get_observation"] = timing
         return obs
@@ -509,6 +515,12 @@ class SquintSO101Robot(Robot):
         return {key: float(value) for key, value in zip(ACTION_KEYS, applied_units, strict=True)}
 
     def disconnect(self) -> None:
+        if self._web_viewer is not None:
+            try:
+                self._web_viewer.stop()
+            except Exception as exc:
+                logger.debug("Squint web viewer stop failed: %s", exc)
+            self._web_viewer = None
         if self._env is not None:
             try:
                 self._flush_video(success=False)
@@ -517,6 +529,51 @@ class SquintSO101Robot(Robot):
                 logger.debug("Squint simulator close failed: %s", exc)
         self._env = None
         self._connected = False
+
+    def _start_web_viewer(self) -> None:
+        if not self.config.web_viewer:
+            return
+        try:
+            from .sim.web_viewer import CameraVizServer
+
+            self._web_viewer = CameraVizServer(
+                http_port=self.config.web_viewer_http_port,
+                ws_port=self.config.web_viewer_ws_port,
+                max_width=self.config.web_viewer_max_width,
+                jpeg_quality=self.config.web_viewer_jpeg_quality,
+            )
+            self._web_viewer.start()
+            viewer_url = (
+                f"http://localhost:{self.config.web_viewer_http_port}/"
+                f"?ws_port={self.config.web_viewer_ws_port}"
+            )
+            logger.info("Squint DRTC web viewer: %s", viewer_url)
+            print(f"Squint DRTC web viewer: {viewer_url}", flush=True)
+        except Exception as exc:
+            logger.warning("Failed to start Squint DRTC web viewer: %s", exc)
+            self._web_viewer = None
+
+    def _publish_web_viewer_frame(self, obs: dict[str, Any]) -> None:
+        if self._web_viewer is None:
+            return
+        try:
+            for _control in self._web_viewer.drain_controls():
+                pass
+            unwrapped = self._env.unwrapped if self._env is not None else None
+            camera_state = getattr(unwrapped, "_teleop_camera_state", None)
+            camera_status = getattr(unwrapped, "_teleop_camera_status", None)
+            action = {key: float(obs[key]) for key in ACTION_KEYS if key in obs}
+            timing = self._web_viewer.on_observation(
+                obs,
+                step=self._web_viewer_step,
+                action=action,
+                camera_state=camera_state,
+                camera_status=camera_status,
+            )
+            self._last_timing["web_viewer"] = timing
+            self._web_viewer_step += 1
+        except Exception as exc:
+            logger.debug("Failed to publish Squint web viewer frame: %s", exc)
 
     def get_rlt_events(self) -> dict[str, bool]:
         """Return one-shot episode events consumed by RobotClientDrtc."""
@@ -864,7 +921,19 @@ class SquintSO101Robot(Robot):
     def _sensor_rgb(self, obs: Any) -> np.ndarray:
         if isinstance(obs, dict):
             if "sensor_data" in obs and isinstance(obs["sensor_data"], dict):
-                for camera_obs in obs["sensor_data"].values():
+                sensor_data = obs["sensor_data"]
+                preferred_names = (
+                    self.config.side_camera_name,
+                    f"{self.config.side_camera_name}_camera",
+                    "wrist_camera",
+                    "base_camera",
+                    "scene_camera",
+                )
+                for name in preferred_names:
+                    camera_obs = sensor_data.get(name)
+                    if isinstance(camera_obs, dict) and "rgb" in camera_obs:
+                        return _as_numpy(camera_obs["rgb"])
+                for camera_obs in sensor_data.values():
                     if isinstance(camera_obs, dict) and "rgb" in camera_obs:
                         return _as_numpy(camera_obs["rgb"])
             if "rgb" in obs:

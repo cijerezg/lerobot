@@ -32,6 +32,11 @@ class SquintSO101RobotConfig(RobotConfig):
     camera_pose_path: str = ""
     top_camera_name: str = "top"
     side_camera_name: str = "side"
+    web_viewer: bool = False
+    web_viewer_http_port: int = 8098
+    web_viewer_ws_port: int = 8099
+    web_viewer_max_width: int = 720
+    web_viewer_jpeg_quality: int = 82
     video_dir: str = "outputs/rlt_squint_videos"
     video_fps: int = 20
     video_every_episodes: int = 1
