@@ -37,6 +37,73 @@ def apply_butterworth_filter(actions: torch.Tensor) -> torch.Tensor:
     smoothed = filtfilt(_BUTTER_B, _BUTTER_A, arr, axis=0)
     return torch.as_tensor(smoothed.copy(), dtype=actions.dtype, device=actions.device)
 
+
+def align_prev_actions(
+    prev_actions: torch.Tensor,
+    anchor_old: torch.Tensor,
+    anchor_now: torch.Tensor,
+    action_encoding: str,
+    chunk_size: int,
+    postprocessor,
+    normalizer,
+) -> torch.Tensor:
+    """Re-align leftover chunk actions when the anchor state changes between chunks.
+
+    For anchor encoding (d_t = a_t - s_0), every action in the leftover references s_0
+    and must be corrected when s_0 changes: d_t_new = d_t_old + (s_0_old - s_0_new).
+
+    For delta encoding (d_0 = a_0 - s_0, d_t = a_t - a_{t-1} for t > 0), only d_0
+    references s_0. Leftovers that begin at offset > 0 contain only consecutive diffs
+    and need no correction at all.
+
+    Per-timestep normalization stats have shape [chunk_size, action_dim]. The leftover
+    starts at index offset = chunk_size - n_left in the original chunk, so we right-align
+    it in a padded buffer before calling postprocessor (unnorm) to ensure each position
+    uses the correct per-timestep stats. After the correction we left-align for renorm,
+    because the model receives prev_chunk_left_over left-aligned (positions 0..n_left-1).
+
+    Args:
+        prev_actions: Leftover normalized actions from the previous chunk, [n_left, action_dim].
+        anchor_old: s_0 that was used when the previous chunk was generated.
+        anchor_now: Current observation state (new s_0).
+        action_encoding: "anchor" or "delta".
+        chunk_size: Full chunk size (used to derive offset).
+        postprocessor: Callable that unnormalizes a [chunk_size, action_dim] tensor.
+        normalizer: NormalizerProcessorStep used to renormalize after correction.
+
+    Returns:
+        Re-aligned normalized prev_actions with shape [n_left, action_dim].
+    """
+    n_left = prev_actions.shape[0]
+    action_dim = prev_actions.shape[1]
+    offset = chunk_size - n_left  # position of prev_actions[0] in the original chunk
+
+    if action_encoding == "delta" and offset > 0:
+        # prev_actions[0] is d_{offset} = a_{offset} - a_{offset-1}, a consecutive diff
+        # that does not reference s_0 at all.  No alignment needed.
+        return prev_actions
+
+    # Right-align in a padded buffer so postprocessor applies the correct per-timestep
+    # stats: stats[offset+i] is used to unnorm prev_actions[i].
+    right_padded = torch.zeros(chunk_size, action_dim, device=prev_actions.device, dtype=prev_actions.dtype)
+    right_padded[offset:] = prev_actions
+    d_abs = postprocessor(right_padded)
+
+    dev = d_abs.device
+    delta_s = anchor_old.squeeze(0).to(dev) - anchor_now.squeeze(0).to(dev)
+    if action_encoding == "anchor":
+        # All positions reference s_0; shift every leftover element.
+        d_abs[offset:] += delta_s
+    else:
+        # delta with offset == 0: only d_0 = a_0 - s_0 references the anchor.
+        d_abs[0] += delta_s
+
+    # Left-align for renorm: the model receives prev_chunk_left_over at positions 0..n_left-1.
+    left_padded = torch.zeros(chunk_size, action_dim, device=dev, dtype=d_abs.dtype)
+    left_padded[:n_left] = d_abs[offset:]
+    return normalizer._normalize_action(left_padded, inverse=False)[:n_left]
+
+
 class SharedState:
     """Thread-safe state manager for passing observations from the environment 
     thread to the background inference thread without race conditions.
@@ -367,7 +434,6 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                         if prev_actions is not None and action_queue.anchor_state is not None:
                             anchor_old = action_queue.anchor_state
                             from lerobot.processor import NormalizerProcessorStep
-                            from lerobot.rl.actor_pi05_async_utils import align_prev_actions
                             normalizer = next(
                                 s for s in policy.preprocessor.steps
                                 if isinstance(s, NormalizerProcessorStep)
