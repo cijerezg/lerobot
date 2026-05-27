@@ -20,6 +20,8 @@ from torch import Tensor
 
 import numpy as np
 
+from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY
+from lerobot.policies.molmoact2.frame_so101 import arm_to_model
 from lerobot.policies.molmoact2.modeling_molmoact2 import (
     _MOLMOACT2_PROBING_CAPTURE,
     register_action_attention_probing,
@@ -27,7 +29,7 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
 from lerobot.probes.base import AttentionCaptureResult, ProbablePolicy
 from lerobot.probes.utils import find_normalizer_step
 from lerobot.types import TransitionKey
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 
 class MolmoAct2Adapter(ProbablePolicy):
@@ -88,6 +90,7 @@ class MolmoAct2Adapter(ProbablePolicy):
             "task": task_str,
             TransitionKey.COMPLEMENTARY_DATA: {
                 "advantage": torch.tensor([[advantage]], device=device, dtype=torch.float32),
+                "advantage_threshold": 0.0,
             },
         }
         if gt_actions is not None:
@@ -100,11 +103,22 @@ class MolmoAct2Adapter(ProbablePolicy):
 
     @torch.no_grad()
     def normalize_gt_actions(self, gt_actions: Tensor, state: Tensor | None) -> Tensor:
-        # Molmoact2 is absolute-only; no anchor/delta adjustment needed.
-        # The masked normalizer uses an internal mask (from _tensor_stats), so it
-        # can be invoked in isolation without action_dim_is_pad.
+        # Mirror the preprocessor pipeline: SO101V3ToV21Step → (anchor encode) → normalizer.
+        # gt_actions/state arrive in v3.0 frame; the molmoact2 normalizer stats are
+        # always in v2.1 frame, and (for anchor/delta) on encoded deltas.
+        action_v21 = arm_to_model(gt_actions)
+        action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
+        if state is not None and action_encoding in ("anchor", "delta"):
+            anchor = arm_to_model(state)[: action_v21.shape[-1]].unsqueeze(0).cpu()
+            if action_encoding == "anchor":
+                action_v21 = action_v21 - anchor
+            elif action_v21.shape[0] > 1:
+                action_v21 = torch.cat([action_v21[0:1] - anchor, torch.diff(action_v21, dim=0)], dim=0)
+            else:
+                action_v21 = action_v21 - anchor
+
         norm_step = find_normalizer_step(self._preprocessor)
-        batch = {TransitionKey.ACTION: gt_actions.unsqueeze(0).to(self._device)}
+        batch = {TransitionKey.ACTION: action_v21.unsqueeze(0).to(self._device)}
         out = norm_step(batch)
         return out[TransitionKey.ACTION].squeeze(0).float().cpu()
 
@@ -113,15 +127,20 @@ class MolmoAct2Adapter(ProbablePolicy):
         self,
         obs: dict[str, Tensor],
         task_str: str,
-        state: Tensor | None = None,  # unused: molmoact2 is absolute-only
+        state: Tensor | None = None,  # noqa: ARG002 — v2.1 anchor comes from obs[OBS_STATE]
         advantage: float = 1.0,
     ) -> tuple[Tensor, Tensor, str | None]:
         batch = self._make_batch(obs, task_str, advantage=advantage)
         # MolmoAct2Policy.predict_action_chunk returns [B, n_action_steps, action_dim],
         # already sliced and float32. See modeling_molmoact2.py:2004.
-        norm_actions = self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode())
+        norm_actions = self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode()).float()
         pred_norm = norm_actions.squeeze(0).float().cpu()
-        unnorm = self._postprocessor(norm_actions.float())
+        action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
+        if action_encoding in ("anchor", "delta"):
+            anchor_v21 = arm_to_model(obs[OBS_STATE].to(self._device))[..., : self.action_dim]
+            unnorm = self._postprocessor({ACTION: norm_actions, ANCHOR_KEY: anchor_v21})
+        else:
+            unnorm = self._postprocessor(norm_actions)
         pred_unnorm = unnorm.squeeze(0).float().cpu()
         return pred_unnorm, pred_norm, None
 

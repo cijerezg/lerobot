@@ -134,7 +134,7 @@ def build_episode_samples(dataset, episodes_str, random_n, subsample, seed=None)
 # Rendering helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def cv2_overlay(img_np, heatmap, title, alpha=0.55, vmax=None, vmin=0.0):
+def cv2_overlay(img_np, heatmap, title, alpha=0.50, vmax=None, vmin=0.0):
     """Blend a heatmap onto a camera image."""
     if vmax is None:
         vmax = float(heatmap.max().item())

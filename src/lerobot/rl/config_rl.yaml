@@ -133,7 +133,7 @@ policy:
   # ---- Inference -----------------------------------------------------------
   torch_compile: true                     # compile action expert + backbone with reduce-overhead
   action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
-  inference_advantage: 1.0                # not yet wired (TODO: thread into build_inference_batch)
+  inference_advantage: 1.0                # set to null when skip_critic: true (drops the advantage clause to match training)
   weights_push_interval: 180.0            # seconds between learner→actor weight sync
   rtc_config:                             # real-time chunking
     enabled: true

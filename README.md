@@ -104,7 +104,7 @@ Before launching any training, decide how actions are represented. The same enco
 - `anchor` (recommended) — offsets from the chunk's initial state. Translation-invariant, generalizes well.
 - `delta` — first-order differences between consecutive actions. Compact, but errors can accumulate.
 
-Set the choice via `policy.action_encoding` in the config. `anchor` and `delta` also require precomputed normalization statistics — see the [advanced usage guide](docs/pi05_docs/advanced_usage.md#action-encodings) for details and the script that generates them.
+Set the choice via `policy.action_encoding` in the config. `anchor` and `delta` also require precomputed normalization statistics — see the [advanced usage guide](docs/recap/advanced_usage.md#action-encodings) for details and the script that generates them.
 
 ### Training
 
@@ -134,7 +134,7 @@ Following the suggestions from the RECAP paper, we suggest to retrain every time
 
 
 > [!IMPORTANT]
-> While these instructions might get you started, we recommend reading the [advanced usage guide](docs/pi05_docs/advanced_usage.md) for better results.
+> While these instructions might get you started, we recommend reading the [advanced usage guide](docs/recap/advanced_usage.md) for better results.
 
 
 
@@ -166,8 +166,8 @@ python -m lerobot.rl.inference_pi05_async --config path/to/config.yaml
 
 Many _important_ details were ommitted in this introduction, and as we all know the devil is in the details, especially in a research-oriented repo. For that reason, we really recommend reading the rest of the documentation, which is structure as:
 
-- [Advanced usage](docs/pi05_docs/advanced_usage.md): a deep dive on how to use all the features in the repo.
-- [RECAP implementation](docs/pi05_docs/recap_implementation.md): an overview of RECAP and details about our implementation.
-- [Validation metrics](docs/pi05_docs/metrics.md): explains the metrics that we chose and how they help uncover the inner workings of the model.
+- [Advanced usage](docs/recap/advanced_usage.md): a deep dive on how to use all the features in the repo.
+- [RECAP implementation](docs/recap/recap_implementation.md): an overview of RECAP and details about our implementation.
+- [Validation metrics](docs/recap/metrics.md): explains the metrics that we chose and how they help uncover the inner workings of the model.
 
 

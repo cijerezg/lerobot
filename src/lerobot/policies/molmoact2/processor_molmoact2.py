@@ -730,6 +730,20 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         elif advantages is not None:
             advantages = np.asarray(advantages, dtype=np.float32).flatten()
 
+        advantage_threshold: float | None = None
+        if advantages is not None:
+            raw_threshold = complementary.get("advantage_threshold")
+            if raw_threshold is None:
+                raise ValueError(
+                    "MolmoAct2 processor requires complementary_data['advantage_threshold'] "
+                    "when 'advantage' is provided. Training callers pass the per-batch top-K "
+                    "quantile; inference passes 0.0 as a sign-based default."
+                )
+            if isinstance(raw_threshold, torch.Tensor):
+                advantage_threshold = float(raw_threshold.detach().cpu().item())
+            else:
+                advantage_threshold = float(raw_threshold)
+
         action_padded = None
         action_horizon_is_pad = None
         action_dim_is_pad = torch.ones((batch_size, self.max_action_dim), dtype=torch.bool)
@@ -755,10 +769,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             advantage_label: str | None = None
             if advantages is not None:
                 adv = np.tanh(float(advantages[batch_idx]) / self.advantage_scaling)
-                adv = float(np.clip(adv, -1.0, 1.0))
-                adv_bin = int(np.digitize(adv, np.array([-1.0, 0.35, 1.0])) - 1)
-                adv_bin = max(0, min(1, adv_bin))
-                advantage_label = ["negative", "positive"][adv_bin]
+                advantage_label = "positive" if adv >= advantage_threshold else "negative"
             prompt = _build_robot_text(
                 task=tasks[batch_idx],
                 discrete_state_string=discrete_state,

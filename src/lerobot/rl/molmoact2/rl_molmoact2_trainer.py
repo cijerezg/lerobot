@@ -504,7 +504,7 @@ class MolmoAct2Trainer(Trainer):
     def compute_advantage(
         self,
         policy: nn.Module,
-        batch: dict,  # noqa: ARG002 — raw batch unused; obs/next_obs extracted by caller
+        batch: dict,
         observations: dict,
         next_observations: dict,
         rewards: torch.Tensor,
@@ -513,14 +513,24 @@ class MolmoAct2Trainer(Trainer):
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """
-        Compute TD advantage.
+        Compute TD advantage with optional is_golden / is_intervention overrides.
 
         raw_advantage      = r + γ * V_target(s') - V(s)
         squashed_advantage = tanh(raw_advantage / advantage_scaling)
 
+        Samples flagged is_golden (offline expert data) or is_intervention
+        (online teleop corrections) have their raw advantage forced to 1.0 so
+        the actor sees them as "positive" regardless of the critic. The critic
+        forward still runs on every sample so its pre-override estimate is
+        logged — useful for spotting when the critic disagrees with the
+        golden-by-construction labels.
+
         kwargs must contain:
             preprocessor: the MolmoAct2 PolicyProcessorPipeline
         """
+        from lerobot.teleoperators.utils import TeleopEvents
+        from lerobot.types import TransitionKey
+
         preprocessor = kwargs["preprocessor"]
         discount = float(getattr(cfg.policy, "discount", 0.97))
         adv_scale = float(getattr(cfg.policy, "advantage_scaling", 0.2))
@@ -544,13 +554,47 @@ class MolmoAct2Trainer(Trainer):
 
         td_target = rewards + discount * v_next * (1.0 - done.float())
         raw_adv = td_target - v_curr
+        raw_adv_pre_override = raw_adv.clone()
+
+        comp_data = batch.get("complementary_info") or batch.get(TransitionKey.COMPLEMENTARY_DATA) or {}
+        golden_mask = torch.zeros_like(raw_adv, dtype=torch.bool)
+        intervention_mask = torch.zeros_like(raw_adv, dtype=torch.bool)
+        critic_vs_golden_gap: float | None = None
+        critic_vs_intervention_gap: float | None = None
+
+        if "is_golden" in comp_data:
+            golden_mask = (comp_data["is_golden"] > 0.5).view(raw_adv.shape)
+            if golden_mask.any():
+                critic_vs_golden_gap = (raw_adv_pre_override[golden_mask] - 1.0).mean().item()
+
+        iv_key = TeleopEvents.IS_INTERVENTION.value
+        if iv_key in comp_data:
+            intervention_mask = (comp_data[iv_key] > 0.5).view(raw_adv.shape)
+            if intervention_mask.any():
+                critic_vs_intervention_gap = (raw_adv_pre_override[intervention_mask] - 1.0).mean().item()
+
+        override_mask = golden_mask | intervention_mask
+        raw_adv = raw_adv.masked_fill(override_mask, 1.0)
         squashed_adv = torch.tanh(raw_adv / adv_scale)
+
+        non_override_squashed = squashed_adv[~override_mask]
+        if non_override_squashed.numel() == 0:
+            top_k_threshold = float("-inf")
+        else:
+            top_k_fraction = float(getattr(cfg.policy, "advantage_top_k_fraction", 0.3))
+            top_k_threshold = float(torch.quantile(non_override_squashed.float(), 1.0 - top_k_fraction).item())
 
         value_info = {
             "advantage_raw_mean": raw_adv.mean().item(),
+            "advantage_raw_pre_override_mean": raw_adv_pre_override.mean().item(),
             "advantage_squashed_mean": squashed_adv.mean().item(),
             "v_curr_mean": v_curr.mean().item(),
             "v_next_mean": v_next.mean().item(),
+            "golden_fraction": golden_mask.float().mean().item(),
+            "intervention_fraction": intervention_mask.float().mean().item(),
+            "advantage_critic_vs_golden_gap": critic_vs_golden_gap,
+            "advantage_critic_vs_intervention_gap": critic_vs_intervention_gap,
+            "advantage_top_k_threshold": top_k_threshold,
             "critic_values": v_curr.detach().float().view(-1),
             "target_values": td_target.detach().float().view(-1),
             "v_next_values": v_next.detach().float().view(-1),
@@ -565,6 +609,7 @@ class MolmoAct2Trainer(Trainer):
         observations: dict,
         actions: torch.Tensor,
         advantage: torch.Tensor | None,
+        advantage_threshold: float | None,
         preprocessor,
         dataset,  # noqa: ARG002
         cfg,
@@ -573,8 +618,9 @@ class MolmoAct2Trainer(Trainer):
         Build the MolmoAct2 forward batch.
 
         Flat dict with image/state observation keys + action + task string.
-        In RL mode, the raw advantage tensor is threaded via complementary_data
-        so the prompt step bins it into a "negative"/"positive" clause.
+        In RL mode, the raw advantage tensor and the per-batch top-K threshold
+        are threaded via complementary_data so the prompt step bins each
+        sample's squashed advantage against the dynamic threshold.
         """
         from lerobot.types import TransitionKey
 
@@ -587,7 +633,10 @@ class MolmoAct2Trainer(Trainer):
             "task": cfg.policy.task,
         }
         if advantage is not None:
-            pre_input[TransitionKey.COMPLEMENTARY_DATA] = {"advantage": advantage}
+            comp: dict[str, Any] = {"advantage": advantage}
+            if advantage_threshold is not None:
+                comp["advantage_threshold"] = advantage_threshold
+            pre_input[TransitionKey.COMPLEMENTARY_DATA] = comp
         return preprocessor(pre_input)
 
     def actor_forward(
@@ -641,7 +690,13 @@ class MolmoAct2Trainer(Trainer):
             "loss_discrete_ce": 0.0,
             "loss_discrete_z": 0.0,
             "advantage_squashed_mean": 0.0,
+            "advantage_raw_pre_override_mean": 0.0,
+            "golden_fraction": 0.0,
+            "intervention_fraction": 0.0,
         }
+        critic_vs_golden_gap_terms: list[float] = []
+        critic_vs_intervention_gap_terms: list[float] = []
+        top_k_threshold_terms: list[float] = []
         squashed_adv_list: list[torch.Tensor] = []
         raw_adv_list: list[torch.Tensor] = []
         actor_loss_list: list[torch.Tensor] = []
@@ -690,6 +745,7 @@ class MolmoAct2Trainer(Trainer):
             # Advantage as prompt conditioning (RL mode only). Raw advantage is
             # threaded into the batch; the preprocessor bins it into a label.
             raw_adv: torch.Tensor | None = None
+            top_k_threshold: float | None = None
             if not skip_critic:
                 next_observations = raw.get("next_state", {})
                 rewards = raw["reward"]
@@ -709,6 +765,18 @@ class MolmoAct2Trainer(Trainer):
                     preprocessor=preprocessor,
                 )
                 accum["advantage_squashed_mean"] += squashed_adv.mean().item() / grad_accum
+                accum["advantage_raw_pre_override_mean"] += value_info["advantage_raw_pre_override_mean"] / grad_accum
+                accum["golden_fraction"] += value_info["golden_fraction"] / grad_accum
+                accum["intervention_fraction"] += value_info["intervention_fraction"] / grad_accum
+                gap = value_info["advantage_critic_vs_golden_gap"]
+                if gap is not None:
+                    critic_vs_golden_gap_terms.append(gap)
+                iv_gap = value_info["advantage_critic_vs_intervention_gap"]
+                if iv_gap is not None:
+                    critic_vs_intervention_gap_terms.append(iv_gap)
+                top_k_threshold = value_info["advantage_top_k_threshold"]
+                if top_k_threshold != float("-inf"):
+                    top_k_threshold_terms.append(top_k_threshold)
                 squashed_adv_list.append(squashed_adv.detach().float().view(-1))
                 raw_adv_list.append(raw_adv.detach().float().view(-1))
                 critic_values_actor_list.append(value_info["critic_values"])
@@ -720,6 +788,7 @@ class MolmoAct2Trainer(Trainer):
                 observations=observations,
                 actions=actions,
                 advantage=raw_adv,
+                advantage_threshold=top_k_threshold,
                 preprocessor=preprocessor,
                 dataset=dataset,
                 cfg=cfg,
@@ -820,6 +889,12 @@ class MolmoAct2Trainer(Trainer):
             )
             accum["advantage_histogram"] = all_squashed.cpu().numpy()
             accum["advantage_raw_histogram"] = all_raw.cpu().numpy()
+        if critic_vs_golden_gap_terms:
+            accum["advantage_critic_vs_golden_gap"] = sum(critic_vs_golden_gap_terms) / len(critic_vs_golden_gap_terms)
+        if critic_vs_intervention_gap_terms:
+            accum["advantage_critic_vs_intervention_gap"] = sum(critic_vs_intervention_gap_terms) / len(critic_vs_intervention_gap_terms)
+        if top_k_threshold_terms:
+            accum["advantage_top_k_threshold"] = sum(top_k_threshold_terms) / len(top_k_threshold_terms)
         if critic_values_actor_list:
             all_critic_actor = torch.cat(critic_values_actor_list)
             accum["critic_value_mean_actor"] = all_critic_actor.mean().item()
@@ -874,10 +949,32 @@ class MolmoAct2Trainer(Trainer):
         The preprocessor's AddBatchDimensionProcessorStep adds the batch dim.
         Tensors are moved to the policy device after preprocessing so the env
         processor no longer needs a DeviceProcessorStep.
+
+        context kwargs: preprocessor (required), robot_type, inference_advantage.
+        Advantage is threaded as complementary_data so the prompt step appends
+        a "negative"/"positive" label clause matching what the actor saw during
+        critic-trained updates. If inference_advantage is None, the clause is
+        dropped — use this when the actor was trained with skip_critic=True
+        (no advantage clause in training prompt).
+
+        Single-sample inference can't form a top-K quantile, so threshold=0.0
+        is passed (sign-based: positive inference_advantage → "positive" label,
+        negative → "negative"). With the default inference_advantage=1.0 this
+        squashes to ~0.99991 and bins positive.
         """
+        from lerobot.types import TransitionKey
+
         preprocessor = context["preprocessor"]
         device = getattr(cfg.policy, "device", "cpu")
         pre_input: dict[str, Any] = {**observation, "task": task_str}
+        advantage = context.get("inference_advantage", cfg.policy.inference_advantage)
+        if advantage is not None:
+            if not isinstance(advantage, torch.Tensor):
+                advantage = torch.tensor([[advantage]], dtype=torch.float32)
+            pre_input[TransitionKey.COMPLEMENTARY_DATA] = {
+                "advantage": advantage,
+                "advantage_threshold": 0.0,
+            }
         with torch.no_grad():
             batch = preprocessor(pre_input)
         return {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
