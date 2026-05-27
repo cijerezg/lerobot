@@ -119,8 +119,8 @@ class PI05RLConfig(PI05FullConfig):
     inference_advantage: float = 1.0
     advantage_scaling: float = 1.0
 
-    # Checkpoint
-    checkpoint_path: str | None = None
+    # Base model
+    base_path: str | None = None
 
     # Dataset stats (inherited from PreTrainedConfig? No, SAC defines it explicitly)
     action_encoding_stats_path: str | None = None  # Path to precomputed action encoding stats (.pt)
@@ -791,41 +791,41 @@ class PI05RLPolicy(PI05FullPolicy):
         # Initialize Temperature (Alpha) - Unused but kept for interface
         self.actor = self.model
 
-        # Load pretrained weights if checkpoint_path is specified
-        if config.checkpoint_path:
-            print(f"Loading pretrained Pi05 weights from {config.checkpoint_path}")
+        # Load pretrained weights if base_path is specified
+        if config.base_path:
+            print(f"Loading pretrained Pi05 weights from {config.base_path}")
 
             # Check if it's an RL checkpoint (has critic or advantage_mlp)
             # We peek at the state dict first
             from safetensors.torch import load_file
             import os
 
-            checkpoint_path = config.checkpoint_path
-            if os.path.isdir(checkpoint_path):
+            base_path = config.base_path
+            if os.path.isdir(base_path):
                 # Try to find model.safetensors or pytorch_model.bin
-                if os.path.exists(os.path.join(checkpoint_path, "model.safetensors")):
-                    checkpoint_file = os.path.join(checkpoint_path, "model.safetensors")
+                if os.path.exists(os.path.join(base_path, "model.safetensors")):
+                    checkpoint_file = os.path.join(base_path, "model.safetensors")
                     state_dict = _load_with_progress(checkpoint_file, "safetensors checkpoint")
-                elif os.path.exists(os.path.join(checkpoint_path, "pytorch_model.bin")):
-                    checkpoint_file = os.path.join(checkpoint_path, "pytorch_model.bin")
+                elif os.path.exists(os.path.join(base_path, "pytorch_model.bin")):
+                    checkpoint_file = os.path.join(base_path, "pytorch_model.bin")
                     state_dict = _load_with_progress(checkpoint_file, "torch checkpoint")
                 else:
                     # Fallback to vanilla loading if no weight file found directly
                     print("[pi05_rl] No weight file found directly, falling back to vanilla loading")
                     state_dict = None
-            elif os.path.isfile(checkpoint_path):
-                if checkpoint_path.endswith(".safetensors"):
-                    state_dict = _load_with_progress(checkpoint_path, "safetensors checkpoint")
+            elif os.path.isfile(base_path):
+                if base_path.endswith(".safetensors"):
+                    state_dict = _load_with_progress(base_path, "safetensors checkpoint")
                 else:
-                    state_dict = _load_with_progress(checkpoint_path, "torch checkpoint")
+                    state_dict = _load_with_progress(base_path, "torch checkpoint")
             else:
                 # Path looks local (contains os.sep or starts with '.') but doesn't exist — error out.
-                if os.sep in checkpoint_path or checkpoint_path.startswith("."):
+                if os.sep in base_path or base_path.startswith("."):
                     raise FileNotFoundError(
-                        f"Checkpoint path '{checkpoint_path}' looks like a local path but does not exist."
+                        f"Checkpoint path '{base_path}' looks like a local path but does not exist."
                     )
                 # Otherwise treat as HuggingFace Hub repo ID.
-                print(f"'{checkpoint_path}' is not a local path; treating as HF Hub repo ID")
+                print(f"'{base_path}' is not a local path; treating as HF Hub repo ID")
                 state_dict = None
 
             is_rl_checkpoint = False
@@ -920,7 +920,7 @@ class PI05RLPolicy(PI05FullPolicy):
                 print("Loading as vanilla Pi05 checkpoint")
                 # Load a vanilla PI05Policy to get the pretrained weights
                 temp_policy = PI05FullPolicy.from_pretrained(
-                    config.checkpoint_path, config=config, strict=False
+                    config.base_path, config=config, strict=False
                 )
                 # Copy weights to our RL model (strict=False allows RL-specific layers to keep their init)
                 missing_keys, unexpected_keys = self.model.load_state_dict(

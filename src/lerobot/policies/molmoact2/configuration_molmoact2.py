@@ -96,9 +96,9 @@ def infer_molmoact2_max_sequence_length(
 class MolmoAct2Config(PreTrainedConfig):
     """MolmoAct2 policy backed by the converted HF checkpoint implementation."""
 
-    checkpoint_path: str = "/home/user/.cache/huggingface/hub/models--allenai--MolmoAct2-SO100_101/snapshots/d341b9e85ae433e0b0e4a0f871260658a71e443f"
-    checkpoint_revision: str | None = None
-    checkpoint_force_download: bool = False
+    base_path: str = "/home/user/.cache/huggingface/hub/models--allenai--MolmoAct2-SO100_101/snapshots/d341b9e85ae433e0b0e4a0f871260658a71e443f"
+    base_revision: str | None = None
+    base_force_download: bool = False
     trust_remote_code: bool = True
 
     n_obs_steps: int = 1

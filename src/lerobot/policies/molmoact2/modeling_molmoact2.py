@@ -52,7 +52,7 @@ def _resolve_checkpoint_location(
 ) -> str:
     checkpoint_path = str(checkpoint_path or "").strip()
     if not checkpoint_path:
-        raise ValueError("MolmoAct2 policy requires `checkpoint_path`.")
+        raise ValueError("MolmoAct2 policy requires `base_path`.")
     local_path = Path(checkpoint_path).expanduser()
     if local_path.exists():
         return str(local_path)
@@ -709,9 +709,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if not str(self.config.norm_tag or "").strip():
             return
         metadata = _load_hf_norm_metadata_for_tag(
-            self.config.checkpoint_path,
-            revision=self.config.checkpoint_revision,
-            force_download=bool(self.config.checkpoint_force_download),
+            self.config.base_path,
+            revision=self.config.base_revision,
+            force_download=bool(self.config.base_force_download),
             norm_tag=self.config.norm_tag,
         )
         if metadata.get("action_horizon") is not None:
@@ -730,9 +730,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
         from transformers import AutoModelForImageTextToText
 
         checkpoint_location = _resolve_checkpoint_location(
-            self.config.checkpoint_path,
-            revision=self.config.checkpoint_revision,
-            force_download=bool(self.config.checkpoint_force_download),
+            self.config.base_path,
+            revision=self.config.base_revision,
+            force_download=bool(self.config.base_force_download),
         )
         model_dtype = _torch_dtype(self.config.dtype)
         self.model = AutoModelForImageTextToText.from_pretrained(
@@ -761,7 +761,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             raise ValueError(
                 "MolmoAct2 HF checkpoints must define `action_mode`. If this is a released "
                 "MolmoAct2 checkpoint, refresh the local Hub cache with "
-                "`policy.checkpoint_force_download=true` after the updated files are pushed."
+                "`policy.base_force_download=true` after the updated files are pushed."
             )
         checkpoint_action_mode = str(self.model.config.action_mode)
         if self.config.action_mode == "both" and checkpoint_action_mode != "both":
@@ -2176,8 +2176,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def _validate_peft_config(self, peft_config) -> None:
         del peft_config
-        if not self.config.checkpoint_path:
-            raise ValueError("MolmoAct2 LoRA fine-tuning requires `policy.checkpoint_path`.")
+        if not self.config.base_path:
+            raise ValueError("MolmoAct2 LoRA fine-tuning requires `policy.base_path`.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

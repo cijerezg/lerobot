@@ -62,7 +62,7 @@ policy:
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
   pretrained_path: outputs/molmoact2_bc_offline/checkpoints/002000/pretrained_model
-  checkpoint_path: outputs/MolmoAct2-SO100_101
+  base_path: outputs/MolmoAct2-SO100_101
 
   # ---- Training mode --------------------------------------------------------
   # KI-style training: VLM trained by discrete CE on FAST tokens, action expert
@@ -207,7 +207,7 @@ policy:
 # policy:
 #   type: pi05_rl
 #   task: "Pick up the red truck and put it in the bowl"
-#   checkpoint_path: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
+#   base_path: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
 #
 #   gradient_accumulation_steps: 2
 #

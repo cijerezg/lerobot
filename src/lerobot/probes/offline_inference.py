@@ -97,7 +97,7 @@ def smooth_actions(actions: torch.Tensor, window_size: int) -> torch.Tensor:
 
 
 def _policy_checkpoint_path(policy_cfg) -> str:
-    for field in ("checkpoint_path", "pi05_checkpoint", "pretrained_path"):
+    for field in ("base_path", "pretrained_path"):
         value = getattr(policy_cfg, field, None)
         if value:
             return str(value)
@@ -105,7 +105,7 @@ def _policy_checkpoint_path(policy_cfg) -> str:
 
 
 def _set_policy_checkpoint_path(policy_cfg, checkpoint: str) -> bool:
-    for field in ("checkpoint_path", "pi05_checkpoint", "pretrained_path"):
+    for field in ("base_path", "pretrained_path"):
         if hasattr(policy_cfg, field):
             setattr(policy_cfg, field, checkpoint)
             return True
@@ -458,7 +458,7 @@ def eval_cli(cfg: EvalOfflineConfig):
         if not _set_policy_checkpoint_path(cfg.policy, checkpoint_b):
             raise ValueError(
                 "eval_checkpoint_b was set, but this policy config has no known checkpoint field "
-                "(checkpoint_path, pi05_checkpoint, or pretrained_path)."
+                "(base_path or pretrained_path)."
             )
         logging.info("Loading policy B …")
         adapter_b = ProbablePolicy.for_config(cfg, device, dataset=dataset)

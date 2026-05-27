@@ -82,7 +82,7 @@ def _resolve_checkpoint_location(
 ) -> str:
     checkpoint_path = str(checkpoint_path or "").strip()
     if not checkpoint_path:
-        raise ValueError("MolmoAct2 policy requires `checkpoint_path`.")
+        raise ValueError("MolmoAct2 policy requires `base_path`.")
     local_path = Path(checkpoint_path).expanduser()
     if local_path.exists():
         return str(local_path)
@@ -500,9 +500,9 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
 @ProcessorStepRegistry.register(name="molmoact2_pack_inputs")
 @dataclass
 class MolmoAct2PackInputsProcessorStep(ProcessorStep):
-    checkpoint_path: str
-    checkpoint_revision: str | None = None
-    checkpoint_force_download: bool = False
+    base_path: str
+    base_revision: str | None = None
+    base_force_download: bool = False
     trust_remote_code: bool = True
     action_mode: str = "both"
     discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
@@ -524,9 +524,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         from transformers import AutoProcessor
 
         checkpoint_location = _resolve_checkpoint_location(
-            self.checkpoint_path,
-            revision=self.checkpoint_revision,
-            force_download=bool(self.checkpoint_force_download),
+            self.base_path,
+            revision=self.base_revision,
+            force_download=bool(self.base_force_download),
         )
         self.processor = AutoProcessor.from_pretrained(
             checkpoint_location,
@@ -548,9 +548,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
     def get_config(self) -> dict[str, Any]:
         return {
-            "checkpoint_path": self.checkpoint_path,
-            "checkpoint_revision": self.checkpoint_revision,
-            "checkpoint_force_download": self.checkpoint_force_download,
+            "base_path": self.base_path,
+            "base_revision": self.base_revision,
+            "base_force_download": self.base_force_download,
             "trust_remote_code": self.trust_remote_code,
             "action_mode": self.action_mode,
             "discrete_action_tokenizer": self.discrete_action_tokenizer,
@@ -868,9 +868,9 @@ def make_molmoact2_pre_post_processors(
     hf_metadata: dict[str, Any] = {}
     if dataset_stats is None and str(config.norm_tag or "").strip():
         dataset_stats, hf_metadata = _load_hf_norm_stats_for_tag(
-            config.checkpoint_path,
-            revision=config.checkpoint_revision,
-            force_download=bool(config.checkpoint_force_download),
+            config.base_path,
+            revision=config.base_revision,
+            force_download=bool(config.base_force_download),
             norm_tag=config.norm_tag,
         )
 
@@ -920,9 +920,9 @@ def make_molmoact2_pre_post_processors(
         ),
         MolmoAct2ClampNormalizedProcessorStep(action_mask=action_mask, state_mask=state_mask),
         MolmoAct2PackInputsProcessorStep(
-            checkpoint_path=config.checkpoint_path,
-            checkpoint_revision=config.checkpoint_revision,
-            checkpoint_force_download=config.checkpoint_force_download,
+            base_path=config.base_path,
+            base_revision=config.base_revision,
+            base_force_download=config.base_force_download,
             trust_remote_code=config.trust_remote_code,
             action_mode=config.action_mode,
             discrete_action_tokenizer=config.discrete_action_tokenizer,

@@ -107,20 +107,20 @@ class PI05Trainer(Trainer):
     def _resolve_dataset_stats(self, cfg, dataset, is_main_process: bool) -> dict | None:
         """Determine which normalizer stats to use, in priority order."""
         use_dataset_stats = getattr(cfg.policy, "use_dataset_stats", False)
-        checkpoint_path = getattr(cfg.policy, "checkpoint_path", None) or ""
+        base_path = getattr(cfg.policy, "base_path", None) or ""
 
         if use_dataset_stats:
             if is_main_process:
                 logging.info("PI05 stats source: dataset stats (use_dataset_stats=True).")
             return dataset.meta.stats if dataset is not None else None
 
-        if "pi05_base" in checkpoint_path:
+        if "pi05_base" in base_path:
             if is_main_process:
-                logging.info(f"PI05 stats source: dataset stats (base model '{checkpoint_path}').")
+                logging.info(f"PI05 stats source: dataset stats (base model '{base_path}').")
             return dataset.meta.stats if dataset is not None else None
 
-        if checkpoint_path:
-            stats = self._load_stats_from_checkpoint(checkpoint_path, is_main_process)
+        if base_path:
+            stats = self._load_stats_from_checkpoint(base_path, is_main_process)
             if stats is not None:
                 return stats
             if is_main_process:
