@@ -1,8 +1,8 @@
-# DRTC bring-up config for the fine-tuned MolmoAct2 SO101 checkpoint at step 2000.
+# DRTC bring-up config for the fine-tuned MolmoAct2 SO101 checkpoint.
 #
 # This mirrors examples/experiments/configs/baseline_tinypi05v2.yaml for the
 # robot, camera, timing, diagnostics, and teleop safety setup, but points the
-# policy at the MolmoAct2 checkpoint trained in /home/jack/code/MolmoAct2.
+# policy at the selected MolmoAct2 checkpoint below.
 #
 # Run with:
 #   ./scripts/run_drtc_experiment.sh --config baseline_molmoact2_so101_002000
@@ -16,10 +16,10 @@ server_host: ""
 robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
 robot_id: so101_follower_2026_04_26_v0
 
-# The checkpoint config expects observation.images.{top,side}. DRTC maps by
-# camera name, so this avoids the image-order ambiguity from the standalone
-# MolmoAct script. Use stable V4L symlinks instead of /dev/videoN, since
-# numeric video nodes can change across restarts.
+# The checkpoint config expects observation.images.{scene,wrist}. DRTC maps by
+# camera name, so keep these keys aligned with the policy preprocessor. Use
+# stable V4L symlinks instead of /dev/videoN, since numeric video nodes can
+# change across restarts or USB port changes.
 camera1_name: scene
 camera1_path: /dev/v4l/by-id/usb-H264_USB_Camera_H264_USB_Camera_2020032801-video-index0
 camera2_name: wrist
@@ -35,7 +35,8 @@ camera_allow_stale_frames: true
 policy_type: molmoact2
 # pretrained_name_or_path: /home/jack/code/MolmoAct2/lerobot/outputs/molmoact2_so101_pickplace_60_action_expert/checkpoints/002000/pretrained_model
 # pretrained_name_or_path: /mnt/2tb/models/molmoact2_so101_pickplace_160eps_10k_action_expert/checkpoints/007000/pretrained_model/
-pretrained_name_or_path: /home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/010000/010000/pretrained_model
+# pretrained_name_or_path: /home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e35trimidle_10k_action_expert_v4/checkpoints/020000/020000/pretrained_model
+pretrained_name_or_path: /home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model
 
 # DRTC parameters. MolmoAct2's checkpoint chunk_size/n_action_steps is 30, so
 # keep actions_per_chunk <= 30.
