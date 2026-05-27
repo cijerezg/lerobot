@@ -798,7 +798,8 @@ def rtc_env_worker(
             _t_move_cpu_start = time.perf_counter()
             transition_cpu = move_transition_to_device(transition_to_send, "cpu")
             _t_move_cpu_end = time.perf_counter()
-            transitions_to_send.append(transition_cpu)
+            if not standalone:
+                transitions_to_send.append(transition_cpu)
 
             if standalone and shared_state.replay_buffer is not None:
                 _add_transition_to_replay_buffer(shared_state.replay_buffer, transition_cpu, action_dim)
@@ -806,7 +807,11 @@ def rtc_env_worker(
             next_policy_fmt_obs = next_observation
             if standalone and shared_state.is_logging_episode:
                 episode_log_buffer.append({
-                    "obs": {k: v.detach().cpu().clone() for k, v in next_policy_fmt_obs.items()},
+                    "obs": {
+                        k: (transition_cpu["next_state"][k].clone() if "image" in k
+                            else v.detach().cpu().clone())
+                        for k, v in next_policy_fmt_obs.items()
+                    },
                     "action": transition_cpu[ACTION].detach().cpu().clone() if isinstance(transition_cpu.get(ACTION), torch.Tensor) else transition_cpu.get(ACTION),
                     "reward": float(reward),
                     "done": bool(done),
@@ -986,11 +991,19 @@ def _finalize_rtc_inference_log(
                 if not isinstance(action, torch.Tensor):
                     action_dim = _action_dim(cfg)
                     action = torch.zeros(action_dim, dtype=torch.float32)
+                # episode_log_buffer stores images as uint8; critic preprocessor
+                # expects float32 in [0, 1], so convert image keys on the fly.
+                obs_f32 = {
+                    k: (v.float() / 255.0
+                        if "image" in k and isinstance(v, torch.Tensor) and v.dtype == torch.uint8
+                        else v)
+                    for k, v in frame["obs"].items()
+                }
                 transition = Transition(
-                    state=frame["obs"],
+                    state=obs_f32,
                     action=action,
                     reward=float(frame.get("reward", 0.0)),
-                    next_state=frame["obs"],
+                    next_state=obs_f32,
                     done=bool(frame.get("done", False)),
                     truncated=False,
                     complementary_info={},
