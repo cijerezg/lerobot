@@ -11,7 +11,7 @@ Notes from the May 2026 `tinypi05v2_rlt` offline-head rollout, the RLT paper, an
 Recommended first-pass command for the current 2026-05-09 replay:
 
 ```bash
-uv run python -m lerobot.rl.train_tinypi05v2_rlt_head_offline \
+uv run --no-sync python -m lerobot.rl.train_tinypi05v2_rlt_head_offline \
   --policy_path=outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model \
   --replay_buffer_path=outputs/rlt_tinypi05v2_online_20260509/rlt_online_replay_20260509.pt \
   --output_dir=outputs/tinypi05v2_rlt_offline_head_20260509_anchor \

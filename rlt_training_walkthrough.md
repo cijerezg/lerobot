@@ -88,7 +88,7 @@ Before any DRTC collection, train the RL-token autoencoder on top of your frozen
 
 ```bash
 # pi05_rlt
-uv run python -m lerobot.rl.train_pi05_rlt_embedding \
+uv run --no-sync python -m lerobot.rl.train_pi05_rlt_embedding \
   --policy_path=outputs/pi05_subtasks_good_dataset_4/checkpoints/last/pretrained_model \
   --dataset_repo_id=<your_repo_id> \
   --output_dir=outputs/pi05_rlt_embedding \
@@ -97,7 +97,7 @@ uv run python -m lerobot.rl.train_pi05_rlt_embedding \
 
 ```bash
 # tinypi05_rlt
-uv run python -m lerobot.rl.train_tinypi05_rlt_embedding \
+uv run --no-sync python -m lerobot.rl.train_tinypi05_rlt_embedding \
   --policy_path=outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model \
   --dataset_repo_id=<your_repo_id> \
   --output_dir=outputs/tinypi05_rlt_embedding \
@@ -106,7 +106,7 @@ uv run python -m lerobot.rl.train_tinypi05_rlt_embedding \
 
 ```bash
 # tinypi05v2_rlt
-uv run python -m lerobot.rl.train_tinypi05v2_rlt_embedding \
+uv run --no-sync python -m lerobot.rl.train_tinypi05v2_rlt_embedding \
   --policy_path=outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model \
   --dataset_repo_id=<your_repo_id> \
   --output_dir=outputs/tinypi05v2_rlt_embedding \
@@ -115,9 +115,9 @@ uv run python -m lerobot.rl.train_tinypi05v2_rlt_embedding \
 
 ```bash
 # molmoact2_rlt
-uv run python -m lerobot.rl.train_molmoact2_rlt_embedding \
+uv run --no-sync python -m lerobot.rl.train_molmoact2_rlt_embedding \
   --policy_path=/home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model \
-  --dataset_repo_id=<your_repo_id> \
+  --dataset_repo_id=jackvial/so101_placemotor_20260525_e51_merge \
   --output_dir=outputs/molmoact2_rlt_embedding \
   --batch_size=4 --steps=5000
 ```
@@ -197,7 +197,7 @@ Run offline RLT-head training:
 
 ```bash
 # pi05_rlt
-uv run python -m lerobot.rl.train_pi05_rlt_head_offline \
+uv run --no-sync python -m lerobot.rl.train_pi05_rlt_head_offline \
   --policy_path=outputs/pi05_subtasks_good_dataset_4/checkpoints/last/pretrained_model \
   --replay_buffer_path=outputs/rlt_online/rlt_online_replay.pt \
   --output_dir=outputs/rlt_offline_head \
@@ -216,7 +216,7 @@ uv run python -m lerobot.rl.train_pi05_rlt_head_offline \
 
 ```bash
 # tinypi05_rlt
-uv run python -m lerobot.rl.train_tinypi05_rlt_head_offline \
+uv run --no-sync python -m lerobot.rl.train_tinypi05_rlt_head_offline \
   --policy_path=outputs/train/2026-04-30/14-03-18_tinypi05_so101_pickplace_finetune/checkpoints/015000/pretrained_model \
   --replay_buffer_path=outputs/rlt_online/rlt_online_replay.pt \
   --output_dir=outputs/tinypi05_rlt_offline_head \
@@ -235,7 +235,7 @@ uv run python -m lerobot.rl.train_tinypi05_rlt_head_offline \
 
 ```bash
 # tinypi05v2_rlt
-uv run python -m lerobot.rl.train_tinypi05v2_rlt_head_offline \
+uv run --no-sync python -m lerobot.rl.train_tinypi05v2_rlt_head_offline \
   --policy_path=outputs/train/2026-05-02/18-34-57_tinypi05_so101_pickplace_160_bs64_anchor/checkpoints/092000/pretrained_model \
   --replay_buffer_path=outputs/rlt_tinypi05v2_online/rlt_online_replay.pt \
   --output_dir=outputs/tinypi05v2_rlt_offline_head \

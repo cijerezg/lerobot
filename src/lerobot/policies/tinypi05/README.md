@@ -14,7 +14,7 @@ Default presets:
 Example:
 
 ```bash
-uv run python -m lerobot.scripts.train_tinypi05_cube \
+uv run --no-sync python -m lerobot.scripts.train_tinypi05_cube \
   --steps 30000 \
   --batch-size 16 \
   --architecture-preset small_500m
@@ -23,7 +23,7 @@ uv run python -m lerobot.scripts.train_tinypi05_cube \
 Use direct policy overrides when calling `lerobot-train`:
 
 ```bash
-uv run lerobot-train \
+uv run --no-sync lerobot-train \
   --dataset.repo_id=jackvial/cube-subtasks-e30-base120trim-0-9-101-end-fixed \
   --dataset.root=outputs/cube-subtasks-e30-base120trim-0-9-101-end-fixed \
   --dataset.use_imagenet_stats=false \
