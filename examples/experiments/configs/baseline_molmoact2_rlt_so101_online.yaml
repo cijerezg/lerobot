@@ -4,7 +4,9 @@
 #   uv run --no-sync python -m lerobot.rl.train_molmoact2_rlt_embedding \
 #     --policy_path=/home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model \
 #     --dataset_repo_id=jackvial/so101_placemotor_20260525_e51_merge \
-#     --output_dir=outputs/molmoact2_rlt_embedding
+#     --output_dir=outputs/molmoact2_rlt_embedding \
+#     --rlt_token_dim=512 \
+#     --rlt_autoencoder_dim=512
 #
 # Then run online collection/training with:
 #   ./scripts/run_drtc_experiment.sh --config baseline_molmoact2_rlt_so101_online
@@ -41,7 +43,8 @@ rlt_enabled: true
 rlt_embedding_checkpoint: outputs/molmoact2_rlt_embedding/rlt_embedding_latest.pt
 rlt_head_checkpoint:
 rlt_chunk_size: 10
-rlt_token_dim:
+rlt_token_dim: 512
+rlt_autoencoder_dim: 512
 rlt_actor_hidden_dims: [512, 512, 512]
 rlt_critic_hidden_dims: [512, 512, 512]
 rlt_actor_residual_scale: 0.25

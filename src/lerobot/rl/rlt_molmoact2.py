@@ -97,8 +97,11 @@ class MolmoAct2RLTConfig(MolmoAct2Config):
     rlt_embedding_checkpoint: str | None = None
     rlt_head_checkpoint: str | None = None
     rlt_chunk_size: int = 10
-    # If None, defaults to the Molmo hidden width at construction time.
+    # If None, defaults to rlt_autoencoder_dim for Molmo to keep online RLT lightweight.
     rlt_token_dim: int | None = None
+    # Internal transformer width for reconstructing Molmo's high-dimensional prefix embeddings.
+    # None defaults to 512 at construction time.
+    rlt_autoencoder_dim: int | None = 512
     rlt_token_max_seq_len: int = 1024
     rlt_token_encoder_layers: int = 2
     rlt_token_decoder_layers: int = 2
@@ -208,13 +211,17 @@ class MolmoAct2RLTPolicy(MolmoAct2Policy):
         self.config: MolmoAct2RLTConfig
 
         hidden_dim = _resolve_molmo_hidden_dim(self)
-        token_dim = int(config.rlt_token_dim) if config.rlt_token_dim is not None else hidden_dim
+        autoencoder_dim = (
+            int(config.rlt_autoencoder_dim) if config.rlt_autoencoder_dim is not None else 512
+        )
+        token_dim = int(config.rlt_token_dim) if config.rlt_token_dim is not None else autoencoder_dim
         action_dim = self.config.output_features[ACTION].shape[0]
         proprio_dim = self.config.input_features[OBS_STATE].shape[0]
 
         self.rlt_embedding = RLTokenAutoencoder(
             hidden_dim=hidden_dim,
             token_dim=token_dim,
+            model_dim=autoencoder_dim,
             max_seq_len=config.rlt_token_max_seq_len,
             num_heads=config.rlt_token_num_heads,
             encoder_layers=config.rlt_token_encoder_layers,
@@ -244,6 +251,7 @@ class MolmoAct2RLTPolicy(MolmoAct2Policy):
         self.rlt_critic_target = copy.deepcopy(self.rlt_critic)
 
         self.config.rlt_token_dim = token_dim
+        self.config.rlt_autoencoder_dim = autoencoder_dim
 
         self._freeze_vla()
         self._rlt_actor_loaded = False

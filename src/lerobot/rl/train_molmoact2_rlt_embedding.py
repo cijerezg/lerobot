@@ -54,8 +54,9 @@ class TrainMolmoAct2RLTEmbeddingConfig:
     save_freq: int = 1_000
     max_episodes: int | None = None
 
-    # Leave None to default to MolmoAct2's text hidden width.
+    # Leave None to default to the lightweight Molmo RLT autoencoder width.
     rlt_token_dim: int | None = None
+    rlt_autoencoder_dim: int | None = 512
     rlt_token_max_seq_len: int = 1024
     rlt_token_encoder_layers: int = 2
     rlt_token_decoder_layers: int = 2
@@ -69,6 +70,7 @@ def _build_policy(cfg: TrainMolmoAct2RLTEmbeddingConfig) -> MolmoAct2RLTPolicy:
         device=cfg.device,
         rlt_enabled=False,
         rlt_token_dim=cfg.rlt_token_dim,
+        rlt_autoencoder_dim=cfg.rlt_autoencoder_dim,
         rlt_token_max_seq_len=cfg.rlt_token_max_seq_len,
         rlt_token_encoder_layers=cfg.rlt_token_encoder_layers,
         rlt_token_decoder_layers=cfg.rlt_token_decoder_layers,
@@ -81,7 +83,7 @@ def _build_policy(cfg: TrainMolmoAct2RLTEmbeddingConfig) -> MolmoAct2RLTPolicy:
     )
     policy = MolmoAct2RLTPolicy.from_pretrained(cfg.policy_path, config=rlt_cfg, strict=False)
     policy.to(cfg.device)
-    policy.train()
+    policy.eval()
     return policy
 
 
@@ -165,7 +167,16 @@ def train_molmoact2_rlt_embedding(cfg: TrainMolmoAct2RLTEmbeddingConfig) -> None
         preprocessor_overrides={"device_processor": {"device": cfg.device}},
     )
 
+    policy.requires_grad_(False)
+    policy.rlt_embedding.requires_grad_(True)
     optimizer = torch.optim.AdamW(policy.rlt_embedding.parameters(), lr=cfg.lr)
+    logging.info(
+        "MolmoAct2 RLT embedding dims: hidden_dim=%d autoencoder_dim=%d token_dim=%d trainable_params=%.1fM",
+        policy.rlt_embedding.hidden_dim,
+        policy.rlt_embedding.model_dim,
+        policy.rlt_embedding.token_dim,
+        sum(p.numel() for p in policy.rlt_embedding.parameters() if p.requires_grad) / 1_000_000,
+    )
 
     def _lr_lambda(step: int) -> float:
         if cfg.warmup_steps <= 0:

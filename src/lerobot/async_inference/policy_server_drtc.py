@@ -1479,9 +1479,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 from lerobot.rl.rlt_molmoact2 import MolmoAct2RLTConfig
 
                 token_dim_raw = getattr(policy_specs, "rlt_token_dim", None)
+                autoencoder_dim_raw = getattr(policy_specs, "rlt_autoencoder_dim", None)
                 cfg_obj = MolmoAct2RLTConfig.from_base_config(
                     base_cfg,
                     rlt_token_dim=int(token_dim_raw) if token_dim_raw is not None else None,
+                    rlt_autoencoder_dim=(
+                        int(autoencoder_dim_raw) if autoencoder_dim_raw is not None else None
+                    ),
                     molmoact2_checkpoint=policy_processor_path,
                     pretrained_path=Path(policy_processor_path),
                     inference_action_mode="continuous",
@@ -1645,7 +1649,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 self.policy = self.policy.eval()
                 self.logger.info(
                     "%s configured | rlt_enabled=%s | embedding=%s | head=%s | "
-                    "rlt_chunk_size=%s | rlt_token_dim=%s | rlt_num_critics=%s | "
+                    "rlt_chunk_size=%s | rlt_token_dim=%s | rlt_autoencoder_dim=%s | "
+                    "rlt_num_critics=%s | "
                     "rlt_eval_actor_blend=%.3f",
                     self.policy_type,
                     getattr(self.policy.config, "rlt_enabled", False),
@@ -1653,6 +1658,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     getattr(self.policy.config, "rlt_head_checkpoint", None),
                     getattr(self.policy.config, "rlt_chunk_size", None),
                     getattr(self.policy.config, "rlt_token_dim", None),
+                    getattr(self.policy.config, "rlt_autoencoder_dim", None),
                     getattr(self.policy.config, "rlt_num_critics", None),
                     self._rlt_eval_actor_blend,
                 )

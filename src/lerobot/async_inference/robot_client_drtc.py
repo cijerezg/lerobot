@@ -406,6 +406,7 @@ class RobotClientDrtc:
             rlt_head_checkpoint=config.rlt_head_checkpoint,
             rlt_chunk_size=config.rlt_chunk_size,
             rlt_token_dim=config.rlt_token_dim,
+            rlt_autoencoder_dim=config.rlt_autoencoder_dim,
             rlt_actor_hidden_dims=config.rlt_actor_hidden_dims,
             rlt_critic_hidden_dims=config.rlt_critic_hidden_dims,
             rlt_actor_residual_scale=config.rlt_actor_residual_scale,

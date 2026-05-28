@@ -22,7 +22,7 @@ The runbook below uses the variant-agnostic terms `<policy_type>`, `<rlt_module>
 | `<rlt_module>` | `lerobot.rl.rlt_pi05` | `lerobot.rl.rlt_tinypi05` | `lerobot.rl.rlt_tinypi05v2` | `lerobot.rl.rlt_molmoact2` |
 | `<embedding_trainer>` | `lerobot.rl.train_pi05_rlt_embedding` | `lerobot.rl.train_tinypi05_rlt_embedding` | `lerobot.rl.train_tinypi05v2_rlt_embedding` | `lerobot.rl.train_molmoact2_rlt_embedding` |
 | `<offline_trainer>` | `lerobot.rl.train_pi05_rlt_head_offline` | `lerobot.rl.train_tinypi05_rlt_head_offline` | `lerobot.rl.train_tinypi05v2_rlt_head_offline` | not implemented; use DRTC online training |
-| default `rlt_token_dim` | `2048` (= `gemma_2b` width) | `None` (defaults to `vlm_width`, e.g. `768` for `small_500m`) | `None` (same as `tinypi05_rlt` — `vlm_width` of the underlying tinypi05 architecture) | `None` (defaults to the MolmoAct2 text hidden width) |
+| default `rlt_token_dim` | `2048` (= `gemma_2b` width) | `None` (defaults to `vlm_width`, e.g. `768` for `small_500m`) | `None` (same as `tinypi05_rlt` — `vlm_width` of the underlying tinypi05 architecture) | `None` (defaults to `512`; Molmo reconstructs the text hidden width through a projected autoencoder) |
 
 DRTC server, replay buffer, safety tripwires, and the tuning advice in sections 6-11 apply identically to all variants. The `tinypi05_rlt` and `tinypi05v2_rlt` wrappers are interchangeable from the operator's perspective: pick `tinypi05v2_rlt` when your frozen VLA was trained with `policy_type: tinypi05v2` (e.g. the `*_so101_pickplace_160_bs64_anchor` checkpoints). The two backbones are not weight-compatible, so an embedding/head checkpoint trained against one variant cannot be reused against the other. `molmoact2_rlt` is also not checkpoint-compatible with any PI0.5 RLT wrapper; train a fresh Molmo embedding against the exact MolmoAct2 checkpoint and processor.
 
@@ -119,10 +119,12 @@ uv run --no-sync python -m lerobot.rl.train_molmoact2_rlt_embedding \
   --policy_path=/home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model \
   --dataset_repo_id=jackvial/so101_placemotor_20260525_e51_merge \
   --output_dir=outputs/molmoact2_rlt_embedding \
-  --batch_size=4 --steps=5000
+  --batch_size=4 --steps=5000 \
+  --rlt_token_dim=512 \
+  --rlt_autoencoder_dim=512
 ```
 
-Both `tinypi05` variants default the RL-token width to `vlm_width` (e.g. 768 for the `small_500m` preset, 640 for `gemma3_270m_emb`). `molmoact2_rlt` defaults the width to the MolmoAct2 text hidden size and trains on the inference-time prompt/image/state prefix only, not on discrete action label tokens. Override `--rlt_token_dim=...` only if you need a wider/narrower bottleneck; the value is persisted into the checkpoint config. `tinypi05v2_rlt` shares the autoencoder/head implementation with `tinypi05_rlt`, but you must train the embedding (and head) against the matching v2 backbone — checkpoints are not cross-compatible.
+Both `tinypi05` variants default the RL-token width to `vlm_width` (e.g. 768 for the `small_500m` preset, 640 for `gemma3_270m_emb`). `molmoact2_rlt` defaults the RLT token and internal autoencoder width to `512`, then projects back to the MolmoAct2 text hidden width for reconstruction. That projection is necessary on 16 GB GPUs; a full hidden-width Molmo autoencoder is large enough to OOM when Adam creates optimizer state. Molmo embedding training uses the inference-time prompt/image/state prefix only, not discrete action label tokens. Override `--rlt_token_dim=...` and `--rlt_autoencoder_dim=...` only if you need a different bottleneck; the values must match the online DRTC config that loads the checkpoint. `tinypi05v2_rlt` shares the autoencoder/head implementation with `tinypi05_rlt`, but you must train the embedding (and head) against the matching v2 backbone — checkpoints are not cross-compatible.
 
 ## 3. Validate The RLT Token
 

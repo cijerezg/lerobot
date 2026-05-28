@@ -60,6 +60,7 @@ class RLTokenAutoencoder(nn.Module):
         *,
         hidden_dim: int,
         token_dim: int = 2048,
+        model_dim: int | None = None,
         max_seq_len: int = 512,
         num_heads: int = 8,
         encoder_layers: int = 2,
@@ -67,17 +68,30 @@ class RLTokenAutoencoder(nn.Module):
         dropout: float = 0.0,
     ):
         super().__init__()
+        if hidden_dim <= 0:
+            raise ValueError(f"hidden_dim must be positive, got {hidden_dim}")
+        if token_dim <= 0:
+            raise ValueError(f"token_dim must be positive, got {token_dim}")
+        if model_dim is not None and model_dim <= 0:
+            raise ValueError(f"model_dim must be positive or None, got {model_dim}")
+        model_dim = hidden_dim if model_dim is None else int(model_dim)
+        if model_dim % num_heads != 0:
+            raise ValueError(
+                f"model_dim={model_dim} must be divisible by num_heads={num_heads}"
+            )
         self.hidden_dim = hidden_dim
         self.token_dim = token_dim
+        self.model_dim = model_dim
         self.max_seq_len = max_seq_len
 
-        self.rl_query = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
-        self.decoder_queries = nn.Parameter(torch.randn(1, max_seq_len, hidden_dim) * 0.02)
+        self.input_proj = nn.Identity() if model_dim == hidden_dim else nn.Linear(hidden_dim, model_dim)
+        self.rl_query = nn.Parameter(torch.randn(1, 1, model_dim) * 0.02)
+        self.decoder_queries = nn.Parameter(torch.randn(1, max_seq_len, model_dim) * 0.02)
 
         enc_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
+            d_model=model_dim,
             nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
+            dim_feedforward=model_dim * 4,
             dropout=dropout,
             batch_first=True,
             norm_first=True,
@@ -85,21 +99,22 @@ class RLTokenAutoencoder(nn.Module):
         self.encoder = nn.TransformerEncoder(enc_layer, num_layers=encoder_layers)
 
         dec_layer = nn.TransformerDecoderLayer(
-            d_model=hidden_dim,
+            d_model=model_dim,
             nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
+            dim_feedforward=model_dim * 4,
             dropout=dropout,
             batch_first=True,
             norm_first=True,
         )
         self.decoder = nn.TransformerDecoder(dec_layer, num_layers=decoder_layers)
 
-        self.to_token = nn.Linear(hidden_dim, token_dim)
-        self.from_token = nn.Linear(token_dim, hidden_dim)
-        self.output_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.to_token = nn.Linear(model_dim, token_dim)
+        self.from_token = nn.Linear(token_dim, model_dim)
+        self.output_proj = nn.Linear(model_dim, hidden_dim)
 
     def encode(self, prefix_embs: Tensor, prefix_pad_mask: Tensor | None = None) -> Tensor:
         prefix_embs = prefix_embs.to(dtype=self.rl_query.dtype)
+        prefix_embs = self.input_proj(prefix_embs)
         batch_size = prefix_embs.shape[0]
         query = self.rl_query.expand(batch_size, -1, -1).to(dtype=prefix_embs.dtype, device=prefix_embs.device)
         encoder_input = torch.cat([prefix_embs, query], dim=1)

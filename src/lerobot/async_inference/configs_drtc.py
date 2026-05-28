@@ -226,7 +226,16 @@ class RobotClientDrtcConfig:
             "help": (
                 "Dimensionality of the compact RLT token. If None, falls back to the "
                 "policy-type default (2048 for pi05_rlt, VLM hidden width for tinypi05_rlt / "
-                "tinypi05v2_rlt / molmoact2_rlt)."
+                "tinypi05v2_rlt, 512 for molmoact2_rlt)."
+            )
+        },
+    )
+    rlt_autoencoder_dim: int | None = field(
+        default=None,
+        metadata={
+            "help": (
+                "MolmoAct2 RLT-only internal autoencoder transformer width. None uses "
+                "the molmoact2_rlt default of 512. Ignored by other RLT policy types."
             )
         },
     )
@@ -713,6 +722,10 @@ class RobotClientDrtcConfig:
             raise ValueError(f"rlt_chunk_size must be positive, got {self.rlt_chunk_size}")
         if self.rlt_token_dim is not None and self.rlt_token_dim <= 0:
             raise ValueError(f"rlt_token_dim must be positive or None, got {self.rlt_token_dim}")
+        if self.rlt_autoencoder_dim is not None and self.rlt_autoencoder_dim <= 0:
+            raise ValueError(
+                f"rlt_autoencoder_dim must be positive or None, got {self.rlt_autoencoder_dim}"
+            )
         for name, dims in (
             ("rlt_actor_hidden_dims", self.rlt_actor_hidden_dims),
             ("rlt_critic_hidden_dims", self.rlt_critic_hidden_dims),

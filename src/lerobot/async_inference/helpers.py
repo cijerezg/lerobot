@@ -461,8 +461,11 @@ class RemotePolicyConfig:
     rlt_embedding_checkpoint: str | None = None
     rlt_head_checkpoint: str | None = None
     rlt_chunk_size: int = 10
-    # None => use the policy default (2048 for pi05_rlt; backbone hidden width for other RLT wrappers).
+    # None => use the policy default (2048 for pi05_rlt; 512 for molmoact2_rlt;
+    # backbone hidden width for TinyPI05 RLT wrappers).
     rlt_token_dim: int | None = None
+    # MolmoAct2 RLT-only internal autoencoder width. None => 512.
+    rlt_autoencoder_dim: int | None = None
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
@@ -534,6 +537,7 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_head_checkpoint", None)
         self.__dict__.setdefault("rlt_chunk_size", 10)
         self.__dict__.setdefault("rlt_token_dim", None)
+        self.__dict__.setdefault("rlt_autoencoder_dim", None)
         self.__dict__.setdefault("rlt_actor_hidden_dims", None)
         self.__dict__.setdefault("rlt_critic_hidden_dims", None)
         self.__dict__.setdefault("rlt_actor_residual_scale", 0.25)

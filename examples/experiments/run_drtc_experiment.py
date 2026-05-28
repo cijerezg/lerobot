@@ -150,12 +150,13 @@ class ExperimentConfig:
     # pi05_rl/pi05_full-only: when False, skip runtime subtask generation and
     # condition action sampling on the main task prompt only.
     subtask_generation_enabled: bool = True
-    # pi05_rlt-only: lightweight RLT modules on top of frozen PI0.5.
+    # RLT-only: lightweight modules on top of a frozen VLA.
     rlt_enabled: bool = False
     rlt_embedding_checkpoint: str | None = None
     rlt_head_checkpoint: str | None = None
     rlt_chunk_size: int = 10
     rlt_token_dim: int | None = None
+    rlt_autoencoder_dim: int | None = None
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25
@@ -280,7 +281,7 @@ _SCALAR_FIELDS = frozenset({
     "policy_type", "pretrained_name_or_path", "inference_advantage",
     "subtask_regeneration_interval", "subtask_generation_enabled",
     "rlt_enabled", "rlt_embedding_checkpoint", "rlt_head_checkpoint",
-    "rlt_chunk_size", "rlt_token_dim",
+    "rlt_chunk_size", "rlt_token_dim", "rlt_autoencoder_dim",
     "rlt_actor_hidden_dims", "rlt_critic_hidden_dims",
     "rlt_actor_residual_scale", "rlt_eval_actor_blend",
     "rlt_actor_mode", "rlt_action_std", "rlt_num_critics",
@@ -545,6 +546,7 @@ def create_client_config(
         rlt_head_checkpoint=config.rlt_head_checkpoint,
         rlt_chunk_size=config.rlt_chunk_size,
         rlt_token_dim=config.rlt_token_dim,
+        rlt_autoencoder_dim=config.rlt_autoencoder_dim,
         rlt_actor_hidden_dims=config.rlt_actor_hidden_dims,
         rlt_critic_hidden_dims=config.rlt_critic_hidden_dims,
         rlt_actor_residual_scale=config.rlt_actor_residual_scale,
