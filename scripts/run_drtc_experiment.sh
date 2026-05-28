@@ -267,7 +267,7 @@ if [ "$ENABLE_TUI" = true ]; then
     # command in the pipeline. We must `export` the DRTC side-channel paths so
     # they reach the `uv run` process on the right side of the pipe (otherwise
     # the client won't see `LEROBOT_DRTC_CONTROL_FILE` and TUI commands like
-    # "start episode" will be silently dropped).
+    # "start rollout" will be silently dropped).
     export LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE"
     export LEROBOT_DRTC_CONTROL_FILE="$CONTROL_FILE"
     yes "" 2>/dev/null | uv run --no-sync python examples/experiments/run_drtc_experiment.py \

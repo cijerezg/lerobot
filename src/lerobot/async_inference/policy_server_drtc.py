@@ -464,8 +464,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             event,
             **status_fields,
         )
-        if self._trajectory_viz_server is not None:
-            self._trajectory_viz_server.on_event(
+        trajectory_viz_server = getattr(self, "_trajectory_viz_server", None)
+        if trajectory_viz_server is not None:
+            trajectory_viz_server.on_event(
                 {
                     "type": "rlt_status",
                     "source": "policy_server",

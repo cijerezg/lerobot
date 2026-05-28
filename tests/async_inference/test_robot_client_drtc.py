@@ -21,15 +21,22 @@ def _make_rlt_client() -> tuple[RobotClientDrtc, _DiagnosticStub]:
     diagnostic = _DiagnosticStub()
     client.config = SimpleNamespace(rlt_online_collection_enabled=True, rlt_chunk_size=3)
     client._metrics = SimpleNamespace(diagnostic=diagnostic)
+    client.logger = SimpleNamespace(info=lambda *args, **kwargs: None)
+    client._trajectory_viz_client = None
     client._rlt_transition_queue = Queue()
     client._rlt_current_episode_transition_buffer = []
     client._rlt_pending_chunks = {}
     client._rlt_executed_actions = {}
     client._rlt_emitted_context_ids = set()
+    client._rlt_rollout_id = 1
+    client._rlt_rollout_open = True
     client._rlt_episode_id = 3
     client._rlt_episode_open = True
+    client._rlt_critical_pending_label = False
     client._rlt_phase = "recording"
     client._rlt_completed_episodes_count = 0
+    client._rlt_success_episodes_count = 0
+    client._rlt_failure_episodes_count = 0
     client._rlt_discarded_episodes_count = 0
     client._rlt_current_episode_transitions = 1
     client._rlt_last_episode_label = None
@@ -114,3 +121,64 @@ def test_rlt_collectable_chunk_uses_shifted_window_start():
     assert pending.chunk_start_step == 102
     assert pending.num_actions == 3
     assert pending.action_dim == 1
+
+
+def test_end_critical_phase_waits_for_label_before_flushing():
+    client, _diagnostic = _make_rlt_client()
+    actions = np.asarray([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    client._rlt_current_episode_transition_buffer.append(
+        services_pb2.RLTTransitionChunk(
+            episode_id=3,
+            source_rlt_context_id=11,
+            next_rlt_context_id=12,
+            chunk_start_step=20,
+            num_actions=2,
+            action_dim=2,
+            executed_actions_f32=actions.tobytes(),
+            reward=0.0,
+            done=False,
+        )
+    )
+
+    client._rlt_end_critical_phase()
+
+    assert client._rlt_episode_open is False
+    assert client._rlt_critical_pending_label is True
+    assert client._rlt_transition_queue.empty()
+    assert client._rlt_current_episode_transition_buffer[-1].done is True
+
+    client._rlt_label_current_critical_phase(success=True)
+
+    terminal = client._rlt_transition_queue.get_nowait()
+    assert terminal.done is True
+    assert terminal.success is True
+    assert terminal.failure is False
+    assert terminal.reward == 1.0
+    assert client._rlt_critical_pending_label is False
+    assert client._rlt_completed_episodes_count == 1
+    assert client._rlt_success_episodes_count == 1
+
+
+def test_discard_critical_phase_keeps_rollout_open():
+    client, _diagnostic = _make_rlt_client()
+    client._rlt_current_episode_transition_buffer.append(services_pb2.RLTTransitionChunk(episode_id=3))
+    client._rlt_current_episode_transitions = 1
+
+    client._rlt_discard_current_episode()
+
+    assert client._rlt_rollout_open is True
+    assert client._rlt_episode_open is False
+    assert client._rlt_critical_pending_label is False
+    assert client._rlt_current_episode_transition_buffer == []
+    assert client._rlt_discarded_episodes_count == 1
+
+
+def test_rollout_state_gates_policy_execution_not_critical_phase():
+    client, _diagnostic = _make_rlt_client()
+
+    client._rlt_rollout_open = True
+    client._rlt_episode_open = False
+    assert not client._waiting_for_rlt_episode_start()
+
+    client._rlt_rollout_open = False
+    assert client._waiting_for_rlt_episode_start()

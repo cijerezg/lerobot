@@ -40,7 +40,7 @@ pretrained_name_or_path: /home/jack/code/lerobot/outputs/molmoact2_so101_placemo
 # the actor/critic asynchronously and only executes the actor after
 # rlt_execute_after_train_steps.
 rlt_enabled: true
-rlt_embedding_checkpoint: outputs/molmoact2_rlt_embedding/rlt_embedding_latest.pt
+rlt_embedding_checkpoint: outputs/molmoact2_rlt_embedding/rlt_embedding_step_010000.pt
 rlt_head_checkpoint:
 rlt_chunk_size: 10
 rlt_token_dim: 512
