@@ -545,6 +545,9 @@ class OpenCVCamera(Camera):
             raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
 
         target_dt_s = (1.0 / float(self.fps)) if self.fps else None
+        error_backoff_s = max(target_dt_s if target_dt_s is not None else 0.1, 0.05)
+        next_error_log_s = 0.0
+        suppressed_errors = 0
         while not self.stop_event.is_set():
             try:
                 t0 = time.perf_counter()
@@ -561,10 +564,25 @@ class OpenCVCamera(Camera):
                     if sleep_s > 0:
                         time.sleep(sleep_s)
 
+                next_error_log_s = 0.0
+                suppressed_errors = 0
+
             except DeviceNotConnectedError:
                 break
             except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                now_s = time.perf_counter()
+                if now_s >= next_error_log_s:
+                    suffix = (
+                        f" (suppressed {suppressed_errors} repeated errors)"
+                        if suppressed_errors
+                        else ""
+                    )
+                    logger.warning(f"Error reading frame in background thread for {self}: {e}{suffix}")
+                    suppressed_errors = 0
+                    next_error_log_s = now_s + 1.0
+                else:
+                    suppressed_errors += 1
+                time.sleep(error_backoff_s)
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""

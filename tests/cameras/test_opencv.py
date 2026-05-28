@@ -20,6 +20,7 @@
 # ```
 
 from pathlib import Path
+from threading import Event
 
 import cv2
 import numpy as np
@@ -188,6 +189,34 @@ def test_async_read_timeout():
     finally:
         if camera.is_connected:
             camera.disconnect()
+
+
+def test_async_read_loop_throttles_repeated_failures(monkeypatch, caplog):
+    config = OpenCVCameraConfig(index_or_path=DEFAULT_PNG_FILE_PATH, fps=30)
+    camera = OpenCVCamera(config)
+    camera.stop_event = Event()
+    sleep_durations = []
+
+    def fail_read():
+        raise RuntimeError("synthetic read failure")
+
+    def fake_sleep(duration_s):
+        sleep_durations.append(duration_s)
+        if len(sleep_durations) >= 5:
+            camera.stop_event.set()
+
+    monkeypatch.setattr(camera, "read", fail_read)
+    monkeypatch.setattr("lerobot.cameras.opencv.camera_opencv.time.sleep", fake_sleep)
+
+    with caplog.at_level("WARNING", logger="lerobot.cameras.opencv.camera_opencv"):
+        camera._read_loop()
+
+    warning_records = [
+        record for record in caplog.records if "Error reading frame in background thread" in record.message
+    ]
+    assert len(warning_records) == 1
+    assert len(sleep_durations) == 5
+    assert all(duration_s == pytest.approx(0.05) for duration_s in sleep_durations)
 
 
 def test_async_read_before_connect():
