@@ -58,7 +58,7 @@ from lerobot.rl.learner import (
 )
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.utils import save_video_with_critic_overlay
-from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
+from lerobot.rl.pretrained_merge import build_pretrained_merges, apply_pretrained_merges
 from lerobot.transport.utils import bytes_to_transitions
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import get_safe_torch_device
@@ -188,13 +188,7 @@ def add_actor_information_and_train(
     critic_warmup_steps: int = int(getattr(cfg.policy, "critic_warmup_steps", 0))
     async_prefetch: bool = bool(getattr(cfg.policy, "async_prefetch", False))
 
-    # Prefer explicit weights_push_interval field; fall back to nested actor_learner_config
-    # for PI05 backward compatibility, then default to 180 s.
-    _alc = getattr(cfg.policy, "actor_learner_config", None)
-    weights_push_interval: float = float(
-        getattr(cfg.policy, "weights_push_interval", None)
-        or getattr(_alc, "policy_parameters_push_frequency", 180)
-    )
+    weights_push_interval: float = float(cfg.policy.actor_learner_config.policy_parameters_push_frequency)
 
     log_freq: int = cfg.log_freq
     save_freq: int = cfg.save_freq
@@ -229,11 +223,11 @@ def add_actor_information_and_train(
 
     # ── Optimizers ────────────────────────────────────────────────────────────
     optimizers = _build_optimizers(trainer.get_optimizer_groups(policy, cfg))
-    weight_anchors = build_weight_anchors(
+    pretrained_merges = build_pretrained_merges(
         optimizers=optimizers,
-        alpha=float(getattr(cfg.policy, "anchor_alpha", 0.0)),
-        every_n_steps=int(getattr(cfg.policy, "anchor_every_n_steps", 0)),
-        targets=list(getattr(cfg.policy, "anchor_targets", [])),
+        alpha=float(getattr(cfg.policy, "pretrained_merge_alpha", 0.0)),
+        every_n_steps=int(getattr(cfg.policy, "pretrained_merge_every_n_steps", 0)),
+        targets=list(getattr(cfg.policy, "pretrained_merge_targets", [])),
     )
     # ── Processors ───────────────────────────────────────────────────────────
     offline_dataset = None
@@ -381,7 +375,7 @@ def add_actor_information_and_train(
                 )
                 training_infos.update(actor_infos)
 
-        apply_weight_anchors(weight_anchors, optimizers, optimization_step)
+        apply_pretrained_merges(pretrained_merges, optimizers, optimization_step)
 
         # ── Logging ────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:

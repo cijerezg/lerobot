@@ -66,7 +66,6 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     online_steps: int = 1_000_000
     online_buffer_capacity: int = 100_000
     online_step_before_learning: int = 100   # transitions before first gradient step
-    weights_push_interval: float = 180.0     # seconds between learner→actor weight pushes
     actor_device: str | None = None
     learner_device: str | None = None
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
@@ -87,11 +86,11 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     critic_warmup_steps: int = 0
     policy_update_freq: int = 1
 
-    # ── Weight anchor ─────────────────────────────────────────────────────
-    # Periodic convex pull toward init weights. alpha == 0 or every_n_steps == 0 disables.
-    anchor_alpha: float = 0.0
-    anchor_every_n_steps: int = 0
-    anchor_targets: list[str] = field(default_factory=lambda: ["policy", "critic"])
+    # ── Pretrained merge ──────────────────────────────────────────────────
+    # Periodic convex pull toward pretrained weights. alpha == 0 or every_n_steps == 0 disables.
+    pretrained_merge_alpha: float = 0.0
+    pretrained_merge_every_n_steps: int = 0
+    pretrained_merge_targets: list[str] = field(default_factory=lambda: ["policy", "critic"])
 
     # ── Inference ─────────────────────────────────────────────────────────
     # Constant advantage value injected as prompt conditioning at inference.

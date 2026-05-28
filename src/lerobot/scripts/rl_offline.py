@@ -31,7 +31,6 @@ Config fields required beyond the standard TrainRLServerPipelineConfig:
 Compared to offline_learner_pi05.py this script:
   - Is model-agnostic (works for pi05_rl, molmoact2_rl, ...)
   - Is single-process only (no Accelerator / DDP)
-  - Does not include weight anchors or per-step validation hooks
   - Defers all model-specific logic to Trainer
 """
 
@@ -69,7 +68,7 @@ from lerobot.rl.offline_dataset_utils import (
 )
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.utils import cast_to_bf16
-from lerobot.rl.weight_anchor import build_weight_anchors, apply_weight_anchors
+from lerobot.rl.pretrained_merge import build_pretrained_merges, apply_pretrained_merges
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
@@ -130,7 +129,7 @@ def _save_checkpoint(
     logging.info(f"[RL_OFFLINE] Checkpoint saved → {checkpoint_dir}")
 
 
-def _save_anchor_checkpoint(
+def _save_pretrained_merge_checkpoint(
     cfg: TrainRLServerPipelineConfig,
     step: int,
     total_steps: int,
@@ -157,7 +156,7 @@ def _save_anchor_checkpoint(
     training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
     training_state_dir.mkdir(parents=True, exist_ok=True)
     torch.save({"step": step, "interaction_step": 0}, training_state_dir / "training_state.pt")
-    logging.info(f"[RL_OFFLINE] Anchor checkpoint ({suffix}) saved → {checkpoint_dir}")
+    logging.info(f"[RL_OFFLINE] Pretrained-merge checkpoint ({suffix}) saved → {checkpoint_dir}")
 
 
 # ── Validation probes ─────────────────────────────────────────────────────────
@@ -518,11 +517,11 @@ def run_offline_training(
 
     # ── Optimizers ────────────────────────────────────────────────────────────
     optimizers = _build_optimizers(trainer.get_optimizer_groups(policy, cfg))
-    weight_anchors = build_weight_anchors(
+    pretrained_merges = build_pretrained_merges(
         optimizers=optimizers,
-        alpha=float(getattr(cfg.policy, "anchor_alpha", 0.0)),
-        every_n_steps=int(getattr(cfg.policy, "anchor_every_n_steps", 0)),
-        targets=list(getattr(cfg.policy, "anchor_targets", [])),
+        alpha=float(getattr(cfg.policy, "pretrained_merge_alpha", 0.0)),
+        every_n_steps=int(getattr(cfg.policy, "pretrained_merge_every_n_steps", 0)),
+        targets=list(getattr(cfg.policy, "pretrained_merge_targets", [])),
     )
 
     # ── Replay buffer ─────────────────────────────────────────────────────────
@@ -682,12 +681,12 @@ def run_offline_training(
                 )
                 training_infos.update(actor_infos)
 
-        anchor_fires = any(a.should_merge(optimization_step) for a in weight_anchors.values())
-        if anchor_fires:
-            _save_anchor_checkpoint(cfg, optimization_step, offline_steps, policy, preprocessor, postprocessor, "pre_anchor")
-        apply_weight_anchors(weight_anchors, optimizers, optimization_step)
-        if anchor_fires:
-            _save_anchor_checkpoint(cfg, optimization_step, offline_steps, policy, preprocessor, postprocessor, "post_anchor")
+        merge_fires = any(m.should_merge(optimization_step) for m in pretrained_merges.values())
+        if merge_fires:
+            _save_pretrained_merge_checkpoint(cfg, optimization_step, offline_steps, policy, preprocessor, postprocessor, "pre_merge")
+        apply_pretrained_merges(pretrained_merges, optimizers, optimization_step)
+        if merge_fires:
+            _save_pretrained_merge_checkpoint(cfg, optimization_step, offline_steps, policy, preprocessor, postprocessor, "post_merge")
 
         # ── Logging ───────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:

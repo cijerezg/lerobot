@@ -39,7 +39,7 @@ rl_offline.py
         └── loop:
               update_critic (UTD−1 extra) + update_target_networks
               update_actor  (if step ≥ critic_warmup and step % policy_update_freq == 0)
-              apply_weight_anchors (if enabled)
+              apply_pretrained_merges (if enabled)
 ```
 
 ### Online loop
@@ -116,7 +116,7 @@ advantage_scaling: 0.2
 - Identical loop structure for any registered model.
 - `trainer.push_weights()` sends only trainable params (`requires_grad=True`) to actor.
 - Weight push interval: `cfg.policy.weights_push_interval` (default 180 s).
-- Weight anchors are supported via `anchor_alpha`, `anchor_every_n_steps`, and `anchor_targets`.
+- Pretrained merges are supported via `pretrained_merge_alpha`, `pretrained_merge_every_n_steps`, and `pretrained_merge_targets`.
 - Additional offline datasets are supported via `dataset.additional_offline_dataset_paths`; they are merged into the offline replay buffer with subtask-index remapping when metadata is available.
 - Supports offline buffer mix (half online / half offline batches when `cfg.dataset` set).
 

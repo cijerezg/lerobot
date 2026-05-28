@@ -26,7 +26,6 @@ RECAP was designed for a much larger model and a much larger compute budget than
 | **Critic loss** | Cross-entropy over discretized returns (HL-Gauss style) | **HL-Gauss CE retained** — soft target over 201 bins for non-terminal, one-hot for exact terminal values | HL-Gauss is a better fit than MSE at this scale; we re-tuned the bin count and support after observing the target distribution. |
 | **Advantage labels** | Multiple discretized return bins | Two bins: `negative` / `positive`, split at $\tanh(A/\alpha) = 0$ | Two bins are enough to teach the policy a directional signal at the data scales we run, and the prompt stays short |
 | **Advantage dropping** | Stochastic dropping of advantage labels (classifier-free guidance style) | Always pass the advantage label | We don't currently rely on guidance at inference; revisit if we want CFG-style conditional sampling |
-| **Golden/intervention overrides** | N/A | Not currently applied for MolmoAct2 | The Pi0.5 trainer forces $A = 1.0$ for clean demos and human interventions; the MolmoAct2 trainer treats every transition the same. If you observe the critic collapsing on demonstration-heavy batches, reinstating overrides is the obvious lever. |
 
 The two implementations share the loop topology and the binarized-prompt interface; everything below describes the MolmoAct2 wiring concretely.
 
@@ -201,7 +200,6 @@ The critic and actor each pull their own batch sample so the critic's CE doesn't
 
 **Offline training** (`rl_offline.py` → `MolmoAct2Trainer`):
 - Trains on a fixed dataset with no actor in the loop.
-- Uses `accelerate` for multi-GPU distributed training.
 - All advantage values are still computed live by the critic during the actor update.
 - Runs validation probes at `val_freq` intervals.
 
@@ -210,7 +208,7 @@ The critic and actor each pull their own batch sample so the critic's CE doesn't
 - Actor runs asynchronous inference on the robot at 30 Hz using RTC, with leader-arm interventions toggled by key `5`.
 - Online and offline buffers are mixed roughly 50/50 per batch — the offline data acts as a stabilizing prior, preventing the policy from forgetting what it learned offline while it incorporates new on-robot experience.
 - Critic advantages are computed live every actor update (when `skip_critic=False`).
-- Policy weights (trainable, non-critic params only) are pushed to the actor every `weights_push_interval` seconds (180 by default).
+- Policy weights (trainable, non-critic params only) are pushed to the actor every `policy.actor_learner_config.policy_parameters_push_frequency` seconds (wall-clock; default 120).
 
 ---
 
@@ -220,16 +218,16 @@ The full MolmoAct2 + critic stack is too large to train end-to-end on a single w
 
 | Component | Config field | Default in `config_rl.yaml` | Total layers |
 |-----------|--------------|------------------------------|--------------|
-| Vision tower (SigLIP) | `vision_from_layer` | `18` (train layers 18–24) | 25 |
+| Vision tower (SigLIP) | `vision_from_layer` | `16` (train layers 16–24) | 25 |
 | Image pooling + projector | (linked to `vision_from_layer`) | trains when vision is on | — |
 | Text model (Qwen2.5) | `language_from_layer` | `0` (train all) | 36 |
 | Token embedding (`wte`) | `freeze_embedding` | `true` (frozen) | — |
 | Action expert | — | always trained | — |
-| Critic vision tower | `critic_vision_from_layer` | `null` (frozen) | 25 |
-| Critic text blocks | `critic_language_from_layer` | `null` (frozen) | 12 |
+| Critic vision tower | `critic_vision_from_layer` | `4` (train layers 4–24) | 25 |
+| Critic text blocks | `critic_language_from_layer` | `18` (train block 18 and beyond, if present) | 12 |
 | Critic queries + logit head | — | always trained | — |
 
-Setting any `_from_layer` field to `null` freezes the entire component. The shipped defaults keep the critic vision and text layers frozen entirely (only the queries + logit head adapt) — fine for actor-only and lightweight critic runs, but raise these when going deeper into online RL if the critic looks under-fit.
+Setting any `_from_layer` field to `null` freezes the entire component. The shipped defaults train the upper half of the vision tower and all of the language model on the actor side, and adapt the upper critic vision layers + a slice of the critic text blocks alongside the always-trained query + logit heads. Push these layer indices lower if the critic looks under-fit; bump them higher (or set to `null`) for actor-only behaviour-cloning runs where the critic is irrelevant.
 
 ---
 
@@ -282,7 +280,7 @@ These are the values used in the shipped `config_rl.yaml`. The dataclass default
 | `policies/molmoact2/processor_molmoact2.py` | Advantage tokenization, prompt construction (`_build_robot_text`), state discretization. |
 | `policies/molmoact2/configuration_molmoact2.py`, `modeling_molmoact2.py` | The base MolmoAct2 policy (vision + text + action expert). See `policies/molmoact2/ARCHITECTURE.md` for the deep model reference. |
 | `rl/rl_trainer.py` | Trainer base class — orchestration of the per-step `update_critic` / `update_actor` / `update_target_networks` calls. |
-| `rl/rl_offline.py` | Offline training entry point with validation probes. |
+| `scripts/rl_offline.py` | Offline training entry point with validation probes. |
 | `rl/rl_learner.py` | Online learner (gRPC server, online + offline buffer mixing, weight pushes). |
 | `rl/rl_actor_async.py` | Online actor (gRPC client; delegates to `rtc_actor_runtime.act_with_policy_rtc`). |
 | `rl/rtc_actor_runtime.py` | RTC runtime: action queue, prefix-attention schedule, 30 Hz robot control loop, leader-arm interventions. Model-agnostic; per-policy details flow through `Trainer.build_inference_batch`. |

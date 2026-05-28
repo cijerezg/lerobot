@@ -5,7 +5,7 @@ This repo includes a suite of probes that automatically run during offline train
 To launch training with validation probes:
 
 ```bash
-python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.yaml
+python -m lerobot.scripts.rl_offline --config path/to/config.yaml
 ```
 
 Additionally, we provide a tool for visualizing the results across training steps:
@@ -54,7 +54,7 @@ If the model is consistently not paying attention to the key objects in the scen
 ### Standalone
 
 ```bash
-python -m lerobot.probes.attention_pi05 --config path/to/config.yaml
+python -m lerobot.probes.attention --config path/to/config.yaml
 ```
 
 ### Config
@@ -85,7 +85,7 @@ We do observe a degree of spatial memorization, and it is more pronounced in cer
 ### Standalone
 
 ```bash
-python -m lerobot.probes.attention_spatial_memorization --config path/to/config.yaml
+python -m lerobot.probes.spatial_memorization_attention --config path/to/config.yaml
 ```
 
 ### Config
@@ -172,7 +172,7 @@ The probe also outputs a PCA scree plot, which is a useful sanity check on the i
 ### Standalone
 
 ```bash
-python -m lerobot.probes.actions_pi05 --config path/to/config.yaml
+python -m lerobot.probes.actions --config path/to/config.yaml
 ```
 
 ### Config
@@ -205,7 +205,7 @@ The probe optionally runs a **subtask injection** analysis: it does two forward 
 ### Standalone
 
 ```bash
-python -m lerobot.probes.representations_pi05 --config path/to/config.yaml
+python -m lerobot.probes.representations --config path/to/config.yaml
 ```
 
 ### Config
@@ -235,17 +235,71 @@ Per-frame plots show predicted vs. GT action traces for each joint, in both unno
 ### Standalone
 
 ```bash
-python -m lerobot.probes.offline_inference_pi05 --config path/to/config.yaml
+python -m lerobot.probes.offline_inference --config path/to/config.yaml
 ```
 
 ### Config
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `enable_offline_eval` | `true` | Enable this probe |
+| `enable_offline_inference` | `true` | Enable this probe |
 | `offline_inference_n_frames` | `5` | Frames per episode |
 | `max_episodes` | `5` | Episodes to evaluate |
 
 ---
 
+## 7. Spatial Memorization (Causal Jacobian Variant)
 
+A variant of the spatial memorization probe (Section 2) that aggregates **causal** attention maps $\mathbf{A} \odot |\nabla_{\mathbf{A}} \mathcal{L}|$ instead of raw softmax attention $\mathbf{A}$. It reuses the same frame-sampling and rendering pipeline as Section 2, but asks the policy adapter for `capture_attention(..., requires_grad=True)` so that a backward pass through the attention weights is included.
+
+Use this when the raw-attention spatial memorization map (Section 2) shows a persistent hot spot and you want to know whether that hot spot actually drives the action output, or whether it is an attention-only artifact uncorrelated with the policy's decisions.
+
+Output directory: `{output_dir}/spatial_memorization_action_jacobian/`.
+
+### Standalone
+
+```bash
+python -m lerobot.probes.spatial_memorization_action_jacobian --config path/to/config.yaml
+```
+
+### Config
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_spatial_memorization_jacobian` | `false` | Enable this probe (off by default — requires a backward pass per sampled frame) |
+| `spatial_layers` | `"0,9,17"` | Layers to analyze |
+| `spatial_n_frames` | `32` | Number of frames to aggregate |
+
+---
+
+## 8. Critic Values Distribution
+
+When the distributional critic is enabled (`skip_critic: false`), this probe samples validation frames and characterizes the critic's output. It is policy-agnostic — it works against any policy whose `ProbablePolicy` adapter implements `predict_value` and `predict_value_and_probs`. Adapters that additionally implement `value_gradient_magnitude` get the gradient-based plots and percentile-exemplar frames; otherwise those sections are skipped.
+
+Outputs (under `{output_dir}/critic/`):
+
+| File | Description |
+|------|-------------|
+| `predicted_distributions.png` | Per-frame $P(V)$ curves with $\mathbb{E}[V]$ overlay |
+| `advantage_dist.png` | TD-error histogram + CDF + by-subtask boxplot |
+| `advantage_squashed_dist.png` | $\tanh(\text{TD-error}/\text{scaling})$ version of the above |
+| `gradient_magnitudes.png` | $\|\nabla_\text{vision} V\|$ distribution (only when the adapter supports it) |
+| `frame_p{XX}.png` | Percentile-exemplar frames at $V$ deciles (only when the adapter supports it) |
+
+The probe is a no-op when `skip_critic: true` (the policy has no critic head to query).
+
+### Standalone
+
+```bash
+python -m lerobot.probes.critic --config path/to/config.yaml
+```
+
+### Config
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_critic_values_distribution` | `false` | Enable this probe (off by default — requires backward when the gradient sections are active) |
+| `critic_adv_frames` | `1000` | Frames sampled for $V(s)$ / TD-error distributions |
+| `critic_grad_frames` | `200` | Frames sampled for $\|\nabla_\text{vision} V\|$ (forward + backward) |
+
+---

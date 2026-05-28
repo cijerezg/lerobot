@@ -65,7 +65,7 @@ This iterates over all episodes, computes anchor (or delta) representations for 
 Offline training initializes the policy and critic from demonstrations before any robot interaction. Skipping this step makes online learning highly unstable.
 
 ```bash
-python -m lerobot.scripts.offline_learner_pi05 --config path/to/config.yaml
+python -m lerobot.scripts.rl_offline --config path/to/config.yaml
 ```
 
 This script:
@@ -74,7 +74,6 @@ This script:
 - Trains for `offline_steps` steps (default: 10,000) with gradient accumulation
 - Runs validation probes every `val_freq` steps if `val_dataset_path` is set
 - Saves checkpoints every `offline_save_freq` steps to `offline_output_dir`
-- Uses `accelerate` for multi-GPU support
 
 ### Phase 2: Online Training
 
@@ -82,15 +81,15 @@ Update `pi05_checkpoint` in the config to point to your offline checkpoint, then
 
 **Learner** (gRPC server, runs on GPU machine):
 ```bash
-python -m lerobot.rl.learner_pi05 --config path/to/config.yaml
+python -m lerobot.rl.rl_learner --config path/to/config.yaml
 ```
 
 **Actor** (gRPC client, runs on robot machine):
 ```bash
-python -m lerobot.rl.actor_pi05_async --config path/to/config.yaml
+python -m lerobot.rl.rl_actor_async --config path/to/config.yaml
 ```
 
-The actor collects transitions at 30Hz and streams them to the learner. The learner mixes online and offline data 50/50 per batch. Updated policy weights are pushed back to the actor every `policy_parameters_push_frequency` steps (default: 180).
+The actor collects transitions at 30Hz and streams them to the learner. The learner mixes online and offline data 50/50 per batch. Updated policy weights are pushed back to the actor every `policy.actor_learner_config.policy_parameters_push_frequency` seconds (wall-clock; default: 120).
 
 The learner writes an episode video to `output_dir` every `episode_logging_freq` episodes with the **predicted critic value overlaid frame-by-frame** — this is the same style of clip shown at the top of the main [README](../../README.md), so you can see when the critic thinks the policy is doing well versus when it expects failure. The online replay buffer is also dumped to disk every `episode_save_freq` episodes, so a crashed run can be resumed and recent episodes inspected or fed back into the next iteration of the loop.
 
@@ -435,23 +434,13 @@ with edge padding. Smoothing matters more here than in standard imitation learni
 
 ## Inference Scripts
 
-Two standalone scripts run the policy without any learner or gRPC connection — useful for evaluation, deployment, and debugging a checkpoint in isolation.
+A standalone script runs the policy without any learner or gRPC connection — useful for evaluation, deployment, and debugging a checkpoint in isolation.
 
-**Standard async inference:**
 ```bash
-python -m lerobot.rl.inference_pi05_async --config path/to/config.yaml
+python -m lerobot.rl.inference_async --config path/to/config.yaml
 ```
 
-Same threading model and action queue as the actor, but no transitions are streamed anywhere. The script still writes episode videos every `episode_logging_freq` episodes and dumps the buffer every `episode_save_freq` episodes, so a session can be reviewed afterward.
-
-**Interactive subtask injection:**
-```bash
-python -m lerobot.rl.inference_pi05_async_interactive --config path/to/config.yaml
-```
-
-Identical to the standard script, except the operator can type a subtask string into the terminal at any time. The text is tokenized and injected into the policy's subtask token cache, taking effect on the very next action chunk; the model's normal time-based subtask cache then resumes. Requires `subtask_regeneration_interval > 0` (e.g. 30) — otherwise the model regenerates subtask tokens every cycle and the override is overwritten before it takes effect.
-
-Both scripts expect the same config used for online training and load weights from `policy.pi05_checkpoint`.
+Same threading model and action queue as the actor, but no transitions are streamed anywhere. The script still writes episode videos every `episode_logging_freq` episodes and dumps the buffer every `episode_save_freq` episodes, so a session can be reviewed afterward. Loads weights from `policy.pi05_checkpoint`.
 
 ---
 

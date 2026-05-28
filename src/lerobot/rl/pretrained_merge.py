@@ -1,16 +1,16 @@
 """Periodic convex pull of trainable weights toward their init snapshot.
 
 Every `every_n_steps` optimization steps the live weights are interpolated
-toward the captured init weights with mixing factor `alpha`:
+toward the captured pretrained weights with mixing factor `alpha`:
 
-    W_new = (1 - alpha) * W_current + alpha * W_init
+    W_new = (1 - alpha) * W_current + alpha * W_pretrained
 
 After the merge the optimizer's per-parameter state (`exp_avg`, `exp_avg_sq`,
 `step`) is cleared so subsequent gradient steps explore directions free from
 pre-merge momentum/variance estimates.
 
-The anchor snapshot lives in pinned CPU memory in the same dtype as the live
-parameter. No extra GPU allocation persists between merges; the transient
+The pretrained snapshot lives in pinned CPU memory in the same dtype as the
+live parameter. No extra GPU allocation persists between merges; the transient
 CPU→GPU tensor created inside `lerp_` is freed when the call returns.
 """
 
@@ -22,7 +22,7 @@ import torch
 from torch.optim import Optimizer
 
 
-class WeightAnchor:
+class PretrainedMerge:
     def __init__(
         self,
         name: str,
@@ -53,7 +53,7 @@ class WeightAnchor:
                     self._live_params.append(p)
 
         logging.info(
-            f"[WeightAnchor:{self.name}] snapshotted {len(self._init_params)} tensors "
+            f"[PretrainedMerge:{self.name}] snapshotted {len(self._init_params)} tensors "
             f"(alpha={self.alpha}, every_n_steps={self.every_n_steps})"
         )
 
@@ -80,40 +80,40 @@ class WeightAnchor:
             return False
         self.merge(optimizer)
         logging.info(
-            f"[WeightAnchor:{self.name}] merged at step {optimization_step} "
+            f"[PretrainedMerge:{self.name}] merged at step {optimization_step} "
             f"(alpha={self.alpha}); optimizer state cleared"
         )
         return True
 
 
-def build_weight_anchors(
+def build_pretrained_merges(
     optimizers: dict[str, Optimizer],
     alpha: float,
     every_n_steps: int,
     targets: list[str],
-) -> dict[str, WeightAnchor]:
-    """Build one WeightAnchor per requested optimizer key. Missing keys are skipped."""
-    anchors: dict[str, WeightAnchor] = {}
+) -> dict[str, PretrainedMerge]:
+    """Build one PretrainedMerge per requested optimizer key. Missing keys are skipped."""
+    merges: dict[str, PretrainedMerge] = {}
     if alpha <= 0.0 or every_n_steps <= 0 or not targets:
-        return anchors
+        return merges
     for key in targets:
         if key not in optimizers:
-            logging.warning(f"[WeightAnchor] target '{key}' not in optimizers; skipping")
+            logging.warning(f"[PretrainedMerge] target '{key}' not in optimizers; skipping")
             continue
-        anchors[key] = WeightAnchor(
+        merges[key] = PretrainedMerge(
             name=key,
             optimizer=optimizers[key],
             alpha=alpha,
             every_n_steps=every_n_steps,
         )
-    return anchors
+    return merges
 
 
-def apply_weight_anchors(
-    anchors: dict[str, WeightAnchor],
+def apply_pretrained_merges(
+    merges: dict[str, PretrainedMerge],
     optimizers: dict[str, Optimizer],
     optimization_step: int,
 ) -> None:
-    """Run a merge on every anchor whose period divides `optimization_step`."""
-    for key, anchor in anchors.items():
-        anchor.maybe_merge(optimization_step, optimizers[key])
+    """Run a merge on every entry whose period divides `optimization_step`."""
+    for key, merge in merges.items():
+        merge.maybe_merge(optimization_step, optimizers[key])
