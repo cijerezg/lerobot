@@ -155,7 +155,7 @@ class ExperimentConfig:
     rlt_embedding_checkpoint: str | None = None
     rlt_head_checkpoint: str | None = None
     rlt_chunk_size: int = 10
-    rlt_token_dim: int = 2048
+    rlt_token_dim: int | None = None
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None
     rlt_actor_residual_scale: float = 0.25

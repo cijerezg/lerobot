@@ -456,12 +456,12 @@ class RemotePolicyConfig:
     # PI05/PI05-RL: when False, skip runtime subtask generation and condition
     # action sampling on the main task prompt only.
     subtask_generation_enabled: bool = True
-    # PI05-RLT: optional lightweight RLT modules on top of a frozen PI0.5 VLA.
+    # Optional lightweight RLT modules on top of a frozen VLA wrapper.
     rlt_enabled: bool = False
     rlt_embedding_checkpoint: str | None = None
     rlt_head_checkpoint: str | None = None
     rlt_chunk_size: int = 10
-    # None => use the policy default (2048 for pi05_rlt; vlm_width for tinypi05_rlt / tinypi05v2_rlt).
+    # None => use the policy default (2048 for pi05_rlt; backbone hidden width for other RLT wrappers).
     rlt_token_dim: int | None = None
     rlt_actor_hidden_dims: list[int] | None = None
     rlt_critic_hidden_dims: list[int] | None = None

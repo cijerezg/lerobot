@@ -35,6 +35,7 @@ SUPPORTED_POLICIES = [
     "tinypi05v2",
     "pistar06",
     "molmoact2",
+    "molmoact2_rlt",
     "molmoact2better",
     "pi05_rl",
     "pi05_rlt",

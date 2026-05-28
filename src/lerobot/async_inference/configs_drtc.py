@@ -206,15 +206,15 @@ class RobotClientDrtcConfig:
     )
     rlt_enabled: bool = field(
         default=False,
-        metadata={"help": "Enable the PI05 RLT actor head when using policy_type='pi05_rlt'."},
+        metadata={"help": "Enable the RLT actor head when using an *_rlt policy type."},
     )
     rlt_embedding_checkpoint: str | None = field(
         default=None,
-        metadata={"help": "Path to an offline-trained RLT embedding checkpoint for policy_type='pi05_rlt'."},
+        metadata={"help": "Path to an offline-trained RLT embedding checkpoint for an *_rlt policy."},
     )
     rlt_head_checkpoint: str | None = field(
         default=None,
-        metadata={"help": "Path to an online-trained RLT actor/critic checkpoint for policy_type='pi05_rlt'."},
+        metadata={"help": "Path to an online-trained RLT actor/critic checkpoint for an *_rlt policy."},
     )
     rlt_chunk_size: int = field(
         default=10,
@@ -225,7 +225,8 @@ class RobotClientDrtcConfig:
         metadata={
             "help": (
                 "Dimensionality of the compact RLT token. If None, falls back to the "
-                "policy-type default (2048 for pi05_rlt, vlm_width for tinypi05_rlt / tinypi05v2_rlt)."
+                "policy-type default (2048 for pi05_rlt, VLM hidden width for tinypi05_rlt / "
+                "tinypi05v2_rlt / molmoact2_rlt)."
             )
         },
     )

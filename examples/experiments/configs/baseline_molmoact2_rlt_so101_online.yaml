@@ -1,0 +1,133 @@
+# DRTC config for online RLT-head training on the MolmoAct2 SO101 checkpoint.
+#
+# Train the embedding first with:
+#   uv run python -m lerobot.rl.train_molmoact2_rlt_embedding \
+#     --policy_path=/home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model \
+#     --dataset_repo_id=<dataset_repo_id> \
+#     --output_dir=outputs/molmoact2_rlt_embedding
+#
+# Then run online collection/training with:
+#   ./scripts/run_drtc_experiment.sh --config baseline_molmoact2_rlt_so101_online
+name: baseline_molmoact2_rlt_so101_online
+
+# Hardware
+robot_type: so101_follower
+gpu: ""
+client_host: ""
+server_host: ""
+robot_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5876043763-if00
+robot_id: so101_follower_2026_04_26_v0
+
+# MolmoAct2 checkpoint expects observation.images.{scene,wrist}.
+camera1_name: scene
+camera1_path: /dev/v4l/by-id/usb-H264_USB_Camera_H264_USB_Camera_2020032801-video-index0
+camera2_name: wrist
+camera2_path: /dev/v4l/by-id/usb-5MP_USB_Camera_5MP_USB_Camera_01.00.00-video-index0
+camera_width: 800
+camera_height: 600
+camera_fps: 30
+camera_fourcc: MJPG
+camera_use_threaded_async_read: true
+camera_allow_stale_frames: true
+
+# Policy
+policy_type: molmoact2_rlt
+pretrained_name_or_path: /home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model
+
+# RLT modules. Leave the head unset for the first online run; the server trains
+# the actor/critic asynchronously and only executes the actor after
+# rlt_execute_after_train_steps.
+rlt_enabled: true
+rlt_embedding_checkpoint: outputs/molmoact2_rlt_embedding/rlt_embedding_latest.pt
+rlt_head_checkpoint:
+rlt_chunk_size: 10
+rlt_token_dim:
+rlt_actor_hidden_dims: [512, 512, 512]
+rlt_critic_hidden_dims: [512, 512, 512]
+rlt_actor_residual_scale: 0.25
+rlt_actor_mode: gaussian
+rlt_action_std: 0.02
+rlt_num_critics: 4
+rlt_bc_beta: 0.2
+rlt_jerk_beta: 0.001
+rlt_reference_dropout_p: 0.25
+rlt_intervention_reference_mode: executed
+
+# Online RLT training.
+rlt_online_collection_enabled: true
+rlt_online_training_enabled: true
+rlt_warmup_episodes: 1
+rlt_warmup_transitions: 128
+rlt_replay_capacity: 50000
+rlt_batch_size: 64
+rlt_utd_ratio: 1
+rlt_critic_updates_per_actor: 2
+rlt_success_sample_fraction: 0.25
+rlt_intervention_sample_fraction: 0.25
+rlt_train_freq_s: 1.0
+rlt_save_freq_steps: 250
+rlt_output_dir: outputs/rlt_molmoact2_so101_online
+rlt_demo_buffer_path:
+rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay.pt
+rlt_online_buffer_save_freq_transitions: 50
+rlt_persist_buffer_on_shutdown: true
+
+# Optional review capture for offline episode inspection.
+rlt_review_capture_enabled: true
+rlt_review_jpeg_quality: 80
+rlt_review_archive_path: outputs/rlt_molmoact2_so101_online/rlt_review_archive.pt
+
+rlt_actor_lr: 0.0001
+rlt_critic_lr: 0.0003
+rlt_discount: 0.985
+rlt_target_update_tau: 0.005
+rlt_execute_after_train_steps: 1000
+rlt_context_cache_size: 512
+rlt_transition_queue_size: 512
+rlt_grad_clip_norm: 20.0
+rlt_q_abs_max: 100.0
+rlt_action_deviation_abs_max: 2.0
+rlt_loss_abs_max: 1000.0
+rlt_safety_patience: 3
+
+# DRTC parameters. MolmoAct2's checkpoint chunk_size/n_action_steps is 30, so
+# keep actions_per_chunk <= 30.
+estimator: jk
+cooldown: true
+latency_k: 1.5
+epsilon: 1
+actions_per_chunk: 30
+s_min: 5
+latency_alpha: 0.125
+latency_beta: 0.25
+
+# Timing
+duration_s: 1000.0
+run_until_interrupt: true
+fps: 30
+
+# Flow matching / RTC.
+num_flow_matching_steps: 3
+rtc_enabled: true
+rtc_max_guidance_weight:
+rtc_prefix_attention_schedule: linear
+rtc_sigma_d: 1.0
+rtc_full_trajectory_alignment: false
+
+# Action smoothing
+action_filter_mode: butterworth
+action_filter_butterworth_cutoff: 4.0
+action_filter_butterworth_order: 2
+action_filter_gain: 1.0
+action_max_step_deg: 5.0
+
+# Diagnostics
+full_diagnostics: true
+trajectory_viz_enabled: false
+
+# Teleop intervention
+teleop_enabled: true
+teleop_type: so101_leader
+teleop_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A7A057748-if00
+teleop_id: so101_leader_2026_04_16_v2
+teleop_send_feedback: true

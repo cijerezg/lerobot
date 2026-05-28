@@ -712,8 +712,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         return context_id
 
     def _is_rlt_policy(self) -> bool:
-        """Return True for any RLT-style wrapper policy (pi05 + tinypi05 variants)."""
-        return self.policy_type in ("pi05_rlt", "tinypi05_rlt", "tinypi05v2_rlt")
+        """Return True for any RLT-style wrapper policy."""
+        return self.policy_type in ("pi05_rlt", "tinypi05_rlt", "tinypi05v2_rlt", "molmoact2_rlt")
 
     def _rlt_source_collectable(self) -> bool:
         if not self._rlt_online_collection_enabled:
@@ -1424,7 +1424,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             base_cfg = PreTrainedConfig.from_pretrained(policy_processor_path)
 
-            # Common RLT keyword arguments shared by both wrappers.
+            # Common RLT keyword arguments shared by all wrappers.
             rlt_kwargs: dict[str, Any] = dict(
                 device=self.device,
                 rlt_enabled=bool(getattr(policy_specs, "rlt_enabled", False)),
@@ -1441,7 +1441,6 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 rlt_bc_action_weights=getattr(policy_specs, "rlt_bc_action_weights", None),
                 rlt_jerk_beta=float(getattr(policy_specs, "rlt_jerk_beta", 0.0)),
                 rlt_reference_dropout_p=float(getattr(policy_specs, "rlt_reference_dropout_p", 0.5)),
-                pi05_checkpoint=policy_processor_path,
                 rtc_config=None,
             )
 
@@ -1453,6 +1452,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     base_cfg,
                     rlt_token_dim=int(pi05_token_dim) if pi05_token_dim is not None else 2048,
                     subtask_generation_enabled=False,
+                    pi05_checkpoint=policy_processor_path,
                     **rlt_kwargs,
                 )
             elif self.policy_type == "tinypi05v2_rlt":
@@ -1462,15 +1462,30 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 cfg_obj = TinyPI05V2RLTConfig.from_base_config(
                     base_cfg,
                     rlt_token_dim=int(token_dim_raw) if token_dim_raw is not None else None,
+                    pi05_checkpoint=policy_processor_path,
                     **rlt_kwargs,
                 )
-            else:  # tinypi05_rlt
+            elif self.policy_type == "tinypi05_rlt":
                 from lerobot.rl.rlt_tinypi05 import TinyPI05RLTConfig
 
                 token_dim_raw = getattr(policy_specs, "rlt_token_dim", None)
                 cfg_obj = TinyPI05RLTConfig.from_base_config(
                     base_cfg,
                     rlt_token_dim=int(token_dim_raw) if token_dim_raw is not None else None,
+                    pi05_checkpoint=policy_processor_path,
+                    **rlt_kwargs,
+                )
+            else:  # molmoact2_rlt
+                from lerobot.rl.rlt_molmoact2 import MolmoAct2RLTConfig
+
+                token_dim_raw = getattr(policy_specs, "rlt_token_dim", None)
+                cfg_obj = MolmoAct2RLTConfig.from_base_config(
+                    base_cfg,
+                    rlt_token_dim=int(token_dim_raw) if token_dim_raw is not None else None,
+                    molmoact2_checkpoint=policy_processor_path,
+                    pretrained_path=Path(policy_processor_path),
+                    inference_action_mode="continuous",
+                    enable_inference_cuda_graph=False,
                     **rlt_kwargs,
                 )
 
@@ -1623,11 +1638,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 },
                 postprocessor_overrides={"device_processor": device_override},
             )
-            if self.policy_type in ("tinypi05_rlt", "tinypi05v2_rlt"):
-                # tinypi05{,v2}_rlt uses the standard tinypi05{,v2} processor
-                # pipeline (no subtask hydration / advantage scaling). Log the
-                # RLT-specific config so the operator can confirm the head
-                # wiring.
+            if self.policy_type in ("tinypi05_rlt", "tinypi05v2_rlt", "molmoact2_rlt"):
+                # Non-PI05 RLT wrappers use their backbone's standard processor
+                # pipeline. Log the RLT-specific config so the operator can
+                # confirm the head wiring.
                 self.policy = self.policy.eval()
                 self.logger.info(
                     "%s configured | rlt_enabled=%s | embedding=%s | head=%s | "

@@ -149,6 +149,13 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.rl.rlt_tinypi05v2 import TinyPI05V2RLTPolicy
 
         return TinyPI05V2RLTPolicy
+    elif name == "molmoact2_rlt":
+        # Importing rlt_molmoact2 registers MolmoAct2RLTConfig
+        # ('molmoact2_rlt') with PreTrainedConfig.register_subclass(...).
+        import lerobot.rl.rlt_molmoact2  # noqa: F401
+        from lerobot.rl.rlt_molmoact2 import MolmoAct2RLTPolicy
+
+        return MolmoAct2RLTPolicy
     elif name == "sac":
         from lerobot.policies.sac.modeling_sac import SACPolicy
 
@@ -243,6 +250,11 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return WallXConfig(**kwargs)
     elif policy_type == "molmoact2":
         return MolmoAct2Config(**kwargs)
+    elif policy_type == "molmoact2_rlt":
+        import lerobot.rl.rlt_molmoact2  # noqa: F401
+        from lerobot.rl.rlt_molmoact2 import MolmoAct2RLTConfig
+
+        return MolmoAct2RLTConfig(**kwargs)
     elif policy_type == "molmoact2better":
         return MolmoAct2BetterConfig(**kwargs)
     else:

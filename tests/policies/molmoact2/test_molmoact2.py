@@ -46,6 +46,18 @@ def test_molmoact2_policy_registration():
     assert get_policy_class("molmoact2") is MolmoAct2Policy
 
 
+def test_molmoact2_rlt_policy_registration():
+    from lerobot.rl.rlt_molmoact2 import MolmoAct2RLTConfig, MolmoAct2RLTPolicy
+
+    cfg = make_policy_config("molmoact2_rlt", checkpoint_path="/tmp/not-a-real-checkpoint")
+
+    assert cfg.type == "molmoact2_rlt"
+    assert isinstance(cfg, MolmoAct2RLTConfig)
+    assert isinstance(cfg, MolmoAct2Config)
+    assert cfg.rlt_token_dim is None
+    assert get_policy_class("molmoact2_rlt") is MolmoAct2RLTPolicy
+
+
 def test_molmoact2_scheduler_decay_steps_auto_match_training_steps():
     param = torch.nn.Parameter(torch.ones(()))
     optimizer = torch.optim.AdamW([param], lr=0.001)

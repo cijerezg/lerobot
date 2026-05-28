@@ -14,6 +14,7 @@
 #   ./scripts/run_drtc_experiment.sh --viz --config baseline   # enable trajectory viz
 #   ./scripts/run_drtc_experiment.sh --config baseline_tinypi05v2_rlt_sim_paper_online \
 #       --sim_camera_pose_path outputs/camera_alignment/charuco_camera_poses.json
+#   ./scripts/run_drtc_experiment.sh --config baseline_molmoact2_rlt_so101_online
 #
 # Flags (consumed by this script, not forwarded to the experiment runner):
 #   --viz                   - Start the trajectory visualization server (HTTP :8088)

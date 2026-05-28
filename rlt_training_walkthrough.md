@@ -6,24 +6,25 @@ Use it as a runbook: start with low-variance collection, persist the replay buff
 
 ## 0. Pick A Policy Variant
 
-Three RLT wrappers ship in this repo. They share the same online/offline pipeline and replay format; only the frozen VLA backbone (and its processor) differ.
+Four RLT wrappers ship in this repo. They share the same online replay/training path and replay format; only the frozen VLA backbone (and its processor) differ. Offline head trainers currently exist for the PI0.5 variants; MolmoAct2 RLT starts with online training only.
 
 | variant | `policy_type` | base policy | typical use |
 | --- | --- | --- | --- |
 | full PI0.5 | `pi05_rlt` | `lerobot.policies.pi05_full.PI05FullPolicy` (subtasks + FAST head + ~3B VLA) | large-scale finetunes / multi-task |
 | tiny PI0.5 | `tinypi05_rlt` | `lerobot.policies.tinypi05.TinyPI05Policy` (`transformers`-based small VLA, no subtasks, no FAST) | small per-robot finetunes (e.g. SO101 pick-place) |
 | tiny PI0.5 v2 | `tinypi05v2_rlt` | `lerobot.policies.tinypi05v2.TinyPI05V2Policy` (self-contained rewrite of tinypi05; no `transformers` / `pistar06` / `pi05` deps) | same as tinypi05_rlt; preferred for new tinypi05v2 finetunes |
+| MolmoAct2 | `molmoact2_rlt` | `lerobot.policies.molmoact2.MolmoAct2Policy` (HF MolmoAct2 checkpoint + continuous action expert) | online RLT refinement for MolmoAct2 SO101 runs |
 
 The runbook below uses the variant-agnostic terms `<policy_type>`, `<rlt_module>`, `<embedding_trainer>`, and `<offline_trainer>`. Substitute according to the variant you picked:
 
-| placeholder | `pi05_rlt` value | `tinypi05_rlt` value | `tinypi05v2_rlt` value |
-| --- | --- | --- | --- |
-| `<rlt_module>` | `lerobot.rl.rlt_pi05` | `lerobot.rl.rlt_tinypi05` | `lerobot.rl.rlt_tinypi05v2` |
-| `<embedding_trainer>` | `lerobot.rl.train_pi05_rlt_embedding` | `lerobot.rl.train_tinypi05_rlt_embedding` | `lerobot.rl.train_tinypi05v2_rlt_embedding` |
-| `<offline_trainer>` | `lerobot.rl.train_pi05_rlt_head_offline` | `lerobot.rl.train_tinypi05_rlt_head_offline` | `lerobot.rl.train_tinypi05v2_rlt_head_offline` |
-| default `rlt_token_dim` | `2048` (= `gemma_2b` width) | `None` (defaults to `vlm_width`, e.g. `768` for `small_500m`) | `None` (same as `tinypi05_rlt` — `vlm_width` of the underlying tinypi05 architecture) |
+| placeholder | `pi05_rlt` value | `tinypi05_rlt` value | `tinypi05v2_rlt` value | `molmoact2_rlt` value |
+| --- | --- | --- | --- | --- |
+| `<rlt_module>` | `lerobot.rl.rlt_pi05` | `lerobot.rl.rlt_tinypi05` | `lerobot.rl.rlt_tinypi05v2` | `lerobot.rl.rlt_molmoact2` |
+| `<embedding_trainer>` | `lerobot.rl.train_pi05_rlt_embedding` | `lerobot.rl.train_tinypi05_rlt_embedding` | `lerobot.rl.train_tinypi05v2_rlt_embedding` | `lerobot.rl.train_molmoact2_rlt_embedding` |
+| `<offline_trainer>` | `lerobot.rl.train_pi05_rlt_head_offline` | `lerobot.rl.train_tinypi05_rlt_head_offline` | `lerobot.rl.train_tinypi05v2_rlt_head_offline` | not implemented; use DRTC online training |
+| default `rlt_token_dim` | `2048` (= `gemma_2b` width) | `None` (defaults to `vlm_width`, e.g. `768` for `small_500m`) | `None` (same as `tinypi05_rlt` — `vlm_width` of the underlying tinypi05 architecture) | `None` (defaults to the MolmoAct2 text hidden width) |
 
-DRTC server, replay buffer, safety tripwires, and the tuning advice in sections 6-11 apply identically to all variants. The `tinypi05_rlt` and `tinypi05v2_rlt` wrappers are interchangeable from the operator's perspective: pick `tinypi05v2_rlt` when your frozen VLA was trained with `policy_type: tinypi05v2` (e.g. the `*_so101_pickplace_160_bs64_anchor` checkpoints). The two backbones are not weight-compatible, so an embedding/head checkpoint trained against one variant cannot be reused against the other.
+DRTC server, replay buffer, safety tripwires, and the tuning advice in sections 6-11 apply identically to all variants. The `tinypi05_rlt` and `tinypi05v2_rlt` wrappers are interchangeable from the operator's perspective: pick `tinypi05v2_rlt` when your frozen VLA was trained with `policy_type: tinypi05v2` (e.g. the `*_so101_pickplace_160_bs64_anchor` checkpoints). The two backbones are not weight-compatible, so an embedding/head checkpoint trained against one variant cannot be reused against the other. `molmoact2_rlt` is also not checkpoint-compatible with any PI0.5 RLT wrapper; train a fresh Molmo embedding against the exact MolmoAct2 checkpoint and processor.
 
 ## 1. Define A Low-Variance Task
 
@@ -71,9 +72,17 @@ rlt_embedding_checkpoint: outputs/tinypi05v2_rlt_embedding/rlt_embedding_latest.
 rlt_head_checkpoint:
 ```
 
+```yaml
+# molmoact2_rlt
+policy_type: molmoact2_rlt
+rlt_enabled: true
+rlt_embedding_checkpoint: outputs/molmoact2_rlt_embedding/rlt_embedding_latest.pt
+rlt_head_checkpoint:
+```
+
 Leaving `rlt_head_checkpoint` empty lets the policy collect RLT context while passing through the frozen VLA until online training reaches `rlt_execute_after_train_steps`.
 
-### Training the RLT embedding (prerequisite for both variants)
+### Training the RLT embedding (prerequisite for all variants)
 
 Before any DRTC collection, train the RL-token autoencoder on top of your frozen VLA checkpoint. The autoencoder learns to compress the VLA prefix embeddings into a single token; the rest of the RLT pipeline conditions on that token.
 
@@ -104,7 +113,16 @@ uv run python -m lerobot.rl.train_tinypi05v2_rlt_embedding \
   --batch_size=8 --steps=5000
 ```
 
-Both `tinypi05` variants default the RL-token width to `vlm_width` (e.g. 768 for the `small_500m` preset, 640 for `gemma3_270m_emb`). Override `--rlt_token_dim=...` only if you need a wider/narrower bottleneck; the value is persisted into the checkpoint config. `tinypi05v2_rlt` shares the autoencoder/head implementation with `tinypi05_rlt`, but you must train the embedding (and head) against the matching v2 backbone — checkpoints are not cross-compatible.
+```bash
+# molmoact2_rlt
+uv run python -m lerobot.rl.train_molmoact2_rlt_embedding \
+  --policy_path=/home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model \
+  --dataset_repo_id=<your_repo_id> \
+  --output_dir=outputs/molmoact2_rlt_embedding \
+  --batch_size=4 --steps=5000
+```
+
+Both `tinypi05` variants default the RL-token width to `vlm_width` (e.g. 768 for the `small_500m` preset, 640 for `gemma3_270m_emb`). `molmoact2_rlt` defaults the width to the MolmoAct2 text hidden size and trains on the inference-time prompt/image/state prefix only, not on discrete action label tokens. Override `--rlt_token_dim=...` only if you need a wider/narrower bottleneck; the value is persisted into the checkpoint config. `tinypi05v2_rlt` shares the autoencoder/head implementation with `tinypi05_rlt`, but you must train the embedding (and head) against the matching v2 backbone — checkpoints are not cross-compatible.
 
 ## 3. Validate The RLT Token
 
@@ -154,6 +172,8 @@ rlt_online_buffer_path: outputs/rlt_online/rlt_online_replay.pt
 Important: this compact RLT buffer is for RLT-head training. It is not a full RECAP offline dataset because it does not store raw images, language tokens, and full transition metadata.
 
 ## 5. Train The RLT Head Offline
+
+MolmoAct2 note: `molmoact2_rlt` currently supports online DRTC head training only. Skip this section for Molmo and use the online settings in section 6 plus `examples/experiments/configs/baseline_molmoact2_rlt_so101_online.yaml`.
 
 - [ ] Confirm `outputs/rlt_online/rlt_online_replay.pt` exists and has enough transitions for your batch size.
 - [ ] Use the same frozen VLA checkpoint that produced the collected reference chunks.
@@ -232,7 +252,7 @@ uv run python -m lerobot.rl.train_tinypi05v2_rlt_head_offline \
   --wandb_project=lerobot-rlt
 ```
 
-The script instantiates the matching policy class (`PI05RLTPolicy` / `TinyPI05RLTPolicy` / `TinyPI05V2RLTPolicy`) from the frozen VLA checkpoint/config for paper-aligned head construction. The hot loop updates only `rlt_actor` and `rlt_critic`; the VLA backbone stays frozen. The replay buffer format is shared, so a buffer collected with `tinypi05_rlt` or `tinypi05v2_rlt` must be replayed against the *same* embedding checkpoint that produced its `rl_token` tensors (the script reads `rl_token.shape[-1]` to size the heads, but the encoder weights still need to match — and the v1 vs v2 backbones are not weight-compatible).
+The script instantiates the matching policy class (`PI05RLTPolicy` / `TinyPI05RLTPolicy` / `TinyPI05V2RLTPolicy`) from the frozen VLA checkpoint/config for paper-aligned head construction. The hot loop updates only `rlt_actor` and `rlt_critic`; the VLA backbone stays frozen. The replay buffer format is shared, so a buffer collected with `tinypi05_rlt` or `tinypi05v2_rlt` must be replayed against the *same* embedding checkpoint that produced its `rl_token` tensors (the script reads `rl_token.shape[-1]` to size the heads, but the encoder weights still need to match — and the v1 vs v2 backbones are not weight-compatible). For `molmoact2_rlt`, the same replay objects are produced by DRTC, but there is no standalone offline trainer yet.
 
 Watch these metrics:
 
@@ -279,6 +299,14 @@ rlt_num_critics: 4
 ```
 
 Once timing and stability are confirmed, sweep `rlt_utd_ratio` toward `5-10`.
+
+For MolmoAct2, start from the provided online config:
+
+```bash
+./scripts/run_drtc_experiment.sh --config baseline_molmoact2_rlt_so101_online
+```
+
+That config uses `policy_type: molmoact2_rlt`, `rlt_online_training_enabled: true`, a delayed actor execution gate, and the same Molmo checkpoint/camera layout as `baseline_molmoact2_so101_002000.yaml`.
 
 ## 7. Tune Regularization
 
@@ -349,7 +377,7 @@ If a tripwire fires:
 ## 10. Evaluate Before Adding Variance
 
 - [ ] Evaluate a saved RLT head on the exact fixed setup.
-- [ ] Point `rlt_head_checkpoint` at `outputs/rlt_offline_head/rlt_head_latest.pt`.
+- [ ] Point `rlt_head_checkpoint` at the saved head (`outputs/rlt_offline_head/rlt_head_latest.pt` for PI0.5 offline training, or `outputs/rlt_molmoact2_so101_online/rlt_head_latest.pt` for Molmo online training).
 - [ ] Keep `rlt_online_collection_enabled: false` and `rlt_online_training_enabled: false` for offline-head evaluation.
 - [ ] Run at least 20 episodes if hardware time allows.
 - [ ] Compare success rate against frozen VLA pass-through.
@@ -365,6 +393,7 @@ Only after fixed-task performance is reliable:
 Eval config:
 
 ```yaml
+# Use outputs/rlt_molmoact2_so101_online/rlt_head_latest.pt for Molmo online heads.
 rlt_head_checkpoint: outputs/rlt_offline_head/rlt_head_latest.pt
 rlt_online_collection_enabled: false
 rlt_online_training_enabled: false
@@ -375,11 +404,11 @@ rlt_online_training_enabled: false
 - [ ] Run frozen VLA pass-through and record baseline success rate.
 - [ ] Run collect-only RLT for 20-50 episodes on a fixed task.
 - [ ] Inspect token structure from the persisted replay.
-- [ ] Train the RLT head offline from `outputs/rlt_online/rlt_online_replay.pt`.
-- [ ] Watch console and W&B metrics, especially KL-to-reference and action deviation.
-- [ ] Evaluate `outputs/rlt_offline_head/rlt_head_latest.pt` without online updates.
-- [ ] Resume offline training from the latest head only after eval is stable.
-- [ ] Optionally move to online fine-tuning with actor execution delayed.
+- [ ] For PI0.5 variants, train the RLT head offline from `outputs/rlt_online/rlt_online_replay.pt`.
+- [ ] For MolmoAct2, use online DRTC training from `baseline_molmoact2_rlt_so101_online.yaml`.
+- [ ] Watch console metrics, especially action deviation, actor loss, critic loss, and Q magnitudes.
+- [ ] Evaluate a saved `rlt_head_latest.pt` without online updates once actor execution is stable.
+- [ ] Resume training from the latest head only after eval is stable.
 - [ ] Sweep one hyperparameter at a time.
 - [ ] Add variance only after fixed-task performance is repeatable.
 
@@ -388,11 +417,13 @@ rlt_online_training_enabled: false
 - `examples/experiments/configs/baseline_pi05_rlt.yaml`: example DRTC experiment config for the full PI0.5 wrapper.
 - `examples/experiments/configs/baseline_tinypi05_rlt.yaml` / `baseline_tinypi05_rlt_eval.yaml`: tinypi05 (v1) DRTC + offline-eval configs.
 - `examples/experiments/configs/baseline_tinypi05v2_rlt.yaml` / `baseline_tinypi05v2_rlt_eval.yaml`: tinypi05v2 DRTC + offline-eval configs (mirror the v1 layout; only `policy_type`, the base checkpoint, and the RLT output paths change).
-- `src/lerobot/async_inference/policy_server_drtc.py`: online RLT training, replay loading/saving, safety tripwires; routes `pi05_rlt`, `tinypi05_rlt`, and `tinypi05v2_rlt` through the same RLT call paths via `_is_rlt_policy()`.
+- `examples/experiments/configs/baseline_molmoact2_rlt_so101_online.yaml`: MolmoAct2 DRTC config for online RLT-head training.
+- `src/lerobot/async_inference/policy_server_drtc.py`: online RLT training, replay loading/saving, safety tripwires; routes `pi05_rlt`, `tinypi05_rlt`, `tinypi05v2_rlt`, and `molmoact2_rlt` through the same RLT call paths via `_is_rlt_policy()`.
 - `src/lerobot/async_inference/robot_client_drtc.py`: episode collection and transition upload.
 - `src/lerobot/rl/rlt_buffer.py`: compact persisted RLT replay format (variant-agnostic).
 - `src/lerobot/rl/rlt_pi05.py`: full PI0.5 RLT wrapper plus the reusable `RLTokenAutoencoder`, `RLTActorHead`, `RLTCriticEnsemble`, losses, and checkpoint helpers.
 - `src/lerobot/rl/rlt_tinypi05.py`: tinypi05 RLT wrapper (registered as `tinypi05_rlt`); imports the heads/losses/helpers from `rlt_pi05` and reuses them verbatim.
 - `src/lerobot/rl/rlt_tinypi05v2.py`: tinypi05v2 RLT wrapper (registered as `tinypi05v2_rlt`); same head/loss/helper imports as the v1 wrapper, only the frozen VLA class changes.
-- `src/lerobot/rl/train_pi05_rlt_embedding.py` / `src/lerobot/rl/train_tinypi05_rlt_embedding.py` / `src/lerobot/rl/train_tinypi05v2_rlt_embedding.py`: standalone RL-token autoencoder trainers (one per variant).
+- `src/lerobot/rl/rlt_molmoact2.py`: MolmoAct2 RLT wrapper (registered as `molmoact2_rlt`); uses Molmo prompt/image prefix embeddings and the shared RLT heads/losses.
+- `src/lerobot/rl/train_pi05_rlt_embedding.py` / `src/lerobot/rl/train_tinypi05_rlt_embedding.py` / `src/lerobot/rl/train_tinypi05v2_rlt_embedding.py` / `src/lerobot/rl/train_molmoact2_rlt_embedding.py`: standalone RL-token autoencoder trainers (one per variant).
 - `src/lerobot/rl/train_pi05_rlt_head_offline.py` / `src/lerobot/rl/train_tinypi05_rlt_head_offline.py` / `src/lerobot/rl/train_tinypi05v2_rlt_head_offline.py`: standalone offline RLT-head trainers with console and W&B metrics.
