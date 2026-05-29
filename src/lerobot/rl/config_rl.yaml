@@ -97,7 +97,7 @@ policy:
   optimizer_weight_decay: 0.1
 
   # ---- Reward shaping -------------------------------------------------------
-  reward_normalization_constant: 1.0
+  reward_normalization_constant: 10.0
   terminal_failure_reward: -10.0
   advantage_scaling: 0.2
   advantage_top_k_fraction: 0.3            # top fraction of non-override samples labeled positive (per-batch quantile cut)

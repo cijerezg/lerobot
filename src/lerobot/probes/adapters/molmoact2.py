@@ -73,7 +73,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         self,
         obs: dict[str, Tensor],
         task_str: str,
-        advantage: float = 1.0,
+        advantage: float | None = 1.0,
         gt_actions: Tensor | None = None,
     ) -> dict:
         """Build the preprocessor input for molmoact2 probe forwards.
@@ -81,18 +81,20 @@ class MolmoAct2Adapter(ProbablePolicy):
         Passes ``advantage`` via ``TransitionKey.COMPLEMENTARY_DATA`` so the
         :class:`MolmoAct2PackInputsProcessorStep` picks it up and binds the
         "negative"/"positive" advantage clause into the prompt — same path the
-        trainer uses.
+        actor update uses. Pass ``advantage=None`` to omit the clause entirely
+        (the critic is trained without it; see ``_critic_batch``).
         """
         device = self._device
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
         flat = {
             **obs_on_device,
             "task": task_str,
-            TransitionKey.COMPLEMENTARY_DATA: {
+        }
+        if advantage is not None:
+            flat[TransitionKey.COMPLEMENTARY_DATA] = {
                 "advantage": torch.tensor([[advantage]], device=device, dtype=torch.float32),
                 "advantage_threshold": 0.0,
-            },
-        }
+            }
         if gt_actions is not None:
             flat[ACTION] = gt_actions
         batch = self._preprocessor(flat)
@@ -559,7 +561,11 @@ class MolmoAct2Adapter(ProbablePolicy):
     # ── Critic / value head ──────────────────────────────────────────────────
 
     def _critic_batch(self, obs: dict[str, Tensor], task_str: str) -> dict:
-        return self._make_batch(obs, task_str, advantage=1.0)
+        # No advantage clause: the critic is trained on prompts without one
+        # (update_critic / compute_advantage never thread advantage into the
+        # critic forward). Injecting "positive"/"negative" here would feed the
+        # critic an out-of-distribution prompt it never saw during training.
+        return self._make_batch(obs, task_str, advantage=None)
 
     @torch.no_grad()
     def predict_value(self, obs: dict[str, Tensor], task_str: str) -> float:

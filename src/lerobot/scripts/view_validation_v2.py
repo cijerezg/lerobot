@@ -253,24 +253,130 @@ def not_loaded_html(kind: str) -> str:
     return f'<p style="color:#888; margin:8px 0;">{html_lib.escape(kind)} view not loaded.</p>'
 
 
-def render_image_grid(paths_and_labels: list[tuple[Path, str]]) -> str:
-    """Render a responsive grid of images with step labels."""
-    n = len(paths_and_labels)
-    if n == 0:
+# Panels stack into a single vertical column when each one is wider than this
+# ratio (W/H); otherwise they sit side by side in a row. So media wider than 2:1
+# gets full width instead of thin strips. Measured client-side — no external tools.
+ASPECT_VERTICAL_THRESHOLD = 2.0
+
+
+def _media_tag(path: Path, kind: str) -> str:
+    uri = file_url(path)
+    if not uri:
+        return '<p style="color:#888;">Not found</p>'
+    if kind == "video":
+        # No src until visible — the observer in _grid_script sets it on scroll-in,
+        # so hidden tabs and off-screen panels never download. Prevents load hangs.
+        return (
+            f'<video class="vv-media" data-src="{uri}" muted loop playsinline '
+            f'preload="none" style="width:100%; height:auto; border-radius:4px;"></video>'
+        )
+    return (
+        f'<img class="vv-media" src="{uri}" loading="lazy" '
+        f'style="width:100%; height:auto; border-radius:4px;" />'
+    )
+
+
+def _grid_script(uid: str, n: int) -> str:
+    """Client-side: orient the grid by aspect ratio, and lazy-load videos on visibility.
+
+    Videos carry only a data-src; the IntersectionObserver assigns src and plays them
+    when they scroll into view and pauses when they leave, so off-screen and hidden-tab
+    panels never download — that is what keeps the page from hanging on many videos.
+    """
+    template = """
+    <script>
+      (function() {
+        var grid = document.getElementById("__UID__");
+        if (!grid) return;
+        var n = __N__, limit = __LIMIT__, laidOut = false;
+        function apply(r) {
+          var vertical = r > limit;
+          grid.style.gridTemplateColumns = vertical ? "1fr" : "repeat(" + n + ", 1fr)";
+          grid.style.maxWidth = vertical ? "1100px" : "none";
+          grid.style.margin = vertical ? "0 auto" : "0";
+        }
+        // Grid starts as a single column (inline style); we only switch to a row
+        // once measured AND the panels are narrow, so wide videos are never all
+        // on-screen at once.
+        function measure(el) {
+          if (laidOut) return;
+          var w = el.naturalWidth || el.videoWidth, h = el.naturalHeight || el.videoHeight;
+          if (w && h) { laidOut = true; apply(w / h); }
+        }
+        var medias = grid.querySelectorAll(".vv-media");
+        medias.forEach(function(el) {
+          if (el.tagName === "IMG") {
+            el.complete ? measure(el) : el.addEventListener("load", function() { measure(el); });
+          }
+        });
+        var vids = [].filter.call(medias, function(el) { return el.tagName === "VIDEO"; });
+        if (!vids.length) return;
+
+        // Load at most one video at a time, and only those scrolled into view, so the
+        // browser never downloads/decodes several large streams at once (the freeze).
+        var visible = [], loading = false;
+        function pump() {
+          if (loading) return;
+          for (var i = 0; i < vids.length; i++) {
+            var v = vids[i];
+            if (visible.indexOf(v) !== -1 && !v.src && v.dataset.src) {
+              loading = true;
+              v.addEventListener("loadedmetadata", (function(el) { return function() { measure(el); }; })(v), { once: true });
+              var done = function() { loading = false; pump(); };
+              v.addEventListener("canplay", done, { once: true });
+              v.addEventListener("error", done, { once: true });
+              v.src = v.dataset.src;
+              v.play().catch(function() {});
+              return;
+            }
+          }
+        }
+        function show(v) { if (visible.indexOf(v) === -1) visible.push(v); if (v.src) v.play().catch(function() {}); }
+        function hide(v) { var i = visible.indexOf(v); if (i !== -1) visible.splice(i, 1); v.pause(); }
+        if ("IntersectionObserver" in window) {
+          var io = new IntersectionObserver(function(entries) {
+            entries.forEach(function(e) { e.isIntersecting ? show(e.target) : hide(e.target); });
+            pump();
+          }, { rootMargin: "100px" });
+          vids.forEach(function(v) { io.observe(v); });
+        } else {
+          vids.forEach(show); pump();
+        }
+      })();
+    </script>
+    """
+    return (
+        template.replace("__UID__", uid)
+        .replace("__N__", str(n))
+        .replace("__LIMIT__", str(ASPECT_VERTICAL_THRESHOLD))
+    )
+
+
+def render_media_grid(paths_and_labels: list[tuple[Path, str]], kind: str = "image") -> str:
+    """Render images or autoplaying synced videos, auto-oriented by measured aspect ratio."""
+    if not paths_and_labels:
         return "<p>Select at least one step.</p>"
 
-    html = '<div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:8px; width:100%;">'
+    n = len(paths_and_labels)
+    uid = "v" + str(abs(hash(str(paths_and_labels[0][0]))))[-8:]
+
+    html = _video_sync_controls(uid) if kind == "video" else ""
+    html += f'<div id="{uid}" style="display:grid; grid-template-columns: 1fr; gap:10px; width:100%;">'
     for path, label in paths_and_labels:
-        uri = file_url(path)
-        html += f'''<div style="text-align:center;">
-            <div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{html_lib.escape(label)}</div>'''
-        if uri:
-            html += f'<img src="{uri}" loading="lazy" style="width:100%; height:auto; border-radius:4px;" />'
-        else:
-            html += '<p style="color:#888;">Not found</p>'
-        html += '</div>'
+        html += (
+            '<div style="text-align:center;">'
+            f'<div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{html_lib.escape(label)}</div>'
+            f'{_media_tag(path, kind)}</div>'
+        )
     html += '</div>'
+    if kind == "video":
+        html += _video_seek_script(uid)
+    html += _grid_script(uid, n)
     return html
+
+
+def render_image_grid(paths_and_labels: list[tuple[Path, str]]) -> str:
+    return render_media_grid(paths_and_labels, "image")
 
 
 def _video_sync_controls(uid: str) -> str:
@@ -283,7 +389,7 @@ def _video_sync_controls(uid: str) -> str:
         vids.forEach(v => playing ? v.pause() : v.play());
         this.textContent = playing ? '▶ Play' : '⏸ Pause';
       " style="padding:6px 16px; cursor:pointer; border-radius:4px; border:1px solid #555;
-              background:#3a3a4a; color:white;">▶ Play</button>
+              background:#3a3a4a; color:white;">⏸ Pause</button>
       <button onclick="
         const vids = document.querySelectorAll('#{uid} video');
         vids.forEach(v => {{ v.pause(); v.currentTime = 0; }});
@@ -309,53 +415,26 @@ def _video_sync_controls(uid: str) -> str:
 
 
 def _video_seek_script(uid: str) -> str:
+    # Event-driven, NOT a requestAnimationFrame loop: 'timeupdate' fires only while
+    # the video plays and stops on its own, and the listener dies with the element.
+    # The old rAF version never terminated and piled up on every re-render, saturating
+    # the main thread and freezing the whole page (every tab, images included).
     return f"""
     <script>
       (function() {{
-        const update = () => {{
-          const vids = document.querySelectorAll('#{uid} video');
-          const seek = document.querySelector('#{uid}-seek');
-          if (vids[0] && seek && vids[0].duration) {{
-            seek.value = (vids[0].currentTime / vids[0].duration) * 1000;
-          }}
-          requestAnimationFrame(update);
-        }};
-        requestAnimationFrame(update);
+        const seek = document.getElementById("{uid}-seek");
+        const first = document.querySelector('#{uid} video');
+        if (!seek || !first) return;
+        first.addEventListener("timeupdate", function() {{
+          if (first.duration) seek.value = (first.currentTime / first.duration) * 1000;
+        }});
       }})();
     </script>
     """
 
 
-def _render_video_item(path: Path, label: str) -> str:
-    uri = file_url(path)
-    html = f'<div style="text-align:center;">'
-    html += f'<div style="font-weight:bold; margin-bottom:4px; font-size:0.95em;">{html_lib.escape(label)}</div>'
-    if uri:
-        html += f'<video src="{uri}" preload="none" style="width:100%; height:auto; border-radius:4px;"></video>'
-    else:
-        html += '<p style="color:#888;">Not found</p>'
-    html += '</div>'
-    return html
-
-
-def render_video_grid(paths_and_labels: list[tuple[Path, str]], vertical: bool = False) -> str:
-    """Render synced videos with shared controls. vertical=True stacks them."""
-    if not paths_and_labels:
-        return "<p>Select at least one step.</p>"
-
-    uid = "v" + str(abs(hash(str(paths_and_labels[0][0]))))[-8:]
-    html = _video_sync_controls(uid)
-
-    if vertical:
-        html += f'<div id="{uid}" style="display:flex; flex-direction:column; gap:12px; width:100%; max-width:900px; margin:0 auto;">'
-    else:
-        html += f'<div id="{uid}" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap:8px; width:100%;">'
-
-    for path, label in paths_and_labels:
-        html += _render_video_item(path, label)
-    html += '</div>'
-    html += _video_seek_script(uid)
-    return html
+def render_video_grid(paths_and_labels: list[tuple[Path, str]]) -> str:
+    return render_media_grid(paths_and_labels, "video")
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +531,12 @@ def build_app(run_dir: str):
             label="Steps to compare",
         )
 
+        def wire(fn, inputs, outputs):
+            """Render on any input change and on first load — no buttons to click."""
+            for comp in inputs:
+                comp.change(fn, inputs, outputs)
+            app.load(fn, inputs, outputs)
+
         # ---- Episode thumbnails (shown above tabs if available) ----
         # Thumbnails are step-independent, so just find the first one that exists
         thumb_path = None
@@ -496,9 +581,7 @@ def build_app(run_dir: str):
                     items = [(_first_existing_rel(val_dir / s, rel), step_label(s)) for s in selected_steps]
                 return render_image_grid(items)
 
-            action_dd.change(render_actions, [step_selector, action_dd], action_html)
-            step_selector.change(render_actions, [step_selector, action_dd], action_html)
-            app.load(render_actions, [step_selector, action_dd], action_html)
+            wire(render_actions, [step_selector, action_dd], action_html)
 
         # ---- Attention tab ----
         if att_episodes and att_layers and att_files:
@@ -513,7 +596,6 @@ def build_app(run_dir: str):
                     att_file_dd = gr.Dropdown(
                         choices=att_files, value=att_files[0], label="View"
                     )
-                att_load_btn = gr.Button("Load View", variant="primary")
                 att_html = gr.HTML(not_loaded_html("Attention"))
 
                 def render_attention(selected_steps, ep, layer, fname):
@@ -523,10 +605,9 @@ def build_app(run_dir: str):
                         (_attention_path(val_dir / s / "attention" / f"{ep}_{layer}", layer, fname), step_label(s))
                         for s in selected_steps
                     ]
-                    vertical = "mean" in fname or "summary" in fname
-                    return render_video_grid(items, vertical=vertical)
+                    return render_video_grid(items)
 
-                att_load_btn.click(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
+                wire(render_attention, [step_selector, att_ep_dd, att_layer_dd, att_file_dd], att_html)
 
         # ---- Representations tab ----
         if repr_spaces:
@@ -534,7 +615,6 @@ def build_app(run_dir: str):
                 with gr.Row():
                     repr_space_dd = gr.Dropdown(choices=repr_spaces, value=repr_spaces[0], label="Space")
                     repr_color_dd = gr.Dropdown(choices=REPR_COLORINGS, value=REPR_COLORINGS[0], label="Coloring")
-                repr_load_btn = gr.Button("Load View", variant="primary")
                 repr_html = gr.HTML(not_loaded_html("Representations"))
 
                 def render_repr(selected_steps, space, coloring):
@@ -544,13 +624,12 @@ def build_app(run_dir: str):
                              for s in selected_steps]
                     return render_image_grid(items)
 
-                repr_load_btn.click(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
+                wire(render_repr, [step_selector, repr_space_dd, repr_color_dd], repr_html)
 
                 # PCA scree
                 if scree_spaces:
                     gr.Markdown("### PCA scree")
                     scree_dd = gr.Dropdown(choices=scree_spaces, value=scree_spaces[0], label="Space")
-                    scree_load_btn = gr.Button("Load Scree")
                     scree_html = gr.HTML(not_loaded_html("PCA scree"))
 
                     def render_scree(selected_steps, space):
@@ -561,7 +640,7 @@ def build_app(run_dir: str):
                                  for s in selected_steps]
                         return render_image_grid(items)
 
-                    scree_load_btn.click(render_scree, [step_selector, scree_dd], scree_html)
+                    wire(render_scree, [step_selector, scree_dd], scree_html)
 
         # ---- Offline Inference tab ----
         if offline_inference_frames:
@@ -577,7 +656,6 @@ def build_app(run_dir: str):
                         value=offline_inference_frames[0] if offline_inference_frames else None,
                         label="Frame",
                     )
-                oe_load_btn = gr.Button("Load View", variant="primary")
                 oe_html = gr.HTML(not_loaded_html("Offline Inference"))
 
                 def render_offline_inference(selected_steps, space, frame):
@@ -594,7 +672,7 @@ def build_app(run_dir: str):
                     ]
                     return render_image_grid(items)
 
-                oe_load_btn.click(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
+                wire(render_offline_inference, [step_selector, oe_space_dd, oe_frame_dd], oe_html)
 
         # ---- Action Drift Jacobian tab ----
         if adj_groups and adj_layers and adj_files:
@@ -609,7 +687,6 @@ def build_app(run_dir: str):
                     adj_file_dd = gr.Dropdown(
                         choices=adj_files, value=adj_files[0], label="View"
                     )
-                adj_load_btn = gr.Button("Load View", variant="primary")
                 adj_html = gr.HTML(not_loaded_html("Action Drift Jacobian"))
 
                 def render_adj(selected_steps, group, layer, fname):
@@ -622,10 +699,9 @@ def build_app(run_dir: str):
                         (val_dir / s / "action_drift_jacobian" / group / layer / real_fname, step_label(s))
                         for s in selected_steps
                     ]
-                    vertical = "summary" in fname or "mean" in fname
-                    return render_video_grid(items, vertical=vertical)
+                    return render_video_grid(items)
 
-                adj_load_btn.click(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
+                wire(render_adj, [step_selector, adj_group_dd, adj_layer_dd, adj_file_dd], adj_html)
 
         # ---- Spatial Memorization Attention tab ----
         if sm_layers and sm_files:
@@ -637,7 +713,6 @@ def build_app(run_dir: str):
                     sm_file_dd = gr.Dropdown(
                         choices=sm_files, value=sm_files[0], label="View"
                     )
-                sm_load_btn = gr.Button("Load View", variant="primary")
                 sm_html = gr.HTML(not_loaded_html("Spatial Memorization Attention"))
 
                 def render_sm(selected_steps, layer, fname):
@@ -649,7 +724,7 @@ def build_app(run_dir: str):
                     ]
                     return render_image_grid(items)
 
-                sm_load_btn.click(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
+                wire(render_sm, [step_selector, sm_layer_dd, sm_file_dd], sm_html)
 
         # ---- Spatial Memorization Action-Jacobian tab ----
         if smj_layers and smj_files:
@@ -661,7 +736,6 @@ def build_app(run_dir: str):
                     smj_file_dd = gr.Dropdown(
                         choices=smj_files, value=smj_files[0], label="View"
                     )
-                smj_load_btn = gr.Button("Load View", variant="primary")
                 smj_html = gr.HTML(not_loaded_html("Spatial Memorization Action-Jacobian"))
 
                 def render_smj(selected_steps, layer, fname):
@@ -673,7 +747,7 @@ def build_app(run_dir: str):
                     ]
                     return render_image_grid(items)
 
-                smj_load_btn.click(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
+                wire(render_smj, [step_selector, smj_layer_dd, smj_file_dd], smj_html)
 
         # ---- Critic Values tab ----
         if cv_files or cv_trace_eps:
@@ -683,7 +757,6 @@ def build_app(run_dir: str):
                     cv_file_dd = gr.Dropdown(
                         choices=cv_files, value=cv_files[0], label="View"
                     )
-                    cv_load_btn = gr.Button("Load View", variant="primary")
                     cv_html = gr.HTML(not_loaded_html("Critic Values"))
 
                     def render_cv(selected_steps, fname):
@@ -695,14 +768,13 @@ def build_app(run_dir: str):
                         ]
                         return render_image_grid(items)
 
-                    cv_load_btn.click(render_cv, [step_selector, cv_file_dd], cv_html)
+                    wire(render_cv, [step_selector, cv_file_dd], cv_html)
 
                 if cv_trace_eps:
                     gr.Markdown("### Episode traces")
                     cv_ep_dd = gr.Dropdown(
                         choices=cv_trace_eps, value=cv_trace_eps[0], label="Episode"
                     )
-                    cv_trace_btn = gr.Button("Load Traces", variant="primary")
                     cv_curve_html = gr.HTML(not_loaded_html("V(s) curve"))
                     cv_video_html = gr.HTML(not_loaded_html("Overlay video"))
 
@@ -721,9 +793,7 @@ def build_app(run_dir: str):
                         )
                         return curve, video
 
-                    cv_trace_btn.click(
-                        render_cv_traces, [step_selector, cv_ep_dd], [cv_curve_html, cv_video_html]
-                    )
+                    wire(render_cv_traces, [step_selector, cv_ep_dd], [cv_curve_html, cv_video_html])
 
     return app
 
