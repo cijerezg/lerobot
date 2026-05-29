@@ -21,7 +21,7 @@ ROBOT_KEY_COMMANDS = {
     "2": "start_rollout",
     "3": "start_critical_phase",
     "4": "end_critical_phase",
-    "5": "toggle_intervention",
+    "5": "toggle_critical_intervention",
     "1": "success",
     "0": "failure",
     "9": "discard_episode",
@@ -55,6 +55,18 @@ class ExecutedAction:
     step: int
     action: list[float]
     timestamp: float
+
+
+@dataclass
+class RolloutRow:
+    rollout: int
+    rollout_start_ts: float
+    critical_phase_id: int | None = None
+    server_episode_id: int | None = None
+    critical_start_s: float | None = None
+    critical_end_s: float | None = None
+    label: str = "open"
+    discard: bool = False
 
 
 @dataclass
@@ -110,6 +122,8 @@ class TuiState:
     executed_actions: deque[ExecutedAction] = field(
         default_factory=lambda: deque(maxlen=TRAJECTORY_EXECUTED_ACTIONS)
     )
+    rollouts: dict[int, RolloutRow] = field(default_factory=dict)
+    rollout_order: deque[int] = field(default_factory=lambda: deque(maxlen=200))
     trajectory_status: str = "disabled"
     trajectory_error: str = ""
 
@@ -117,6 +131,7 @@ class TuiState:
         source = str(event.get("source", "unknown"))
         target = self.server if source == "policy_server" else self.client
         target.update(event)
+        self._apply_rollout_status_event(source, event)
 
         actor_loss = _to_float(event.get("rlt_actor_loss"))
         critic_loss = _to_float(event.get("rlt_critic_loss"))
@@ -129,6 +144,66 @@ class TuiState:
         detail = _status_event_detail(event)
         stamp = _format_time(float(event.get("ts", time.time())))
         self.status_events.append(f"{stamp} {source}: {event_name}{detail}")
+
+    def _get_or_create_rollout_row(self, rollout_id: int, timestamp: float) -> RolloutRow:
+        row = self.rollouts.get(rollout_id)
+        if row is None:
+            row = RolloutRow(rollout=rollout_id, rollout_start_ts=timestamp)
+            self.rollouts[rollout_id] = row
+            self.rollout_order.append(rollout_id)
+        return row
+
+    def _apply_rollout_status_event(self, source: str, event: dict[str, Any]) -> None:
+        event_name = str(event.get("event", "status"))
+        timestamp = _to_float(event.get("ts")) or time.time()
+
+        if source == "policy_server":
+            server_episode_id = _to_int(event.get("episode_id"))
+            client_episode_id = _to_int(event.get("client_episode_id"))
+            if server_episode_id is not None and client_episode_id is not None:
+                for row in self.rollouts.values():
+                    if row.critical_phase_id == client_episode_id:
+                        row.server_episode_id = server_episode_id
+            return
+
+        rollout_id = _to_int(event.get("rollout_id"))
+        if rollout_id is None:
+            return
+
+        if event_name == "rlt_rollout_started":
+            rollout_start_ts = _to_float(event.get("rollout_start_ts")) or timestamp
+            self._get_or_create_rollout_row(rollout_id, rollout_start_ts).rollout_start_ts = rollout_start_ts
+            return
+
+        row = self._get_or_create_rollout_row(rollout_id, timestamp)
+        critical_phase_id = _to_int(event.get("critical_phase_id") or event.get("episode_id"))
+        if critical_phase_id is not None:
+            row.critical_phase_id = critical_phase_id
+
+        if event_name in {"rlt_critical_phase_started", "rlt_critical_intervention_started"}:
+            critical_start_s = _to_float(event.get("critical_start_s"))
+            if critical_start_s is None:
+                critical_start_ts = _to_float(event.get("critical_start_ts")) or timestamp
+                critical_start_s = max(0.0, critical_start_ts - row.rollout_start_ts)
+            row.critical_start_s = critical_start_s
+            row.critical_end_s = None
+            row.label = "open"
+            row.discard = False
+            return
+
+        if event_name in {"rlt_critical_phase_ended", "rlt_critical_phase_labeled", "rlt_critical_phase_discarded"}:
+            critical_end_s = _to_float(event.get("critical_end_s"))
+            if critical_end_s is None:
+                critical_end_ts = _to_float(event.get("critical_end_ts")) or timestamp
+                critical_end_s = max(0.0, critical_end_ts - row.rollout_start_ts)
+            row.critical_end_s = critical_end_s
+
+        if event_name == "rlt_critical_phase_labeled":
+            row.label = str(event.get("label") or "open")
+            row.discard = False
+        elif event_name == "rlt_critical_phase_discarded":
+            row.label = "discarded"
+            row.discard = True
 
     def apply_trajectory_event(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type", ""))
@@ -151,6 +226,10 @@ class TuiState:
 
 def _format_time(ts: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(ts))
+
+
+def _format_datetime(ts: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
 
 
 def _plain_text(value: Any) -> str:
@@ -192,6 +271,9 @@ def _status_event_detail(event: dict[str, Any]) -> str:
         "label",
         "rollout_id",
         "critical_phase_id",
+        "critical_start_s",
+        "critical_end_s",
+        "seeded_prebuffer_chunks",
         "rlt_replay_size",
         "rlt_training_head",
         "rlt_train_step",
@@ -277,6 +359,136 @@ def _parse_executed_action(event: dict[str, Any]) -> ExecutedAction | None:
     if timestamp is None:
         timestamp = time.time()
     return ExecutedAction(step=step, action=action, timestamp=timestamp)
+
+
+def _format_seconds(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.2f}"
+
+
+def _display_rollout_label(label: str) -> str:
+    if label == "failure":
+        return "fail"
+    return label
+
+
+def _review_label(label: str | None) -> str:
+    if label in {"success", "failure", "open"}:
+        return label
+    if label == "fail":
+        return "failure"
+    return "open"
+
+
+def _ordered_rollout_rows(state: TuiState) -> list[RolloutRow]:
+    rows: list[RolloutRow] = []
+    for rollout_id in state.rollout_order:
+        row = state.rollouts.get(rollout_id)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _latest_reviewable_rollout(state: TuiState) -> RolloutRow | None:
+    for row in reversed(_ordered_rollout_rows(state)):
+        if row.critical_phase_id is not None:
+            return row
+    return None
+
+
+def _review_sidecar_path_from_state(state: TuiState) -> Path | None:
+    replay_path = state.server.get("replay_path") or state.server.get("rlt_replay_path")
+    if not replay_path:
+        return None
+    return Path(str(replay_path)).with_suffix(".review.json")
+
+
+def _write_rollout_review_edit(
+    state: TuiState,
+    *,
+    label: str | None = None,
+    discard: bool | None = None,
+) -> None:
+    row = _latest_reviewable_rollout(state)
+    if row is None:
+        state.status_events.append(f"{_format_time(time.time())} tui: no rollout row to edit")
+        return
+
+    sidecar_path = _review_sidecar_path_from_state(state)
+    if sidecar_path is None:
+        state.status_events.append(f"{_format_time(time.time())} tui: no replay path for review sidecar")
+        return
+
+    episode_id = row.server_episode_id or row.critical_phase_id
+    if episode_id is None:
+        state.status_events.append(f"{_format_time(time.time())} tui: selected rollout has no episode id")
+        return
+
+    sidecar: dict[str, Any] = {"version": 1, "episodes": {}}
+    if sidecar_path.exists():
+        try:
+            existing = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                sidecar = existing
+        except (OSError, json.JSONDecodeError):
+            sidecar = {"version": 1, "episodes": {}}
+
+    sidecar["version"] = 1
+    episodes = sidecar.get("episodes")
+    if not isinstance(episodes, dict):
+        episodes = {}
+        sidecar["episodes"] = episodes
+
+    entry = episodes.get(str(episode_id))
+    if not isinstance(entry, dict):
+        entry = {}
+    current_label = _review_label(str(row.label))
+    next_label = _review_label(label or entry.get("label") or current_label)
+    next_discard = bool(discard if discard is not None else entry.get("deleted", row.discard))
+    episodes[str(episode_id)] = {"label": next_label, "deleted": next_discard}
+
+    try:
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as e:
+        state.status_events.append(f"{_format_time(time.time())} tui: failed to write review sidecar: {e}")
+        return
+
+    row.label = next_label
+    row.discard = next_discard
+    state.status_events.append(
+        f"{_format_time(time.time())} tui: saved review episode={episode_id} "
+        f"label={_display_rollout_label(next_label)} discard={next_discard}"
+    )
+
+
+def _format_rollouts_panel(state: TuiState) -> str:
+    rows = _ordered_rollout_rows(state)
+    lines = [
+        "[b]Rollouts[/b]",
+        "s: mark latest success   f: mark latest fail   d: toggle latest discard",
+        "",
+        (
+            f"{'rollout':>7}  {'rollout_start':19}  {'critical_start':>14}  "
+            f"{'critical_end':>12}  {'label':>7}  {'discard':>7}"
+        ),
+        "-" * 80,
+    ]
+    if not rows:
+        lines.append("No rollout rows yet")
+        return "\n".join(lines)
+
+    for row in rows[-80:]:
+        lines.append(
+            f"{row.rollout:>7}  "
+            f"{_format_datetime(row.rollout_start_ts):19}  "
+            f"{_format_seconds(row.critical_start_s):>14}  "
+            f"{_format_seconds(row.critical_end_s):>12}  "
+            f"{_display_rollout_label(row.label):>7}  "
+            f"{str(bool(row.discard)).lower():>7}"
+        )
+    return "\n".join(lines)
 
 
 def _yes_no(value: Any) -> str:
@@ -772,6 +984,11 @@ def _run_textual(
             padding: 1 1;
         }
 
+        #rollouts_panel {
+            height: 1fr;
+            padding: 1 1;
+        }
+
         #logs {
             height: 1fr;
             padding: 0 1;
@@ -782,15 +999,19 @@ def _run_textual(
             ("left", "show_main", "Main"),
             ("right", "show_logs", "Logs"),
             ("t", "show_trajectory", "Trajectory"),
+            ("r", "show_rollouts", "Rollouts"),
             ("q", "quit_app", "Quit"),
             ("2", "robot_start_rollout", "Start rollout"),
             ("3", "robot_start_critical", "Start critical"),
             ("4", "robot_end_critical", "End critical"),
-            ("5", "robot_intervention", "Toggle intervention"),
+            ("5", "robot_intervention", "Critical intervention"),
             ("1", "robot_success", "Critical success"),
             ("0", "robot_failure", "Critical failure"),
             ("9", "robot_discard", "Discard critical"),
             ("8", "robot_end_rollout", "End rollout"),
+            ("s", "rollout_mark_success", "Review success"),
+            ("f", "rollout_mark_failure", "Review fail"),
+            ("d", "rollout_toggle_discard", "Review discard"),
         ]
 
         def __init__(self) -> None:
@@ -831,6 +1052,8 @@ def _run_textual(
                         yield Static(id="recent_panel")
                 with TabPane("Trajectory", id="trajectory"):
                     yield Static(id="trajectory_panel")
+                with TabPane("Rollouts", id="rollouts"):
+                    yield Static(id="rollouts_panel")
                 with TabPane("Logs", id="logs_tab"):
                     yield RichLog(id="logs", wrap=True, markup=False, highlight=False)
             yield Footer()
@@ -888,7 +1111,8 @@ def _run_textual(
                 f"Pending label: {_yes_no(client.get('critical_pending_label'))}\n"
                 f"Recorded: {critical_recorded}  Discarded: {critical_discarded}\n"
                 f"Last label: {last_label}\n"
-                f"Current transitions: {client.get('current_critical_transitions', client.get('current_episode_transitions', 'n/a'))}"
+                "Current transitions: "
+                f"{client.get('current_critical_transitions', client.get('current_episode_transitions', 'n/a'))}"
             )
             self.query_one("#training_card", Static).update(
                 "[b]RLT Training[/b]\n"
@@ -901,13 +1125,11 @@ def _run_textual(
             self.query_one("#controls_card", Static).update(
                 "[b]Controls[/b]\n"
                 "2: start VLA rollout\n"
-                "3: start RLT critical\n"
-                "4: end RLT critical\n"
-                "5: toggle intervention\n"
-                "1: critical success/keep\n"
+                "5: start/end critical + intervention\n"
                 "0: critical failure/keep\n"
                 "9: discard critical\n"
-                "8: end VLA rollout\n\n"
+                "8: end VLA rollout\n"
+                "r: rollouts table\n\n"
                 "Left/Right: tabs   q: quit"
             )
             self.query_one("#loss_panel", Static).update(
@@ -916,6 +1138,7 @@ def _run_textual(
             recent = "\n".join(self.state.status_events) or "No status events yet"
             self.query_one("#recent_panel", Static).update("[b]Recent Status[/b]\n" + recent)
             self.query_one("#trajectory_panel", Static).update(_format_trajectory_panel(self.state))
+            self.query_one("#rollouts_panel", Static).update(_format_rollouts_panel(self.state))
 
         def action_show_main(self) -> None:
             self.query_one("#tabs", TabbedContent).active = "main"
@@ -925,6 +1148,9 @@ def _run_textual(
 
         def action_show_trajectory(self) -> None:
             self.query_one("#tabs", TabbedContent).active = "trajectory"
+
+        def action_show_rollouts(self) -> None:
+            self.query_one("#tabs", TabbedContent).active = "rollouts"
 
         def action_quit_app(self) -> None:
             self.exit(130)
@@ -947,7 +1173,7 @@ def _run_textual(
             self._send_robot_command("end_critical_phase")
 
         def action_robot_intervention(self) -> None:
-            self._send_robot_command("toggle_intervention")
+            self._send_robot_command("toggle_critical_intervention")
 
         def action_robot_success(self) -> None:
             self._send_robot_command("success")
@@ -960,6 +1186,19 @@ def _run_textual(
 
         def action_robot_end_rollout(self) -> None:
             self._send_robot_command("end_rollout")
+
+        def action_rollout_mark_success(self) -> None:
+            _write_rollout_review_edit(self.state, label="success")
+            self.refresh_dashboard()
+
+        def action_rollout_mark_failure(self) -> None:
+            _write_rollout_review_edit(self.state, label="failure")
+            self.refresh_dashboard()
+
+        def action_rollout_toggle_discard(self) -> None:
+            row = _latest_reviewable_rollout(self.state)
+            _write_rollout_review_edit(self.state, discard=not bool(row.discard) if row is not None else None)
+            self.refresh_dashboard()
 
     return int(DrtcTuiApp().run())
 

@@ -489,7 +489,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         if not replay_path.exists():
             self._emit_rlt_status("rlt_replay_load_skipped", replay_source=source, replay_path=str(replay_path))
             return 0
-        loaded = RLTReplayBuffer.load(replay_path, capacity=self._rlt_replay_capacity)
+        loaded = RLTReplayBuffer.load(
+            replay_path,
+            capacity=self._rlt_replay_capacity,
+            apply_review_sidecar=True,
+        )
         with self._rlt_replay_lock:
             self._rlt_replay.extend(loaded.samples())
             replay_size = len(self._rlt_replay)

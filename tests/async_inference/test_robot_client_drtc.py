@@ -16,22 +16,40 @@ class _DiagnosticStub:
         self.counters[name] = self.counters.get(name, 0) + value
 
 
+class _TeleopStub:
+    def __init__(self):
+        self.is_intervening = False
+
+    def _handle_key_char(self, char: str) -> None:
+        if char == "5":
+            self.is_intervening = not self.is_intervening
+
+
 def _make_rlt_client() -> tuple[RobotClientDrtc, _DiagnosticStub]:
     client = RobotClientDrtc.__new__(RobotClientDrtc)
     diagnostic = _DiagnosticStub()
     client.config = SimpleNamespace(rlt_online_collection_enabled=True, rlt_chunk_size=3)
     client._metrics = SimpleNamespace(diagnostic=diagnostic)
-    client.logger = SimpleNamespace(info=lambda *args, **kwargs: None)
+    client.logger = SimpleNamespace(info=lambda *args, **kwargs: None, error=lambda *args, **kwargs: None)
     client._trajectory_viz_client = None
     client._rlt_transition_queue = Queue()
     client._rlt_current_episode_transition_buffer = []
     client._rlt_pending_chunks = {}
     client._rlt_executed_actions = {}
     client._rlt_emitted_context_ids = set()
+    client._rlt_prebuffer_pending_chunks = {}
+    client._rlt_prebuffer_executed_actions = {}
+    client._rlt_prebuffer_step_window = 6
     client._rlt_rollout_id = 1
     client._rlt_rollout_open = True
+    client._rlt_rollout_start_ts = 1.0
+    client._rlt_rollout_start_step = 0
     client._rlt_episode_id = 3
     client._rlt_episode_open = True
+    client._rlt_critical_start_ts = 1.0
+    client._rlt_critical_start_step = 0
+    client._rlt_critical_end_ts = None
+    client._rlt_critical_end_step = 0
     client._rlt_critical_pending_label = False
     client._rlt_phase = "recording"
     client._rlt_completed_episodes_count = 0
@@ -41,6 +59,9 @@ def _make_rlt_client() -> tuple[RobotClientDrtc, _DiagnosticStub]:
     client._rlt_current_episode_transitions = 1
     client._rlt_last_episode_label = None
     client._rlt_phase_intervening = False
+    client._tui_intervention_enabled = False
+    client._teleop_device = _TeleopStub()
+    client.action_step = 0
     return client, diagnostic
 
 
@@ -182,3 +203,67 @@ def test_rollout_state_gates_policy_execution_not_critical_phase():
 
     client._rlt_rollout_open = False
     assert client._waiting_for_rlt_episode_start()
+
+
+def test_toggle_critical_intervention_starts_and_successfully_labels():
+    client, _diagnostic = _make_rlt_client()
+    client._rlt_episode_open = False
+    client._rlt_current_episode_transition_buffer = []
+    client._rlt_current_episode_transitions = 0
+
+    assert client._rlt_toggle_critical_intervention() is True
+    assert client._rlt_episode_open is True
+    assert client._teleop_device.is_intervening is True
+
+    client._rlt_current_episode_transition_buffer.append(services_pb2.RLTTransitionChunk(episode_id=4))
+    client._rlt_current_episode_transitions = 1
+
+    assert client._rlt_toggle_critical_intervention() is False
+    assert client._rlt_episode_open is False
+    assert client._teleop_device.is_intervening is False
+    assert client._rlt_completed_episodes_count == 1
+    assert client._rlt_success_episodes_count == 1
+
+    terminal = client._rlt_transition_queue.get_nowait()
+    assert terminal.done is True
+    assert terminal.success is True
+    assert terminal.failure is False
+    assert terminal.reward == 1.0
+
+
+def test_start_critical_phase_seeds_pre_intervention_prebuffer():
+    client, _diagnostic = _make_rlt_client()
+    client._rlt_episode_open = False
+    client._rlt_current_episode_transitions = 0
+
+    actions = [
+        TimedAction(action=np.asarray([float(i)], dtype=np.float32), action_step=100 + i)
+        for i in range(3)
+    ]
+    chunk = ReceivedActionChunk(
+        actions=actions,
+        src_control_step=10,
+        chunk_start_step=100,
+        measured_latency=0.0,
+        rlt_context_id=21,
+        policy_mode="rlt_actor",
+        rlt_collectable=True,
+    )
+    client._rlt_note_collectable_chunk(chunk)
+    for step in range(100, 102):
+        client._rlt_record_executed_action(step, np.asarray([float(step)], dtype=np.float32), is_intervention=False)
+
+    assert 21 in client._rlt_prebuffer_pending_chunks
+    assert set(client._rlt_prebuffer_executed_actions) == {100, 101}
+
+    client._rlt_start_critical_phase()
+
+    assert 21 in client._rlt_pending_chunks
+    assert set(client._rlt_executed_actions) == {100, 101}
+    assert client._rlt_prebuffer_pending_chunks == {}
+    assert client._rlt_prebuffer_executed_actions == {}
+
+    client._rlt_record_executed_action(102, np.asarray([102.0], dtype=np.float32), is_intervention=True)
+    client._rlt_maybe_emit_transitions(done=True, flush_on_done=False)
+
+    assert client._rlt_current_episode_transition_buffer[-1].is_intervention is True

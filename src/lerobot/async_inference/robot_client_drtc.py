@@ -316,6 +316,25 @@ class RLTPendingChunk:
     policy_mode: str
     next_rlt_context_id: int | None = None
 
+
+def _copy_rlt_pending_chunk(chunk: RLTPendingChunk) -> RLTPendingChunk:
+    return RLTPendingChunk(
+        rlt_context_id=int(chunk.rlt_context_id),
+        chunk_start_step=int(chunk.chunk_start_step),
+        num_actions=int(chunk.num_actions),
+        action_dim=int(chunk.action_dim),
+        policy_mode=str(chunk.policy_mode),
+        next_rlt_context_id=chunk.next_rlt_context_id,
+    )
+
+
+def _copy_rlt_executed_action(action: RLTExecutedAction) -> RLTExecutedAction:
+    return RLTExecutedAction(
+        action=np.asarray(action.action, dtype=np.float32).copy(),
+        is_intervention=bool(action.is_intervention),
+    )
+
+
 class RobotClientDrtc:
     prefix = "robot_client_drtc"
     logger = get_logger(prefix)
@@ -573,10 +592,19 @@ class RobotClientDrtc:
         self._rlt_executed_actions: dict[int, RLTExecutedAction] = {}
         self._rlt_pending_chunks: dict[int, RLTPendingChunk] = {}
         self._rlt_emitted_context_ids: set[int] = set()
+        self._rlt_prebuffer_executed_actions: dict[int, RLTExecutedAction] = {}
+        self._rlt_prebuffer_pending_chunks: dict[int, RLTPendingChunk] = {}
+        self._rlt_prebuffer_step_window = max(1, int(config.rlt_chunk_size) * 2)
         self._rlt_rollout_id = 0
         self._rlt_rollout_open = False
+        self._rlt_rollout_start_ts: float | None = None
+        self._rlt_rollout_start_step = 0
         self._rlt_episode_id = 0
         self._rlt_episode_open = False
+        self._rlt_critical_start_ts: float | None = None
+        self._rlt_critical_start_step = 0
+        self._rlt_critical_end_ts: float | None = None
+        self._rlt_critical_end_step = 0
         self._rlt_critical_pending_label = False
         self._rlt_current_episode_transitions = 0
         self._rlt_current_episode_transition_buffer: list[services_pb2.RLTTransitionChunk] = []
@@ -590,8 +618,8 @@ class RobotClientDrtc:
         if config.rlt_online_collection_enabled:
             self.logger.info(
                 "RLT collector phase: waiting_to_start_rollout | "
-                "press 2=start rollout, 3=start critical, 4=end critical, "
-                "1=critical success, 0=critical failure, 9=discard critical, 8=end rollout"
+                "press 2=start rollout, 5=start/end critical intervention, "
+                "0=mark last critical failure, 9=discard critical, 8=end rollout"
             )
             self._emit_rlt_status("rlt_phase", phase="waiting_to_start_rollout")
             self._rlt_transition_sender_thread = threading.Thread(
@@ -624,10 +652,16 @@ class RobotClientDrtc:
             "phase": self._rlt_phase,
             "rollout_id": getattr(self, "_rlt_rollout_id", 0),
             "rollout_open": getattr(self, "_rlt_rollout_open", False),
+            "rollout_start_ts": getattr(self, "_rlt_rollout_start_ts", None),
+            "rollout_start_step": getattr(self, "_rlt_rollout_start_step", 0),
             "episode_id": self._rlt_episode_id,
             "episode_open": self._rlt_episode_open,
             "critical_phase_id": self._rlt_episode_id,
             "critical_phase_open": self._rlt_episode_open,
+            "critical_start_ts": getattr(self, "_rlt_critical_start_ts", None),
+            "critical_start_step": getattr(self, "_rlt_critical_start_step", 0),
+            "critical_end_ts": getattr(self, "_rlt_critical_end_ts", None),
+            "critical_end_step": getattr(self, "_rlt_critical_end_step", 0),
             "critical_pending_label": getattr(self, "_rlt_critical_pending_label", False),
             "episodes_recorded": self._rlt_completed_episodes_count,
             "episodes_succeeded": self._rlt_success_episodes_count,
@@ -664,15 +698,20 @@ class RobotClientDrtc:
     def _waiting_for_rlt_episode_start(self) -> bool:
         return self.config.rlt_online_collection_enabled and not getattr(self, "_rlt_rollout_open", False)
 
-    def _disable_teleop_intervention_for_episode_start(self) -> None:
-        self._tui_intervention_enabled = False
+    def _set_teleop_intervention_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        self._tui_intervention_enabled = enabled
         key_handler = getattr(self._teleop_device, "_handle_key_char", None)
-        if callable(key_handler) and bool(getattr(self._teleop_device, "is_intervening", False)):
+        teleop_intervening = bool(getattr(self._teleop_device, "is_intervening", False))
+        if callable(key_handler) and teleop_intervening != enabled:
             try:
                 key_handler("5")
             except Exception as e:
-                self.logger.error("Failed to disable teleop intervention for episode start: %s", e)
-        self._rlt_phase_intervening = False
+                self.logger.error("Failed to set teleop intervention=%s: %s", enabled, e)
+        self._rlt_phase_intervening = enabled
+
+    def _disable_teleop_intervention_for_episode_start(self) -> None:
+        self._set_teleop_intervention_enabled(False)
 
     def _begin_new_inference_epoch(self, reason: str) -> None:
         """Discard in-flight chunks, reset filter, re-trigger inference.
@@ -773,6 +812,7 @@ class RobotClientDrtc:
             elif command in {
                 "start_rollout",
                 "end_rollout",
+                "toggle_critical_intervention",
                 "start_critical_phase",
                 "end_critical_phase",
             }:
@@ -1267,6 +1307,7 @@ class RobotClientDrtc:
     ) -> tuple[float, bool, bool, bool]:
         start_rollout = bool(teleop_events.get("start_rollout"))
         end_rollout = bool(teleop_events.get("end_rollout"))
+        toggle_critical_intervention = bool(teleop_events.get("toggle_critical_intervention"))
         start_critical = bool(teleop_events.get("start_critical_phase"))
         end_critical = bool(teleop_events.get("end_critical_phase"))
         legacy_start = self._teleop_event(teleop_events, TeleopEvents.START_EPISODE)
@@ -1286,10 +1327,16 @@ class RobotClientDrtc:
             if not getattr(self, "_rlt_rollout_open", False):
                 self._rlt_start_rollout()
             self._rlt_start_critical_phase()
-        if start_critical:
-            self._rlt_start_critical_phase()
-        if end_critical:
-            self._rlt_end_critical_phase()
+        if toggle_critical_intervention:
+            intervention_enabled = self._rlt_toggle_critical_intervention()
+            if intervention_enabled is not None:
+                teleop_events[TeleopEvents.IS_INTERVENTION] = bool(intervention_enabled)
+                teleop_events[TeleopEvents.IS_INTERVENTION.value] = bool(intervention_enabled)
+        else:
+            if start_critical:
+                self._rlt_start_critical_phase()
+            if end_critical:
+                self._rlt_end_critical_phase()
         if success:
             self._rlt_label_current_critical_phase(success=True)
         elif failure:
@@ -1308,6 +1355,48 @@ class RobotClientDrtc:
         failure = False
         return reward, done, success, failure
 
+    def _rlt_current_action_step(self) -> int:
+        try:
+            return int(self.current_action_step)
+        except Exception:
+            return int(getattr(self, "action_step", 0))
+
+    def _rlt_rollout_elapsed_s(self, timestamp: float | None = None) -> float | None:
+        rollout_start_ts = getattr(self, "_rlt_rollout_start_ts", None)
+        if rollout_start_ts is None:
+            return None
+        if timestamp is None:
+            timestamp = time.time()
+        return max(0.0, float(timestamp) - float(rollout_start_ts))
+
+    def _rlt_toggle_critical_intervention(self) -> bool | None:
+        if not self.config.rlt_online_collection_enabled:
+            return None
+        if not getattr(self, "_rlt_rollout_open", False):
+            self._emit_rlt_status("rlt_critical_intervention_ignored", reason="rollout_not_open")
+            return None
+        if self._rlt_episode_open:
+            self._rlt_end_critical_phase()
+            self._rlt_label_current_critical_phase(success=True)
+            self._set_teleop_intervention_enabled(False)
+            self._emit_rlt_status("rlt_critical_intervention_stopped", auto_label="success")
+            self._metrics.diagnostic.counter("rlt_critical_intervention_stopped", 1)
+            return False
+        if self._rlt_critical_pending_label:
+            self._rlt_label_current_critical_phase(success=True)
+            self._set_teleop_intervention_enabled(False)
+            self._emit_rlt_status("rlt_critical_intervention_stopped", auto_label="success")
+            self._metrics.diagnostic.counter("rlt_critical_intervention_stopped", 1)
+            return False
+
+        self._rlt_start_critical_phase()
+        if not self._rlt_episode_open:
+            return None
+        self._set_teleop_intervention_enabled(True)
+        self._emit_rlt_status("rlt_critical_intervention_started", phase="critical_recording_with_intervention")
+        self._metrics.diagnostic.counter("rlt_critical_intervention_started", 1)
+        return True
+
     def _rlt_start_rollout(self) -> None:
         if not self.config.rlt_online_collection_enabled:
             return
@@ -1318,21 +1407,34 @@ class RobotClientDrtc:
         self._begin_new_inference_epoch("rollout_start")
         self._rlt_rollout_id += 1
         self._rlt_rollout_open = True
+        self._rlt_rollout_start_ts = time.time()
+        self._rlt_rollout_start_step = self._rlt_current_action_step()
         self._rlt_episode_open = False
+        self._rlt_critical_start_ts = None
+        self._rlt_critical_start_step = 0
+        self._rlt_critical_end_ts = None
+        self._rlt_critical_end_step = 0
         self._rlt_critical_pending_label = False
         self._rlt_executed_actions.clear()
         self._rlt_pending_chunks.clear()
         self._rlt_emitted_context_ids.clear()
+        self._rlt_prebuffer_executed_actions.clear()
+        self._rlt_prebuffer_pending_chunks.clear()
         self._rlt_current_episode_transitions = 0
         self._rlt_current_episode_transition_buffer.clear()
         self._rlt_last_episode_label = None
         self._rlt_phase_intervening = False
         self.logger.info(
             "RLT collector phase: rollout_running | rollout_id=%d | "
-            "press 3=start critical, 8=end rollout",
+            "press 5=start/end critical intervention, 8=end rollout",
             self._rlt_rollout_id,
         )
-        self._emit_rlt_status("rlt_rollout_started", phase="rollout_running")
+        self._emit_rlt_status(
+            "rlt_rollout_started",
+            phase="rollout_running",
+            rollout_start_ts=self._rlt_rollout_start_ts,
+            rollout_start_step=self._rlt_rollout_start_step,
+        )
         self._metrics.diagnostic.counter("rlt_rollout_started", 1)
 
     def _rlt_end_rollout(self) -> None:
@@ -1342,14 +1444,96 @@ class RobotClientDrtc:
             self._rlt_discard_current_episode(reason="rollout_end")
         self._disable_teleop_intervention_for_episode_start()
         self._begin_new_inference_epoch("rollout_end")
+        rollout_end_ts = time.time()
+        rollout_duration_s = self._rlt_rollout_elapsed_s(rollout_end_ts)
         self._rlt_rollout_open = False
         self._rlt_phase_intervening = False
+        self._rlt_prebuffer_executed_actions.clear()
+        self._rlt_prebuffer_pending_chunks.clear()
         self.logger.info(
             "RLT collector phase: waiting_to_start_rollout | rollout_id=%d ended",
             self._rlt_rollout_id,
         )
-        self._emit_rlt_status("rlt_rollout_ended", phase="waiting_to_start_rollout")
+        self._emit_rlt_status(
+            "rlt_rollout_ended",
+            phase="waiting_to_start_rollout",
+            rollout_end_ts=rollout_end_ts,
+            rollout_duration_s=rollout_duration_s,
+        )
         self._metrics.diagnostic.counter("rlt_rollout_ended", 1)
+
+    def _rlt_pending_chunk_from_received(self, chunk: ReceivedActionChunk) -> RLTPendingChunk | None:
+        if chunk.rlt_context_id <= 0:
+            return None
+        window_start_index = max(0, int(getattr(chunk, "rlt_window_start_index", 0)))
+        if window_start_index >= len(chunk.actions):
+            return None
+        window_len = min(len(chunk.actions) - window_start_index, self.config.rlt_chunk_size)
+        if window_len <= 0:
+            return None
+
+        return RLTPendingChunk(
+            rlt_context_id=int(chunk.rlt_context_id),
+            chunk_start_step=int(chunk.chunk_start_step + window_start_index),
+            num_actions=int(window_len),
+            action_dim=int(chunk.actions[window_start_index].get_action().shape[0]),
+            policy_mode=str(chunk.policy_mode),
+        )
+
+    def _rlt_add_pending_chunk(
+        self,
+        pending_chunks: dict[int, RLTPendingChunk],
+        pending: RLTPendingChunk,
+    ) -> None:
+        for old in pending_chunks.values():
+            if old.next_rlt_context_id is None and old.rlt_context_id != pending.rlt_context_id:
+                old.next_rlt_context_id = pending.rlt_context_id
+        pending_chunks[pending.rlt_context_id] = pending
+
+    def _rlt_trim_prebuffer(self, *, latest_step: int | None = None) -> None:
+        if latest_step is None:
+            steps = list(self._rlt_prebuffer_executed_actions)
+            if not steps:
+                return
+            latest_step = max(steps)
+        min_step = int(latest_step) - int(self._rlt_prebuffer_step_window) + 1
+
+        for step in [step for step in self._rlt_prebuffer_executed_actions if step < min_step]:
+            self._rlt_prebuffer_executed_actions.pop(step, None)
+
+        for context_id, pending in list(self._rlt_prebuffer_pending_chunks.items()):
+            chunk_end_step = pending.chunk_start_step + pending.num_actions
+            if pending.chunk_start_step < min_step or chunk_end_step <= min_step:
+                self._rlt_prebuffer_pending_chunks.pop(context_id, None)
+
+        valid_context_ids = set(self._rlt_prebuffer_pending_chunks)
+        for pending in self._rlt_prebuffer_pending_chunks.values():
+            if pending.next_rlt_context_id not in valid_context_ids:
+                pending.next_rlt_context_id = None
+
+    def _rlt_seed_critical_from_prebuffer(self) -> tuple[int, int]:
+        seeded_pending = 0
+        needed_steps: set[int] = set()
+        for context_id, pending in sorted(
+            self._rlt_prebuffer_pending_chunks.items(), key=lambda item: item[1].chunk_start_step
+        ):
+            steps = range(pending.chunk_start_step, pending.chunk_start_step + pending.num_actions)
+            executed_steps = [step for step in steps if step in self._rlt_prebuffer_executed_actions]
+            if not executed_steps:
+                continue
+            self._rlt_pending_chunks[context_id] = _copy_rlt_pending_chunk(pending)
+            needed_steps.update(executed_steps)
+            seeded_pending += 1
+
+        for step in sorted(needed_steps):
+            executed = self._rlt_prebuffer_executed_actions.get(step)
+            if executed is not None:
+                self._rlt_executed_actions[step] = _copy_rlt_executed_action(executed)
+
+        seeded_actions = len(self._rlt_executed_actions)
+        self._rlt_prebuffer_pending_chunks.clear()
+        self._rlt_prebuffer_executed_actions.clear()
+        return seeded_pending, seeded_actions
 
     def _rlt_start_critical_phase(self) -> None:
         if not self.config.rlt_online_collection_enabled:
@@ -1365,6 +1549,10 @@ class RobotClientDrtc:
             return
         self._rlt_episode_id += 1
         self._rlt_episode_open = True
+        self._rlt_critical_start_ts = time.time()
+        self._rlt_critical_start_step = self._rlt_current_action_step()
+        self._rlt_critical_end_ts = None
+        self._rlt_critical_end_step = 0
         self._rlt_critical_pending_label = False
         self._rlt_executed_actions.clear()
         self._rlt_pending_chunks.clear()
@@ -1372,13 +1560,20 @@ class RobotClientDrtc:
         self._rlt_current_episode_transitions = 0
         self._rlt_current_episode_transition_buffer.clear()
         self._rlt_last_episode_label = None
+        seeded_prebuffer_chunks, seeded_prebuffer_actions = self._rlt_seed_critical_from_prebuffer()
         self.logger.info(
             "RLT collector phase: critical_recording | rollout_id=%d | critical_phase_id=%d | "
-            "press 4=end critical, 1=success, 0=failure, 9=discard",
+            "press 5=end critical success, 0=failure, 9=discard",
             self._rlt_rollout_id,
             self._rlt_episode_id,
         )
-        self._emit_rlt_status("rlt_critical_phase_started", phase="critical_recording")
+        self._emit_rlt_status(
+            "rlt_critical_phase_started",
+            phase="critical_recording",
+            critical_start_s=self._rlt_rollout_elapsed_s(self._rlt_critical_start_ts),
+            seeded_prebuffer_chunks=seeded_prebuffer_chunks,
+            seeded_prebuffer_actions=seeded_prebuffer_actions,
+        )
         self._metrics.diagnostic.counter("rlt_critical_phase_started", 1)
 
     def _rlt_end_critical_phase(self) -> None:
@@ -1390,6 +1585,9 @@ class RobotClientDrtc:
             return
 
         self._rlt_maybe_emit_transitions(done=True, flush_on_done=False)
+        self._rlt_critical_end_ts = time.time()
+        self._rlt_critical_end_step = self._rlt_current_action_step()
+        critical_end_s = self._rlt_rollout_elapsed_s(self._rlt_critical_end_ts)
         self._rlt_episode_open = False
         self._rlt_pending_chunks.clear()
         self._rlt_executed_actions.clear()
@@ -1407,6 +1605,7 @@ class RobotClientDrtc:
                 "rlt_critical_phase_empty",
                 phase="rollout_running",
                 critical_phase_id=self._rlt_episode_id,
+                critical_end_s=critical_end_s,
             )
             self._metrics.diagnostic.counter("rlt_critical_phase_empty", 1)
             return
@@ -1417,7 +1616,11 @@ class RobotClientDrtc:
             "press 1=success, 0=failure, 9=discard",
             self._rlt_episode_id,
         )
-        self._emit_rlt_status("rlt_critical_phase_ended", phase="critical_pending_label")
+        self._emit_rlt_status(
+            "rlt_critical_phase_ended",
+            phase="critical_pending_label",
+            critical_end_s=critical_end_s,
+        )
         self._metrics.diagnostic.counter("rlt_critical_phase_ended", 1)
 
     def _rlt_label_current_critical_phase(self, *, success: bool) -> None:
@@ -1477,6 +1680,7 @@ class RobotClientDrtc:
             reward=float(reward),
             success=bool(success),
             failure=bool(failure),
+            critical_end_s=self._rlt_rollout_elapsed_s(getattr(self, "_rlt_critical_end_ts", None)),
             queued_transitions=queued_transitions,
         )
         self._metrics.diagnostic.counter("rlt_critical_phase_labeled", 1)
@@ -1491,6 +1695,9 @@ class RobotClientDrtc:
             return
         episode_id = self._rlt_episode_id
         dropped_transitions = self._rlt_current_episode_transitions
+        discard_ts = time.time()
+        self._rlt_critical_end_ts = discard_ts
+        self._rlt_critical_end_step = self._rlt_current_action_step()
         self._rlt_episode_open = False
         self._rlt_critical_pending_label = False
         self._rlt_pending_chunks.clear()
@@ -1512,6 +1719,7 @@ class RobotClientDrtc:
             "rlt_critical_phase_discarded",
             phase="rollout_running" if getattr(self, "_rlt_rollout_open", False) else "waiting_to_start_rollout",
             label="discarded",
+            critical_end_s=self._rlt_rollout_elapsed_s(discard_ts),
             buffered_transitions_dropped=dropped_transitions,
             discard_reason=reason,
         )
@@ -1520,29 +1728,24 @@ class RobotClientDrtc:
     def _rlt_note_collectable_chunk(self, chunk: ReceivedActionChunk) -> None:
         if not self.config.rlt_online_collection_enabled or not chunk.rlt_collectable:
             return
-        if not self._rlt_episode_open:
+        if not getattr(self, "_rlt_rollout_open", False):
             return
         if chunk.rlt_context_id <= 0 or chunk.rlt_context_id in self._rlt_emitted_context_ids:
             return
 
-        window_start_index = max(0, int(getattr(chunk, "rlt_window_start_index", 0)))
-        if window_start_index >= len(chunk.actions):
-            return
-        window_len = min(len(chunk.actions) - window_start_index, self.config.rlt_chunk_size)
-        if window_len <= 0:
+        pending = self._rlt_pending_chunk_from_received(chunk)
+        if pending is None:
             return
 
-        pending = RLTPendingChunk(
-            rlt_context_id=chunk.rlt_context_id,
-            chunk_start_step=chunk.chunk_start_step + window_start_index,
-            num_actions=window_len,
-            action_dim=int(chunk.actions[window_start_index].get_action().shape[0]),
-            policy_mode=chunk.policy_mode,
-        )
-        for old in self._rlt_pending_chunks.values():
-            if old.next_rlt_context_id is None and old.rlt_context_id != pending.rlt_context_id:
-                old.next_rlt_context_id = pending.rlt_context_id
-        self._rlt_pending_chunks[pending.rlt_context_id] = pending
+        if not self._rlt_episode_open:
+            if self._rlt_critical_pending_label:
+                return
+            self._rlt_add_pending_chunk(self._rlt_prebuffer_pending_chunks, pending)
+            self._rlt_trim_prebuffer(latest_step=pending.chunk_start_step + pending.num_actions - 1)
+            self._metrics.diagnostic.counter("rlt_prebuffer_collectable_chunk", 1)
+            return
+
+        self._rlt_add_pending_chunk(self._rlt_pending_chunks, pending)
         self._metrics.diagnostic.counter("rlt_collectable_chunk", 1)
         self._rlt_maybe_emit_transitions()
 
@@ -1553,12 +1756,19 @@ class RobotClientDrtc:
         *,
         is_intervention: bool,
     ) -> None:
-        if not self.config.rlt_online_collection_enabled or not self._rlt_episode_open:
+        if not self.config.rlt_online_collection_enabled or not getattr(self, "_rlt_rollout_open", False):
             return
-        self._rlt_executed_actions[int(step)] = RLTExecutedAction(
+        executed_action = RLTExecutedAction(
             action=np.asarray(action, dtype=np.float32).copy(),
             is_intervention=bool(is_intervention),
         )
+        if not self._rlt_episode_open:
+            if not self._rlt_critical_pending_label:
+                self._rlt_prebuffer_executed_actions[int(step)] = executed_action
+                self._rlt_trim_prebuffer(latest_step=int(step))
+            return
+
+        self._rlt_executed_actions[int(step)] = executed_action
         # Keep bounded history around pending windows.
         if self._rlt_pending_chunks:
             min_pending = min(p.chunk_start_step for p in self._rlt_pending_chunks.values())
@@ -1701,6 +1911,7 @@ class RobotClientDrtc:
                 reward=float(reward),
                 success=bool(success),
                 failure=bool(failure),
+                critical_end_s=self._rlt_rollout_elapsed_s(getattr(self, "_rlt_critical_end_ts", None)),
                 queued_transitions=queued_transitions,
             )
             self._rlt_episode_open = False
