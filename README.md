@@ -8,7 +8,9 @@ This repo is a research-oriented version of [LeRobot](https://github.com/hugging
 
 This is an active project and we expect to continually add more features and capabilities. Happy to take requests.
 
-<video src="https://github.com/user-attachments/assets/9c5330a9-27bf-4aab-98df-ea142f40093d" controls width="100%"></video>
+Results obtained using MolmoAct2 on anchor actions.
+
+<video src="https://github.com/user-attachments/assets/fc5c1815-93b9-41ec-90cb-ec8ba84c40fd" controls width="100%"></video>
 
 
 ## Key features
@@ -166,7 +168,7 @@ Following the suggestions from the RECAP paper, we suggest to retrain every time
 >     - [-150,   0]  # joint 2
 >     - ...          # one [min, max] per joint
 > ```
-> Anything outside is silently clamped before reaching the servos.
+> Anything outside isclamped before reaching the servos.
 
 Once your config has a trained model, camera indices, and follower/leader ports, run inference with:
 
