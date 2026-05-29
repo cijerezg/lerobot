@@ -1568,7 +1568,7 @@ class RobotClientDrtc:
         seeded_prebuffer_chunks, seeded_prebuffer_actions = self._rlt_seed_critical_from_prebuffer()
         self.logger.info(
             "RLT collector phase: critical_recording | rollout_id=%d | critical_phase_id=%d | "
-            "press 5=end critical success, 0=failure, 9=discard",
+            "press 3=end critical recording, 1=success, 0=failure, 9=discard",
             self._rlt_rollout_id,
             self._rlt_episode_id,
         )

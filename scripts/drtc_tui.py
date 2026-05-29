@@ -24,6 +24,7 @@ ROBOT_KEY_COMMANDS = {
     "5": "toggle_intervention",
     "6": "toggle_rlt_training",
     "7": "toggle_rlt_actor",
+    "1": "success",
     "0": "failure",
     "9": "discard_episode",
 }
@@ -1011,6 +1012,7 @@ def _run_textual(
             Binding("5", "robot_intervention", "Intervention"),
             Binding("6", "training_toggle", "Train on/off"),
             Binding("7", "rlt_actor_toggle", "RLT head on/off"),
+            Binding("1", "robot_success", "Episode success"),
             Binding("0", "robot_failure", "Fail critical"),
             Binding("9", "robot_discard", "Discard critical"),
             Binding("s", "rollout_mark_success", "Review success"),
@@ -1142,6 +1144,7 @@ def _run_textual(
                 "5: toggle intervention\n"
                 "6: start/pause RLT training\n"
                 "7: enable/disable RLT head\n"
+                "1: episode success\n"
                 "0: critical failure/keep\n"
                 "9: discard critical\n"
                 "r: rollouts table\n\n"
@@ -1186,6 +1189,9 @@ def _run_textual(
 
         def action_robot_intervention(self) -> None:
             self._send_robot_command("toggle_intervention")
+
+        def action_robot_success(self) -> None:
+            self._send_robot_command("success")
 
         def action_robot_failure(self) -> None:
             self._send_robot_command("failure")
