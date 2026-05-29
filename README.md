@@ -4,7 +4,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 
-This repo is a research-oriented version of [LeRobot](https://github.com/huggingface/lerobot). The focus is on having SOTA algorithms (e.g., RECAP) and SOTA models (MolmoAct2) and tooling for examining the model's internals such as attention maps, clustering of internal representations. 
+This repo is a research-oriented version of [LeRobot](https://github.com/huggingface/lerobot). The focus is on having SOTA algorithms (e.g., RECAP) and SOTA models (e.g., MolmoAct2) and tooling for examining the model's internals such as attention maps, clustering of internal representations. 
 
 This is an active project and we expect to continually add more features and capabilities. Happy to take requests.
 
@@ -68,18 +68,19 @@ Generate the cache once per dataset:
 
 ```bash
 python -m lerobot.scripts.lerobot_memmap_buffer_cache \
-    --repo-id your/dataset \
     --root /path/to/local/dataset \
     --cache-dir outputs/buffer_cache \
     --image-storage-dtype uint8 \
     --image-storage-size 480 640
 ```
 
+You can also pass `repo-id` instead of `root` if the dataset is on HF hub.
+
 Then point the YAML at it with `buffer_cache_dir: outputs/buffer_cache`. Benefits:
 
 - Training startup is fast on subsequent runs (no re-decode).
 - RAM use stays bounded regardless of dataset size — you can train on datasets much larger than your physical memory.
-- The `--image-storage-size` and `--image-storage-dtype` flags are model-agnostic, so the same pipeline works for any policy that uses a different image resolution (224×224 for $\pi_{0.5}$, 480×640 for MolmoAct2, etc.).
+- The `--image-storage-size` and `--image-storage-dtype` flags are model-agnostic, so the same pipeline works for any policy that uses a different image resolution (378x378 for MolmoAct2, 224×224 for $\pi_{0.5}, etc.).
 
 More on edge cases in [advanced usage](docs/recap/advanced_usage_molmoact2.md#buffer-caching).
 
@@ -127,7 +128,7 @@ uv run python -m lerobot.scripts.rl_offline --config path/to/config.yaml
 > echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-overcommit.conf
 > sudo sysctl --system
 > ```
-> Background and tradeoffs in [docs/engineering_notes/runbooks/system_overcommit.md](docs/engineering_notes/runbooks/system_overcommit.md). If you'd rather not touch sysctl, set the `probe_parameters.enable_*` flags to `false` in the config to skip the probes entirely.
+> Background and tradeoffs in [docs/engineering_notes/runbooks/system_overcommit.md](docs/engineering_notes/runbooks/system_overcommit.md). If you'd rather not touch sysctl, set val_on_start to false and a large number to val_freq.
 
 Once the offline training has run for a while, set `pretrained_path` in the config to the resulting checkpoint and proceed to online training.
 
@@ -172,6 +173,8 @@ Once your config has a trained model, camera indices, and follower/leader ports,
 ```bash
 uv run python -m lerobot.rl.inference_async --config path/to/config.yaml
 ```
+
+> **Note:** Initial model loading takes 1 to 2 minutes.
 
 
 ## Beyond the basics

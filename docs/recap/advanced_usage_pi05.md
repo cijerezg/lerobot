@@ -1,5 +1,9 @@
 # Advanced Usage Guide
 
+Results obtained with $\pi_{0.5}$:
+
+<video src="https://github.com/user-attachments/assets/9c5330a9-27bf-4aab-98df-ea142f40093d" controls width="100%"></video>
+
 This guide covers action encodings, the full training pipeline, the iterative RL loop, intervention mechanics, async inference, and the standalone inference scripts.
 
 ---

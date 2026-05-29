@@ -689,7 +689,7 @@ def _finalize_episode_log(
     # --- 4. Generate video ---
     try:
         save_video_with_critic_overlay(
-            log_dir, critic_values,
+            log_dir, [],  # TODO: restore critic_values
             camera_names=video_logging_cameras,
             fps=cfg.env.fps,
             subtask_texts=subtask_texts,

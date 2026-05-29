@@ -1037,7 +1037,7 @@ def _finalize_rtc_inference_log(
     try:
         save_video_with_critic_overlay(
             log_dir,
-            critic_values,
+            [],  # TODO: restore critic_values
             camera_names=video_logging_cameras,
             fps=cfg.env.fps,
             subtask_texts=[frame.get("subtask_text", "") for frame in episode_log_buffer],
