@@ -12,6 +12,7 @@ Results obtained using MolmoAct2 on anchor actions.
 
 <video src="https://github.com/user-attachments/assets/fc5c1815-93b9-41ec-90cb-ec8ba84c40fd" controls width="100%"></video>
 
+A longer video with successes, recoveries, and failures is availabe on [Youtube](https://youtu.be/rhE2HRvlQMI).
 
 ## Key features
 
