@@ -55,6 +55,7 @@ def test_load_rlt_replay_file_emits_status_with_replay_size(tmp_path, monkeypatc
     server._rlt_demo_replay_size = 0
     server._rlt_online_replay_size = 0
     server._rlt_accepted_transitions = 0
+    server._rlt_accepted_frames = 0
     server._rlt_episode_id_offset = 0
     server.logger = logging.getLogger("test_policy_server_drtc")
 
@@ -98,6 +99,7 @@ def test_online_replay_load_sets_episode_id_offset(tmp_path, monkeypatch):
     server._rlt_demo_replay_size = 0
     server._rlt_online_replay_size = 0
     server._rlt_accepted_transitions = 0
+    server._rlt_accepted_frames = 0
     server._rlt_episode_id_offset = 0
     server.logger = logging.getLogger("test_policy_server_drtc")
 
@@ -134,6 +136,7 @@ def test_load_rlt_review_archive_preserves_existing_samples(tmp_path, monkeypatc
     server._rlt_demo_replay_size = 0
     server._rlt_online_replay_size = 0
     server._rlt_accepted_transitions = 0
+    server._rlt_accepted_frames = 0
     server._rlt_episode_id_offset = 0
     server.logger = logging.getLogger("test_policy_server_drtc")
 
@@ -167,6 +170,7 @@ def _server_for_accept_transition(policy_server_drtc):
     server._rlt_actor_disabled_by_safety = False
     server._rlt_demo_replay_size = 0
     server._rlt_accepted_transitions = 0
+    server._rlt_accepted_frames = 0
     server._rlt_online_replay_size = 0
     server._rlt_online_buffer_save_freq_transitions = 0
     server._rlt_buffer_dirty = False
@@ -257,6 +261,59 @@ def test_accept_rlt_transition_uses_executed_chunk_as_intervention_reference(mon
     assert torch.equal(sample.reference_chunk, executed)
     assert torch.equal(sample.executed_chunk, executed)
     assert torch.equal(sample.next_reference_chunk, next_context.reference_chunk)
+    assert server._rlt_accepted_frames == 3
+
+
+@require_package("grpcio", "grpc")
+def test_rlt_training_control_toggle_enables_operator(monkeypatch):
+    from lerobot.async_inference import policy_server_drtc
+
+    monkeypatch.setattr(policy_server_drtc, "emit_status", lambda *_args, **_kwargs: None)
+
+    server = policy_server_drtc.PolicyServerDrtc.__new__(policy_server_drtc.PolicyServerDrtc)
+    server.policy_type = "molmoact2_rlt"
+    server._rlt_replay_lock = threading.Lock()
+    server._rlt_replay = RLTReplayBuffer(capacity=4)
+    server._rlt_replay_capacity = 4
+    server._rlt_completed_episodes = set()
+    server._rlt_train_step = 0
+    server._rlt_online_collection_enabled = True
+    server._rlt_online_training_enabled = True
+    server._rlt_training_head = "paused"
+    server._rlt_training_operator_enabled = False
+    server._rlt_actor_disabled_by_safety = False
+    server._rlt_demo_replay_size = 0
+    server._rlt_online_replay_size = 0
+    server._rlt_accepted_transitions = 0
+    server._rlt_accepted_frames = 0
+    server._tui_control_reader = SimpleNamespace(read_commands=lambda: ["toggle_rlt_training"])
+
+    server._poll_rlt_training_controls()
+
+    assert server._rlt_training_operator_enabled is True
+    assert server._rlt_training_head == "idle"
+
+
+@require_package("grpcio", "grpc")
+def test_rlt_actor_execution_is_gated_to_operator_enabled_critical_phase():
+    from lerobot.async_inference import policy_server_drtc
+
+    server = policy_server_drtc.PolicyServerDrtc.__new__(policy_server_drtc.PolicyServerDrtc)
+    server.policy_type = "molmoact2_rlt"
+    server.policy = SimpleNamespace(
+        config=SimpleNamespace(rlt_enabled=True),
+        _rlt_actor_loaded=True,
+    )
+    server._rlt_actor_disabled_by_safety = False
+    server._rlt_actor_operator_enabled = True
+    server._rlt_train_step = 0
+    server._rlt_execute_after_train_steps = 1000
+
+    assert server._rlt_should_execute_actor(critical_phase_active=True)
+    assert not server._rlt_should_execute_actor(critical_phase_active=False)
+
+    server._rlt_actor_operator_enabled = False
+    assert not server._rlt_should_execute_actor(critical_phase_active=True)
 
 
 @require_package("grpcio", "grpc")

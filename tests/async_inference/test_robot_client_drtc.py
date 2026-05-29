@@ -205,25 +205,39 @@ def test_rollout_state_gates_policy_execution_not_critical_phase():
     assert client._waiting_for_rlt_episode_start()
 
 
-def test_toggle_critical_intervention_starts_and_successfully_labels():
+def test_end_rollout_can_enable_intervention_for_manual_reset():
+    client, _diagnostic = _make_rlt_client()
+    client._rlt_episode_open = False
+    client._rlt_rollout_open = True
+    client._begin_new_inference_epoch = lambda reason: None
+
+    client._rlt_end_rollout(enable_intervention_for_reset=True)
+
+    assert client._rlt_rollout_open is False
+    assert client._teleop_device.is_intervening is True
+
+
+def test_toggle_critical_phase_starts_and_waits_for_label():
     client, _diagnostic = _make_rlt_client()
     client._rlt_episode_open = False
     client._rlt_current_episode_transition_buffer = []
     client._rlt_current_episode_transitions = 0
 
-    assert client._rlt_toggle_critical_intervention() is True
+    client._rlt_toggle_critical_phase()
     assert client._rlt_episode_open is True
-    assert client._teleop_device.is_intervening is True
+    assert client._teleop_device.is_intervening is False
 
     client._rlt_current_episode_transition_buffer.append(services_pb2.RLTTransitionChunk(episode_id=4))
     client._rlt_current_episode_transitions = 1
 
-    assert client._rlt_toggle_critical_intervention() is False
+    client._rlt_toggle_critical_phase()
     assert client._rlt_episode_open is False
     assert client._teleop_device.is_intervening is False
-    assert client._rlt_completed_episodes_count == 1
-    assert client._rlt_success_episodes_count == 1
+    assert client._rlt_critical_pending_label is True
+    assert client._rlt_completed_episodes_count == 0
+    assert client._rlt_transition_queue.empty()
 
+    client._rlt_label_current_critical_phase(success=True)
     terminal = client._rlt_transition_queue.get_nowait()
     assert terminal.done is True
     assert terminal.success is True

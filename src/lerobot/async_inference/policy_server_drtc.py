@@ -68,7 +68,7 @@ from .helpers import (
 from .lww_register import LWWRegister
 from .rtc_guidance import AsyncRTCConfig, AsyncRTCProcessor
 from .utils.compression import decode_images_from_transport
-from .utils.drtc_status import emit_status
+from .utils.drtc_status import DrtcControlReader, emit_status
 from .utils.metrics import DiagnosticMetrics, EvActionChunk, Metrics
 from .utils.rlt_image_capture import RltImageEncoder
 from .utils.simulation import SpikeDelaySimulator
@@ -364,6 +364,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_train_step = 0
         self._rlt_loaded_head_step = 0
         self._rlt_accepted_transitions = 0
+        self._rlt_accepted_frames = 0
         self._rlt_buffer_dirty = False
         self._rlt_demo_replay_size = 0
         self._rlt_online_replay_size = 0
@@ -377,6 +378,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_actor_optimizer: torch.optim.Optimizer | None = None
         self._rlt_critic_optimizer: torch.optim.Optimizer | None = None
         self._rlt_training_head = "disabled"
+        self._tui_control_reader = DrtcControlReader()
+        self._rlt_training_operator_enabled = not self._tui_control_reader.enabled
+        self._rlt_actor_operator_enabled = not self._tui_control_reader.enabled
+        self._rlt_actor_critical_phase_active = False
 
         # Review-only image capture (off by default; enabled via RemotePolicyConfig).
         self._rlt_review_capture_enabled = False
@@ -443,6 +448,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_train_step": self._rlt_train_step,
             "rlt_online_collection_enabled": self._rlt_online_collection_enabled,
             "rlt_online_training_enabled": self._rlt_online_training_enabled,
+            "rlt_training_operator_enabled": getattr(self, "_rlt_training_operator_enabled", True),
+            "rlt_training_paused": not getattr(self, "_rlt_training_operator_enabled", True),
+            "rlt_actor_operator_enabled": getattr(self, "_rlt_actor_operator_enabled", True),
+            "rlt_actor_critical_phase_active": getattr(self, "_rlt_actor_critical_phase_active", False),
             "rlt_eval_actor_blend": getattr(self, "_rlt_eval_actor_blend", 1.0),
             "rlt_training_head": self._rlt_training_head,
             "rlt_actor_training": self._rlt_training_head == "actor",
@@ -451,6 +460,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_demo_replay_size": self._rlt_demo_replay_size,
             "rlt_online_replay_size": self._rlt_online_replay_size,
             "rlt_accepted_transitions": self._rlt_accepted_transitions,
+            "rlt_accepted_frames": getattr(self, "_rlt_accepted_frames", 0),
             "rlt_critic_updates_per_actor": getattr(self, "_rlt_critic_updates_per_actor", 1),
             "rlt_success_sample_fraction": getattr(self, "_rlt_success_sample_fraction", 0.0),
             "rlt_intervention_sample_fraction": getattr(self, "_rlt_intervention_sample_fraction", 0.0),
@@ -481,6 +491,77 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             return
         self._rlt_training_head = head
         self._emit_rlt_status("rlt_training_state")
+
+    def _set_rlt_training_operator_enabled(self, enabled: bool, *, command: str) -> None:
+        enabled = bool(enabled)
+        if not self._rlt_online_training_enabled:
+            self._emit_rlt_status(
+                "rlt_training_control_ignored",
+                command=command,
+                reason="online_training_disabled",
+            )
+            return
+        if not self._is_rlt_policy():
+            self._emit_rlt_status(
+                "rlt_training_control_ignored",
+                command=command,
+                reason="not_rlt_policy",
+            )
+            return
+
+        self._rlt_training_operator_enabled = enabled
+        if not enabled:
+            self._set_rlt_training_head("paused")
+        elif self._rlt_training_head == "paused":
+            self._set_rlt_training_head("idle")
+        self._emit_rlt_status(
+            "rlt_training_control",
+            command=command,
+            rlt_training_operator_enabled=enabled,
+            rlt_training_paused=not enabled,
+        )
+
+    def _set_rlt_actor_operator_enabled(self, enabled: bool, *, command: str) -> None:
+        enabled = bool(enabled)
+        if not self._is_rlt_policy():
+            self._emit_rlt_status(
+                "rlt_actor_control_ignored",
+                command=command,
+                reason="not_rlt_policy",
+            )
+            return
+
+        self._rlt_actor_operator_enabled = enabled
+        self._emit_rlt_status(
+            "rlt_actor_control",
+            command=command,
+            rlt_actor_operator_enabled=enabled,
+            rlt_actor_critical_phase_active=getattr(self, "_rlt_actor_critical_phase_active", False),
+        )
+
+    def _poll_rlt_training_controls(self) -> None:
+        reader = getattr(self, "_tui_control_reader", None)
+        if reader is None:
+            return
+        for command in reader.read_commands():
+            if command == "start_rlt_training":
+                self._set_rlt_training_operator_enabled(True, command=command)
+            elif command == "pause_rlt_training":
+                self._set_rlt_training_operator_enabled(False, command=command)
+            elif command == "toggle_rlt_training":
+                self._set_rlt_training_operator_enabled(
+                    not getattr(self, "_rlt_training_operator_enabled", False),
+                    command=command,
+                )
+            elif command == "enable_rlt_actor":
+                self._set_rlt_actor_operator_enabled(True, command=command)
+            elif command == "disable_rlt_actor":
+                self._set_rlt_actor_operator_enabled(False, command=command)
+            elif command == "toggle_rlt_actor":
+                self._set_rlt_actor_operator_enabled(
+                    not getattr(self, "_rlt_actor_operator_enabled", False),
+                    command=command,
+                )
 
     def _load_rlt_replay_file(self, path: str | None, *, source: str) -> int:
         if not path:
@@ -692,10 +773,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._load_rlt_review_archive()
         self._rlt_buffer_dirty = False
         self._rlt_accepted_transitions = 0
+        self._rlt_accepted_frames = 0
         self._rlt_completed_episodes.clear()
         self._rlt_next_context_id = 1
         self._rlt_loaded_head_step = int(getattr(self.policy, "_rlt_loaded_head_step", 0) or 0)
         self._rlt_train_step = self._rlt_loaded_head_step
+        self._rlt_training_operator_enabled = not getattr(self._tui_control_reader, "enabled", False)
+        self._rlt_actor_operator_enabled = not getattr(self._tui_control_reader, "enabled", False)
+        self._rlt_actor_critical_phase_active = False
 
         if self._rlt_online_training_enabled and self._is_rlt_policy() and self.policy is not None:
             self._rlt_actor_optimizer = torch.optim.AdamW(
@@ -704,7 +789,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._rlt_critic_optimizer = torch.optim.AdamW(
                 self.policy.rlt_critic.parameters(), lr=self._rlt_critic_lr
             )
-            self._rlt_training_head = "idle"
+            self._rlt_training_head = "idle" if self._rlt_training_operator_enabled else "paused"
         else:
             self._rlt_actor_optimizer = None
             self._rlt_critic_optimizer = None
@@ -728,8 +813,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         cfg = getattr(self.policy, "config", None)
         return bool(getattr(cfg, "rlt_embedding_checkpoint", None))
 
-    def _rlt_should_execute_actor(self) -> bool:
+    def _rlt_should_execute_actor(self, *, critical_phase_active: bool) -> bool:
         if not self._is_rlt_policy() or self.policy is None:
+            return False
+        if not critical_phase_active:
+            return False
+        if not getattr(self, "_rlt_actor_operator_enabled", True):
             return False
         cfg = getattr(self.policy, "config", None)
         if not bool(getattr(cfg, "rlt_enabled", False)):
@@ -743,6 +832,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self,
         observation: dict[str, torch.Tensor],
         rtc_kwargs: dict[str, Any],
+        *,
+        critical_phase_active: bool,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, str, int]:
         if self.policy is None:
             raise RuntimeError("policy is not loaded")
@@ -756,7 +847,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             window_start = 0
             if rtc_kwargs:
                 window_start = min(max(0, int(rtc_kwargs.get("inference_delay", 0))), max_start)
-            if self._rlt_should_execute_actor():
+            if self._rlt_should_execute_actor(critical_phase_active=critical_phase_active):
                 window_end = window_start + rlt_window
                 actor_ref = reference[:, window_start:window_end].to(
                     dtype=rl_token.dtype,
@@ -801,12 +892,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     policy_mode = "rlt_actor"
             else:
                 action_tensor = reference
-                policy_mode = (
-                    "warmup"
-                    if self._rlt_online_training_enabled
-                    and self._rlt_train_step < self._rlt_execute_after_train_steps
-                    else "vla_passthrough"
-                )
+                if not critical_phase_active:
+                    policy_mode = "vla_non_critical"
+                elif not getattr(self, "_rlt_actor_operator_enabled", True):
+                    policy_mode = "rlt_actor_operator_disabled"
+                elif self._rlt_online_training_enabled and self._rlt_train_step < self._rlt_execute_after_train_steps:
+                    policy_mode = "warmup"
+                else:
+                    policy_mode = "vla_passthrough"
         return action_tensor, reference, rl_token, proprio, policy_mode, window_start
 
     @staticmethod
@@ -1015,6 +1108,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         if transition.done:
             self._rlt_completed_episodes.add(episode_id)
         self._metrics.diagnostic.counter("rlt_transition_accepted", 1)
+        self._rlt_accepted_frames += int(transition.num_actions)
         self._metrics.diagnostic.set_context(rlt_replay_size=replay_size)
         self._emit_rlt_status(
             "rlt_transition_accepted",
@@ -1022,6 +1116,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             transition_success=bool(transition.success),
             transition_failure=bool(transition.failure),
             transition_intervention=bool(transition.is_intervention),
+            transition_frames=int(transition.num_actions),
             episode_id=episode_id,
             client_episode_id=int(transition.episode_id),
         )
@@ -1103,9 +1198,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
     def _rlt_trainer_loop(self) -> None:
         while self.running:
+            self._poll_rlt_training_controls()
             time.sleep(self._rlt_train_freq_s)
+            self._poll_rlt_training_controls()
             if self.policy is None or self._rlt_actor_optimizer is None or self._rlt_critic_optimizer is None:
                 self._set_rlt_training_head("disabled")
+                continue
+            if not getattr(self, "_rlt_training_operator_enabled", True):
+                self._set_rlt_training_head("paused")
                 continue
             with self._rlt_replay_lock:
                 replay_size = len(self._rlt_replay)
@@ -1260,6 +1360,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_train_step = 0
         self._rlt_loaded_head_step = 0
         self._rlt_accepted_transitions = 0
+        self._rlt_accepted_frames = 0
         self._rlt_buffer_dirty = False
         self._rlt_demo_replay_size = 0
         self._rlt_online_replay_size = 0
@@ -1996,6 +2097,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             try:
                 t_total_start = time.perf_counter()
+                self._poll_rlt_training_controls()
 
                 # Apply simulated delay (for experiments)
                 self._delay_simulator.apply_delay()
@@ -2199,16 +2301,23 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         # Optional RTC metadata (client-provided hard-mask prefix + estimated delay).
         rtc_meta = None
+        rlt_meta = None
         raw_obs_any = observation_t.get_observation()
         if isinstance(raw_obs_any, dict):
             rtc_meta = raw_obs_any.get("__rtc__")
+            rlt_meta = raw_obs_any.get("__rlt__")
 
-        # Remove RTC metadata before policy preprocessing (avoid surprising processors).
-        if rtc_meta is not None and isinstance(raw_obs_any, dict):
+        # Remove side-channel metadata before policy preprocessing (avoid surprising processors).
+        if isinstance(raw_obs_any, dict) and (rtc_meta is not None or rlt_meta is not None):
             raw_obs = dict(raw_obs_any)
             raw_obs.pop("__rtc__", None)
+            raw_obs.pop("__rlt__", None)
         else:
             raw_obs = raw_obs_any
+        critical_phase_active = bool(
+            isinstance(rlt_meta, dict) and rlt_meta.get("critical_phase_open")
+        )
+        self._rlt_actor_critical_phase_active = critical_phase_active
         _mark("obs_meta")
         # Kick off review image encoding in parallel with the rest of inference.
         # The submission_id is later popped inside _cache_rlt_source_context.
@@ -2363,7 +2472,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     rlt_proprio,
                     rlt_policy_mode,
                     rlt_window_start_index,
-                ) = self._predict_pi05_rlt_with_context(observation, rtc_kwargs)
+                ) = self._predict_pi05_rlt_with_context(
+                    observation,
+                    rtc_kwargs,
+                    critical_phase_active=critical_phase_active,
+                )
             else:
                 action_tensor = self._get_action_chunk(observation, **rtc_kwargs)
             _mark("policy_predict")

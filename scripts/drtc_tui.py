@@ -19,13 +19,13 @@ from typing import Any
 
 ROBOT_KEY_COMMANDS = {
     "2": "start_rollout",
-    "3": "start_critical_phase",
-    "4": "end_critical_phase",
-    "5": "toggle_critical_intervention",
-    "1": "success",
+    "3": "toggle_critical_phase",
+    "4": "end_rollout_enable_intervention",
+    "5": "toggle_intervention",
+    "6": "toggle_rlt_training",
+    "7": "toggle_rlt_actor",
     "0": "failure",
     "9": "discard_episode",
-    "8": "end_rollout",
 }
 LOSS_HISTORY_SAMPLES = 240
 LOSS_CHART_WIDTH = 56
@@ -275,7 +275,10 @@ def _status_event_detail(event: dict[str, Any]) -> str:
         "critical_end_s",
         "seeded_prebuffer_chunks",
         "rlt_replay_size",
+        "rlt_accepted_frames",
         "rlt_training_head",
+        "rlt_training_paused",
+        "rlt_actor_operator_enabled",
         "rlt_train_step",
         "episode_id",
         "buffered_transitions_dropped",
@@ -299,7 +302,7 @@ def _phase_label(phase: Any) -> str:
         "reset": "Episode complete/reset",
         "waiting_to_start_episode": "Episode complete/reset",
         "waiting_to_start_next_episode": "Waiting to start next episode/reset (press 2)",
-        "waiting_to_start_rollout": "Waiting to start VLA rollout/reset (press 2)",
+        "waiting_to_start_rollout": "Waiting to start episode/reset (press 2)",
     }
     return mapping.get(str(phase or "reset"), str(phase or "Episode complete/reset"))
 
@@ -935,6 +938,7 @@ def _run_textual(
 ) -> int:
     try:
         from textual.app import App, ComposeResult
+        from textual.binding import Binding
         from textual.containers import Grid, Vertical
         from textual.widgets import Footer, Header, RichLog, Static, TabbedContent, TabPane
     except ImportError as e:
@@ -996,22 +1000,22 @@ def _run_textual(
         """
 
         BINDINGS = [
-            ("left", "show_main", "Main"),
-            ("right", "show_logs", "Logs"),
-            ("t", "show_trajectory", "Trajectory"),
-            ("r", "show_rollouts", "Rollouts"),
-            ("q", "quit_app", "Quit"),
-            ("2", "robot_start_rollout", "Start rollout"),
-            ("3", "robot_start_critical", "Start critical"),
-            ("4", "robot_end_critical", "End critical"),
-            ("5", "robot_intervention", "Critical intervention"),
-            ("1", "robot_success", "Critical success"),
-            ("0", "robot_failure", "Critical failure"),
-            ("9", "robot_discard", "Discard critical"),
-            ("8", "robot_end_rollout", "End rollout"),
-            ("s", "rollout_mark_success", "Review success"),
-            ("f", "rollout_mark_failure", "Review fail"),
-            ("d", "rollout_toggle_discard", "Review discard"),
+            Binding("left", "show_main", "Main"),
+            Binding("right", "show_logs", "Logs"),
+            Binding("t", "show_trajectory", "Trajectory"),
+            Binding("r", "show_rollouts", "Rollouts"),
+            Binding("q", "quit_app", "Quit"),
+            Binding("2", "robot_start_rollout", "Start episode"),
+            Binding("3", "critical_toggle", "Record critical"),
+            Binding("4", "robot_end_rollout", "End episode"),
+            Binding("5", "robot_intervention", "Intervention"),
+            Binding("6", "training_toggle", "Train on/off"),
+            Binding("7", "rlt_actor_toggle", "RLT head on/off"),
+            Binding("0", "robot_failure", "Fail critical"),
+            Binding("9", "robot_discard", "Discard critical"),
+            Binding("s", "rollout_mark_success", "Review success"),
+            Binding("f", "rollout_mark_failure", "Review fail"),
+            Binding("d", "rollout_toggle_discard", "Review discard"),
         ]
 
         def __init__(self) -> None:
@@ -1094,6 +1098,12 @@ def _run_textual(
             replay_size = server.get("rlt_replay_size", "n/a")
             replay_capacity = server.get("rlt_replay_capacity", "n/a")
             train_head = server.get("rlt_training_head", "unknown")
+            frames_gathered = server.get("rlt_accepted_frames", "n/a")
+            transition_chunks = server.get("rlt_accepted_transitions", "n/a")
+            training_operator_value = server.get("rlt_training_operator_enabled")
+            training_operator_enabled = bool(training_operator_value) if training_operator_value is not None else False
+            rlt_actor_value = server.get("rlt_actor_operator_enabled")
+            rlt_actor_enabled = bool(rlt_actor_value) if rlt_actor_value is not None else False
 
             closing = "\nExperiment process exited; closing TUI..." if self.dead_since is not None else ""
             self.query_one("#phase_card", Static).update(
@@ -1108,10 +1118,10 @@ def _run_textual(
                 f"({_yes_no(client.get('rollout_open'))})\n"
                 f"Critical: {client.get('critical_phase_id', client.get('episode_id', 'n/a'))} "
                 f"({_yes_no(client.get('critical_phase_open', client.get('episode_open')))})\n"
-                f"Pending label: {_yes_no(client.get('critical_pending_label'))}\n"
-                f"Recorded: {critical_recorded}  Discarded: {critical_discarded}\n"
-                f"Last label: {last_label}\n"
-                "Current transitions: "
+                f"Critical sections: {critical_recorded}  Frames: {frames_gathered}\n"
+                f"Chunks: {transition_chunks}  Discarded: {critical_discarded}\n"
+                f"Last: {last_label}  Pending: {_yes_no(client.get('critical_pending_label'))}\n"
+                "Current: "
                 f"{client.get('current_critical_transitions', client.get('current_episode_transitions', 'n/a'))}"
             )
             self.query_one("#training_card", Static).update(
@@ -1119,16 +1129,21 @@ def _run_textual(
                 f"Replay: {replay_size}/{replay_capacity}\n"
                 f"Train step: {server.get('rlt_train_step', 'n/a')}\n"
                 f"State: {train_head}\n"
+                f"Operator: {'started' if training_operator_enabled else 'paused'}\n"
+                f"RLT head: {'enabled' if rlt_actor_enabled else 'disabled'}\n"
                 f"Actor active: {_yes_no(server.get('rlt_actor_training'))}\n"
                 f"Critic active: {_yes_no(server.get('rlt_critic_training'))}"
             )
             self.query_one("#controls_card", Static).update(
                 "[b]Controls[/b]\n"
-                "2: start VLA rollout\n"
-                "5: start/end critical + intervention\n"
+                "2: start episode\n"
+                "3: start/end critical recording\n"
+                "4: end episode + intervention\n"
+                "5: toggle intervention\n"
+                "6: start/pause RLT training\n"
+                "7: enable/disable RLT head\n"
                 "0: critical failure/keep\n"
                 "9: discard critical\n"
-                "8: end VLA rollout\n"
                 "r: rollouts table\n\n"
                 "Left/Right: tabs   q: quit"
             )
@@ -1166,17 +1181,11 @@ def _run_textual(
         def action_robot_start_rollout(self) -> None:
             self._send_robot_command("start_rollout")
 
-        def action_robot_start_critical(self) -> None:
-            self._send_robot_command("start_critical_phase")
-
-        def action_robot_end_critical(self) -> None:
-            self._send_robot_command("end_critical_phase")
+        def action_critical_toggle(self) -> None:
+            self._send_robot_command("toggle_critical_phase")
 
         def action_robot_intervention(self) -> None:
-            self._send_robot_command("toggle_critical_intervention")
-
-        def action_robot_success(self) -> None:
-            self._send_robot_command("success")
+            self._send_robot_command("toggle_intervention")
 
         def action_robot_failure(self) -> None:
             self._send_robot_command("failure")
@@ -1185,19 +1194,41 @@ def _run_textual(
             self._send_robot_command("discard_episode")
 
         def action_robot_end_rollout(self) -> None:
-            self._send_robot_command("end_rollout")
+            self._send_robot_command("end_rollout_enable_intervention")
+
+        def action_training_toggle(self) -> None:
+            self._send_robot_command("toggle_rlt_training")
+
+        def action_rlt_actor_toggle(self) -> None:
+            self._send_robot_command("toggle_rlt_actor")
+
+        def _has_live_critical_to_label(self) -> bool:
+            return bool(
+                self.state.client.get("critical_pending_label")
+                or self.state.client.get("critical_phase_open")
+                or self.state.client.get("episode_open")
+            )
 
         def action_rollout_mark_success(self) -> None:
-            _write_rollout_review_edit(self.state, label="success")
+            if self._has_live_critical_to_label():
+                _write_control_command(control_file, "success", self.state)
+            else:
+                _write_rollout_review_edit(self.state, label="success")
             self.refresh_dashboard()
 
         def action_rollout_mark_failure(self) -> None:
-            _write_rollout_review_edit(self.state, label="failure")
+            if self._has_live_critical_to_label():
+                _write_control_command(control_file, "failure", self.state)
+            else:
+                _write_rollout_review_edit(self.state, label="failure")
             self.refresh_dashboard()
 
         def action_rollout_toggle_discard(self) -> None:
-            row = _latest_reviewable_rollout(self.state)
-            _write_rollout_review_edit(self.state, discard=not bool(row.discard) if row is not None else None)
+            if self._has_live_critical_to_label():
+                _write_control_command(control_file, "discard_episode", self.state)
+            else:
+                row = _latest_reviewable_rollout(self.state)
+                _write_rollout_review_edit(self.state, discard=not bool(row.discard) if row is not None else None)
             self.refresh_dashboard()
 
     return int(DrtcTuiApp().run())

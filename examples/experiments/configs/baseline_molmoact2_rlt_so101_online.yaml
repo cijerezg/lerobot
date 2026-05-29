@@ -71,7 +71,7 @@ rlt_train_freq_s: 1.0
 rlt_save_freq_steps: 250
 rlt_output_dir: outputs/rlt_molmoact2_so101_online
 rlt_demo_buffer_path:
-rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay.pt
+rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260828.pt
 rlt_online_buffer_save_freq_transitions: 50
 rlt_persist_buffer_on_shutdown: true
 

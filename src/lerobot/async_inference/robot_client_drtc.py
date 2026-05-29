@@ -270,6 +270,7 @@ class ObservationRequest:
     chunk_start_step: int
     task: str
     rtc_meta: dict[str, Any] | None = None
+    rlt_meta: dict[str, Any] | None = None
 
 
 @dataclass
@@ -812,6 +813,8 @@ class RobotClientDrtc:
             elif command in {
                 "start_rollout",
                 "end_rollout",
+                "end_rollout_enable_intervention",
+                "toggle_critical_phase",
                 "toggle_critical_intervention",
                 "start_critical_phase",
                 "end_critical_phase",
@@ -1134,6 +1137,8 @@ class RobotClientDrtc:
                 raw_observation["task"] = request.task
                 if request.rtc_meta is not None:
                     raw_observation["__rtc__"] = request.rtc_meta
+                if request.rlt_meta is not None:
+                    raw_observation["__rlt__"] = request.rlt_meta
 
                 t_capture_done = time.perf_counter()
 
@@ -1307,6 +1312,8 @@ class RobotClientDrtc:
     ) -> tuple[float, bool, bool, bool]:
         start_rollout = bool(teleop_events.get("start_rollout"))
         end_rollout = bool(teleop_events.get("end_rollout"))
+        end_rollout_enable_intervention = bool(teleop_events.get("end_rollout_enable_intervention"))
+        toggle_critical_phase = bool(teleop_events.get("toggle_critical_phase"))
         toggle_critical_intervention = bool(teleop_events.get("toggle_critical_intervention"))
         start_critical = bool(teleop_events.get("start_critical_phase"))
         end_critical = bool(teleop_events.get("end_critical_phase"))
@@ -1327,11 +1334,8 @@ class RobotClientDrtc:
             if not getattr(self, "_rlt_rollout_open", False):
                 self._rlt_start_rollout()
             self._rlt_start_critical_phase()
-        if toggle_critical_intervention:
-            intervention_enabled = self._rlt_toggle_critical_intervention()
-            if intervention_enabled is not None:
-                teleop_events[TeleopEvents.IS_INTERVENTION] = bool(intervention_enabled)
-                teleop_events[TeleopEvents.IS_INTERVENTION.value] = bool(intervention_enabled)
+        if toggle_critical_phase or toggle_critical_intervention:
+            self._rlt_toggle_critical_phase()
         else:
             if start_critical:
                 self._rlt_start_critical_phase()
@@ -1343,7 +1347,11 @@ class RobotClientDrtc:
             self._rlt_label_current_critical_phase(success=False)
         if discard:
             self._rlt_discard_current_episode()
-        if end_rollout:
+        if end_rollout_enable_intervention:
+            self._rlt_end_rollout(enable_intervention_for_reset=True)
+            teleop_events[TeleopEvents.IS_INTERVENTION] = True
+            teleop_events[TeleopEvents.IS_INTERVENTION.value] = True
+        elif end_rollout:
             self._rlt_end_rollout()
 
         # Labels are applied and flushed inside the helpers above. Keep the
@@ -1369,39 +1377,32 @@ class RobotClientDrtc:
             timestamp = time.time()
         return max(0.0, float(timestamp) - float(rollout_start_ts))
 
-    def _rlt_toggle_critical_intervention(self) -> bool | None:
+    def _rlt_toggle_critical_phase(self) -> None:
         if not self.config.rlt_online_collection_enabled:
-            return None
+            return
         if not getattr(self, "_rlt_rollout_open", False):
-            self._emit_rlt_status("rlt_critical_intervention_ignored", reason="rollout_not_open")
-            return None
+            self._emit_rlt_status("rlt_critical_toggle_ignored", reason="rollout_not_open")
+            return
         if self._rlt_episode_open:
             self._rlt_end_critical_phase()
-            self._rlt_label_current_critical_phase(success=True)
-            self._set_teleop_intervention_enabled(False)
-            self._emit_rlt_status("rlt_critical_intervention_stopped", auto_label="success")
-            self._metrics.diagnostic.counter("rlt_critical_intervention_stopped", 1)
-            return False
+            self._metrics.diagnostic.counter("rlt_critical_recording_toggled_off", 1)
+            return
         if self._rlt_critical_pending_label:
-            self._rlt_label_current_critical_phase(success=True)
-            self._set_teleop_intervention_enabled(False)
-            self._emit_rlt_status("rlt_critical_intervention_stopped", auto_label="success")
-            self._metrics.diagnostic.counter("rlt_critical_intervention_stopped", 1)
-            return False
+            self._emit_rlt_status("rlt_critical_toggle_ignored", reason="critical_pending_label")
+            return
 
         self._rlt_start_critical_phase()
-        if not self._rlt_episode_open:
-            return None
-        self._set_teleop_intervention_enabled(True)
-        self._emit_rlt_status("rlt_critical_intervention_started", phase="critical_recording_with_intervention")
-        self._metrics.diagnostic.counter("rlt_critical_intervention_started", 1)
-        return True
+        if self._rlt_episode_open:
+            self._metrics.diagnostic.counter("rlt_critical_recording_toggled_on", 1)
 
     def _rlt_start_rollout(self) -> None:
         if not self.config.rlt_online_collection_enabled:
             return
         if getattr(self, "_rlt_rollout_open", False):
             self._emit_rlt_status("rlt_rollout_start_ignored", reason="rollout_already_open")
+            return
+        if self._rlt_critical_pending_label:
+            self._emit_rlt_status("rlt_rollout_start_ignored", reason="critical_pending_label")
             return
         self._disable_teleop_intervention_for_episode_start()
         self._begin_new_inference_epoch("rollout_start")
@@ -1426,7 +1427,7 @@ class RobotClientDrtc:
         self._rlt_phase_intervening = False
         self.logger.info(
             "RLT collector phase: rollout_running | rollout_id=%d | "
-            "press 5=start/end critical intervention, 8=end rollout",
+            "press 3=start/end critical recording, 4=end rollout/reset",
             self._rlt_rollout_id,
         )
         self._emit_rlt_status(
@@ -1437,17 +1438,20 @@ class RobotClientDrtc:
         )
         self._metrics.diagnostic.counter("rlt_rollout_started", 1)
 
-    def _rlt_end_rollout(self) -> None:
+    def _rlt_end_rollout(self, *, enable_intervention_for_reset: bool = False) -> None:
         if not self.config.rlt_online_collection_enabled:
             return
-        if self._rlt_episode_open or self._rlt_critical_pending_label:
-            self._rlt_discard_current_episode(reason="rollout_end")
-        self._disable_teleop_intervention_for_episode_start()
+        if self._rlt_episode_open:
+            self._rlt_end_critical_phase()
+        if enable_intervention_for_reset:
+            self._set_teleop_intervention_enabled(True)
+        else:
+            self._disable_teleop_intervention_for_episode_start()
         self._begin_new_inference_epoch("rollout_end")
         rollout_end_ts = time.time()
         rollout_duration_s = self._rlt_rollout_elapsed_s(rollout_end_ts)
         self._rlt_rollout_open = False
-        self._rlt_phase_intervening = False
+        self._rlt_phase_intervening = bool(enable_intervention_for_reset)
         self._rlt_prebuffer_executed_actions.clear()
         self._rlt_prebuffer_pending_chunks.clear()
         self.logger.info(
@@ -1459,6 +1463,7 @@ class RobotClientDrtc:
             phase="waiting_to_start_rollout",
             rollout_end_ts=rollout_end_ts,
             rollout_duration_s=rollout_duration_s,
+            intervention_for_reset=bool(enable_intervention_for_reset),
         )
         self._metrics.diagnostic.counter("rlt_rollout_ended", 1)
 
@@ -2343,6 +2348,13 @@ class RobotClientDrtc:
                     chunk_start_step=max(current_step, 0),
                     task=task,
                     rtc_meta=rtc_meta,
+                    rlt_meta={
+                        "rollout_open": bool(getattr(self, "_rlt_rollout_open", False)),
+                        "critical_phase_open": bool(getattr(self, "_rlt_episode_open", False)),
+                        "critical_pending_label": bool(getattr(self, "_rlt_critical_pending_label", False)),
+                        "rollout_id": int(getattr(self, "_rlt_rollout_id", 0)),
+                        "critical_phase_id": int(getattr(self, "_rlt_episode_id", 0)),
+                    },
                 )
 
                 # Always reset cooldown when trigger fires (before attempting put)

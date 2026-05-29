@@ -202,7 +202,13 @@ fi
 if [ "${VERBOSE_DIAGNOSTICS:-true}" = true ]; then
     POLICY_SERVER_CMD+=(--metrics_diagnostic_verbose=true)
 fi
-LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE" "${POLICY_SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
+if [ "$ENABLE_TUI" = true ]; then
+    LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE" \
+        LEROBOT_DRTC_CONTROL_FILE="$CONTROL_FILE" \
+        "${POLICY_SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
+else
+    LEROBOT_DRTC_STATUS_FILE="$STATUS_FILE" "${POLICY_SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
+fi
 POLICY_SERVER_PID=$!
 STARTED_SERVER=true
 echo "      Policy server started (PID: $POLICY_SERVER_PID)"
