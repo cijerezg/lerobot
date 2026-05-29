@@ -532,6 +532,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             return
 
         self._rlt_actor_operator_enabled = enabled
+        self.logger.info("RLT head %s by operator command %s", "enabled" if enabled else "disabled", command)
         self._emit_rlt_status(
             "rlt_actor_control",
             command=command,

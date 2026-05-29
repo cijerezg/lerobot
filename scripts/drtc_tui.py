@@ -279,13 +279,17 @@ def _status_event_detail(event: dict[str, Any]) -> str:
         "rlt_accepted_frames",
         "rlt_training_head",
         "rlt_training_paused",
+        "command",
         "rlt_actor_operator_enabled",
         "rlt_train_step",
         "episode_id",
         "buffered_transitions_dropped",
     ):
         if key in event and event[key] not in (None, ""):
-            fields.append(f"{key}={event[key]}")
+            if key == "rlt_actor_operator_enabled":
+                fields.append(f"rlt_head={'enabled' if bool(event[key]) else 'disabled'}")
+            else:
+                fields.append(f"{key}={event[key]}")
     if not fields:
         return ""
     return " | " + " ".join(fields)
@@ -394,6 +398,31 @@ def _ordered_rollout_rows(state: TuiState) -> list[RolloutRow]:
     return rows
 
 
+def _critical_label_counts(state: TuiState) -> tuple[int, int, int]:
+    critical_rows = [
+        row
+        for row in _ordered_rollout_rows(state)
+        if row.critical_phase_id is not None or row.critical_start_s is not None
+    ]
+    if critical_rows:
+        success = sum(1 for row in critical_rows if not row.discard and row.label == "success")
+        failure = sum(1 for row in critical_rows if not row.discard and row.label in {"failure", "fail"})
+        open_count = sum(1 for row in critical_rows if not row.discard and row.label == "open")
+        return success, failure, open_count
+
+    client = state.client
+    success = int(client.get("critical_phases_succeeded") or client.get("episodes_succeeded") or 0)
+    failure = int(client.get("critical_phases_failed") or client.get("episodes_failed") or 0)
+    open_count = int(
+        bool(
+            client.get("critical_pending_label")
+            or client.get("critical_phase_open")
+            or client.get("episode_open")
+        )
+    )
+    return success, failure, open_count
+
+
 def _latest_reviewable_rollout(state: TuiState) -> RolloutRow | None:
     for row in reversed(_ordered_rollout_rows(state)):
         if row.critical_phase_id is not None:
@@ -497,6 +526,23 @@ def _format_rollouts_panel(state: TuiState) -> str:
 
 def _yes_no(value: Any) -> str:
     return "yes" if bool(value) else "no"
+
+
+def _enabled_disabled(value: Any) -> str:
+    return "enabled" if bool(value) else "disabled"
+
+
+def _control_command_label(command: str, state: TuiState) -> str:
+    if command == "toggle_rlt_actor":
+        current_value = state.server.get("rlt_actor_operator_enabled")
+        if current_value is None:
+            return "RLT head toggle"
+        return f"RLT head toggle {'off' if bool(current_value) else 'on'}"
+    if command == "enable_rlt_actor":
+        return "RLT head on"
+    if command == "disable_rlt_actor":
+        return "RLT head off"
+    return command.replace("_", " ")
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -623,7 +669,7 @@ def _run_trajectory_listener(
 
 
 def _write_control_command(control_file: Path | None, command: str, state: TuiState) -> None:
-    label = command.replace("_", " ")
+    label = _control_command_label(command, state)
     if control_file is None:
         state.status_events.append(f"{_format_time(time.time())} tui: control disabled ({label})")
         return
@@ -1097,6 +1143,7 @@ def _run_textual(
             critical_discarded = int(
                 client.get("critical_phases_discarded") or client.get("episodes_discarded") or 0
             )
+            critical_success, critical_failure, critical_open = _critical_label_counts(self.state)
             replay_size = server.get("rlt_replay_size", "n/a")
             replay_capacity = server.get("rlt_replay_capacity", "n/a")
             train_head = server.get("rlt_training_head", "unknown")
@@ -1111,7 +1158,8 @@ def _run_textual(
             self.query_one("#phase_card", Static).update(
                 "[b]Phase[/b]\n"
                 f"{phase}\n\n"
-                f"Intervention: {_yes_no(client.get('intervention'))}"
+                f"Intervention: {_yes_no(client.get('intervention'))}\n"
+                f"RLT head: {_enabled_disabled(rlt_actor_enabled)}"
                 f"{closing}"
             )
             self.query_one("#episode_card", Static).update(
@@ -1121,6 +1169,7 @@ def _run_textual(
                 f"Critical: {client.get('critical_phase_id', client.get('episode_id', 'n/a'))} "
                 f"({_yes_no(client.get('critical_phase_open', client.get('episode_open')))})\n"
                 f"Critical sections: {critical_recorded}  Frames: {frames_gathered}\n"
+                f"Labels: success {critical_success}  fail {critical_failure}  open {critical_open}\n"
                 f"Chunks: {transition_chunks}  Discarded: {critical_discarded}\n"
                 f"Last: {last_label}  Pending: {_yes_no(client.get('critical_pending_label'))}\n"
                 "Current: "
@@ -1132,7 +1181,7 @@ def _run_textual(
                 f"Train step: {server.get('rlt_train_step', 'n/a')}\n"
                 f"State: {train_head}\n"
                 f"Operator: {'started' if training_operator_enabled else 'paused'}\n"
-                f"RLT head: {'enabled' if rlt_actor_enabled else 'disabled'}\n"
+                f"RLT head: {_enabled_disabled(rlt_actor_enabled)}\n"
                 f"Actor active: {_yes_no(server.get('rlt_actor_training'))}\n"
                 f"Critic active: {_yes_no(server.get('rlt_critic_training'))}"
             )
