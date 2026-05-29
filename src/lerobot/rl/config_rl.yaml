@@ -13,6 +13,7 @@
 # 2. Adjust the hot knobs in the model's section.
 # rl_offline.py automatically strips fields that belong to the inactive model
 # before passing the config to draccus, so all sections can coexist here.
+#
 # =============================================================================
 
 
@@ -22,12 +23,11 @@
 # -----------------------------------------------------------------------------
 # Hot knobs (changed often)
 # -----------------------------------------------------------------------------
-offline_output_dir: outputs/molmoact2_bc_offline
-batch_size: 32
-
+offline_output_dir: outputs/molmoact2_offline_anchor_actions_test
+batch_size: 96
 
 # -----------------------------------------------------------------------------
-# Dataset (shared by both models)
+# Dataset
 # -----------------------------------------------------------------------------
 dataset:
   root: outputs/annotated-dataset-v7
@@ -36,22 +36,21 @@ dataset:
   max_episodes: null
   additional_offline_dataset_paths: []   # datasets generated from inference
 
+buffer_cache_dir: outputs/buffer_cache-v7  # Cache directory for the buffer
 
 # -----------------------------------------------------------------------------
 # RL flags (shared)
 # -----------------------------------------------------------------------------
-skip_critic: false
-treat_main_dataset_as_golden: true
-
+skip_critic: true    # Skip critic if not interested in RECAP. It also saved VRAM and training is faster.
+treat_main_dataset_as_golden: true  # True assumes advantage is 1 (optimal action always). If dataset is from teleop, set to true
 
 # -----------------------------------------------------------------------------
 # Validation (shared)
 # -----------------------------------------------------------------------------
-val_dataset_path: outputs/annotated-dataset-validation-v7
-val_split: 0.0
-val_freq: 500
-val_on_start: true     # run probes at step 0 to catch wiring bugs before training amortizes them
-
+val_dataset_path: outputs/annotated-dataset-validation-v7   # Strongly suggest to have a separate validation dataset. MSE on training is not good indicator of performance 
+val_split: 0.0    # If you don't have a separate val set, split your main set using this param.
+val_freq: 800     # How often to run val scripts. They are time-consuming.
+val_on_start: false     # Runs validation at start. This is useful as a baseline, but it takes time.
 
 # =============================================================================
 # Policy: MolmoAct2  (active when policy.type: molmoact2_rl)
@@ -61,8 +60,8 @@ policy:
 
   # ---- Identity & checkpoint ------------------------------------------------
   task: "Pick up the red truck and put it in the bowl"
-  pretrained_path: outputs/molmoact2_bc_offline/checkpoints/002000/pretrained_model
-  base_path: outputs/MolmoAct2-SO100_101
+  pretrained_path: null   # Use if you have a finetuned model   
+  base_path: outputs/MolmoAct2-SO100_101 # Path to HF Molmo model. Download using: hf download allenai/molmoact2-so100_101
 
   # ---- Training mode --------------------------------------------------------
   # KI-style training: VLM trained by discrete CE on FAST tokens, action expert
@@ -72,9 +71,9 @@ policy:
   # to the original "freeze VLM, train action expert only" recipe.
   action_mode: both
   inference_action_mode: continuous
-  discrete_action_tokenizer: /home/user/Documents/Research/RL/LeRobot/outputs/MolmoAct-FAST-tokenizer
-  knowledge_insulation: true
-  train_action_expert_only: false
+  discrete_action_tokenizer: /home/user/Documents/Research/RL/LeRobot/outputs/MolmoAct-FAST-tokenizer  # Download tokenizer using hf download allenai/MolmoAct2-FAST-tokenizer
+  knowledge_insulation: true  
+  train_action_expert_only: false  # If limited VRAM, go with this, but training parts of VLM too produces better
   freeze_embedding: true                # we never train token embeddings
   gradient_checkpointing: true
 
@@ -87,29 +86,30 @@ policy:
   #   • action expert is always trained
   # Critic_* knobs are ignored when skip_critic: true.
   trainable_params:
-    vision_from_layer: null
-    language_from_layer: 18
-    critic_vision_from_layer: null
-    critic_language_from_layer: null
+    vision_from_layer: 16
+    language_from_layer: 0
+    critic_vision_from_layer: 4
+    critic_language_from_layer: 18
 
   # ---- Losses & optimizer ---------------------------------------------------
   optimizer_lr: 5.0e-5                  # action expert LR (VLM frozen)
   optimizer_grad_clip_norm: 1.0
-  optimizer_weight_decay: 0.0
+  optimizer_weight_decay: 0.1
 
   # ---- Reward shaping -------------------------------------------------------
   reward_normalization_constant: 1.0
   terminal_failure_reward: -10.0
   advantage_scaling: 0.2
+  advantage_top_k_fraction: 0.3            # top fraction of non-override samples labeled positive (per-batch quantile cut)
 
-  # ---- Retain update with base weights (periodic EMA pull toward init) ------
-  anchor_alpha: 0.2
-  anchor_every_n_steps: 2000
-  anchor_targets: [policy, critic]        # molmo optimizer group names
+  # ---- Periodic merge toward pretrained weights (see RETAIN paper) ------
+  pretrained_merge_alpha: 0.2
+  pretrained_merge_every_n_steps: 8000
+  pretrained_merge_targets: [policy, critic]        # molmo optimizer group names
 
   # ---- Distributional critic (online RL; skip_critic: true → ignored) -------
   critic_llm_depth: 12
-  num_value_bins: 101
+  num_value_bins: 201
   value_support_min: -2.0
   value_support_max: 0.0
   hl_gauss_sigma_ratio: 5.0
@@ -131,24 +131,22 @@ policy:
   storage_device: cpu
 
   # ---- Inference -----------------------------------------------------------
-  torch_compile: true                     # compile action expert + backbone with reduce-overhead
-  action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
-  inference_advantage: 1.0                # set to null when skip_critic: true (drops the advantage clause to match training)
-  weights_push_interval: 180.0            # seconds between learner→actor weight sync
+  torch_compile: true                     # compile action expert. Helps meet 30Hz run goal
+  action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]  # These values can be obtained from teleoperation  
+  inference_advantage: 1.0                # matches skip_critic: false (training prompt carries the clause; deploy with the "positive" label)
   rtc_config:                             # real-time chunking
     enabled: true
-    execution_horizon: 10
+    execution_horizon: 5
     prefix_attention_schedule: LINEAR
     max_guidance_weight: 10.0
     debug: false
     debug_maxlen: 100
 
   # ---- Architecture ---------------------------------------------------------
-  n_obs_steps: 1
   chunk_size: 30
   n_action_steps: 30
   num_inference_steps: 5                # flow-matching denoising steps
-  gradient_accumulation_steps: 4        # effective batch = batch_size * grad_accum
+  gradient_accumulation_steps: 1        # effective batch = batch_size * grad_accum
   dtype: bfloat16
 
   # ---- Normalization --------------------------------------------------------
@@ -157,9 +155,9 @@ policy:
 
   # ---- Action encoding -----------------------------------------------------
   # "absolute" (default) | "anchor" | "delta"
-  action_encoding: absolute
+  action_encoding: anchor   # molmo was originally trained on absolute actions, but in our experiments anchor works better
   # Required when action_encoding is anchor/delta; ignored otherwise.
-  action_encoding_stats_path: null
+  action_encoding_stats_path: outputs/stats/action_stats_anchor_so101_v3_to_v21_annotated-dataset-v7.pt
 
   # ---- Feature schema -------------------------------------------------------
   normalization_mapping:
@@ -169,10 +167,10 @@ policy:
   input_features:
     observation.images.wrist:
       type: VISUAL
-      shape: [3, 378, 378]
+      shape: [3, 480, 640]
     observation.images.top:
       type: VISUAL
-      shape: [3, 378, 378]
+      shape: [3, 480, 640]
     observation.state:
       type: STATE
       shape: [6]
@@ -187,127 +185,17 @@ policy:
   learner_device: cuda:0
 
   # ---- Distributed runtime (online actor↔learner) ---------------------------
-  # Uncomment and fill in for distributed online training.
-  # actor_learner_config:
-  #   learner_host: 192.168.50.1
-  #   learner_port: 50051
-  #   policy_parameters_push_frequency: 180
-  # concurrency:
-  #   actor: threads
-  #   learner: threads
+  # Learner binds 0.0.0.0 to accept connections from the actor (different machine).
+  actor_learner_config:
+    learner_host: 0.0.0.0
+    learner_port: 50051
+    policy_parameters_push_frequency: 180
+  concurrency:
+    actor: threads
+    learner: threads
 
   # ---- Hub (required by validate(); not actually pushed) --------------------
   repo_id: cijerezg/multi-task-toys-merged-v2
-
-
-# =============================================================================
-# Policy: PI05  (active when policy.type: pi05_rl)
-# — fields here are ignored when policy.type is molmoact2_rl —
-# =============================================================================
-# policy:
-#   type: pi05_rl
-#   task: "Pick up the red truck and put it in the bowl"
-#   base_path: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
-#
-#   gradient_accumulation_steps: 2
-#
-#   trainable_params:
-#     vision_from_layer: 5         # train SigLIP layers >= 5 (depth 27); projector trains too
-#     language_from_layer: 5       # train Gemma blocks >= 5 (depth 18); ln_f trains too
-#     critic_vision_from_layer: null
-#     critic_language_from_layer: 5
-#
-#   loss_weight_flow: 1.0
-#   loss_weight_action_ce: 1.0
-#   loss_weight_subtask_ce: 1.0
-#   optimizer_lr: 0.00005
-#   critic_lr: 0.0001
-#   optimizer_weight_decay: 0.1
-#   optimizer_grad_clip_norm: 2.0
-#
-#   reward_normalization_constant: 10.0
-#   terminal_failure_reward: -15.0
-#   advantage_scaling: 0.20
-#
-#   anchor_alpha: 0.2
-#   anchor_every_n_steps: 2000
-#   anchor_targets: [policy, critic]
-#
-#   num_value_bins: 201
-#   value_support_min: -2.0
-#   value_support_max: 0.0
-#   hl_gauss_sigma_ratio: 8
-#   critic_target_update_weight: 0.02
-#   critic_target_update_every: 4
-#   discount: 0.97
-#
-#   online_buffer_capacity: 5000
-#   offline_buffer_capacity: 50000
-#   online_steps: 20000
-#   offline_steps: 10000
-#   policy_update_freq: 1
-#   critic_warmup_steps: 0
-#   utd_ratio: 1
-#   async_prefetch: false
-#   storage_device: cpu
-#
-#   action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
-#   inference_advantage: 1.0
-#   subtask_regeneration_interval: 1.5
-#   rtc_config:
-#     enabled: true
-#     execution_horizon: 10
-#     prefix_attention_schedule: LINEAR
-#     max_guidance_weight: 10.0
-#     debug: false
-#     debug_maxlen: 100
-#
-#   tokenizer_max_length: 64
-#   max_state_dim: 6
-#   action_dim: 6
-#   n_obs_steps: 1
-#   num_inference_steps: 5
-#   max_decoding_steps: 24
-#   knowledge_insulation: true
-#   use_separate_critic: true
-#   dtype: bfloat16
-#   gradient_checkpointing: true
-#   action_encoding: anchor
-#   action_encoding_stats_path: outputs/stats/action_stats_anchor_annotated_dataset-v4.pt
-#   normalization_mapping:
-#     VISUAL: IDENTITY
-#     STATE: MIN_MAX
-#     ENV: MIN_MAX
-#     ACTION: QUANTILES
-#   input_features:
-#     observation.images.wrist:
-#       type: VISUAL
-#       shape: [3, 224, 224]
-#     observation.images.top:
-#       type: VISUAL
-#       shape: [3, 224, 224]
-#     observation.state:
-#       type: STATE
-#       shape: [6]
-#   output_features:
-#     action:
-#       type: ACTION
-#       shape: [6]
-#
-#   device: cuda
-#   actor_device: cuda:0
-#   learner_device: cuda:0
-#   storage_device: cpu
-#
-#   actor_learner_config:
-#     learner_host: 192.168.50.1
-#     learner_port: 50051
-#     policy_parameters_push_frequency: 180
-#   concurrency:
-#     actor: threads
-#     learner: threads
-#
-#   repo_id: cijerezg/multi-task-toys-merged-v2
 
 
 # -----------------------------------------------------------------------------
@@ -325,16 +213,15 @@ seed: 42
 log_freq: 20
 save_checkpoint: true
 save_freq: 100                # online checkpoint cadence (optimizer steps)
-offline_save_freq: 500        # offline checkpoint cadence
-buffer_cache_dir: outputs/buffer_cache-v7
+offline_save_freq: 400        # offline checkpoint cadence
 use_rerun: true
 
 
 # -----------------------------------------------------------------------------
 # Episode-level logging (online actor)
 # -----------------------------------------------------------------------------
-episode_logging_freq: 4        # log every Nth episode
-episode_save_freq: 10          # save buffer snapshot every Nth episode
+episode_logging_freq: 1        # log every Nth episode
+episode_save_freq: 2          # save buffer snapshot every Nth episode
 video_logging_cameras: [top, wrist]
 
 
@@ -375,21 +262,21 @@ probe_parameters:
   # Bump these once the probes are validated.
   output_dir: outputs/probe
   mode: all
-  max_episodes: 2
-  n_frames_per_episode: 16
+  max_episodes: 5
+  n_frames_per_episode: 64
   random_seed: 42
   timestep: 0.5
 
   # ---- Actions / representations --------------------------------------------
-  ref_max_episodes: 3
-  ref_n_frames_per_episode: 32
+  ref_max_episodes: 50
+  ref_n_frames_per_episode: 128
 
   # Layers / subsampling (relevant once attention / spatial / jacobian are on)
-  spatial_layers: "0"
-  attn_eval_subsample: 5
+  spatial_layers: "0,14,28"
+  attn_eval_subsample: 3
 
   # offline_inference selects N random frames (see EvalOfflineConfig)
-  offline_inference_n_frames: 5
+  offline_inference_n_frames: 8
 
 
 # =============================================================================
@@ -433,7 +320,7 @@ env:
       add_joint_velocity_to_observation: false
       add_current_to_observation: false
     image_preprocessing:
-      resize_size: [378, 378]
+      resize_size: null
     gripper:
       use_gripper: true
       gripper_penalty: 0.00
@@ -442,21 +329,16 @@ env:
       reset_time_s: 10
       control_time_s: 200.0
       terminate_on_success: true
-    reward_classifier:
-      pretrained_path: null
-      success_threshold: 0.5
-      success_reward: 1.0
-    max_gripper_pos: 30
 
 
   # ---- Feature schema (used by make_policy to infer input/output shapes) ----
   features:
     observation.images.wrist:
       type: VISUAL
-      shape: [3, 378, 378]
+      shape: [3, 480, 640]
     observation.images.top:
       type: VISUAL
-      shape: [3, 378, 378]
+      shape: [3, 480, 640]
     observation.state:
       type: STATE
       shape: [6]
@@ -468,3 +350,120 @@ env:
     observation.images.top: observation.images.top
     observation.state: observation.state
     action: action
+
+
+
+# =============================================================================
+# Policy: PI05  (active when policy.type: pi05_rl)
+# — fields here are ignored when policy.type is molmoact2_rl —
+# =============================================================================
+# policy:
+#   type: pi05_rl
+#   task: "Pick up the red truck and put it in the bowl"
+#   pretrained_path: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
+#
+#   gradient_accumulation_steps: 2
+#
+#   trainable_params:
+#     vision_from_layer: 5         # train SigLIP layers >= 5 (depth 27); projector trains too
+#     language_from_layer: 5       # train Gemma blocks >= 5 (depth 18); ln_f trains too
+#     critic_vision_from_layer: null
+#     critic_language_from_layer: 5
+#
+#   loss_weight_flow: 1.0
+#   loss_weight_action_ce: 1.0
+#   loss_weight_subtask_ce: 1.0
+#   optimizer_lr: 0.00005
+#   critic_lr: 0.0001
+#   optimizer_weight_decay: 0.1
+#   optimizer_grad_clip_norm: 2.0
+#
+#   reward_normalization_constant: 10.0
+#   terminal_failure_reward: -15.0
+#   advantage_scaling: 0.20
+#
+#   pretrained_merge_alpha: 0.2
+#   pretrained_merge_every_n_steps: 2000
+#   pretrained_merge_targets: [policy, critic]
+#
+#   critic_llm_depth: 6
+#   num_value_bins: 201
+#   value_support_min: -2.0
+#   value_support_max: 0.0
+#   hl_gauss_sigma_ratio: 8
+#   critic_target_update_weight: 0.02
+#   critic_target_update_every: 4
+#   discount: 0.97
+#
+#   online_buffer_capacity: 5000
+#   offline_buffer_capacity: 50000
+#   online_step_before_learning: 10
+#   online_steps: 20000
+#   offline_steps: 10000
+#   policy_update_freq: 1
+#   critic_warmup_steps: 0
+#   utd_ratio: 1
+#   async_prefetch: false
+#   storage_device: cpu
+#   image_storage_dtype: uint8
+#   image_storage_size: [224, 224]
+#
+#   action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
+#   inference_advantage: 1.0
+#   subtask_regeneration_interval: 1.5
+#   rtc_config:
+#     enabled: true
+#     execution_horizon: 10
+#     prefix_attention_schedule: LINEAR
+#     max_guidance_weight: 10.0
+#     debug: false
+#     debug_maxlen: 100
+#
+#   tokenizer_max_length: 64
+#   max_state_dim: 6
+#   action_dim: 6
+#   max_action_dim: 6
+#   chunk_size: 50
+#   n_action_steps: 50
+#   num_inference_steps: 5
+#   max_decoding_steps: 24
+#   knowledge_insulation: true
+#   use_separate_critic: true
+#   dtype: bfloat16
+#   gradient_checkpointing: true
+#   action_encoding: anchor
+#   action_encoding_stats_path: outputs/stats/action_stats_anchor_annotated_dataset-v4.pt
+#   normalization_mapping:
+#     VISUAL: IDENTITY
+#     STATE: MIN_MAX
+#     ENV: MIN_MAX
+#     ACTION: QUANTILES
+#   input_features:
+#     observation.images.wrist:
+#       type: VISUAL
+#       shape: [3, 224, 224]
+#     observation.images.top:
+#       type: VISUAL
+#       shape: [3, 224, 224]
+#     observation.state:
+#       type: STATE
+#       shape: [6]
+#   output_features:
+#     action:
+#       type: ACTION
+#       shape: [6]
+#
+#   device: cuda
+#   actor_device: cuda:0
+#   learner_device: cuda:0
+#   storage_device: cpu
+#
+#   actor_learner_config:
+#     learner_host: 192.168.50.1
+#     learner_port: 50051
+#     policy_parameters_push_frequency: 180
+#   concurrency:
+#     actor: threads
+#     learner: threads
+#
+#   repo_id: cijerezg/multi-task-toys-merged-v2
