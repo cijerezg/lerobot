@@ -265,6 +265,18 @@ def _format_loss(value: Any) -> str:
     return f"{parsed:.6f}"
 
 
+def _format_compact_float(value: Any) -> str:
+    parsed = _to_float(value)
+    if parsed is None:
+        return "n/a"
+    abs_value = abs(parsed)
+    if abs_value != 0 and abs_value < 0.001:
+        return f"{parsed:.2e}"
+    if abs_value < 10:
+        return f"{parsed:.4f}"
+    return f"{parsed:.2f}"
+
+
 def _status_event_detail(event: dict[str, Any]) -> str:
     fields: list[str] = []
     for key in (
@@ -281,6 +293,11 @@ def _status_event_detail(event: dict[str, Any]) -> str:
         "rlt_training_paused",
         "command",
         "rlt_actor_operator_enabled",
+        "rlt_policy_mode",
+        "rlt_actor_executing",
+        "rlt_actor_gate_reason",
+        "rlt_action_deviation_rms",
+        "rlt_action_deviation_abs_max",
         "rlt_train_step",
         "episode_id",
         "buffered_transitions_dropped",
@@ -288,6 +305,10 @@ def _status_event_detail(event: dict[str, Any]) -> str:
         if key in event and event[key] not in (None, ""):
             if key == "rlt_actor_operator_enabled":
                 fields.append(f"rlt_head={'enabled' if bool(event[key]) else 'disabled'}")
+            elif key == "rlt_actor_executing":
+                fields.append(f"rlt_actor_used={'yes' if bool(event[key]) else 'no'}")
+            elif key in {"rlt_action_deviation_rms", "rlt_action_deviation_abs_max"}:
+                fields.append(f"{key}={_format_compact_float(event[key])}")
             else:
                 fields.append(f"{key}={event[key]}")
     if not fields:
@@ -1153,13 +1174,22 @@ def _run_textual(
             training_operator_enabled = bool(training_operator_value) if training_operator_value is not None else False
             rlt_actor_value = server.get("rlt_actor_operator_enabled")
             rlt_actor_enabled = bool(rlt_actor_value) if rlt_actor_value is not None else False
+            rlt_actor_executing = bool(server.get("rlt_actor_executing", False))
+            rlt_policy_mode = server.get("rlt_policy_mode") or "n/a"
+            rlt_gate_reason = server.get("rlt_actor_gate_reason") or "n/a"
+            rlt_delta_rms = _format_compact_float(server.get("rlt_action_deviation_rms"))
+            rlt_delta_abs_max = _format_compact_float(server.get("rlt_action_deviation_abs_max"))
+            rlt_steps_until_execute = server.get("rlt_steps_until_execute", "n/a")
 
             closing = "\nExperiment process exited; closing TUI..." if self.dead_since is not None else ""
             self.query_one("#phase_card", Static).update(
                 "[b]Phase[/b]\n"
                 f"{phase}\n\n"
                 f"Intervention: {_yes_no(client.get('intervention'))}\n"
-                f"RLT head: {_enabled_disabled(rlt_actor_enabled)}"
+                f"RLT toggle: {_enabled_disabled(rlt_actor_enabled)}\n"
+                f"RLT used: {_yes_no(rlt_actor_executing)}  Mode: {rlt_policy_mode}\n"
+                f"Gate: {rlt_gate_reason}  Steps left: {rlt_steps_until_execute}\n"
+                f"Delta rms/max: {rlt_delta_rms}/{rlt_delta_abs_max}"
                 f"{closing}"
             )
             self.query_one("#episode_card", Static).update(
@@ -1181,9 +1211,9 @@ def _run_textual(
                 f"Train step: {server.get('rlt_train_step', 'n/a')}\n"
                 f"State: {train_head}\n"
                 f"Operator: {'started' if training_operator_enabled else 'paused'}\n"
-                f"RLT head: {_enabled_disabled(rlt_actor_enabled)}\n"
-                f"Actor active: {_yes_no(server.get('rlt_actor_training'))}\n"
-                f"Critic active: {_yes_no(server.get('rlt_critic_training'))}"
+                f"Actor toggle: {_enabled_disabled(rlt_actor_enabled)}\n"
+                f"Actor train: {_yes_no(server.get('rlt_actor_training'))}\n"
+                f"Critic train: {_yes_no(server.get('rlt_critic_training'))}"
             )
             self.query_one("#controls_card", Static).update(
                 "[b]Controls[/b]\n"

@@ -388,6 +388,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_training_operator_enabled = not self._tui_control_reader.enabled
         self._rlt_actor_operator_enabled = not self._tui_control_reader.enabled
         self._rlt_actor_critical_phase_active = False
+        self._rlt_last_inference_status_key: tuple[Any, ...] | None = None
+        self._rlt_last_inference_status_ts = 0.0
 
         # Review-only image capture (off by default; enabled via RemotePolicyConfig).
         self._rlt_review_capture_enabled = False
@@ -941,6 +943,79 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         actor_loaded = bool(getattr(self.policy, "_rlt_actor_loaded", False))
         return actor_loaded or self._rlt_train_step >= self._rlt_execute_after_train_steps
 
+    def _rlt_actor_gate_reason(self, *, critical_phase_active: bool) -> str:
+        if not self._is_rlt_policy() or self.policy is None:
+            return "not_rlt_policy"
+        if not critical_phase_active:
+            return "not_critical"
+        if not getattr(self, "_rlt_actor_operator_enabled", True):
+            return "operator_disabled"
+        cfg = getattr(self.policy, "config", None)
+        if not bool(getattr(cfg, "rlt_enabled", False)):
+            return "rlt_disabled"
+        if self._rlt_actor_disabled_by_safety:
+            return "safety_disabled"
+        actor_loaded = bool(getattr(self.policy, "_rlt_actor_loaded", False))
+        if not actor_loaded and self._rlt_train_step < self._rlt_execute_after_train_steps:
+            return "train_step_gate"
+        return "executing"
+
+    def _emit_rlt_inference_status(
+        self,
+        *,
+        policy_mode: str,
+        critical_phase_active: bool,
+        actor_executing: bool,
+        action_deviation_rms: float | None,
+        action_deviation_abs_max: float | None,
+        window_start_index: int,
+        window_len: int,
+    ) -> None:
+        if not policy_mode:
+            return
+        gate_reason = self._rlt_actor_gate_reason(critical_phase_active=critical_phase_active)
+        if policy_mode == "rlt_safety_passthrough":
+            gate_reason = "safety_passthrough"
+        actor_loaded = bool(getattr(self.policy, "_rlt_actor_loaded", False)) if self.policy is not None else False
+        steps_until_execute = (
+            0
+            if actor_loaded
+            else max(0, int(self._rlt_execute_after_train_steps) - int(self._rlt_train_step))
+        )
+        # Emit immediately when the state changes, and otherwise refresh about
+        # once a second so the TUI gets fresh actor-reference delta magnitudes.
+        status_key = (
+            policy_mode,
+            bool(actor_executing),
+            gate_reason,
+            bool(critical_phase_active),
+            bool(getattr(self, "_rlt_actor_operator_enabled", True)),
+            bool(self._rlt_actor_disabled_by_safety),
+            bool(actor_loaded),
+            int(self._rlt_train_step),
+        )
+        now = time.time()
+        if status_key == self._rlt_last_inference_status_key and (
+            now - self._rlt_last_inference_status_ts
+        ) < 1.0:
+            return
+        self._rlt_last_inference_status_key = status_key
+        self._rlt_last_inference_status_ts = now
+        self._emit_rlt_status(
+            "rlt_inference_state",
+            rlt_policy_mode=policy_mode,
+            rlt_actor_executing=bool(actor_executing),
+            rlt_actor_gate_reason=gate_reason,
+            rlt_actor_prediction_available=action_deviation_rms is not None,
+            rlt_action_deviation_rms=action_deviation_rms,
+            rlt_action_deviation_abs_max=action_deviation_abs_max,
+            rlt_window_start_index=int(window_start_index),
+            rlt_window_len=int(window_len),
+            rlt_actor_loaded=actor_loaded,
+            rlt_execute_after_train_steps=int(self._rlt_execute_after_train_steps),
+            rlt_steps_until_execute=steps_until_execute,
+        )
+
     def _predict_pi05_rlt_with_context(
         self,
         observation: dict[str, torch.Tensor],
@@ -960,6 +1035,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             window_start = 0
             if rtc_kwargs:
                 window_start = min(max(0, int(rtc_kwargs.get("inference_delay", 0))), max_start)
+            actor_executing = False
+            action_deviation_rms: float | None = None
+            action_deviation_abs_max: float | None = None
             if self._rlt_should_execute_actor(critical_phase_active=critical_phase_active):
                 window_end = window_start + rlt_window
                 actor_ref = reference[:, window_start:window_end].to(
@@ -981,7 +1059,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     refined_prefix = actor_ref + self._rlt_eval_actor_blend * (
                         refined_prefix - actor_ref
                     )
-                action_deviation_abs_max = float((refined_prefix - actor_ref).detach().abs().max().cpu())
+                action_deviation = (refined_prefix - actor_ref).detach()
+                action_deviation_rms = float(action_deviation.pow(2).mean().sqrt().cpu())
+                action_deviation_abs_max = float(action_deviation.abs().max().cpu())
                 if (
                     self._rlt_action_deviation_abs_max is not None
                     and action_deviation_abs_max > float(self._rlt_action_deviation_abs_max)
@@ -1003,6 +1083,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                         dim=1,
                     )
                     policy_mode = "rlt_actor"
+                    actor_executing = True
             else:
                 action_tensor = reference
                 if not critical_phase_active:
@@ -1013,6 +1094,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     policy_mode = "warmup"
                 else:
                     policy_mode = "vla_passthrough"
+            self._emit_rlt_inference_status(
+                policy_mode=policy_mode,
+                critical_phase_active=critical_phase_active,
+                actor_executing=actor_executing,
+                action_deviation_rms=action_deviation_rms,
+                action_deviation_abs_max=action_deviation_abs_max,
+                window_start_index=window_start,
+                window_len=rlt_window,
+            )
         return action_tensor, reference, rl_token, proprio, policy_mode, window_start
 
     @staticmethod
@@ -1490,6 +1580,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_episode_id_offset = 0
         self._rlt_safety_violation_count = 0
         self._rlt_actor_disabled_by_safety = False
+        self._rlt_last_inference_status_key = None
+        self._rlt_last_inference_status_ts = 0.0
         self._rlt_completed_episodes.clear()
         # Review-archive state is rebuilt on the next _configure_rlt_online.
         self._rlt_review_archive = []
