@@ -26,6 +26,8 @@
 #   POLICY_SERVER_PORT      - Port to check / bind (default: 8080)
 #   DRTC_TRAJECTORY_WS_URL  - Trajectory viz WebSocket URL for TUI/client (default: ws://localhost:8089)
 #   DRTC_TUI                - Set false/0/no/off to disable the TUI (default: true)
+#   PYTORCH_CUDA_ALLOC_CONF - PyTorch CUDA allocator options (default: expandable_segments:True)
+#   LEROBOT_DRTC_POLICY_LOAD_DEVICE - Force model staging device (default: cpu for MolmoAct2 on CUDA)
 #
 # =============================================================================
 
@@ -53,6 +55,7 @@ POLICY_SERVER_DELAY_S="${POLICY_SERVER_DELAY_S:-3}"
 POLICY_SERVER_HOST="${POLICY_SERVER_HOST:-localhost}"
 POLICY_SERVER_PORT="${POLICY_SERVER_PORT:-8080}"
 TRAJECTORY_WS_URL="${DRTC_TRAJECTORY_WS_URL:-ws://localhost:8089}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 ARGS=("$@")
 for ((i = 0; i < ${#ARGS[@]}; i++)); do
     case "${ARGS[$i]}" in
@@ -154,6 +157,7 @@ echo "  DRTC Experiment Runner"
 echo "=============================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Arguments:    $*"
+echo "CUDA alloc:   $PYTORCH_CUDA_ALLOC_CONF"
 if [ "$ENABLE_TUI" = true ]; then
     echo "TUI:          enabled (use --no-tui or DRTC_TUI=false to disable)"
 else

@@ -672,6 +672,62 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self.logger.warning("RLT WandB logging failed; disabling WandB for this run: %s", e)
             self._emit_rlt_status("rlt_wandb_error", rlt_wandb_error=str(e))
 
+    def _cuda_device_index(self) -> int | None:
+        device = str(getattr(self, "device", "") or "")
+        if not device.startswith("cuda") or not torch.cuda.is_available():
+            return None
+        parsed = torch.device(device)
+        return int(parsed.index) if parsed.index is not None else int(torch.cuda.current_device())
+
+    def _log_cuda_memory(self, label: str) -> None:
+        device_index = self._cuda_device_index()
+        if device_index is None:
+            return
+        try:
+            free_bytes, total_bytes = torch.cuda.mem_get_info(device_index)
+            allocated = torch.cuda.memory_allocated(device_index)
+            reserved = torch.cuda.memory_reserved(device_index)
+            max_allocated = torch.cuda.max_memory_allocated(device_index)
+            max_reserved = torch.cuda.max_memory_reserved(device_index)
+            mib = 1024 * 1024
+            self.logger.info(
+                "CUDA memory %s | free=%.1fMiB total=%.1fMiB allocated=%.1fMiB "
+                "reserved=%.1fMiB max_allocated=%.1fMiB max_reserved=%.1fMiB",
+                label,
+                free_bytes / mib,
+                total_bytes / mib,
+                allocated / mib,
+                reserved / mib,
+                max_allocated / mib,
+                max_reserved / mib,
+            )
+        except Exception as e:
+            self.logger.debug("CUDA memory diagnostic failed at %s: %s", label, e)
+
+    def _log_cuda_memory_summary(self, label: str) -> None:
+        device_index = self._cuda_device_index()
+        if device_index is None:
+            return
+        try:
+            self.logger.error(
+                "CUDA memory summary at %s:\n%s",
+                label,
+                torch.cuda.memory_summary(device=device_index, abbreviated=True),
+            )
+        except Exception as e:
+            self.logger.debug("CUDA memory summary failed at %s: %s", label, e)
+
+    def _policy_load_device(self) -> str:
+        target_device = str(getattr(self, "device", "") or "")
+        if not target_device.startswith("cuda"):
+            return target_device
+        override = os.environ.get("LEROBOT_DRTC_POLICY_LOAD_DEVICE")
+        if override:
+            return override
+        if self.policy_type in {"molmoact2", "molmoact2better", "molmoact2_rlt"}:
+            return "cpu"
+        return target_device
+
     def _load_rlt_replay_file(self, path: str | None, *, source: str) -> int:
         if not path:
             return 0
@@ -1561,6 +1617,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 self.logger.warning("RLT trainer thread did not exit within 5s during reset.")
         self._rlt_trainer_thread = None
         self._finish_rlt_wandb(reason="reset")
+        self._rlt_actor_optimizer = None
+        self._rlt_critic_optimizer = None
+        self.policy = None
+        self.preprocessor = None
+        self.postprocessor = None
+        if torch.cuda.is_available():
+            with suppress(Exception):
+                torch.cuda.empty_cache()
+            self._log_cuda_memory("after_reset_empty_cache")
 
         # Reset registers (avoid leaking prior session values)
         self._obs_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)
@@ -1719,6 +1784,17 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             policy_load_path,
             self.device,
         )
+        policy_load_device = self._policy_load_device()
+        if policy_load_device != str(self.device):
+            self.logger.info(
+                "Policy weights will be staged on %s before moving to runtime device %s",
+                policy_load_device,
+                self.device,
+            )
+        if self._cuda_device_index() is not None:
+            with suppress(Exception):
+                torch.cuda.empty_cache()
+            self._log_cuda_memory("before_policy_load")
         self._rlt_eval_actor_blend = float(getattr(policy_specs, "rlt_eval_actor_blend", 1.0))
         t_load_start = time.perf_counter()
         if self.policy_type == "pi05_rl":
@@ -1747,7 +1823,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             # Common RLT keyword arguments shared by all wrappers.
             rlt_kwargs: dict[str, Any] = dict(
-                device=self.device,
+                device=policy_load_device,
                 rlt_enabled=bool(getattr(policy_specs, "rlt_enabled", False)),
                 rlt_embedding_checkpoint=getattr(policy_specs, "rlt_embedding_checkpoint", None),
                 rlt_head_checkpoint=getattr(policy_specs, "rlt_head_checkpoint", None),
@@ -1816,11 +1892,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             if getattr(policy_specs, "num_flow_matching_steps", None) is not None:
                 cfg_obj.num_inference_steps = int(policy_specs.num_flow_matching_steps)
-            self.policy = policy_class.from_pretrained(
-                policy_processor_path,
-                config=cfg_obj,
-                strict=False,
-            )
+            try:
+                self.policy = policy_class.from_pretrained(
+                    policy_processor_path,
+                    config=cfg_obj,
+                    strict=False,
+                )
+            except torch.cuda.OutOfMemoryError:
+                self._log_cuda_memory("policy_from_pretrained_oom")
+                self._log_cuda_memory_summary("policy_from_pretrained_oom")
+                raise
         elif self.policy_type == "pistar06" and policy_checkpoint_path is not None:
             from lerobot.configs.policies import PreTrainedConfig
 
@@ -1842,20 +1923,26 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 from lerobot.configs.policies import PreTrainedConfig
 
                 cfg_obj = PreTrainedConfig.from_pretrained(policy_processor_path)
-            cfg_obj.device = self.device
+            cfg_obj.device = policy_load_device
             cfg_obj.pretrained_path = Path(policy_processor_path)
             cfg_obj.inference_action_mode = "continuous"
             cfg_obj.enable_inference_cuda_graph = False
             if getattr(policy_specs, "num_flow_matching_steps", None) is not None:
                 cfg_obj.num_inference_steps = int(policy_specs.num_flow_matching_steps)
-            self.policy = policy_class.from_pretrained(
-                policy_processor_path,
-                config=cfg_obj,
-                strict=False,
-            )
+            try:
+                self.policy = policy_class.from_pretrained(
+                    policy_processor_path,
+                    config=cfg_obj,
+                    strict=False,
+                )
+            except torch.cuda.OutOfMemoryError:
+                self._log_cuda_memory("policy_from_pretrained_oom")
+                self._log_cuda_memory_summary("policy_from_pretrained_oom")
+                raise
         else:
             self.policy = policy_class.from_pretrained(policy_processor_path)
         t_load_done = time.perf_counter()
+        self._log_cuda_memory("after_policy_load")
         self.logger.info(
             "Loaded policy weights in %.1fs | moving to %s ...",
             t_load_done - t_load_start,
@@ -1863,7 +1950,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         )
 
         t_to_start = time.perf_counter()
-        self.policy.to(self.device)
+        try:
+            self.policy.to(self.device)
+        except torch.cuda.OutOfMemoryError:
+            self._log_cuda_memory("policy_to_device_oom")
+            self._log_cuda_memory_summary("policy_to_device_oom")
+            raise
+        with suppress(Exception):
+            self.policy.config.device = self.device
         if self.policy_type in (
             "pi05_rlt",
             "tinypi05",
@@ -1879,6 +1973,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 self.policy.model.to(dtype=torch.float16)
                 self.logger.info("Converted %s backbone to float16", self.policy_type)
         t_to_done = time.perf_counter()
+        self._log_cuda_memory("after_policy_to_device")
         self.logger.info("Moved policy to %s in %.1fs", self.device, t_to_done - t_to_start)
 
         inferred_horizon = _infer_model_action_horizon(getattr(self.policy, "config", None))
