@@ -154,6 +154,127 @@ class _DiagnosticStub:
         pass
 
 
+def _server_for_rlt_status(policy_server_drtc):
+    server = policy_server_drtc.PolicyServerDrtc.__new__(policy_server_drtc.PolicyServerDrtc)
+    server.policy_type = "molmoact2_rlt"
+    server._rlt_replay_lock = threading.Lock()
+    server._rlt_replay = RLTReplayBuffer(capacity=4)
+    server._rlt_replay_capacity = 4
+    server._rlt_completed_episodes = set()
+    server._rlt_train_step = 0
+    server._rlt_loaded_head_step = 0
+    server._rlt_execute_after_train_steps = 1000
+    server._rlt_online_collection_enabled = True
+    server._rlt_online_training_enabled = True
+    server._rlt_training_operator_enabled = True
+    server._rlt_actor_operator_enabled = True
+    server._rlt_actor_critical_phase_active = False
+    server._rlt_eval_actor_blend = 1.0
+    server._rlt_training_head = "idle"
+    server._rlt_actor_disabled_by_safety = False
+    server._rlt_demo_replay_size = 0
+    server._rlt_online_replay_size = 0
+    server._rlt_accepted_transitions = 0
+    server._rlt_accepted_frames = 0
+    server._rlt_critic_updates_per_actor = 1
+    server._rlt_success_sample_fraction = 0.0
+    server._rlt_intervention_sample_fraction = 0.0
+    server._rlt_intervention_reference_mode = "executed"
+    server._rlt_wandb_enabled = False
+    server._rlt_wandb_run = None
+    server._rlt_wandb_project = "lerobot-rlt"
+    server._rlt_wandb_run_name = None
+    server._rlt_wandb_mode = None
+    server._rlt_last_policy_mode = "not_configured"
+    server._rlt_last_actor_executing = False
+    server._rlt_last_actor_gate_reason = "not_configured"
+    server._rlt_last_actor_prediction_available = False
+    server._rlt_last_action_deviation_rms = None
+    server._rlt_last_action_deviation_abs_max = None
+    server._rlt_last_inference_event_ts = None
+    server._rlt_last_inference_status_key = None
+    server._rlt_last_inference_status_ts = 0.0
+    return server
+
+
+@require_package("grpcio", "grpc")
+def test_rlt_status_reports_persisted_head_checkpoint(monkeypatch):
+    from lerobot.async_inference import policy_server_drtc
+
+    emitted: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        policy_server_drtc,
+        "emit_status",
+        lambda source, event, **fields: emitted.append((source, event, fields)),
+    )
+
+    server = _server_for_rlt_status(policy_server_drtc)
+    server.policy = SimpleNamespace(
+        config=SimpleNamespace(
+            rlt_enabled=True,
+            rlt_embedding_checkpoint="outputs/embed.pt",
+            rlt_head_checkpoint="outputs/rlt_head_latest.pt",
+        ),
+        _rlt_actor_loaded=True,
+        _rlt_loaded_head_step=250,
+    )
+    server._rlt_loaded_head_step = 250
+    server._rlt_train_step = 250
+
+    server._emit_rlt_status("rlt_configured")
+
+    fields = emitted[0][2]
+    assert fields["rlt_enabled"] is True
+    assert fields["rlt_head_checkpoint"] == "outputs/rlt_head_latest.pt"
+    assert fields["rlt_head_checkpoint_loaded"] is True
+    assert fields["rlt_head_status"] == "loaded_from_disk"
+    assert fields["rlt_actor_available"] is True
+    assert fields["rlt_loaded_head_step"] == 250
+
+
+@require_package("grpcio", "grpc")
+def test_rlt_inference_status_persists_actor_usage_and_vla_delta(monkeypatch):
+    from lerobot.async_inference import policy_server_drtc
+
+    emitted: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        policy_server_drtc,
+        "emit_status",
+        lambda source, event, **fields: emitted.append((source, event, fields)),
+    )
+
+    server = _server_for_rlt_status(policy_server_drtc)
+    server.policy = SimpleNamespace(
+        config=SimpleNamespace(rlt_enabled=True, rlt_head_checkpoint=None),
+        _rlt_actor_loaded=True,
+        _rlt_loaded_head_step=0,
+    )
+
+    server._emit_rlt_inference_status(
+        policy_mode="rlt_actor",
+        critical_phase_active=True,
+        actor_executing=True,
+        action_deviation_rms=0.125,
+        action_deviation_abs_max=0.5,
+        window_start_index=2,
+        window_len=10,
+    )
+    server._emit_rlt_status("rlt_training_state")
+
+    inference_fields = emitted[0][2]
+    assert inference_fields["rlt_policy_mode"] == "rlt_actor"
+    assert inference_fields["rlt_actor_executing"] is True
+    assert inference_fields["rlt_actor_gate_reason"] == "executing"
+    assert inference_fields["rlt_action_deviation_rms"] == 0.125
+    assert inference_fields["rlt_action_deviation_abs_max"] == 0.5
+
+    later_fields = emitted[1][2]
+    assert later_fields["rlt_policy_mode"] == "rlt_actor"
+    assert later_fields["rlt_actor_executing"] is True
+    assert later_fields["rlt_action_deviation_rms"] == 0.125
+    assert later_fields["rlt_action_deviation_abs_max"] == 0.5
+
+
 def _server_for_accept_transition(policy_server_drtc):
     server = policy_server_drtc.PolicyServerDrtc.__new__(policy_server_drtc.PolicyServerDrtc)
     server._rlt_context_cache = policy_server_drtc.RLTSourceContextCache(max_size=4)

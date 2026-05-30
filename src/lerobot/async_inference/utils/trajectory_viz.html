@@ -341,6 +341,126 @@
             height: 94px !important;
         }
 
+        .rlt-comparison-panel,
+        .rollouts-panel {
+            background: var(--bg-white);
+            border: 3px solid var(--structural-black);
+            padding: 16px;
+            margin-bottom: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .rlt-comparison-panel::before,
+        .rollouts-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--primary-blue);
+        }
+
+        .rlt-comparison-title,
+        .rollouts-title {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            font-weight: 700;
+        }
+
+        .rlt-comparison-metrics {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .rlt-comparison-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        .rlt-comparison-chart {
+            background: var(--bg-cream);
+            border: 2px solid var(--structural-black);
+            padding: 8px;
+            min-width: 0;
+            height: 172px;
+        }
+
+        .rlt-comparison-chart h3 {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+        }
+
+        .rlt-comparison-chart canvas {
+            width: 100% !important;
+            height: 132px !important;
+        }
+
+        .rollouts-table-wrap {
+            overflow-x: auto;
+            border: 2px solid var(--structural-black);
+            background: var(--bg-cream);
+        }
+
+        .rollouts-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            min-width: 900px;
+        }
+
+        .rollouts-table th,
+        .rollouts-table td {
+            border-bottom: 1px solid var(--grid-line);
+            padding: 7px 8px;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .rollouts-table th {
+            background: var(--structural-black);
+            color: var(--bg-cream);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+
+        .rollouts-table td {
+            font-family: 'Courier New', monospace;
+        }
+
+        .rollout-label.success {
+            color: #2d6a4f;
+            font-weight: 800;
+        }
+
+        .rollout-label.failure,
+        .rollout-label.fail {
+            color: var(--primary-red);
+            font-weight: 800;
+        }
+
+        .rollout-label.discarded {
+            color: var(--ochre);
+            font-weight: 800;
+        }
+
+        .rollouts-empty {
+            padding: 12px;
+            color: var(--ochre);
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+        }
+
         /* RTC Parameters Panel */
         .rtc-panel {
             background: var(--bg-white);
@@ -902,6 +1022,12 @@
             .rlt-metrics-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
+            .rlt-comparison-metrics {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .rlt-comparison-grid {
+                grid-template-columns: 1fr;
+            }
             .charts-grid {
                 grid-template-columns: 1fr;
             }
@@ -986,11 +1112,86 @@
                     <span class="rlt-metric-label">Critic Grad</span>
                     <span class="rlt-metric-value" id="rlt-critic-grad">--</span>
                 </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Policy Mode</span>
+                    <span class="rlt-metric-value" id="rlt-policy-mode">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">Gate</span>
+                    <span class="rlt-metric-value" id="rlt-gate">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">RLT Active</span>
+                    <span class="rlt-metric-value" id="rlt-active">--</span>
+                </div>
+                <div class="rlt-metric">
+                    <span class="rlt-metric-label">RLT/Base RMS</span>
+                    <span class="rlt-metric-value" id="rlt-delta-rms">--</span>
+                </div>
             </div>
             <div class="rlt-loss-chart-container">
                 <canvas id="rlt-loss-chart"></canvas>
             </div>
             <div class="rlt-meta" id="rlt-meta">event: -- | actor q: -- | critic q: --</div>
+        </div>
+    </div>
+
+    <div class="rollouts-panel">
+        <div class="rollouts-title">RLT Rollouts</div>
+        <div class="rollouts-table-wrap">
+            <table class="rollouts-table">
+                <thead>
+                    <tr>
+                        <th>Rollout</th>
+                        <th>Critical</th>
+                        <th>Server Ep</th>
+                        <th>Status</th>
+                        <th>Rollout Start</th>
+                        <th>Critical Start</th>
+                        <th>Critical End</th>
+                        <th>Duration</th>
+                        <th>Label</th>
+                        <th>Discard</th>
+                        <th>Transitions</th>
+                    </tr>
+                </thead>
+                <tbody id="rollouts-table-body">
+                    <tr><td colspan="11"><div class="rollouts-empty">Waiting for rollout events...</div></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="rlt-comparison-panel">
+        <div class="rlt-comparison-title">RLT Head vs Base Policy</div>
+        <div class="rlt-comparison-metrics">
+            <div class="rlt-metric">
+                <span class="rlt-metric-label">Chunk</span>
+                <span class="rlt-metric-value" id="rlt-pred-chunk">--</span>
+            </div>
+            <div class="rlt-metric">
+                <span class="rlt-metric-label">Mode</span>
+                <span class="rlt-metric-value" id="rlt-pred-mode">--</span>
+            </div>
+            <div class="rlt-metric">
+                <span class="rlt-metric-label">Window</span>
+                <span class="rlt-metric-value" id="rlt-pred-window">--</span>
+            </div>
+            <div class="rlt-metric">
+                <span class="rlt-metric-label">RMS Delta</span>
+                <span class="rlt-metric-value" id="rlt-pred-rms">--</span>
+            </div>
+            <div class="rlt-metric">
+                <span class="rlt-metric-label">Max Delta</span>
+                <span class="rlt-metric-value" id="rlt-pred-max">--</span>
+            </div>
+            <div class="rlt-metric">
+                <span class="rlt-metric-label">Status</span>
+                <span class="rlt-metric-value" id="rlt-pred-status">Waiting</span>
+            </div>
+        </div>
+        <div class="rlt-comparison-grid" id="rlt-comparison-grid">
+            <div class="empty-state">Waiting for RLT/base prediction pairs...</div>
         </div>
     </div>
     
@@ -1132,6 +1333,7 @@
         const MAX_ROLLING_AVG_POINTS = 100;
         const MAX_RLT_POINTS = 200;
         const MAX_EPISODE_HISTORY = 20;
+        const MAX_ROLLOUT_ROWS = 100;
         const MAX_DEBUG_LINES = 10;
         const CHUNK_COLORS = [
             '#c1272d',  // vermillion
@@ -1152,6 +1354,7 @@
         let rollingAvgChart = null;
         let prefixWeightsChart = null;  // RTC prefix weights chart
         let rltLossChart = null;
+        let rltCompareCharts = [];
         let currentRtcParams = null;  // Current RTC parameters
         let lastRtcParamsJson = null;  // For debouncing RTC panel updates
         let chunks = [];
@@ -1171,6 +1374,12 @@
         let rltSequence = 0;
         let latestRltStatus = {};
         let rltLossHistory = [];
+        const rolloutState = {
+            rows: new Map(),
+            order: [],
+            currentRolloutId: null,
+            rolloutStarts: new Map(),
+        };
         const episodeState = {
             success: 0,
             failure: 0,
@@ -1217,6 +1426,32 @@
         function setText(id, value) {
             const el = document.getElementById(id);
             if (el) el.textContent = value;
+        }
+
+        function numericOrNull(value) {
+            const n = Number(value);
+            return Number.isFinite(n) ? n : null;
+        }
+
+        function formatTimestamp(value) {
+            const ts = numericOrNull(value);
+            if (ts === null) return '--';
+            return new Date(ts * 1000).toLocaleTimeString();
+        }
+
+        function formatSeconds(value) {
+            const seconds = numericOrNull(value);
+            if (seconds === null) return '--';
+            return `${seconds.toFixed(2)}s`;
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '--')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function debug(msg) {
@@ -1951,6 +2186,172 @@
             }
         }
 
+        function initRltCompareCharts(numDims) {
+            const grid = document.getElementById('rlt-comparison-grid');
+            grid.innerHTML = '';
+            rltCompareCharts = [];
+
+            for (let d = 0; d < numDims; d++) {
+                const container = document.createElement('div');
+                container.className = 'rlt-comparison-chart';
+                container.innerHTML = `
+                    <h3>Joint ${d}</h3>
+                    <canvas id="rlt-compare-chart-${d}"></canvas>
+                `;
+                grid.appendChild(container);
+
+                const ctx = document.getElementById(`rlt-compare-chart-${d}`).getContext('2d');
+                const chart = new Chart(ctx, {
+                    type: 'line',
+                    data: { datasets: [] },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top',
+                                labels: {
+                                    color: '#1a1a1a',
+                                    boxWidth: 12,
+                                    padding: 8,
+                                    font: { size: 10, weight: 'bold' }
+                                }
+                            },
+                            annotation: { annotations: {} },
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Step #',
+                                    color: '#1a1a1a',
+                                    font: { size: 10, weight: 'bold' }
+                                },
+                                ticks: { color: '#5a5a5a', font: { size: 9 } },
+                                grid: { color: '#d0c8b8' }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Position',
+                                    color: '#1a1a1a',
+                                    font: { size: 10, weight: 'bold' }
+                                },
+                                ticks: { color: '#5a5a5a', font: { size: 9 } },
+                                grid: { color: '#d0c8b8' }
+                            }
+                        },
+                        elements: {
+                            point: { radius: 0 },
+                            line: { borderWidth: 2 }
+                        }
+                    }
+                });
+                rltCompareCharts.push(chart);
+            }
+        }
+
+        function updateRltPredictionPanel(chunk) {
+            const baseActions = chunk.base_actions || chunk.rlt_reference_actions;
+            setText('rlt-pred-chunk', formatCount(chunk.source_step));
+            setText('rlt-pred-mode', humanizeStatus(chunk.rlt_policy_mode || pickMetric(['rlt_policy_mode'])));
+
+            const windowStart = numericOrNull(chunk.rlt_window_start_index ?? pickMetric(['rlt_window_start_index']));
+            const windowLen = numericOrNull(chunk.rlt_window_len ?? pickMetric(['rlt_window_len']));
+            const windowText = windowStart === null || windowLen === null
+                ? '--'
+                : `${windowStart}-${Math.max(windowStart, windowStart + windowLen - 1)}`;
+            setText('rlt-pred-window', windowText);
+
+            if (!Array.isArray(baseActions) || !Array.isArray(chunk.actions) || chunk.actions.length === 0 || baseActions.length === 0) {
+                setText('rlt-pred-status', 'No pair');
+                setText('rlt-pred-rms', '--');
+                setText('rlt-pred-max', '--');
+                return;
+            }
+
+            const actionDim = Array.isArray(chunk.actions[0]) ? chunk.actions[0].length : 0;
+            const baseDim = Array.isArray(baseActions[0]) ? baseActions[0].length : 0;
+            const commonDimCount = Math.min(actionDim, baseDim);
+            const chartDimCount = Math.min(commonDimCount, 6);
+            const horizon = Math.min(chunk.actions.length, baseActions.length);
+            if (commonDimCount === 0 || horizon === 0) {
+                setText('rlt-pred-status', 'Invalid');
+                return;
+            }
+
+            let sumSq = 0;
+            let count = 0;
+            let absMax = 0;
+            for (let t = 0; t < horizon; t++) {
+                for (let d = 0; d < commonDimCount; d++) {
+                    const delta = Number(chunk.actions[t][d]) - Number(baseActions[t][d]);
+                    if (!Number.isFinite(delta)) continue;
+                    sumSq += delta * delta;
+                    absMax = Math.max(absMax, Math.abs(delta));
+                    count++;
+                }
+            }
+            const rms = count > 0 ? Math.sqrt(sumSq / count) : NaN;
+            setText('rlt-pred-rms', formatValue(rms));
+            setText('rlt-pred-max', formatValue(absMax));
+            setText('rlt-pred-status', count > 0 ? 'Live' : 'Invalid');
+
+            if (rltCompareCharts.length !== chartDimCount) {
+                initRltCompareCharts(chartDimCount);
+            }
+
+            const annotations = {};
+            if (windowStart !== null && windowLen !== null && windowLen > 0) {
+                annotations.rltWindow = {
+                    type: 'box',
+                    xMin: chunk.source_step + windowStart,
+                    xMax: chunk.source_step + windowStart + windowLen - 1,
+                    backgroundColor: 'rgba(244, 196, 48, 0.16)',
+                    borderColor: 'rgba(244, 196, 48, 0.5)',
+                    borderWidth: 1,
+                };
+            }
+
+            for (let d = 0; d < rltCompareCharts.length; d++) {
+                const finalData = [];
+                const baseData = [];
+                for (let t = 0; t < horizon; t++) {
+                    const step = chunk.source_step + t;
+                    finalData.push({ x: step, y: chunk.actions[t][d] });
+                    baseData.push({ x: step, y: baseActions[t][d] });
+                }
+
+                const chart = rltCompareCharts[d];
+                chart.data.datasets = [
+                    {
+                        label: 'RLT / final',
+                        data: finalData,
+                        borderColor: '#c1272d',
+                        backgroundColor: 'transparent',
+                        tension: 0.1,
+                        borderWidth: 2,
+                        pointRadius: 0,
+                    },
+                    {
+                        label: 'Base VLA',
+                        data: baseData,
+                        borderColor: '#1a3a6e',
+                        backgroundColor: 'transparent',
+                        borderDash: [6, 4],
+                        tension: 0.1,
+                        borderWidth: 2,
+                        pointRadius: 0,
+                    }
+                ];
+                chart.options.plugins.annotation = { annotations };
+                chart.update('none');
+            }
+        }
+
         // Update executed action charts
         function updateExecutedCharts() {
             if (executedCharts.length === 0 || executedActions.length === 0) return;
@@ -2059,6 +2460,158 @@
             }
         }
 
+        function rememberRolloutOrder(key) {
+            if (!rolloutState.rows.has(key)) {
+                rolloutState.order.push(key);
+                while (rolloutState.order.length > MAX_ROLLOUT_ROWS) {
+                    const oldKey = rolloutState.order.shift();
+                    rolloutState.rows.delete(oldKey);
+                }
+            }
+        }
+
+        function ensureRolloutRow(key, defaults = {}) {
+            rememberRolloutOrder(key);
+            const existing = rolloutState.rows.get(key) || {};
+            const row = { ...defaults, ...existing };
+            rolloutState.rows.set(key, row);
+            return row;
+        }
+
+        function updateServerEpisodeMapping(data) {
+            const clientEpisodeId = numericOrNull(data.client_episode_id);
+            const serverEpisodeId = numericOrNull(data.episode_id);
+            if (clientEpisodeId === null || serverEpisodeId === null || data.source !== 'policy_server') {
+                return;
+            }
+            for (const row of rolloutState.rows.values()) {
+                if (Number(row.criticalPhaseId) === clientEpisodeId) {
+                    row.serverEpisodeId = serverEpisodeId;
+                }
+            }
+        }
+
+        function applyRolloutStatus(data) {
+            updateServerEpisodeMapping(data);
+
+            const eventName = String(data.event || '');
+            const rolloutId = numericOrNull(data.rollout_id) ?? rolloutState.currentRolloutId;
+            if (rolloutId !== null) {
+                rolloutState.currentRolloutId = rolloutId;
+            }
+
+            if (eventName === 'rlt_rollout_started' && rolloutId !== null) {
+                const key = `rollout:${rolloutId}`;
+                const row = ensureRolloutRow(key, { rolloutId, label: 'open', status: 'open' });
+                row.rolloutStartTs = numericOrNull(data.rollout_start_ts) ?? numericOrNull(data.timestamp) ?? row.rolloutStartTs;
+                row.rolloutStartStep = numericOrNull(data.rollout_start_step) ?? row.rolloutStartStep;
+                row.status = 'rollout open';
+                row.label = 'open';
+                row.discard = false;
+                rolloutState.rolloutStarts.set(String(rolloutId), row.rolloutStartTs);
+                renderRolloutsTable();
+                return;
+            }
+
+            if (eventName === 'rlt_rollout_ended' && rolloutId !== null) {
+                const row = ensureRolloutRow(`rollout:${rolloutId}`, { rolloutId, label: 'open' });
+                row.rolloutEndTs = numericOrNull(data.rollout_end_ts) ?? numericOrNull(data.timestamp);
+                row.rolloutDurationS = numericOrNull(data.rollout_duration_s);
+                row.status = 'rollout ended';
+                renderRolloutsTable();
+                return;
+            }
+
+            const criticalId = numericOrNull(data.critical_phase_id ?? data.episode_id);
+            const hasCriticalEvent = eventName.includes('critical') || data.critical_phase_open || data.critical_pending_label;
+            if (rolloutId === null || criticalId === null || criticalId <= 0 || !hasCriticalEvent) {
+                return;
+            }
+
+            const key = `critical:${rolloutId}:${criticalId}`;
+            const row = ensureRolloutRow(key, {
+                rolloutId,
+                criticalPhaseId: criticalId,
+                rolloutStartTs: rolloutState.rolloutStarts.get(String(rolloutId)),
+                label: 'open',
+                discard: false,
+                status: 'open',
+            });
+
+            row.rolloutStartTs = numericOrNull(data.rollout_start_ts) ?? row.rolloutStartTs;
+            row.rolloutStartStep = numericOrNull(data.rollout_start_step) ?? row.rolloutStartStep;
+            row.criticalPhaseId = criticalId;
+            row.transitions = numericOrNull(data.current_critical_transitions ?? data.current_episode_transitions) ?? row.transitions;
+
+            if (eventName === 'rlt_critical_phase_started' || eventName === 'rlt_critical_intervention_started') {
+                row.criticalStartS = numericOrNull(data.critical_start_s) ?? row.criticalStartS;
+                row.criticalStartStep = numericOrNull(data.critical_start_step) ?? row.criticalStartStep;
+                row.status = 'recording';
+                row.label = 'open';
+                row.discard = false;
+            } else if (eventName === 'rlt_critical_phase_ended') {
+                row.criticalEndS = numericOrNull(data.critical_end_s) ?? row.criticalEndS;
+                row.criticalEndStep = numericOrNull(data.critical_end_step) ?? row.criticalEndStep;
+                row.status = 'pending label';
+            } else if (eventName === 'rlt_critical_phase_empty') {
+                row.criticalEndS = numericOrNull(data.critical_end_s) ?? row.criticalEndS;
+                row.status = 'empty';
+            } else if (eventName === 'rlt_critical_phase_labeled') {
+                row.criticalEndS = numericOrNull(data.critical_end_s) ?? row.criticalEndS;
+                row.label = String(data.label || (data.success ? 'success' : data.failure ? 'failure' : 'open'));
+                row.reward = numericOrNull(data.reward);
+                row.queuedTransitions = numericOrNull(data.queued_transitions);
+                row.transitions = row.queuedTransitions ?? row.transitions;
+                row.discard = false;
+                row.status = 'labeled';
+            } else if (eventName === 'rlt_critical_phase_discarded') {
+                row.criticalEndS = numericOrNull(data.critical_end_s) ?? row.criticalEndS;
+                row.label = 'discarded';
+                row.discard = true;
+                row.transitions = numericOrNull(data.buffered_transitions_dropped) ?? row.transitions;
+                row.status = 'discarded';
+            }
+
+            renderRolloutsTable();
+        }
+
+        function renderRolloutsTable() {
+            const body = document.getElementById('rollouts-table-body');
+            if (!body) return;
+            const rows = rolloutState.order
+                .map(key => rolloutState.rows.get(key))
+                .filter(Boolean)
+                .slice(-MAX_ROLLOUT_ROWS)
+                .reverse();
+
+            if (rows.length === 0) {
+                body.innerHTML = '<tr><td colspan="11"><div class="rollouts-empty">Waiting for rollout events...</div></td></tr>';
+                return;
+            }
+
+            body.innerHTML = rows.map(row => {
+                const label = row.label || 'open';
+                const duration = row.criticalStartS !== undefined && row.criticalEndS !== undefined
+                    ? formatSeconds(Number(row.criticalEndS) - Number(row.criticalStartS))
+                    : formatSeconds(row.rolloutDurationS);
+                return `
+                    <tr>
+                        <td>${escapeHtml(row.rolloutId ?? '--')}</td>
+                        <td>${escapeHtml(row.criticalPhaseId ?? '--')}</td>
+                        <td>${escapeHtml(row.serverEpisodeId ?? '--')}</td>
+                        <td>${escapeHtml(row.status ?? '--')}</td>
+                        <td>${escapeHtml(formatTimestamp(row.rolloutStartTs))}</td>
+                        <td>${escapeHtml(formatSeconds(row.criticalStartS))}</td>
+                        <td>${escapeHtml(formatSeconds(row.criticalEndS))}</td>
+                        <td>${escapeHtml(duration)}</td>
+                        <td><span class="rollout-label ${escapeHtml(label)}">${escapeHtml(label)}</span></td>
+                        <td>${row.discard ? 'true' : 'false'}</td>
+                        <td>${escapeHtml(row.transitions ?? row.queuedTransitions ?? '--')}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
         function setEpisodeStatus(text, statusClass = '') {
             const badge = document.getElementById('episode-status');
             badge.className = `episode-badge ${statusClass}`.trim();
@@ -2071,25 +2624,25 @@
             }
 
             let label = data.label || data.last_label;
-            if (data.event === 'rlt_episode_labeled') {
+            if (data.event === 'rlt_episode_labeled' || data.event === 'rlt_critical_phase_labeled') {
                 label = data.success ? 'success' : data.failure ? 'failure' : label;
-                const key = String(data.episode_id ?? data.timestamp ?? episodeState.history.length);
+                const key = String(data.critical_phase_id ?? data.episode_id ?? data.timestamp ?? episodeState.history.length);
                 if (!episodeState.labeledEpisodes.has(key)) {
                     episodeState.labeledEpisodes.add(key);
                     if (label === 'success') episodeState.success++;
                     if (label === 'failure') episodeState.failure++;
-                    episodeState.history.push({ episodeId: data.episode_id ?? '--', label: label || 'labeled' });
+                    episodeState.history.push({ episodeId: data.critical_phase_id ?? data.episode_id ?? '--', label: label || 'labeled' });
                 }
                 setEpisodeStatus(humanizeStatus(label), label === 'success' ? 'success' : 'failure');
-            } else if (data.event === 'rlt_episode_discarded') {
-                const key = String(data.episode_id ?? data.timestamp ?? episodeState.history.length);
+            } else if (data.event === 'rlt_episode_discarded' || data.event === 'rlt_critical_phase_discarded') {
+                const key = String(data.critical_phase_id ?? data.episode_id ?? data.timestamp ?? episodeState.history.length);
                 if (!episodeState.discardedEpisodes.has(key)) {
                     episodeState.discardedEpisodes.add(key);
                     episodeState.discarded++;
-                    episodeState.history.push({ episodeId: data.episode_id ?? '--', label: 'discarded' });
+                    episodeState.history.push({ episodeId: data.critical_phase_id ?? data.episode_id ?? '--', label: 'discarded' });
                 }
                 setEpisodeStatus('Discarded', 'discarded');
-            } else if (data.event === 'rlt_episode_started' || data.episode_open) {
+            } else if (data.event === 'rlt_episode_started' || data.event === 'rlt_critical_phase_started' || data.episode_open) {
                 setEpisodeStatus('Recording', 'recording');
             } else if (data.phase) {
                 setEpisodeStatus(humanizeStatus(data.phase));
@@ -2133,6 +2686,10 @@
             const criticGrad = pickMetric(['rlt_critic_grad_norm']);
             const actorQ = pickMetric(['actor_q_mean']);
             const criticQ = pickMetric(['pred_q_mean', 'target_q_mean']);
+            const policyMode = pickMetric(['rlt_policy_mode']);
+            const gateReason = pickMetric(['rlt_actor_gate_reason']);
+            const actorExecuting = pickMetric(['rlt_actor_executing']);
+            const deltaRms = pickMetric(['rlt_action_deviation_rms']);
 
             setText('rlt-head', formatValue(pickMetric(['rlt_training_head'])));
             setText('rlt-train-step', formatCount(pickMetric(['rlt_train_step'])));
@@ -2145,6 +2702,10 @@
             setText('rlt-critic-loss', formatValue(criticLoss));
             setText('rlt-actor-grad', formatValue(actorGrad));
             setText('rlt-critic-grad', formatValue(criticGrad));
+            setText('rlt-policy-mode', humanizeStatus(policyMode));
+            setText('rlt-gate', humanizeStatus(gateReason));
+            setText('rlt-active', actorExecuting === null ? '--' : (actorExecuting ? 'yes' : 'no'));
+            setText('rlt-delta-rms', formatValue(deltaRms));
             setText(
                 'rlt-meta',
                 `event: ${formatValue(data.event)} | actor q: ${formatValue(actorQ)} | critic q: ${formatValue(criticQ)}`
@@ -2156,6 +2717,7 @@
             if (data.source === 'robot_client' || data.episode_id !== undefined || data.phase !== undefined) {
                 updateEpisodePanel(data);
             }
+            applyRolloutStatus(data);
 
             updateRltPanel(data);
 
@@ -2291,11 +2853,15 @@
             const newChunk = {
                 source_step: data.source_step,
                 actions: data.actions,
+                base_actions: data.base_actions || data.rlt_reference_actions || null,
                 frozen_len: data.frozen_len,
                 timestamp: data.timestamp,
                 colorIndex: colorIndex,
                 rtc_params: data.rtc_params,
-                prefix_weights: data.prefix_weights
+                prefix_weights: data.prefix_weights,
+                rlt_policy_mode: data.rlt_policy_mode,
+                rlt_window_start_index: data.rlt_window_start_index,
+                rlt_window_len: data.rlt_window_len,
             };
             chunks.push(newChunk);
 
@@ -2312,6 +2878,7 @@
 
             // Update UI
             updateCharts();
+            updateRltPredictionPanel(newChunk);
             updateStats();
             
             // Update bar charts
@@ -2373,6 +2940,7 @@
         initPrefixWeightsChart();
         initRltLossChart();
         renderEpisodeHistory();
+        renderRolloutsTable();
         connect();
 
         // Update stats periodically

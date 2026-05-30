@@ -309,15 +309,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # delta / sum row 0) matches the standalone reference. Reset to 0
         # by `_reset_server`. Tunable via env LEROBOT_DRTC_DEBUG_CHUNKS.
         try:
-            self._debug_chunks_remaining = int(
-                os.environ.get("LEROBOT_DRTC_DEBUG_CHUNKS", "5")
-            )
+            self._debug_chunks_remaining = int(os.environ.get("LEROBOT_DRTC_DEBUG_CHUNKS", "5"))
         except ValueError:
             self._debug_chunks_remaining = 5
         try:
-            self._norm_debug_chunks_remaining = int(
-                os.environ.get("LEROBOT_DRTC_NORM_DEBUG_CHUNKS", "5")
-            )
+            self._norm_debug_chunks_remaining = int(os.environ.get("LEROBOT_DRTC_NORM_DEBUG_CHUNKS", "5"))
         except ValueError:
             self._norm_debug_chunks_remaining = 5
 
@@ -388,6 +384,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_training_operator_enabled = not self._tui_control_reader.enabled
         self._rlt_actor_operator_enabled = not self._tui_control_reader.enabled
         self._rlt_actor_critical_phase_active = False
+        self._rlt_last_policy_mode = "not_configured"
+        self._rlt_last_actor_executing = False
+        self._rlt_last_actor_gate_reason = "not_configured"
+        self._rlt_last_actor_prediction_available = False
+        self._rlt_last_action_deviation_rms: float | None = None
+        self._rlt_last_action_deviation_abs_max: float | None = None
+        self._rlt_last_inference_event_ts: float | None = None
         self._rlt_last_inference_status_key: tuple[Any, ...] | None = None
         self._rlt_last_inference_status_ts = 0.0
 
@@ -446,6 +449,68 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 parts.append(f"{key}={value}")
         return " ".join(parts)
 
+    def _rlt_head_status_fields(self) -> dict[str, Any]:
+        policy = getattr(self, "policy", None)
+        cfg = getattr(policy, "config", None)
+        policy_type = getattr(self, "policy_type", None)
+        is_rlt_policy = policy_type in (
+            "pi05_rlt",
+            "tinypi05_rlt",
+            "tinypi05v2_rlt",
+            "molmoact2_rlt",
+        )
+        rlt_enabled = bool(getattr(cfg, "rlt_enabled", False)) if cfg is not None else False
+        rlt_head_checkpoint = getattr(cfg, "rlt_head_checkpoint", None) if cfg is not None else None
+        rlt_embedding_checkpoint = getattr(cfg, "rlt_embedding_checkpoint", None) if cfg is not None else None
+        actor_loaded = bool(getattr(policy, "_rlt_actor_loaded", False))
+        loaded_head_step = int(
+            getattr(policy, "_rlt_loaded_head_step", getattr(self, "_rlt_loaded_head_step", 0)) or 0
+        )
+        train_step = int(getattr(self, "_rlt_train_step", 0) or 0)
+        execute_after_steps = int(getattr(self, "_rlt_execute_after_train_steps", 1000000) or 0)
+        train_step_ready = train_step >= execute_after_steps
+        actor_available = bool(is_rlt_policy and rlt_enabled and (actor_loaded or train_step_ready))
+        operator_enabled = bool(getattr(self, "_rlt_actor_operator_enabled", True))
+        safety_disabled = bool(getattr(self, "_rlt_actor_disabled_by_safety", False))
+        actor_effective_enabled = actor_available and operator_enabled and not safety_disabled
+
+        if not is_rlt_policy:
+            head_status = "not_rlt_policy"
+        elif not rlt_enabled:
+            head_status = "rlt_disabled"
+        elif rlt_head_checkpoint and actor_loaded:
+            head_status = "loaded_from_disk"
+        elif rlt_head_checkpoint:
+            head_status = "checkpoint_configured_not_loaded"
+        elif train_step > loaded_head_step:
+            head_status = "online_trained"
+        elif getattr(self, "_rlt_online_training_enabled", False):
+            head_status = "fresh_online"
+        else:
+            head_status = "no_head_checkpoint"
+
+        return {
+            "rlt_enabled": rlt_enabled,
+            "rlt_embedding_checkpoint": rlt_embedding_checkpoint,
+            "rlt_head_checkpoint": rlt_head_checkpoint,
+            "rlt_head_status": head_status,
+            "rlt_head_checkpoint_loaded": bool(rlt_head_checkpoint and actor_loaded),
+            "rlt_actor_loaded": actor_loaded,
+            "rlt_loaded_head_step": loaded_head_step,
+            "rlt_actor_train_step_ready": train_step_ready,
+            "rlt_actor_available": actor_available,
+            "rlt_actor_effective_enabled": actor_effective_enabled,
+            "rlt_policy_mode": getattr(self, "_rlt_last_policy_mode", "not_configured"),
+            "rlt_actor_executing": bool(getattr(self, "_rlt_last_actor_executing", False)),
+            "rlt_actor_gate_reason": getattr(self, "_rlt_last_actor_gate_reason", "not_configured"),
+            "rlt_actor_prediction_available": bool(
+                getattr(self, "_rlt_last_actor_prediction_available", False)
+            ),
+            "rlt_action_deviation_rms": getattr(self, "_rlt_last_action_deviation_rms", None),
+            "rlt_action_deviation_abs_max": getattr(self, "_rlt_last_action_deviation_abs_max", None),
+            "rlt_last_inference_ts": getattr(self, "_rlt_last_inference_event_ts", None),
+        }
+
     def _emit_rlt_status(self, event: str, **fields: Any) -> None:
         with self._rlt_replay_lock:
             replay_size = len(self._rlt_replay)
@@ -472,15 +537,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_critic_updates_per_actor": getattr(self, "_rlt_critic_updates_per_actor", 1),
             "rlt_success_sample_fraction": getattr(self, "_rlt_success_sample_fraction", 0.0),
             "rlt_intervention_sample_fraction": getattr(self, "_rlt_intervention_sample_fraction", 0.0),
-            "rlt_intervention_reference_mode": getattr(
-                self, "_rlt_intervention_reference_mode", "executed"
-            ),
+            "rlt_intervention_reference_mode": getattr(self, "_rlt_intervention_reference_mode", "executed"),
             "rlt_wandb_enabled": getattr(self, "_rlt_wandb_enabled", False),
             "rlt_wandb_active": getattr(self, "_rlt_wandb_run", None) is not None,
             "rlt_wandb_project": getattr(self, "_rlt_wandb_project", None),
             "rlt_wandb_run_name": getattr(self, "_rlt_wandb_run_name", None),
             "rlt_wandb_mode": getattr(self, "_rlt_wandb_mode", None),
         }
+        status_fields.update(self._rlt_head_status_fields())
         status_fields.update(fields)
         emit_status(
             "policy_server",
@@ -733,7 +797,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             return 0
         replay_path = Path(path)
         if not replay_path.exists():
-            self._emit_rlt_status("rlt_replay_load_skipped", replay_source=source, replay_path=str(replay_path))
+            self._emit_rlt_status(
+                "rlt_replay_load_skipped", replay_source=source, replay_path=str(replay_path)
+            )
             return 0
         loaded = RLTReplayBuffer.load(
             replay_path,
@@ -869,9 +935,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             1,
             int(getattr(policy_specs, "rlt_critic_updates_per_actor", 1)),
         )
-        self._rlt_success_sample_fraction = float(
-            getattr(policy_specs, "rlt_success_sample_fraction", 0.0)
-        )
+        self._rlt_success_sample_fraction = float(getattr(policy_specs, "rlt_success_sample_fraction", 0.0))
         self._rlt_intervention_sample_fraction = float(
             getattr(policy_specs, "rlt_intervention_sample_fraction", 0.0)
         )
@@ -891,9 +955,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_persist_buffer_on_shutdown = bool(
             getattr(policy_specs, "rlt_persist_buffer_on_shutdown", True)
         )
-        self._rlt_review_capture_enabled = bool(
-            getattr(policy_specs, "rlt_review_capture_enabled", False)
-        )
+        self._rlt_review_capture_enabled = bool(getattr(policy_specs, "rlt_review_capture_enabled", False))
         self._rlt_review_jpeg_quality = int(getattr(policy_specs, "rlt_review_jpeg_quality", 80))
         self._rlt_review_archive_path = getattr(policy_specs, "rlt_review_archive_path", None)
         # Tear down any encoder/archive carried over from a previous session before
@@ -923,7 +985,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_loss_abs_max = getattr(policy_specs, "rlt_loss_abs_max", None)
         self._rlt_safety_patience = int(getattr(policy_specs, "rlt_safety_patience", 3))
         self._rlt_wandb_enabled = bool(getattr(policy_specs, "rlt_wandb_enabled", False))
-        self._rlt_wandb_project = str(getattr(policy_specs, "rlt_wandb_project", "lerobot-rlt") or "lerobot-rlt")
+        self._rlt_wandb_project = str(
+            getattr(policy_specs, "rlt_wandb_project", "lerobot-rlt") or "lerobot-rlt"
+        )
         self._rlt_wandb_entity = getattr(policy_specs, "rlt_wandb_entity", None)
         self._rlt_wandb_run_name = getattr(policy_specs, "rlt_wandb_run_name", None)
         self._rlt_wandb_mode = getattr(policy_specs, "rlt_wandb_mode", None)
@@ -951,6 +1015,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_training_operator_enabled = not getattr(self._tui_control_reader, "enabled", False)
         self._rlt_actor_operator_enabled = not getattr(self._tui_control_reader, "enabled", False)
         self._rlt_actor_critical_phase_active = False
+        self._rlt_last_policy_mode = "configured"
+        self._rlt_last_actor_executing = False
+        self._rlt_last_actor_gate_reason = "waiting_for_inference"
+        self._rlt_last_actor_prediction_available = False
+        self._rlt_last_action_deviation_rms = None
+        self._rlt_last_action_deviation_abs_max = None
+        self._rlt_last_inference_event_ts = None
+        self._rlt_last_inference_status_key = None
+        self._rlt_last_inference_status_ts = 0.0
 
         if self._rlt_online_training_enabled and self._is_rlt_policy() and self.policy is not None:
             self._rlt_actor_optimizer = torch.optim.AdamW(
@@ -965,6 +1038,17 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._rlt_critic_optimizer = None
             self._rlt_training_head = "disabled"
         self._init_rlt_wandb(policy_specs)
+        head_fields = self._rlt_head_status_fields()
+        self.logger.info(
+            "RLT head status | enabled=%s | status=%s | persisted_loaded=%s | "
+            "checkpoint=%s | loaded_step=%s | actor_available=%s",
+            head_fields["rlt_enabled"],
+            head_fields["rlt_head_status"],
+            head_fields["rlt_head_checkpoint_loaded"],
+            head_fields["rlt_head_checkpoint"],
+            head_fields["rlt_loaded_head_step"],
+            head_fields["rlt_actor_available"],
+        )
         self._emit_rlt_status("rlt_configured")
 
     def _next_rlt_context_id_value(self) -> int:
@@ -974,7 +1058,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
     def _is_rlt_policy(self) -> bool:
         """Return True for any RLT-style wrapper policy."""
-        return self.policy_type in ("pi05_rlt", "tinypi05_rlt", "tinypi05v2_rlt", "molmoact2_rlt")
+        return getattr(self, "policy_type", None) in (
+            "pi05_rlt",
+            "tinypi05_rlt",
+            "tinypi05v2_rlt",
+            "molmoact2_rlt",
+        )
 
     def _rlt_source_collectable(self) -> bool:
         if not self._rlt_online_collection_enabled:
@@ -1032,12 +1121,21 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         gate_reason = self._rlt_actor_gate_reason(critical_phase_active=critical_phase_active)
         if policy_mode == "rlt_safety_passthrough":
             gate_reason = "safety_passthrough"
-        actor_loaded = bool(getattr(self.policy, "_rlt_actor_loaded", False)) if self.policy is not None else False
+        actor_loaded = (
+            bool(getattr(self.policy, "_rlt_actor_loaded", False)) if self.policy is not None else False
+        )
         steps_until_execute = (
             0
             if actor_loaded
             else max(0, int(self._rlt_execute_after_train_steps) - int(self._rlt_train_step))
         )
+        self._rlt_last_policy_mode = policy_mode
+        self._rlt_last_actor_executing = bool(actor_executing)
+        self._rlt_last_actor_gate_reason = gate_reason
+        self._rlt_last_actor_prediction_available = action_deviation_rms is not None
+        self._rlt_last_action_deviation_rms = action_deviation_rms
+        self._rlt_last_action_deviation_abs_max = action_deviation_abs_max
+        self._rlt_last_inference_event_ts = time.time()
         # Emit immediately when the state changes, and otherwise refresh about
         # once a second so the TUI gets fresh actor-reference delta magnitudes.
         status_key = (
@@ -1051,9 +1149,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             int(self._rlt_train_step),
         )
         now = time.time()
-        if status_key == self._rlt_last_inference_status_key and (
-            now - self._rlt_last_inference_status_ts
-        ) < 1.0:
+        if (
+            status_key == self._rlt_last_inference_status_key
+            and (now - self._rlt_last_inference_status_ts) < 1.0
+        ):
             return
         self._rlt_last_inference_status_key = status_key
         self._rlt_last_inference_status_ts = now
@@ -1072,6 +1171,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             rlt_steps_until_execute=steps_until_execute,
         )
 
+    # TODO - rename this to be generic
     def _predict_pi05_rlt_with_context(
         self,
         observation: dict[str, torch.Tensor],
@@ -1106,21 +1206,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 # time (collection disabled) we use the deterministic mean.
                 actor_std = float(getattr(self.policy.rlt_actor, "action_std", 0.0))
                 if self._rlt_online_collection_enabled and actor_std > 0:
-                    refined_prefix = self.policy.rlt_actor.sample(
-                        rl_token, proprio, actor_ref
-                    )
+                    refined_prefix = self.policy.rlt_actor.sample(rl_token, proprio, actor_ref)
                 else:
                     refined_prefix = self.policy.rlt_actor(rl_token, proprio, actor_ref)
                 if not self._rlt_online_collection_enabled and self._rlt_eval_actor_blend < 1.0:
-                    refined_prefix = actor_ref + self._rlt_eval_actor_blend * (
-                        refined_prefix - actor_ref
-                    )
+                    refined_prefix = actor_ref + self._rlt_eval_actor_blend * (refined_prefix - actor_ref)
                 action_deviation = (refined_prefix - actor_ref).detach()
                 action_deviation_rms = float(action_deviation.pow(2).mean().sqrt().cpu())
                 action_deviation_abs_max = float(action_deviation.abs().max().cpu())
-                if (
-                    self._rlt_action_deviation_abs_max is not None
-                    and action_deviation_abs_max > float(self._rlt_action_deviation_abs_max)
+                if self._rlt_action_deviation_abs_max is not None and action_deviation_abs_max > float(
+                    self._rlt_action_deviation_abs_max
                 ):
                     action_tensor = reference
                     policy_mode = "rlt_safety_passthrough"
@@ -1146,7 +1241,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     policy_mode = "vla_non_critical"
                 elif not getattr(self, "_rlt_actor_operator_enabled", True):
                     policy_mode = "rlt_actor_operator_disabled"
-                elif self._rlt_online_training_enabled and self._rlt_train_step < self._rlt_execute_after_train_steps:
+                elif (
+                    self._rlt_online_training_enabled
+                    and self._rlt_train_step < self._rlt_execute_after_train_steps
+                ):
                     policy_mode = "warmup"
                 else:
                     policy_mode = "vla_passthrough"
@@ -1217,7 +1315,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         review_inference_ts: float | None = None,
     ) -> int:
         context_id = self._next_rlt_context_id_value()
-        rlt_window = min(int(getattr(self.policy.config, "rlt_chunk_size", reference.shape[1])), reference.shape[1])
+        rlt_window = min(
+            int(getattr(self.policy.config, "rlt_chunk_size", reference.shape[1])), reference.shape[1]
+        )
         max_start = max(0, int(reference.shape[1]) - rlt_window)
         window_start_index = min(max(0, int(window_start_index)), max_start)
         window_end = window_start_index + rlt_window
@@ -1327,8 +1427,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         executed_model = self._executed_actions_to_model_space(executed_np, source)
         episode_id = int(transition.episode_id) + int(self._rlt_episode_id_offset)
         use_executed_reference = (
-            bool(transition.is_intervention)
-            and self._rlt_intervention_reference_mode == "executed"
+            bool(transition.is_intervention) and self._rlt_intervention_reference_mode == "executed"
         )
         training_reference = executed_model if use_executed_reference else source.reference_chunk
 
@@ -1420,9 +1519,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         if self._rlt_q_abs_max is not None and q_abs > float(self._rlt_q_abs_max):
             violations.append(f"q_abs={q_abs:.4f}")
         action_dev = abs(stats.get("action_deviation_abs_max", 0.0))
-        if (
-            self._rlt_action_deviation_abs_max is not None
-            and action_dev > float(self._rlt_action_deviation_abs_max)
+        if self._rlt_action_deviation_abs_max is not None and action_dev > float(
+            self._rlt_action_deviation_abs_max
         ):
             violations.append(f"action_deviation_abs={action_dev:.4f}")
         loss_abs = max(abs(stats.get("actor_loss", 0.0)), abs(stats.get("critic_loss", 0.0)))
@@ -1521,19 +1619,17 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                             "rlt_critic_grad_norm": critic_grad_norm,
                             "rlt_actor_grad_norm": actor_grad_norm,
                             "rlt_replay_size": float(replay_size),
-                            "rlt_batch_success_fraction": float(batch["success"].float().mean().detach().cpu()),
+                            "rlt_batch_success_fraction": float(
+                                batch["success"].float().mean().detach().cpu()
+                            ),
                             "rlt_batch_intervention_fraction": float(
                                 batch["is_intervention"].float().mean().detach().cpu()
                             ),
                         }
                         self._check_rlt_safety(rlt_stats)
 
-                    self._metrics.diagnostic.timing_ms(
-                        "rlt_critic_loss", float(critic_loss.detach().cpu())
-                    )
-                    self._metrics.diagnostic.timing_ms(
-                        "rlt_actor_loss", float(actor_loss.detach().cpu())
-                    )
+                    self._metrics.diagnostic.timing_ms("rlt_critic_loss", float(critic_loss.detach().cpu()))
+                    self._metrics.diagnostic.timing_ms("rlt_actor_loss", float(actor_loss.detach().cpu()))
                     self._metrics.diagnostic.set_context(rlt_train_step=self._rlt_train_step)
                     self._rlt_training_head = "idle"
                     self._emit_rlt_status(
@@ -1654,15 +1750,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_review_next_submission_id = 1
 
         try:
-            self._debug_chunks_remaining = int(
-                os.environ.get("LEROBOT_DRTC_DEBUG_CHUNKS", "5")
-            )
+            self._debug_chunks_remaining = int(os.environ.get("LEROBOT_DRTC_DEBUG_CHUNKS", "5"))
         except ValueError:
             self._debug_chunks_remaining = 5
         try:
-            self._norm_debug_chunks_remaining = int(
-                os.environ.get("LEROBOT_DRTC_NORM_DEBUG_CHUNKS", "5")
-            )
+            self._norm_debug_chunks_remaining = int(os.environ.get("LEROBOT_DRTC_NORM_DEBUG_CHUNKS", "5"))
         except ValueError:
             self._norm_debug_chunks_remaining = 5
 
@@ -1768,8 +1860,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             pretrained_dir = run_root / "pretrained"
             if not pretrained_dir.exists():
                 raise FileNotFoundError(
-                    "pistar06 .pt checkpoints require adjacent pretrained metadata at "
-                    f"{pretrained_dir}"
+                    f"pistar06 .pt checkpoints require adjacent pretrained metadata at {pretrained_dir}"
                 )
             policy_processor_path = str(pretrained_dir)
             self.logger.info(
@@ -2188,7 +2279,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             self._rtc_cfg = AsyncRTCConfig(
                 enabled=True,
-                prefix_attention_schedule=str(getattr(policy_specs, "rtc_prefix_attention_schedule", "linear")),
+                prefix_attention_schedule=str(
+                    getattr(policy_specs, "rtc_prefix_attention_schedule", "linear")
+                ),
                 max_guidance_weight=max_gw,
                 sigma_d=float(getattr(policy_specs, "rtc_sigma_d", 1.0)),
                 full_trajectory_alignment=bool(getattr(policy_specs, "rtc_full_trajectory_alignment", False)),
@@ -2254,9 +2347,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # network transfer of the chunked image payload, not just the
         # gRPC handler dispatch time).
         t_recv_start = time.perf_counter()
-        received_bytes = receive_bytes_in_chunks(
-            request_iterator, None, self.shutdown_event, self.logger
-        )
+        received_bytes = receive_bytes_in_chunks(request_iterator, None, self.shutdown_event, self.logger)
         t_recv_done = time.perf_counter()
         receive_time = time.time()
 
@@ -2279,7 +2370,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
         # Diagnostics
         # Provide a stable `step` field for compact diagnostics.
-        self._metrics.diagnostic.set_context(step=obs_control_step, last_obs_step=obs_control_step, chunk_size=self.actions_per_chunk)
+        self._metrics.diagnostic.set_context(
+            step=obs_control_step, last_obs_step=obs_control_step, chunk_size=self.actions_per_chunk
+        )
         self._metrics.diagnostic.timing_s("obs_recv_ms", t_recv_done - t_recv_start)
         self._metrics.diagnostic.timing_s("deser_ms", t_deser_done - t_deser_start)
         self._metrics.diagnostic.timing_s("obs_decode_ms", t_decode_done - t_decode_start)
@@ -2433,7 +2526,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     chunk_size=self.actions_per_chunk,
                 )
                 self._metrics.diagnostic.timing_s("infer_total_ms", t_infer_done - t_infer_start)
-                self._metrics.diagnostic.timing_s("producer_loop_total_ms", time.perf_counter() - t_total_start)
+                self._metrics.diagnostic.timing_s(
+                    "producer_loop_total_ms", time.perf_counter() - t_total_start
+                )
                 consecutive_errors = 0
             except Exception as e:
                 consecutive_errors += 1
@@ -2552,9 +2647,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         delta_s_use = delta_s[:correct_dim]
 
         if self._action_encoding == "anchor":
-            d_abs[start_idx:end_idx, :correct_dim] = (
-                d_abs[start_idx:end_idx, :correct_dim] + delta_s_use
-            )
+            d_abs[start_idx:end_idx, :correct_dim] = d_abs[start_idx:end_idx, :correct_dim] + delta_s_use
         else:  # delta with start_idx == 0
             d_abs[0, :correct_dim] = d_abs[0, :correct_dim] + delta_s_use
 
@@ -2588,11 +2681,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             raise RuntimeError("pre/post processors not initialized; did SendPolicyInstructions run?")
 
         def _sync() -> None:
-            if (
-                isinstance(self.device, str)
-                and self.device.startswith("cuda")
-                and torch.cuda.is_available()
-            ):
+            if isinstance(self.device, str) and self.device.startswith("cuda") and torch.cuda.is_available():
                 torch.cuda.synchronize()
 
         def _now() -> float:
@@ -2624,9 +2713,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             raw_obs.pop("__rlt__", None)
         else:
             raw_obs = raw_obs_any
-        critical_phase_active = bool(
-            isinstance(rlt_meta, dict) and rlt_meta.get("critical_phase_open")
-        )
+        critical_phase_active = bool(isinstance(rlt_meta, dict) and rlt_meta.get("critical_phase_open"))
         self._rlt_actor_critical_phase_active = critical_phase_active
         _mark("obs_meta")
         # Kick off review image encoding in parallel with the rest of inference.
@@ -2744,7 +2831,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                             if max_action_dim is not None and prefix_tensor.shape[-1] < max_action_dim:
                                 b, t, a = prefix_tensor.shape
                                 padded = torch.zeros(
-                                    b, t, max_action_dim,
+                                    b,
+                                    t,
+                                    max_action_dim,
                                     device=prefix_tensor.device,
                                     dtype=prefix_tensor.dtype,
                                 )
@@ -2768,8 +2857,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     rtc_kwargs = {}
             _mark("rtc_prefix")
 
+            policy_cfg = getattr(self.policy, "config", None)
+            rlt_config_enabled = bool(getattr(policy_cfg, "rlt_enabled", False))
             use_rlt_context_path = self._is_rlt_policy() and (
-                self._rlt_online_collection_enabled
+                rlt_config_enabled
+                or self._rlt_online_collection_enabled
                 or self._rlt_online_training_enabled
                 or self._rlt_action_deviation_abs_max is not None
                 or self._rlt_eval_actor_blend < 1.0
@@ -2797,6 +2889,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         action_tensor = action_tensor[:, : self.actions_per_chunk, :]
         if rlt_reference is not None:
             rlt_reference = rlt_reference[:, : self.actions_per_chunk, :]
+        rlt_reference_viz: torch.Tensor | None = rlt_reference
 
         b, t, a = action_tensor.shape
         norm_action_debug = action_tensor.detach().clone() if norm_debug else None
@@ -2838,6 +2931,20 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             raise TypeError(f"postprocessor must return torch.Tensor, got {type(flat)}")
         a_out = flat.shape[-1]
         action_tensor = flat.reshape(b, t, a_out)
+        if rlt_reference_viz is not None:
+            ref_b, ref_t, ref_a = rlt_reference_viz.shape
+            ref_flat = rlt_reference_viz.reshape(ref_b * ref_t, ref_a)
+            ref_flat = self.postprocessor(ref_flat)
+            if not isinstance(ref_flat, torch.Tensor):
+                raise TypeError(f"postprocessor must return torch.Tensor, got {type(ref_flat)}")
+            rlt_reference_viz = ref_flat.reshape(ref_b, ref_t, ref_flat.shape[-1])
+            if rlt_reference_viz.shape[-1] != a_out:
+                self.logger.debug(
+                    "Skipping RLT/base browser comparison: action_dim=%d reference_dim=%d",
+                    a_out,
+                    rlt_reference_viz.shape[-1],
+                )
+                rlt_reference_viz = None
         post_action_debug = action_tensor.detach().clone() if norm_debug else None
         _mark("postprocess")
 
@@ -2850,10 +2957,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # `get_actions_worker` PHASE 5 (`unnormalized + anchor` for "anchor",
         # `cumsum + anchor` for "delta").
         action_encoding = self._action_encoding
-        debug_anchor_dump = (
-            self._debug_chunks_remaining > 0
-            and action_encoding in ("anchor", "delta")
-        )
+        debug_anchor_dump = self._debug_chunks_remaining > 0 and action_encoding in ("anchor", "delta")
         if action_encoding in ("anchor", "delta") and anchor_state is None:
             # If we got here, the per-chunk reconstruction silently no-ops and
             # the robot will be commanded to the unnormalized delta directly,
@@ -2908,8 +3012,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 self._debug_chunks_remaining -= 1
             if action_encoding == "anchor":
                 action_tensor = action_tensor + anchor_b
+                if rlt_reference_viz is not None:
+                    rlt_reference_viz = rlt_reference_viz + anchor_b
             else:  # "delta"
                 action_tensor = torch.cumsum(action_tensor, dim=1) + anchor_b
+                if rlt_reference_viz is not None:
+                    rlt_reference_viz = torch.cumsum(rlt_reference_viz, dim=1) + anchor_b
         _mark("anchor_reconstruct")
 
         if norm_debug:
@@ -2940,6 +3048,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         # Drop batch dim and move to CPU once
         actions_cpu = action_tensor.squeeze(0).detach().to("cpu")
         actions_np = actions_cpu.to(torch.float32).numpy()
+        rlt_reference_actions_list: list[list[float]] | None = None
+        if rlt_reference_viz is not None:
+            rlt_reference_cpu = rlt_reference_viz.squeeze(0).detach().to("cpu")
+            rlt_reference_actions_list = rlt_reference_cpu.to(torch.float32).numpy().tolist()
 
         payload = np.asarray(actions_np, dtype=np.float32, order="C")
         _mark("cpu_numpy_payload")
@@ -2953,7 +3065,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             if self._rtc_cfg is not None and self._rtc_cfg.enabled and rtc_kwargs:
                 d_viz = rtc_kwargs.get("inference_delay", 0)
                 # Use intended overlap_end for visualization (not clamped to prefix length)
-                overlap_end_viz = rtc_kwargs.get("overlap_end_intended", rtc_kwargs.get("overlap_end", self.actions_per_chunk))
+                overlap_end_viz = rtc_kwargs.get(
+                    "overlap_end_intended", rtc_kwargs.get("overlap_end", self.actions_per_chunk)
+                )
                 H_viz = self.actions_per_chunk
 
                 rtc_params_viz = {
@@ -2971,15 +3085,30 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
 
             # Create and emit the event
             actions_list = actions_np.tolist()
-            event = EvActionChunk(
-                src_control_step=src_control_step,
-                actions=actions_list,
-                frozen_len=rtc_kwargs.get("inference_delay", 0) if rtc_kwargs else 0,
-                timestamp=time.time(),
-                rtc_params=rtc_params_viz,
-                prefix_weights=prefix_weights_viz,
-            )
-            self._trajectory_viz_server.on_chunk(event)
+            chunk_payload: dict[str, Any] = {
+                "type": "action_chunk",
+                "source_step": src_control_step,
+                "actions": actions_list,
+                "frozen_len": rtc_kwargs.get("inference_delay", 0) if rtc_kwargs else 0,
+                "timestamp": time.time(),
+                "rtc_params": rtc_params_viz,
+                "prefix_weights": prefix_weights_viz,
+            }
+            if rlt_reference_actions_list is not None:
+                rlt_window_len = min(
+                    max(0, len(rlt_reference_actions_list) - int(rlt_window_start_index)),
+                    int(getattr(self.policy.config, "rlt_chunk_size", len(rlt_reference_actions_list))),
+                )
+                chunk_payload.update(
+                    {
+                        "base_actions": rlt_reference_actions_list,
+                        "rlt_reference_actions": rlt_reference_actions_list,
+                        "rlt_policy_mode": rlt_policy_mode,
+                        "rlt_window_start_index": int(rlt_window_start_index),
+                        "rlt_window_len": int(rlt_window_len),
+                    }
+                )
+            self._trajectory_viz_server.on_event(chunk_payload)
         _mark("trajectory_viz")
 
         dense_kwargs: dict[str, Any] = dict(
@@ -3024,7 +3153,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._metrics.diagnostic.timing_s("policy_predict_ms", t1 - t0)
 
         if chunk.ndim != 3:
-            chunk = chunk.unsqueeze(0)  # Add batch dimension: (chunk_size, action_dim) -> (1, chunk_size, action_dim)
+            chunk = chunk.unsqueeze(
+                0
+            )  # Add batch dimension: (chunk_size, action_dim) -> (1, chunk_size, action_dim)
 
         return chunk[:, : self.actions_per_chunk, :]
 

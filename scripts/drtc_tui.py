@@ -277,6 +277,32 @@ def _format_compact_float(value: Any) -> str:
     return f"{parsed:.2f}"
 
 
+def _format_path_tail(value: Any, *, max_len: int = 44) -> str:
+    if value in (None, ""):
+        return "none"
+    path = Path(str(value))
+    parent = path.parent.name
+    tail = f"{parent}/{path.name}" if parent else path.name
+    if len(tail) <= max_len:
+        return tail
+    return "..." + tail[-(max_len - 3) :]
+
+
+def _format_rlt_head_status(server: dict[str, Any]) -> str:
+    status = str(server.get("rlt_head_status") or "unknown")
+    step = server.get("rlt_loaded_head_step", "n/a")
+    labels = {
+        "loaded_from_disk": f"disk step {step}",
+        "checkpoint_configured_not_loaded": "disk not loaded",
+        "online_trained": "online trained",
+        "fresh_online": "fresh online",
+        "no_head_checkpoint": "no disk head",
+        "rlt_disabled": "disabled",
+        "not_rlt_policy": "not RLT policy",
+    }
+    return labels.get(status, status.replace("_", " "))
+
+
 def _status_event_detail(event: dict[str, Any]) -> str:
     fields: list[str] = []
     for key in (
@@ -291,6 +317,11 @@ def _status_event_detail(event: dict[str, Any]) -> str:
         "rlt_accepted_frames",
         "rlt_training_head",
         "rlt_training_paused",
+        "rlt_enabled",
+        "rlt_head_status",
+        "rlt_head_checkpoint_loaded",
+        "rlt_loaded_head_step",
+        "rlt_actor_available",
         "command",
         "rlt_actor_operator_enabled",
         "rlt_policy_mode",
@@ -307,6 +338,17 @@ def _status_event_detail(event: dict[str, Any]) -> str:
                 fields.append(f"rlt_head={'enabled' if bool(event[key]) else 'disabled'}")
             elif key == "rlt_actor_executing":
                 fields.append(f"rlt_actor_used={'yes' if bool(event[key]) else 'no'}")
+            elif key == "rlt_enabled":
+                fields.append(f"rlt={'enabled' if bool(event[key]) else 'disabled'}")
+            elif key == "rlt_head_status":
+                fields.append(f"rlt_head_status={_format_rlt_head_status(event)}")
+            elif key == "rlt_head_checkpoint_loaded":
+                if event.get("rlt_head_checkpoint"):
+                    fields.append(f"persisted_head={'loaded' if bool(event[key]) else 'not_loaded'}")
+                else:
+                    fields.append("persisted_head=none")
+            elif key == "rlt_actor_available":
+                fields.append(f"rlt_actor_available={'yes' if bool(event[key]) else 'no'}")
             elif key in {"rlt_action_deviation_rms", "rlt_action_deviation_abs_max"}:
                 fields.append(f"{key}={_format_compact_float(event[key])}")
             else:
@@ -985,6 +1027,17 @@ def _run_smoke(status_file: Path, client_log_file: Path, server_log_file: Path) 
     replay_capacity = state.server.get("rlt_replay_capacity", "n/a")
     train_head = state.server.get("rlt_training_head", "unknown")
     print(f"phase={phase}")
+    print(f"rlt_enabled={_yes_no(state.server.get('rlt_enabled'))}")
+    print(f"rlt_head_status={_format_rlt_head_status(state.server)}")
+    print(f"rlt_head_checkpoint={_format_path_tail(state.server.get('rlt_head_checkpoint'))}")
+    print(f"rlt_actor_available={_yes_no(state.server.get('rlt_actor_available'))}")
+    print(f"rlt_actor_used={_yes_no(state.server.get('rlt_actor_executing'))}")
+    print(f"rlt_policy_mode={state.server.get('rlt_policy_mode', 'n/a')}")
+    print(f"rlt_vla_delta_rms={_format_compact_float(state.server.get('rlt_action_deviation_rms'))}")
+    print(
+        "rlt_vla_delta_abs_max="
+        f"{_format_compact_float(state.server.get('rlt_action_deviation_abs_max'))}"
+    )
     print(f"replay_buffer={replay_size}/{replay_capacity}")
     print(f"training_state={train_head}")
     print(f"actor_loss={_format_loss(state.server.get('rlt_actor_loss'))}")
@@ -1027,7 +1080,7 @@ def _run_textual(
         #dashboard {
             grid-size: 2 2;
             grid-gutter: 1 2;
-            height: 16;
+            height: 18;
             padding: 1 1;
         }
 
@@ -1037,28 +1090,11 @@ def _run_textual(
             height: 100%;
         }
 
-        #loss_panel {
-            border: round $secondary;
-            padding: 0 1;
-            height: 12;
-            margin: 0 1 1 1;
-        }
-
         #recent_panel {
             border: round $accent;
             padding: 0 1;
             height: 1fr;
             margin: 0 1 1 1;
-        }
-
-        #trajectory_panel {
-            height: 1fr;
-            padding: 1 1;
-        }
-
-        #rollouts_panel {
-            height: 1fr;
-            padding: 1 1;
         }
 
         #logs {
@@ -1070,8 +1106,6 @@ def _run_textual(
         BINDINGS = [
             Binding("left", "show_main", "Main"),
             Binding("right", "show_logs", "Logs"),
-            Binding("t", "show_trajectory", "Trajectory"),
-            Binding("r", "show_rollouts", "Rollouts"),
             Binding("q", "quit_app", "Quit"),
             Binding("2", "robot_start_rollout", "Start episode"),
             Binding("3", "critical_toggle", "Record critical"),
@@ -1082,9 +1116,6 @@ def _run_textual(
             Binding("1", "robot_success", "Episode success"),
             Binding("0", "robot_failure", "Fail critical"),
             Binding("9", "robot_discard", "Discard critical"),
-            Binding("s", "rollout_mark_success", "Review success"),
-            Binding("f", "rollout_mark_failure", "Review fail"),
-            Binding("d", "rollout_toggle_discard", "Review discard"),
         ]
 
         def __init__(self) -> None:
@@ -1096,20 +1127,11 @@ def _run_textual(
                 TailedTextFile(server_log_file, "server"),
             ]
             self.dead_since: float | None = None
-            self.trajectory_events: Queue[dict[str, Any]] | None = None
-            self.trajectory_stop_event: threading.Event | None = None
-            self.trajectory_thread: threading.Thread | None = None
+            self.browser_dashboard_enabled = bool(trajectory_ws_url)
             if trajectory_ws_url:
-                self.state.trajectory_status = "connecting"
-                self.trajectory_events = Queue(maxsize=TRAJECTORY_QUEUE_SIZE)
-                self.trajectory_stop_event = threading.Event()
-                self.trajectory_thread = threading.Thread(
-                    target=_run_trajectory_listener,
-                    args=(trajectory_ws_url, self.trajectory_events, self.trajectory_stop_event),
-                    name="drtc_tui_trajectory_listener",
-                    daemon=True,
+                self.state.status_events.append(
+                    f"{_format_time(time.time())} tui: plots moved to browser trajectory dashboard"
                 )
-                self.trajectory_thread.start()
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
@@ -1121,12 +1143,7 @@ def _run_textual(
                             yield Static(id="episode_card", classes="card")
                             yield Static(id="training_card", classes="card")
                             yield Static(id="controls_card", classes="card")
-                        yield Static(id="loss_panel")
                         yield Static(id="recent_panel")
-                with TabPane("Trajectory", id="trajectory"):
-                    yield Static(id="trajectory_panel")
-                with TabPane("Rollouts", id="rollouts"):
-                    yield Static(id="rollouts_panel")
                 with TabPane("Logs", id="logs_tab"):
                     yield RichLog(id="logs", wrap=True, markup=False, highlight=False)
             yield Footer()
@@ -1138,10 +1155,6 @@ def _run_textual(
         def refresh_from_files(self) -> None:
             for line in _update_from_files(self.state, self.status_tail, self.log_tails):
                 self.query_one("#logs", RichLog).write(line)
-
-            if self.trajectory_events is not None:
-                for event in _drain_queue(self.trajectory_events):
-                    self.state.apply_trajectory_event(event)
 
             alive = _pid_alive(watch_pid)
             if not alive and self.dead_since is None:
@@ -1174,22 +1187,30 @@ def _run_textual(
             training_operator_enabled = bool(training_operator_value) if training_operator_value is not None else False
             rlt_actor_value = server.get("rlt_actor_operator_enabled")
             rlt_actor_enabled = bool(rlt_actor_value) if rlt_actor_value is not None else False
+            rlt_config_enabled = bool(server.get("rlt_enabled", False))
+            rlt_actor_available = bool(server.get("rlt_actor_available", False))
+            rlt_actor_effective_enabled = bool(server.get("rlt_actor_effective_enabled", False))
             rlt_actor_executing = bool(server.get("rlt_actor_executing", False))
             rlt_policy_mode = server.get("rlt_policy_mode") or "n/a"
             rlt_gate_reason = server.get("rlt_actor_gate_reason") or "n/a"
             rlt_delta_rms = _format_compact_float(server.get("rlt_action_deviation_rms"))
             rlt_delta_abs_max = _format_compact_float(server.get("rlt_action_deviation_abs_max"))
             rlt_steps_until_execute = server.get("rlt_steps_until_execute", "n/a")
+            rlt_head_status = _format_rlt_head_status(server)
+            rlt_head_checkpoint = _format_path_tail(server.get("rlt_head_checkpoint"), max_len=38)
 
             closing = "\nExperiment process exited; closing TUI..." if self.dead_since is not None else ""
             self.query_one("#phase_card", Static).update(
-                "[b]Phase[/b]\n"
-                f"{phase}\n\n"
+                "[b]Phase / RLT Use[/b]\n"
+                f"{phase}\n"
                 f"Intervention: {_yes_no(client.get('intervention'))}\n"
-                f"RLT toggle: {_enabled_disabled(rlt_actor_enabled)}\n"
-                f"RLT used: {_yes_no(rlt_actor_executing)}  Mode: {rlt_policy_mode}\n"
+                f"RLT config/toggle: {_enabled_disabled(rlt_config_enabled)}/"
+                f"{_enabled_disabled(rlt_actor_enabled)}\n"
+                f"RLT avail/armed: {_yes_no(rlt_actor_available)}/"
+                f"{_yes_no(rlt_actor_effective_enabled)}\n"
+                f"Using RLT head: {_yes_no(rlt_actor_executing)}  Mode: {rlt_policy_mode}\n"
                 f"Gate: {rlt_gate_reason}  Steps left: {rlt_steps_until_execute}\n"
-                f"Delta rms/max: {rlt_delta_rms}/{rlt_delta_abs_max}"
+                f"RLT vs VLA rms/max: {rlt_delta_rms}/{rlt_delta_abs_max}"
                 f"{closing}"
             )
             self.query_one("#episode_card", Static).update(
@@ -1207,13 +1228,18 @@ def _run_textual(
             )
             self.query_one("#training_card", Static).update(
                 "[b]RLT Training[/b]\n"
-                f"Replay: {replay_size}/{replay_capacity}\n"
-                f"Train step: {server.get('rlt_train_step', 'n/a')}\n"
-                f"State: {train_head}\n"
-                f"Operator: {'started' if training_operator_enabled else 'paused'}\n"
+                f"Head: {rlt_head_status}  Step: {server.get('rlt_train_step', 'n/a')}\n"
+                f"Disk: {rlt_head_checkpoint}\n"
+                f"Replay: {replay_size}/{replay_capacity}  State: {train_head}\n"
+                f"Operator: {'started' if training_operator_enabled else 'paused'}  "
                 f"Actor toggle: {_enabled_disabled(rlt_actor_enabled)}\n"
-                f"Actor train: {_yes_no(server.get('rlt_actor_training'))}\n"
-                f"Critic train: {_yes_no(server.get('rlt_critic_training'))}"
+                f"Actor/Critic train: {_yes_no(server.get('rlt_actor_training'))}/"
+                f"{_yes_no(server.get('rlt_critic_training'))}"
+            )
+            browser_line = (
+                "Browser dashboard: loss plots, rollouts, trajectory comparison"
+                if self.browser_dashboard_enabled
+                else "Use --viz for browser plots, rollouts, trajectory comparison"
             )
             self.query_one("#controls_card", Static).update(
                 "[b]Controls[/b]\n"
@@ -1226,16 +1252,12 @@ def _run_textual(
                 "1: episode success\n"
                 "0: critical failure/keep\n"
                 "9: discard critical\n"
-                "r: rollouts table\n\n"
+                "\n"
+                f"{browser_line}\n"
                 "Left/Right: tabs   q: quit"
-            )
-            self.query_one("#loss_panel", Static).update(
-                _format_loss_chart(self.state.actor_loss_history, self.state.critic_loss_history)
             )
             recent = "\n".join(self.state.status_events) or "No status events yet"
             self.query_one("#recent_panel", Static).update("[b]Recent Status[/b]\n" + recent)
-            self.query_one("#trajectory_panel", Static).update(_format_trajectory_panel(self.state))
-            self.query_one("#rollouts_panel", Static).update(_format_rollouts_panel(self.state))
 
         def action_show_main(self) -> None:
             self.query_one("#tabs", TabbedContent).active = "main"
@@ -1243,18 +1265,8 @@ def _run_textual(
         def action_show_logs(self) -> None:
             self.query_one("#tabs", TabbedContent).active = "logs_tab"
 
-        def action_show_trajectory(self) -> None:
-            self.query_one("#tabs", TabbedContent).active = "trajectory"
-
-        def action_show_rollouts(self) -> None:
-            self.query_one("#tabs", TabbedContent).active = "rollouts"
-
         def action_quit_app(self) -> None:
             self.exit(130)
-
-        def on_unmount(self) -> None:
-            if self.trajectory_stop_event is not None:
-                self.trajectory_stop_event.set()
 
         def _send_robot_command(self, command: str) -> None:
             _write_control_command(control_file, command, self.state)
@@ -1286,35 +1298,6 @@ def _run_textual(
 
         def action_rlt_actor_toggle(self) -> None:
             self._send_robot_command("toggle_rlt_actor")
-
-        def _has_live_critical_to_label(self) -> bool:
-            return bool(
-                self.state.client.get("critical_pending_label")
-                or self.state.client.get("critical_phase_open")
-                or self.state.client.get("episode_open")
-            )
-
-        def action_rollout_mark_success(self) -> None:
-            if self._has_live_critical_to_label():
-                _write_control_command(control_file, "success", self.state)
-            else:
-                _write_rollout_review_edit(self.state, label="success")
-            self.refresh_dashboard()
-
-        def action_rollout_mark_failure(self) -> None:
-            if self._has_live_critical_to_label():
-                _write_control_command(control_file, "failure", self.state)
-            else:
-                _write_rollout_review_edit(self.state, label="failure")
-            self.refresh_dashboard()
-
-        def action_rollout_toggle_discard(self) -> None:
-            if self._has_live_critical_to_label():
-                _write_control_command(control_file, "discard_episode", self.state)
-            else:
-                row = _latest_reviewable_rollout(self.state)
-                _write_rollout_review_edit(self.state, discard=not bool(row.discard) if row is not None else None)
-            self.refresh_dashboard()
 
     return int(DrtcTuiApp().run())
 
