@@ -239,14 +239,31 @@ class OpenCVCamera(Camera):
         # blocking in multi-threaded applications, especially during data collection.
         cv2.setNumThreads(1)
 
-        self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+        try:
+            connect_timeout_s = max(0.0, float(os.environ.get("LEROBOT_OPENCV_CONNECT_TIMEOUT_S", "0")))
+        except ValueError:
+            connect_timeout_s = 0.0
+        deadline = time.monotonic() + connect_timeout_s
+        attempt = 0
+        while True:
+            attempt += 1
+            self.videocapture = cv2.VideoCapture(self.index_or_path, self.backend)
+            if self.videocapture.isOpened():
+                break
 
-        if not self.videocapture.isOpened():
             self.videocapture.release()
             self.videocapture = None
-            raise ConnectionError(
-                f"Failed to open {self}.Run `lerobot-find-cameras opencv` to find available cameras."
-            )
+            if time.monotonic() >= deadline:
+                raise ConnectionError(
+                    f"Failed to open {self}.Run `lerobot-find-cameras opencv` to find available cameras."
+                )
+            if attempt == 1:
+                logger.warning(
+                    "Failed to open %s; retrying for %.1fs while the camera settles.",
+                    self,
+                    connect_timeout_s,
+                )
+            time.sleep(0.25)
 
         self._configure_capture_settings()
 

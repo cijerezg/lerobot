@@ -28,6 +28,7 @@
 #   DRTC_TUI                - Set false/0/no/off to disable the TUI (default: true)
 #   PYTORCH_CUDA_ALLOC_CONF - PyTorch CUDA allocator options (default: expandable_segments:True)
 #   LEROBOT_DRTC_POLICY_LOAD_DEVICE - Force model staging device (default: cpu for MolmoAct2 on CUDA)
+#   LEROBOT_OPENCV_CONNECT_TIMEOUT_S - Seconds to retry camera open on transient failure (default: 5)
 #
 # =============================================================================
 
@@ -56,6 +57,7 @@ POLICY_SERVER_HOST="${POLICY_SERVER_HOST:-localhost}"
 POLICY_SERVER_PORT="${POLICY_SERVER_PORT:-8080}"
 TRAJECTORY_WS_URL="${DRTC_TRAJECTORY_WS_URL:-ws://localhost:8089}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+export LEROBOT_OPENCV_CONNECT_TIMEOUT_S="${LEROBOT_OPENCV_CONNECT_TIMEOUT_S:-5}"
 ARGS=("$@")
 for ((i = 0; i < ${#ARGS[@]}; i++)); do
     case "${ARGS[$i]}" in
@@ -158,6 +160,7 @@ echo "=============================================="
 echo "Project root: $PROJECT_ROOT"
 echo "Arguments:    $*"
 echo "CUDA alloc:   $PYTORCH_CUDA_ALLOC_CONF"
+echo "Camera retry: ${LEROBOT_OPENCV_CONNECT_TIMEOUT_S}s"
 if [ "$ENABLE_TUI" = true ]; then
     echo "TUI:          enabled (use --no-tui or DRTC_TUI=false to disable)"
 else
