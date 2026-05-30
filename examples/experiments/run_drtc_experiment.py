@@ -202,6 +202,11 @@ class ExperimentConfig:
     rlt_action_deviation_abs_max: float | None = None
     rlt_loss_abs_max: float | None = None
     rlt_safety_patience: int = 3
+    rlt_wandb_enabled: bool = False
+    rlt_wandb_project: str = "lerobot-rlt"
+    rlt_wandb_entity: str | None = None
+    rlt_wandb_run_name: str | None = None
+    rlt_wandb_mode: str | None = None
     # DRTC parameters
     latency_k: float = 2.0
     epsilon: int = 2
@@ -300,6 +305,8 @@ _SCALAR_FIELDS = frozenset({
     "rlt_context_cache_size", "rlt_transition_queue_size",
     "rlt_grad_clip_norm", "rlt_q_abs_max", "rlt_action_deviation_abs_max",
     "rlt_loss_abs_max", "rlt_safety_patience",
+    "rlt_wandb_enabled", "rlt_wandb_project", "rlt_wandb_entity",
+    "rlt_wandb_run_name", "rlt_wandb_mode",
     "latency_k", "epsilon", "s_min", "latency_alpha", "latency_beta",
     "duration_s", "run_until_interrupt", "fps", "actions_per_chunk",
     "num_flow_matching_steps", "rtc_enabled", "rtc_max_guidance_weight",
@@ -590,6 +597,11 @@ def create_client_config(
         rlt_action_deviation_abs_max=config.rlt_action_deviation_abs_max,
         rlt_loss_abs_max=config.rlt_loss_abs_max,
         rlt_safety_patience=config.rlt_safety_patience,
+        rlt_wandb_enabled=config.rlt_wandb_enabled,
+        rlt_wandb_project=config.rlt_wandb_project,
+        rlt_wandb_entity=config.rlt_wandb_entity,
+        rlt_wandb_run_name=config.rlt_wandb_run_name,
+        rlt_wandb_mode=config.rlt_wandb_mode,
         actions_per_chunk=config.actions_per_chunk,
         fps=config.fps,
         s_min=config.s_min,

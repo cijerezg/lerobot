@@ -455,6 +455,26 @@ class RobotClientDrtcConfig:
         default=3,
         metadata={"help": "Number of consecutive unsafe RLT updates before actor execution is disabled."},
     )
+    rlt_wandb_enabled: bool = field(
+        default=False,
+        metadata={"help": "Log online RLT trainer metrics from the policy server to Weights & Biases."},
+    )
+    rlt_wandb_project: str = field(
+        default="lerobot-rlt",
+        metadata={"help": "Weights & Biases project for online RLT trainer metrics."},
+    )
+    rlt_wandb_entity: str | None = field(
+        default=None,
+        metadata={"help": "Optional Weights & Biases entity for online RLT trainer metrics."},
+    )
+    rlt_wandb_run_name: str | None = field(
+        default=None,
+        metadata={"help": "Optional Weights & Biases run name for online RLT trainer metrics."},
+    )
+    rlt_wandb_mode: str | None = field(
+        default=None,
+        metadata={"help": "Optional Weights & Biases mode: online, offline, or disabled."},
+    )
 
     # Diagnostic metrics (console output; avg/max only)
     metrics_diagnostic_enabled: bool = field(
@@ -843,6 +863,11 @@ class RobotClientDrtcConfig:
                 raise ValueError(f"{name} must be positive or None, got {value}")
         if self.rlt_safety_patience <= 0:
             raise ValueError(f"rlt_safety_patience must be positive, got {self.rlt_safety_patience}")
+        if self.rlt_wandb_mode not in (None, "online", "offline", "disabled"):
+            raise ValueError(
+                "rlt_wandb_mode must be one of None, 'online', 'offline', or 'disabled', "
+                f"got {self.rlt_wandb_mode!r}"
+            )
         if self.action_filter_mode not in ("none", "adaptive_lowpass", "hold_stable", "butterworth"):
             raise ValueError(
                 f"action_filter_mode must be 'none', 'adaptive_lowpass', 'hold_stable', or 'butterworth', "

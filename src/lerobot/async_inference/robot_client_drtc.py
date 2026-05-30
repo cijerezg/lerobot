@@ -471,6 +471,11 @@ class RobotClientDrtc:
             rlt_review_capture_enabled=config.rlt_review_capture_enabled,
             rlt_review_jpeg_quality=config.rlt_review_jpeg_quality,
             rlt_review_archive_path=config.rlt_review_archive_path,
+            rlt_wandb_enabled=config.rlt_wandb_enabled,
+            rlt_wandb_project=config.rlt_wandb_project,
+            rlt_wandb_entity=config.rlt_wandb_entity,
+            rlt_wandb_run_name=config.rlt_wandb_run_name,
+            rlt_wandb_mode=config.rlt_wandb_mode,
         )
 
         self.channel = grpc.insecure_channel(

@@ -516,6 +516,12 @@ class RemotePolicyConfig:
     rlt_review_capture_enabled: bool = False
     rlt_review_jpeg_quality: int = 80
     rlt_review_archive_path: str | None = None
+    # Optional server-side WandB logging for online RLT trainer metrics.
+    rlt_wandb_enabled: bool = False
+    rlt_wandb_project: str = "lerobot-rlt"
+    rlt_wandb_entity: str | None = None
+    rlt_wandb_run_name: str | None = None
+    rlt_wandb_mode: str | None = None
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Back-compat for pickles created before RTC/spike fields existed."""
@@ -582,6 +588,11 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_review_capture_enabled", False)
         self.__dict__.setdefault("rlt_review_jpeg_quality", 80)
         self.__dict__.setdefault("rlt_review_archive_path", None)
+        self.__dict__.setdefault("rlt_wandb_enabled", False)
+        self.__dict__.setdefault("rlt_wandb_project", "lerobot-rlt")
+        self.__dict__.setdefault("rlt_wandb_entity", None)
+        self.__dict__.setdefault("rlt_wandb_run_name", None)
+        self.__dict__.setdefault("rlt_wandb_mode", None)
 
 
 def _compare_observation_states(obs1_state: Any, obs2_state: Any, atol: float) -> bool:

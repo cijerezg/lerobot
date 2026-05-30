@@ -358,6 +358,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_action_deviation_abs_max: float | None = None
         self._rlt_loss_abs_max: float | None = None
         self._rlt_safety_patience = 3
+        self._rlt_wandb_enabled = False
+        self._rlt_wandb_project = "lerobot-rlt"
+        self._rlt_wandb_entity: str | None = None
+        self._rlt_wandb_run_name: str | None = None
+        self._rlt_wandb_mode: str | None = None
+        self._rlt_wandb_run: Any | None = None
         self._rlt_safety_violation_count = 0
         self._rlt_actor_disabled_by_safety = False
         self._rlt_next_context_id = 1
@@ -467,6 +473,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_intervention_reference_mode": getattr(
                 self, "_rlt_intervention_reference_mode", "executed"
             ),
+            "rlt_wandb_enabled": getattr(self, "_rlt_wandb_enabled", False),
+            "rlt_wandb_active": getattr(self, "_rlt_wandb_run", None) is not None,
+            "rlt_wandb_project": getattr(self, "_rlt_wandb_project", None),
+            "rlt_wandb_run_name": getattr(self, "_rlt_wandb_run_name", None),
+            "rlt_wandb_mode": getattr(self, "_rlt_wandb_mode", None),
         }
         status_fields.update(fields)
         emit_status(
@@ -563,6 +574,101 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                     not getattr(self, "_rlt_actor_operator_enabled", False),
                     command=command,
                 )
+
+    def _init_rlt_wandb(self, policy_specs: RemotePolicyConfig) -> None:
+        if self._rlt_wandb_run is not None:
+            self._finish_rlt_wandb(reason="reconfigure")
+        if not self._rlt_wandb_enabled:
+            return
+        if not self._rlt_online_training_enabled:
+            self._emit_rlt_status("rlt_wandb_disabled", reason="online_training_disabled")
+            return
+        if not self._is_rlt_policy() or self.policy is None:
+            self._emit_rlt_status("rlt_wandb_disabled", reason="not_rlt_policy")
+            return
+
+        try:
+            os.environ.setdefault("WANDB_SILENT", "True")
+            Path(self._rlt_output_dir).mkdir(parents=True, exist_ok=True)
+            import wandb
+
+            wandb_config = {
+                "policy_type": policy_specs.policy_type,
+                "pretrained_name_or_path": str(policy_specs.pretrained_name_or_path),
+                "actions_per_chunk": int(policy_specs.actions_per_chunk),
+            }
+            for key, value in vars(policy_specs).items():
+                if key.startswith("rlt_"):
+                    wandb_config[key] = value
+
+            self._rlt_wandb_run = wandb.init(
+                project=self._rlt_wandb_project,
+                entity=self._rlt_wandb_entity,
+                name=self._rlt_wandb_run_name,
+                mode=self._rlt_wandb_mode,
+                dir=self._rlt_output_dir,
+                config=wandb_config,
+            )
+            run_url = None
+            get_url = getattr(self._rlt_wandb_run, "get_url", None)
+            if callable(get_url):
+                run_url = get_url()
+            self.logger.info("RLT WandB logging enabled%s", f": {run_url}" if run_url else ".")
+            self._emit_rlt_status("rlt_wandb_started", rlt_wandb_url=run_url)
+        except Exception as e:
+            run = self._rlt_wandb_run
+            self._rlt_wandb_run = None
+            if run is not None:
+                with suppress(Exception):
+                    run.finish(exit_code=1)
+            self.logger.warning("RLT WandB initialization failed; continuing without WandB: %s", e)
+            self._emit_rlt_status("rlt_wandb_error", rlt_wandb_error=str(e))
+
+    def _finish_rlt_wandb(self, *, reason: str) -> None:
+        run = self._rlt_wandb_run
+        if run is None:
+            return
+        self._rlt_wandb_run = None
+        try:
+            run.finish()
+            self._emit_rlt_status("rlt_wandb_finished", reason=reason)
+        except Exception as e:
+            self.logger.warning("RLT WandB finish failed during %s: %s", reason, e)
+
+    @staticmethod
+    def _wandb_metric_value(value: Any) -> int | float | None:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int | float):
+            return value
+        if isinstance(value, torch.Tensor) and value.numel() == 1:
+            return float(value.detach().cpu())
+        return None
+
+    def _log_rlt_wandb(self, *, step: int, metrics: dict[str, Any]) -> None:
+        run = self._rlt_wandb_run
+        if run is None:
+            return
+
+        payload: dict[str, int | float] = {}
+        for key, value in metrics.items():
+            metric_value = self._wandb_metric_value(value)
+            if metric_value is None:
+                continue
+            payload[f"train/{key}"] = metric_value
+        if not payload:
+            return
+
+        try:
+            run.log(payload, step=int(step))
+        except Exception as e:
+            run = self._rlt_wandb_run
+            self._rlt_wandb_run = None
+            if run is not None:
+                with suppress(Exception):
+                    run.finish(exit_code=1)
+            self.logger.warning("RLT WandB logging failed; disabling WandB for this run: %s", e)
+            self._emit_rlt_status("rlt_wandb_error", rlt_wandb_error=str(e))
 
     def _load_rlt_replay_file(self, path: str | None, *, source: str) -> int:
         if not path:
@@ -758,6 +864,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_action_deviation_abs_max = getattr(policy_specs, "rlt_action_deviation_abs_max", None)
         self._rlt_loss_abs_max = getattr(policy_specs, "rlt_loss_abs_max", None)
         self._rlt_safety_patience = int(getattr(policy_specs, "rlt_safety_patience", 3))
+        self._rlt_wandb_enabled = bool(getattr(policy_specs, "rlt_wandb_enabled", False))
+        self._rlt_wandb_project = str(getattr(policy_specs, "rlt_wandb_project", "lerobot-rlt") or "lerobot-rlt")
+        self._rlt_wandb_entity = getattr(policy_specs, "rlt_wandb_entity", None)
+        self._rlt_wandb_run_name = getattr(policy_specs, "rlt_wandb_run_name", None)
+        self._rlt_wandb_mode = getattr(policy_specs, "rlt_wandb_mode", None)
         self._rlt_safety_violation_count = 0
         self._rlt_actor_disabled_by_safety = False
         context_cache_size = int(getattr(policy_specs, "rlt_context_cache_size", 256))
@@ -795,6 +906,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             self._rlt_actor_optimizer = None
             self._rlt_critic_optimizer = None
             self._rlt_training_head = "disabled"
+        self._init_rlt_wandb(policy_specs)
         self._emit_rlt_status("rlt_configured")
 
     def _next_rlt_context_id_value(self) -> int:
@@ -1262,6 +1374,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                             **self._rlt_float_stats(actor_stats),
                             "rlt_critic_grad_norm": critic_grad_norm,
                             "rlt_actor_grad_norm": actor_grad_norm,
+                            "rlt_replay_size": float(replay_size),
                             "rlt_batch_success_fraction": float(batch["success"].float().mean().detach().cpu()),
                             "rlt_batch_intervention_fraction": float(
                                 batch["is_intervention"].float().mean().detach().cpu()
@@ -1283,6 +1396,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                         rlt_critic_loss=float(critic_loss.detach().cpu()),
                         **rlt_stats,
                     )
+                    wandb_metrics = {
+                        "rlt_actor_loss": float(actor_loss.detach().cpu()),
+                        "rlt_critic_loss": float(critic_loss.detach().cpu()),
+                    }
+                    for key, value in rlt_stats.items():
+                        metric_key = key if key.startswith("rlt_") else f"rlt_{key}"
+                        wandb_metrics.setdefault(metric_key, value)
+                    self._log_rlt_wandb(step=self._rlt_train_step, metrics=wandb_metrics)
                     if self._rlt_train_step % self._rlt_save_freq_steps == 0:
                         self._save_rlt_head_checkpoint()
                 except Exception as e:
@@ -1349,6 +1470,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             if self._rlt_trainer_thread.is_alive():
                 self.logger.warning("RLT trainer thread did not exit within 5s during reset.")
         self._rlt_trainer_thread = None
+        self._finish_rlt_wandb(reason="reset")
 
         # Reset registers (avoid leaking prior session values)
         self._obs_reg = LWWRegister(initial_control_step=_INITIAL_K, initial_value=None)

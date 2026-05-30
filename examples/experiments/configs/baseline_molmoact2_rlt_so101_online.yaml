@@ -75,6 +75,13 @@ rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_202
 rlt_online_buffer_save_freq_transitions: 50
 rlt_persist_buffer_on_shutdown: true
 
+# Server-side online RLT trainer metrics.
+rlt_wandb_enabled: true
+rlt_wandb_project: lerobot-rlt
+rlt_wandb_entity:
+rlt_wandb_run_name: baseline_molmoact2_rlt_so101_online
+rlt_wandb_mode: online
+
 # Optional review capture for offline episode inspection.
 rlt_review_capture_enabled: true
 rlt_review_jpeg_quality: 80
