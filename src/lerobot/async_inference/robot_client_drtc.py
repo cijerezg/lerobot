@@ -464,6 +464,7 @@ class RobotClientDrtc:
             rlt_context_cache_size=config.rlt_context_cache_size,
             rlt_transition_queue_size=config.rlt_transition_queue_size,
             rlt_grad_clip_norm=config.rlt_grad_clip_norm,
+            rlt_safety_enabled=config.rlt_safety_enabled,
             rlt_q_abs_max=config.rlt_q_abs_max,
             rlt_action_deviation_abs_max=config.rlt_action_deviation_abs_max,
             rlt_loss_abs_max=config.rlt_loss_abs_max,

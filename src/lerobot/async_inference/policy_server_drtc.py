@@ -350,6 +350,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_execute_after_train_steps = 1000000
         self._rlt_eval_actor_blend = 1.0
         self._rlt_grad_clip_norm: float | None = None
+        self._rlt_safety_enabled = True
         self._rlt_q_abs_max: float | None = None
         self._rlt_action_deviation_abs_max: float | None = None
         self._rlt_loss_abs_max: float | None = None
@@ -471,7 +472,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         train_step_ready = train_step >= execute_after_steps
         actor_available = bool(is_rlt_policy and rlt_enabled and (actor_loaded or train_step_ready))
         operator_enabled = bool(getattr(self, "_rlt_actor_operator_enabled", True))
-        safety_disabled = bool(getattr(self, "_rlt_actor_disabled_by_safety", False))
+        safety_enabled = bool(getattr(self, "_rlt_safety_enabled", True))
+        safety_disabled = bool(getattr(self, "_rlt_actor_disabled_by_safety", False)) if safety_enabled else False
         actor_effective_enabled = actor_available and operator_enabled and not safety_disabled
 
         if not is_rlt_policy:
@@ -506,6 +508,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_actor_prediction_available": bool(
                 getattr(self, "_rlt_last_actor_prediction_available", False)
             ),
+            "rlt_safety_enabled": safety_enabled,
             "rlt_action_deviation_rms": getattr(self, "_rlt_last_action_deviation_rms", None),
             "rlt_action_deviation_abs_max": getattr(self, "_rlt_last_action_deviation_abs_max", None),
             "rlt_last_inference_ts": getattr(self, "_rlt_last_inference_event_ts", None),
@@ -529,6 +532,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_training_head": self._rlt_training_head,
             "rlt_actor_training": self._rlt_training_head == "actor",
             "rlt_critic_training": self._rlt_training_head == "critic",
+            "rlt_safety_enabled": getattr(self, "_rlt_safety_enabled", True),
+            "rlt_safety_violation_count": getattr(self, "_rlt_safety_violation_count", 0),
+            "rlt_safety_patience": getattr(self, "_rlt_safety_patience", 3),
+            "rlt_q_abs_limit": getattr(self, "_rlt_q_abs_max", None),
+            "rlt_action_deviation_limit": getattr(self, "_rlt_action_deviation_abs_max", None),
+            "rlt_loss_abs_limit": getattr(self, "_rlt_loss_abs_max", None),
             "rlt_actor_disabled_by_safety": self._rlt_actor_disabled_by_safety,
             "rlt_demo_replay_size": self._rlt_demo_replay_size,
             "rlt_online_replay_size": self._rlt_online_replay_size,
@@ -980,6 +989,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         )
         self._rlt_eval_actor_blend = float(getattr(policy_specs, "rlt_eval_actor_blend", 1.0))
         self._rlt_grad_clip_norm = getattr(policy_specs, "rlt_grad_clip_norm", None)
+        self._rlt_safety_enabled = bool(getattr(policy_specs, "rlt_safety_enabled", True))
         self._rlt_q_abs_max = getattr(policy_specs, "rlt_q_abs_max", None)
         self._rlt_action_deviation_abs_max = getattr(policy_specs, "rlt_action_deviation_abs_max", None)
         self._rlt_loss_abs_max = getattr(policy_specs, "rlt_loss_abs_max", None)
@@ -1083,7 +1093,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         cfg = getattr(self.policy, "config", None)
         if not bool(getattr(cfg, "rlt_enabled", False)):
             return False
-        if self._rlt_actor_disabled_by_safety:
+        if bool(getattr(self, "_rlt_safety_enabled", True)) and self._rlt_actor_disabled_by_safety:
             return False
         actor_loaded = bool(getattr(self.policy, "_rlt_actor_loaded", False))
         return actor_loaded or self._rlt_train_step >= self._rlt_execute_after_train_steps
@@ -1098,7 +1108,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         cfg = getattr(self.policy, "config", None)
         if not bool(getattr(cfg, "rlt_enabled", False)):
             return "rlt_disabled"
-        if self._rlt_actor_disabled_by_safety:
+        if bool(getattr(self, "_rlt_safety_enabled", True)) and self._rlt_actor_disabled_by_safety:
             return "safety_disabled"
         actor_loaded = bool(getattr(self.policy, "_rlt_actor_loaded", False))
         if not actor_loaded and self._rlt_train_step < self._rlt_execute_after_train_steps:
@@ -1144,6 +1154,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             gate_reason,
             bool(critical_phase_active),
             bool(getattr(self, "_rlt_actor_operator_enabled", True)),
+            bool(getattr(self, "_rlt_safety_enabled", True)),
             bool(self._rlt_actor_disabled_by_safety),
             bool(actor_loaded),
             int(self._rlt_train_step),
@@ -1169,6 +1180,33 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             rlt_actor_loaded=actor_loaded,
             rlt_execute_after_train_steps=int(self._rlt_execute_after_train_steps),
             rlt_steps_until_execute=steps_until_execute,
+        )
+        self.logger.info(
+            "RLT inference: mode=%s gate=%s critical=%s actor_executing=%s "
+            "prediction_available=%s train_step=%d execute_after=%d steps_until_execute=%d "
+            "actor_loaded=%s operator_enabled=%s safety_enabled=%s safety_disabled=%s "
+            "window_start=%d window_len=%d deviation_rms=%s deviation_abs_max=%s deviation_limit=%s",
+            policy_mode,
+            gate_reason,
+            bool(critical_phase_active),
+            bool(actor_executing),
+            action_deviation_rms is not None,
+            int(self._rlt_train_step),
+            int(self._rlt_execute_after_train_steps),
+            int(steps_until_execute),
+            bool(actor_loaded),
+            bool(getattr(self, "_rlt_actor_operator_enabled", True)),
+            bool(getattr(self, "_rlt_safety_enabled", True)),
+            bool(self._rlt_actor_disabled_by_safety),
+            int(window_start_index),
+            int(window_len),
+            "n/a" if action_deviation_rms is None else f"{action_deviation_rms:.6g}",
+            "n/a" if action_deviation_abs_max is None else f"{action_deviation_abs_max:.6g}",
+            (
+                "n/a"
+                if self._rlt_action_deviation_abs_max is None
+                else f"{float(self._rlt_action_deviation_abs_max):.6g}"
+            ),
         )
 
     # TODO - rename this to be generic
@@ -1233,8 +1271,10 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 action_deviation = (actor_prediction_prefix - actor_ref).detach()
                 action_deviation_rms = float(action_deviation.pow(2).mean().sqrt().cpu())
                 action_deviation_abs_max = float(action_deviation.abs().max().cpu())
-                if self._rlt_action_deviation_abs_max is not None and action_deviation_abs_max > float(
-                    self._rlt_action_deviation_abs_max
+                if (
+                    bool(getattr(self, "_rlt_safety_enabled", True))
+                    and self._rlt_action_deviation_abs_max is not None
+                    and action_deviation_abs_max > float(self._rlt_action_deviation_abs_max)
                 ):
                     action_tensor = reference
                     policy_mode = "rlt_safety_passthrough"
@@ -1536,6 +1576,8 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         }
 
     def _check_rlt_safety(self, stats: dict[str, float]) -> None:
+        if not bool(getattr(self, "_rlt_safety_enabled", True)):
+            return
         if self._rlt_actor_disabled_by_safety:
             return
         violations: list[str] = []
@@ -1560,6 +1602,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             return
 
         if self._rlt_train_step < self._rlt_execute_after_train_steps:
+            self.logger.info(
+                "RLT safety warmup violation ignored for actor disable: violations=%s train_step=%d "
+                "execute_after=%d",
+                ",".join(violations),
+                int(self._rlt_train_step),
+                int(self._rlt_execute_after_train_steps),
+            )
             self._emit_rlt_status(
                 "rlt_safety_warmup_violation",
                 rlt_safety_violations=",".join(violations),
@@ -1568,6 +1617,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             return
 
         self._rlt_safety_violation_count += 1
+        self.logger.warning(
+            "RLT safety violation: violations=%s count=%d/%d train_step=%d",
+            ",".join(violations),
+            int(self._rlt_safety_violation_count),
+            int(self._rlt_safety_patience),
+            int(self._rlt_train_step),
+        )
         self._emit_rlt_status(
             "rlt_safety_violation",
             rlt_safety_violations=",".join(violations),
@@ -1575,6 +1631,13 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         )
         if self._rlt_safety_violation_count >= self._rlt_safety_patience:
             self._rlt_actor_disabled_by_safety = True
+            self.logger.error(
+                "RLT actor disabled by safety: violations=%s count=%d/%d train_step=%d",
+                ",".join(violations),
+                int(self._rlt_safety_violation_count),
+                int(self._rlt_safety_patience),
+                int(self._rlt_train_step),
+            )
             self._emit_rlt_status(
                 "rlt_actor_disabled_by_safety",
                 rlt_safety_violations=",".join(violations),
@@ -1701,6 +1764,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_intervention_sample_fraction": self._rlt_intervention_sample_fraction,
             "rlt_intervention_reference_mode": self._rlt_intervention_reference_mode,
             "rlt_grad_clip_norm": self._rlt_grad_clip_norm,
+            "rlt_safety_enabled": self._rlt_safety_enabled,
             "rlt_q_abs_max": self._rlt_q_abs_max,
             "rlt_action_deviation_abs_max": self._rlt_action_deviation_abs_max,
             "rlt_loss_abs_max": self._rlt_loss_abs_max,
@@ -3179,6 +3243,20 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                         "rlt_reference_actions": rlt_reference_actions_list,
                         "rlt_actor_actions": rlt_actor_actions_list,
                         "rlt_policy_mode": rlt_policy_mode,
+                        "rlt_actor_executing": bool(rlt_policy_mode == "rlt_actor"),
+                        "rlt_actor_gate_reason": getattr(self, "_rlt_last_actor_gate_reason", None),
+                        "rlt_actor_prediction_available": rlt_actor_actions_list is not None,
+                        "rlt_safety_enabled": bool(self._rlt_safety_enabled),
+                        "rlt_actor_disabled_by_safety": bool(self._rlt_actor_disabled_by_safety),
+                        "rlt_safety_filtered": bool(rlt_policy_mode == "rlt_safety_passthrough"),
+                        "rlt_action_deviation_abs_max": getattr(
+                            self, "_rlt_last_action_deviation_abs_max", None
+                        ),
+                        "rlt_action_deviation_limit": (
+                            float(self._rlt_action_deviation_abs_max)
+                            if self._rlt_action_deviation_abs_max is not None
+                            else None
+                        ),
                         "rlt_window_start_index": int(rlt_window_start_index),
                         "rlt_window_len": int(rlt_window_len),
                     }

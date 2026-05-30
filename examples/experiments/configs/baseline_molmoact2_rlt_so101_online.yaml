@@ -95,6 +95,7 @@ rlt_execute_after_train_steps: 1000
 rlt_context_cache_size: 512
 rlt_transition_queue_size: 512
 rlt_grad_clip_norm: 20.0
+rlt_safety_enabled: true
 rlt_q_abs_max: 100.0
 rlt_action_deviation_abs_max: 2.0
 rlt_loss_abs_max: 1000.0

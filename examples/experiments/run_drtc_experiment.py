@@ -198,6 +198,7 @@ class ExperimentConfig:
     rlt_context_cache_size: int = 256
     rlt_transition_queue_size: int = 256
     rlt_grad_clip_norm: float | None = None
+    rlt_safety_enabled: bool = True
     rlt_q_abs_max: float | None = None
     rlt_action_deviation_abs_max: float | None = None
     rlt_loss_abs_max: float | None = None
@@ -303,7 +304,7 @@ _SCALAR_FIELDS = frozenset({
     "rlt_actor_lr", "rlt_critic_lr", "rlt_discount",
     "rlt_target_update_tau", "rlt_execute_after_train_steps",
     "rlt_context_cache_size", "rlt_transition_queue_size",
-    "rlt_grad_clip_norm", "rlt_q_abs_max", "rlt_action_deviation_abs_max",
+    "rlt_grad_clip_norm", "rlt_safety_enabled", "rlt_q_abs_max", "rlt_action_deviation_abs_max",
     "rlt_loss_abs_max", "rlt_safety_patience",
     "rlt_wandb_enabled", "rlt_wandb_project", "rlt_wandb_entity",
     "rlt_wandb_run_name", "rlt_wandb_mode",
@@ -593,6 +594,7 @@ def create_client_config(
         rlt_context_cache_size=config.rlt_context_cache_size,
         rlt_transition_queue_size=config.rlt_transition_queue_size,
         rlt_grad_clip_norm=config.rlt_grad_clip_norm,
+        rlt_safety_enabled=config.rlt_safety_enabled,
         rlt_q_abs_max=config.rlt_q_abs_max,
         rlt_action_deviation_abs_max=config.rlt_action_deviation_abs_max,
         rlt_loss_abs_max=config.rlt_loss_abs_max,

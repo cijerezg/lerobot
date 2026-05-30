@@ -508,6 +508,7 @@ class RemotePolicyConfig:
     rlt_context_cache_size: int = 256
     rlt_transition_queue_size: int = 256
     rlt_grad_clip_norm: float | None = None
+    rlt_safety_enabled: bool = True
     rlt_q_abs_max: float | None = None
     rlt_action_deviation_abs_max: float | None = None
     rlt_loss_abs_max: float | None = None
@@ -581,6 +582,7 @@ class RemotePolicyConfig:
         self.__dict__.setdefault("rlt_context_cache_size", 256)
         self.__dict__.setdefault("rlt_transition_queue_size", 256)
         self.__dict__.setdefault("rlt_grad_clip_norm", None)
+        self.__dict__.setdefault("rlt_safety_enabled", True)
         self.__dict__.setdefault("rlt_q_abs_max", None)
         self.__dict__.setdefault("rlt_action_deviation_abs_max", None)
         self.__dict__.setdefault("rlt_loss_abs_max", None)

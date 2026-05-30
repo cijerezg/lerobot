@@ -439,6 +439,10 @@ class RobotClientDrtcConfig:
         default=None,
         metadata={"help": "Optional gradient norm clipping value for online RLT actor and critic updates."},
     )
+    rlt_safety_enabled: bool = field(
+        default=True,
+        metadata={"help": "Enable RLT safety gates that can pass through or disable actor execution."},
+    )
     rlt_q_abs_max: float | None = field(
         default=None,
         metadata={"help": "Disable actor execution if observed absolute Q values exceed this threshold."},

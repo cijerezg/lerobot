@@ -341,6 +341,73 @@
             height: 94px !important;
         }
 
+        .rlt-gates-table-wrap {
+            overflow-x: auto;
+            border: 2px solid var(--structural-black);
+            background: var(--bg-cream);
+            margin-bottom: 10px;
+        }
+
+        .rlt-gates-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+            min-width: 640px;
+        }
+
+        .rlt-gates-table th,
+        .rlt-gates-table td {
+            border-bottom: 1px solid var(--grid-line);
+            padding: 6px 8px;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        .rlt-gates-table th {
+            background: var(--structural-black);
+            color: var(--bg-cream);
+            font-size: 9px;
+            font-weight: 800;
+            text-transform: uppercase;
+        }
+
+        .rlt-gates-table td {
+            font-family: 'Courier New', monospace;
+        }
+
+        .rlt-gate-badge {
+            display: inline-block;
+            border: 1px solid var(--structural-black);
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            font-weight: 900;
+            min-width: 58px;
+            padding: 3px 5px;
+            text-align: center;
+            text-transform: uppercase;
+        }
+
+        .rlt-gate-pass {
+            background: #2d6a4f;
+            color: var(--bg-white);
+        }
+
+        .rlt-gate-blocked {
+            background: var(--primary-red);
+            color: var(--bg-white);
+        }
+
+        .rlt-gate-waiting {
+            background: var(--primary-yellow);
+            color: var(--structural-black);
+        }
+
+        .rlt-gate-off,
+        .rlt-gate-unknown {
+            background: var(--bg-white);
+            color: var(--text-muted);
+        }
+
         .rlt-output-banner {
             border: 3px solid var(--structural-black);
             padding: 10px 12px;
@@ -1261,6 +1328,21 @@
             </div>
             <div class="rlt-loss-chart-container">
                 <canvas id="rlt-loss-chart"></canvas>
+            </div>
+            <div class="rlt-gates-table-wrap">
+                <table class="rlt-gates-table">
+                    <thead>
+                        <tr>
+                            <th>Gate</th>
+                            <th>Status</th>
+                            <th>Value</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rlt-gates-table-body">
+                        <tr><td colspan="4"><div class="rollouts-empty">Waiting for RLT gate status...</div></td></tr>
+                    </tbody>
+                </table>
             </div>
             <div class="rlt-meta" id="rlt-meta">event: -- | actor q: -- | critic q: --</div>
         </div>
@@ -2399,6 +2481,17 @@
                                 pointHoverRadius: 3,
                                 spanGaps: false,
                             },
+                            {
+                                label: 'Safety filtered',
+                                data: [],
+                                borderColor: '#e85d04',
+                                backgroundColor: 'transparent',
+                                order: -10,
+                                tension: 0,
+                                borderWidth: 5,
+                                pointRadius: 0,
+                                spanGaps: false,
+                            },
                         ],
                     },
                     options: {
@@ -2460,8 +2553,11 @@
 
         function currentRltOutputState(chunk = null) {
             const mode = String((chunk && chunk.rlt_policy_mode) || pickMetric(['rlt_policy_mode']) || '');
-            const gate = pickMetric(['rlt_actor_gate_reason']);
-            const executing = boolValue(pickMetric(['rlt_actor_executing'])) || mode === 'rlt_actor';
+            const gate = (chunk && chunk.rlt_actor_gate_reason) || pickMetric(['rlt_actor_gate_reason']);
+            const actorExecutingValue = chunk && chunk.rlt_actor_executing !== undefined
+                ? chunk.rlt_actor_executing
+                : pickMetric(['rlt_actor_executing']);
+            const executing = boolValue(actorExecutingValue) || mode === 'rlt_actor';
             const criticalActive = (
                 boolValue(pickMetric(['rlt_actor_critical_phase_active'])) ||
                 boolValue(pickMetric(['critical_phase_open'])) ||
@@ -2546,6 +2642,22 @@
             }
         }
 
+        function rltChartBottomY(dim) {
+            const values = [];
+            for (const kind of ['final', 'base', 'actor']) {
+                for (const point of comparisonSeries(kind, dim)) {
+                    if (point && Number.isFinite(point.y)) {
+                        values.push(point.y);
+                    }
+                }
+            }
+            if (values.length === 0) return 0;
+            const minValue = Math.min(...values);
+            const maxValue = Math.max(...values);
+            const pad = Math.max((maxValue - minValue) * 0.08, 0.01);
+            return minValue - pad;
+        }
+
         function comparisonSeries(kind, dim) {
             const data = [];
             for (const chunk of rltComparisonHistory) {
@@ -2572,6 +2684,16 @@
                         const start = numericOrNull(chunk.rlt_window_start_index) ?? 0;
                         appendChunkSeries(data, chunk, actorActions, dim, start);
                     }
+                } else if (kind === 'safety') {
+                    const safetyFiltered = chunk.rlt_safety_filtered || chunk.rlt_policy_mode === 'rlt_safety_passthrough';
+                    if (!safetyFiltered) continue;
+                    const sourceStep = numericOrNull(chunk.source_step) ?? 0;
+                    const start = Math.max(0, numericOrNull(chunk.rlt_window_start_index) ?? 0);
+                    const len = Math.max(1, numericOrNull(chunk.rlt_window_len) ?? 1);
+                    const y = rltChartBottomY(dim);
+                    data.push({ x: sourceStep + start, y });
+                    data.push({ x: sourceStep + start + len, y });
+                    data.push({ x: sourceStep + start + len, y: null });
                 }
             }
             return data;
@@ -2652,9 +2774,12 @@
             setText('rlt-pred-max', Number.isFinite(actorRms) ? formatValue(actorRms) : '--');
             const rltActorPresent = hasActionMatrix(chunk.rlt_actor_actions);
             const rltExecuting = currentRltOutputState(chunk).cssClass === 'rlt';
+            const safetyFiltered = chunk.rlt_safety_filtered || chunk.rlt_policy_mode === 'rlt_safety_passthrough';
             setText(
                 'rlt-pred-status',
-                rltActorPresent
+                safetyFiltered
+                    ? 'RLT safety filtered'
+                    : rltActorPresent
                     ? (rltExecuting ? 'RLT window active' : 'RLT proposal not used')
                     : (rltExecuting ? 'RLT active, no payload' : 'Base VLA only')
             );
@@ -2680,6 +2805,7 @@
                 chart.data.datasets[0].data = comparisonSeries('final', d);
                 chart.data.datasets[1].data = comparisonSeries('base', d);
                 chart.data.datasets[2].data = comparisonSeries('actor', d);
+                chart.data.datasets[3].data = comparisonSeries('safety', d);
                 chart.options.plugins.annotation.annotations = annotations;
                 chart.update('none');
             }
@@ -3056,6 +3182,147 @@
             return null;
         }
 
+        function rememberRltFields(fields) {
+            for (const [key, value] of Object.entries(fields)) {
+                if (value !== undefined && value !== null) {
+                    latestRltStatus[key] = value;
+                }
+            }
+        }
+
+        function boolOrNull(value) {
+            if (value === undefined || value === null || value === '') return null;
+            return boolValue(value);
+        }
+
+        function gateState(label, state, value, description) {
+            return { label, state, value, description };
+        }
+
+        function renderGateBadge(state) {
+            const labels = {
+                pass: 'pass',
+                blocked: 'blocked',
+                waiting: 'waiting',
+                off: 'off',
+                unknown: '--',
+            };
+            const cssClass = {
+                pass: 'rlt-gate-pass',
+                blocked: 'rlt-gate-blocked',
+                waiting: 'rlt-gate-waiting',
+                off: 'rlt-gate-off',
+                unknown: 'rlt-gate-unknown',
+            }[state] || 'rlt-gate-unknown';
+            return `<span class="rlt-gate-badge ${cssClass}">${escapeHtml(labels[state] || '--')}</span>`;
+        }
+
+        function renderRltGateTable() {
+            const body = document.getElementById('rlt-gates-table-body');
+            if (!body) return;
+
+            const rltEnabled = boolOrNull(pickMetric(['rlt_enabled']));
+            const operatorEnabled = boolOrNull(pickMetric(['rlt_actor_operator_enabled']));
+            const criticalActive = (
+                boolOrNull(pickMetric(['rlt_actor_critical_phase_active'])) === true ||
+                boolOrNull(pickMetric(['critical_phase_open'])) === true ||
+                boolOrNull(pickMetric(['episode_open'])) === true ||
+                String(pickMetric(['phase']) || '').includes('critical_recording')
+            );
+            const actorLoaded = boolOrNull(pickMetric(['rlt_actor_loaded', 'rlt_head_checkpoint_loaded'])) === true;
+            const trainReady = boolOrNull(pickMetric(['rlt_actor_train_step_ready'])) === true;
+            const trainStep = numericOrNull(pickMetric(['rlt_train_step']));
+            const executeAfter = numericOrNull(pickMetric(['rlt_execute_after_train_steps']));
+            const stepsUntilExecute = numericOrNull(pickMetric(['rlt_steps_until_execute']));
+            const safetyEnabled = boolOrNull(pickMetric(['rlt_safety_enabled']));
+            const safetyDisabled = boolOrNull(pickMetric(['rlt_actor_disabled_by_safety'])) === true;
+            const safetyFiltered = (
+                boolOrNull(pickMetric(['rlt_safety_filtered'])) === true ||
+                pickMetric(['rlt_policy_mode']) === 'rlt_safety_passthrough' ||
+                pickMetric(['rlt_actor_gate_reason']) === 'safety_passthrough'
+            );
+            const violationCount = numericOrNull(pickMetric(['rlt_safety_violation_count']));
+            const safetyPatience = numericOrNull(pickMetric(['rlt_safety_patience']));
+            const deviation = pickMetric(['rlt_action_deviation_abs_max']);
+            const deviationLimit = pickMetric(['rlt_action_deviation_limit']);
+            const actorAvailable = boolOrNull(pickMetric(['rlt_actor_available']));
+            const actorEffective = boolOrNull(pickMetric(['rlt_actor_effective_enabled']));
+
+            const trainValue = [
+                `${formatCount(trainStep)}/${formatCount(executeAfter)} train steps`,
+                actorLoaded ? 'checkpoint loaded' : null,
+                stepsUntilExecute !== null ? `${formatCount(stepsUntilExecute)} steps left` : null,
+            ].filter(Boolean).join(' | ');
+            const safetyValue = safetyEnabled === false
+                ? 'safety disabled by config'
+                : [
+                    `violations ${formatCount(violationCount)}/${formatCount(safetyPatience)}`,
+                    `q <= ${formatValue(pickMetric(['rlt_q_abs_limit']))}`,
+                    `dev <= ${formatValue(deviationLimit)}`,
+                    `loss <= ${formatValue(pickMetric(['rlt_loss_abs_limit']))}`,
+                ].join(' | ');
+            const chunkSafetyValue = [
+                `mode ${humanizeStatus(pickMetric(['rlt_policy_mode']))}`,
+                `abs dev ${formatValue(deviation)}/${formatValue(deviationLimit)}`,
+            ].join(' | ');
+
+            const rows = [
+                gateState(
+                    'RLT config',
+                    rltEnabled === null ? 'unknown' : (rltEnabled ? 'pass' : 'blocked'),
+                    `enabled ${rltEnabled === null ? '--' : (rltEnabled ? 'yes' : 'no')} | head ${humanizeStatus(pickMetric(['rlt_head_status']))}`,
+                    'The loaded policy config must enable the RLT actor path.'
+                ),
+                gateState(
+                    'Critical phase',
+                    criticalActive ? 'pass' : 'waiting',
+                    `phase ${formatValue(pickMetric(['phase']))} | critical ${formatValue(pickMetric(['critical_phase_id', 'episode_id']))}`,
+                    'The RLT actor only runs while a critical phase is open.'
+                ),
+                gateState(
+                    'Operator gate',
+                    operatorEnabled === null ? 'unknown' : (operatorEnabled ? 'pass' : 'blocked'),
+                    operatorEnabled === null ? '--' : (operatorEnabled ? 'enabled' : 'disabled'),
+                    'Manual runtime arm for actor execution; TUI key 7 toggles it.'
+                ),
+                gateState(
+                    'Train step gate',
+                    (actorLoaded || trainReady || (trainStep !== null && executeAfter !== null && trainStep >= executeAfter))
+                        ? 'pass'
+                        : 'waiting',
+                    trainValue,
+                    'Actor can execute after a head checkpoint is loaded or enough online train steps complete.'
+                ),
+                gateState(
+                    'Safety disable',
+                    safetyEnabled === false ? 'off' : (safetyDisabled ? 'blocked' : 'pass'),
+                    safetyValue,
+                    'Trainer-side Q, loss, and deviation checks can disable actor execution after patience is exceeded.'
+                ),
+                gateState(
+                    'Chunk safety filter',
+                    safetyEnabled === false ? 'off' : (safetyFiltered ? 'blocked' : 'pass'),
+                    chunkSafetyValue,
+                    'Per-chunk deviation filter; blocked chunks show an orange line in the comparison charts.'
+                ),
+                gateState(
+                    'Actor effective',
+                    actorEffective === true ? 'pass' : (actorAvailable === false ? 'blocked' : 'waiting'),
+                    `available ${actorAvailable === null ? '--' : (actorAvailable ? 'yes' : 'no')} | armed ${actorEffective === null ? '--' : (actorEffective ? 'yes' : 'no')}`,
+                    'Combined non-phase gates before the actor can affect critical-phase output.'
+                ),
+            ];
+
+            body.innerHTML = rows.map(row => `
+                <tr>
+                    <td>${escapeHtml(row.label)}</td>
+                    <td>${renderGateBadge(row.state)}</td>
+                    <td>${escapeHtml(row.value)}</td>
+                    <td>${escapeHtml(row.description)}</td>
+                </tr>
+            `).join('');
+        }
+
         function updateRltPanel(data) {
             const replaySize = pickMetric(['rlt_replay_size']);
             const replayCapacity = pickMetric(['rlt_replay_capacity']);
@@ -3091,6 +3358,7 @@
                 'rlt-meta',
                 `event: ${formatValue(data.event)} | actor q: ${formatValue(actorQ)} | critic q: ${formatValue(criticQ)}`
             );
+            renderRltGateTable();
         }
 
         function onRltStatus(data) {
@@ -3242,6 +3510,14 @@
                 rtc_params: data.rtc_params,
                 prefix_weights: data.prefix_weights,
                 rlt_policy_mode: data.rlt_policy_mode,
+                rlt_actor_executing: data.rlt_actor_executing,
+                rlt_actor_gate_reason: data.rlt_actor_gate_reason,
+                rlt_actor_prediction_available: data.rlt_actor_prediction_available,
+                rlt_safety_enabled: data.rlt_safety_enabled,
+                rlt_actor_disabled_by_safety: data.rlt_actor_disabled_by_safety,
+                rlt_safety_filtered: data.rlt_safety_filtered,
+                rlt_action_deviation_abs_max: data.rlt_action_deviation_abs_max,
+                rlt_action_deviation_limit: data.rlt_action_deviation_limit,
                 rlt_window_start_index: data.rlt_window_start_index,
                 rlt_window_len: data.rlt_window_len,
             };
@@ -3325,6 +3601,7 @@
         initRltLossChart();
         renderEpisodeHistory();
         renderRolloutsTable();
+        renderRltGateTable();
         updateRltOutputBanners();
         document.addEventListener('click', (event) => {
             const button = event.target.closest('[data-rollout-action]');
