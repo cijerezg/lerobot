@@ -21,6 +21,7 @@
 
 import abc
 import logging
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -270,6 +271,7 @@ class MotorsBus(abc.ABC):
         self.sync_writer: GroupSyncWrite
         self._comm_success: int
         self._no_error: int
+        self._comm_lock = threading.RLock()
 
         self._id_to_model_dict = {m.id: m.model for m in self.motors.values()}
         self._id_to_name_dict = {m.id: motor for motor, m in self.motors.items()}
@@ -956,14 +958,15 @@ class MotorsBus(abc.ABC):
         else:
             raise ValueError(length)
 
-        for n_try in range(1 + num_retry):
-            value, comm, error = read_fn(self.port_handler, motor_id, address)
-            if self._is_comm_success(comm):
-                break
-            logger.debug(
-                f"Failed to read @{address=} ({length=}) on {motor_id=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
+        with self._comm_lock:
+            for n_try in range(1 + num_retry):
+                value, comm, error = read_fn(self.port_handler, motor_id, address)
+                if self._is_comm_success(comm):
+                    break
+                logger.debug(
+                    f"Failed to read @{address=} ({length=}) on {motor_id=} ({n_try=}): "
+                    + self.packet_handler.getTxRxResult(comm)
+                )
 
         if not self._is_comm_success(comm) and raise_on_error:
             raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
@@ -1016,14 +1019,17 @@ class MotorsBus(abc.ABC):
         err_msg: str = "",
     ) -> tuple[int, int]:
         data = self._serialize_data(value, length)
-        for n_try in range(1 + num_retry):
-            comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, length, data)
-            if self._is_comm_success(comm):
-                break
-            logger.debug(
-                f"Failed to sync write @{addr=} ({length=}) on id={motor_id} with {value=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
+        with self._comm_lock:
+            for n_try in range(1 + num_retry):
+                comm, error = self.packet_handler.writeTxRx(
+                    self.port_handler, motor_id, addr, length, data
+                )
+                if self._is_comm_success(comm):
+                    break
+                logger.debug(
+                    f"Failed to sync write @{addr=} ({length=}) on id={motor_id} with {value=} ({n_try=}): "
+                    + self.packet_handler.getTxRxResult(comm)
+                )
 
         if not self._is_comm_success(comm) and raise_on_error:
             raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
@@ -1087,20 +1093,21 @@ class MotorsBus(abc.ABC):
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> tuple[dict[int, int], int]:
-        self._setup_sync_reader(motor_ids, addr, length)
-        for n_try in range(1 + num_retry):
-            comm = self.sync_reader.txRxPacket()
-            if self._is_comm_success(comm):
-                break
-            logger.debug(
-                f"Failed to sync read @{addr=} ({length=}) on {motor_ids=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
+        with self._comm_lock:
+            self._setup_sync_reader(motor_ids, addr, length)
+            for n_try in range(1 + num_retry):
+                comm = self.sync_reader.txRxPacket()
+                if self._is_comm_success(comm):
+                    break
+                logger.debug(
+                    f"Failed to sync read @{addr=} ({length=}) on {motor_ids=} ({n_try=}): "
+                    + self.packet_handler.getTxRxResult(comm)
+                )
+            values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in motor_ids}
 
         if not self._is_comm_success(comm) and raise_on_error:
             raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
 
-        values = {id_: self.sync_reader.getData(id_, addr, length) for id_ in motor_ids}
         return values, comm
 
     def _setup_sync_reader(self, motor_ids: list[int], addr: int, length: int) -> None:
@@ -1172,15 +1179,16 @@ class MotorsBus(abc.ABC):
         raise_on_error: bool = True,
         err_msg: str = "",
     ) -> int:
-        self._setup_sync_writer(ids_values, addr, length)
-        for n_try in range(1 + num_retry):
-            comm = self.sync_writer.txPacket()
-            if self._is_comm_success(comm):
-                break
-            logger.debug(
-                f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): "
-                + self.packet_handler.getTxRxResult(comm)
-            )
+        with self._comm_lock:
+            self._setup_sync_writer(ids_values, addr, length)
+            for n_try in range(1 + num_retry):
+                comm = self.sync_writer.txPacket()
+                if self._is_comm_success(comm):
+                    break
+                logger.debug(
+                    f"Failed to sync write @{addr=} ({length=}) with {ids_values=} ({n_try=}): "
+                    + self.packet_handler.getTxRxResult(comm)
+                )
 
         if not self._is_comm_success(comm) and raise_on_error:
             raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
