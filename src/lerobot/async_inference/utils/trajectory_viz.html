@@ -341,6 +341,58 @@
             height: 94px !important;
         }
 
+        .rlt-output-banner {
+            border: 3px solid var(--structural-black);
+            padding: 10px 12px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            background: var(--bg-cream);
+            min-width: 0;
+        }
+
+        .rlt-output-source {
+            font-size: 18px;
+            line-height: 1.1;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+
+        .rlt-output-detail {
+            font-size: 12px;
+            font-weight: 700;
+            text-align: right;
+            color: var(--text-muted);
+            min-width: 0;
+        }
+
+        .rlt-output-banner.rlt {
+            background: #2d6a4f;
+            color: var(--bg-white);
+        }
+
+        .rlt-output-banner.rlt .rlt-output-detail {
+            color: var(--bg-white);
+        }
+
+        .rlt-output-banner.base-critical {
+            background: var(--primary-yellow);
+            color: var(--structural-black);
+        }
+
+        .rlt-output-banner.blocked {
+            background: var(--primary-red);
+            color: var(--bg-white);
+        }
+
+        .rlt-output-banner.blocked .rlt-output-detail {
+            color: var(--bg-white);
+        }
+
         .rlt-comparison-panel,
         .rollouts-panel {
             background: var(--bg-white);
@@ -1028,6 +1080,16 @@
             .rlt-comparison-grid {
                 grid-template-columns: 1fr;
             }
+            .rlt-output-banner {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+            .rlt-output-source {
+                white-space: normal;
+            }
+            .rlt-output-detail {
+                text-align: left;
+            }
             .charts-grid {
                 grid-template-columns: 1fr;
             }
@@ -1079,6 +1141,10 @@
 
         <div class="sim-card rlt">
             <div class="sim-card-title">RLT Head Metrics</div>
+            <div class="rlt-output-banner" id="rlt-output-banner">
+                <span class="rlt-output-source" id="rlt-output-source">Output Source Unknown</span>
+                <span class="rlt-output-detail" id="rlt-output-detail">Waiting for RLT inference status...</span>
+            </div>
             <div class="rlt-metrics-grid">
                 <div class="rlt-metric">
                     <span class="rlt-metric-label">Head</span>
@@ -1164,6 +1230,10 @@
 
     <div class="rlt-comparison-panel">
         <div class="rlt-comparison-title">RLT Head vs Base Policy</div>
+        <div class="rlt-output-banner" id="rlt-pred-output-banner">
+            <span class="rlt-output-source" id="rlt-pred-output-source">Output Source Unknown</span>
+            <span class="rlt-output-detail" id="rlt-pred-output-detail">Waiting for RLT inference status...</span>
+        </div>
         <div class="rlt-comparison-metrics">
             <div class="rlt-metric">
                 <span class="rlt-metric-label">Chunk</span>
@@ -1421,6 +1491,15 @@
         function formatCount(value) {
             if (value === null || value === undefined || isNaN(Number(value))) return '--';
             return String(Number(value));
+        }
+
+        function boolValue(value) {
+            if (value === true || value === 1) return true;
+            if (value === false || value === 0 || value === null || value === undefined || value === '') return false;
+            if (typeof value === 'string') {
+                return ['1', 'true', 'yes', 'on', 'enabled'].includes(value.toLowerCase());
+            }
+            return Boolean(value);
         }
 
         function setText(id, value) {
@@ -2254,10 +2333,68 @@
             }
         }
 
+        function clearRltCompareCharts(message) {
+            for (const chart of rltCompareCharts) {
+                chart.destroy();
+            }
+            rltCompareCharts = [];
+            const grid = document.getElementById('rlt-comparison-grid');
+            grid.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
+        }
+
+        function currentRltOutputState(chunk = null) {
+            const mode = String((chunk && chunk.rlt_policy_mode) || pickMetric(['rlt_policy_mode']) || '');
+            const gate = pickMetric(['rlt_actor_gate_reason']);
+            const executing = boolValue(pickMetric(['rlt_actor_executing'])) || mode === 'rlt_actor';
+            const criticalActive = (
+                boolValue(pickMetric(['rlt_actor_critical_phase_active'])) ||
+                boolValue(pickMetric(['critical_phase_open'])) ||
+                boolValue(pickMetric(['episode_open'])) ||
+                String(pickMetric(['phase']) || '').includes('critical_recording')
+            );
+
+            if (executing) {
+                return {
+                    cssClass: 'rlt',
+                    source: 'Critical Output: RLT Head',
+                    detail: 'The RLT actor is producing the action chunk sent to the robot.',
+                };
+            }
+
+            if (criticalActive) {
+                const reason = humanizeStatus(gate || mode || 'not executing');
+                const blocked = ['safety_disabled', 'safety_passthrough', 'rlt_safety_passthrough'].includes(String(gate || mode));
+                return {
+                    cssClass: blocked ? 'blocked' : 'base-critical',
+                    source: 'Critical Output: Base VLA',
+                    detail: `RLT actor is not being used. Gate: ${reason}.`,
+                };
+            }
+
+            return {
+                cssClass: 'base',
+                source: 'Output: Base VLA',
+                detail: 'Outside an active critical phase; RLT actor is not expected to execute.',
+            };
+        }
+
+        function updateRltOutputBanners(chunk = null) {
+            const state = currentRltOutputState(chunk);
+            for (const id of ['rlt-output-banner', 'rlt-pred-output-banner']) {
+                const banner = document.getElementById(id);
+                if (banner) banner.className = `rlt-output-banner ${state.cssClass}`;
+            }
+            setText('rlt-output-source', state.source);
+            setText('rlt-output-detail', state.detail);
+            setText('rlt-pred-output-source', state.source);
+            setText('rlt-pred-output-detail', state.detail);
+        }
+
         function updateRltPredictionPanel(chunk) {
             const baseActions = chunk.base_actions || chunk.rlt_reference_actions;
             setText('rlt-pred-chunk', formatCount(chunk.source_step));
             setText('rlt-pred-mode', humanizeStatus(chunk.rlt_policy_mode || pickMetric(['rlt_policy_mode'])));
+            updateRltOutputBanners(chunk);
 
             const windowStart = numericOrNull(chunk.rlt_window_start_index ?? pickMetric(['rlt_window_start_index']));
             const windowLen = numericOrNull(chunk.rlt_window_len ?? pickMetric(['rlt_window_len']));
@@ -2267,9 +2404,10 @@
             setText('rlt-pred-window', windowText);
 
             if (!Array.isArray(baseActions) || !Array.isArray(chunk.actions) || chunk.actions.length === 0 || baseActions.length === 0) {
-                setText('rlt-pred-status', 'No pair');
+                setText('rlt-pred-status', 'No base pair');
                 setText('rlt-pred-rms', '--');
                 setText('rlt-pred-max', '--');
+                clearRltCompareCharts('No base VLA reference was streamed for this chunk.');
                 return;
             }
 
@@ -2280,6 +2418,7 @@
             const horizon = Math.min(chunk.actions.length, baseActions.length);
             if (commonDimCount === 0 || horizon === 0) {
                 setText('rlt-pred-status', 'Invalid');
+                clearRltCompareCharts('Invalid RLT/base comparison payload.');
                 return;
             }
 
@@ -2690,6 +2829,7 @@
             const gateReason = pickMetric(['rlt_actor_gate_reason']);
             const actorExecuting = pickMetric(['rlt_actor_executing']);
             const deltaRms = pickMetric(['rlt_action_deviation_rms']);
+            updateRltOutputBanners();
 
             setText('rlt-head', formatValue(pickMetric(['rlt_training_head'])));
             setText('rlt-train-step', formatCount(pickMetric(['rlt_train_step'])));
@@ -2704,7 +2844,7 @@
             setText('rlt-critic-grad', formatValue(criticGrad));
             setText('rlt-policy-mode', humanizeStatus(policyMode));
             setText('rlt-gate', humanizeStatus(gateReason));
-            setText('rlt-active', actorExecuting === null ? '--' : (actorExecuting ? 'yes' : 'no'));
+            setText('rlt-active', actorExecuting === null ? '--' : (boolValue(actorExecuting) ? 'yes' : 'no'));
             setText('rlt-delta-rms', formatValue(deltaRms));
             setText(
                 'rlt-meta',
@@ -2941,6 +3081,7 @@
         initRltLossChart();
         renderEpisodeHistory();
         renderRolloutsTable();
+        updateRltOutputBanners();
         connect();
 
         // Update stats periodically

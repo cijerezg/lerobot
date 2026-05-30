@@ -9,6 +9,7 @@ import io
 import json
 import math
 import os
+import socket
 import threading
 import time
 from collections import deque
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 ROBOT_KEY_COMMANDS = {
     "2": "start_rollout",
@@ -303,6 +305,82 @@ def _format_rlt_head_status(server: dict[str, Any]) -> str:
     return labels.get(status, status.replace("_", " "))
 
 
+def _preferred_local_ipv4() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            address = sock.getsockname()[0]
+            if address and not address.startswith("127."):
+                return address
+    except OSError:
+        pass
+
+    try:
+        for address in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if address and not address.startswith("127."):
+                return address
+    except OSError:
+        pass
+
+    return "127.0.0.1"
+
+
+def _url_port(parsed: Any) -> int | None:
+    try:
+        return parsed.port
+    except ValueError:
+        return None
+
+
+def _format_host_port(host: str, port: int | None) -> str:
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{host}:{port}" if port is not None else host
+
+
+def _replace_url_host(url: str, host: str) -> str:
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return url
+    return urlunparse(parsed._replace(netloc=_format_host_port(host, _url_port(parsed))))
+
+
+def _derive_trajectory_http_url(trajectory_ws_url: str | None) -> str | None:
+    if not trajectory_ws_url:
+        return None
+    parsed = urlparse(trajectory_ws_url)
+    if not parsed.scheme or not parsed.hostname:
+        return None
+    scheme = "https" if parsed.scheme == "wss" else "http"
+    ws_port = _url_port(parsed)
+    http_port = ws_port - 1 if ws_port and ws_port > 1 else None
+    return urlunparse((scheme, _format_host_port(parsed.hostname, http_port), "", "", "", ""))
+
+
+def _format_trajectory_dashboard_location(
+    *,
+    trajectory_http_url: str | None,
+    trajectory_ws_url: str | None,
+) -> str:
+    if not trajectory_http_url and not trajectory_ws_url:
+        return "Trajectory dashboard: disabled"
+
+    http_url = trajectory_http_url or _derive_trajectory_http_url(trajectory_ws_url)
+    lines = ["Trajectory dashboard:"]
+    if http_url:
+        local_ip = _preferred_local_ipv4()
+        parsed = urlparse(http_url)
+        port = _url_port(parsed)
+        lines.append(f"Open: {http_url}")
+        lines.append(f"Local IP: {_format_host_port(local_ip, port)}")
+        lan_url = _replace_url_host(http_url, local_ip)
+        if lan_url != http_url:
+            lines.append(f"LAN URL: {lan_url}")
+    if trajectory_ws_url:
+        lines.append(f"WS: {trajectory_ws_url}")
+    return "\n".join(lines)
+
+
 def _status_event_detail(event: dict[str, Any]) -> str:
     fields: list[str] = []
     for key in (
@@ -588,11 +666,32 @@ def _format_rollouts_panel(state: TuiState) -> str:
 
 
 def _yes_no(value: Any) -> str:
-    return "yes" if bool(value) else "no"
+    return "yes" if _truthy(value) else "no"
 
 
 def _enabled_disabled(value: Any) -> str:
-    return "enabled" if bool(value) else "disabled"
+    return "enabled" if _truthy(value) else "disabled"
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "on", "enabled"}
+    return bool(value)
+
+
+def _critical_output_source_line(server: dict[str, Any], client: dict[str, Any]) -> str:
+    rlt_actor_executing = _truthy(server.get("rlt_actor_executing"))
+    critical_active = (
+        _truthy(server.get("rlt_actor_critical_phase_active"))
+        or _truthy(client.get("critical_phase_open", client.get("episode_open")))
+        or "critical_recording" in str(client.get("phase") or "")
+    )
+    if rlt_actor_executing:
+        return "[b][green]CRITICAL OUTPUT: RLT HEAD[/green][/b]"
+    if critical_active:
+        gate_reason = server.get("rlt_actor_gate_reason") or server.get("rlt_policy_mode") or "not_executing"
+        return f"[b][yellow]CRITICAL OUTPUT: BASE VLA[/yellow][/b]  Gate: {gate_reason}"
+    return "[b]Output: BASE VLA[/b]  (outside critical phase)"
 
 
 def _control_command_label(command: str, state: TuiState) -> str:
@@ -1055,6 +1154,7 @@ def _run_textual(
     client_log_file: Path,
     server_log_file: Path,
     watch_pid: int | None,
+    trajectory_http_url: str | None,
     trajectory_ws_url: str | None,
 ) -> int:
     try:
@@ -1127,8 +1227,12 @@ def _run_textual(
                 TailedTextFile(server_log_file, "server"),
             ]
             self.dead_since: float | None = None
-            self.browser_dashboard_enabled = bool(trajectory_ws_url)
-            if trajectory_ws_url:
+            self.browser_dashboard_location = _format_trajectory_dashboard_location(
+                trajectory_http_url=trajectory_http_url,
+                trajectory_ws_url=trajectory_ws_url,
+            )
+            self.browser_dashboard_enabled = bool(trajectory_http_url or trajectory_ws_url)
+            if self.browser_dashboard_enabled:
                 self.state.status_events.append(
                     f"{_format_time(time.time())} tui: plots moved to browser trajectory dashboard"
                 )
@@ -1184,13 +1288,13 @@ def _run_textual(
             frames_gathered = server.get("rlt_accepted_frames", "n/a")
             transition_chunks = server.get("rlt_accepted_transitions", "n/a")
             training_operator_value = server.get("rlt_training_operator_enabled")
-            training_operator_enabled = bool(training_operator_value) if training_operator_value is not None else False
+            training_operator_enabled = _truthy(training_operator_value) if training_operator_value is not None else False
             rlt_actor_value = server.get("rlt_actor_operator_enabled")
-            rlt_actor_enabled = bool(rlt_actor_value) if rlt_actor_value is not None else False
-            rlt_config_enabled = bool(server.get("rlt_enabled", False))
-            rlt_actor_available = bool(server.get("rlt_actor_available", False))
-            rlt_actor_effective_enabled = bool(server.get("rlt_actor_effective_enabled", False))
-            rlt_actor_executing = bool(server.get("rlt_actor_executing", False))
+            rlt_actor_enabled = _truthy(rlt_actor_value) if rlt_actor_value is not None else False
+            rlt_config_enabled = _truthy(server.get("rlt_enabled", False))
+            rlt_actor_available = _truthy(server.get("rlt_actor_available", False))
+            rlt_actor_effective_enabled = _truthy(server.get("rlt_actor_effective_enabled", False))
+            rlt_actor_executing = _truthy(server.get("rlt_actor_executing", False))
             rlt_policy_mode = server.get("rlt_policy_mode") or "n/a"
             rlt_gate_reason = server.get("rlt_actor_gate_reason") or "n/a"
             rlt_delta_rms = _format_compact_float(server.get("rlt_action_deviation_rms"))
@@ -1208,8 +1312,9 @@ def _run_textual(
                 f"{_enabled_disabled(rlt_actor_enabled)}\n"
                 f"RLT avail/armed: {_yes_no(rlt_actor_available)}/"
                 f"{_yes_no(rlt_actor_effective_enabled)}\n"
-                f"Using RLT head: {_yes_no(rlt_actor_executing)}  Mode: {rlt_policy_mode}\n"
-                f"Gate: {rlt_gate_reason}  Steps left: {rlt_steps_until_execute}\n"
+                f"{_critical_output_source_line(server, client)}\n"
+                f"Mode: {rlt_policy_mode}  Gate: {rlt_gate_reason}\n"
+                f"Steps left: {rlt_steps_until_execute}  "
                 f"RLT vs VLA rms/max: {rlt_delta_rms}/{rlt_delta_abs_max}"
                 f"{closing}"
             )
@@ -1237,7 +1342,7 @@ def _run_textual(
                 f"{_yes_no(server.get('rlt_critic_training'))}"
             )
             browser_line = (
-                "Browser dashboard: loss plots, rollouts, trajectory comparison"
+                self.browser_dashboard_location
                 if self.browser_dashboard_enabled
                 else "Use --viz for browser plots, rollouts, trajectory comparison"
             )
@@ -1310,6 +1415,11 @@ def main() -> int:
     parser.add_argument("--server-log-file", required=True, type=Path)
     parser.add_argument("--watch-pid", type=int, default=None)
     parser.add_argument(
+        "--trajectory-http-url",
+        default=None,
+        help="Optional trajectory visualization browser URL, for example http://localhost:8088",
+    )
+    parser.add_argument(
         "--trajectory-ws-url",
         default=None,
         help="Optional trajectory visualization WebSocket URL, for example ws://localhost:8089",
@@ -1326,6 +1436,7 @@ def main() -> int:
         client_log_file=args.client_log_file,
         server_log_file=args.server_log_file,
         watch_pid=args.watch_pid,
+        trajectory_http_url=args.trajectory_http_url,
         trajectory_ws_url=args.trajectory_ws_url,
     )
 

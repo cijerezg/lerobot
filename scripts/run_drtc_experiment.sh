@@ -29,6 +29,7 @@
 #   PYTORCH_CUDA_ALLOC_CONF - PyTorch CUDA allocator options (default: expandable_segments:True)
 #   LEROBOT_DRTC_POLICY_LOAD_DEVICE - Force model staging device (default: cpu for MolmoAct2 on CUDA)
 #   LEROBOT_OPENCV_CONNECT_TIMEOUT_S - Seconds to retry camera open on transient failure (default: 5)
+#   DRTC_TRAJECTORY_HTTP_URL - Browser URL shown in the TUI (default: http://localhost:8088)
 #
 # =============================================================================
 
@@ -56,6 +57,7 @@ POLICY_SERVER_DELAY_S="${POLICY_SERVER_DELAY_S:-3}"
 POLICY_SERVER_HOST="${POLICY_SERVER_HOST:-localhost}"
 POLICY_SERVER_PORT="${POLICY_SERVER_PORT:-8080}"
 TRAJECTORY_WS_URL="${DRTC_TRAJECTORY_WS_URL:-ws://localhost:8089}"
+TRAJECTORY_HTTP_URL="${DRTC_TRAJECTORY_HTTP_URL:-http://localhost:8088}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export LEROBOT_OPENCV_CONNECT_TIMEOUT_S="${LEROBOT_OPENCV_CONNECT_TIMEOUT_S:-5}"
 ARGS=("$@")
@@ -220,7 +222,7 @@ POLICY_SERVER_PID=$!
 STARTED_SERVER=true
 echo "      Policy server started (PID: $POLICY_SERVER_PID)"
 if [ "$ENABLE_VIZ" = true ]; then
-    echo "      Trajectory visualization: http://localhost:8088"
+    echo "      Trajectory visualization: $TRAJECTORY_HTTP_URL"
     echo "      Trajectory WebSocket: $TRAJECTORY_WS_URL"
 fi
 if [ "$ENABLE_TUI" != true ] && [ "${STREAM_SERVER_TIMINGS:-true}" = true ]; then
@@ -290,6 +292,7 @@ if [ "$ENABLE_TUI" = true ]; then
 
     TUI_TRAJECTORY_ARGS=()
     if [ "$ENABLE_VIZ" = true ]; then
+        TUI_TRAJECTORY_ARGS+=(--trajectory-http-url "$TRAJECTORY_HTTP_URL")
         TUI_TRAJECTORY_ARGS+=(--trajectory-ws-url "$TRAJECTORY_WS_URL")
     fi
 
