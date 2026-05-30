@@ -19,6 +19,29 @@ from lerobot.utils.constants import (
 )
 from lerobot.types import TransitionKey
 
+
+def build_named_adamw_optimizers(groups: list[dict], policy_cfg) -> dict[str, torch.optim.Optimizer]:
+    """
+    Build one AdamW optimizer per trainer parameter group.
+
+    Group-specific values override policy defaults; the trainer currently
+    supplies per-group learning rates for actor/critic.
+    """
+    default_betas = tuple(getattr(policy_cfg, "optimizer_betas", (0.9, 0.999)))
+    default_eps = float(getattr(policy_cfg, "optimizer_eps", 1e-8))
+    default_weight_decay = float(getattr(policy_cfg, "optimizer_weight_decay", 0.0))
+
+    optimizers = {}
+    for group in groups:
+        optimizers[group["name"]] = torch.optim.AdamW(
+            group["params"],
+            lr=group["lr"],
+            betas=tuple(group.get("betas", default_betas)),
+            eps=float(group.get("eps", default_eps)),
+            weight_decay=float(group.get("weight_decay", default_weight_decay)),
+        )
+    return optimizers
+
 def preprocess_batch_for_pi05(
     policy: nn.Module,
     observations: dict,

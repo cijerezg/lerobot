@@ -67,7 +67,7 @@ from lerobot.rl.offline_dataset_utils import (
     make_combined_offline_iterator,
 )
 from lerobot.rl.rl_trainer import Trainer
-from lerobot.rl.utils import cast_to_bf16
+from lerobot.rl.utils import build_named_adamw_optimizers, cast_to_bf16
 from lerobot.rl.pretrained_merge import build_pretrained_merges, apply_pretrained_merges
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.common.train_utils import (
@@ -82,21 +82,6 @@ from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import format_big_number, init_logging
 
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-
-def _build_optimizers(groups: list[dict]) -> dict[str, torch.optim.Optimizer]:
-    """
-    Convert the list of parameter-group dicts returned by Trainer.get_optimizer_groups
-    into a dict of named Adam optimizers.
-
-    Each group dict must have keys: "params", "lr", "name".
-    """
-    optimizers = {}
-    for g in groups:
-        optimizers[g["name"]] = torch.optim.Adam(g["params"], lr=g["lr"])
-    return optimizers
 
 
 def _save_checkpoint(
@@ -516,7 +501,10 @@ def run_offline_training(
     policy.postprocessor = postprocessor
 
     # ── Optimizers ────────────────────────────────────────────────────────────
-    optimizers = _build_optimizers(trainer.get_optimizer_groups(policy, cfg))
+    optimizers = build_named_adamw_optimizers(
+        trainer.get_optimizer_groups(policy, cfg),
+        cfg.policy,
+    )
     pretrained_merges = build_pretrained_merges(
         optimizers=optimizers,
         alpha=float(getattr(cfg.policy, "pretrained_merge_alpha", 0.0)),

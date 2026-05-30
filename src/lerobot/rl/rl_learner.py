@@ -57,7 +57,7 @@ from lerobot.rl.learner import (
     start_learner,
 )
 from lerobot.rl.rl_trainer import Trainer
-from lerobot.rl.utils import save_video_with_critic_overlay
+from lerobot.rl.utils import build_named_adamw_optimizers, save_video_with_critic_overlay
 from lerobot.rl.pretrained_merge import build_pretrained_merges, apply_pretrained_merges
 from lerobot.transport.utils import bytes_to_transitions
 from lerobot.utils.constants import ACTION
@@ -66,13 +66,6 @@ from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
-
-# ── Optimizer builder ─────────────────────────────────────────────────────────
-
-
-def _build_optimizers(groups: list[dict]) -> dict[str, torch.optim.Optimizer]:
-    """Convert trainer.get_optimizer_groups() list into named Adam optimizers."""
-    return {g["name"]: torch.optim.Adam(g["params"], lr=g["lr"]) for g in groups}
 
 
 # ── Thread/process helpers ────────────────────────────────────────────────────
@@ -222,7 +215,10 @@ def add_actor_information_and_train(
     log_training_info(cfg=cfg, policy=policy)
 
     # ── Optimizers ────────────────────────────────────────────────────────────
-    optimizers = _build_optimizers(trainer.get_optimizer_groups(policy, cfg))
+    optimizers = build_named_adamw_optimizers(
+        trainer.get_optimizer_groups(policy, cfg),
+        cfg.policy,
+    )
     pretrained_merges = build_pretrained_merges(
         optimizers=optimizers,
         alpha=float(getattr(cfg.policy, "pretrained_merge_alpha", 0.0)),
