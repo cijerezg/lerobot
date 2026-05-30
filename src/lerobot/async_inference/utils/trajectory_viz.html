@@ -433,8 +433,8 @@
 
         .rlt-comparison-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
+            grid-template-columns: 1fr;
+            gap: 14px;
         }
 
         .rlt-comparison-chart {
@@ -442,7 +442,7 @@
             border: 2px solid var(--structural-black);
             padding: 8px;
             min-width: 0;
-            height: 172px;
+            height: 236px;
         }
 
         .rlt-comparison-chart h3 {
@@ -454,7 +454,7 @@
 
         .rlt-comparison-chart canvas {
             width: 100% !important;
-            height: 132px !important;
+            height: 194px !important;
         }
 
         .rollouts-table-wrap {
@@ -1248,11 +1248,11 @@
                 <span class="rlt-metric-value" id="rlt-pred-window">--</span>
             </div>
             <div class="rlt-metric">
-                <span class="rlt-metric-label">RMS Delta</span>
+                <span class="rlt-metric-label">Output/Base RMS</span>
                 <span class="rlt-metric-value" id="rlt-pred-rms">--</span>
             </div>
             <div class="rlt-metric">
-                <span class="rlt-metric-label">Max Delta</span>
+                <span class="rlt-metric-label">Actor/Base RMS</span>
                 <span class="rlt-metric-value" id="rlt-pred-max">--</span>
             </div>
             <div class="rlt-metric">
@@ -1399,7 +1399,8 @@
     <script>
         // Configuration
         const WS_PORT = 8089;
-        const MAX_CHUNKS = 10;
+        const MAX_CHUNKS = 30;
+        const MAX_RLT_COMPARE_CHUNKS = 30;
         const MAX_ROLLING_AVG_POINTS = 100;
         const MAX_RLT_POINTS = 200;
         const MAX_EPISODE_HISTORY = 20;
@@ -1429,7 +1430,7 @@
         let lastRtcParamsJson = null;  // For debouncing RTC panel updates
         let chunks = [];
         let executedActions = [];  // Rolling buffer of executed actions {step, action}
-        const MAX_EXECUTED_ACTIONS = 500;  // Keep last N executed actions
+        const MAX_EXECUTED_ACTIONS = 1500;  // Keep last N executed actions
         let numDimensions = 6;
         let ws = null;
         let reconnectTimeout = null;
@@ -1444,6 +1445,7 @@
         let rltSequence = 0;
         let latestRltStatus = {};
         let rltLossHistory = [];
+        let rltComparisonHistory = [];
         const rolloutState = {
             rows: new Map(),
             order: [],
@@ -2338,6 +2340,7 @@
                 chart.destroy();
             }
             rltCompareCharts = [];
+            rltComparisonHistory = [];
             const grid = document.getElementById('rlt-comparison-grid');
             grid.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
         }
@@ -2390,8 +2393,56 @@
             setText('rlt-pred-output-detail', state.detail);
         }
 
+        function hasActionMatrix(value) {
+            return Array.isArray(value) && value.length > 0 && Array.isArray(value[0]);
+        }
+
+        function appendChunkSeries(data, chunk, actions, dim, stepOffset = 0) {
+            if (!hasActionMatrix(actions)) return;
+            const sourceStep = numericOrNull(chunk.source_step) ?? 0;
+            let added = false;
+            for (let t = 0; t < actions.length; t++) {
+                if (dim >= actions[t].length) continue;
+                const value = Number(actions[t][dim]);
+                if (!Number.isFinite(value)) continue;
+                data.push({ x: sourceStep + stepOffset + t, y: value });
+                added = true;
+            }
+            if (added) {
+                data.push({ x: sourceStep + stepOffset + actions.length, y: null });
+            }
+        }
+
+        function comparisonSeries(kind, dim) {
+            const data = [];
+            for (const chunk of rltComparisonHistory) {
+                if (kind === 'base') {
+                    appendChunkSeries(data, chunk, chunk.base_actions, dim);
+                } else if (kind === 'final') {
+                    appendChunkSeries(data, chunk, chunk.actions, dim);
+                } else if (kind === 'actor') {
+                    const start = numericOrNull(chunk.rlt_window_start_index) ?? 0;
+                    appendChunkSeries(data, chunk, chunk.rlt_actor_actions, dim, start);
+                }
+            }
+            return data;
+        }
+
+        function updateRltComparisonHistory(chunk) {
+            if (!hasActionMatrix(chunk.base_actions) || !hasActionMatrix(chunk.actions)) {
+                clearRltCompareCharts('No base VLA reference was streamed for this chunk.');
+                return false;
+            }
+            rltComparisonHistory.push(chunk);
+            while (rltComparisonHistory.length > MAX_RLT_COMPARE_CHUNKS) {
+                rltComparisonHistory.shift();
+            }
+            return true;
+        }
+
         function updateRltPredictionPanel(chunk) {
             const baseActions = chunk.base_actions || chunk.rlt_reference_actions;
+            chunk.base_actions = baseActions;
             setText('rlt-pred-chunk', formatCount(chunk.source_step));
             setText('rlt-pred-mode', humanizeStatus(chunk.rlt_policy_mode || pickMetric(['rlt_policy_mode'])));
             updateRltOutputBanners(chunk);
@@ -2403,16 +2454,15 @@
                 : `${windowStart}-${Math.max(windowStart, windowStart + windowLen - 1)}`;
             setText('rlt-pred-window', windowText);
 
-            if (!Array.isArray(baseActions) || !Array.isArray(chunk.actions) || chunk.actions.length === 0 || baseActions.length === 0) {
+            if (!updateRltComparisonHistory(chunk)) {
                 setText('rlt-pred-status', 'No base pair');
                 setText('rlt-pred-rms', '--');
-                setText('rlt-pred-max', '--');
-                clearRltCompareCharts('No base VLA reference was streamed for this chunk.');
+                setText('rlt-pred-max', hasActionMatrix(chunk.rlt_actor_actions) ? 'actor only' : '--');
                 return;
             }
 
-            const actionDim = Array.isArray(chunk.actions[0]) ? chunk.actions[0].length : 0;
-            const baseDim = Array.isArray(baseActions[0]) ? baseActions[0].length : 0;
+            const actionDim = hasActionMatrix(chunk.actions) ? chunk.actions[0].length : 0;
+            const baseDim = hasActionMatrix(baseActions) ? baseActions[0].length : 0;
             const commonDimCount = Math.min(actionDim, baseDim);
             const chartDimCount = Math.min(commonDimCount, 6);
             const horizon = Math.min(chunk.actions.length, baseActions.length);
@@ -2424,20 +2474,39 @@
 
             let sumSq = 0;
             let count = 0;
-            let absMax = 0;
             for (let t = 0; t < horizon; t++) {
                 for (let d = 0; d < commonDimCount; d++) {
                     const delta = Number(chunk.actions[t][d]) - Number(baseActions[t][d]);
                     if (!Number.isFinite(delta)) continue;
                     sumSq += delta * delta;
-                    absMax = Math.max(absMax, Math.abs(delta));
                     count++;
                 }
             }
             const rms = count > 0 ? Math.sqrt(sumSq / count) : NaN;
+            let actorSumSq = 0;
+            let actorCount = 0;
+            const actorActions = chunk.rlt_actor_actions;
+            const actorStart = numericOrNull(chunk.rlt_window_start_index) ?? 0;
+            if (hasActionMatrix(actorActions)) {
+                const actorHorizon = Math.min(actorActions.length, baseActions.length - actorStart);
+                for (let t = 0; t < actorHorizon; t++) {
+                    for (let d = 0; d < Math.min(actorActions[t].length, baseDim); d++) {
+                        const delta = Number(actorActions[t][d]) - Number(baseActions[actorStart + t][d]);
+                        if (!Number.isFinite(delta)) continue;
+                        actorSumSq += delta * delta;
+                        actorCount++;
+                    }
+                }
+            }
+            const actorRms = actorCount > 0 ? Math.sqrt(actorSumSq / actorCount) : NaN;
             setText('rlt-pred-rms', formatValue(rms));
-            setText('rlt-pred-max', formatValue(absMax));
-            setText('rlt-pred-status', count > 0 ? 'Live' : 'Invalid');
+            setText('rlt-pred-max', Number.isFinite(actorRms) ? formatValue(actorRms) : '--');
+            const rltActorPresent = hasActionMatrix(chunk.rlt_actor_actions);
+            const rltExecuting = currentRltOutputState(chunk).cssClass === 'rlt';
+            setText(
+                'rlt-pred-status',
+                rltActorPresent ? (rltExecuting ? 'RLT window active' : 'RLT proposal not used') : 'Base VLA only'
+            );
 
             if (rltCompareCharts.length !== chartDimCount) {
                 initRltCompareCharts(chartDimCount);
@@ -2456,34 +2525,38 @@
             }
 
             for (let d = 0; d < rltCompareCharts.length; d++) {
-                const finalData = [];
-                const baseData = [];
-                for (let t = 0; t < horizon; t++) {
-                    const step = chunk.source_step + t;
-                    finalData.push({ x: step, y: chunk.actions[t][d] });
-                    baseData.push({ x: step, y: baseActions[t][d] });
-                }
-
                 const chart = rltCompareCharts[d];
                 chart.data.datasets = [
                     {
-                        label: 'RLT / final',
-                        data: finalData,
-                        borderColor: '#c1272d',
+                        label: 'Combined output',
+                        data: comparisonSeries('final', d),
+                        borderColor: '#2d6a4f',
                         backgroundColor: 'transparent',
                         tension: 0.1,
                         borderWidth: 2,
                         pointRadius: 0,
+                        spanGaps: false,
                     },
                     {
                         label: 'Base VLA',
-                        data: baseData,
+                        data: comparisonSeries('base', d),
                         borderColor: '#1a3a6e',
                         backgroundColor: 'transparent',
                         borderDash: [6, 4],
                         tension: 0.1,
-                        borderWidth: 2,
+                        borderWidth: 3,
                         pointRadius: 0,
+                        spanGaps: false,
+                    },
+                    {
+                        label: 'RLT prediction',
+                        data: comparisonSeries('actor', d),
+                        borderColor: '#c1272d',
+                        backgroundColor: 'transparent',
+                        tension: 0.1,
+                        borderWidth: 3,
+                        pointRadius: 0,
+                        spanGaps: false,
                     }
                 ];
                 chart.options.plugins.annotation = { annotations };
@@ -2994,6 +3067,7 @@
                 source_step: data.source_step,
                 actions: data.actions,
                 base_actions: data.base_actions || data.rlt_reference_actions || null,
+                rlt_actor_actions: data.rlt_actor_actions || null,
                 frozen_len: data.frozen_len,
                 timestamp: data.timestamp,
                 colorIndex: colorIndex,

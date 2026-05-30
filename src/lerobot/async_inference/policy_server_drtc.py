@@ -1178,7 +1178,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         rtc_kwargs: dict[str, Any],
         *,
         critical_phase_active: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, str, int]:
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor | None,
+        torch.Tensor,
+        torch.Tensor,
+        str,
+        int,
+        int,
+    ]:
         if self.policy is None:
             raise RuntimeError("policy is not loaded")
         with self._rlt_model_lock:
@@ -1192,6 +1201,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             if rtc_kwargs:
                 window_start = min(max(0, int(rtc_kwargs.get("inference_delay", 0))), max_start)
             actor_executing = False
+            actor_prediction_chunk: torch.Tensor | None = None
             action_deviation_rms: float | None = None
             action_deviation_abs_max: float | None = None
             if self._rlt_should_execute_actor(critical_phase_active=critical_phase_active):
@@ -1206,12 +1216,21 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 # time (collection disabled) we use the deterministic mean.
                 actor_std = float(getattr(self.policy.rlt_actor, "action_std", 0.0))
                 if self._rlt_online_collection_enabled and actor_std > 0:
-                    refined_prefix = self.policy.rlt_actor.sample(rl_token, proprio, actor_ref)
+                    actor_prediction_prefix = self.policy.rlt_actor.sample(rl_token, proprio, actor_ref)
                 else:
-                    refined_prefix = self.policy.rlt_actor(rl_token, proprio, actor_ref)
+                    actor_prediction_prefix = self.policy.rlt_actor(rl_token, proprio, actor_ref)
+                refined_prefix = actor_prediction_prefix
                 if not self._rlt_online_collection_enabled and self._rlt_eval_actor_blend < 1.0:
                     refined_prefix = actor_ref + self._rlt_eval_actor_blend * (refined_prefix - actor_ref)
-                action_deviation = (refined_prefix - actor_ref).detach()
+                actor_prediction_chunk = torch.cat(
+                    [
+                        reference[:, :window_start],
+                        actor_prediction_prefix,
+                        reference[:, window_end:],
+                    ],
+                    dim=1,
+                )
+                action_deviation = (actor_prediction_prefix - actor_ref).detach()
                 action_deviation_rms = float(action_deviation.pow(2).mean().sqrt().cpu())
                 action_deviation_abs_max = float(action_deviation.abs().max().cpu())
                 if self._rlt_action_deviation_abs_max is not None and action_deviation_abs_max > float(
@@ -1257,7 +1276,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 window_start_index=window_start,
                 window_len=rlt_window,
             )
-        return action_tensor, reference, rl_token, proprio, policy_mode, window_start
+        return (
+            action_tensor,
+            reference,
+            actor_prediction_chunk,
+            rl_token,
+            proprio,
+            policy_mode,
+            window_start,
+            rlt_window,
+        )
 
     @staticmethod
     def _snapshot_review_images_uint8(raw_obs: Any) -> dict[str, np.ndarray]:
@@ -2762,9 +2790,11 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         rlt_reference: torch.Tensor | None = None
         rlt_rl_token: torch.Tensor | None = None
         rlt_proprio: torch.Tensor | None = None
+        rlt_actor_prediction: torch.Tensor | None = None
         rlt_context_id = 0
         rlt_policy_mode = ""
         rlt_window_start_index = 0
+        rlt_window_len = 0
         rlt_collectable = False
 
         with torch.no_grad():
@@ -2870,10 +2900,12 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 (
                     action_tensor,
                     rlt_reference,
+                    rlt_actor_prediction,
                     rlt_rl_token,
                     rlt_proprio,
                     rlt_policy_mode,
                     rlt_window_start_index,
+                    rlt_window_len,
                 ) = self._predict_pi05_rlt_with_context(
                     observation,
                     rtc_kwargs,
@@ -2890,6 +2922,9 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         if rlt_reference is not None:
             rlt_reference = rlt_reference[:, : self.actions_per_chunk, :]
         rlt_reference_viz: torch.Tensor | None = rlt_reference
+        if rlt_actor_prediction is not None:
+            rlt_actor_prediction = rlt_actor_prediction[:, : self.actions_per_chunk, :]
+        rlt_actor_prediction_viz: torch.Tensor | None = rlt_actor_prediction
 
         b, t, a = action_tensor.shape
         norm_action_debug = action_tensor.detach().clone() if norm_debug else None
@@ -2931,20 +2966,35 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             raise TypeError(f"postprocessor must return torch.Tensor, got {type(flat)}")
         a_out = flat.shape[-1]
         action_tensor = flat.reshape(b, t, a_out)
-        if rlt_reference_viz is not None:
-            ref_b, ref_t, ref_a = rlt_reference_viz.shape
-            ref_flat = rlt_reference_viz.reshape(ref_b * ref_t, ref_a)
-            ref_flat = self.postprocessor(ref_flat)
-            if not isinstance(ref_flat, torch.Tensor):
-                raise TypeError(f"postprocessor must return torch.Tensor, got {type(ref_flat)}")
-            rlt_reference_viz = ref_flat.reshape(ref_b, ref_t, ref_flat.shape[-1])
-            if rlt_reference_viz.shape[-1] != a_out:
+
+        def _postprocess_viz_chunk(
+            viz_tensor: torch.Tensor | None,
+            *,
+            label: str,
+        ) -> torch.Tensor | None:
+            if viz_tensor is None:
+                return None
+            viz_b, viz_t, viz_a = viz_tensor.shape
+            viz_flat = viz_tensor.reshape(viz_b * viz_t, viz_a)
+            viz_flat = self.postprocessor(viz_flat)
+            if not isinstance(viz_flat, torch.Tensor):
+                raise TypeError(f"postprocessor must return torch.Tensor, got {type(viz_flat)}")
+            viz_tensor = viz_flat.reshape(viz_b, viz_t, viz_flat.shape[-1])
+            if viz_tensor.shape[-1] != a_out:
                 self.logger.debug(
-                    "Skipping RLT/base browser comparison: action_dim=%d reference_dim=%d",
+                    "Skipping %s browser comparison: action_dim=%d comparison_dim=%d",
+                    label,
                     a_out,
-                    rlt_reference_viz.shape[-1],
+                    viz_tensor.shape[-1],
                 )
-                rlt_reference_viz = None
+                return None
+            return viz_tensor
+
+        rlt_reference_viz = _postprocess_viz_chunk(rlt_reference_viz, label="RLT/base")
+        rlt_actor_prediction_viz = _postprocess_viz_chunk(
+            rlt_actor_prediction_viz,
+            label="RLT actor prediction",
+        )
         post_action_debug = action_tensor.detach().clone() if norm_debug else None
         _mark("postprocess")
 
@@ -3014,10 +3064,14 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
                 action_tensor = action_tensor + anchor_b
                 if rlt_reference_viz is not None:
                     rlt_reference_viz = rlt_reference_viz + anchor_b
+                if rlt_actor_prediction_viz is not None:
+                    rlt_actor_prediction_viz = rlt_actor_prediction_viz + anchor_b
             else:  # "delta"
                 action_tensor = torch.cumsum(action_tensor, dim=1) + anchor_b
                 if rlt_reference_viz is not None:
                     rlt_reference_viz = torch.cumsum(rlt_reference_viz, dim=1) + anchor_b
+                if rlt_actor_prediction_viz is not None:
+                    rlt_actor_prediction_viz = torch.cumsum(rlt_actor_prediction_viz, dim=1) + anchor_b
         _mark("anchor_reconstruct")
 
         if norm_debug:
@@ -3052,6 +3106,16 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         if rlt_reference_viz is not None:
             rlt_reference_cpu = rlt_reference_viz.squeeze(0).detach().to("cpu")
             rlt_reference_actions_list = rlt_reference_cpu.to(torch.float32).numpy().tolist()
+        rlt_actor_actions_list: list[list[float]] | None = None
+        if rlt_actor_prediction_viz is not None:
+            actor_start = max(0, int(rlt_window_start_index))
+            actor_end = min(
+                int(rlt_actor_prediction_viz.shape[1]),
+                actor_start + max(0, int(rlt_window_len)),
+            )
+            if actor_end > actor_start:
+                rlt_actor_cpu = rlt_actor_prediction_viz[:, actor_start:actor_end, :].squeeze(0).detach().to("cpu")
+                rlt_actor_actions_list = rlt_actor_cpu.to(torch.float32).numpy().tolist()
 
         payload = np.asarray(actions_np, dtype=np.float32, order="C")
         _mark("cpu_numpy_payload")
@@ -3097,12 +3161,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             if rlt_reference_actions_list is not None:
                 rlt_window_len = min(
                     max(0, len(rlt_reference_actions_list) - int(rlt_window_start_index)),
-                    int(getattr(self.policy.config, "rlt_chunk_size", len(rlt_reference_actions_list))),
+                    int(rlt_window_len)
+                    if rlt_window_len
+                    else int(getattr(self.policy.config, "rlt_chunk_size", len(rlt_reference_actions_list))),
                 )
                 chunk_payload.update(
                     {
                         "base_actions": rlt_reference_actions_list,
                         "rlt_reference_actions": rlt_reference_actions_list,
+                        "rlt_actor_actions": rlt_actor_actions_list,
                         "rlt_policy_mode": rlt_policy_mode,
                         "rlt_window_start_index": int(rlt_window_start_index),
                         "rlt_window_len": int(rlt_window_len),
