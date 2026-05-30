@@ -2369,6 +2369,7 @@
                                 data: [],
                                 borderColor: '#2d6a4f',
                                 backgroundColor: 'transparent',
+                                order: 10,
                                 tension: 0.1,
                                 borderWidth: 2,
                                 pointRadius: 0,
@@ -2380,6 +2381,7 @@
                                 borderColor: '#1a3a6e',
                                 backgroundColor: 'transparent',
                                 borderDash: [6, 4],
+                                order: 20,
                                 tension: 0.1,
                                 borderWidth: 3,
                                 pointRadius: 0,
@@ -2390,9 +2392,11 @@
                                 data: [],
                                 borderColor: '#c1272d',
                                 backgroundColor: 'transparent',
+                                order: 0,
                                 tension: 0.1,
-                                borderWidth: 3,
-                                pointRadius: 0,
+                                borderWidth: 4,
+                                pointRadius: 1.5,
+                                pointHoverRadius: 3,
                                 spanGaps: false,
                             },
                         ],
@@ -2523,6 +2527,25 @@
             }
         }
 
+        function appendChunkSeriesWindow(data, chunk, actions, dim, windowStart, windowLen) {
+            if (!hasActionMatrix(actions)) return;
+            const sourceStep = numericOrNull(chunk.source_step) ?? 0;
+            const start = Math.max(0, numericOrNull(windowStart) ?? 0);
+            const len = Math.max(0, numericOrNull(windowLen) ?? actions.length);
+            const end = Math.min(actions.length, start + len);
+            let added = false;
+            for (let t = start; t < end; t++) {
+                if (dim >= actions[t].length) continue;
+                const value = Number(actions[t][dim]);
+                if (!Number.isFinite(value)) continue;
+                data.push({ x: sourceStep + t, y: value });
+                added = true;
+            }
+            if (added) {
+                data.push({ x: sourceStep + end, y: null });
+            }
+        }
+
         function comparisonSeries(kind, dim) {
             const data = [];
             for (const chunk of rltComparisonHistory) {
@@ -2531,8 +2554,24 @@
                 } else if (kind === 'final') {
                     appendChunkSeries(data, chunk, chunk.actions, dim);
                 } else if (kind === 'actor') {
-                    const start = numericOrNull(chunk.rlt_window_start_index) ?? 0;
-                    appendChunkSeries(data, chunk, chunk.rlt_actor_actions, dim, start);
+                    const actorActions = chunk.rlt_actor_actions;
+                    const fullHorizonLen = Math.max(
+                        hasActionMatrix(chunk.actions) ? chunk.actions.length : 0,
+                        hasActionMatrix(chunk.base_actions) ? chunk.base_actions.length : 0,
+                    );
+                    if (hasActionMatrix(actorActions) && actorActions.length === fullHorizonLen) {
+                        appendChunkSeriesWindow(
+                            data,
+                            chunk,
+                            actorActions,
+                            dim,
+                            chunk.rlt_window_start_index,
+                            chunk.rlt_window_len,
+                        );
+                    } else {
+                        const start = numericOrNull(chunk.rlt_window_start_index) ?? 0;
+                        appendChunkSeries(data, chunk, actorActions, dim, start);
+                    }
                 }
             }
             return data;
@@ -2615,7 +2654,9 @@
             const rltExecuting = currentRltOutputState(chunk).cssClass === 'rlt';
             setText(
                 'rlt-pred-status',
-                rltActorPresent ? (rltExecuting ? 'RLT window active' : 'RLT proposal not used') : 'Base VLA only'
+                rltActorPresent
+                    ? (rltExecuting ? 'RLT window active' : 'RLT proposal not used')
+                    : (rltExecuting ? 'RLT active, no payload' : 'Base VLA only')
             );
 
             if (rltCompareCharts.length !== chartDimCount) {

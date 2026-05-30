@@ -3108,11 +3108,19 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             rlt_reference_actions_list = rlt_reference_cpu.to(torch.float32).numpy().tolist()
         rlt_actor_actions_list: list[list[float]] | None = None
         if rlt_actor_prediction_viz is not None:
+            actor_prediction_len = int(rlt_actor_prediction_viz.shape[1])
             actor_start = max(0, int(rlt_window_start_index))
-            actor_end = min(
-                int(rlt_actor_prediction_viz.shape[1]),
-                actor_start + max(0, int(rlt_window_len)),
-            )
+            actor_window_len = max(0, int(rlt_window_len))
+            if actor_prediction_len <= actor_window_len or actor_start >= actor_prediction_len:
+                # Older/local actor paths can produce only the replacement
+                # window. In that case the browser applies rlt_window_start_index.
+                actor_slice_start = 0
+                actor_slice_len = actor_window_len or actor_prediction_len
+            else:
+                actor_slice_start = actor_start
+                actor_slice_len = actor_window_len or (actor_prediction_len - actor_start)
+            actor_end = min(actor_prediction_len, actor_slice_start + actor_slice_len)
+            actor_start = actor_slice_start
             if actor_end > actor_start:
                 rlt_actor_cpu = rlt_actor_prediction_viz[:, actor_start:actor_end, :].squeeze(0).detach().to("cpu")
                 rlt_actor_actions_list = rlt_actor_cpu.to(torch.float32).numpy().tolist()
