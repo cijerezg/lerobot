@@ -33,6 +33,7 @@ import base64
 import json
 import logging
 import math
+import os
 import threading
 import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
@@ -43,7 +44,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .metrics import EvActionChunk, EvExecutedAction
 
+from .drtc_status import emit_control
+
 logger = logging.getLogger(__name__)
+
+_CONTROL_ENV = "LEROBOT_DRTC_CONTROL_FILE"
+_BROWSER_CONTROL_COMMANDS = {"success", "failure", "discard_episode"}
 
 
 def _json_safe(value: Any) -> Any:
@@ -144,6 +150,43 @@ class TrajectoryVizServer:
         }
         self.on_event(chunk_data)
 
+    def _handle_control_command(self, data: dict[str, Any]) -> dict[str, Any]:
+        command = str(data.get("command") or "")
+        base_ack = {
+            "type": "control_ack",
+            "command": command,
+            "row_key": data.get("row_key"),
+            "rollout_id": data.get("rollout_id"),
+            "critical_phase_id": data.get("critical_phase_id"),
+            "timestamp": time.time(),
+        }
+        if command not in _BROWSER_CONTROL_COMMANDS:
+            return {
+                **base_ack,
+                "status": "error",
+                "message": f"Unsupported command: {command or '<empty>'}",
+            }
+
+        if not os.environ.get(_CONTROL_ENV):
+            return {
+                **base_ack,
+                "status": "error",
+                "message": f"{_CONTROL_ENV} is not configured for this process.",
+            }
+
+        emit_control(
+            command,
+            source="browser_dashboard",
+            row_key=data.get("row_key"),
+            rollout_id=data.get("rollout_id"),
+            critical_phase_id=data.get("critical_phase_id"),
+        )
+        return {
+            **base_ack,
+            "status": "sent",
+            "message": "Command sent to DRTC control side channel.",
+        }
+
     async def _handler(self, websocket):
         """Handle a WebSocket connection."""
         self._clients.add(websocket)
@@ -153,6 +196,10 @@ class TrajectoryVizServer:
                 # and queue them for broadcasting to all other clients (browsers)
                 try:
                     data = json.loads(message)
+                    if isinstance(data, dict) and data.get("type") == "control_command":
+                        ack = self._handle_control_command(data)
+                        await websocket.send(json.dumps(_json_safe(ack)))
+                        continue
                     # Queue for broadcasting (e.g., executed_action from robot client).
                     # Exclude the source socket so large camera frames are not echoed
                     # back to the robot-side sender, which does not read replies.
@@ -457,7 +504,7 @@ def generate_mock_chunks(server: TrajectoryVizServer, interval: float = 0.5):
 
 def main():
     """Run the trajectory visualization server standalone."""
-    parser = argparse.ArgumentParser(description="RTC Trajectory Visualization Server")
+    parser = argparse.ArgumentParser(description="Robodash visualization server")
     parser.add_argument("--http_port", type=int, default=8088, help="HTTP server port")
     parser.add_argument("--ws_port", type=int, default=8089, help="WebSocket server port")
     parser.add_argument("--mock", action="store_true", help="Generate mock data for testing")
