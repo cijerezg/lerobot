@@ -2960,23 +2960,22 @@
             }
 
             if (eventName === 'rlt_rollout_started' && rolloutId !== null) {
-                const key = `rollout:${rolloutId}`;
-                const row = ensureRolloutRow(key, { rolloutId, label: 'open', status: 'open' });
-                row.rolloutStartTs = numericOrNull(data.rollout_start_ts) ?? numericOrNull(data.timestamp) ?? row.rolloutStartTs;
-                row.rolloutStartStep = numericOrNull(data.rollout_start_step) ?? row.rolloutStartStep;
-                row.status = 'rollout open';
-                row.label = 'open';
-                row.discard = false;
-                rolloutState.rolloutStarts.set(String(rolloutId), row.rolloutStartTs);
-                renderRolloutsTable();
+                const rolloutStartTs = numericOrNull(data.rollout_start_ts) ?? numericOrNull(data.timestamp);
+                if (rolloutStartTs !== null) {
+                    rolloutState.rolloutStarts.set(String(rolloutId), rolloutStartTs);
+                }
                 return;
             }
 
             if (eventName === 'rlt_rollout_ended' && rolloutId !== null) {
-                const row = ensureRolloutRow(`rollout:${rolloutId}`, { rolloutId, label: 'open' });
-                row.rolloutEndTs = numericOrNull(data.rollout_end_ts) ?? numericOrNull(data.timestamp);
-                row.rolloutDurationS = numericOrNull(data.rollout_duration_s);
-                row.status = 'rollout ended';
+                const rolloutEndTs = numericOrNull(data.rollout_end_ts) ?? numericOrNull(data.timestamp);
+                const rolloutDurationS = numericOrNull(data.rollout_duration_s);
+                for (const row of rolloutState.rows.values()) {
+                    if (Number(row.rolloutId) === rolloutId && row.criticalPhaseId !== undefined && row.criticalPhaseId !== null) {
+                        row.rolloutEndTs = rolloutEndTs ?? row.rolloutEndTs;
+                        row.rolloutDurationS = rolloutDurationS ?? row.rolloutDurationS;
+                    }
+                }
                 renderRolloutsTable();
                 return;
             }
@@ -3039,7 +3038,7 @@
             if (!body) return;
             const rows = rolloutState.order
                 .map(key => rolloutState.rows.get(key))
-                .filter(Boolean)
+                .filter(row => row && row.criticalPhaseId !== undefined && row.criticalPhaseId !== null)
                 .slice(-MAX_ROLLOUT_ROWS)
                 .reverse();
 
@@ -3247,6 +3246,25 @@
             const deviationLimit = pickMetric(['rlt_action_deviation_limit']);
             const actorAvailable = boolOrNull(pickMetric(['rlt_actor_available']));
             const actorEffective = boolOrNull(pickMetric(['rlt_actor_effective_enabled']));
+            const onlineTrainingEnabled = boolOrNull(pickMetric(['rlt_online_training_enabled']));
+            const trainingOperatorEnabled = boolOrNull(pickMetric(['rlt_training_operator_enabled']));
+            const trainingHead = pickMetric(['rlt_training_head']);
+            const replaySize = numericOrNull(pickMetric(['rlt_replay_size']));
+            const warmupTransitions = numericOrNull(pickMetric(['rlt_warmup_transitions']));
+            const batchSize = numericOrNull(pickMetric(['rlt_batch_size']));
+            const requiredReplay = numericOrNull(pickMetric(['rlt_required_replay_transitions'])) ??
+                (warmupTransitions !== null && batchSize !== null ? Math.max(warmupTransitions, batchSize) : null);
+            const replayRemaining = numericOrNull(pickMetric(['rlt_replay_warmup_remaining'])) ??
+                (replaySize !== null && requiredReplay !== null ? Math.max(0, requiredReplay - replaySize) : null);
+            const completedCritical = numericOrNull(pickMetric(['rlt_completed_episodes']));
+            const warmupCritical = numericOrNull(pickMetric(['rlt_warmup_episodes']));
+            const criticalRemaining = numericOrNull(pickMetric(['rlt_episode_warmup_remaining'])) ??
+                (completedCritical !== null && warmupCritical !== null ? Math.max(0, warmupCritical - completedCritical) : null);
+            const replayReady = boolOrNull(pickMetric(['rlt_training_replay_ready'])) ??
+                (replaySize !== null && requiredReplay !== null ? replaySize >= requiredReplay : null);
+            const criticalReady = boolOrNull(pickMetric(['rlt_training_episode_ready'])) ??
+                (completedCritical !== null && warmupCritical !== null ? completedCritical >= warmupCritical : null);
+            const trainingReady = boolOrNull(pickMetric(['rlt_training_ready']));
 
             const trainValue = [
                 `${formatCount(trainStep)}/${formatCount(executeAfter)} train steps`,
@@ -3265,6 +3283,20 @@
                 `mode ${humanizeStatus(pickMetric(['rlt_policy_mode']))}`,
                 `abs dev ${formatValue(deviation)}/${formatValue(deviationLimit)}`,
             ].join(' | ');
+            const replayValue = [
+                `${formatCount(replaySize)}/${formatCount(requiredReplay)} transitions`,
+                replayRemaining !== null ? `${formatCount(replayRemaining)} left` : null,
+                `threshold max(batch ${formatCount(batchSize)}, warmup ${formatCount(warmupTransitions)})`,
+            ].filter(Boolean).join(' | ');
+            const criticalWarmupValue = [
+                `${formatCount(completedCritical)}/${formatCount(warmupCritical)} labeled critical sections`,
+                criticalRemaining !== null ? `${formatCount(criticalRemaining)} left` : null,
+            ].filter(Boolean).join(' | ');
+            const trainingStateValue = [
+                `head ${humanizeStatus(trainingHead)}`,
+                `ready ${trainingReady === null ? '--' : (trainingReady ? 'yes' : 'no')}`,
+                `step ${formatCount(trainStep)}`,
+            ].join(' | ');
 
             const rows = [
                 gateState(
@@ -3274,19 +3306,47 @@
                     'The loaded policy config must enable the RLT actor path.'
                 ),
                 gateState(
+                    'Training toggle',
+                    onlineTrainingEnabled === false ? 'off' : (
+                        trainingOperatorEnabled === null ? 'unknown' : (trainingOperatorEnabled ? 'pass' : 'blocked')
+                    ),
+                    `key 6 ${trainingOperatorEnabled === null ? '--' : (trainingOperatorEnabled ? 'enabled' : 'paused')} | online ${onlineTrainingEnabled === null ? '--' : (onlineTrainingEnabled ? 'yes' : 'no')}`,
+                    'Key 6 arms the online trainer; replay and critical-section warmup gates still apply.'
+                ),
+                gateState(
+                    'Replay warmup',
+                    replayReady === null ? 'unknown' : (replayReady ? 'pass' : 'waiting'),
+                    replayValue,
+                    'Minimum replay transitions required before the trainer can sample batches.'
+                ),
+                gateState(
+                    'Critical warmup',
+                    criticalReady === null ? 'unknown' : (criticalReady ? 'pass' : 'waiting'),
+                    criticalWarmupValue,
+                    'Minimum labeled critical sections required before online training can start.'
+                ),
+                gateState(
+                    'Training state',
+                    onlineTrainingEnabled === false ? 'off' : (
+                        trainingOperatorEnabled === false ? 'blocked' : (trainingReady ? 'pass' : 'waiting')
+                    ),
+                    trainingStateValue,
+                    'Current trainer loop state. Warmup replay means key 6 is on, but replay transitions are still below threshold.'
+                ),
+                gateState(
                     'Critical phase',
                     criticalActive ? 'pass' : 'waiting',
                     `phase ${formatValue(pickMetric(['phase']))} | critical ${formatValue(pickMetric(['critical_phase_id', 'episode_id']))}`,
                     'The RLT actor only runs while a critical phase is open.'
                 ),
                 gateState(
-                    'Operator gate',
+                    'Actor operator gate',
                     operatorEnabled === null ? 'unknown' : (operatorEnabled ? 'pass' : 'blocked'),
                     operatorEnabled === null ? '--' : (operatorEnabled ? 'enabled' : 'disabled'),
                     'Manual runtime arm for actor execution; TUI key 7 toggles it.'
                 ),
                 gateState(
-                    'Train step gate',
+                    'Actor train-step gate',
                     (actorLoaded || trainReady || (trainStep !== null && executeAfter !== null && trainStep >= executeAfter))
                         ? 'pass'
                         : 'waiting',
@@ -3522,6 +3582,19 @@
                 rlt_window_len: data.rlt_window_len,
             };
             chunks.push(newChunk);
+            rememberRltFields({
+                rlt_policy_mode: data.rlt_policy_mode,
+                rlt_actor_executing: data.rlt_actor_executing,
+                rlt_actor_gate_reason: data.rlt_actor_gate_reason,
+                rlt_actor_prediction_available: data.rlt_actor_prediction_available,
+                rlt_safety_enabled: data.rlt_safety_enabled,
+                rlt_actor_disabled_by_safety: data.rlt_actor_disabled_by_safety,
+                rlt_safety_filtered: data.rlt_safety_filtered,
+                rlt_action_deviation_abs_max: data.rlt_action_deviation_abs_max,
+                rlt_action_deviation_limit: data.rlt_action_deviation_limit,
+                rlt_window_start_index: data.rlt_window_start_index,
+                rlt_window_len: data.rlt_window_len,
+            });
 
             // Compute metrics if we have a previous chunk
             let currentMetrics = null;
@@ -3537,6 +3610,7 @@
             // Update UI
             updateCharts();
             updateRltPredictionPanel(newChunk);
+            renderRltGateTable();
             updateStats();
             
             // Update bar charts

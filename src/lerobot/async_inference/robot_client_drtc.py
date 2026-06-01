@@ -424,6 +424,7 @@ class RobotClientDrtc:
             rlt_enabled=config.rlt_enabled,
             rlt_embedding_checkpoint=config.rlt_embedding_checkpoint,
             rlt_head_checkpoint=config.rlt_head_checkpoint,
+            rlt_resume_head_checkpoint=config.rlt_resume_head_checkpoint,
             rlt_chunk_size=config.rlt_chunk_size,
             rlt_token_dim=config.rlt_token_dim,
             rlt_autoencoder_dim=config.rlt_autoencoder_dim,
@@ -1571,19 +1572,27 @@ class RobotClientDrtc:
         self._rlt_current_episode_transitions = 0
         self._rlt_current_episode_transition_buffer.clear()
         self._rlt_last_episode_label = None
-        seeded_prebuffer_chunks, seeded_prebuffer_actions = self._rlt_seed_critical_from_prebuffer()
+        dropped_prebuffer_chunks = len(self._rlt_prebuffer_pending_chunks)
+        dropped_prebuffer_actions = len(self._rlt_prebuffer_executed_actions)
+        self._rlt_prebuffer_pending_chunks.clear()
+        self._rlt_prebuffer_executed_actions.clear()
         self.logger.info(
             "RLT collector phase: critical_recording | rollout_id=%d | critical_phase_id=%d | "
+            "precritical_chunks_dropped=%d | precritical_actions_dropped=%d | "
             "press 3=end critical recording, 1=success, 0=failure, 9=discard",
             self._rlt_rollout_id,
             self._rlt_episode_id,
+            dropped_prebuffer_chunks,
+            dropped_prebuffer_actions,
         )
         self._emit_rlt_status(
             "rlt_critical_phase_started",
             phase="critical_recording",
             critical_start_s=self._rlt_rollout_elapsed_s(self._rlt_critical_start_ts),
-            seeded_prebuffer_chunks=seeded_prebuffer_chunks,
-            seeded_prebuffer_actions=seeded_prebuffer_actions,
+            seeded_prebuffer_chunks=0,
+            seeded_prebuffer_actions=0,
+            dropped_prebuffer_chunks=dropped_prebuffer_chunks,
+            dropped_prebuffer_actions=dropped_prebuffer_actions,
         )
         self._metrics.diagnostic.counter("rlt_critical_phase_started", 1)
 
@@ -1749,11 +1758,9 @@ class RobotClientDrtc:
             return
 
         if not self._rlt_episode_open:
-            if self._rlt_critical_pending_label:
-                return
-            self._rlt_add_pending_chunk(self._rlt_prebuffer_pending_chunks, pending)
-            self._rlt_trim_prebuffer(latest_step=pending.chunk_start_step + pending.num_actions - 1)
-            self._metrics.diagnostic.counter("rlt_prebuffer_collectable_chunk", 1)
+            return
+        if int(pending.chunk_start_step) < int(self._rlt_critical_start_step):
+            self._metrics.diagnostic.counter("rlt_collectable_chunk_before_critical_dropped", 1)
             return
 
         self._rlt_add_pending_chunk(self._rlt_pending_chunks, pending)
@@ -1774,9 +1781,6 @@ class RobotClientDrtc:
             is_intervention=bool(is_intervention),
         )
         if not self._rlt_episode_open:
-            if not self._rlt_critical_pending_label:
-                self._rlt_prebuffer_executed_actions[int(step)] = executed_action
-                self._rlt_trim_prebuffer(latest_step=int(step))
             return
 
         self._rlt_executed_actions[int(step)] = executed_action
@@ -1841,11 +1845,17 @@ class RobotClientDrtc:
     ) -> None:
         if not self.config.rlt_online_collection_enabled:
             return
+        if not self._rlt_episode_open:
+            return
         emitted_ids: list[int] = []
         for context_id, pending in sorted(
             self._rlt_pending_chunks.items(), key=lambda item: item[1].chunk_start_step
         ):
             if context_id in self._rlt_emitted_context_ids:
+                emitted_ids.append(context_id)
+                continue
+            if int(pending.chunk_start_step) < int(self._rlt_critical_start_step):
+                self._metrics.diagnostic.counter("rlt_transition_before_critical_dropped", 1)
                 emitted_ids.append(context_id)
                 continue
             steps = range(pending.chunk_start_step, pending.chunk_start_step + pending.num_actions)

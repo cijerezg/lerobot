@@ -216,6 +216,12 @@ class RobotClientDrtcConfig:
         default=None,
         metadata={"help": "Path to an online-trained RLT actor/critic checkpoint for an *_rlt policy."},
     )
+    rlt_resume_head_checkpoint: bool = field(
+        default=False,
+        metadata={
+            "help": "If rlt_head_checkpoint is unset, resume from rlt_output_dir/rlt_head_latest.pt when it exists."
+        },
+    )
     rlt_chunk_size: int = field(
         default=10,
         metadata={"help": "Number of leading action steps refined by the RLT actor head."},

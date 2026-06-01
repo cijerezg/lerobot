@@ -349,6 +349,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self._rlt_target_update_tau = 0.005
         self._rlt_execute_after_train_steps = 1000000
         self._rlt_eval_actor_blend = 1.0
+        self._rlt_resume_head_checkpoint = False
         self._rlt_grad_clip_norm: float | None = None
         self._rlt_safety_enabled = True
         self._rlt_q_abs_max: float | None = None
@@ -495,6 +496,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_enabled": rlt_enabled,
             "rlt_embedding_checkpoint": rlt_embedding_checkpoint,
             "rlt_head_checkpoint": rlt_head_checkpoint,
+            "rlt_resume_head_checkpoint": bool(getattr(self, "_rlt_resume_head_checkpoint", False)),
             "rlt_head_status": head_status,
             "rlt_head_checkpoint_loaded": bool(rlt_head_checkpoint and actor_loaded),
             "rlt_actor_loaded": actor_loaded,
@@ -517,15 +519,37 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
     def _emit_rlt_status(self, event: str, **fields: Any) -> None:
         with self._rlt_replay_lock:
             replay_size = len(self._rlt_replay)
+        completed_episodes = len(self._rlt_completed_episodes)
+        required_replay_transitions = max(int(self._rlt_batch_size), int(self._rlt_warmup_transitions))
+        required_warmup_episodes = int(self._rlt_warmup_episodes)
+        training_operator_enabled = bool(getattr(self, "_rlt_training_operator_enabled", True))
+        training_replay_ready = replay_size >= required_replay_transitions
+        training_episode_ready = completed_episodes >= required_warmup_episodes
+        training_optimizers_ready = self._rlt_actor_optimizer is not None and self._rlt_critic_optimizer is not None
         status_fields = {
             "rlt_replay_size": replay_size,
             "rlt_replay_capacity": self._rlt_replay_capacity,
-            "rlt_completed_episodes": len(self._rlt_completed_episodes),
+            "rlt_completed_episodes": completed_episodes,
+            "rlt_warmup_episodes": required_warmup_episodes,
+            "rlt_warmup_transitions": int(self._rlt_warmup_transitions),
+            "rlt_batch_size": int(self._rlt_batch_size),
+            "rlt_required_replay_transitions": required_replay_transitions,
+            "rlt_replay_warmup_remaining": max(0, required_replay_transitions - replay_size),
+            "rlt_episode_warmup_remaining": max(0, required_warmup_episodes - completed_episodes),
+            "rlt_training_replay_ready": training_replay_ready,
+            "rlt_training_episode_ready": training_episode_ready,
+            "rlt_training_ready": bool(
+                self._rlt_online_training_enabled
+                and training_operator_enabled
+                and training_replay_ready
+                and training_episode_ready
+                and training_optimizers_ready
+            ),
             "rlt_train_step": self._rlt_train_step,
             "rlt_online_collection_enabled": self._rlt_online_collection_enabled,
             "rlt_online_training_enabled": self._rlt_online_training_enabled,
-            "rlt_training_operator_enabled": getattr(self, "_rlt_training_operator_enabled", True),
-            "rlt_training_paused": not getattr(self, "_rlt_training_operator_enabled", True),
+            "rlt_training_operator_enabled": training_operator_enabled,
+            "rlt_training_paused": not training_operator_enabled,
             "rlt_actor_operator_enabled": getattr(self, "_rlt_actor_operator_enabled", True),
             "rlt_actor_critical_phase_active": getattr(self, "_rlt_actor_critical_phase_active", False),
             "rlt_eval_actor_blend": getattr(self, "_rlt_eval_actor_blend", 1.0),
@@ -988,6 +1012,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             getattr(policy_specs, "rlt_execute_after_train_steps", 1000000)
         )
         self._rlt_eval_actor_blend = float(getattr(policy_specs, "rlt_eval_actor_blend", 1.0))
+        self._rlt_resume_head_checkpoint = bool(getattr(policy_specs, "rlt_resume_head_checkpoint", False))
         self._rlt_grad_clip_norm = getattr(policy_specs, "rlt_grad_clip_norm", None)
         self._rlt_safety_enabled = bool(getattr(policy_specs, "rlt_safety_enabled", True))
         self._rlt_q_abs_max = getattr(policy_specs, "rlt_q_abs_max", None)
@@ -1756,6 +1781,7 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             "rlt_target_update_tau": self._rlt_target_update_tau,
             "rlt_demo_buffer_path": self._rlt_demo_buffer_path,
             "rlt_online_buffer_path": self._rlt_online_buffer_path,
+            "rlt_resume_head_checkpoint": bool(getattr(self, "_rlt_resume_head_checkpoint", False)),
             "rlt_replay_size": len(self._rlt_replay),
             "rlt_demo_replay_size": self._rlt_demo_replay_size,
             "rlt_online_replay_size": self._rlt_online_replay_size,
@@ -1782,6 +1808,15 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
         self.shutdown_event.set()
         self._policy_ready.clear()
         if self._rlt_persist_buffer_on_shutdown:
+            if (
+                self.policy is not None
+                and int(getattr(self, "_rlt_train_step", 0) or 0)
+                > int(getattr(self, "_rlt_loaded_head_step", 0) or 0)
+            ):
+                try:
+                    self._save_rlt_head_checkpoint()
+                except Exception as e:
+                    self.logger.warning("Failed to persist RLT head checkpoint during reset: %s", e)
             self._persist_rlt_replay(reason="reset")
             self._persist_rlt_review_archive(reason="reset")
         if self._rlt_image_encoder is not None:
@@ -2003,13 +2038,32 @@ class PolicyServerDrtc(services_pb2_grpc.AsyncInferenceServicer):
             from lerobot.configs.policies import PreTrainedConfig
 
             base_cfg = PreTrainedConfig.from_pretrained(policy_processor_path)
+            rlt_head_checkpoint = getattr(policy_specs, "rlt_head_checkpoint", None)
+            self._rlt_resume_head_checkpoint = bool(
+                getattr(policy_specs, "rlt_resume_head_checkpoint", False)
+            )
+            if not rlt_head_checkpoint and self._rlt_resume_head_checkpoint:
+                latest_head_path = Path(
+                    str(getattr(policy_specs, "rlt_output_dir", "outputs/rlt_online"))
+                ) / "rlt_head_latest.pt"
+                if latest_head_path.exists():
+                    rlt_head_checkpoint = str(latest_head_path)
+                    self.logger.info(
+                        "Resuming RLT head checkpoint from %s; train step will be restored from checkpoint",
+                        latest_head_path,
+                    )
+                else:
+                    self.logger.info(
+                        "RLT resume requested, but no latest head checkpoint exists at %s",
+                        latest_head_path,
+                    )
 
             # Common RLT keyword arguments shared by all wrappers.
             rlt_kwargs: dict[str, Any] = dict(
                 device=policy_load_device,
                 rlt_enabled=bool(getattr(policy_specs, "rlt_enabled", False)),
                 rlt_embedding_checkpoint=getattr(policy_specs, "rlt_embedding_checkpoint", None),
-                rlt_head_checkpoint=getattr(policy_specs, "rlt_head_checkpoint", None),
+                rlt_head_checkpoint=rlt_head_checkpoint,
                 rlt_chunk_size=int(getattr(policy_specs, "rlt_chunk_size", 10)),
                 rlt_actor_hidden_dims=getattr(policy_specs, "rlt_actor_hidden_dims", None),
                 rlt_critic_hidden_dims=getattr(policy_specs, "rlt_critic_hidden_dims", None),
