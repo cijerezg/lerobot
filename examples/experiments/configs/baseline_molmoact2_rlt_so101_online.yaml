@@ -72,7 +72,7 @@ rlt_train_freq_s: 1.0
 rlt_save_freq_steps: 25
 rlt_output_dir: outputs/rlt_molmoact2_so101_online_20260831_v2
 rlt_demo_buffer_path:
-rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v1.pt
+rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v2.pt
 rlt_online_buffer_save_freq_transitions: 50
 rlt_persist_buffer_on_shutdown: true
 
@@ -86,7 +86,7 @@ rlt_wandb_mode: online
 # Optional review capture for offline episode inspection.
 rlt_review_capture_enabled: true
 rlt_review_jpeg_quality: 80
-rlt_review_archive_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v1_archive.pt
+rlt_review_archive_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v2_archive.pt
 
 rlt_actor_lr: 0.0001
 rlt_critic_lr: 0.0003
