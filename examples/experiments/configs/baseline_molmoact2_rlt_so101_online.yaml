@@ -53,8 +53,10 @@ rlt_actor_mode: residual
 rlt_action_std: 0.0
 rlt_num_critics: 4
 rlt_bc_beta: 1.0
-rlt_jerk_beta: 0.03
-rlt_reference_dropout_p: 0.25
+rlt_jerk_beta: 1.0
+# Keep dropout off in residual mode: zeroing the reference chunk makes the
+# residual actor unable to reconstruct the BC target within its residual cap.
+rlt_reference_dropout_p: 0.0
 rlt_intervention_reference_mode: executed
 
 # Online RLT training.
@@ -70,9 +72,9 @@ rlt_success_sample_fraction: 0.5
 rlt_intervention_sample_fraction: 0.0
 rlt_train_freq_s: 1.0
 rlt_save_freq_steps: 25
-rlt_output_dir: outputs/rlt_molmoact2_so101_online_20260601_first47_gate250_v0
+rlt_output_dir: outputs/rlt_molmoact2_so101_online_20260601_first47_gate250_v1
 rlt_demo_buffer_path:
-rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v2_first47_train_gate250_v0.pt
+rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v2_first47_train_gate250_v1.pt
 rlt_online_buffer_save_freq_transitions: 50
 rlt_persist_buffer_on_shutdown: true
 
@@ -80,13 +82,13 @@ rlt_persist_buffer_on_shutdown: true
 rlt_wandb_enabled: true
 rlt_wandb_project: lerobot-rlt
 rlt_wandb_entity:
-rlt_wandb_run_name: baseline_molmoact2_rlt_so101_online_gate250
+rlt_wandb_run_name: baseline_molmoact2_rlt_so101_online_gate250_v1
 rlt_wandb_mode: online
 
 # Optional review capture for offline episode inspection.
 rlt_review_capture_enabled: true
 rlt_review_jpeg_quality: 80
-rlt_review_archive_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v2_first47_train_gate250_v0_archive.pt
+rlt_review_archive_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v2_first47_train_gate250_v1_archive.pt
 
 rlt_actor_lr: 0.00005
 rlt_critic_lr: 0.0001
