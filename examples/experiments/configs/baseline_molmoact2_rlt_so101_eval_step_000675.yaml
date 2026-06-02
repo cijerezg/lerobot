@@ -1,16 +1,11 @@
-# DRTC config for online RLT-head training on the MolmoAct2 SO101 checkpoint.
+# DRTC config for evaluating the MolmoAct2 SO101 RLT head at train step 675.
 #
-# Train the embedding first with:
-#   uv run --no-sync python -m lerobot.rl.train_molmoact2_rlt_embedding \
-#     --policy_path=/home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model \
-#     --dataset_repo_id=jackvial/so101_placemotor_20260525_e51_merge \
-#     --output_dir=outputs/molmoact2_rlt_embedding \
-#     --rlt_token_dim=512 \
-#     --rlt_autoencoder_dim=512
+# This loads a fixed head checkpoint, records eval rollouts to a separate buffer,
+# and keeps online training disabled so the checkpoint does not change.
 #
-# Then run online collection/training with:
-#   ./scripts/run_drtc_experiment.sh --config baseline_molmoact2_rlt_so101_online
-name: baseline_molmoact2_rlt_so101_online
+# Run with:
+#   ./scripts/run_drtc_experiment.sh --config baseline_molmoact2_rlt_so101_eval_step_000675
+name: baseline_molmoact2_rlt_so101_eval_step_000675
 
 # Hardware
 robot_type: so101_follower
@@ -36,12 +31,11 @@ camera_allow_stale_frames: true
 policy_type: molmoact2_rlt
 pretrained_name_or_path: /home/jack/code/lerobot/outputs/molmoact2_so101_placemotor_e51_v6/checkpoints/030000/030000/pretrained_model
 
-# RLT modules. Leave the head unset for the first online run; the server trains
-# the actor/critic asynchronously and only executes the actor after
-# rlt_execute_after_train_steps.
+# RLT modules. This is the fixed checkpoint selected from the stronger-looking
+# mid-run window in l8rofem0.
 rlt_enabled: true
 rlt_embedding_checkpoint: outputs/molmoact2_rlt_embedding/rlt_embedding_step_010000.pt
-rlt_head_checkpoint:
+rlt_head_checkpoint: outputs/rlt_molmoact2_so101_online_20260601_first47_gate250_v1/rlt_head_step_000675.pt
 rlt_resume_head_checkpoint: false
 rlt_chunk_size: 10
 rlt_token_dim: 512
@@ -54,16 +48,15 @@ rlt_action_std: 0.0
 rlt_num_critics: 4
 rlt_bc_beta: 1.0
 rlt_jerk_beta: 1.0
-# Keep dropout off in residual mode: zeroing the reference chunk makes the
-# residual actor unable to reconstruct the BC target within its residual cap.
 rlt_reference_dropout_p: 0.0
 rlt_intervention_reference_mode: executed
 
-# Online RLT training.
+# Eval collection mode: record labels to an isolated eval buffer, but do not
+# train/update the loaded checkpoint.
 rlt_online_collection_enabled: true
-rlt_online_training_enabled: true
+rlt_online_training_enabled: false
 rlt_warmup_episodes: 0
-rlt_warmup_transitions: 64
+rlt_warmup_transitions: 0
 rlt_replay_capacity: 50000
 rlt_batch_size: 64
 rlt_utd_ratio: 1
@@ -72,31 +65,31 @@ rlt_success_sample_fraction: 0.5
 rlt_intervention_sample_fraction: 0.0
 rlt_train_freq_s: 1.0
 rlt_save_freq_steps: 25
-rlt_output_dir: outputs/rlt_molmoact2_so101_online_20260601_first47_gate250_v2
+rlt_output_dir: outputs/rlt_molmoact2_so101_eval_step_000675
 rlt_demo_buffer_path:
-rlt_online_buffer_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v2_first47_train_gate250_v2.pt
-rlt_online_buffer_save_freq_transitions: 50
+rlt_online_buffer_path: outputs/rlt_molmoact2_so101_eval_step_000675/rlt_eval_replay.pt
+rlt_online_buffer_save_freq_transitions: 1
 rlt_persist_buffer_on_shutdown: true
 
-# Server-side online RLT trainer metrics.
+# Server-side online RLT trainer metrics/status.
 rlt_wandb_enabled: true
 rlt_wandb_project: lerobot-rlt
 rlt_wandb_entity:
-rlt_wandb_run_name: baseline_molmoact2_rlt_so101_online_gate250_v2
+rlt_wandb_run_name: baseline_molmoact2_rlt_so101_eval_step_000675
 rlt_wandb_mode: online
 
 # Optional review capture for offline episode inspection.
 rlt_review_capture_enabled: true
 rlt_review_jpeg_quality: 80
-rlt_review_archive_path: outputs/rlt_molmoact2_so101_online/rlt_online_replay_20260831_v2_first47_train_gate250_v2_archive.pt
+rlt_review_archive_path: outputs/rlt_molmoact2_so101_eval_step_000675/rlt_eval_review_archive.pt
 
 rlt_actor_lr: 0.00005
 rlt_critic_lr: 0.0001
 rlt_discount: 0.985
 rlt_target_update_tau: 0.005
-# Train the fresh online head on the seed replay first, then allow actor rollout
-# in critical phases once the run reaches this many train steps.
-rlt_execute_after_train_steps: 250
+# Checkpoint is loaded above, and actor execution should be available
+# immediately during critical phases.
+rlt_execute_after_train_steps: 0
 rlt_context_cache_size: 512
 rlt_transition_queue_size: 512
 rlt_grad_clip_norm: 20.0
