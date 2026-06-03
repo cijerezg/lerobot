@@ -206,7 +206,7 @@ def add_actor_information_and_train(
 
     policy.train()
 
-    if not skip_critic:
+    if not skip_critic and not hasattr(policy, "critic"):
         init_critic = getattr(policy, "init_critic", None)
         if callable(init_critic):
             init_critic()

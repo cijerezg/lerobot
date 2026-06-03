@@ -417,6 +417,18 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
 
     # ── Critic lifecycle ──────────────────────────────────────────────────────
 
+    @classmethod
+    def _load_as_safetensor(cls, model, model_file, map_location, strict):
+        # init_critic() is lazy, so critic.* keys in the checkpoint would be
+        # silently dropped as "unexpected" during the default load.  Pre-init
+        # the sub-module here so every key lands correctly.
+        from safetensors import safe_open
+        with safe_open(model_file, framework="pt", device="cpu") as _sf:
+            has_critic = any(k.startswith("critic.") for k in _sf.keys())
+        if has_critic and not hasattr(model, "critic"):
+            model.init_critic()
+        return super()._load_as_safetensor(model, model_file, map_location, strict)
+
     def init_critic(self) -> None:
         """
         Instantiate and initialise the distributional critic + its frozen target.
