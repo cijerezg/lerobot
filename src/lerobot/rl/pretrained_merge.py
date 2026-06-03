@@ -75,7 +75,7 @@ class PretrainedMerge:
             live_p.data.lerp_(init_gpu, self.alpha)
         optimizer.state.clear()
 
-    def maybe_merge(self, optimization_step: int, optimizer: Optimizer) -> bool:
+    def try_merge(self, optimization_step: int, optimizer: Optimizer) -> bool:
         if not self.should_merge(optimization_step):
             return False
         self.merge(optimizer)
@@ -116,4 +116,4 @@ def apply_pretrained_merges(
 ) -> None:
     """Run a merge on every entry whose period divides `optimization_step`."""
     for key, merge in merges.items():
-        merge.maybe_merge(optimization_step, optimizers[key])
+        merge.try_merge(optimization_step, optimizers[key])

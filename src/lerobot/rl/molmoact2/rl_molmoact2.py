@@ -424,10 +424,28 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
         # the sub-module here so every key lands correctly.
         from safetensors import safe_open
         with safe_open(model_file, framework="pt", device="cpu") as _sf:
-            has_critic = any(k.startswith("critic.") for k in _sf.keys())
+            file_keys = set(_sf.keys())
+        has_critic = any(k.startswith("critic.") for k in file_keys)
         if has_critic and not hasattr(model, "critic"):
             model.init_critic()
-        return super()._load_as_safetensor(model, model_file, map_location, strict)
+        result = super()._load_as_safetensor(model, model_file, map_location, strict)
+        # freeze_model() aliases frozen critic_target params onto critic params
+        # (p_tgt.data = p.data) to save VRAM.  safetensors deduplicates shared
+        # storage on save, so those critic_target.* keys are absent from the file.
+        # Restore them from critic — frozen params are never Polyak-updated, so
+        # critic_target.X == critic.X for every frozen X.
+        if hasattr(result, "critic") and hasattr(result, "critic_target"):
+            critic_module: nn.Module = getattr(result, "critic")
+            critic_target_module: nn.Module = getattr(result, "critic_target")
+            critic_tensors = {**dict(critic_module.named_parameters()), **dict(critic_module.named_buffers())}
+            with torch.no_grad():
+                for name, tensor in (
+                    list(critic_target_module.named_parameters())
+                    + list(critic_target_module.named_buffers())
+                ):
+                    if f"critic_target.{name}" not in file_keys and name in critic_tensors:
+                        tensor.data.copy_(critic_tensors[name].data)
+        return result
 
     def init_critic(self) -> None:
         """

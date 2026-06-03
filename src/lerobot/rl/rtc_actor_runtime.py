@@ -865,7 +865,7 @@ def rtc_env_worker(
                         episode_log_buffer = []
 
                     shared_state.episode_counter += 1
-                    _maybe_save_inference_dataset(shared_state, cfg)
+                    _flush_episode_buffer(shared_state, cfg)
                     shared_state.is_logging_episode = (
                         episode_logging_freq > 0
                         and shared_state.episode_counter % episode_logging_freq == 0
@@ -1048,7 +1048,7 @@ def _finalize_rtc_inference_log(
         logger.error("[RTC_INFERENCE] Failed to generate video: %s", exc)
 
 
-def _maybe_save_inference_dataset(shared_state: RTCSharedState, cfg) -> None:
+def _flush_episode_buffer(shared_state: RTCSharedState, cfg) -> None:
     if shared_state.replay_buffer is None:
         return
     episode_save_freq = int(getattr(cfg, "episode_save_freq", 0) or 0)
@@ -1186,7 +1186,9 @@ def act_with_policy_rtc_inference(
         capacity=cfg.policy.online_buffer_capacity,
         device=str(device),
         state_keys=cfg.policy.input_features.keys(),
-        storage_device="cpu",
+        storage_device=getattr(cfg.policy, "storage_device", "cpu"),
+        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "uint8"),
+        image_storage_size=getattr(cfg.policy, "image_storage_size", None),
     )
     action_queue = ActionQueue(policy.config.rtc_config)
 

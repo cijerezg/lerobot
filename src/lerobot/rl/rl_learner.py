@@ -455,7 +455,7 @@ def process_transitions_vla(
         transition_list = bytes_to_transitions(buffer=raw)
         episode_counter[0] += 1
 
-        log_ctx = _maybe_start_logging_episode(cfg, episode_counter[0])
+        log_ctx = _init_episode_log(cfg, episode_counter[0])
 
         for step_idx, transition in enumerate(transition_list):
             if log_ctx is not None and policy is not None and trainer is not None and device is not None:
@@ -499,7 +499,7 @@ def process_transitions_vla(
             _finish_logging_episode(log_ctx, episode_counter[0])
 
 
-def _maybe_start_logging_episode(
+def _init_episode_log(
     cfg: TrainRLServerPipelineConfig | None,
     episode: int,
 ) -> dict | None:

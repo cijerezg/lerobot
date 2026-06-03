@@ -220,8 +220,8 @@ use_rerun: true
 # -----------------------------------------------------------------------------
 # Episode-level logging (online actor)
 # -----------------------------------------------------------------------------
-episode_logging_freq: 1        # log every Nth episode
-episode_save_freq: 2          # save buffer snapshot every Nth episode
+episode_logging_freq: 10        # log every Nth episode
+episode_save_freq: 10          # save buffer snapshot every Nth episode
 video_logging_cameras: [top, wrist]
 
 

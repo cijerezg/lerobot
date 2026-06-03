@@ -177,7 +177,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None):
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     # Handle resume logic
-    cfg = handle_resume_logic(cfg)
+    cfg = resolve_training_cfg(cfg)
 
     set_seed(seed=cfg.seed)
 
@@ -648,7 +648,7 @@ def save_training_checkpoint(
 # Training setup functions
 
 
-def handle_resume_logic(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipelineConfig:
+def resolve_training_cfg(cfg: TrainRLServerPipelineConfig) -> TrainRLServerPipelineConfig:
     """
     Handle the resume logic for training.
 

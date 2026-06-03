@@ -31,7 +31,7 @@ def cfg_to_group(
 ) -> list[str] | str:
     """Return a group name for logging. Optionally returns group name as list."""
 
-    def _maybe_truncate(tag: str) -> str:
+    def _truncate_tag(tag: str) -> str:
         """Truncate tag to max_tag_length characters if required.
 
         wandb rejects tags longer than 64 characters.
@@ -54,7 +54,7 @@ def cfg_to_group(
     if cfg.env is not None:
         lst.append(f"env:{cfg.env.type}")
     if truncate_tags:
-        lst = [_maybe_truncate(tag) for tag in lst]
+        lst = [_truncate_tag(tag) for tag in lst]
     return lst if return_list else "-".join(lst)
 
 

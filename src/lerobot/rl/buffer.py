@@ -939,7 +939,7 @@ class ReplayBuffer:
 
         # Add "action"
         sample_action = self.actions[0]
-        act_info = guess_feature_info(t=sample_action, name=ACTION)
+        act_info = infer_feature_info(t=sample_action, name=ACTION)
         features[ACTION] = act_info
 
         # Add "reward" and "done"
@@ -949,7 +949,7 @@ class ReplayBuffer:
         # Add state keys
         for key in self.states:
             sample_val = self.states[key][0]
-            f_info = guess_feature_info(t=sample_val, name=key)
+            f_info = infer_feature_info(t=sample_val, name=key)
             features[key] = f_info
 
         # Add complementary_info keys if available
@@ -958,7 +958,7 @@ class ReplayBuffer:
                 sample_val = self.complementary_info[key][0]
                 if isinstance(sample_val, torch.Tensor) and sample_val.ndim == 0:
                     sample_val = sample_val.unsqueeze(0)
-                f_info = guess_feature_info(t=sample_val, name=f"complementary_info.{key}")
+                f_info = infer_feature_info(t=sample_val, name=f"complementary_info.{key}")
                 features[f"complementary_info.{key}"] = f_info
 
         # Create an empty LeRobotDataset
@@ -1182,7 +1182,7 @@ class ReplayBuffer:
 
 
 # Utility function to guess shapes/dtypes from a tensor
-def guess_feature_info(t, name: str):
+def infer_feature_info(t, name: str):
     """
     Return a dictionary with the 'dtype' and 'shape' for a given tensor or scalar value.
     If it looks like a 3D (C,H,W) shape, we might consider it an 'image'.
