@@ -1049,24 +1049,68 @@ def _finalize_rtc_inference_log(
 
 
 def _flush_episode_buffer(shared_state: RTCSharedState, cfg) -> None:
-    if shared_state.replay_buffer is None:
+    if shared_state.replay_buffer is None or shared_state.replay_buffer.size == 0:
         return
-    episode_save_freq = int(getattr(cfg, "episode_save_freq", 0) or 0)
-    if episode_save_freq <= 0 or shared_state.episode_counter % episode_save_freq != 0:
-        return
-    dataset_root = os.path.join(cfg.output_dir, "inference_dataset")
-    logger.info("[RTC_INFERENCE] Saving inference dataset at episode %d", shared_state.episode_counter)
-    if os.path.exists(dataset_root):
-        shutil.rmtree(dataset_root)
+    episode_idx = shared_state.episode_counter - 1
+    output_dir = cfg.output_dir or "outputs"
+    chunk_root = os.path.join(output_dir, "inference_chunks", f"chunk_{episode_idx:04d}")
+    logger.info(
+        "[RTC_INFERENCE] Saving episode %d to %s (%d transitions).",
+        episode_idx, chunk_root, shared_state.replay_buffer.size,
+    )
     try:
         shared_state.replay_buffer.to_lerobot_dataset(
             repo_id="inference_recorded",
             fps=cfg.env.fps,
-            root=dataset_root,
+            root=chunk_root,
             task_name=cfg.policy.task,
         )
+        shared_state.replay_buffer.reset()
+        logger.info("[RTC_INFERENCE] Episode %d saved. Buffer cleared.", episode_idx)
     except Exception as exc:
-        logger.error("[RTC_INFERENCE] Failed to save inference dataset: %s", exc)
+        logger.error("[RTC_INFERENCE] Failed to save episode %d: %s", episode_idx, exc)
+
+
+def _merge_inference_chunks(cfg) -> None:
+    """Merge per-episode chunks written by _flush_episode_buffer into a single dataset."""
+    from pathlib import Path
+    output_dir = cfg.output_dir or "outputs"
+    chunks_dir = Path(output_dir) / "inference_chunks"
+    final_dir = Path(output_dir) / "inference_dataset"
+
+    if not chunks_dir.exists():
+        logger.warning("[RTC_INFERENCE] No inference_chunks directory found — nothing to merge.")
+        return
+
+    chunk_paths = sorted(p for p in chunks_dir.iterdir() if p.is_dir() and p.name.startswith("chunk_"))
+    if not chunk_paths:
+        logger.warning("[RTC_INFERENCE] No episode chunks found — nothing to merge.")
+        return
+
+    if final_dir.exists():
+        raise RuntimeError(
+            f"Inference dataset already exists at {final_dir}. "
+            "Remove it before running inference again."
+        )
+
+    logger.info("[RTC_INFERENCE] Merging %d episode chunks into %s...", len(chunk_paths), final_dir)
+
+    if len(chunk_paths) == 1:
+        shutil.move(str(chunk_paths[0]), str(final_dir))
+        shutil.rmtree(str(chunks_dir), ignore_errors=True)
+        logger.info("[RTC_INFERENCE] Single episode chunk moved to %s.", final_dir)
+    else:
+        from lerobot.datasets.aggregate import aggregate_datasets
+        aggregate_datasets(
+            repo_ids=["inference_recorded"] * len(chunk_paths),
+            aggr_repo_id="inference_recorded",
+            roots=chunk_paths,
+            aggr_root=final_dir,
+        )
+        shutil.rmtree(str(chunks_dir))
+        logger.info("[RTC_INFERENCE] %d episodes merged and chunks cleaned up.", len(chunk_paths))
+
+    logger.info("[RTC_INFERENCE] Inference dataset ready at %s.", final_dir)
 
 
 def _warmup_compiled_policy(
@@ -1273,6 +1317,10 @@ def act_with_policy_rtc_inference(
             online_env.close()
         except Exception:
             pass
+        try:
+            _merge_inference_chunks(cfg)
+        except Exception:
+            logger.error("[RTC_INFERENCE] Failed to merge inference chunks:\n%s", traceback.format_exc())
         logger.info("[RTC_INFERENCE] Shutdown complete.")
 
 def act_with_policy_rtc(

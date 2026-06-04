@@ -287,6 +287,12 @@ class ReplayBuffer:
     def __len__(self):
         return self.size
 
+    def reset(self) -> None:
+        """Clear the buffer without deallocating pre-allocated tensors."""
+        with self._lock:
+            self.position = 0
+            self.size = 0
+
     def add(
         self,
         state: dict[str, torch.Tensor],
