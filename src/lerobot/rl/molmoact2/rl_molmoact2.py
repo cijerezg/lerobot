@@ -447,6 +447,21 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
                         tensor.data.copy_(critic_tensors[name].data)
         return result
 
+    @classmethod
+    def _filter_load_keys(cls, model, missing_keys, unexpected_keys):
+        # freeze_model() aliases frozen critic_target params onto critic params, so
+        # safetensors deduplicates them and those critic_target.* keys are absent from
+        # the file. They are restored from critic in _load_as_safetensor, so reporting
+        # them as "missing" is spurious — drop any critic_target.X whose critic.X exists.
+        if hasattr(model, "critic") and hasattr(model, "critic_target"):
+            critic_module: nn.Module = getattr(model, "critic")
+            critic_names = set(dict(critic_module.named_parameters())) | set(dict(critic_module.named_buffers()))
+            prefix = "critic_target."
+            missing_keys = [
+                k for k in missing_keys if not (k.startswith(prefix) and k[len(prefix) :] in critic_names)
+            ]
+        return missing_keys, unexpected_keys
+
     def init_critic(self) -> None:
         """
         Instantiate and initialise the distributional critic + its frozen target.

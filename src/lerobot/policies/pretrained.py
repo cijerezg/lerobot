@@ -144,6 +144,7 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
 
         # Load the model with appropriate kwargs
         missing_keys, unexpected_keys = load_model_as_safetensor(model, model_file, **kwargs)
+        missing_keys, unexpected_keys = cls._filter_load_keys(model, missing_keys, unexpected_keys)
         log_model_loading_keys(missing_keys, unexpected_keys)
 
         # For older versions, manually move to device if needed
@@ -156,6 +157,17 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
             )
             model.to(map_location)
         return model
+
+    @classmethod
+    def _filter_load_keys(
+        cls, model: T, missing_keys: list[str], unexpected_keys: list[str]
+    ) -> tuple[list[str], list[str]]:
+        """Hook for subclasses to drop expected missing/unexpected keys before they are logged.
+
+        Default is a no-op. Subclasses that intentionally share or restore some parameters
+        (e.g. deduplicated frozen tensors) can override this to suppress spurious warnings.
+        """
+        return missing_keys, unexpected_keys
 
     @abc.abstractmethod
     def get_optim_params(self) -> dict:
