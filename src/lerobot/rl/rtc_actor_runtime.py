@@ -393,8 +393,15 @@ def rtc_inference_worker(
     parameters_queue,
     device: torch.device,
     cfg,
+    post_inference_hook=None,
 ) -> None:
-    """Background inference worker using RTC ActionQueue semantics."""
+    """Background inference worker using RTC ActionQueue semantics.
+
+    ``post_inference_hook(latest_obs)`` (optional) is called once per cycle, in
+    this thread, after the action chunk is merged. It runs in-thread on purpose:
+    some policies' attention/probe capture flips process-global state and patches
+    modules the live forward also uses, so it must not overlap inference.
+    """
     try:
         logger.info("[RTC_INFERENCE] Thread started.")
         if getattr(cfg.policy, "torch_compile", False):
@@ -569,6 +576,14 @@ def rtc_inference_worker(
                 action_index_before_inference=action_index_before,
                 anchor_state=anchor_now.detach().cpu() if anchor_now is not None else None,
             )
+
+            if post_inference_hook is not None:
+                # Must never kill the action loop — the hook self-throttles and
+                # swallows its own errors, but guard here too.
+                try:
+                    post_inference_hook(latest_obs)
+                except Exception:
+                    logger.warning("[RTC_INFERENCE] post_inference_hook failed:\n%s", traceback.format_exc())
 
         logger.info("[RTC_INFERENCE] Thread shut down.")
     except Exception:
@@ -1169,8 +1184,15 @@ def act_with_policy_rtc_inference(
     cfg,
     trainer: Trainer,
     shutdown_event,
+    post_inference_hook_factory=None,
 ) -> None:
-    """Run standalone generic inference with the shared RTC ActionQueue runtime."""
+    """Run standalone generic inference with the shared RTC ActionQueue runtime.
+
+    ``post_inference_hook_factory(policy, preprocessor, postprocessor, device, cfg)``
+    (optional) is called once after the policy + processors are built; it returns
+    a ``hook(latest_obs)`` callable (or None) run in the inference thread each
+    cycle. Used by inference_w_attn to stream live attention maps.
+    """
     set_seed(cfg.seed)
     device_name = getattr(cfg.policy, "actor_device", None) or cfg.policy.device
     device = get_safe_torch_device(device_name, log=True)
@@ -1236,9 +1258,13 @@ def act_with_policy_rtc_inference(
     )
     action_queue = ActionQueue(policy.config.rtc_config)
 
+    post_inference_hook = None
+    if post_inference_hook_factory is not None:
+        post_inference_hook = post_inference_hook_factory(policy, preprocessor, postprocessor, device, cfg)
+
     inf_thread = Thread(
         target=rtc_inference_worker,
-        args=(policy, trainer, preprocessor, postprocessor, shared, action_queue, None, device, cfg),
+        args=(policy, trainer, preprocessor, postprocessor, shared, action_queue, None, device, cfg, post_inference_hook),
         daemon=True,
         name="rtc_inference",
     )

@@ -96,8 +96,6 @@ from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DEFAULT_IMAGE_SIZE = (224, 224)
-
 
 def parse_image_storage_size(raw: list[str]) -> tuple[int, int] | None:
     if len(raw) == 1 and raw[0].lower() == "raw":
@@ -173,8 +171,8 @@ def main():
     parser.add_argument(
         "--image-storage-size",
         nargs="+",
-        default=[str(DEFAULT_IMAGE_SIZE[0]), str(DEFAULT_IMAGE_SIZE[1])],
-        help="Image storage size as HEIGHT WIDTH, or 'raw' to keep dataset resolution.",
+        default=["raw"],
+        help="Image storage size as HEIGHT WIDTH, or 'raw' to keep dataset resolution (default).",
     )
     parser.add_argument("--inject-golden", action="store_true", default=True,
                         help="Inject is_golden=True for all frames (matches offline training)")
