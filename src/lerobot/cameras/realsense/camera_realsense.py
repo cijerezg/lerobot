@@ -131,6 +131,20 @@ class RealSenseCamera(Camera):
         self.use_depth = config.use_depth
         self.warmup_s = config.warmup_s
 
+        # Depth post-processing: spatial smooth + hole-fill, applied in the read thread.
+        # No temporal filter (it ghosts under camera/wrist motion). Spatial runs in the
+        # disparity domain where stereo noise is uniform; hole-fill runs back in depth.
+        self.depth_filters = (
+            [
+                rs.disparity_transform(True),
+                rs.spatial_filter(),
+                rs.disparity_transform(False),
+                rs.hole_filling_filter(),
+            ]
+            if self.use_depth and config.depth_filters
+            else []
+        )
+
         self.rs_pipeline: rs.pipeline | None = None
         self.rs_profile: rs.pipeline_profile | None = None
 
@@ -484,6 +498,8 @@ class RealSenseCamera(Camera):
 
                 if self.use_depth:
                     depth_frame_raw = frame.get_depth_frame()
+                    for f in self.depth_filters:
+                        depth_frame_raw = f.process(depth_frame_raw)
                     depth_frame = np.asanyarray(depth_frame_raw.get_data())
                     processed_depth_frame = self._postprocess_image(depth_frame, depth_frame=True)
 
@@ -607,6 +623,34 @@ class RealSenseCamera(Camera):
         if age_ms > max_age_ms:
             raise TimeoutError(
                 f"{self} latest frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms)."
+            )
+
+        return frame
+
+    @check_if_not_connected
+    def read_latest_depth(self, max_age_ms: int = 500) -> NDArray[Any]:
+        """Peek the most recent depth frame immediately, mirroring read_latest() for color.
+
+        Returns the (filtered, if enabled) depth map from the same frameset the read loop
+        last stored. Non-blocking; raises if depth is disabled or the frame is too old.
+        """
+        if not self.use_depth:
+            raise RuntimeError(f"Depth stream is not enabled for {self}.")
+
+        if self.thread is None or not self.thread.is_alive():
+            raise RuntimeError(f"{self} read thread is not running.")
+
+        with self.frame_lock:
+            frame = self.latest_depth_frame
+            timestamp = self.latest_timestamp
+
+        if frame is None or timestamp is None:
+            raise RuntimeError(f"{self} has not captured any depth frames yet.")
+
+        age_ms = (time.perf_counter() - timestamp) * 1e3
+        if age_ms > max_age_ms:
+            raise TimeoutError(
+                f"{self} latest depth frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms)."
             )
 
         return frame

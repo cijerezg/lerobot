@@ -78,6 +78,7 @@ import multiprocessing
 import os
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torchvision.transforms.functional as F_vision
@@ -119,6 +120,15 @@ def write_array(outputs: dict[str, object], key: str, value: np.ndarray | np.gen
     if not array.flags.c_contiguous:
         array = np.ascontiguousarray(array)
     outputs[sanitize_key(key)].write(array.tobytes(order="C"))
+
+
+def load_depth_png(root, depth_key: str, episode_index: int, frame_index: int) -> np.ndarray:
+    """Read one frame's sidecar depth PNG (uint16, raw 0.1mm levels) written by depth_writer.py."""
+    path = Path(root) / "depth" / depth_key / f"episode-{episode_index:06d}" / f"frame-{frame_index:06d}.png"
+    depth = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if depth is None:
+        raise FileNotFoundError(f"Missing depth sidecar PNG: {path}")
+    return depth
 
 
 def flush_outputs(outputs: dict[str, object], *, sync: bool = False, drop_cache: bool = False) -> None:
@@ -211,6 +221,13 @@ def main():
     logger.info(f"Image storage: dtype={image_storage_dtype}, size={image_storage_size or 'raw'}")
 
     complementary_info_keys = [k for k in sample if k.startswith("complementary_info.")]
+
+    # Sidecar depth keys: subdirs under {root}/depth/ written by depth_writer.py at record time.
+    # Stored here as RAW uint16 (no bf16, no clip) so the policy's depth normalizer keeps full
+    # 0.1mm precision; clip/normalize happen downstream (config: depth_clip_mm).
+    depth_root = Path(dataset.root) / "depth"
+    depth_keys = sorted(p.name for p in depth_root.iterdir()) if depth_root.exists() else []
+    logger.info(f"Depth sidecar keys: {depth_keys}")
     if "subtask_index" in sample:
         complementary_info_keys.append("subtask_index")
 
@@ -273,6 +290,11 @@ def main():
         shapes["complementary_info.is_golden"] = ()
         dtypes_np["complementary_info.is_golden"] = np.uint16
 
+    for key in depth_keys:
+        ep0, fr0 = int(sample["episode_index"]), int(sample["frame_index"])
+        shapes[f"depth.{key}"] = load_depth_png(dataset.root, key, ep0, fr0).shape
+        dtypes_np[f"depth.{key}"] = np.uint16
+
     # N = num_frames - 1 because transitions are (current, next) pairs,
     # but we also need the last frame's state for the final transition's next_state.
     # The buffer stores N transitions where N = num_frames (each frame becomes a transition).
@@ -327,6 +349,7 @@ def main():
             state_keys, image_keys, non_image_state_keys,
             complementary_info_keys, has_done_key, args.inject_golden,
             to_bf16_uint16, image_to_numpy,
+            depth_keys, dataset.root,
         )
         prev_sample = current_sample
         idx += 1
@@ -341,6 +364,7 @@ def main():
         state_keys, image_keys, non_image_state_keys,
         complementary_info_keys, has_done_key, args.inject_golden,
         to_bf16_uint16, image_to_numpy,
+        depth_keys, dataset.root,
     )
     idx += 1
 
@@ -365,6 +389,7 @@ def main():
         "image_keys": image_keys,
         "non_image_state_keys": non_image_state_keys,
         "complementary_info_keys": list(complementary_info_keys),
+        "depth_keys": list(depth_keys),
         "inject_golden": args.inject_golden,
         "shapes": {sanitize_key(k): list(v) if isinstance(v, tuple) else v for k, v in shapes.items()},
         "dtypes": {sanitize_key(k): np.dtype(v).str for k, v in dtypes_np.items()},
@@ -382,6 +407,7 @@ def _write_transition(
     complementary_info_keys, has_done_key, inject_golden,
     to_bf16_uint16,
     image_to_numpy,
+    depth_keys, dataset_root,
 ):
     # State images
     for key in image_keys:
@@ -430,6 +456,13 @@ def _write_transition(
 
     if inject_golden:
         write_array(outputs, "complementary_info.is_golden", to_bf16_uint16(torch.tensor(True, dtype=torch.float32)))
+
+    # Depth sidecar: raw uint16 straight through (no bf16) so the downstream normalizer keeps 0.1mm.
+    for key in depth_keys:
+        depth = load_depth_png(
+            dataset_root, key, int(current_sample["episode_index"]), int(current_sample["frame_index"])
+        )
+        write_array(outputs, f"depth.{key}", depth)
 
 
 if __name__ == "__main__":

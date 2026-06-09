@@ -723,6 +723,20 @@ class ReplayBuffer:
             )
             logger.info(f"  complementary_info.{k}: {replay_buffer.complementary_info[k].shape}")
 
+        # Depth sidecar: surfaced through complementary_info but kept RAW uint16 (no bf16 view) and
+        # memmap-backed (large, like images). The policy's depth normalizer clips/normalizes downstream.
+        for k in meta.get("depth_keys", []):
+            full_key = f"depth.{k}"
+            if not (cache_dir / f"{_sanitize(full_key)}.bin").exists():
+                continue
+            replay_buffer.complementary_info[full_key] = _load_memmap(full_key, (), as_torch_dtype=None)
+            replay_buffer.complementary_info_keys.append(full_key)
+            replay_buffer.has_complementary_info = True
+            logger.info(
+                f"  depth {full_key}: memmap {replay_buffer.complementary_info[full_key].shape} "
+                f"{replay_buffer.complementary_info[full_key].dtype}"
+            )
+
         replay_buffer.size = num_transitions
         replay_buffer.position = num_transitions % replay_buffer.capacity
         replay_buffer.initialized = True

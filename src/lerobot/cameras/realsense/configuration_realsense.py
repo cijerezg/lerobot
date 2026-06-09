@@ -56,6 +56,7 @@ class RealSenseCameraConfig(CameraConfig):
     serial_number_or_name: str
     color_mode: ColorMode = ColorMode.RGB
     use_depth: bool = False
+    depth_filters: bool = False  # apply spatial + hole-filling to depth (no temporal; safe under camera motion)
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
 

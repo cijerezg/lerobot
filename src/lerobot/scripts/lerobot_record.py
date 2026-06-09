@@ -110,6 +110,7 @@ from lerobot.datasets import (
     create_initial_features,
     safe_stop_image_writer,
 )
+from lerobot.datasets.depth_writer import write_depth
 from lerobot.processor import (
     RobotAction,
     RobotObservation,
@@ -323,6 +324,7 @@ def record_loop(
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
+            write_depth(dataset, obs)  # PNG16 depth alongside the dataset (uint16-preserving), post-add for correct indices
 
         if display_data:
             log_rerun_data(
