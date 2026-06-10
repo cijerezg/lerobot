@@ -97,7 +97,7 @@ def hw_to_dataset_features(
 
 
 def build_dataset_frame(
-    ds_features: dict[str, dict], values: dict[str, Any], prefix: str
+    ds_features: dict[str, dict], values: dict[str, Any], prefix: str, depth_keys: list[str] | None = None
 ) -> dict[str, np.ndarray]:
     """Construct a single data frame from raw values based on dataset features.
 
@@ -109,6 +109,11 @@ def build_dataset_frame(
         values (dict): A dictionary of raw values from the hardware/environment.
         prefix (str): The prefix to filter features by (e.g., "observation"
             or "action").
+        depth_keys (list[str] | None): Canonical camera names whose raw depth
+            (`{cam}.depth` in ``values``) should be carried through to the frame
+            under the model-facing key ``observation.depth.{cam}``. Depth is not
+            a dataset feature, so without this it is filtered out here. ``None``
+            (the default) is an exact no-op for every non-depth caller.
 
     Returns:
         dict: A dictionary representing a single frame of data.
@@ -121,6 +126,10 @@ def build_dataset_frame(
             frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
+
+    if prefix == OBS_STR and depth_keys:
+        for cam in depth_keys:
+            frame[f"{prefix}.depth.{cam}"] = values[f"{cam}.depth"]
 
     return frame
 

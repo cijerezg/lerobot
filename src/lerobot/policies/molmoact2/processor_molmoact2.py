@@ -497,6 +497,64 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
         return features
 
 
+@ProcessorStepRegistry.register(name="molmoact2_depth_normalizer")
+@dataclass
+class MolmoAct2DepthNormalizerProcessorStep(ProcessorStep):
+    """Normalize external RealSense depth to the §1.2 forward-boundary spec.
+
+    For each `observation.depth.{cam}` present (cam in depth_keys), apply §1.3:
+        depth_mm   = raw * depth_units_mm
+        depth_clip = clamp(depth_mm, 0, depth_clip_mm)
+        depth_norm = depth_clip / depth_clip_mm          # -> [0, 1]; holes (0) stay 0
+    and canonicalize to float32, shape (B, 1, H, W). This is the single normalization
+    site shared by inference (Track A) and training (Track B); adapters deliver raw
+    sensor units (float32) and this step owns the conversion to [0, 1].
+
+    Hard no-op when enable_depth=False or no depth key is present.
+    """
+
+    enable_depth: bool = False
+    depth_keys: list[str] = field(default_factory=list)
+    depth_units_mm: float = 0.1
+    depth_clip_mm: float = 1000.0
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if not self.enable_depth or not self.depth_keys:
+            return transition
+        observation = transition.get(TransitionKey.OBSERVATION)
+        if not isinstance(observation, dict):
+            return transition
+
+        updated: dict[str, Any] | None = None
+        for cam in self.depth_keys:
+            key = f"observation.depth.{cam}"
+            value = observation.get(key)
+            if value is None:
+                continue
+            depth = torch.as_tensor(value).to(dtype=torch.float32)
+            if depth.ndim == 2:
+                depth = depth[None, None]
+            elif depth.ndim == 3:
+                depth = depth[:, None]  # (B, H, W) -> (B, 1, H, W)
+            elif depth.ndim != 4:
+                raise ValueError(f"MolmoAct2 depth {key} has unsupported shape {tuple(depth.shape)}.")
+            depth_mm = depth * self.depth_units_mm
+            depth_norm = depth_mm.clamp(0.0, self.depth_clip_mm) / self.depth_clip_mm
+            if updated is None:
+                updated = observation.copy()
+            updated[key] = depth_norm
+
+        if updated is not None:
+            transition = transition.copy()
+            transition[TransitionKey.OBSERVATION] = updated
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 @ProcessorStepRegistry.register(name="molmoact2_pack_inputs")
 @dataclass
 class MolmoAct2PackInputsProcessorStep(ProcessorStep):
@@ -919,6 +977,12 @@ def make_molmoact2_pre_post_processors(
             stats=masked_dataset_stats,
         ),
         MolmoAct2ClampNormalizedProcessorStep(action_mask=action_mask, state_mask=state_mask),
+        MolmoAct2DepthNormalizerProcessorStep(
+            enable_depth=config.enable_depth,
+            depth_keys=list(config.depth_keys),
+            depth_units_mm=config.depth_units_mm,
+            depth_clip_mm=config.depth_clip_mm,
+        ),
         MolmoAct2PackInputsProcessorStep(
             base_path=config.base_path,
             base_revision=config.base_revision,

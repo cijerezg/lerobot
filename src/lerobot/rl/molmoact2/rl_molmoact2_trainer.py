@@ -603,6 +603,41 @@ class MolmoAct2Trainer(Trainer):
 
     # ── Actor ─────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _inject_depth_observations(observations: dict, comp_data: dict | None, cfg) -> dict:
+        """Lift recorded depth from complementary_info into the canonical model key.
+
+        Track B of the depth-integration plan. The sampler surfaces raw depth as
+        ``complementary_info["depth.{robot_key}"]`` where ``robot_key == "{cam}.depth"``
+        (e.g. ``depth.top.depth``, a ``(B, H, W)`` raw uint16 memmap slice). Here we
+        strip the ``depth.`` prefix and the trailing ``.depth`` to recover the bare
+        cam, gate on ``cfg.policy.depth_keys``, and write it back as
+        ``observation.depth.{cam}`` shaped ``(B, 1, H, W)`` float32 — the frozen
+        forward-boundary contract (§1.2). Values stay raw; clip + normalize to [0, 1]
+        is the shared Track C normalizer inside the preprocessor, so training and
+        inference normalize identically.
+
+        Hard no-op when depth is disabled or absent. Caller must inject for the
+        actor forward only — the critic path is left untouched (next-state depth is
+        not sampled, and the encoder is gate-zeroed at init anyway).
+        """
+        if not getattr(cfg.policy, "enable_depth", False):
+            return observations
+        depth_keys = getattr(cfg.policy, "depth_keys", None) or []
+        if not depth_keys or not comp_data:
+            return observations
+        for comp_key, tensor in comp_data.items():
+            if not isinstance(comp_key, str) or not comp_key.startswith("depth."):
+                continue
+            cam = comp_key[len("depth.") :].removesuffix(".depth")
+            if cam not in depth_keys:
+                continue
+            depth = tensor.float()
+            if depth.dim() == 3:  # (B, H, W) -> (B, 1, H, W)
+                depth = depth.unsqueeze(1)
+            observations[f"observation.depth.{cam}"] = depth
+        return observations
+
     def build_training_batch(
         self,
         raw_batch: dict,  # noqa: ARG002
@@ -782,6 +817,13 @@ class MolmoAct2Trainer(Trainer):
                 critic_values_actor_list.append(value_info["critic_values"])
                 target_values_actor_list.append(value_info["target_values"])
                 v_next_values_actor_list.append(value_info["v_next_values"])
+
+            # Lift recorded depth into the actor forward batch (no-op unless
+            # enable_depth). Done here — after compute_advantage — so the critic
+            # forward stays depth-free (actor-only first pass, see plan §3).
+            observations = self._inject_depth_observations(
+                observations, raw.get("complementary_info"), cfg
+            )
 
             fwd_batch = self.build_training_batch(
                 raw_batch=raw,  # type: ignore[arg-type]
