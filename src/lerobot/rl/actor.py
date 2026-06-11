@@ -83,7 +83,7 @@ import torch
 from torch import nn
 from torch.multiprocessing import Queue
 
-from lerobot.cameras import opencv  # noqa: F401
+from lerobot.cameras import opencv, realsense  # noqa: F401
 from lerobot.configs import parser
 from lerobot.policies import make_policy, make_pre_post_processors
 from lerobot.processor import TransitionKey
@@ -309,6 +309,15 @@ def act_with_policy(
         observation = {
             k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
         }
+        # Depth is not an input_feature, so the filter above drops it. Re-inject the raw depth map
+        # under the canonical model key so the ACTING policy sees depth (preprocessor's normalizer
+        # casts/clamps/reshapes it) — otherwise data collection runs depth-blind while training
+        # feeds depth, a collect/train mismatch that grows with the depth gate. Gated on the
+        # policy's enable_depth (not the camera's use_depth); hard no-op for non-depth policies.
+        if getattr(cfg.policy, "enable_depth", False):
+            for key, val in transition[TransitionKey.OBSERVATION].items():
+                if isinstance(key, str) and key.endswith(".depth"):
+                    observation[f"observation.depth.{key[: -len('.depth')]}"] = val
 
         # Time policy inference and check if it meets FPS requirement
         with policy_timer:
@@ -367,6 +376,19 @@ def act_with_policy(
             ),
             TeleopEvents.IS_INTERVENTION.value: is_intervention,
         }
+        # Carry raw depth for the CURRENT state into the buffer's complementary_info under the
+        # same key the offline cache uses (depth.{cam}.depth), so online and offline batches
+        # concatenate without zero-padding and the trainer lifts both identically. `observation`
+        # was filtered to input_features (drops *.depth); pull from the unfiltered current
+        # `transition` (not yet advanced to new_transition), keeping depth aligned with `state`.
+        # Gate on the POLICY's intent (enable_depth), NOT merely on a `.depth` key being present
+        # — that only reflects the camera's use_depth. Otherwise a depth camera on a non-depth
+        # policy would fill the online buffer with ~614 KB/frame for nothing (storage_device RAM,
+        # or VRAM if storage_device=cuda). getattr: enable_depth lives only on the MolmoAct2 config.
+        if getattr(cfg.policy, "enable_depth", False):
+            for key, val in transition[TransitionKey.OBSERVATION].items():
+                if isinstance(key, str) and key.endswith(".depth"):
+                    complementary_info[f"depth.{key}"] = val
         # Create transition for learner (convert to old format)
         list_transition_to_send_to_learner.append(
             Transition(

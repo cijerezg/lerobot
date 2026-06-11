@@ -211,6 +211,34 @@ class MolmoAct2Trainer(Trainer):
             if is_main_process:
                 logging.info(f"MolmoAct2 stats source: saved checkpoint processors ({saved_processor_path})")
             result = make_pre_post_processors(cfg.policy, pretrained_path=str(saved_processor_path))
+            # A checkpoint saved before depth landed has no depth-normalizer step; without it,
+            # raw 0-65535 depth reaches the encoders. Insert it where a fresh build puts it
+            # (right before PackInputs).
+            if getattr(cfg.policy, "enable_depth", False):
+                from lerobot.policies.molmoact2.processor_molmoact2 import (
+                    MolmoAct2DepthNormalizerProcessorStep,
+                    MolmoAct2PackInputsProcessorStep,
+                )
+
+                steps = list(result[0].steps)
+                if not any(isinstance(s, MolmoAct2DepthNormalizerProcessorStep) for s in steps):
+                    pack_idx = next(
+                        i for i, s in enumerate(steps) if isinstance(s, MolmoAct2PackInputsProcessorStep)
+                    )
+                    steps.insert(
+                        pack_idx,
+                        MolmoAct2DepthNormalizerProcessorStep(
+                            enable_depth=cfg.policy.enable_depth,
+                            depth_keys=list(cfg.policy.depth_keys),
+                            depth_units_mm=cfg.policy.depth_units_mm,
+                            depth_clip_mm=cfg.policy.depth_clip_mm,
+                        ),
+                    )
+                    result[0].steps = steps
+                    if is_main_process:
+                        logging.info(
+                            "MolmoAct2: saved checkpoint preprocessor predates depth — inserted depth normalizer"
+                        )
             if action_stats_override is not None:
                 if is_main_process:
                     logging.info(f"MolmoAct2 ACTION stats override: {action_encoding} stats")
@@ -338,8 +366,13 @@ class MolmoAct2Trainer(Trainer):
         )
 
         for name, param in critic_net.named_parameters():
-            # Always-trainable critic heads.
-            if name.startswith("value_queries") or name.startswith("bin_logit_head"):
+            # Always-trainable critic heads (fresh modules trained from scratch, incl. the
+            # external depth encoder — mirrors the actor keeping its depth encoder trainable).
+            if (
+                name.startswith("value_queries")
+                or name.startswith("bin_logit_head")
+                or name.startswith("depth_encoder")
+            ):
                 param.requires_grad = True
             elif "transformer_blocks." in name:
                 param.requires_grad = _layer_idx_after(name, "transformer_blocks.") in cr_layers
@@ -430,6 +463,15 @@ class MolmoAct2Trainer(Trainer):
                 rewards = rewards.unsqueeze(-1)
             if done.dim() == 1:
                 done = done.unsqueeze(-1)
+
+            # Lift depth into both critic batches (no-op unless enable_depth): current-state
+            # depth for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
+            observations = self._inject_depth_observations(
+                observations, raw.get("complementary_info"), cfg
+            )
+            next_observations = self._inject_depth_observations(
+                next_observations, raw.get("complementary_info"), cfg, key_prefix="next_depth."
+            )
 
             # Preprocess observations for current and next states.
             curr_batch = preprocessor({**observations, "task": cfg.policy.task})
@@ -540,6 +582,14 @@ class MolmoAct2Trainer(Trainer):
         if done.dim() == 1:
             done = done.unsqueeze(-1)
 
+        # Lift depth into both critic batches (no-op unless enable_depth): current-state depth
+        # for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
+        observations = self._inject_depth_observations(
+            observations, batch.get("complementary_info"), cfg
+        )
+        next_observations = self._inject_depth_observations(
+            next_observations, batch.get("complementary_info"), cfg, key_prefix="next_depth."
+        )
         curr_batch = preprocessor({**observations, "task": cfg.policy.task})
         next_batch = preprocessor({**next_observations, "task": cfg.policy.task})
 
@@ -604,22 +654,25 @@ class MolmoAct2Trainer(Trainer):
     # ── Actor ─────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _inject_depth_observations(observations: dict, comp_data: dict | None, cfg) -> dict:
+    def _inject_depth_observations(
+        observations: dict, comp_data: dict | None, cfg, key_prefix: str = "depth."
+    ) -> dict:
         """Lift recorded depth from complementary_info into the canonical model key.
 
         Track B of the depth-integration plan. The sampler surfaces raw depth as
         ``complementary_info["depth.{robot_key}"]`` where ``robot_key == "{cam}.depth"``
         (e.g. ``depth.top.depth``, a ``(B, H, W)`` raw uint16 memmap slice). Here we
-        strip the ``depth.`` prefix and the trailing ``.depth`` to recover the bare
+        strip the ``key_prefix`` and the trailing ``.depth`` to recover the bare
         cam, gate on ``cfg.policy.depth_keys``, and write it back as
         ``observation.depth.{cam}`` shaped ``(B, 1, H, W)`` float32 — the frozen
         forward-boundary contract (§1.2). Values stay raw; clip + normalize to [0, 1]
         is the shared Track C normalizer inside the preprocessor, so training and
         inference normalize identically.
 
-        Hard no-op when depth is disabled or absent. Caller must inject for the
-        actor forward only — the critic path is left untouched (next-state depth is
-        not sampled, and the encoder is gate-zeroed at init anyway).
+        Hard no-op when depth is disabled or absent. Callers inject into every
+        critic/actor forward: current-state batches lift ``depth.*`` and the
+        target V(s') batch lifts ``next_depth.*`` (the buffer samples next-state
+        depth at the same index next_state is derived from).
         """
         if not getattr(cfg.policy, "enable_depth", False):
             return observations
@@ -627,9 +680,9 @@ class MolmoAct2Trainer(Trainer):
         if not depth_keys or not comp_data:
             return observations
         for comp_key, tensor in comp_data.items():
-            if not isinstance(comp_key, str) or not comp_key.startswith("depth."):
+            if not isinstance(comp_key, str) or not comp_key.startswith(key_prefix):
                 continue
-            cam = comp_key[len("depth.") :].removesuffix(".depth")
+            cam = comp_key[len(key_prefix) :].removesuffix(".depth")
             if cam not in depth_keys:
                 continue
             depth = tensor.float()
@@ -819,8 +872,8 @@ class MolmoAct2Trainer(Trainer):
                 v_next_values_actor_list.append(value_info["v_next_values"])
 
             # Lift recorded depth into the actor forward batch (no-op unless
-            # enable_depth). Done here — after compute_advantage — so the critic
-            # forward stays depth-free (actor-only first pass, see plan §3).
+            # enable_depth). compute_advantage injects for its own critic V(s)
+            # forward; this covers the case where it didn't run on this batch.
             observations = self._inject_depth_observations(
                 observations, raw.get("complementary_info"), cfg
             )
@@ -1019,6 +1072,23 @@ class MolmoAct2Trainer(Trainer):
             }
         with torch.no_grad():
             batch = preprocessor(pre_input)
+        # One-shot depth confirmation: the delivery chain (env worker -> shared state -> filter ->
+        # preprocessor) has several silent drop points, so log once whether depth actually made it.
+        if getattr(cfg.policy, "enable_depth", False) and not getattr(self, "_depth_inference_logged", False):
+            self._depth_inference_logged = True
+            for cam in cfg.policy.depth_keys:
+                depth = batch.get(f"observation.depth.{cam}")
+                if depth is None:
+                    logging.warning(
+                        f"MolmoAct2 inference: observation.depth.{cam} MISSING from the batch despite "
+                        "enable_depth=True — the policy is running depth-blind."
+                    )
+                else:
+                    logging.info(
+                        f"MolmoAct2 inference: observation.depth.{cam} {tuple(depth.shape)} {depth.dtype} "
+                        f"med={depth.median().item():.3f} holes={(depth == 0).float().mean().item():.3f} "
+                        "(normalized [0,1])"
+                    )
         return {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
     # ── Online loop ───────────────────────────────────────────────────────────

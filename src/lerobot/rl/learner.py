@@ -71,7 +71,7 @@ from torch import nn
 from torch.multiprocessing import Queue
 from torch.optim.optimizer import Optimizer
 
-from lerobot.cameras import opencv  # noqa: F401
+from lerobot.cameras import opencv, realsense  # noqa: F401
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     save_checkpoint,

@@ -128,6 +128,12 @@ def prepare_observation_for_inference(
         if "image" in name:
             observation[name] = observation[name].type(torch.float32) / 255
             observation[name] = observation[name].permute(2, 0, 1).contiguous()
+        elif name.startswith(f"{OBS_STR}.depth."):
+            # Mirror the image path's split of responsibilities: here we own
+            # dtype + layout only. Raw uint16 (H, W) -> float32 (1, H, W); the
+            # trailing unsqueeze(0) adds the batch dim -> (1, 1, H, W). Values
+            # stay raw-mm; the policy preprocessor's depth normalizer clamps/scales to [0, 1].
+            observation[name] = observation[name].to(torch.float32).unsqueeze(0)
         observation[name] = observation[name].unsqueeze(0)
         observation[name] = observation[name].to(device)
 

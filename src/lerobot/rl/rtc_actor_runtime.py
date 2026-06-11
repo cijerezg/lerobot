@@ -70,18 +70,37 @@ def _action_dim(cfg) -> int:
     return int(next(iter(cfg.policy.output_features.values())).shape[0])
 
 
+_JOINT_ORDER = [
+    "shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos",
+    "wrist_flex.pos", "wrist_roll.pos", "gripper.pos",
+]
+
+
 def _raw_joint_action(online_env, action_dim: int, device) -> torch.Tensor:
     if hasattr(online_env, "get_raw_joint_positions"):
         raw_joints = online_env.get_raw_joint_positions()
-        joint_order = [
-            "shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos",
-            "wrist_flex.pos", "wrist_roll.pos", "gripper.pos",
-        ]
-        vals = [float(raw_joints.get(k, 0.0)) for k in joint_order[:action_dim]]
+        vals = [float(raw_joints.get(k, 0.0)) for k in _JOINT_ORDER[:action_dim]]
         if len(vals) < action_dim:
             vals.extend([0.0] * (action_dim - len(vals)))
         return torch.tensor(vals, dtype=torch.float32, device=device)
     return torch.zeros(action_dim, dtype=torch.float32, device=device)
+
+
+def _obs_with_depth(policy_obs: dict, env_obs: dict, cfg) -> dict:
+    """Carry raw {cam}.depth from the env observation into the inference observation under the
+    canonical observation.depth.{cam} key (the preprocessor's depth normalizer owns
+    cast/clamp/reshape; convert_env_obs_to_policy_format drops depth). Gated on the POLICY's
+    enable_depth, not the camera's use_depth. Returns a shallow copy when depth is added so the
+    caller's dict (also used for transition storage / episode logs) stays depth-free.
+    """
+    if not getattr(cfg.policy, "enable_depth", False):
+        return policy_obs
+    depth = {
+        f"observation.depth.{key[: -len('.depth')]}": val
+        for key, val in env_obs.items()
+        if isinstance(key, str) and key.endswith(".depth")
+    }
+    return {**policy_obs, **depth} if depth else policy_obs
 
 
 class RTCSharedState:
@@ -254,8 +273,13 @@ class RTCSharedState:
 
 
 def _rerun_log_worker(q) -> None:
-    """Daemon thread: drains the rerun queue and calls rr.log without blocking the env loop."""
+    """Daemon thread: drains the rerun queue and logs via log_rerun_data — same entity naming
+    as teleop/record (observation.{cam}, observation.{cam}.depth, observation/action.{joint}.pos)
+    so the viewer layout matches what teleop shows. Does not block the env loop."""
     import rerun as rr
+
+    from lerobot.utils.visualization_utils import log_rerun_data
+
     while True:
         try:
             item = q.get(timeout=1.0)
@@ -263,12 +287,12 @@ def _rerun_log_worker(q) -> None:
             continue
         if item is None:
             break
-        step, images, joints = item
-        rr.set_time_sequence("step", step)
-        for key, img_hwc in images.items():
-            rr.log(f"world/cameras/{key}", rr.Image(img_hwc))
-        for j_name, j_val in joints.items():
-            rr.log(f"world/robot_joints/{j_name}", rr.Scalars(j_val))
+        step, observation, action = item
+        try:
+            rr.set_time_sequence("step", step)
+            log_rerun_data(observation=observation, action=action)
+        except Exception:
+            logger.exception("[RERUN] logging failed for step %s (worker keeps running)", step)
 
 
 def pull_new_policy_weights(policy: nn.Module, parameters_queue, device: torch.device) -> None:
@@ -445,7 +469,13 @@ def rtc_inference_worker(
                 time.sleep(0.01)
                 continue
 
-            obs_filtered = {k: v for k, v in latest_obs.items() if k in cfg.policy.input_features}
+            # observation.depth.* is not an input_feature; it is only present when the env worker
+            # injected it (enable_depth), so carrying it through keeps inference depth-aware.
+            obs_filtered = {
+                k: v
+                for k, v in latest_obs.items()
+                if k in cfg.policy.input_features or k.startswith("observation.depth.")
+            }
             robot_type = cfg.env.robot.type if hasattr(cfg.env, "robot") else ""
 
             current_time = time.perf_counter()
@@ -641,7 +671,9 @@ def rtc_env_worker(
         transition = env_processor(transition)
 
         policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
-        shared_state.update_observation(policy_fmt_obs, False)
+        shared_state.update_observation(
+            _obs_with_depth(policy_fmt_obs, transition[TransitionKey.OBSERVATION], cfg), False
+        )
         if not standalone:
             shared_state.request_parameter_update()
 
@@ -681,7 +713,9 @@ def rtc_env_worker(
                 transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
                 transition = env_processor(transition)
                 policy_fmt_obs = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
-                shared_state.update_observation(policy_fmt_obs, False)
+                shared_state.update_observation(
+                    _obs_with_depth(policy_fmt_obs, transition[TransitionKey.OBSERVATION], cfg), False
+                )
 
                 if not standalone:
                     logger.info("[ACTOR] Loading new params, please wait before episode starts...")
@@ -795,6 +829,16 @@ def rtc_env_worker(
                 complementary_info["subtask_tokens"] = subtask_tokens
                 complementary_info["subtask_masks"] = subtask_masks
 
+            # Carry raw CURRENT-state depth into the buffer under the offline cache's key
+            # (depth.{cam}.depth) so online/offline batches concatenate without padding and the
+            # trainer/sampler treat both identically (incl. next_depth.* for the critic target).
+            # Pulled from the unfiltered transition so depth stays aligned with `state`; gated on
+            # the policy's enable_depth, not the camera's use_depth (mirrors rl/actor.py).
+            if getattr(cfg.policy, "enable_depth", False):
+                for key, val in transition[TransitionKey.OBSERVATION].items():
+                    if isinstance(key, str) and key.endswith(".depth"):
+                        complementary_info[f"depth.{key}"] = val
+
             observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
             next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
             # Images go on-wire as uint8 to match the offline buffer's uint8 storage
@@ -834,22 +878,32 @@ def rtc_env_worker(
                 })
             _t_rerun_start = time.perf_counter()
             if getattr(cfg, "use_rerun", False) and rerun_queue is not None:
-                images = {}
+                # Bare robot keys (top, top.depth, {joint}.pos) — log_rerun_data namespaces them to
+                # the same observation.*/action.* entities teleop/record show, so the viewer layout
+                # matches teleop. Actions are the executed v3-frame joint targets.
+                obs_log: dict = {}
                 for key, val in next_policy_fmt_obs.items():
                     if "image" in key:
                         val_np = val[0].cpu().numpy() if val.ndim == 4 else val.cpu().numpy()
-                        images[key] = val_np.transpose(1, 2, 0)
-                joints = {}
+                        obs_log[key.removeprefix("observation.images.")] = val_np.transpose(1, 2, 0)
+                for key, val in new_transition[TransitionKey.OBSERVATION].items():
+                    if isinstance(key, str) and key.endswith(".depth"):
+                        obs_log[key] = val.cpu().numpy() if isinstance(val, torch.Tensor) else val
                 if hasattr(online_env, "get_raw_joint_positions"):
                     raw = online_env.get_raw_joint_positions()
-                    joints = {j_name: float(j_val) for j_name, j_val in raw.items()}
+                    obs_log.update({j_name: float(j_val) for j_name, j_val in raw.items()})
+                act_np = executed_action.detach().float().cpu().numpy().reshape(-1)[:action_dim]
+                act_log = {name: float(v) for name, v in zip(_JOINT_ORDER, act_np)}
                 try:
-                    rerun_queue.put_nowait((interaction_step, images, joints))
+                    rerun_queue.put_nowait((interaction_step, obs_log, act_log))
                 except queue.Full:
                     pass  # drop frame rather than block the env loop
             _t_rerun_end = time.perf_counter()
 
-            shared_state.update_observation(next_policy_fmt_obs, is_intervening)
+            shared_state.update_observation(
+                _obs_with_depth(next_policy_fmt_obs, new_transition[TransitionKey.OBSERVATION], cfg),
+                is_intervening,
+            )
             transition = new_transition
             interaction_step += 1
             shared_state.current_step = interaction_step
@@ -1208,7 +1262,9 @@ def act_with_policy_rtc_inference(
     rerun_queue = None
     if getattr(cfg, "use_rerun", False):
         import rerun as rr
-        rr.init("lerobot_inference", spawn=True)
+        # Fresh app id (was "lerobot_inference"): the viewer caches blueprints per app id, and the
+        # old id's blueprint predates the teleop-style entity naming (would render black panels).
+        rr.init("lerobot_rtc_inference", spawn=True)
         rerun_queue = queue.Queue(maxsize=2)
         Thread(target=_rerun_log_worker, args=(rerun_queue,), daemon=True, name="rerun_log").start()
 

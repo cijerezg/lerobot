@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import types
 from collections import defaultdict, deque
@@ -13,7 +14,7 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 import torch.utils.checkpoint
 from huggingface_hub import snapshot_download
-from torch import Tensor
+from torch import Tensor, nn
 from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -22,6 +23,8 @@ from lerobot.utils.import_utils import require_package
 
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
+
+logger = logging.getLogger(__name__)
 
 _MODEL_INPUT_KEYS = {
     "input_ids",
@@ -642,6 +645,43 @@ def _patch_numpy_dtype_cast(backbone: Any) -> None:
     backbone_module._to_numpy = _to_numpy_patched
 
 
+class MolmoAct2DepthEncoder(nn.Module):
+    """Tiny gate-zeroed encoder turning a normalized depth map into LLM tokens.
+
+    Input  : (B, 1, H, W) in [0, 1]  (native depth resolution; this module owns the resize-down)
+    Output : (B, num_tokens, hidden_size), gated by sigmoid(gate_param).
+
+    The final projection is zero-initialized and the gate starts at sigmoid(gate_init_bias)
+    (~0.018 for -4.0), so at init the emitted tokens are ~0 and the policy is unchanged up to
+    the small softmax perturbation from the extra sequence position. The encoder only shifts
+    behaviour as the gate (and projection) train.
+    """
+
+    def __init__(self, hidden_size: int, num_tokens: int, gate_init_bias: float) -> None:
+        super().__init__()
+        self.hidden_size = int(hidden_size)
+        self.num_tokens = int(num_tokens)
+        self.stem = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+        )
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.proj = nn.Linear(128, self.hidden_size * self.num_tokens)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+        self.gate_param = nn.Parameter(torch.tensor(float(gate_init_bias)))
+
+    def forward(self, depth: Tensor) -> Tensor:
+        x = self.stem(depth)
+        x = self.pool(x).flatten(1)
+        tokens = self.proj(x).view(depth.shape[0], self.num_tokens, self.hidden_size)
+        return tokens * torch.sigmoid(self.gate_param)
+
+
 class MolmoAct2Policy(PreTrainedPolicy):
     config_class = MolmoAct2Config
     name = "molmoact2"
@@ -792,6 +832,21 @@ class MolmoAct2Policy(PreTrainedPolicy):
         _patch_numpy_dtype_cast(self._backbone())
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
+
+        # External RealSense depth encoder (Track C). Built only when enabled; otherwise a
+        # hard no-op. Kept in float32 (small fresh module trained from scratch); its output is
+        # cast to the LLM embed dtype at the append site.
+        self.depth_encoder: MolmoAct2DepthEncoder | None = None
+        self._warned_discrete_depth_ignored = False
+        if self.config.enable_depth:
+            hidden_size = int(self.model.config.text_config.hidden_size)
+            device = next(self.model.parameters()).device
+            self.depth_encoder = MolmoAct2DepthEncoder(
+                hidden_size=hidden_size,
+                num_tokens=self.config.depth_num_tokens,
+                gate_init_bias=self.config.depth_gate_init_bias,
+            ).to(device=device, dtype=torch.float32)
+
         self.train(self.training)
 
     def reset(self) -> None:
@@ -848,7 +903,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _freeze_non_action_expert_parameters(self) -> None:
         trainable_params = 0
         for name, param in self.named_parameters():
-            param.requires_grad = "action_expert" in name
+            param.requires_grad = ("action_expert" in name) or ("depth_encoder" in name)
             if param.requires_grad:
                 trainable_params += param.numel()
         if trainable_params == 0:
@@ -903,11 +958,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
         vit_params: list[Tensor] = []
         connector_params: list[Tensor] = []
         action_expert_params: list[Tensor] = []
+        depth_params: list[Tensor] = []
         vlm_params: list[Tensor] = []
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
-            if "action_expert" in name:
+            if "depth_encoder" in name:
+                depth_params.append(param)
+            elif "action_expert" in name:
                 action_expert_params.append(param)
             elif any(part in name for part in ("image_pooling_2d", "image_projector")):
                 connector_params.append(param)
@@ -931,6 +989,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             groups.append({"params": connector_params, "lr": connector_lr})
         if action_expert_params:
             groups.append({"params": action_expert_params, "lr": self.config.optimizer_action_expert_lr})
+        if depth_params:
+            # Fresh module trained from scratch: use the action-expert LR, not the slow VLM rate.
+            groups.append({"params": depth_params, "lr": self.config.optimizer_action_expert_lr})
         return groups
 
     def _model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -940,6 +1001,112 @@ class MolmoAct2Policy(PreTrainedPolicy):
             for key, value in batch.items()
             if key in _MODEL_INPUT_KEYS and value is not None
         }
+
+    def _depth_tokens(self, batch: dict[str, Tensor], *, dtype: torch.dtype, device: torch.device) -> Tensor | None:
+        """Encode normalized depth (observation.depth.{cam}) into appended LLM tokens.
+
+        Returns (B, num_tokens * n_present_cams, hidden) in `dtype`, or None when depth is
+        disabled / no depth key is present. First pass concatenates one encoder's tokens per
+        camera (single cam in practice).
+        """
+        if self.depth_encoder is None:
+            return None
+        encoder_dtype = next(self.depth_encoder.parameters()).dtype
+        tokens: list[Tensor] = []
+        for cam in self.config.depth_keys:
+            depth = batch.get(f"observation.depth.{cam}")
+            if depth is None:
+                continue
+            depth = torch.as_tensor(depth, device=device, dtype=encoder_dtype)
+            tokens.append(self.depth_encoder(depth))
+        if not tokens:
+            return None
+        return torch.cat(tokens, dim=1).to(dtype=dtype)
+
+    def _run_prefix_backbone(
+        self, model_inputs: dict[str, Tensor], depth_tokens: Tensor | None
+    ) -> tuple[Any, int]:
+        """Run the prefix backbone forward (``use_cache``), optionally appending external
+        depth tokens at the end of the prefix (marked image-type, mirroring training).
+
+        Returns ``(outputs, num_depth)`` where ``outputs`` carries ``past_key_values`` and
+        ``num_depth`` is the count of appended depth tokens (0 when ``depth_tokens`` is None).
+        Single source of the "append depth to the prefix" logic, shared by every inference
+        path that pre-encodes the prefix (continuous, RTC).
+        """
+        backbone = self._backbone()
+        if depth_tokens is None:
+            outputs = backbone(
+                **model_inputs,
+                use_cache=True,
+                output_attentions=False,
+                output_hidden_states=False,
+            )
+            return outputs, 0
+
+        input_ids = model_inputs["input_ids"]
+        images, token_pooling = backbone.merge_visual_inputs(
+            input_ids=input_ids,
+            pixel_values=model_inputs.get("pixel_values"),
+            image_token_pooling=model_inputs.get("image_token_pooling"),
+            image_grids=model_inputs.get("image_grids"),
+            image_num_crops=model_inputs.get("image_num_crops"),
+            pixel_values_videos=model_inputs.get("pixel_values_videos"),
+            video_token_pooling=model_inputs.get("video_token_pooling"),
+            video_grids=model_inputs.get("video_grids"),
+        )
+        inputs_embeds, _image_features = backbone.build_input_embeddings(input_ids, images, token_pooling)
+        num_depth = int(depth_tokens.shape[1])
+        inputs_embeds = torch.cat(
+            [inputs_embeds, depth_tokens.to(dtype=inputs_embeds.dtype, device=inputs_embeds.device)], dim=1
+        )
+
+        attention_mask = model_inputs.get("attention_mask")
+        token_type_ids = model_inputs.get("token_type_ids")
+        if torch.is_tensor(attention_mask):
+            attention_mask = torch.cat(
+                [attention_mask, attention_mask.new_ones((attention_mask.shape[0], num_depth))], dim=1
+            )
+        if torch.is_tensor(token_type_ids):
+            token_type_ids = torch.cat(
+                [token_type_ids, token_type_ids.new_ones((token_type_ids.shape[0], num_depth))], dim=1
+            )
+
+        outputs = backbone(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            use_cache=True,
+            output_attentions=False,
+            output_hidden_states=False,
+        )
+        return outputs, num_depth
+
+    @staticmethod
+    def _extend_encoder_attention_mask(mask: Tensor | None, num_depth: int) -> Tensor | None:
+        """Append ``num_depth`` always-attended columns to an encoder attention mask."""
+        if mask is None or num_depth <= 0:
+            return mask
+        return torch.cat([mask, mask.new_ones((mask.shape[0], num_depth))], dim=1)
+
+    def _encode_prefix_with_depth(
+        self, model_inputs: dict[str, Tensor], depth_tokens: Tensor
+    ) -> tuple[Any, Tensor | None]:
+        """Inference mirror of the training append (continuous path).
+
+        Build the prefix embeds with depth appended, run the backbone once with a KV cache, and
+        return (encoder_kv_states, encoder_attention_mask) extended by the depth tokens. These are
+        handed to generate_actions_from_inputs, which then skips its own internal prefix forward
+        and lets the action expert cross-attend to the depth KV.
+        """
+        backbone = self._backbone()
+        outputs, num_depth = self._run_prefix_backbone(model_inputs, depth_tokens)
+        encoder_kv_states = backbone._extract_kv_states(outputs.past_key_values)
+        encoder_attention_mask = backbone._get_encoder_attention_mask(
+            model_inputs.get("input_ids"), model_inputs.get("attention_mask")
+        )
+        encoder_attention_mask = self._extend_encoder_attention_mask(encoder_attention_mask, num_depth)
+        return encoder_kv_states, encoder_attention_mask
 
     def _output_action_dim(self, batch: dict[str, Tensor]) -> int:
         action_feature = self.config.output_features.get(ACTION)
@@ -1252,6 +1419,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _prepare_joint_training_backbone_inputs(
         self,
         model_inputs: dict[str, Tensor],
+        depth_tokens: Tensor | None = None,
     ) -> tuple[Tensor, Tensor | dict[str, Any], Tensor, Tensor]:
         backbone = self._backbone()
         input_ids = model_inputs.get("input_ids")
@@ -1286,19 +1454,40 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if inputs_embeds is None:
             inputs_embeds, _image_features = backbone.build_input_embeddings(input_ids, images, token_pooling)
 
+        attention_mask = model_inputs.get("attention_mask")
+        token_type_ids = model_inputs.get("token_type_ids")
+
+        # Append external depth tokens at the end of the prefix and treat them as a type of
+        # image: mark them in token_type_ids so they join the bidirectional image block, and
+        # extend the attention mask so they are valid positions. cache_position/position_ids
+        # below derive from the (now longer) sequence, so rotary handles the extra tokens.
+        if depth_tokens is not None:
+            num_depth = int(depth_tokens.shape[1])
+            inputs_embeds = torch.cat(
+                [inputs_embeds, depth_tokens.to(dtype=inputs_embeds.dtype, device=inputs_embeds.device)],
+                dim=1,
+            )
+            if torch.is_tensor(attention_mask):
+                attention_mask = torch.cat(
+                    [attention_mask, attention_mask.new_ones((attention_mask.shape[0], num_depth))], dim=1
+                )
+            if torch.is_tensor(token_type_ids):
+                token_type_ids = torch.cat(
+                    [token_type_ids, token_type_ids.new_ones((token_type_ids.shape[0], num_depth))], dim=1
+                )
+
         cache_position = torch.arange(0, inputs_embeds.shape[1], device=inputs_embeds.device)
         position_ids = model_inputs.get("position_ids")
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        attention_mask = model_inputs.get("attention_mask")
         if isinstance(attention_mask, dict):
             causal_mask_mapping = attention_mask
         else:
             causal_mask_mapping = backbone._build_native_attention_bias(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
-                token_type_ids=model_inputs.get("token_type_ids"),
+                token_type_ids=token_type_ids,
                 past_key_values=None,
             )
         return inputs_embeds, causal_mask_mapping, position_ids, cache_position
@@ -1351,8 +1540,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
         xt_flat = xt.reshape(batch_size * num_flow_timesteps, actions.shape[1], actions.shape[2])
         timesteps_flat = timesteps.reshape(batch_size * num_flow_timesteps)
 
+        depth_tokens = self._depth_tokens(batch, dtype=actions.dtype, device=device)
         hidden_states, causal_mask_mapping, position_ids, cache_position = (
-            self._prepare_joint_training_backbone_inputs(model_inputs)
+            self._prepare_joint_training_backbone_inputs(model_inputs, depth_tokens)
         )
         if hidden_states.shape[0] != batch_size:
             raise ValueError(
@@ -1363,6 +1553,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
             input_ids=model_inputs.get("input_ids"),
             attention_mask=model_inputs.get("attention_mask"),
         )
+        if depth_tokens is not None and encoder_attention_mask is not None:
+            num_depth = int(depth_tokens.shape[1])
+            encoder_attention_mask = torch.cat(
+                [
+                    encoder_attention_mask,
+                    encoder_attention_mask.new_ones((encoder_attention_mask.shape[0], num_depth)),
+                ],
+                dim=1,
+            )
         action_attention_mask = None
         if batch.get("action_horizon_is_pad") is not None:
             action_attention_mask = ~batch["action_horizon_is_pad"].to(device=device, dtype=torch.bool)
@@ -1816,7 +2015,20 @@ class MolmoAct2Policy(PreTrainedPolicy):
         *,
         model_inputs: dict[str, Tensor],
         action_dim: int,
+        depth_tokens: Tensor | None = None,
     ) -> Tensor:
+        if depth_tokens is not None and not self._warned_discrete_depth_ignored:
+            # Pure-discrete inference autoregressively grows a static KV cache + position-indexed
+            # attention bias sized to the prompt length; appending external depth tokens would
+            # require resizing that machinery (and the CUDA-graph cache), which can't be landed
+            # without on-device verification. Depth is dropped here — harmless while the depth
+            # gate is ~0, a collect/deploy mismatch once it trains. Use continuous/RTC inference
+            # for depth-aware deployment. See depth_integration_plan.md §"Open items".
+            logger.warning(
+                "MolmoAct2 discrete inference ignores external depth tokens (not wired for the "
+                "autoregressive path). Use continuous or RTC inference for depth-aware rollouts."
+            )
+            self._warned_discrete_depth_ignored = True
         model_inputs = self._drop_trivial_attention_mask(model_inputs)
         max_steps = self._discrete_generation_max_steps()
         static_cache, attention_bias = self._make_discrete_ar_graph_decode_inputs(
@@ -1853,22 +2065,25 @@ class MolmoAct2Policy(PreTrainedPolicy):
         inference_delay: int | None,
         prev_chunk_left_over: Tensor | None,
         execution_horizon: int | None,
+        depth_tokens: Tensor | None = None,
     ) -> Tensor:
         backbone = self._backbone()
         action_expert = self._action_expert()
 
-        outputs = backbone(
-            **model_inputs,
-            use_cache=True,
-            output_attentions=False,
-            output_hidden_states=False,
-        )
+        # Prefix encode happens outside the action-flow CUDA graph, so appending external depth
+        # tokens here is safe with graphs on. num_depth==0 when depth is disabled/absent → the
+        # forward and mask extension below are byte-for-byte the pre-depth behaviour.
+        outputs, num_depth = self._run_prefix_backbone(model_inputs, depth_tokens)
 
         encoder_kv_states = backbone._extract_kv_states(outputs.past_key_values)
         encoder_attention_mask = self._encoder_attention_mask_for_action_expert(
             input_ids=model_inputs.get("input_ids"),
             attention_mask=model_inputs.get("attention_mask"),
         )
+        encoder_attention_mask = self._extend_encoder_attention_mask(encoder_attention_mask, num_depth)
+        # The model's OWN predicted-depth gate (action_expert_depth_gate) is a hard no-op for this
+        # checkpoint (gate head is None) and is unrelated to the external RealSense depth appended
+        # above; left untouched so a checkpoint that does use it keeps working.
         depth_gate, depth_mask = backbone._depth_gate_from_condition(
             input_ids=model_inputs.get("input_ids"),
             encoder_attention_mask=encoder_attention_mask,
@@ -2017,7 +2232,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else:
                 flow_loss, hidden_states = flow_result
                 flow_diagnostics = {}
-            outputs = types.SimpleNamespace(last_hidden_state=hidden_states)
+            # The flow path may have appended depth tokens; the discrete head only reads the
+            # original token positions, so slice back to the input_ids length (identity when
+            # no depth was appended).
+            input_len = int(model_inputs["input_ids"].shape[1])
+            outputs = types.SimpleNamespace(last_hidden_state=hidden_states[:, :input_len])
             discrete_ce_loss, discrete_z_loss = self._discrete_loss_from_backbone_outputs(
                 batch, outputs, reduction=reduction
             )
@@ -2069,12 +2288,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else nullcontext()
         )
         with autocast_context:
+            # Encode external depth once; each path consumes it (or warns when it can't).
+            depth_tokens = self._depth_tokens(batch, dtype=model_dtype, device=device)
             if inference_action_mode == "discrete":
                 if self._rtc_enabled():
                     raise ValueError("RTC is only supported for continuous MolmoAct2 inference.")
                 actions = self._generate_discrete_actions_from_inputs(
                     model_inputs=model_inputs,
                     action_dim=action_dim,
+                    depth_tokens=depth_tokens,
                 )
             elif self._rtc_enabled():
                 actions = self._generate_actions_from_inputs_with_rtc(
@@ -2085,14 +2307,25 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     inference_delay=kwargs.get("inference_delay"),
                     prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
                     execution_horizon=kwargs.get("execution_horizon"),
+                    depth_tokens=depth_tokens,
                 )
             else:
+                depth_kwargs: dict[str, Any] = {}
+                if depth_tokens is not None:
+                    encoder_kv_states, encoder_attention_mask = self._encode_prefix_with_depth(
+                        model_inputs, depth_tokens
+                    )
+                    depth_kwargs = {
+                        "encoder_kv_states": encoder_kv_states,
+                        "encoder_attention_mask": encoder_attention_mask,
+                    }
                 actions = self._backbone().generate_actions_from_inputs(
                     **model_inputs,
                     action_dim_is_pad=batch.get("action_dim_is_pad"),
                     action_horizon=self._generation_action_horizon(),
                     num_steps=num_steps,
                     generator=generator,
+                    **depth_kwargs,
                 )
         return actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
 

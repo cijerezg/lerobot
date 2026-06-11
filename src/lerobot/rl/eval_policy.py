@@ -15,7 +15,7 @@
 # limitations under the License.
 import logging
 
-from lerobot.cameras import opencv  # noqa: F401
+from lerobot.cameras import opencv, realsense  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.policies import make_policy

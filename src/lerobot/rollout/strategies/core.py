@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 from lerobot.datasets.utils import DEFAULT_VIDEO_FILE_SIZE_IN_MB
 from lerobot.utils.action_interpolator import ActionInterpolator
 from lerobot.utils.constants import OBS_STR
-from lerobot.utils.feature_utils import build_dataset_frame
+from lerobot.utils.feature_utils import build_dataset_frame, resolve_depth_keys
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.visualization_utils import log_rerun_data
 
@@ -286,8 +286,13 @@ def send_next_action(
     features = ctx.data.dataset_features
     ordered_keys = ctx.data.ordered_action_keys
 
+    # Depth is not a dataset feature, so build_dataset_frame would drop it; carry
+    # the configured cams through to ``observation.depth.{cam}``. No-op for policies
+    # without depth support (pi05 etc.) or when it is disabled.
+    depth_keys = resolve_depth_keys(ctx.policy.policy.config)
+
     if interpolator.needs_new_action():
-        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR)
+        obs_frame = build_dataset_frame(features, obs_processed, prefix=OBS_STR, depth_keys=depth_keys)
         action_tensor = engine.get_action(obs_frame)
         if action_tensor is not None:
             interpolator.add(action_tensor.cpu())

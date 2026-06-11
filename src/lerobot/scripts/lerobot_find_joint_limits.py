@@ -50,6 +50,8 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     omx_follower,
     openarm_follower,
+    rebot_b601_follower,
+    bi_rebot_b601_follower,
     so_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
@@ -62,6 +64,8 @@ from lerobot.teleoperators import (  # noqa: F401
     omx_leader,
     openarm_leader,
     openarm_mini,
+    rebot_102_leader,
+    bi_rebot_102_leader,
     so_leader,
 )
 from lerobot.utils.robot_utils import precise_sleep

@@ -24,7 +24,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-from lerobot.cameras import opencv  # noqa: F401
+from lerobot.cameras import opencv, realsense  # noqa: F401
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset
 from lerobot.envs import HILSerlRobotEnvConfig
@@ -175,7 +175,18 @@ class RobotEnv(gym.Env):
 
         images = {key: obs_dict[key] for key in self._image_keys}
 
-        return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position}
+        # Forward any raw depth maps the robot produced (cameras with use_depth=True) untouched.
+        # They ride alongside the observation under their native "{cam}.depth" key: the observation
+        # processors and the policy input-feature filter all ignore unknown keys, so depth passes
+        # through to the RL actor, which lifts it into the buffer's complementary_info. Kept as a
+        # native-resolution uint16 tensor (no resize/normalize here — that is the model's job).
+        depth = {
+            key: (torch.from_numpy(val) if isinstance(val, np.ndarray) else val)
+            for key, val in obs_dict.items()
+            if isinstance(key, str) and key.endswith(".depth")
+        }
+
+        return {"agent_pos": joint_positions, "pixels": images, **raw_joint_joint_position, **depth}
 
     def _setup_spaces(self) -> None:
         """Configure observation and action spaces based on robot capabilities."""
@@ -201,6 +212,18 @@ class RobotEnv(gym.Env):
                 shape=agent_pos.shape,
                 dtype=np.float32,
             )
+
+        # Declare any raw depth maps (cameras with use_depth=True) in the space so the space is
+        # honest about what _get_observation emits. The data path does not rely on this (the
+        # observation processors passthrough unknown keys and the depth tensor rides the
+        # transition untouched), but registering it future-proofs against any consumer or env
+        # checker that iterates observation_space. Native-resolution uint16, no batch dim.
+        if current_observation is not None:
+            for key, value in current_observation.items():
+                if isinstance(key, str) and key.endswith(".depth"):
+                    observation_spaces[key] = gym.spaces.Box(
+                        low=0, high=np.iinfo(np.uint16).max, shape=tuple(value.shape), dtype=np.uint16
+                    )
 
         self.observation_space = gym.spaces.Dict(observation_spaces)
 

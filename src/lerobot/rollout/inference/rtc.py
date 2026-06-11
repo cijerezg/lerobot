@@ -40,7 +40,7 @@ from lerobot.processor import (
     PolicyProcessorPipeline,
     RelativeActionsProcessorStep,
 )
-from lerobot.utils.feature_utils import build_dataset_frame
+from lerobot.utils.feature_utils import build_dataset_frame, resolve_depth_keys
 
 from ..robot_wrapper import ThreadSafeRobot
 from .base import InferenceEngine
@@ -276,7 +276,12 @@ class RTCInferenceEngine(InferenceEngine):
                         latency = latency_tracker.max()
                         delay = math.ceil(latency / time_per_chunk) if latency else 0
 
-                        obs_batch = build_dataset_frame(self._hw_features, obs, prefix="observation")
+                        obs_batch = build_dataset_frame(
+                            self._hw_features,
+                            obs,
+                            prefix="observation",
+                            depth_keys=resolve_depth_keys(self._policy.config),
+                        )
                         obs_batch = prepare_observation_for_inference(
                             obs_batch, policy_device, self._task, self._robot.robot_type
                         )

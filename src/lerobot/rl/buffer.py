@@ -223,7 +223,11 @@ class ReplayBuffer:
         prepared = {}
         for key, value in complementary_info.items():
             if isinstance(value, torch.Tensor):
-                prepared[key] = value.to(dtype=torch.bfloat16, device=self.storage_device)
+                # Depth rides through complementary_info but must stay lossless: bf16 has only
+                # 8 mantissa bits and mangles raw uint16 depth. Keep its native dtype, mirroring
+                # the offline memmap cache (which keeps depth raw uint16, no bf16 view).
+                dtype = value.dtype if key.startswith("depth.") else torch.bfloat16
+                prepared[key] = value.to(dtype=dtype, device=self.storage_device)
             else:
                 prepared[key] = value
         return prepared
@@ -273,8 +277,11 @@ class ReplayBuffer:
             for key, value in complementary_info.items():
                 if isinstance(value, torch.Tensor):
                     value_shape = value.squeeze(0).shape
+                    # Depth keeps its native (uint16) dtype — lossless, see
+                    # _prepare_complementary_info_for_storage. Everything else stays bf16.
+                    dtype = value.dtype if key.startswith("depth.") else torch.bfloat16
                     self.complementary_info[key] = torch.empty(
-                        (self.capacity, *value_shape), dtype=torch.bfloat16, device=self.storage_device
+                        (self.capacity, *value_shape), dtype=dtype, device=self.storage_device
                     )
                 elif isinstance(value, (int | float)):
                     # Handle scalar values similar to reward
@@ -440,8 +447,18 @@ class ReplayBuffer:
             batch_complementary_info = None
             if self.has_complementary_info:
                 batch_complementary_info = {}
+                # Depth for the critic target V(s'): next_state is derived at sample time
+                # (optimize_memory), so its depth is the same column at the same next_idx.
+                # Emitted as next_depth.{key} so online/offline batches concatenate symmetrically.
+                depth_next_idx = (
+                    (idx + action_chunk_size) % self.capacity if self.optimize_memory else None
+                )
                 for key in self.complementary_info_keys:
                     batch_complementary_info[key] = self.complementary_info[key][idx].to(self.device)
+                    if depth_next_idx is not None and key.startswith("depth."):
+                        batch_complementary_info[f"next_{key}"] = self.complementary_info[key][
+                            depth_next_idx
+                        ].to(self.device)
 
         # Image augmentation operates only on local batch_state/batch_next_state
         # tensors -- safe to do outside the lock.

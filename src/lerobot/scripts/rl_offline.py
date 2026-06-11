@@ -57,7 +57,7 @@ import torch
 from termcolor import colored
 from torch import nn
 
-from lerobot.cameras import opencv  # noqa: F401
+from lerobot.cameras import opencv, realsense  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
