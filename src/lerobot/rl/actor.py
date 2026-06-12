@@ -310,11 +310,11 @@ def act_with_policy(
             k: v for k, v in transition[TransitionKey.OBSERVATION].items() if k in cfg.policy.input_features
         }
         # Depth is not an input_feature, so the filter above drops it. Re-inject the raw depth map
-        # under the canonical model key so the ACTING policy sees depth (preprocessor's normalizer
-        # casts/clamps/reshapes it) — otherwise data collection runs depth-blind while training
-        # feeds depth, a collect/train mismatch that grows with the depth gate. Gated on the
-        # policy's enable_depth (not the camera's use_depth); hard no-op for non-depth policies.
-        if getattr(cfg.policy, "enable_depth", False):
+        # under the canonical model key so the ACTING policy sees depth — otherwise data
+        # collection runs depth-blind while training feeds depth, a collect/train mismatch that
+        # grows with the depth gate. Gated on the policy's intent (a tsdf_config), not the
+        # camera's use_depth; hard no-op for non-depth policies.
+        if getattr(cfg.policy, "tsdf_config", None) is not None:
             for key, val in transition[TransitionKey.OBSERVATION].items():
                 if isinstance(key, str) and key.endswith(".depth"):
                     observation[f"observation.depth.{key[: -len('.depth')]}"] = val
@@ -381,11 +381,11 @@ def act_with_policy(
         # concatenate without zero-padding and the trainer lifts both identically. `observation`
         # was filtered to input_features (drops *.depth); pull from the unfiltered current
         # `transition` (not yet advanced to new_transition), keeping depth aligned with `state`.
-        # Gate on the POLICY's intent (enable_depth), NOT merely on a `.depth` key being present
+        # Gate on the POLICY's intent (a tsdf_config), NOT merely on a `.depth` key being present
         # — that only reflects the camera's use_depth. Otherwise a depth camera on a non-depth
         # policy would fill the online buffer with ~614 KB/frame for nothing (storage_device RAM,
-        # or VRAM if storage_device=cuda). getattr: enable_depth lives only on the MolmoAct2 config.
-        if getattr(cfg.policy, "enable_depth", False):
+        # or VRAM if storage_device=cuda). getattr: tsdf_config lives only on depth-capable configs.
+        if getattr(cfg.policy, "tsdf_config", None) is not None:
             for key, val in transition[TransitionKey.OBSERVATION].items():
                 if isinstance(key, str) and key.endswith(".depth"):
                     complementary_info[f"depth.{key}"] = val

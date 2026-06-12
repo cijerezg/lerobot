@@ -24,7 +24,7 @@ from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
-from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2DepthEncoder, MolmoAct2Policy
+from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
 from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig
 
 
@@ -215,40 +215,6 @@ class MolmoAct2Critic(nn.Module):
         self.transformer_blocks: nn.ModuleList | None = None
         self.rotary_emb: nn.Module | None = None
         self.ln_f: nn.Module | None = None
-
-        # External RealSense depth — the critic owns its own gate-zeroed encoder (mirrors how it
-        # owns a separate vision_backbone copy), so V(s) cross-attends to the same depth tokens the
-        # actor sees. Built only when enabled; kept float32 (re-asserted after the critic's bulk
-        # .to(bf16) in init_critic) — its output is cast to the critic dtype at the append site.
-        self.enable_depth: bool = bool(getattr(config, "enable_depth", False))
-        self.depth_keys: list[str] = list(getattr(config, "depth_keys", []) or [])
-        self.depth_encoder: MolmoAct2DepthEncoder | None = None
-        if self.enable_depth:
-            self.depth_encoder = MolmoAct2DepthEncoder(
-                hidden_size=D,
-                num_tokens=int(getattr(config, "depth_num_tokens", 1)),
-                gate_init_bias=float(getattr(config, "depth_gate_init_bias", -4.0)),
-            )
-
-    def depth_tokens(self, batch: dict[str, Tensor], *, dtype: torch.dtype, device: torch.device) -> Tensor | None:
-        """Encode normalized depth (observation.depth.{cam}) into appended critic tokens.
-
-        Mirror of the actor's MolmoAct2Policy._depth_tokens: returns
-        (B, num_tokens * n_present_cams, D) in `dtype`, or None when depth is disabled / absent.
-        """
-        if self.depth_encoder is None:
-            return None
-        encoder_dtype = next(self.depth_encoder.parameters()).dtype
-        tokens: list[Tensor] = []
-        for cam in self.depth_keys:
-            depth = batch.get(f"observation.depth.{cam}")
-            if depth is None:
-                continue
-            depth = torch.as_tensor(depth, device=device, dtype=encoder_dtype)
-            tokens.append(self.depth_encoder(depth))
-        if not tokens:
-            return None
-        return torch.cat(tokens, dim=1).to(dtype=dtype)
 
     # ── Weight initialisation ─────────────────────────────────────────────────
 
@@ -510,10 +476,6 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
         backbone = self._backbone()
         self.critic.initialize_weights_from_backbone(backbone)
         self.critic = self.critic.to(device=device, dtype=dtype)
-        # Keep the fresh depth encoder in float32 (the bulk .to above would have cast it to bf16),
-        # matching the actor's encoder; its output is cast to the critic dtype at the append site.
-        if self.critic.depth_encoder is not None:
-            self.critic.depth_encoder.to(dtype=torch.float32)
 
         self.critic_target: MolmoAct2Critic = copy.deepcopy(self.critic)
         for p in self.critic_target.parameters():
@@ -555,19 +517,8 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
                     inputs_embeds.shape[:2], dtype=torch.bool, device=inputs_embeds.device
                 )
 
-        # Append external depth tokens at the end of the prefix and extend the attention mask by
-        # the same count (the critic's forward then appends the value queries after these). Mirrors
-        # the actor's prefix append; no-op when depth is disabled/absent. num_depth==0 => unchanged.
-        depth_tokens = critic_module.depth_tokens(
-            batch, dtype=inputs_embeds.dtype, device=inputs_embeds.device
-        )
-        if depth_tokens is not None:
-            num_depth = int(depth_tokens.shape[1])
-            inputs_embeds = torch.cat([inputs_embeds, depth_tokens], dim=1)
-            attention_mask = torch.cat(
-                [attention_mask, attention_mask.new_ones((attention_mask.shape[0], num_depth))], dim=1
-            )
-
+        # TODO(tsdf-critic): feed the shared DepthTsdfEncoder memory to the critic here
+        # (actor-critic symmetry, depth_tsdf_design.md §6.1) — critic-side workstream.
         return critic_module(inputs_embeds, attention_mask.to(torch.bool))
 
     def forward_critic(self, batch: dict) -> dict[str, torch.Tensor]:

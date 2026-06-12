@@ -137,13 +137,14 @@ def build_dataset_frame(
 def resolve_depth_keys(policy_cfg) -> list[str] | None:
     """Depth cams to carry through ``build_dataset_frame`` for inference, or ``None``.
 
-    Returns ``policy_cfg.depth_keys`` only when the policy opts into depth
-    (``enable_depth``). The ``getattr`` guard is required, not a stopgap:
-    ``enable_depth`` / ``depth_keys`` live only on the MolmoAct2 config, and the
-    shared rollout code that calls this also runs for pi05 (and any other policy)
-    with neither attribute — so this must stay a no-op for them.
+    Returns the depth cam only when the policy opts into depth (a ``tsdf_config``).
+    The ``getattr`` guard is required, not a stopgap: ``tsdf_config`` lives only on
+    depth-capable policy configs, and the shared rollout code that calls this also
+    runs for pi05 (and any other policy) without the attribute — so this must stay
+    a no-op for them.
     """
-    return policy_cfg.depth_keys if getattr(policy_cfg, "enable_depth", False) else None
+    tsdf_config = getattr(policy_cfg, "tsdf_config", None)
+    return [tsdf_config.depth_key] if tsdf_config is not None else None
 
 
 def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:

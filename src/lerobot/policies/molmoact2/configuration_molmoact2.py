@@ -14,6 +14,7 @@ from lerobot.optim import (
 from lerobot.rl.rl_trainer import TrainableParamsConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
+from ..depth_tsdf.configuration_depth_tsdf import DepthTsdfConfig
 from ..rtc.configuration_rtc import RTCConfig
 
 MOLMOACT2_DEFAULT_NUM_IMAGES = 2
@@ -117,22 +118,12 @@ class MolmoAct2Config(PreTrainedConfig):
     image_storage_dtype: str = "uint8"
     image_storage_size: tuple[int, int] | None = None
 
-    # --- External RealSense depth (Track C contract §1.4) ---------------------
-    # Master switch. False => total no-op: no encoder built, normalizer step is a
-    # pass-through, no depth key required, forward cost unchanged. Non-depth
-    # datasets/checkpoints are unaffected.
-    enable_depth: bool = False
-    # Canonical bare cam names, matching observation.images.{cam} / observation.depth.{cam}.
-    depth_keys: list[str] = field(default_factory=list)
-    # Normalization (§1.3): depth_mm = raw * depth_units_mm; clamp to [0, depth_clip_mm]; / clip.
-    # depth_units_mm MUST be verified against a recorded sidecar PNG (§5.1), not assumed.
-    # D405 commonly reports 0.1 mm/unit; the camera docstring's 1.0 mm claim is suspect.
-    depth_units_mm: float = 0.1
-    depth_clip_mm: float = 1000.0  # 1 m working volume; retune after verifying units.
-    # Encoder: how many depth tokens to append to the LLM sequence, and the gate's
-    # init bias. sigmoid(-4.0) ~= 0.018 so depth starts ~off and only grows as the gate trains.
-    depth_num_tokens: int = 1
-    depth_gate_init_bias: float = -4.0
+    # --- Gripper-frame TSDF depth (depth_tsdf_design.md) ----------------------
+    # None => depth-free: no encoder built, no depth key shipped, forward cost
+    # unchanged. When set, the shared DepthTsdfEncoder's memory tokens enter the
+    # action expert's cross-attention as a gated additive read; the VLM prefix
+    # is untouched.
+    tsdf_config: DepthTsdfConfig | None = None
     normalize_language: bool = True
     add_setup_tokens: bool = True
     add_control_tokens: bool = True
@@ -268,15 +259,8 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.max_sequence_length is not None and self.max_sequence_length < 1:
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
-        if self.enable_depth:
-            if not self.depth_keys:
-                raise ValueError("MolmoAct2 enable_depth=True requires a non-empty depth_keys.")
-            if self.depth_clip_mm <= 0:
-                raise ValueError(f"depth_clip_mm must be > 0, got {self.depth_clip_mm}.")
-            if self.depth_units_mm <= 0:
-                raise ValueError(f"depth_units_mm must be > 0, got {self.depth_units_mm}.")
-            if self.depth_num_tokens < 1:
-                raise ValueError(f"depth_num_tokens must be >= 1, got {self.depth_num_tokens}.")
+        if self.tsdf_config is not None and self.action_mode == "discrete":
+            raise ValueError("tsdf_config feeds the action expert; action_mode='discrete' never uses it.")
 
     def inferred_max_sequence_length(
         self,

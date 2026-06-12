@@ -211,34 +211,6 @@ class MolmoAct2Trainer(Trainer):
             if is_main_process:
                 logging.info(f"MolmoAct2 stats source: saved checkpoint processors ({saved_processor_path})")
             result = make_pre_post_processors(cfg.policy, pretrained_path=str(saved_processor_path))
-            # A checkpoint saved before depth landed has no depth-normalizer step; without it,
-            # raw 0-65535 depth reaches the encoders. Insert it where a fresh build puts it
-            # (right before PackInputs).
-            if getattr(cfg.policy, "enable_depth", False):
-                from lerobot.policies.molmoact2.processor_molmoact2 import (
-                    MolmoAct2DepthNormalizerProcessorStep,
-                    MolmoAct2PackInputsProcessorStep,
-                )
-
-                steps = list(result[0].steps)
-                if not any(isinstance(s, MolmoAct2DepthNormalizerProcessorStep) for s in steps):
-                    pack_idx = next(
-                        i for i, s in enumerate(steps) if isinstance(s, MolmoAct2PackInputsProcessorStep)
-                    )
-                    steps.insert(
-                        pack_idx,
-                        MolmoAct2DepthNormalizerProcessorStep(
-                            enable_depth=cfg.policy.enable_depth,
-                            depth_keys=list(cfg.policy.depth_keys),
-                            depth_units_mm=cfg.policy.depth_units_mm,
-                            depth_clip_mm=cfg.policy.depth_clip_mm,
-                        ),
-                    )
-                    result[0].steps = steps
-                    if is_main_process:
-                        logging.info(
-                            "MolmoAct2: saved checkpoint preprocessor predates depth — inserted depth normalizer"
-                        )
             if action_stats_override is not None:
                 if is_main_process:
                     logging.info(f"MolmoAct2 ACTION stats override: {action_encoding} stats")
@@ -366,13 +338,8 @@ class MolmoAct2Trainer(Trainer):
         )
 
         for name, param in critic_net.named_parameters():
-            # Always-trainable critic heads (fresh modules trained from scratch, incl. the
-            # external depth encoder — mirrors the actor keeping its depth encoder trainable).
-            if (
-                name.startswith("value_queries")
-                or name.startswith("bin_logit_head")
-                or name.startswith("depth_encoder")
-            ):
+            # Always-trainable critic heads (fresh modules trained from scratch).
+            if name.startswith("value_queries") or name.startswith("bin_logit_head"):
                 param.requires_grad = True
             elif "transformer_blocks." in name:
                 param.requires_grad = _layer_idx_after(name, "transformer_blocks.") in cr_layers
@@ -464,8 +431,9 @@ class MolmoAct2Trainer(Trainer):
             if done.dim() == 1:
                 done = done.unsqueeze(-1)
 
-            # Lift depth into both critic batches (no-op unless enable_depth): current-state
+            # Lift depth into both critic batches (no-op unless tsdf_config is set): current-state
             # depth for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
+            # Unconsumed until the critic-side depth read lands (TODO(tsdf-critic), rl_molmoact2.py).
             observations = self._inject_depth_observations(
                 observations, raw.get("complementary_info"), cfg
             )
@@ -582,8 +550,9 @@ class MolmoAct2Trainer(Trainer):
         if done.dim() == 1:
             done = done.unsqueeze(-1)
 
-        # Lift depth into both critic batches (no-op unless enable_depth): current-state depth
+        # Lift depth into both critic batches (no-op unless tsdf_config is set): current-state depth
         # for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
+        # Unconsumed until the critic-side depth read lands (TODO(tsdf-critic), rl_molmoact2.py).
         observations = self._inject_depth_observations(
             observations, batch.get("complementary_info"), cfg
         )
@@ -659,31 +628,27 @@ class MolmoAct2Trainer(Trainer):
     ) -> dict:
         """Lift recorded depth from complementary_info into the canonical model key.
 
-        Track B of the depth-integration plan. The sampler surfaces raw depth as
-        ``complementary_info["depth.{robot_key}"]`` where ``robot_key == "{cam}.depth"``
-        (e.g. ``depth.top.depth``, a ``(B, H, W)`` raw uint16 memmap slice). Here we
-        strip the ``key_prefix`` and the trailing ``.depth`` to recover the bare
-        cam, gate on ``cfg.policy.depth_keys``, and write it back as
-        ``observation.depth.{cam}`` shaped ``(B, 1, H, W)`` float32 — the frozen
-        forward-boundary contract (§1.2). Values stay raw; clip + normalize to [0, 1]
-        is the shared Track C normalizer inside the preprocessor, so training and
-        inference normalize identically.
+        The sampler surfaces raw depth as ``complementary_info["depth.{robot_key}"]``
+        where ``robot_key == "{cam}.depth"`` (e.g. ``depth.wrist.depth``, a
+        ``(B, H, W)`` raw uint16 memmap slice). Here we strip the ``key_prefix``
+        and the trailing ``.depth`` to recover the bare cam, gate on the policy's
+        ``tsdf_config.depth_key``, and write it back as ``observation.depth.{cam}``
+        shaped ``(B, 1, H, W)`` float32. Values stay raw sensor units — the TSDF
+        builder consumes metric depth (depth_tsdf_design.md §7).
 
         Hard no-op when depth is disabled or absent. Callers inject into every
         critic/actor forward: current-state batches lift ``depth.*`` and the
         target V(s') batch lifts ``next_depth.*`` (the buffer samples next-state
         depth at the same index next_state is derived from).
         """
-        if not getattr(cfg.policy, "enable_depth", False):
-            return observations
-        depth_keys = getattr(cfg.policy, "depth_keys", None) or []
-        if not depth_keys or not comp_data:
+        tsdf_config = getattr(cfg.policy, "tsdf_config", None)
+        if tsdf_config is None or not comp_data:
             return observations
         for comp_key, tensor in comp_data.items():
             if not isinstance(comp_key, str) or not comp_key.startswith(key_prefix):
                 continue
             cam = comp_key[len(key_prefix) :].removesuffix(".depth")
-            if cam not in depth_keys:
+            if cam != tsdf_config.depth_key:
                 continue
             depth = tensor.float()
             if depth.dim() == 3:  # (B, H, W) -> (B, 1, H, W)
@@ -872,11 +837,29 @@ class MolmoAct2Trainer(Trainer):
                 v_next_values_actor_list.append(value_info["v_next_values"])
 
             # Lift recorded depth into the actor forward batch (no-op unless
-            # enable_depth). compute_advantage injects for its own critic V(s)
+            # tsdf_config set). compute_advantage injects for its own critic V(s)
             # forward; this covers the case where it didn't run on this batch.
             observations = self._inject_depth_observations(
                 observations, raw.get("complementary_info"), cfg
             )
+            # One-shot depth confirmation for the TRAINING path (the inference path has its own):
+            # a cache/buffer without the depth column would otherwise train on the null bank silently.
+            tsdf_config = getattr(cfg.policy, "tsdf_config", None)
+            if tsdf_config is not None and not getattr(self, "_depth_training_logged", False):
+                self._depth_training_logged = True
+                cam = tsdf_config.depth_key
+                depth = observations.get(f"observation.depth.{cam}")
+                if depth is None:
+                    logging.warning(
+                        f"MolmoAct2 training: observation.depth.{cam} MISSING from the batch despite "
+                        "tsdf_config being set — flow loss trains on the null depth bank."
+                    )
+                else:
+                    logging.info(
+                        f"MolmoAct2 training: observation.depth.{cam} {tuple(depth.shape)} {depth.dtype} "
+                        f"med={depth.median().item():.3f} holes={(depth == 0).float().mean().item():.3f} "
+                        "(raw sensor units)"
+                    )
 
             fwd_batch = self.build_training_batch(
                 raw_batch=raw,  # type: ignore[arg-type]
@@ -925,6 +908,9 @@ class MolmoAct2Trainer(Trainer):
         policy_opt.step()
 
         accum["actor_grad_norm"] = actor_grad_norm
+        # Depth gate uptake (depth_tsdf_design.md §9.1): pinned at ~0 means the expert isn't using depth.
+        if getattr(policy, "tsdf_encoder", None) is not None:
+            accum["tsdf_gate"] = policy.tsdf_encoder.gate_value().item()
 
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)
@@ -1074,21 +1060,22 @@ class MolmoAct2Trainer(Trainer):
             batch = preprocessor(pre_input)
         # One-shot depth confirmation: the delivery chain (env worker -> shared state -> filter ->
         # preprocessor) has several silent drop points, so log once whether depth actually made it.
-        if getattr(cfg.policy, "enable_depth", False) and not getattr(self, "_depth_inference_logged", False):
+        tsdf_config = getattr(cfg.policy, "tsdf_config", None)
+        if tsdf_config is not None and not getattr(self, "_depth_inference_logged", False):
             self._depth_inference_logged = True
-            for cam in cfg.policy.depth_keys:
-                depth = batch.get(f"observation.depth.{cam}")
-                if depth is None:
-                    logging.warning(
-                        f"MolmoAct2 inference: observation.depth.{cam} MISSING from the batch despite "
-                        "enable_depth=True — the policy is running depth-blind."
-                    )
-                else:
-                    logging.info(
-                        f"MolmoAct2 inference: observation.depth.{cam} {tuple(depth.shape)} {depth.dtype} "
-                        f"med={depth.median().item():.3f} holes={(depth == 0).float().mean().item():.3f} "
-                        "(normalized [0,1])"
-                    )
+            cam = tsdf_config.depth_key
+            depth = batch.get(f"observation.depth.{cam}")
+            if depth is None:
+                logging.warning(
+                    f"MolmoAct2 inference: observation.depth.{cam} MISSING from the batch despite "
+                    "tsdf_config being set — the policy falls back to the null depth bank."
+                )
+            else:
+                logging.info(
+                    f"MolmoAct2 inference: observation.depth.{cam} {tuple(depth.shape)} {depth.dtype} "
+                    f"med={depth.median().item():.3f} holes={(depth == 0).float().mean().item():.3f} "
+                    "(raw sensor units)"
+                )
         return {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
     # ── Online loop ───────────────────────────────────────────────────────────
