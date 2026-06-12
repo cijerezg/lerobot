@@ -37,8 +37,13 @@ import lerobot.rl.pi05.rl_pi05  # noqa: F401 - registers PI05RLConfig
 logger = logging.getLogger(__name__)
 
 # ── Knobs (edit these) ───────────────────────────────────────────────────────
-ATTENTION_LAYERS = [9]      # action-expert layers to capture (1-2 recommended)
-ATTENTION_RATE_HZ = 2.5     # captures/sec; throttles GPU contention with inference
+ATTENTION_LAYERS = [9]   # action-expert block index, 0..35 (one block per VLM layer).
+                         # Early layers (≈9) stay spatially grounded; deeper blocks
+                         # attend more semantically and lose pixel alignment.
+ATTENTION_RATE_HZ = 0.0  # 0 = capture every policy step; >0 = cap captures/sec.
+                         # Each capture is a second forward that blocks inference,
+                         # so capping (e.g. 3.0) trades freshness for policy speed.
+ATTENTION_ALPHA = 0.5    # heatmap-over-image blend (0=image only, 1=heatmap only)
 
 
 def _ensure_batch(obs: dict) -> dict:
@@ -54,6 +59,25 @@ def _ensure_batch(obs: dict) -> dict:
     return out
 
 
+def _segment_image_np(result, cam_name, cam_idx):
+    """Reconstruct the uint8 HWC camera image for a segment, or None if absent.
+
+    Mirrors the de-normalization in ``attention._extract_overlay_grids``: image
+    tensors are stored normalized to roughly [-1, 1], so ``*0.5 + 0.5`` recovers
+    [0, 1] before scaling to uint8.
+    """
+    import numpy as np
+
+    tensors_by_segment = result.extras.get("image_tensors_by_segment", {})
+    img_t = tensors_by_segment.get(cam_name)
+    if img_t is None and cam_idx < len(result.image_tensors):
+        img_t = result.image_tensors[cam_idx]
+    if img_t is None:
+        return None
+    img_t = img_t.squeeze(0).cpu() * 0.5 + 0.5
+    return (img_t.clamp(0, 1).permute(1, 2, 0).numpy() * 255).astype("uint8")
+
+
 def _make_attention_hook(policy, preprocessor, postprocessor, device, cfg):
     """Build the post-inference capture/render/log callable, or None if unsupported."""
     if not getattr(cfg, "use_rerun", False):
@@ -62,6 +86,7 @@ def _make_attention_hook(policy, preprocessor, postprocessor, device, cfg):
 
     try:
         import rerun as rr
+        from lerobot.probes.attention import cv2_overlay
         from lerobot.probes.base import _adapter_for_type
         from lerobot.probes.spatial_memorization_attention import (
             _image_hw_for_segment,
@@ -78,14 +103,18 @@ def _make_attention_hook(policy, preprocessor, postprocessor, device, cfg):
 
     task_str = cfg.policy.task
     layers = list(ATTENTION_LAYERS)
-    min_interval = 1.0 / max(ATTENTION_RATE_HZ, 1e-6)
+    min_interval = (1.0 / ATTENTION_RATE_HZ) if ATTENTION_RATE_HZ > 0 else 0.0
     state = {"last": 0.0}
-    logger.info("[ATTN] Live attention viz on: layers=%s rate=%.1fHz", layers, ATTENTION_RATE_HZ)
+    rate_str = "every policy step" if ATTENTION_RATE_HZ <= 0 else f"max {ATTENTION_RATE_HZ:.1f}Hz"
+    logger.info("[ATTN] Live attention viz on: layers=%s alpha=%.2f (%s)",
+                layers, ATTENTION_ALPHA, rate_str)
 
     @torch.no_grad()
     def hook(latest_obs: dict) -> None:
+        if latest_obs is None:
+            return
         now = time.perf_counter()
-        if now - state["last"] < min_interval or latest_obs is None:
+        if min_interval and now - state["last"] < min_interval:
             return
         state["last"] = now
 
@@ -112,9 +141,19 @@ def _make_attention_hook(policy, preprocessor, postprocessor, device, cfg):
                     continue
                 mean_vec = vec.mean(dim=0)  # mean over heads -> [K_cam]
                 img_h, img_w = _image_hw_for_segment(result, cam_name, cam_idx)
-                up = _upsample_patches(mean_vec, n_p, img_h, img_w)
-                heat = _render_heatmap(up, f"L{layer_idx} {cam_name}", img_h, img_w)  # RGB uint8 HWC
-                rr.log(f"attention/L{layer_idx:02d}/{cam_name}", rr.Image(heat))
+                up = _upsample_patches(mean_vec, n_p, img_h, img_w)  # [img_h, img_w]
+                img_np = _segment_image_np(result, cam_name, cam_idx)  # uint8 HWC or None
+
+                # Only the overlay is logged here; the raw frames already come
+                # through the env worker's observation.images.* tiles.
+                base = f"attention/L{layer_idx:02d}"
+                if img_np is not None:
+                    overlay = cv2_overlay(img_np, up.clamp(min=0),
+                                          f"L{layer_idx} {cam_name}", alpha=ATTENTION_ALPHA)
+                else:
+                    # No camera tensor available; fall back to the bare heatmap.
+                    overlay = _render_heatmap(up, f"L{layer_idx} {cam_name}", img_h, img_w)
+                rr.log(f"{base}/{cam_name}_overlay", rr.Image(overlay))
 
     return hook
 
