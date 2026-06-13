@@ -692,7 +692,7 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
 
     modulate = sys.modules[type(action_expert).__module__]._modulate
 
-    def cross_attn_forward(self, x, *, kv_k, kv_v, attn_mask=None, tsdf_kv=None, tsdf_gate=None):
+    def cross_attn_forward(self, x, *, kv_k, kv_v, attn_mask=None, tsdf_kv=None, tsdf_gate=None, tsdf_bias=None):
         bsz, tgt_len, _ = x.shape
         q = self.q_proj(x).view(bsz, tgt_len, self.num_heads, self.head_dim)
         k = self._as_heads(kv_k)
@@ -700,11 +700,22 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
         q = q.transpose(1, 2)
         if self.q_norm is not None:
             q = self.q_norm(q)
-        q = q.transpose(1, 2)
-        out = self._attention(q, k, v, attn_mask=attn_mask)
+        q = q.transpose(1, 2)  # (B, Tq, H, Dh)
+        out = self._attention(q, k, v, attn_mask=attn_mask)  # context read (SDPA), unchanged
         if tsdf_kv is not None:
-            k_tsdf, v_tsdf = tsdf_kv
-            out = out + tsdf_gate.to(dtype=out.dtype) * self._attention(q, k_tsdf, v_tsdf)
+            # A.3 per-token gated depth read, done manually (SDPA hides the scores we need
+            # for E_i). Only the depth term is manual; the context read above stays on SDPA.
+            #   out_i += tanh(α_ℓ) · g_i · r_i,   g_i = σ(E_i − b),   E_i = logsumexp_j s_ij
+            k_tsdf, v_tsdf = tsdf_kv  # (B, Tk=216, H, Dh)
+            scale = self.head_dim**-0.5
+            s = torch.einsum("bqhd,bkhd->bhqk", q.float(), k_tsdf.float()) * scale  # (B,H,Tq,Tk)
+            e = torch.logsumexp(s, dim=-1)  # (B,H,Tq) — strength of token i's best depth match
+            bias = 0.0 if tsdf_bias is None else tsdf_bias.view(1, -1, 1)  # (1,H,1)
+            g = torch.sigmoid(e - bias)  # (B,H,Tq) — per (token, head) admit fraction in (0,1)
+            p = torch.softmax(s, dim=-1).to(v_tsdf.dtype)  # (B,H,Tq,Tk)
+            r = torch.einsum("bhqk,bkhd->bqhd", p, v_tsdf)  # (B,Tq,H,Dh) — the depth content
+            g = g.transpose(1, 2).unsqueeze(-1).to(out.dtype)  # (B,Tq,H,1)
+            out = out + tsdf_gate.to(dtype=out.dtype) * (g * r)
         out = out.reshape(bsz, tgt_len, self.hidden_size)
         return self.out_drop(self.out_proj(out))
 
@@ -721,6 +732,7 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
         rope_cache=None,
         tsdf_kv=None,
         tsdf_gate=None,
+        tsdf_bias=None,
     ):
         if modulation is None:
             modulation = self.modulation(conditioning).chunk(9, dim=1)
@@ -748,6 +760,7 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
             attn_mask=attn_mask,
             tsdf_kv=tsdf_kv,
             tsdf_gate=tsdf_gate,
+            tsdf_bias=tsdf_bias,
         )
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.ff_norm(x), shift_mlp, scale_mlp))
         return x
@@ -974,7 +987,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
             action_expert = self._action_expert()
             device = next(self.model.parameters()).device
             self.tsdf_encoder = DepthTsdfEncoder(
-                self.config.tsdf_config, d_mem=int(action_expert.llm_kv_dim)
+                self.config.tsdf_config,
+                d_mem=int(action_expert.llm_kv_dim),
+                num_read_layers=len(action_expert.blocks),
+                num_read_heads=action_expert.blocks[0].cross_attn.num_heads,
             ).to(device=device, dtype=torch.float32)
             _patch_action_expert_tsdf_read(action_expert)
 

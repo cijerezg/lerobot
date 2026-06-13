@@ -174,8 +174,16 @@ class DepthTsdfEncoder(nn.Module):
         self.out_proj = nn.Linear(c3, d_mem)
         self.modality_embed = nn.Parameter(torch.randn(d_mem) * 0.02)
         self.null_tokens = nn.Parameter(torch.randn(self.num_tokens, d_mem) * 0.02)
-        # Scalar Flamingo-style gate; tanh(0) = 0 at init (design §5.4).
-        self.gate = nn.Parameter(torch.zeros(()))
+        # Flamingo-style gate; tanh(0) = 0 at init (design §5.4). With read layout known
+        # (the MolmoAct2 path), the gate is per-layer α_ℓ and a per-(layer, head) abstain
+        # bias b_{ℓ,h} is added for the A.3 per-token coefficient g_i = σ(E_i − b). Without
+        # it (model-agnostic use) fall back to today's single scalar gate, no bias.
+        if num_read_layers is None:
+            self.gate = nn.Parameter(torch.zeros(()))
+            self.abstain_bias: nn.Parameter | None = None
+        else:
+            self.gate = nn.Parameter(torch.zeros(num_read_layers))
+            self.abstain_bias = nn.Parameter(torch.zeros(num_read_layers, num_read_heads))
 
         self.register_buffer(
             "t_g_from_c", torch.tensor(config.t_g_from_c, dtype=torch.float32).reshape(4, 4), persistent=False
