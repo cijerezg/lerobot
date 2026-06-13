@@ -153,7 +153,14 @@ class DepthTsdfEncoder(nn.Module):
     TRUNK_CHANNELS = (32, 64, 128, 256)
     NUM_FOURIER_WAVELENGTHS = 6
 
-    def __init__(self, config: DepthTsdfConfig, *, d_mem: int) -> None:
+    def __init__(
+        self,
+        config: DepthTsdfConfig,
+        *,
+        d_mem: int,
+        num_read_layers: int | None = None,
+        num_read_heads: int | None = None,
+    ) -> None:
         super().__init__()
         self.config = config
         c0, c1, c2, c3 = self.TRUNK_CHANNELS

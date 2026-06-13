@@ -2324,7 +2324,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     action_horizon=self._generation_action_horizon(),
                     num_steps=num_steps,
                     generator=generator,
-                    **depth_kwargs,
                 )
         return actions[:, : self.config.n_action_steps, :action_dim].to(dtype=torch.float32)
 
