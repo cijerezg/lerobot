@@ -665,6 +665,44 @@ def _project_tsdf_memory(action_expert: Any, memory: Tensor) -> tuple[list[Tenso
     return keys, v
 
 
+def _gated_tsdf_depth_read(
+    q: Tensor,
+    tsdf_kv: tuple[Tensor, Tensor],
+    tsdf_gate: Tensor,
+    tsdf_bias: Tensor | None,
+    *,
+    head_dim: int,
+    out_dtype: torch.dtype,
+) -> Tensor:
+    """A.3 per-token gated depth read (depth_tsdf_math.md §A.3, depth_tsdf_a3_plan.md §3).
+
+    Computes the additive depth term  tanh(α_ℓ) · g_i · r_i  for one cross-attention head
+    group, where for action token i and depth token j (head suppressed):
+
+        s_ij = q_i·k_j / sqrt(d_h),   E_i = logsumexp_j s_ij,   g_i = σ(E_i − b),
+        r_i  = Σ_j softmax_j(s_ij) · v_j.
+
+    g_i ∈ (0,1) is the per-token admit fraction — near 1 when token i's query found a strong
+    depth match, near 0 when it found none. Done manually (not SDPA) because we need the
+    scores to form E_i; the context read stays on SDPA. Scores/softmax run in float32.
+
+    q:         (B, Tq, H, Dh) action-token queries (post q_norm).
+    tsdf_kv:   (keys, values), each (B, Tk, H, Dh).
+    tsdf_gate: 0-dim tanh(α_ℓ) for this layer.   tsdf_bias: (H,) bar b_{ℓ,h} or None.
+    Returns the term in out_dtype, shape (B, Tq, H, Dh) — caller adds it to the context read.
+    """
+    k_tsdf, v_tsdf = tsdf_kv
+    scale = head_dim**-0.5
+    s = torch.einsum("bqhd,bkhd->bhqk", q.float(), k_tsdf.float()) * scale  # (B,H,Tq,Tk)
+    e = torch.logsumexp(s, dim=-1)  # (B,H,Tq) — strength of token i's best depth match
+    bias = 0.0 if tsdf_bias is None else tsdf_bias.view(1, -1, 1)  # (1,H,1)
+    g = torch.sigmoid(e - bias)  # (B,H,Tq) — per (token, head) admit fraction in (0,1)
+    p = torch.softmax(s, dim=-1).to(v_tsdf.dtype)  # (B,H,Tq,Tk)
+    r = torch.einsum("bhqk,bkhd->bqhd", p, v_tsdf)  # (B,Tq,H,Dh) — the depth content
+    g = g.transpose(1, 2).unsqueeze(-1).to(out_dtype)  # (B,Tq,H,1)
+    return tsdf_gate.to(out_dtype) * (g * r)
+
+
 def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
     """Teach the action expert a gated additive TSDF depth read (depth_tsdf_design.md §5.4/§6.1).
 
@@ -703,19 +741,9 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
         q = q.transpose(1, 2)  # (B, Tq, H, Dh)
         out = self._attention(q, k, v, attn_mask=attn_mask)  # context read (SDPA), unchanged
         if tsdf_kv is not None:
-            # A.3 per-token gated depth read, done manually (SDPA hides the scores we need
-            # for E_i). Only the depth term is manual; the context read above stays on SDPA.
-            #   out_i += tanh(α_ℓ) · g_i · r_i,   g_i = σ(E_i − b),   E_i = logsumexp_j s_ij
-            k_tsdf, v_tsdf = tsdf_kv  # (B, Tk=216, H, Dh)
-            scale = self.head_dim**-0.5
-            s = torch.einsum("bqhd,bkhd->bhqk", q.float(), k_tsdf.float()) * scale  # (B,H,Tq,Tk)
-            e = torch.logsumexp(s, dim=-1)  # (B,H,Tq) — strength of token i's best depth match
-            bias = 0.0 if tsdf_bias is None else tsdf_bias.view(1, -1, 1)  # (1,H,1)
-            g = torch.sigmoid(e - bias)  # (B,H,Tq) — per (token, head) admit fraction in (0,1)
-            p = torch.softmax(s, dim=-1).to(v_tsdf.dtype)  # (B,H,Tq,Tk)
-            r = torch.einsum("bhqk,bkhd->bqhd", p, v_tsdf)  # (B,Tq,H,Dh) — the depth content
-            g = g.transpose(1, 2).unsqueeze(-1).to(out.dtype)  # (B,Tq,H,1)
-            out = out + tsdf_gate.to(dtype=out.dtype) * (g * r)
+            out = out + _gated_tsdf_depth_read(
+                q, tsdf_kv, tsdf_gate, tsdf_bias, head_dim=self.head_dim, out_dtype=out.dtype
+            )
         out = out.reshape(bsz, tgt_len, self.hidden_size)
         return self.out_drop(self.out_proj(out))
 
@@ -771,9 +799,10 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
         context = original_prepare_context(**kwargs)
         handoff = getattr(self, "_lerobot_tsdf_memory", None)
         if handoff is not None:
-            memory, gate = handoff
+            memory, gate, bias = handoff
             context.tsdf_keys, context.tsdf_values = _project_tsdf_memory(self, memory)
-            context.tsdf_gate = gate
+            context.tsdf_gate = gate  # (L,) per-layer tanh(α_ℓ)
+            context.tsdf_bias = bias  # (L, H) per-(layer, head) abstain bias
         return context
 
     def forward_with_context(self, actions, timesteps, *, context, modulation=None):
@@ -793,7 +822,8 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
             final_modulation = modulation.final_modulation
         tsdf_keys = getattr(context, "tsdf_keys", None)
         tsdf_values = getattr(context, "tsdf_values", None)
-        tsdf_gate = getattr(context, "tsdf_gate", None)
+        tsdf_gate = getattr(context, "tsdf_gate", None)  # (L,)
+        tsdf_bias = getattr(context, "tsdf_bias", None)  # (L, H)
         x = self.action_embed(actions)
         if context.valid_action is not None:
             x = x * context.valid_action
@@ -810,7 +840,8 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
                 modulation=block_modulation,
                 rope_cache=context.rope_cache,
                 tsdf_kv=None if tsdf_keys is None else (tsdf_keys[idx], tsdf_values),
-                tsdf_gate=tsdf_gate,
+                tsdf_gate=None if tsdf_gate is None else tsdf_gate[idx],
+                tsdf_bias=None if tsdf_bias is None else tsdf_bias[idx],
             )
             if context.valid_action is not None:
                 x = x * context.valid_action
@@ -1577,11 +1608,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
         xt_flat = xt.reshape(batch_size * num_flow_timesteps, actions.shape[1], actions.shape[2])
         timesteps_flat = timesteps.reshape(batch_size * num_flow_timesteps)
 
-        tsdf_keys = tsdf_values = tsdf_gate = None
+        tsdf_keys = tsdf_values = tsdf_gate = tsdf_bias = None
         if self.tsdf_encoder is not None:
             tsdf_memory, tsdf_gate = self.tsdf_encoder.memory_from_batch(
                 batch, batch_size=batch_size, device=device
             )
+            tsdf_bias = self.tsdf_encoder.abstain_bias  # (L, H)
             tsdf_keys, tsdf_values = _project_tsdf_memory(action_expert, tsdf_memory.to(dtype=actions.dtype))
             if num_flow_timesteps != 1:
                 tsdf_keys = [self._expand_mask(k, num_flow_timesteps) for k in tsdf_keys]
@@ -1693,7 +1725,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # tsdf kwargs only exist on the patched block forward (tsdf_config set).
             tsdf_kwargs: dict[str, Any] = {}
             if tsdf_keys is not None:
-                tsdf_kwargs = {"tsdf_kv": (tsdf_keys[layer_idx], tsdf_values), "tsdf_gate": tsdf_gate}
+                tsdf_kwargs = {
+                    "tsdf_kv": (tsdf_keys[layer_idx], tsdf_values),
+                    "tsdf_gate": tsdf_gate[layer_idx],
+                    "tsdf_bias": tsdf_bias[layer_idx],
+                }
             next_action_hidden = action_block(
                 layer_action_hidden,
                 conditioning,
@@ -2315,7 +2351,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 tsdf_memory, tsdf_gate = self.tsdf_encoder.memory_from_batch(
                     batch, batch_size=batch_size, device=device
                 )
-                self._action_expert()._lerobot_tsdf_memory = (tsdf_memory.to(dtype=model_dtype), tsdf_gate)
+                self._action_expert()._lerobot_tsdf_memory = (
+                    tsdf_memory.to(dtype=model_dtype),
+                    tsdf_gate,
+                    self.tsdf_encoder.abstain_bias,
+                )
             if inference_action_mode == "discrete":
                 if self._rtc_enabled():
                     raise ValueError("RTC is only supported for continuous MolmoAct2 inference.")

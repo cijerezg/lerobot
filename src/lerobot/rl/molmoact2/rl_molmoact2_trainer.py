@@ -910,7 +910,8 @@ class MolmoAct2Trainer(Trainer):
         accum["actor_grad_norm"] = actor_grad_norm
         # Depth gate uptake (depth_tsdf_design.md §9.1): pinned at ~0 means the expert isn't using depth.
         if getattr(policy, "tsdf_encoder", None) is not None:
-            accum["tsdf_gate"] = policy.tsdf_encoder.gate_value().item()
+            # gate_value() is now per-layer tanh(α_ℓ); log the mean to keep the scalar metric.
+            accum["tsdf_gate"] = policy.tsdf_encoder.gate_value().mean().item()
 
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)

@@ -21,7 +21,8 @@ lerobot/probes/tsdf_bit_identity.py (GPU + checkpoint), not here.
 
 import torch
 
-from lerobot.policies.depth_tsdf.modeling_depth_tsdf import build_tsdf_grid
+from lerobot.policies.depth_tsdf.configuration_depth_tsdf import DepthTsdfConfig
+from lerobot.policies.depth_tsdf.modeling_depth_tsdf import DepthTsdfEncoder, build_tsdf_grid
 
 # Camera at the gripper origin looking along +z (identity extrinsic), unit focal
 # scale: pixel (u, v) sees ray direction ((u-cx)/fx, (v-cy)/fy, 1).
@@ -121,6 +122,71 @@ def test_uint16_units_and_batching():
     )
     assert grid[0, 0, 8, 8, 7] > 0 > grid[0, 0, 8, 8, 8]  # surface at 58mm
     assert grid[1, 0, 8, 8, 3] > 0 > grid[1, 0, 8, 8, 4]  # surface at 54mm
+
+
+def test_encoder_read_params_per_layer_and_head():
+    # With the read layout known (the MolmoAct2 path), the gate is per-layer α_ℓ and the
+    # abstain bar b is per (layer, head). State-dict shape change vs the old scalar gate.
+    enc = DepthTsdfEncoder(DepthTsdfConfig(), d_mem=16, num_read_layers=5, num_read_heads=3)
+    assert enc.gate.shape == (5,)
+    assert enc.abstain_bias.shape == (5, 3)
+    assert torch.equal(enc.gate_value(), torch.zeros(5))  # tanh(0) = 0 at init
+    assert torch.equal(enc.abstain_bias, torch.zeros(5, 3))
+
+
+def test_encoder_scalar_gate_fallback_when_layout_unknown():
+    # Model-agnostic use (no read layout): keep today's single scalar gate, no bias.
+    enc = DepthTsdfEncoder(DepthTsdfConfig(), d_mem=16)
+    assert enc.gate.shape == ()
+    assert enc.abstain_bias is None
+
+
+def _read_inputs(*, head_dim=4, num_keys=4, scale_match=4.0):
+    # One query token strongly aligned with key 0, one aligned with nothing; keys are
+    # axis-aligned so token 0's best match score dominates and token 1's are all ~0.
+    q = torch.zeros(1, 2, 1, head_dim)
+    q[0, 0, 0, 0] = scale_match  # strong: q·k_0 = scale_match² before the 1/sqrt(d_h) scale
+    q[0, 1, 0, 0] = 1e-3  # weak: matches no key
+    k = torch.zeros(1, num_keys, 1, head_dim)
+    for j in range(num_keys):
+        k[0, j, 0, j % head_dim] = scale_match
+    v = torch.ones(1, num_keys, 1, head_dim)  # equal values ⇒ r_i = ones for every token
+    return q, k, v
+
+
+def test_gated_depth_read_zero_gate_is_exactly_zero():
+    # tanh(α_ℓ)=0 at init kills the whole term bitwise — the bit-identity guarantee, at the
+    # helper level (the real-checkpoint probe covers the full forward).
+    from lerobot.policies.molmoact2.modeling_molmoact2 import _gated_tsdf_depth_read
+
+    q, k, v = _read_inputs()
+    term = _gated_tsdf_depth_read(
+        q, (k, v), torch.zeros(()), torch.zeros(1), head_dim=4, out_dtype=torch.float32
+    )
+    assert torch.equal(term, torch.zeros_like(term))
+
+
+def test_gated_depth_read_admits_on_match_closes_on_high_bar():
+    # Values are all-ones, so r_i = ones and the term equals g_i·ones with gate=1: every
+    # component reads back g_i directly. A bar between the two tokens' E_i admits the strong
+    # match (g→1) and closes the non-match (g→0).
+    from lerobot.policies.molmoact2.modeling_molmoact2 import _gated_tsdf_depth_read
+
+    q, k, v = _read_inputs()
+    gate = torch.ones(())
+    term = _gated_tsdf_depth_read(q, (k, v), gate, torch.tensor([4.0]), head_dim=4, out_dtype=torch.float32)
+    assert term.shape == (1, 2, 1, 4)
+    g_strong = term[0, 0, 0]
+    g_weak = term[0, 1, 0]
+    assert torch.allclose(g_strong, g_strong[0].expand(4))  # g_i scales all components equally
+    assert g_strong[0] > 0.9  # strong match clears the bar
+    assert g_weak[0] < 0.1  # non-match does not
+
+    # A very low bar admits everything (g→1); a very high bar closes everything (g→0).
+    open_term = _gated_tsdf_depth_read(q, (k, v), gate, torch.tensor([-100.0]), head_dim=4, out_dtype=torch.float32)
+    shut_term = _gated_tsdf_depth_read(q, (k, v), gate, torch.tensor([100.0]), head_dim=4, out_dtype=torch.float32)
+    assert torch.allclose(open_term, torch.ones_like(open_term), atol=1e-3)
+    assert torch.allclose(shut_term, torch.zeros_like(shut_term), atol=1e-3)
 
 
 def test_buffer_sample_emits_next_depth_aligned_with_next_state():
