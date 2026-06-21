@@ -137,14 +137,14 @@ def build_dataset_frame(
 def resolve_depth_keys(policy_cfg) -> list[str] | None:
     """Depth cams to carry through ``build_dataset_frame`` for inference, or ``None``.
 
-    Returns the depth cam only when the policy opts into depth (a ``tsdf_config``).
-    The ``getattr`` guard is required, not a stopgap: ``tsdf_config`` lives only on
+    Returns the depth cam only when the policy opts into depth (a ``pointmap_config``).
+    The ``getattr`` guard is required, not a stopgap: ``pointmap_config`` lives only on
     depth-capable policy configs, and the shared rollout code that calls this also
     runs for pi05 (and any other policy) without the attribute — so this must stay
     a no-op for them.
     """
-    tsdf_config = getattr(policy_cfg, "tsdf_config", None)
-    return [tsdf_config.depth_key] if tsdf_config is not None else None
+    pointmap_config = getattr(policy_cfg, "pointmap_config", None)
+    return [pointmap_config.depth_key] if pointmap_config is not None else None
 
 
 def dataset_to_policy_features(features: dict[str, dict]) -> dict[str, PolicyFeature]:

@@ -21,7 +21,13 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import require_package
 
-from ..depth_tsdf.modeling_depth_tsdf import DepthTsdfEncoder
+from ..depth_pointmap.modeling_pointmap import DepthPointmapEncoder
+from ..depth_pointmap.modeling_stream import (
+    DepthStream,
+    gated_depth_read,
+    gather_kv_at_indices,
+    wrist_cam_token_indices,
+)
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
 
@@ -646,91 +652,35 @@ def _patch_numpy_dtype_cast(backbone: Any) -> None:
     backbone_module._to_numpy = _to_numpy_patched
 
 
-def _project_tsdf_memory(action_expert: Any, memory: Tensor) -> tuple[list[Tensor], Tensor]:
-    """Project TSDF memory (B, T, llm_kv_dim) through the expert's shared context projections.
-
-    Returns (per-block keys after each block's cross-attn k_norm, shared values), both
-    head-shaped (B, T, num_heads, head_dim) — the same treatment _prepare_kv_context gives
-    the VLM's per-layer KV states.
-    """
-    k_base = action_expert._project_kv_tensor(memory, action_expert.context_k_proj)
-    v = action_expert._project_kv_tensor(memory, action_expert.context_v_proj)
-    keys = []
-    for block in action_expert.blocks:
-        k = k_base
-        k_norm = block.cross_attn.k_norm
-        if k_norm is not None:
-            k = k_norm(k.transpose(1, 2)).transpose(1, 2)
-        keys.append(k)
-    return keys, v
-
-
-def _gated_tsdf_depth_read(
-    q: Tensor,
-    tsdf_kv: tuple[Tensor, Tensor],
-    tsdf_gate: Tensor,
-    tsdf_bias: Tensor | None,
-    *,
-    head_dim: int,
-    out_dtype: torch.dtype,
-) -> Tensor:
-    """A.3 per-token gated depth read (depth_tsdf_math.md §A.3, depth_tsdf_a3_plan.md §3).
-
-    Computes the additive depth term  tanh(α_ℓ) · g_i · r_i  for one cross-attention head
-    group, where for action token i and depth token j (head suppressed):
-
-        s_ij = q_i·k_j / sqrt(d_h),   E_i = logsumexp_j s_ij,   g_i = σ(E_i − b),
-        r_i  = Σ_j softmax_j(s_ij) · v_j.
-
-    g_i ∈ (0,1) is the per-token admit fraction — near 1 when token i's query found a strong
-    depth match, near 0 when it found none. Done manually (not SDPA) because we need the
-    scores to form E_i; the context read stays on SDPA. Scores/softmax run in float32.
-
-    q:         (B, Tq, H, Dh) action-token queries (post q_norm).
-    tsdf_kv:   (keys, values), each (B, Tk, H, Dh).
-    tsdf_gate: 0-dim tanh(α_ℓ) for this layer.   tsdf_bias: (H,) bar b_{ℓ,h} or None.
-    Returns the term in out_dtype, shape (B, Tq, H, Dh) — caller adds it to the context read.
-    """
-    k_tsdf, v_tsdf = tsdf_kv
-    scale = head_dim**-0.5
-    s = torch.einsum("bqhd,bkhd->bhqk", q.float(), k_tsdf.float()) * scale  # (B,H,Tq,Tk)
-    e = torch.logsumexp(s, dim=-1)  # (B,H,Tq) — strength of token i's best depth match
-    bias = 0.0 if tsdf_bias is None else tsdf_bias.view(1, -1, 1)  # (1,H,1)
-    g = torch.sigmoid(e - bias)  # (B,H,Tq) — per (token, head) admit fraction in (0,1)
-    p = torch.softmax(s, dim=-1).to(v_tsdf.dtype)  # (B,H,Tq,Tk)
-    r = torch.einsum("bhqk,bkhd->bqhd", p, v_tsdf)  # (B,Tq,H,Dh) — the depth content
-    g = g.transpose(1, 2).unsqueeze(-1).to(out_dtype)  # (B,Tq,H,1)
-    return tsdf_gate.to(out_dtype) * (g * r)
-
-
-def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
-    """Teach the action expert a gated additive TSDF depth read (depth_tsdf_design.md §5.4/§6.1).
+def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) -> None:
+    """Teach the action expert the point-map MoT read (depth_pointmap_design.md §B.4).
 
     Every block's cross-attention output becomes
 
-        out = sdpa(q, K_ctx, V_ctx) + tanh(α) · sdpa(q, K_tsdf, V_tsdf)
+        out = sdpa(q, K_ctx, V_ctx) + tanh(α_ℓ) · sdpa(q, [K_dℓ, k_⋆], [V_dℓ, 0])
 
-    merged before out_proj, with K/V_tsdf coming from the expert's existing shared
-    context_k_proj / context_v_proj (no new per-block weights). At α = 0 the added term is
-    exactly zero, so the expert is bit-identical to the depth-free model — the roadmap's
-    checksum requirement. This amends the design's single-softmax memory bank: appending
-    gate-zeroed K/V columns to one softmax would still absorb attention mass at init
-    (exp(q·0) = 1 per depth key), which is not bit-identical.
+    where (K_dℓ, V_dℓ) are the per-layer co-evolved depth state projected into the action
+    expert's head space and k_⋆ is the zero-value sink (see _gated_pointmap_depth_read). At
+    α_ℓ=0 the added term is exactly zero ⇒ the expert is bit-identical to the depth-free
+    model. Both reads are static-shape SDPA ⇒ CUDA-graph friendly.
 
-    Inference handoff: the policy sets ``action_expert._lerobot_tsdf_memory = (memory, gate)``
-    once per control step; the patched prepare_context projects it and attaches the per-block
-    KV to the returned context, which both the lerobot RTC loop and the snapshot's
-    generate_actions_from_inputs hand back to forward_with_context. The training loop calls
-    the blocks directly and passes ``tsdf_kv`` / ``tsdf_gate`` itself. All patched methods
-    keep their original behaviour when no TSDF context is present.
+    The co-evolving ``depth_stream`` is captured by closure (not attached to the expert, so
+    it is registered once on the policy). Inference handoff: the policy sets
+    ``action_expert._lerobot_pointmap = (init_tokens_f32, wrist_sel)`` once per control step;
+    the patched prepare_context slices the wrist-cam KV from the prefix, runs the stream, and
+    attaches the per-layer depth K/V + gate + sink to the context. The training loop runs the
+    stream block-by-block itself and passes ``depth_kv`` / ``depth_gate`` / ``depth_sink``
+    directly. All patched methods keep their original behaviour when no depth context exists.
     """
-    if getattr(action_expert, "_lerobot_tsdf_read_patched", False):
+    if getattr(action_expert, "_lerobot_pointmap_read_patched", False):
         return
     import sys
 
     modulate = sys.modules[type(action_expert).__module__]._modulate
 
-    def cross_attn_forward(self, x, *, kv_k, kv_v, attn_mask=None, tsdf_kv=None, tsdf_gate=None, tsdf_bias=None):
+    def cross_attn_forward(
+        self, x, *, kv_k, kv_v, attn_mask=None, depth_kv=None, depth_gate=None, depth_sink=None
+    ):
         bsz, tgt_len, _ = x.shape
         q = self.q_proj(x).view(bsz, tgt_len, self.num_heads, self.head_dim)
         k = self._as_heads(kv_k)
@@ -740,10 +690,8 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
             q = self.q_norm(q)
         q = q.transpose(1, 2)  # (B, Tq, H, Dh)
         out = self._attention(q, k, v, attn_mask=attn_mask)  # context read (SDPA), unchanged
-        if tsdf_kv is not None:
-            out = out + _gated_tsdf_depth_read(
-                q, tsdf_kv, tsdf_gate, tsdf_bias, head_dim=self.head_dim, out_dtype=out.dtype
-            )
+        if depth_kv is not None:
+            out = out + depth_gate.to(out.dtype) * gated_depth_read(q, depth_kv, depth_sink)
         out = out.reshape(bsz, tgt_len, self.hidden_size)
         return self.out_drop(self.out_proj(out))
 
@@ -758,9 +706,9 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
         is_causal=False,
         modulation=None,
         rope_cache=None,
-        tsdf_kv=None,
-        tsdf_gate=None,
-        tsdf_bias=None,
+        depth_kv=None,
+        depth_gate=None,
+        depth_sink=None,
     ):
         if modulation is None:
             modulation = self.modulation(conditioning).chunk(9, dim=1)
@@ -786,9 +734,9 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
             kv_k=cross_kv[0],
             kv_v=cross_kv[1],
             attn_mask=attn_mask,
-            tsdf_kv=tsdf_kv,
-            tsdf_gate=tsdf_gate,
-            tsdf_bias=tsdf_bias,
+            depth_kv=depth_kv,
+            depth_gate=depth_gate,
+            depth_sink=depth_sink,
         )
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.ff_norm(x), shift_mlp, scale_mlp))
         return x
@@ -797,12 +745,32 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
 
     def prepare_context(self, **kwargs):
         context = original_prepare_context(**kwargs)
-        handoff = getattr(self, "_lerobot_tsdf_memory", None)
+        handoff = getattr(self, "_lerobot_pointmap", None)
         if handoff is not None:
-            memory, gate, bias = handoff
-            context.tsdf_keys, context.tsdf_values = _project_tsdf_memory(self, memory)
-            context.tsdf_gate = gate  # (L,) per-layer tanh(α_ℓ)
-            context.tsdf_bias = bias  # (L, H) per-(layer, head) abstain bias
+            init_tokens, wrist_sel = handoff
+            dtype = kwargs["dtype"]
+            encoder_kv_states = kwargs["encoder_kv_states"]
+            device_type = init_tokens.device.type
+            with torch.autocast(device_type=device_type, enabled=False):
+                wrist_keys, wrist_values = [], []
+                for k_in, v_in in encoder_kv_states:
+                    wk, wv = gather_kv_at_indices(k_in.float(), v_in.float(), wrist_sel)
+                    wrist_keys.append(wk)
+                    wrist_values.append(wv)
+                states = depth_stream(init_tokens.float(), wrist_keys, wrist_values)
+                read_kv = [depth_stream.read_kv(state) for state in states]
+            depth_keys, depth_values = [], []
+            for block, (k_d, v_d) in zip(self.blocks, read_kv, strict=True):
+                k_d = k_d.to(dtype=dtype)
+                v_d = v_d.to(dtype=dtype)
+                if block.cross_attn.k_norm is not None:
+                    k_d = block.cross_attn.k_norm(k_d.transpose(1, 2)).transpose(1, 2)
+                depth_keys.append(k_d)
+                depth_values.append(v_d)
+            context.depth_keys = depth_keys
+            context.depth_values = depth_values
+            context.depth_gate = depth_stream.gate_value().to(dtype=dtype)  # (L,)
+            context.depth_sink = depth_stream.sink_logit.to(dtype=dtype)  # (L, H)
         return context
 
     def forward_with_context(self, actions, timesteps, *, context, modulation=None):
@@ -820,10 +788,10 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
             conditioning = modulation.conditioning
             block_modulations = modulation.block_modulations
             final_modulation = modulation.final_modulation
-        tsdf_keys = getattr(context, "tsdf_keys", None)
-        tsdf_values = getattr(context, "tsdf_values", None)
-        tsdf_gate = getattr(context, "tsdf_gate", None)  # (L,)
-        tsdf_bias = getattr(context, "tsdf_bias", None)  # (L, H)
+        depth_keys = getattr(context, "depth_keys", None)
+        depth_values = getattr(context, "depth_values", None)
+        depth_gate = getattr(context, "depth_gate", None)  # (L,)
+        depth_sink = getattr(context, "depth_sink", None)  # (L, H)
         x = self.action_embed(actions)
         if context.valid_action is not None:
             x = x * context.valid_action
@@ -839,9 +807,9 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
                 is_causal=self.config.causal_attn,
                 modulation=block_modulation,
                 rope_cache=context.rope_cache,
-                tsdf_kv=None if tsdf_keys is None else (tsdf_keys[idx], tsdf_values),
-                tsdf_gate=None if tsdf_gate is None else tsdf_gate[idx],
-                tsdf_bias=None if tsdf_bias is None else tsdf_bias[idx],
+                depth_kv=None if depth_keys is None else (depth_keys[idx], depth_values[idx]),
+                depth_gate=None if depth_gate is None else depth_gate[idx],
+                depth_sink=None if depth_sink is None else depth_sink[idx],
             )
             if context.valid_action is not None:
                 x = x * context.valid_action
@@ -855,8 +823,8 @@ def _patch_action_expert_tsdf_read(action_expert: Any) -> None:
         block.cross_attn.forward = types.MethodType(cross_attn_forward, block.cross_attn)
     action_expert.prepare_context = types.MethodType(prepare_context, action_expert)
     action_expert.forward_with_context = types.MethodType(forward_with_context, action_expert)
-    action_expert._lerobot_tsdf_memory = None
-    action_expert._lerobot_tsdf_read_patched = True
+    action_expert._lerobot_pointmap = None
+    action_expert._lerobot_pointmap_read_patched = True
 
 
 class MolmoAct2Policy(PreTrainedPolicy):
@@ -1010,20 +978,36 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
 
-        # Gripper-frame TSDF depth (depth_tsdf_design.md). Fresh module in float32; its
-        # memory is cast to the model dtype at the handoff. Patching the expert is a
-        # behaviour no-op until a TSDF context is actually passed.
-        self.tsdf_encoder: DepthTsdfEncoder | None = None
-        if self.config.tsdf_config is not None:
+        # Point-map depth read (fresh float32 modules; memory cast to the model dtype at
+        # the read boundary). When pointmap_config is set, point-map tokens co-evolve
+        # through a DepthStream and enter the action expert via the gated additive SDPA +
+        # sink read (depth_pointmap_design.md §B.4). Bit-identical at α=0; patching
+        # the expert is a behaviour no-op until a depth context is actually passed.
+        self.pointmap_encoder: DepthPointmapEncoder | None = None
+        self.depth_stream: DepthStream | None = None
+        if self.config.pointmap_config is not None:
+            pm_config = self.config.pointmap_config
             action_expert = self._action_expert()
             device = next(self.model.parameters()).device
-            self.tsdf_encoder = DepthTsdfEncoder(
-                self.config.tsdf_config,
-                d_mem=int(action_expert.llm_kv_dim),
-                num_read_layers=len(action_expert.blocks),
-                num_read_heads=action_expert.blocks[0].cross_attn.num_heads,
+            num_layers = len(action_expert.blocks)
+            stream_layers = pm_config.stream_layers or num_layers
+            if stream_layers != num_layers:
+                raise ValueError(
+                    f"pointmap stream_layers={stream_layers} must equal the action expert layer "
+                    f"count {num_layers} (the action expert reads one depth state per layer)."
+                )
+            cross_attn = action_expert.blocks[0].cross_attn
+            self.pointmap_encoder = DepthPointmapEncoder(pm_config, d_mem=pm_config.stream_width).to(
+                device=device, dtype=torch.float32
+            )
+            self.depth_stream = DepthStream(
+                pm_config,
+                d_vlm=int(action_expert.llm_kv_dim),
+                num_action_heads=cross_attn.num_heads,
+                action_head_dim=cross_attn.head_dim,
+                num_layers=num_layers,
             ).to(device=device, dtype=torch.float32)
-            _patch_action_expert_tsdf_read(action_expert)
+            _patch_action_expert_pointmap_read(action_expert, self.depth_stream)
 
         self.train(self.training)
 
@@ -1035,13 +1019,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if not hasattr(self, "model"):
             return
         hf_model = self._hf_model()
-        # The captured action-flow graph replays fixed buffers; per-observation TSDF depth
+        # The captured action-flow graph replays fixed buffers; per-observation depth
         # K/V are not registered graph inputs, so a replay would silently reuse the depth
-        # memory from capture time. Disable until depth memory becomes a static graph input.
+        # memory from capture time. Disabled when point-map depth is active until the
+        # per-observation depth K/V become static graph inputs (the additive SDPA read is
+        # itself graph-friendly — Stage 3 registers its K/V and flips this back on).
         enabled = bool(
             enabled
             and getattr(self.config, "enable_inference_cuda_graph", True)
-            and self.config.tsdf_config is None
+            and self.config.pointmap_config is None
         )
         managers = [
             getattr(self._backbone(), "action_cuda_graph_manager", None),
@@ -1068,6 +1054,27 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _action_expert(self) -> torch.nn.Module:
         return self._backbone()._require_action_expert()
 
+    def _pointmap_wrist_meta(self) -> tuple[int, int, int]:
+        """(image_patch_id, num_images, cam_index) for slicing the depth camera's tokens.
+
+        cam_index is the position of the point-map depth camera in the image-token order.
+        That order must match the processor's: it uses ``image_keys`` when set, else
+        ``sorted`` bare camera names (processor_molmoact2.py `_resolve_image_keys`). We
+        mirror that here — ``image_keys`` is empty when the policy is built from scratch
+        (no dataset metadata), in which case the bare names come from ``image_features``.
+        """
+        pm_config = self.config.pointmap_config
+        image_keys = list(self.config.image_keys)
+        if not image_keys:
+            image_keys = sorted(key.split(".")[-1] for key in self.config.image_features)
+        if pm_config.depth_key not in image_keys:
+            raise ValueError(
+                f"pointmap depth_key={pm_config.depth_key!r} not in image cameras {image_keys}; the "
+                "depth stream attends that camera's RGB tokens, so it must be one of the images."
+            )
+        image_patch_id = int(self.model.config.image_patch_id)
+        return image_patch_id, len(image_keys), image_keys.index(pm_config.depth_key)
+
     def _enable_gradient_checkpointing(self) -> None:
         enable_gradient_checkpointing = getattr(self._hf_model(), "gradient_checkpointing_enable", None)
         if callable(enable_gradient_checkpointing):
@@ -1088,7 +1095,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _freeze_non_action_expert_parameters(self) -> None:
         trainable_params = 0
         for name, param in self.named_parameters():
-            param.requires_grad = ("action_expert" in name) or ("tsdf_encoder" in name)
+            param.requires_grad = any(
+                key in name
+                for key in ("action_expert", "pointmap_encoder", "depth_stream")
+            )
             if param.requires_grad:
                 trainable_params += param.numel()
         if trainable_params == 0:
@@ -1148,7 +1158,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
-            if "tsdf_encoder" in name:
+            if any(key in name for key in ("pointmap_encoder", "depth_stream")):
                 depth_params.append(param)
             elif "action_expert" in name:
                 action_expert_params.append(param)
@@ -1608,16 +1618,28 @@ class MolmoAct2Policy(PreTrainedPolicy):
         xt_flat = xt.reshape(batch_size * num_flow_timesteps, actions.shape[1], actions.shape[2])
         timesteps_flat = timesteps.reshape(batch_size * num_flow_timesteps)
 
-        tsdf_keys = tsdf_values = tsdf_gate = tsdf_bias = None
-        if self.tsdf_encoder is not None:
-            tsdf_memory, tsdf_gate = self.tsdf_encoder.memory_from_batch(
+        # Point-map MoT depth stream: encode initial tokens (B, N, d_d) once, then evolve
+        # one DepthStream block per layer inside run_layer (slicing that layer's wrist-cam
+        # KV). depth_state threads through the layer loop at batch B (observation-only);
+        # per-layer read K/V are expanded to the flow-timestep batch at the read site.
+        depth_state = depth_wrist_sel = None
+        if self.pointmap_encoder is not None:
+            init_tokens = self.pointmap_encoder.memory_from_batch(
                 batch, batch_size=batch_size, device=device
             )
-            tsdf_bias = self.tsdf_encoder.abstain_bias  # (L, H)
-            tsdf_keys, tsdf_values = _project_tsdf_memory(action_expert, tsdf_memory.to(dtype=actions.dtype))
-            if num_flow_timesteps != 1:
-                tsdf_keys = [self._expand_mask(k, num_flow_timesteps) for k in tsdf_keys]
-                tsdf_values = self._expand_mask(tsdf_values, num_flow_timesteps)
+            depth_state = init_tokens.to(dtype=torch.float32)  # stream runs in float32
+            image_patch_id, num_images, cam_index = self._pointmap_wrist_meta()
+            depth_wrist_sel = wrist_cam_token_indices(
+                model_inputs["input_ids"],
+                image_patch_id=image_patch_id,
+                num_images=num_images,
+                cam_index=cam_index,
+            )
+            # NOTE: the gate tanh(α_ℓ) is read INSIDE run_layer (below) straight off the
+            # parameter, not precomputed here — under gradient checkpointing a non-leaf
+            # intermediate captured by closure loses its gradient to α (see
+            # depth_pointmap_gate_gradient.md). Reading the param in-region matches sink_logit.
+
         hidden_states, causal_mask_mapping, position_ids, cache_position = (
             self._prepare_joint_training_backbone_inputs(model_inputs)
         )
@@ -1681,8 +1703,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
         )
 
         def run_layer(
-            layer_idx: int, layer_hidden: Tensor, layer_action_hidden: Tensor
-        ) -> tuple[Tensor, Tensor]:
+            layer_idx: int,
+            layer_hidden: Tensor,
+            layer_action_hidden: Tensor,
+            layer_depth_state: Tensor | None,
+        ) -> tuple[Tensor, Tensor, Tensor | None]:
             decoder_block = transformer.blocks[layer_idx]
             action_block = action_expert.blocks[layer_idx]
             if transformer.config.rope_scaling_layers is not None:
@@ -1722,13 +1747,30 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 k_ctx = self._expand_mask(k_ctx, num_flow_timesteps)
                 v_ctx = self._expand_mask(v_ctx, num_flow_timesteps)
 
-            # tsdf kwargs only exist on the patched block forward (tsdf_config set).
-            tsdf_kwargs: dict[str, Any] = {}
-            if tsdf_keys is not None:
-                tsdf_kwargs = {
-                    "tsdf_kv": (tsdf_keys[layer_idx], tsdf_values),
-                    "tsdf_gate": tsdf_gate[layer_idx],
-                    "tsdf_bias": tsdf_bias[layer_idx],
+            # Depth read kwargs exist only on the patched block forward (pointmap_config set).
+            depth_kwargs: dict[str, Any] = {}
+            next_depth_state = layer_depth_state
+            if self.pointmap_encoder is not None:
+                # Evolve one DepthStream block (float32) using this layer's wrist-cam KV,
+                # then project the new state into the action expert's head space.
+                wk, wv = gather_kv_at_indices(key_states, value_states, depth_wrist_sel)
+                with torch.autocast(device_type=device.type, enabled=False):
+                    next_depth_state = self.depth_stream.blocks[layer_idx](
+                        layer_depth_state, wk.float(), wv.float()
+                    )
+                    k_d, v_d = self.depth_stream.read_kv(next_depth_state)
+                k_d = k_d.to(dtype=layer_action_hidden.dtype)
+                v_d = v_d.to(dtype=layer_action_hidden.dtype)
+                dk_norm = action_block.cross_attn.k_norm
+                if dk_norm is not None:
+                    k_d = dk_norm(k_d.transpose(1, 2)).transpose(1, 2)
+                if num_flow_timesteps != 1:
+                    k_d = self._expand_mask(k_d, num_flow_timesteps)
+                    v_d = self._expand_mask(v_d, num_flow_timesteps)
+                depth_kwargs = {
+                    "depth_kv": (k_d, v_d),
+                    "depth_gate": torch.tanh(self.depth_stream.gate[layer_idx]).to(dtype=layer_action_hidden.dtype),
+                    "depth_sink": self.depth_stream.sink_logit[layer_idx].to(dtype=layer_action_hidden.dtype),
                 }
             next_action_hidden = action_block(
                 layer_action_hidden,
@@ -1739,26 +1781,30 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 is_causal=action_expert.config.causal_attn,
                 modulation=None,
                 rope_cache=rope_cache,
-                **tsdf_kwargs,
+                **depth_kwargs,
             )
             if valid_action is not None:
                 next_action_hidden = next_action_hidden * valid_action
-            return next_hidden, next_action_hidden
+            return next_hidden, next_action_hidden, next_depth_state
 
         for layer_idx in range(int(transformer.config.num_hidden_layers)):
             if use_gradient_checkpointing:
-                hidden_states, action_hidden = torch.utils.checkpoint.checkpoint(
-                    lambda layer_hidden, layer_action_hidden, idx=layer_idx: run_layer(
+                hidden_states, action_hidden, depth_state = torch.utils.checkpoint.checkpoint(
+                    lambda layer_hidden, layer_action_hidden, layer_depth_state, idx=layer_idx: run_layer(
                         idx,
                         layer_hidden,
                         layer_action_hidden,
+                        layer_depth_state,
                     ),
                     hidden_states,
                     action_hidden,
+                    depth_state,
                     use_reentrant=False,
                 )
             else:
-                hidden_states, action_hidden = run_layer(layer_idx, hidden_states, action_hidden)
+                hidden_states, action_hidden, depth_state = run_layer(
+                    layer_idx, hidden_states, action_hidden, depth_state
+                )
 
         hidden_states = transformer.ln_f(hidden_states)
         pred_velocity = action_expert.final_layer(action_hidden, conditioning)
@@ -2344,18 +2390,23 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else nullcontext()
         )
         with autocast_context:
-            # TSDF memory: encode once per control step (§6.2) and hand off to the patched
+            # Depth handoff: encode once per control step (§6.2) and hand off to the patched
             # action expert; both continuous paths reach it through prepare_context. The
             # discrete path never runs the expert, so depth structurally cannot enter it.
-            if self.tsdf_encoder is not None and inference_action_mode != "discrete":
-                tsdf_memory, tsdf_gate = self.tsdf_encoder.memory_from_batch(
+            if self.pointmap_encoder is not None and inference_action_mode != "discrete":
+                # Hand off the encoder's initial tokens + the wrist-cam token positions; the
+                # patched prepare_context slices that camera's per-layer KV and runs the stream.
+                init_tokens = self.pointmap_encoder.memory_from_batch(
                     batch, batch_size=batch_size, device=device
                 )
-                self._action_expert()._lerobot_tsdf_memory = (
-                    tsdf_memory.to(dtype=model_dtype),
-                    tsdf_gate,
-                    self.tsdf_encoder.abstain_bias,
+                image_patch_id, num_images, cam_index = self._pointmap_wrist_meta()
+                wrist_sel = wrist_cam_token_indices(
+                    model_inputs["input_ids"],
+                    image_patch_id=image_patch_id,
+                    num_images=num_images,
+                    cam_index=cam_index,
                 )
+                self._action_expert()._lerobot_pointmap = (init_tokens.to(dtype=torch.float32), wrist_sel)
             if inference_action_mode == "discrete":
                 if self._rtc_enabled():
                     raise ValueError("RTC is only supported for continuous MolmoAct2 inference.")

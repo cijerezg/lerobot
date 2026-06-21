@@ -23,10 +23,15 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.policies.depth_pointmap.modeling_pointmap import DepthPointmapEncoder
+from lerobot.policies.depth_pointmap.modeling_stream import (
+    DepthStreamBlock,
+    gather_kv_at_indices,
+    wrist_cam_token_indices,
+)
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
 from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
 from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig
-
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -216,6 +221,32 @@ class MolmoAct2Critic(nn.Module):
         self.rotary_emb: nn.Module | None = None
         self.ln_f: nn.Module | None = None
 
+        # Point-map depth (actor/critic symmetry, depth_pointmap_design.md §B.8). The critic
+        # owns its OWN depth modules (mirrors its own vision_backbone): TD gradient trains
+        # only these, never the actor's flow-trained encoder, and they ride critic_target's
+        # EMA. The critic is bidirectional + reads its value queries once at the end, so the
+        # depth tokens co-evolve through their own DepthStreamBlocks (attending the critic's
+        # wrist-cam tokens) and the FINAL state is appended to the sequence for the queries to
+        # attend — no gate/sink (the critic isn't frozen, so no bit-identity constraint).
+        # Names are `depth_*` so _apply_critic_freeze keeps them trainable (else-branch freezes).
+        self.pointmap_config: Any = getattr(config, "pointmap_config", None)
+        self.depth_encoder: DepthPointmapEncoder | None = None
+        self.depth_blocks: nn.ModuleList | None = None
+        self.depth_read_proj: nn.Linear | None = None
+        if self.pointmap_config is not None:
+            pm = self.pointmap_config
+            self.depth_encoder = DepthPointmapEncoder(pm, d_mem=pm.stream_width)
+            self.depth_blocks = nn.ModuleList(
+                DepthStreamBlock(
+                    d_d=pm.stream_width,
+                    d_vlm=D,  # critic wrist-cam tokens live at the text hidden size
+                    num_heads=pm.stream_num_heads,
+                    mlp_ratio=pm.stream_mlp_ratio,
+                )
+                for _ in range(self.num_critic_blocks)
+            )
+            self.depth_read_proj = nn.Linear(pm.stream_width, D)
+
     # ── Weight initialisation ─────────────────────────────────────────────────
 
     def initialize_weights_from_backbone(self, backbone: Any) -> None:
@@ -295,9 +326,45 @@ class MolmoAct2Critic(nn.Module):
         flat[is_image_patch] = flat[is_image_patch] + vision_features.to(flat)
         return flat.reshape_as(text_embeds)
 
+    # ── Depth co-evolution ────────────────────────────────────────────────────
+
+    def compute_depth_tokens(
+        self,
+        batch: dict,
+        inputs_embeds: Tensor,
+        input_ids: Tensor,
+        *,
+        image_patch_id: int,
+        num_images: int,
+        cam_index: int,
+    ) -> Tensor | None:
+        """Co-evolve point-map depth tokens attending the critic's wrist-cam tokens (D6).
+
+        Encodes the batch's depth into N tokens, evolves them through the critic's own
+        DepthStreamBlocks (each attending the depth camera's tokens sliced from the critic's
+        obs embeds), and projects the final state to the text hidden size. Returns (B, N, D)
+        to append to the critic sequence, or None when depth-free. Mirrors the actor's
+        co-evolving stream, adapted to the critic's single (end-of-stack) read.
+        """
+        if self.depth_encoder is None:
+            return None
+        init = self.depth_encoder.memory_from_batch(
+            batch, batch_size=inputs_embeds.shape[0], device=inputs_embeds.device
+        ).to(dtype=inputs_embeds.dtype)  # (B, N, d_d)
+        sel = wrist_cam_token_indices(
+            input_ids, image_patch_id=image_patch_id, num_images=num_images, cam_index=cam_index
+        )
+        wrist, _ = gather_kv_at_indices(inputs_embeds, inputs_embeds, sel)  # (B, T_w, D)
+        tokens = init
+        for block in self.depth_blocks:
+            tokens = block(tokens, wrist, wrist)
+        return self.depth_read_proj(tokens)  # (B, N, D)
+
     # ── Forward pass ──────────────────────────────────────────────────────────
 
-    def forward(self, inputs_embeds: Tensor, attention_mask: Tensor) -> dict[str, Tensor]:
+    def forward(
+        self, inputs_embeds: Tensor, attention_mask: Tensor, depth_tokens: Tensor | None = None
+    ) -> dict[str, Tensor]:
         """
         Args:
             inputs_embeds:  [B, seq_len, D]
@@ -313,14 +380,22 @@ class MolmoAct2Critic(nn.Module):
         device = inputs_embeds.device
         dtype = inputs_embeds.dtype
 
-        # Append value query tokens.
+        # Sequence: [obs | depth (optional) | value-queries]. Depth tokens are full
+        # bidirectional members — the value queries read them, and the critic is trained
+        # from scratch so there is no frozen-policy constraint to preserve.
         queries = self.value_queries.expand(B, -1, -1).to(dtype=dtype)
-        hidden_states = torch.cat([inputs_embeds, queries], dim=1)
+        attn_bool = attention_mask.to(torch.bool)
+        parts = [inputs_embeds]
+        masks = [attn_bool]
+        if depth_tokens is not None:
+            parts.append(depth_tokens.to(dtype=dtype))
+            masks.append(torch.ones(B, depth_tokens.shape[1], dtype=torch.bool, device=device))
+        parts.append(queries)
+        masks.append(torch.ones(B, self.num_value_bins, dtype=torch.bool, device=device))
+        hidden_states = torch.cat(parts, dim=1)
 
         # Build bidirectional 4-D attention bias.
-        attn_bool = attention_mask.to(torch.bool)
-        query_mask = torch.ones(B, self.num_value_bins, dtype=torch.bool, device=device)
-        full_mask = torch.cat([attn_bool, query_mask], dim=1)  # [B, full_len]
+        full_mask = torch.cat(masks, dim=1)  # [B, full_len]
         full_len = full_mask.shape[1]
 
         # [B, 1, full_len, full_len] — valid → 0.0, invalid → -inf
@@ -355,8 +430,8 @@ class MolmoAct2Critic(nn.Module):
 
         hidden_states = self.ln_f(hidden_states)
 
-        # Extract query outputs and map to logits.
-        queries_out = hidden_states[:, seq_len:]  # [B, num_value_bins, D]
+        # Extract query outputs and map to logits (value queries are the trailing tokens).
+        queries_out = hidden_states[:, -self.num_value_bins :]  # [B, num_value_bins, D]
         logits = self.bin_logit_head(queries_out.to(self.compute_dtype)).squeeze(-1)  # [B, num_bins]
 
         probs = F.softmax(logits, dim=-1)
@@ -517,9 +592,22 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
                     inputs_embeds.shape[:2], dtype=torch.bool, device=inputs_embeds.device
                 )
 
-        # TODO(tsdf-critic): feed the shared DepthTsdfEncoder memory to the critic here
-        # (actor-critic symmetry, depth_tsdf_design.md §6.1) — critic-side workstream.
-        return critic_module(inputs_embeds, attention_mask.to(torch.bool))
+        # Point-map depth (D6): co-evolve depth tokens attending this critic's wrist-cam
+        # tokens, append them to the sequence for the value queries to read. critic_module is
+        # critic or critic_target, so V(s) uses the live depth modules and V(s') uses the EMA
+        # copy on next_depth (batch["observation.depth.{cam}"] holds the right one per caller).
+        depth_tokens = None
+        if critic_module.depth_encoder is not None and input_ids is not None:
+            image_patch_id, num_images, cam_index = self._pointmap_wrist_meta()
+            depth_tokens = critic_module.compute_depth_tokens(
+                batch,
+                inputs_embeds,
+                input_ids,
+                image_patch_id=image_patch_id,
+                num_images=num_images,
+                cam_index=cam_index,
+            )
+        return critic_module(inputs_embeds, attention_mask.to(torch.bool), depth_tokens=depth_tokens)
 
     def forward_critic(self, batch: dict) -> dict[str, torch.Tensor]:
         """V(s) with gradient — used for critic updates."""

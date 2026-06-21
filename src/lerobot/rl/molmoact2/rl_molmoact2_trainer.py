@@ -303,7 +303,13 @@ class MolmoAct2Trainer(Trainer):
             if name.startswith("critic.") or name.startswith("critic_target."):
                 continue  # critic handled separately
 
-            if ".action_expert." in name:
+            if "pointmap_encoder" in name or "depth_stream" in name:
+                # Fresh point-map depth modules (encoder + co-evolving stream + gate/sink),
+                # trained from scratch — always trainable, mirroring the critic's depth_*
+                # branch in _apply_critic_freeze. Without this they fall through to the
+                # else-branch below and get frozen, so the actor gate α never learns.
+                param.requires_grad = True
+            elif ".action_expert." in name:
                 param.requires_grad = True
             elif ".transformer.wte" in name:
                 param.requires_grad = not freeze_embedding
@@ -338,8 +344,12 @@ class MolmoAct2Trainer(Trainer):
         )
 
         for name, param in critic_net.named_parameters():
-            # Always-trainable critic heads (fresh modules trained from scratch).
-            if name.startswith("value_queries") or name.startswith("bin_logit_head"):
+            # Always-trainable critic heads + depth modules (fresh, trained from scratch).
+            if (
+                name.startswith("value_queries")
+                or name.startswith("bin_logit_head")
+                or name.startswith("depth_")  # depth_encoder / depth_blocks / depth_read_proj
+            ):
                 param.requires_grad = True
             elif "transformer_blocks." in name:
                 param.requires_grad = _layer_idx_after(name, "transformer_blocks.") in cr_layers
@@ -431,9 +441,9 @@ class MolmoAct2Trainer(Trainer):
             if done.dim() == 1:
                 done = done.unsqueeze(-1)
 
-            # Lift depth into both critic batches (no-op unless tsdf_config is set): current-state
+            # Lift depth into both critic batches (no-op unless pointmap_config is set): current-state
             # depth for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
-            # Unconsumed until the critic-side depth read lands (TODO(tsdf-critic), rl_molmoact2.py).
+            # Unconsumed until the critic-side depth read lands (TODO(pointmap-critic), rl_molmoact2.py).
             observations = self._inject_depth_observations(
                 observations, raw.get("complementary_info"), cfg
             )
@@ -550,9 +560,9 @@ class MolmoAct2Trainer(Trainer):
         if done.dim() == 1:
             done = done.unsqueeze(-1)
 
-        # Lift depth into both critic batches (no-op unless tsdf_config is set): current-state depth
+        # Lift depth into both critic batches (no-op unless pointmap_config is set): current-state depth
         # for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
-        # Unconsumed until the critic-side depth read lands (TODO(tsdf-critic), rl_molmoact2.py).
+        # Unconsumed until the critic-side depth read lands (TODO(pointmap-critic), rl_molmoact2.py).
         observations = self._inject_depth_observations(
             observations, batch.get("complementary_info"), cfg
         )
@@ -632,23 +642,23 @@ class MolmoAct2Trainer(Trainer):
         where ``robot_key == "{cam}.depth"`` (e.g. ``depth.wrist.depth``, a
         ``(B, H, W)`` raw uint16 memmap slice). Here we strip the ``key_prefix``
         and the trailing ``.depth`` to recover the bare cam, gate on the policy's
-        ``tsdf_config.depth_key``, and write it back as ``observation.depth.{cam}``
-        shaped ``(B, 1, H, W)`` float32. Values stay raw sensor units — the TSDF
-        builder consumes metric depth (depth_tsdf_design.md §7).
+        ``pointmap_config.depth_key``, and write it back as ``observation.depth.{cam}``
+        shaped ``(B, 1, H, W)`` float32. Values stay raw sensor units — the point-map
+        builder consumes metric depth (depth_pointmap_design.md §A.1).
 
         Hard no-op when depth is disabled or absent. Callers inject into every
         critic/actor forward: current-state batches lift ``depth.*`` and the
         target V(s') batch lifts ``next_depth.*`` (the buffer samples next-state
         depth at the same index next_state is derived from).
         """
-        tsdf_config = getattr(cfg.policy, "tsdf_config", None)
-        if tsdf_config is None or not comp_data:
+        pointmap_config = getattr(cfg.policy, "pointmap_config", None)
+        if pointmap_config is None or not comp_data:
             return observations
         for comp_key, tensor in comp_data.items():
             if not isinstance(comp_key, str) or not comp_key.startswith(key_prefix):
                 continue
             cam = comp_key[len(key_prefix) :].removesuffix(".depth")
-            if cam != tsdf_config.depth_key:
+            if cam != pointmap_config.depth_key:
                 continue
             depth = tensor.float()
             if depth.dim() == 3:  # (B, H, W) -> (B, 1, H, W)
@@ -837,22 +847,22 @@ class MolmoAct2Trainer(Trainer):
                 v_next_values_actor_list.append(value_info["v_next_values"])
 
             # Lift recorded depth into the actor forward batch (no-op unless
-            # tsdf_config set). compute_advantage injects for its own critic V(s)
+            # pointmap_config set). compute_advantage injects for its own critic V(s)
             # forward; this covers the case where it didn't run on this batch.
             observations = self._inject_depth_observations(
                 observations, raw.get("complementary_info"), cfg
             )
             # One-shot depth confirmation for the TRAINING path (the inference path has its own):
             # a cache/buffer without the depth column would otherwise train on the null bank silently.
-            tsdf_config = getattr(cfg.policy, "tsdf_config", None)
-            if tsdf_config is not None and not getattr(self, "_depth_training_logged", False):
+            pointmap_config = getattr(cfg.policy, "pointmap_config", None)
+            if pointmap_config is not None and not getattr(self, "_depth_training_logged", False):
                 self._depth_training_logged = True
-                cam = tsdf_config.depth_key
+                cam = pointmap_config.depth_key
                 depth = observations.get(f"observation.depth.{cam}")
                 if depth is None:
                     logging.warning(
                         f"MolmoAct2 training: observation.depth.{cam} MISSING from the batch despite "
-                        "tsdf_config being set — flow loss trains on the null depth bank."
+                        "pointmap_config being set — flow loss trains on the null depth bank."
                     )
                 else:
                     logging.info(
@@ -908,10 +918,30 @@ class MolmoAct2Trainer(Trainer):
         policy_opt.step()
 
         accum["actor_grad_norm"] = actor_grad_norm
-        # Depth gate uptake (depth_tsdf_design.md §9.1): pinned at ~0 means the expert isn't using depth.
-        if getattr(policy, "tsdf_encoder", None) is not None:
-            # gate_value() is now per-layer tanh(α_ℓ); log the mean to keep the scalar metric.
-            accum["tsdf_gate"] = policy.tsdf_encoder.gate_value().mean().item()
+        # Point-map MoT gate uptake (depth_pointmap_design.md §B.5): per-layer tanh(α_ℓ).
+        # Mean tracks overall admission; abs-max flags any single layer opening first.
+        if getattr(policy, "depth_stream", None) is not None:
+            pointmap_gate = policy.depth_stream.gate_value()  # (L,)
+            accum["pointmap_gate"] = pointmap_gate.mean().item()
+            accum["pointmap_gate_absmax"] = pointmap_gate.abs().max().item()
+            # TEMP per-iteration depth-grad diagnostic (remove once uptake is confirmed).
+            # Localizes where the gradient dies: report requires_grad + grad status for
+            # the gate, the sink, and a stream-block weight — all read identically inside
+            # run_layer. At init sink/block grads should be exact-zero TENSORS (gate=0
+            # multiplies them); None means that param isn't in the loss graph at all.
+            def _grad_tag(p):
+                if not p.requires_grad:
+                    return "no-req-grad"
+                if p.grad is None:
+                    return "grad=None"
+                return f"grad_absmax={p.grad.abs().max().item():.2e}"
+
+            ds = policy.depth_stream
+            block_w = next(ds.blocks[0].parameters())
+            logging.info(
+                f"[gate] mean={accum['pointmap_gate']:+.3e} absmax={accum['pointmap_gate_absmax']:.3e} | "
+                f"gate[{_grad_tag(ds.gate)}] sink[{_grad_tag(ds.sink_logit)}] block0[{_grad_tag(block_w)}]"
+            )
 
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)
@@ -1061,15 +1091,15 @@ class MolmoAct2Trainer(Trainer):
             batch = preprocessor(pre_input)
         # One-shot depth confirmation: the delivery chain (env worker -> shared state -> filter ->
         # preprocessor) has several silent drop points, so log once whether depth actually made it.
-        tsdf_config = getattr(cfg.policy, "tsdf_config", None)
-        if tsdf_config is not None and not getattr(self, "_depth_inference_logged", False):
+        pointmap_config = getattr(cfg.policy, "pointmap_config", None)
+        if pointmap_config is not None and not getattr(self, "_depth_inference_logged", False):
             self._depth_inference_logged = True
-            cam = tsdf_config.depth_key
+            cam = pointmap_config.depth_key
             depth = batch.get(f"observation.depth.{cam}")
             if depth is None:
                 logging.warning(
                     f"MolmoAct2 inference: observation.depth.{cam} MISSING from the batch despite "
-                    "tsdf_config being set — the policy falls back to the null depth bank."
+                    "pointmap_config being set — the policy falls back to the null depth bank."
                 )
             else:
                 logging.info(
@@ -1128,7 +1158,7 @@ class MolmoAct2Trainer(Trainer):
         wandb_logger,
         _policy: nn.Module,
     ) -> None:
-        console_keys = ("loss_flow", "actor_grad_norm", "loss_critic")
+        console_keys = ("loss_flow", "actor_grad_norm", "loss_critic", "pointmap_gate")
         console_scalars = {
             k: training_infos[k]
             for k in console_keys

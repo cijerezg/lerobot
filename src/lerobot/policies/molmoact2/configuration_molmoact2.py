@@ -14,7 +14,7 @@ from lerobot.optim import (
 from lerobot.rl.rl_trainer import TrainableParamsConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-from ..depth_tsdf.configuration_depth_tsdf import DepthTsdfConfig
+from ..depth_pointmap.configuration_pointmap import DepthPointmapConfig
 from ..rtc.configuration_rtc import RTCConfig
 
 MOLMOACT2_DEFAULT_NUM_IMAGES = 2
@@ -118,12 +118,13 @@ class MolmoAct2Config(PreTrainedConfig):
     image_storage_dtype: str = "uint8"
     image_storage_size: tuple[int, int] | None = None
 
-    # --- Gripper-frame TSDF depth (depth_tsdf_design.md) ----------------------
+    # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
     # None => depth-free: no encoder built, no depth key shipped, forward cost
-    # unchanged. When set, the shared DepthTsdfEncoder's memory tokens enter the
-    # action expert's cross-attention as a gated additive read; the VLM prefix
-    # is untouched.
-    tsdf_config: DepthTsdfConfig | None = None
+    # unchanged. When set, the DepthPointmapEncoder tokenizes the wrist depth and a
+    # co-evolving DepthStream feeds the action expert via a gated additive SDPA + sink
+    # read (depth_pointmap_design.md §B.4); the VLM prefix is untouched, and the read
+    # is bit-identical to depth-free at init (gate α=0).
+    pointmap_config: DepthPointmapConfig | None = None
     normalize_language: bool = True
     add_setup_tokens: bool = True
     add_control_tokens: bool = True
@@ -259,8 +260,8 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.max_sequence_length is not None and self.max_sequence_length < 1:
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
-        if self.tsdf_config is not None and self.action_mode == "discrete":
-            raise ValueError("tsdf_config feeds the action expert; action_mode='discrete' never uses it.")
+        if self.pointmap_config is not None and self.action_mode == "discrete":
+            raise ValueError("pointmap_config feeds the action expert; action_mode='discrete' never uses it.")
 
     def inferred_max_sequence_length(
         self,

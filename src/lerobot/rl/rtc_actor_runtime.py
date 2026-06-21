@@ -89,11 +89,11 @@ def _raw_joint_action(online_env, action_dim: int, device) -> torch.Tensor:
 def _obs_with_depth(policy_obs: dict, env_obs: dict, cfg) -> dict:
     """Carry raw {cam}.depth from the env observation into the inference observation under the
     canonical observation.depth.{cam} key (convert_env_obs_to_policy_format drops depth; values
-    stay raw — the TSDF builder consumes metric depth). Gated on the POLICY's tsdf_config, not
-    the camera's use_depth. Returns a shallow copy when depth is added so the caller's dict
+    stay raw — the point-map builder consumes metric depth). Gated on the POLICY's pointmap_config,
+    not the camera's use_depth. Returns a shallow copy when depth is added so the caller's dict
     (also used for transition storage / episode logs) stays depth-free.
     """
-    if getattr(cfg.policy, "tsdf_config", None) is None:
+    if getattr(cfg.policy, "pointmap_config", None) is None:
         return policy_obs
     depth = {
         f"observation.depth.{key[: -len('.depth')]}": val
@@ -470,7 +470,7 @@ def rtc_inference_worker(
                 continue
 
             # observation.depth.* is not an input_feature; it is only present when the env worker
-            # injected it (tsdf_config set), so carrying it through keeps inference depth-aware.
+            # injected it (pointmap_config set), so carrying it through keeps inference depth-aware.
             obs_filtered = {
                 k: v
                 for k, v in latest_obs.items()
@@ -833,8 +833,8 @@ def rtc_env_worker(
             # (depth.{cam}.depth) so online/offline batches concatenate without padding and the
             # trainer/sampler treat both identically (incl. next_depth.* for the critic target).
             # Pulled from the unfiltered transition so depth stays aligned with `state`; gated on
-            # the policy's tsdf_config, not the camera's use_depth (mirrors rl/actor.py).
-            if getattr(cfg.policy, "tsdf_config", None) is not None:
+            # the policy's pointmap_config, not the camera's use_depth (mirrors rl/actor.py).
+            if getattr(cfg.policy, "pointmap_config", None) is not None:
                 for key, val in transition[TransitionKey.OBSERVATION].items():
                     if isinstance(key, str) and key.endswith(".depth"):
                         complementary_info[f"depth.{key}"] = val

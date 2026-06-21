@@ -223,8 +223,8 @@ def main():
     complementary_info_keys = [k for k in sample if k.startswith("complementary_info.")]
 
     # Sidecar depth keys: subdirs under {root}/depth/ written by depth_writer.py at record time.
-    # Stored here as RAW uint16 (no bf16, no clip) — the TSDF builder consumes metric depth at
-    # full 0.1mm precision (depth_tsdf_design.md §7).
+    # Stored here as RAW uint16 (no bf16, no clip) — the point-map builder consumes metric depth at
+    # full 0.1mm precision (depth_pointmap_design.md §A.1).
     depth_root = Path(dataset.root) / "depth"
     depth_keys = sorted(p.name for p in depth_root.iterdir()) if depth_root.exists() else []
     logger.info(f"Depth sidecar keys: {depth_keys}")

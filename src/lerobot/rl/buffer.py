@@ -741,7 +741,7 @@ class ReplayBuffer:
             logger.info(f"  complementary_info.{k}: {replay_buffer.complementary_info[k].shape}")
 
         # Depth sidecar: surfaced through complementary_info but kept RAW uint16 (no bf16 view) and
-        # memmap-backed (large, like images). The TSDF builder consumes raw metric depth downstream.
+        # memmap-backed (large, like images). The point-map builder consumes raw metric depth downstream.
         for k in meta.get("depth_keys", []):
             full_key = f"depth.{k}"
             if not (cache_dir / f"{_sanitize(full_key)}.bin").exists():
