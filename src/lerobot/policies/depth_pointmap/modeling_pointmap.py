@@ -40,7 +40,7 @@ def back_project(
     """Depth image → metric point map in the camera frame (design §1).
 
     Args:
-        depth: (B, H, W) or (B, 1, H, W) raw depth; uint16 or float. 0 = hole.
+        depth: (H, W), (B, H, W) or (B, 1, H, W) raw depth; uint16 or float. 0 = hole.
         intrinsics: (fx, fy, cx, cy) of the raw depth stream, in pixels.
         depth_units_mm: raw value × this = mm.
         z_min_mm, z_max_mm: valid-depth band; outside → mask 0 (near deadzone, far cutoff).
@@ -49,6 +49,8 @@ def back_project(
         (B, 4, H, W) float32 = [X, Y, Z, m]. Z is the depth; X=(u-cx)Z/fx,
         Y=(v-cy)Z/fy; m is the validity mask. Invalid pixels have X=Y=Z=0.
     """
+    if depth.ndim == 2:
+        depth = depth.unsqueeze(0)  # single live frame (H, W) → (1, H, W)
     if depth.ndim == 4:
         depth = depth.squeeze(1)
     if depth.ndim != 3:

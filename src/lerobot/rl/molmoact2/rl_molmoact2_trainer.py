@@ -867,7 +867,7 @@ class MolmoAct2Trainer(Trainer):
                 else:
                     logging.info(
                         f"MolmoAct2 training: observation.depth.{cam} {tuple(depth.shape)} {depth.dtype} "
-                        f"med={depth.median().item():.3f} holes={(depth == 0).float().mean().item():.3f} "
+                        f"med={depth.float().median().item():.3f} holes={(depth == 0).float().mean().item():.3f} "
                         "(raw sensor units)"
                     )
 
@@ -924,24 +924,6 @@ class MolmoAct2Trainer(Trainer):
             pointmap_gate = policy.depth_stream.gate_value()  # (L,)
             accum["pointmap_gate"] = pointmap_gate.mean().item()
             accum["pointmap_gate_absmax"] = pointmap_gate.abs().max().item()
-            # TEMP per-iteration depth-grad diagnostic (remove once uptake is confirmed).
-            # Localizes where the gradient dies: report requires_grad + grad status for
-            # the gate, the sink, and a stream-block weight — all read identically inside
-            # run_layer. At init sink/block grads should be exact-zero TENSORS (gate=0
-            # multiplies them); None means that param isn't in the loss graph at all.
-            def _grad_tag(p):
-                if not p.requires_grad:
-                    return "no-req-grad"
-                if p.grad is None:
-                    return "grad=None"
-                return f"grad_absmax={p.grad.abs().max().item():.2e}"
-
-            ds = policy.depth_stream
-            block_w = next(ds.blocks[0].parameters())
-            logging.info(
-                f"[gate] mean={accum['pointmap_gate']:+.3e} absmax={accum['pointmap_gate_absmax']:.3e} | "
-                f"gate[{_grad_tag(ds.gate)}] sink[{_grad_tag(ds.sink_logit)}] block0[{_grad_tag(block_w)}]"
-            )
 
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)
@@ -1104,7 +1086,7 @@ class MolmoAct2Trainer(Trainer):
             else:
                 logging.info(
                     f"MolmoAct2 inference: observation.depth.{cam} {tuple(depth.shape)} {depth.dtype} "
-                    f"med={depth.median().item():.3f} holes={(depth == 0).float().mean().item():.3f} "
+                    f"med={depth.float().median().item():.3f} holes={(depth == 0).float().mean().item():.3f} "
                     "(raw sensor units)"
                 )
         return {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
