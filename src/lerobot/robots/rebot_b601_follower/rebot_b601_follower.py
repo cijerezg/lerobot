@@ -215,6 +215,10 @@ class RebotB601Follower(Robot):
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
             obs_dict[cam_key] = cam.read_latest()
+            # Depth is emitted at runtime (for the PNG16 sidecar writer) but is not a
+            # dataset feature, so it's dropped by build_dataset_frame during recording.
+            if getattr(self.config.cameras[cam_key], "use_depth", False):
+                obs_dict[f"{cam_key}.depth"] = cam.read_latest_depth()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 

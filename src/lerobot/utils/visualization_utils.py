@@ -106,6 +106,9 @@ def log_rerun_data(
                 if arr.ndim == 1:
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                elif arr.ndim == 2 and str(k).endswith(".depth"):
+                    # Raw z16 depth (D405: 0.1 mm/level -> 10000 units per meter).
+                    rr.log(key, rr.DepthImage(arr, meter=10000.0), static=True)
                 else:
                     img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)
