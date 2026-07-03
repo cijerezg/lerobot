@@ -67,7 +67,11 @@ class RebotB601FollowerConfig:
 
     # Target velocity for joints running in POS_VEL mode, in degrees/s. A scalar is
     # applied to every joint; a list provides one value per joint (in motor order).
-    pos_vel_velocity: float | list[float] = field(default_factory=lambda: [150.0] * 7)
+    # Joints are capped low enough (~0.5 m/s at the tip) to leave reaction time if
+    # the leader is dropped. The gripper gets a higher cap: it travels its full
+    # 270 degree range on every open/close, and its force is already limited by
+    # gripper_torque_ratio.
+    pos_vel_velocity: float | list[float] = field(default_factory=lambda: [60.0] * 6 + [180.0])
 
     # Torque/current ratio for the gripper's FORCE_POS mode, in range [0, 1].
     gripper_torque_ratio: float = 0.1

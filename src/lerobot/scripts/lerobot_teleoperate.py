@@ -214,7 +214,7 @@ def teleoperate(cfg: TeleoperateConfig):
     init_logging()
     logging.info(pformat(asdict(cfg)))
     if cfg.display_data:
-        init_rerun(session_name="teleoperation", ip=cfg.display_ip, port=cfg.display_port)
+        init_rerun(session_name="rebot_teleoperation", ip=cfg.display_ip, port=cfg.display_port)
     display_compressed_images = (
         True
         if (cfg.display_data and cfg.display_ip is not None and cfg.display_port is not None)

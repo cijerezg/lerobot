@@ -30,8 +30,8 @@ class DepthPointmapConfig:
     depth_units_mm: float = 0.1
 
     # Camera intrinsics (fx, fy, cx, cy) of the raw depth stream, in pixels.
-    # PLACEHOLDER D405 ballpark for the raw 640×480 stream; calibrate once.
-    intrinsics: tuple[float, float, float, float] = (382.0, 382.0, 320.0, 240.0)
+    # Factory calibration of D405 427622270837, 640×480 z16 (rectified, zero distortion).
+    intrinsics: tuple[float, float, float, float] = (394.9832, 394.9832, 322.5604, 238.6966)
 
     # Depth image size (H, W). Both must be divisible by patch_size.
     image_size: tuple[int, int] = (480, 640)
