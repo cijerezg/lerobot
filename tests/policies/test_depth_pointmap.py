@@ -132,7 +132,7 @@ def test_encoder_is_gate_free():
     assert mem.shape == (2, enc.num_tokens, 16)
 
 
-# --- MoT co-evolving depth stream (depth_tsdf_mot_design.md §3) --------------------
+# --- MoT co-evolving depth stream (depth_pointmap_design.md Part B) ----------------
 
 from lerobot.policies.depth_pointmap.modeling_stream import (  # noqa: E402
     DepthStream,

@@ -18,25 +18,10 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 logging.basicConfig(level=logging.INFO, force=True)
 logger = logging.getLogger(__name__)
 
-FRAME_CONVERSIONS = ("none", "so101_v3_to_v21")
-
-
-def _apply_frame_conversion(
-    actions: torch.Tensor, states: torch.Tensor, frame_conversion: str
-) -> tuple[torch.Tensor, torch.Tensor]:
-    if frame_conversion == "none":
-        return actions, states
-    if frame_conversion == "so101_v3_to_v21":
-        from lerobot.policies.molmoact2.frame_so101 import arm_to_model
-        return arm_to_model(actions), arm_to_model(states)
-    raise ValueError(f"Unknown frame_conversion={frame_conversion!r}")
-
-
 def compute_action_stats(
     root_dir: str,
     chunk_size: int = 50,
     encoding: str = "delta",
-    frame_conversion: str = "none",
 ):
     root = Path(root_dir)
     meta_dir = root / "meta"
@@ -74,12 +59,7 @@ def compute_action_stats(
     actions = torch.from_numpy(np.stack(data_df[ACTION].values)).float()
     states = torch.from_numpy(np.stack(data_df[OBS_STATE].values)).float()
 
-    actions, states = _apply_frame_conversion(actions, states, frame_conversion)
-
-    logger.info(
-        f"Loaded {len(actions)} frames. Computing stats for {encoding} encoding "
-        f"in frame_conversion={frame_conversion!r}..."
-    )
+    logger.info(f"Loaded {len(actions)} frames. Computing stats for {encoding} encoding...")
     
     all_chunks = []
     
@@ -141,7 +121,9 @@ def compute_action_stats(
     stats["q99"] = torch.stack(q99)
 
     stats["encoding"] = encoding
-    stats["frame_conversion"] = frame_conversion
+    # Kept for the loader-side metadata check: stats files produced with the old
+    # SO-101 v2.1 conversion carry "so101_v3_to_v21" here and are rejected.
+    stats["frame_conversion"] = "none"
     stats["chunk_size"] = chunk_size
 
     return stats
@@ -194,31 +176,15 @@ def main():
     parser.add_argument("--output-dir", type=str, default="outputs/stats", help="Where to save stats")
     parser.add_argument("--chunk-size", type=int, default=50, help="Action horizon")
     parser.add_argument("--encoding", type=str, required=True, choices=["absolute", "anchor", "delta"], help="Action encoding method")
-    parser.add_argument(
-        "--frame-conversion",
-        type=str,
-        required=True,
-        choices=list(FRAME_CONVERSIONS),
-        help=(
-            "Joint-frame conversion applied to actions and states before encoding. "
-            "'none' keeps raw v3.0 (pi05). 'so101_v3_to_v21' applies arm_to_model "
-            "so the encoded stats live in v2.1 frame (molmoact2)."
-        ),
-    )
     args = parser.parse_args()
 
-    stats = compute_action_stats(
-        args.root, args.chunk_size, args.encoding, args.frame_conversion
-    )
+    stats = compute_action_stats(args.root, args.chunk_size, args.encoding)
     if stats:
         output_path = Path(args.output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
         repo_id = Path(args.root).name
-        save_file = (
-            output_path
-            / f"action_stats_{args.encoding}_{args.frame_conversion}_{repo_id.replace('/', '_')}.pt"
-        )
+        save_file = output_path / f"action_stats_{args.encoding}_{repo_id.replace('/', '_')}.pt"
         torch.save(stats, save_file)
         logger.info(f"Stats saved to {save_file}")
 

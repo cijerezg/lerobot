@@ -1,6 +1,6 @@
 """Back-projected point-map depth tokens (depth_pointmap_design.md).
 
-Replaces the gripper-frame TSDF voxel representation (depth_tsdf). Pipeline:
+Pipeline:
 
   depth image ──back_project──▶ 4-channel point map [X, Y, Z, m] (camera frame, mm)
             ──patchify──▶ 192 non-overlapping P×P patches

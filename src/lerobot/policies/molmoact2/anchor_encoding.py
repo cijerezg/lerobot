@@ -1,11 +1,9 @@
 """Anchor/delta action encoding for MolmoAct2.
 
-These steps live INSIDE the molmoact2 pipeline so that encoding (a - s) and
-decoding (Delta + s, cumsum(Delta) + s) happen in v2.1 frame, after
-SO101V3ToV21Step and before SO101V21ToV3Step. The frame steps therefore see
-absolute actions only; encoded deltas are frame-coherent with the v2.1
-normalizer stats produced by compute_delta_stats.py --frame-conversion
-so101_v3_to_v21.
+These steps live INSIDE the molmoact2 pipeline: encoding (a - s) right after
+batching, decoding (Delta + s, cumsum(Delta) + s) right after the unnormalizer.
+Everything operates in the raw arm frame; encoded deltas are coherent with the
+normalizer stats produced by compute_delta_stats.py on the same dataset.
 """
 
 from __future__ import annotations
@@ -23,7 +21,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 
 ENCODINGS = ("anchor", "delta")
 
-ANCHOR_KEY = "anchor_state_v21"
+ANCHOR_KEY = "anchor_state"
 
 
 def _encode(action: torch.Tensor, anchor: torch.Tensor, encoding: str) -> torch.Tensor:
@@ -47,7 +45,7 @@ def _decode(action: torch.Tensor, anchor: torch.Tensor, encoding: str) -> torch.
 class AnchorEncodeStep(ProcessorStep):
     """Replace ACTION with the encoded target and stash the anchor.
 
-    Insert AFTER SO101V3ToV21Step, BEFORE the normalizer.
+    Insert BEFORE the normalizer.
     """
 
     encoding: str
@@ -89,10 +87,10 @@ class AnchorEncodeStep(ProcessorStep):
 @ProcessorStepRegistry.register(name="anchor_decode")
 @dataclass
 class AnchorDecodeStep(ProcessorStep):
-    """Reconstruct absolute v2.1 action from the decoded delta.
+    """Reconstruct the absolute action from the decoded delta.
 
-    Insert AFTER the unnormalizer, BEFORE SO101V21ToV3Step. Requires the
-    caller to populate ``complementary_data[ANCHOR_KEY]`` (v2.1 frame).
+    Insert AFTER the unnormalizer. Requires the caller to populate
+    ``complementary_data[ANCHOR_KEY]``.
     """
 
     encoding: str

@@ -53,14 +53,6 @@ def _has_anchor_decode(postprocessor) -> bool:
     )
 
 
-def _has_v3_to_v21_frame_step(preprocessor) -> bool:
-    """True when the preprocessor maps v3.0 → v2.1, i.e. the model lives in v2.1 frame."""
-    return any(
-        getattr(step, "_registry_name", None) == "so101_v3_to_v21"
-        for step in getattr(preprocessor, "steps", [])
-    )
-
-
 def _action_dim(cfg) -> int:
     if hasattr(cfg.policy, "action_dim"):
         return int(cfg.policy.action_dim)
@@ -387,20 +379,14 @@ def _resolve_prev_actions_and_anchor(
         return prev_actions, anchor_now
 
     anchor_old = action_queue.anchor_state
-    anchor_old_aligned, anchor_now_aligned = anchor_old, anchor_now
-    if _has_v3_to_v21_frame_step(policy.preprocessor):
-        from lerobot.policies.molmoact2.frame_so101 import arm_to_model
-        anchor_old_aligned = arm_to_model(anchor_old)
-        anchor_now_aligned = arm_to_model(anchor_now)
-
     logger.debug(
         "[RTC] Alignment offset: %.3f",
-        (anchor_old_aligned.to(anchor_now_aligned.device) - anchor_now_aligned).norm().item(),
+        (anchor_old.to(anchor_now.device) - anchor_now).norm().item(),
     )
     return align_prev_actions(
         prev_actions=prev_actions,
-        anchor_old=anchor_old_aligned,
-        anchor_now=anchor_now_aligned,
+        anchor_old=anchor_old,
+        anchor_now=anchor_now,
         action_encoding=action_encoding,
         chunk_size=policy.config.chunk_size,
         normalizer=normalizer,
@@ -534,15 +520,12 @@ def rtc_inference_worker(
                     and action_encoding in {"anchor", "delta"}
                     and _has_anchor_decode(postprocessor)
                 ):
-                    # molmoact2: thread the v2.1 anchor through the postprocessor so
-                    # AnchorDecodeStep reconstructs the absolute v2.1 action, then
-                    # SO101V21ToV3Step maps to v3.0 for the robot.
+                    # molmoact2: thread the anchor through the postprocessor so
+                    # AnchorDecodeStep reconstructs the absolute action for the robot.
                     from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY
-                    from lerobot.policies.molmoact2.frame_so101 import arm_to_model
                     anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
-                    anchor_v21 = arm_to_model(anchor_sq.to(original_actions.device))
                     processed_actions = postprocessor(
-                        {ACTION: original_actions, ANCHOR_KEY: anchor_v21}
+                        {ACTION: original_actions, ANCHOR_KEY: anchor_sq.to(original_actions.device)}
                     )
                 else:
                     unnormalized_actions = (

@@ -16,7 +16,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from lerobot.policies.molmoact2.frame_so101 import stats_v3_to_v21
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.utils.constants import (
     ACTION,
@@ -48,9 +47,7 @@ def _dataset_stats(dataset: Any | None) -> dict[str, dict[str, Any]] | None:
         meta = getattr(dataset, "meta", None)
         if meta is not None:
             stats = getattr(meta, "stats", None)
-    # Dataset stats live in v3.0 joint frame; the MolmoAct2 normalizer sees
-    # tensors after SO101V3ToV21Step, so the stats must be converted to match.
-    return stats_v3_to_v21(stats)
+    return stats
 
 
 def _has_saved_processors(path: Path) -> bool:
@@ -85,7 +82,7 @@ def _saved_processor_path(cfg: Any) -> Path | None:
     return None
 
 
-_EXPECTED_FRAME_CONVERSION = "so101_v3_to_v21"
+_EXPECTED_FRAME_CONVERSION = "none"
 _STATS_METADATA_KEYS = ("encoding", "frame_conversion", "chunk_size")
 
 
@@ -94,9 +91,9 @@ def _validate_and_strip_anchor_stats_metadata(
 ) -> dict[str, Any]:
     """Pop metadata stamped by compute_delta_stats.py, validating against the policy config.
 
-    MolmoAct2 always trains on v2.1-frame stats, so frame_conversion must be
-    ``so101_v3_to_v21``. Raises with a clear message on any mismatch so a wrong
-    stats file fails before training rather than silently mis-aligning.
+    frame_conversion must be ``none``: the SO-101 v2.1 frame transform is gone,
+    so stats files produced with ``so101_v3_to_v21`` (pre-rebot) fail loudly here
+    instead of silently mis-aligning.
     """
     meta = {k: stats.pop(k, None) for k in _STATS_METADATA_KEYS}
     expected_encoding = getattr(cfg_policy, "action_encoding", "absolute")
@@ -366,14 +363,17 @@ class MolmoAct2Trainer(Trainer):
 
     def get_optimizer_groups(self, policy: nn.Module, cfg) -> list[dict]:
         """
-        Actor group: all policy params with requires_grad (excludes critic).
+        Actor group: all policy params with requires_grad (excludes critic and depth).
+        Depth group: from-scratch pointmap_encoder/depth_stream params at depth_lr.
         Critic group: all critic params (added only when skip_critic=False).
         """
         skip_critic = getattr(cfg, "skip_critic", True)
 
         if skip_critic or not hasattr(policy, "critic"):
             trainable = [p for p in policy.parameters() if p.requires_grad]
-            return [{"name": "policy", "params": trainable, "lr": cfg.policy.optimizer_lr}]
+            return self._split_depth_group(policy, cfg, [
+                {"name": "policy", "params": trainable, "lr": cfg.policy.optimizer_lr},
+            ])
 
         critic_net: nn.Module = getattr(policy, "critic")
         critic_param_ids = {id(p) for p in critic_net.parameters()}
@@ -382,10 +382,28 @@ class MolmoAct2Trainer(Trainer):
             if p.requires_grad and id(p) not in critic_param_ids
         ]
         critic_params = list(critic_net.parameters())
-        return [
+        return self._split_depth_group(policy, cfg, [
             {"name": "policy", "params": actor_params, "lr": cfg.policy.optimizer_lr},
             {"name": "critic", "params": critic_params, "lr": cfg.policy.critic_lr},
-        ]
+        ])
+
+    @staticmethod
+    def _split_depth_group(policy: nn.Module, cfg, groups: list[dict]) -> list[dict]:
+        """Move from-scratch depth params (pointmap_encoder/depth_stream, incl. gate and
+        sink) out of the policy group into their own "depth" group at depth_lr: the
+        pretrained-model lr is too slow for fresh modules, and the separate group name
+        keeps them out of pretrained_merge_targets (the checkpoint has no depth weights,
+        so a merge would drag them back toward their init)."""
+        depth_ids = {
+            id(p) for name, p in policy.named_parameters()
+            if "pointmap_encoder" in name or "depth_stream" in name
+        }
+        policy_group = next(g for g in groups if g["name"] == "policy")
+        depth_params = [p for p in policy_group["params"] if id(p) in depth_ids]
+        if depth_params:
+            policy_group["params"] = [p for p in policy_group["params"] if id(p) not in depth_ids]
+            groups.append({"name": "depth", "params": depth_params, "lr": cfg.policy.depth_lr})
+        return groups
 
     # ── Critic ────────────────────────────────────────────────────────────────
 
@@ -746,6 +764,9 @@ class MolmoAct2Trainer(Trainer):
 
         policy_opt = optimizers.get("policy") or next(iter(optimizers.values()))
         policy_opt.zero_grad()
+        depth_opt = optimizers.get("depth")
+        if depth_opt is not None:
+            depth_opt.zero_grad()
 
         accum: dict[str, float] = {
             "loss_actor": 0.0,
@@ -916,6 +937,8 @@ class MolmoAct2Trainer(Trainer):
 
         actor_grad_norm = torch.nn.utils.clip_grad_norm_(actor_params, clip_norm).item()
         policy_opt.step()
+        if depth_opt is not None:
+            depth_opt.step()
 
         accum["actor_grad_norm"] = actor_grad_norm
         # Point-map MoT gate uptake (depth_pointmap_design.md §B.5): per-layer tanh(α_ℓ).
@@ -924,6 +947,15 @@ class MolmoAct2Trainer(Trainer):
             pointmap_gate = policy.depth_stream.gate_value()  # (L,)
             accum["pointmap_gate"] = pointmap_gate.mean().item()
             accum["pointmap_gate_absmax"] = pointmap_gate.abs().max().item()
+            gate_grad = policy.depth_stream.gate.grad
+            accum["pointmap_gate_grad_absmax"] = (
+                0.0 if gate_grad is None else gate_grad.abs().max().item()
+            )
+            logging.info(
+                f"[MolmoAct2Trainer] pointmap_gate mean={accum['pointmap_gate']:.3e}  "
+                f"absmax={accum['pointmap_gate_absmax']:.3e}  "
+                f"grad_absmax={accum['pointmap_gate_grad_absmax']:.3e}"
+            )
 
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)

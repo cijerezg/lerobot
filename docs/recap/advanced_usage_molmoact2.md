@@ -1,6 +1,6 @@
 # Advanced Usage Guide — MolmoAct2
 
-This guide covers the MolmoAct2 RL pipeline end-to-end: action encodings, the offline-then-online training flow, the full configuration reference, the iterative RL loop, interventions, async inference, action post-processing, and the SO-101 joint-frame convention.
+This guide covers the MolmoAct2 RL pipeline end-to-end: action encodings, the offline-then-online training flow, the full configuration reference, the iterative RL loop, interventions, async inference, and action post-processing.
 
 The pipeline shares its core scripts (`rl_offline.py`, `rl_learner.py`, `rl_actor_async.py`) with the $\pi_{0.5}$ implementation — only the policy class and a handful of policy-specific fields differ. If you are looking for the $\pi_{0.5}$ variant, see [advanced_usage_pi05.md](advanced_usage_pi05.md).
 
@@ -14,13 +14,12 @@ The pipeline shares its core scripts (`rl_offline.py`, `rl_learner.py`, `rl_acto
 4. [Pretrained Merge (RETAIN-style)](#pretrained-merge-retain-style)
 5. [The Iterative RL Loop](#the-iterative-rl-loop)
 6. [Using a v2.1 Dataset](#using-a-v21-dataset)
-7. [SO-101 Frame Convention (CRITICAL)](#so-101-frame-convention-critical)
-8. [Interventions and Real-Time Control](#interventions-and-real-time-control)
-9. [Async Inference Architecture](#async-inference-architecture)
-10. [Action Post-Processing](#action-post-processing)
-11. [Buffer Caching](#buffer-caching)
-12. [Probes](#probes)
-13. [Dataset Annotation (Not Implemented)](#dataset-annotation-not-implemented)
+7. [Interventions and Real-Time Control](#interventions-and-real-time-control)
+8. [Async Inference Architecture](#async-inference-architecture)
+9. [Action Post-Processing](#action-post-processing)
+10. [Buffer Caching](#buffer-caching)
+11. [Probes](#probes)
+12. [Dataset Annotation (Not Implemented)](#dataset-annotation-not-implemented)
 
 ---
 
@@ -28,7 +27,7 @@ The pipeline shares its core scripts (`rl_offline.py`, `rl_learner.py`, `rl_acto
 
 This is the first decision to make — it is set in the config and applies to **all** subsequent training, online and offline. Switching encodings later means recomputing statistics and retraining from base.
 
-In the MolmoAct2 pipeline only the **action** is encoded — the observation state is always passed absolute (in v2.1 frame, after `SO101V3ToV21Step`). Normalization statistics for `observation.state` likewise remain absolute. This is different from setups that re-anchor state and action together.
+In the MolmoAct2 pipeline only the **action** is encoded — the observation state is always passed absolute, in the raw arm frame. Normalization statistics for `observation.state` likewise remain absolute. This is different from setups that re-anchor state and action together.
 
 ### Anchor (recommended)
 
@@ -56,9 +55,12 @@ Anchor and delta encodings require precomputed normalization statistics. Generat
 
 ```bash
 python -m lerobot.scripts.compute_delta_stats \
-    --data-dir /path/to/dataset \
-    --encoding anchor
+    --root /path/to/dataset \
+    --encoding anchor \
+    --chunk-size 30
 ```
+
+`--chunk-size` must match `policy.chunk_size` — the loader validates it against the stats file's metadata.
 
 This iterates over all episodes, computes the per-timestep anchor (or delta) representation for every action chunk, and saves min/max/mean/std/quantile statistics to a `.pt` file. Set `policy.action_encoding_stats_path` to point to this file. The file is required only for `action_encoding: anchor | delta`.
 
@@ -242,7 +244,7 @@ See [Pretrained Merge (RETAIN-style)](#pretrained-merge-retain-style).
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `policy.torch_compile` | bool | `true` | Compile the action expert with `torch.compile(mode="reduce-overhead")`. Helps meet the 30 Hz control target. |
-| `policy.action_clamp_limits` | list\|null | — | Per-joint `[min, max]` limits in **degrees**, applied in v3.0 arm frame *after* unnormalization and Butterworth filtering. `null` disables clamping. |
+| `policy.action_clamp_limits` | list\|null | — | Per-joint `[min, max]` limits in **degrees**, applied in arm frame *after* unnormalization and Butterworth filtering. `null` disables clamping. |
 | `policy.inference_advantage` | float\|null | `1.0` | Constant advantage value injected as prompt conditioning. Match this to training: use `null` with `skip_critic: true`, keep `1.0` with `skip_critic: false`. |
 | `policy.rtc_config.enabled` | bool | `true` | Enable real-time chunking — see [Async Inference Architecture](#async-inference-architecture). |
 | `policy.rtc_config.execution_horizon` | int | `5` | Steps from each chunk that are executed before requesting a new chunk. |
@@ -261,7 +263,7 @@ See [Pretrained Merge (RETAIN-style)](#pretrained-merge-retain-style).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `policy.norm_tag` | str\|null | `"so100_so101_molmoact2"` | Loads norm stats from the HF base checkpoint. Set to `null` only when loading a fine-tuned checkpoint that already has norm stats in its `policy_preprocessor_*.safetensors`. |
+| `policy.norm_tag` | str\|null | `"so100_so101_molmoact2"` | Loads norm stats by tag from the HF base checkpoint, used only when no dataset stats are available (rl_offline always uses dataset stats). Set to `null` for rebot runs; the dataclass default is a legacy SO-101 tag. |
 | `policy.normalize_gripper` | bool | `true` | **Must match the base model.** Setting `false` against a model that was trained with `true` crushes the gripper to 1.0 via the post-norm clamp. |
 
 ### Policy — Actor-Learner Communication
@@ -328,32 +330,9 @@ python -m lerobot.scripts.convert_dataset_v21_to_v30 \
     --repo-id=your/dataset
 ```
 
-The migration regenerates per-episode statistics, removes the deprecated `stats.json`, and updates `codebase_version` in `info.json`. Joint values are not modified — if your v2.1 dataset was also recorded in the v2.1 SO-101 joint convention (almost all were), the joint-frame transform documented in [SO-101 Frame Convention](#so-101-frame-convention-critical) is still relevant.
+The migration regenerates per-episode statistics, removes the deprecated `stats.json`, and updates `codebase_version` in `info.json`. Joint values are not modified.
 
----
-
-## SO-101 Frame Convention (CRITICAL)
-
-MolmoAct2 was pretrained on SO-100/101 data in the **v2.1 joint convention**. All datasets recorded with LeRobot v3.0 (this repo) are in the **v3.0 convention**. Two joints differ:
-
-| Joint | Transform: v3.0 → v2.1 |
-|-------|------------------------|
-| 1 · shoulder_lift | `v2.1 = −v3.0 + 90` |
-| 2 · elbow_flex    | `v2.1 =  v3.0 + 90` |
-| 0, 3, 4, 5        | unchanged              |
-
-**Where this is handled:** [`policies/molmoact2/frame_so101.py`](../../src/lerobot/policies/molmoact2/frame_so101.py)
-- `SO101V3ToV21Step` — inserted before the normalizer in the input pipeline (converts state + action in training data and live observations).
-- `SO101V21ToV3Step` — inserted after the unnormalizer in the output pipeline (converts model actions back to arm frame before sending to the robot).
-
-**Implications for training:**
-- Datasets recorded with LeRobot v3.0 (this repo) are in v3.0 convention → the transform is correct as-is.
-- If you ever use a dataset recorded in v2.1 convention (e.g., raw HF Hub datasets from before PR-777), remove or bypass `SO101V3ToV21Step` — otherwise joint angles will be double-converted.
-- To verify a dataset's convention: check `observation.state` mean for joint 1 (shoulder_lift). v3.0 ≈ −30° to +10°; v2.1 ≈ 90° to 130°.
-
-**Implications for inference:**
-- `policy.norm_tag: so100_so101_molmoact2` is required when loading the zero-shot base checkpoint. Set `norm_tag: null` only when loading a fine-tuned checkpoint that already has norm stats embedded.
-- `policy.action_clamp_limits` are defined in **v3.0 arm frame** (clamping runs *after* `SO101V21ToV3Step`).
+> **Note (2026-07-04):** the SO-101 v3.0↔v2.1 joint-frame conversion (`frame_so101.py`) has been removed along with the SO-101 embodiment. The pipeline operates entirely in the raw arm frame; anchor stats files produced with the old `so101_v3_to_v21` conversion are rejected at load.
 
 ---
 
@@ -421,7 +400,7 @@ Smoothing matters in this pipeline because the policy is continuously generating
 
 ### 3. Per-Joint Safety Clamp
 
-If `action_clamp_limits` is set, each joint is hard-clamped to the `[min, max]` range *in v3.0 arm frame* (after `SO101V21ToV3Step`). Out-of-bounds joints emit a `[CLAMP]` warning with the raw range, so you can spot training/inference drift before it damages the robot.
+If `action_clamp_limits` is set, each joint is hard-clamped to the `[min, max]` range in arm frame (after unnormalization/anchor decode). Out-of-bounds joints emit a `[CLAMP]` warning with the raw range, so you can spot training/inference drift before it damages the robot.
 
 The default config sets v3.0-frame limits derived from teleop joint ranges:
 ```yaml

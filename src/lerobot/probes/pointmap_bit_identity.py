@@ -116,9 +116,9 @@ def main() -> None:
     # Same pre-parse machinery as rl_offline: register policy configs, strip inactive-model YAML fields.
     import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
     import lerobot.rl.pi05.rl_pi05  # noqa: F401 — registers PI05RLConfig
-    from lerobot.robots import so_follower  # noqa: F401 — registers so101_follower
+    from lerobot.robots import rebot_b601_follower, so_follower  # noqa: F401 — registers robot configs
     from lerobot.scripts.rl_offline import _extract_config_path_args, _preprocess_config_yaml
-    from lerobot.teleoperators import so_leader  # noqa: F401 — registers so101_leader
+    from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — registers teleop configs
 
     config_path, remaining_args = _extract_config_path_args(sys.argv[1:])
     if config_path:

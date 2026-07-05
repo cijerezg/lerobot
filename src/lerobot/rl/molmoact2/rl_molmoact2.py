@@ -83,6 +83,10 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     value_support_max: float = 0.0
     hl_gauss_sigma_ratio: float = 5.0
     critic_lr: float = 1e-4
+    # From-scratch depth modules (pointmap_encoder + depth_stream, incl. gate/sink) get
+    # their own optimizer group: pretrained-lr is too slow for fresh params, and a separate
+    # group name keeps them out of pretrained_merge_targets (checkpoint has no depth weights).
+    depth_lr: float = 5e-4
     critic_target_update_weight: float = 0.005
     critic_target_update_every: int = 4
     discount: float = 0.97

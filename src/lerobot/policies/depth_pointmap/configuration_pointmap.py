@@ -5,9 +5,8 @@ Model-agnostic: policies embed this as ``pointmap_config: DepthPointmapConfig | 
 ships, forward cost is unchanged. How the emitted tokens enter a specific policy
 (the attention seam) lives with that policy (depth_pointmap_design.md), not here.
 
-Replaces the gripper-frame TSDF voxel config (depth_tsdf). No box, no extrinsic,
-no voxel grid: the only setup-specific input is the camera intrinsics. Units are
-millimeters throughout.
+No box, no extrinsic, no voxel grid: the only setup-specific input is the camera
+intrinsics. Units are millimeters throughout.
 """
 
 from __future__ import annotations

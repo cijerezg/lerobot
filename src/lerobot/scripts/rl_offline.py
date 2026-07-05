@@ -362,8 +362,8 @@ def main() -> None:
     # Register before parsing so draccus can resolve policy.type.
     import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
     import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
-    from lerobot.robots import so_follower         # noqa: F401 — registers so101_follower
-    from lerobot.teleoperators import so_leader    # noqa: F401 — registers so101_leader
+    from lerobot.robots import rebot_b601_follower, so_follower   # noqa: F401 — registers robot configs
+    from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — registers teleop configs
 
     cli_args = sys.argv[1:]
     config_path, remaining_args = _extract_config_path_args(cli_args)

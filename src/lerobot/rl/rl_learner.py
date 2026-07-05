@@ -42,8 +42,8 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
 import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
-from lerobot.robots import so_follower        # noqa: F401 — registers so101_follower
-from lerobot.teleoperators import so_leader   # noqa: F401 — registers so101_leader
+from lerobot.robots import rebot_b601_follower, so_follower   # noqa: F401 — registers robot configs
+from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — registers teleop configs
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.offline_dataset_utils import (
     load_additional_offline_buffers,

@@ -81,8 +81,8 @@ from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.datasets import LeRobotDataset, make_dataset
 from lerobot.policies import make_policy, make_pre_post_processors
-from lerobot.robots import so_follower  # noqa: F401
-from lerobot.teleoperators import gamepad, so_leader  # noqa: F401
+from lerobot.robots import rebot_b601_follower, so_follower  # noqa: F401
+from lerobot.teleoperators import gamepad, rebot_102_leader, so_leader  # noqa: F401
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport.utils import (
     MAX_MESSAGE_SIZE,
