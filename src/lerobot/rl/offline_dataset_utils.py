@@ -72,6 +72,7 @@ def load_additional_offline_buffers(
     device,
     storage_device,
     is_main_process: bool = True,
+    history_offsets: dict[str, list[int]] | None = None,
 ) -> list[ReplayBuffer]:
     """Load extra offline datasets as independent ReplayBuffers.
 
@@ -124,6 +125,7 @@ def load_additional_offline_buffers(
                 cache_dir=cached,
                 device=device,
                 use_drq=False,
+                history_offsets=history_offsets,
             )
         else:
             if is_main_process:
@@ -142,6 +144,7 @@ def load_additional_offline_buffers(
                 inject_complementary_info={"is_golden": False},
                 image_storage_dtype=image_storage_dtype,
                 image_storage_size=image_storage_size,
+                history_offsets=history_offsets,
             )
 
         # Remap subtask indices on the (RAM-resident) complementary_info tensor.

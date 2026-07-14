@@ -706,3 +706,143 @@ def test_async_iterator_multiple_iterations():
 
     # Ensure iterator can be disposed without blocking
     del iterator
+
+
+# ── Short-term memory: history lookback ──────────────────────────────────────
+
+
+def _history_buffer(capacity: int = 20, offsets: list[int] | None = None) -> ReplayBuffer:
+    return ReplayBuffer(
+        capacity,
+        "cpu",
+        [OBS_STATE],
+        use_drq=False,
+        optimize_memory=True,
+        history_offsets={OBS_STATE: offsets or [3, 2, 1]},
+    )
+
+
+def _fill_episode(buffer: ReplayBuffer, first_value: int, length: int) -> None:
+    """Add one episode whose state values are first_value .. first_value+length-1."""
+    for i in range(length):
+        buffer.add(
+            state={OBS_STATE: torch.tensor([[float(first_value + i)]])},
+            action=torch.tensor([[0.0]]),
+            reward=0.0,
+            next_state=None,
+            done=(i == length - 1),
+            truncated=False,
+        )
+
+
+def _history_values(history: dict) -> torch.Tensor:
+    return history[OBS_STATE].float().squeeze(-1)
+
+
+def test_history_mid_episode():
+    buffer = _history_buffer()
+    _fill_episode(buffer, first_value=0, length=10)
+
+    history, pad = buffer._gather_history(torch.tensor([5]))
+
+    assert torch.equal(_history_values(history), torch.tensor([[2.0, 3.0, 4.0]]))
+    assert torch.equal(pad[OBS_STATE], torch.tensor([[False, False, False]]))
+
+
+def test_history_at_episode_start():
+    buffer = _history_buffer()
+    _fill_episode(buffer, first_value=0, length=10)
+
+    # Frame 1 has only one predecessor: slots beyond it repeat frame 0 and are padded.
+    history, pad = buffer._gather_history(torch.tensor([1]))
+    assert torch.equal(_history_values(history), torch.tensor([[0.0, 0.0, 0.0]]))
+    assert torch.equal(pad[OBS_STATE], torch.tensor([[True, True, False]]))
+
+    # The very first frame has no history at all: every slot repeats it, all padded.
+    history, pad = buffer._gather_history(torch.tensor([0]))
+    assert torch.equal(_history_values(history), torch.tensor([[0.0, 0.0, 0.0]]))
+    assert torch.equal(pad[OBS_STATE], torch.tensor([[True, True, True]]))
+
+
+def test_history_does_not_cross_episode_boundary():
+    buffer = _history_buffer()
+    _fill_episode(buffer, first_value=0, length=5)  # frames 0-4, done at index 4
+    _fill_episode(buffer, first_value=5, length=5)  # frames 5-9
+
+    # Index 6 (2nd frame of episode 2): lookback of 2+ would land in episode 1.
+    history, pad = buffer._gather_history(torch.tensor([6]))
+    assert torch.equal(_history_values(history), torch.tensor([[5.0, 5.0, 5.0]]))
+    assert torch.equal(pad[OBS_STATE], torch.tensor([[True, True, False]]))
+
+    # Index 7: two valid predecessors (5, 6), the oldest slot clamps to 5.
+    history, pad = buffer._gather_history(torch.tensor([7]))
+    assert torch.equal(_history_values(history), torch.tensor([[5.0, 5.0, 6.0]]))
+    assert torch.equal(pad[OBS_STATE], torch.tensor([[True, False, False]]))
+
+
+def test_history_circular_wraparound():
+    # Capacity 10, 12 frames added: indices 0-1 now hold frames 10-11, the
+    # oldest surviving frame (value 2) sits at the write head (position 2).
+    buffer = _history_buffer(capacity=10)
+    _fill_episode(buffer, first_value=0, length=6)  # values 0-5, done at 5
+    _fill_episode(buffer, first_value=6, length=6)  # values 6-11, done at 11
+    assert buffer.size == 10
+    assert buffer.position == 2
+
+    # Index 3 (value 3): only one stored predecessor (value 2) before the write head.
+    history, pad = buffer._gather_history(torch.tensor([3]))
+    assert torch.equal(_history_values(history), torch.tensor([[2.0, 2.0, 2.0]]))
+    assert torch.equal(pad[OBS_STATE], torch.tensor([[True, True, False]]))
+
+    # Index 2 is the oldest stored frame: no history at all.
+    history, pad = buffer._gather_history(torch.tensor([2]))
+    assert torch.equal(_history_values(history), torch.tensor([[2.0, 2.0, 2.0]]))
+    assert torch.equal(pad[OBS_STATE], torch.tensor([[True, True, True]]))
+
+
+def test_sample_emits_history_keys():
+    buffer = _history_buffer()
+    _fill_episode(buffer, first_value=0, length=10)
+
+    batch = buffer.sample(batch_size=4, action_chunk_size=2)
+
+    values = batch["state"][f"history.{OBS_STATE}"].float().squeeze(-1)
+    pad = batch["state"][f"history.{OBS_STATE}_is_pad"]
+    assert values.shape == (4, 3)
+    assert pad.shape == (4, 3)
+    assert pad.dtype == torch.bool
+
+    # Wherever the newest slot is real history, it is the frame just before the current one.
+    current = batch["state"][OBS_STATE].float().squeeze(-1)
+    newest_real = ~pad[:, -1]
+    assert torch.equal(values[newest_real, -1], current[newest_real] - 1)
+
+
+def test_history_includes_executed_actions():
+    buffer = ReplayBuffer(
+        20,
+        "cpu",
+        [OBS_STATE],
+        use_drq=False,
+        optimize_memory=True,
+        history_offsets={OBS_STATE: [3, 2, 1], ACTION: [3, 2, 1]},
+    )
+    # Episode of 10 frames: state value = frame, action value = 100 + frame.
+    for i in range(10):
+        buffer.add(
+            state={OBS_STATE: torch.tensor([[float(i)]])},
+            action=torch.tensor([[100.0 + i]]),
+            reward=0.0,
+            next_state=None,
+            done=(i == 9),
+            truncated=False,
+        )
+
+    history, pad = buffer._gather_history(torch.tensor([5]))
+    assert torch.equal(history[ACTION].float().squeeze(-1), torch.tensor([[102.0, 103.0, 104.0]]))
+    assert torch.equal(pad[ACTION], pad[OBS_STATE])
+
+    # Same validity rules as states: at frame 1 only one predecessor exists.
+    history, pad = buffer._gather_history(torch.tensor([1]))
+    assert torch.equal(history[ACTION].float().squeeze(-1), torch.tensor([[100.0, 100.0, 100.0]]))
+    assert torch.equal(pad[ACTION], torch.tensor([[True, True, False]]))

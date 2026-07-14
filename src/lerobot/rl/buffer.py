@@ -104,6 +104,7 @@ class ReplayBuffer:
         terminal_failure_reward: float = -1.0,
         image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
         image_storage_size: tuple[int, int] | None = None,
+        history_offsets: dict[str, list[int]] | None = None,
     ):
         """
         Replay buffer for storing transitions.
@@ -126,6 +127,9 @@ class ReplayBuffer:
                 previous normalized-float storage behavior.
             image_storage_size: Optional (height, width) resize applied before image storage. None keeps
                 the input resolution.
+            history_offsets: Optional map of state key → lookback distances in buffer steps
+                (e.g. {"observation.state": [30, 60, 90, 120]}). When set, sample() emits
+                "history.{key}" windows (oldest → newest) plus "history.{key}_is_pad" masks.
         """
         if capacity <= 0:
             raise ValueError("Capacity must be greater than 0.")
@@ -141,6 +145,7 @@ class ReplayBuffer:
         self.terminal_failure_reward = terminal_failure_reward
         self.image_storage_dtype = self._normalize_image_storage_dtype(image_storage_dtype)
         self.image_storage_size = self._normalize_image_storage_size(image_storage_size)
+        self.history_offsets = self._normalize_history_offsets(history_offsets)
         self._lock = threading.Lock()
 
         # Track episode boundaries for memory optimization
@@ -179,6 +184,20 @@ class ReplayBuffer:
         if height <= 0 or width <= 0:
             raise ValueError(f"image_storage_size values must be positive, got {size!r}")
         return height, width
+
+    @staticmethod
+    def _normalize_history_offsets(
+        history_offsets: dict[str, list[int]] | None,
+    ) -> dict[str, list[int]] | None:
+        if not history_offsets:
+            return None
+        normalized = {}
+        for key, offsets in history_offsets.items():
+            offsets = sorted({int(o) for o in offsets}, reverse=True)  # oldest → newest
+            if not offsets or offsets[-1] <= 0:
+                raise ValueError(f"history_offsets[{key!r}] must be positive lookback distances, got {offsets}")
+            normalized[key] = offsets
+        return normalized
 
     @staticmethod
     def _is_image_key(key: str) -> bool:
@@ -350,6 +369,45 @@ class ReplayBuffer:
             self.position = (self.position + 1) % self.capacity
             self.size = min(self.size + 1, self.capacity)
 
+    def _gather_history(self, idx: torch.Tensor) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        """Assemble lookback windows for the sampled indices.
+
+        Mirror of the next_state index math in sample(): history at distance k is
+        states[idx - k]. A slot is invalid when the lookback crosses an episode
+        boundary (done/truncated between idx-k and idx-1) or reaches past the
+        oldest stored frame (index 0 while filling; the write head once the
+        circular buffer is full). Invalid slots repeat the earliest valid frame
+        of the current episode and are flagged True in the pad mask.
+
+        The key "action" gathers from self.actions: every fill path stores one
+        executed action per frame, so actions[idx - k] is what the robot did k
+        steps ago.
+
+        Returns ({key: (B, T_h, ...)}, {key: (B, T_h) bool}), windows oldest → newest.
+        """
+        device = idx.device
+        max_back = max(offsets[0] for offsets in self.history_offsets.values())
+        back = torch.arange(1, max_back + 1, device=device)  # (M,)
+        back_idx = (idx.unsqueeze(1) - back) % self.capacity  # (B, M)
+        boundary = self.dones[back_idx] | self.truncateds[back_idx]
+        crossed = torch.cummax(boundary.int(), dim=1).values.bool()  # (B, M)
+
+        # Oldest stored frame: index 0 while filling, the write head once the circular buffer is full.
+        oldest_distance = idx if self.size < self.capacity else (idx - self.position) % self.capacity
+        invalid = crossed | (back.unsqueeze(0) > oldest_distance.unsqueeze(1))  # (B, M)
+        reach = (~invalid).int().cumprod(dim=1).sum(dim=1)  # (B,) farthest usable lookback
+
+        history = {}
+        pad = {}
+        for key, offsets in self.history_offsets.items():
+            offs = torch.tensor(offsets, device=device)  # (T_h,) oldest → newest
+            dist = torch.minimum(offs.unsqueeze(0), reach.unsqueeze(1))  # (B, T_h)
+            gather_idx = (idx.unsqueeze(1) - dist) % self.capacity
+            source = self.actions if key == ACTION else self.states[key]
+            history[key] = source[gather_idx]
+            pad[key] = offs.unsqueeze(0) > reach.unsqueeze(1)
+        return history, pad
+
     def sample(self, batch_size: int, action_chunk_size: int = 50) -> BatchTransition:
         """Sample a random batch of transitions and collate them into batched tensors."""
         if not self.initialized:
@@ -413,6 +471,13 @@ class ReplayBuffer:
                     # Memory-optimized approach - get next_state from the next index
                     next_idx = (idx + action_chunk_size) % self.capacity
                     batch_next_state[key] = self.states[key][next_idx].to(self.device)
+
+            # Short-term memory: lookback windows for the configured keys
+            if self.history_offsets is not None:
+                history, pad = self._gather_history(idx)
+                for key in history:
+                    batch_state[f"history.{key}"] = history[key].to(self.device)
+                    batch_state[f"history.{key}_is_pad"] = pad[key].to(self.device)
 
             # Sample actions - handle both pre-chunked and single actions
             # Check if actions are already chunked (offline buffer: shape (N, chunk_size, action_dim))
@@ -619,6 +684,7 @@ class ReplayBuffer:
         reward_normalization_constant: float = 1.0,
         terminal_failure_reward: float = -1.0,
         inject_complementary_info: dict | None = None,
+        history_offsets: dict[str, list[int]] | None = None,
     ) -> "ReplayBuffer":
         """
         Load a ReplayBuffer from pre-decoded memmap cache files.
@@ -655,6 +721,7 @@ class ReplayBuffer:
             terminal_failure_reward=terminal_failure_reward,
             image_storage_dtype=image_storage_dtype,
             image_storage_size=image_storage_size,
+            history_offsets=history_offsets,
         )
 
         def _sanitize(key: str) -> str:
@@ -851,6 +918,7 @@ class ReplayBuffer:
         cache_dir: str | Path | None = None,
         image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
         image_storage_size: tuple[int, int] | None = (224, 224),
+        history_offsets: dict[str, list[int]] | None = None,
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -889,6 +957,7 @@ class ReplayBuffer:
                     reward_normalization_constant=reward_normalization_constant,
                     terminal_failure_reward=terminal_failure_reward,
                     inject_complementary_info=inject_complementary_info,
+                    history_offsets=history_offsets,
                 )
             else:
                 logger.info(f"No valid cache found in {cache_dir}, falling back to video decode")
@@ -914,6 +983,7 @@ class ReplayBuffer:
             terminal_failure_reward=terminal_failure_reward,
             image_storage_dtype=image_storage_dtype,
             image_storage_size=image_storage_size,
+            history_offsets=history_offsets,
         )
 
         # Process dataset transitions one at a time to save memory

@@ -31,7 +31,7 @@ from lerobot.policies.depth_pointmap.modeling_stream import (
 )
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
 from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
-from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig
+from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig, MemoryConfig
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -51,6 +51,9 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # ── Training loop ──────────────────────────────────────────────────────
     offline_steps: int = 10_000
     gradient_accumulation_steps: int = 1
+
+    # ── Memory (short-term observation history) ─────────────────────────────
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
     # ── Replay buffer ──────────────────────────────────────────────────────
     storage_device: str = "cpu"

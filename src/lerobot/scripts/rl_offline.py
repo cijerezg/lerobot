@@ -513,6 +513,11 @@ def run_offline_training(
     )
 
     # ── Replay buffer ─────────────────────────────────────────────────────────
+    memory_cfg = getattr(cfg.policy, "memory", None)
+    history_offsets = memory_cfg.history_offsets(fps) if memory_cfg is not None else None
+    if history_offsets is not None:
+        logging.info(f"[RL_OFFLINE] History lookback (steps @ {fps} fps): {history_offsets}")
+
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
         offline_dataset,
         device=device,
@@ -526,6 +531,7 @@ def run_offline_training(
         cache_dir=getattr(cfg, "buffer_cache_dir", None),
         image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
         image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
+        history_offsets=history_offsets,
     )
     offline_replay_buffer.dataset = offline_dataset
     additional_buffers = load_additional_offline_buffers(
@@ -534,6 +540,7 @@ def run_offline_training(
         device=device,
         storage_device=storage_device,
         is_main_process=True,
+        history_offsets=history_offsets,
     )
     offline_buffers = [offline_replay_buffer, *additional_buffers]
     logging.info(
