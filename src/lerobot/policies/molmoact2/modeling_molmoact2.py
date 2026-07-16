@@ -2133,6 +2133,35 @@ class MolmoAct2Policy(PreTrainedPolicy):
             chunks.append(torch.as_tensor(action_chunk, device=token_row.device, dtype=torch.float32))
         return torch.stack(chunks, dim=0)
 
+    @torch.no_grad()
+    def generate_subtask_tokens(self, model_inputs: dict[str, Tensor], max_new_tokens: int) -> Tensor:
+        """Greedy-decode the answer of a subtask-generation prompt (two-prompt design).
+
+        model_inputs: full pipeline output with the pack step in
+        prompt_mode="subtask_generation" (so states are normalized identically
+        to the action path). Returns (B, <=max_new_tokens) generated ids, eos
+        included when reached; decoding/snapping to the subtask vocabulary
+        happens at the caller (the tokenizer lives with the processor).
+        """
+        inputs = self._model_inputs(model_inputs)
+        inputs = self._drop_trivial_attention_mask(inputs)
+        eos_token_id = getattr(self.model.config, "eos_token_id", None)
+        if eos_token_id is None:
+            raise RuntimeError("MolmoAct2 checkpoint defines no eos_token_id for subtask generation.")
+        output = self.model(
+            **inputs,
+            use_cache=True,
+            output_attentions=False,
+            output_hidden_states=False,
+        )
+        return self._continue_discrete_generation_from_output(
+            output,
+            past_key_values=output.past_key_values,
+            attention_mask=inputs.get("attention_mask"),
+            end_token_id=int(eos_token_id),
+            max_steps=max_new_tokens,
+        )
+
     def _generate_discrete_actions_from_inputs(
         self,
         *,

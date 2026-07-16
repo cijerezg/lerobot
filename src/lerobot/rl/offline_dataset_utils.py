@@ -73,6 +73,8 @@ def load_additional_offline_buffers(
     storage_device,
     is_main_process: bool = True,
     history_offsets: dict[str, list[int]] | None = None,
+    done_list_cap: int | None = None,
+    memory_cfg=None,
 ) -> list[ReplayBuffer]:
     """Load extra offline datasets as independent ReplayBuffers.
 
@@ -96,6 +98,7 @@ def load_additional_offline_buffers(
     cache_dir = getattr(cfg, "buffer_cache_dir", None)
     image_storage_dtype = getattr(cfg.policy, "image_storage_dtype", "bfloat16")
     image_storage_size = getattr(cfg.policy, "image_storage_size", None)
+    image_stride = getattr(cfg.policy, "image_stride", 1)
 
     buffers: list[ReplayBuffer] = []
     for dataset_path in paths:
@@ -116,6 +119,7 @@ def load_additional_offline_buffers(
                 state_keys=state_keys,
                 image_storage_dtype=image_storage_dtype,
                 image_storage_size=image_storage_size,
+                image_stride=image_stride,
             )
 
         if cached is not None:
@@ -144,6 +148,7 @@ def load_additional_offline_buffers(
                 inject_complementary_info={"is_golden": False},
                 image_storage_dtype=image_storage_dtype,
                 image_storage_size=image_storage_size,
+                image_stride=image_stride,
                 history_offsets=history_offsets,
             )
 
@@ -156,6 +161,17 @@ def load_additional_offline_buffers(
             ci = buf.complementary_info["subtask_index"]
             for old_idx, new_idx in remap_table.items():
                 ci[ci == old_idx] = new_idx
+
+        # Done-lists are derived from subtask_index, so only after the remap above.
+        if done_list_cap is not None:
+            buf.materialize_done_lists(done_list_cap)
+
+        if memory_cfg is not None and memory_cfg.metadata_enabled:
+            buf.materialize_metadata(
+                quality=memory_cfg.metadata_default_quality,
+                mistake=memory_cfg.metadata_default_mistake,
+                speed_bucket_steps=memory_cfg.metadata_speed_bucket_steps,
+            )
 
         # Force is_golden=False (cache may carry True from --inject-golden).
         ci_dict = buf.complementary_info

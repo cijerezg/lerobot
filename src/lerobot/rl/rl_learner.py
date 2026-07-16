@@ -658,6 +658,7 @@ def _init_offline_buffer(
         cache_dir=cfg.buffer_cache_dir,
         image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
         image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
+        image_stride=getattr(cfg.policy, "image_stride", 1),
     )
     buf.dataset = offline_dataset
     return buf

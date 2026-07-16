@@ -90,6 +90,75 @@ def random_shift(images: torch.Tensor, pad: int = 4):
     return random_crop_vectorized(images=images, output_size=(h, w))
 
 
+def done_list_ids_from_subtask_indices(
+    subtask_indices: torch.Tensor,  # (T,)
+    episode_ends: torch.Tensor,  # (T,) bool
+    cap: int,
+) -> torch.Tensor:
+    """Per-frame done-list: the subtasks completed so far in the episode, oldest → newest.
+
+    Append-on-switch with consecutive dedup: when subtask_index changes A→B at
+    frame t, A is done from frame t onward. A subtask that recurs later appends
+    again (this is execution history, not a set). Frames with index -1
+    (unannotated) neither append nor become current. The list resets after
+    episode-end frames and keeps the newest `cap` entries, padded with -1.
+
+    Returns (T, cap) long.
+    """
+    indices = [int(i) for i in subtask_indices.tolist()]
+    ends = episode_ends.tolist()
+    out = torch.full((len(indices), cap), -1, dtype=torch.long)
+    completed: list[int] = []
+    prev = -1
+    for t, cur in enumerate(indices):
+        if cur != -1:
+            if prev != -1 and cur != prev:
+                completed.append(prev)
+            prev = cur
+        tail = completed[-cap:]
+        if tail:
+            out[t, : len(tail)] = torch.tensor(tail, dtype=torch.long)
+        if ends[t]:
+            completed = []
+            prev = -1
+    return out
+
+
+def assemble_history_windows(
+    entries: Sequence[dict[str, torch.Tensor]],
+    history_offsets: dict[str, list[int]],
+    current_state: dict[str, torch.Tensor],
+    action_dim: int,
+) -> dict[str, torch.Tensor]:
+    """Actor-side mirror of ReplayBuffer._gather_history.
+
+    entries are the completed (state, action) steps of the current episode,
+    oldest → newest, each value shaped (1, ...); the frame at lookback distance
+    k is entries[-k]. Slots reaching past the oldest entry repeat it and are
+    flagged True in the pad mask — same clamp + mask semantics as the
+    learner-side gather. With no entries at all, state slots repeat the current
+    state and action slots are zeros (padded either way).
+
+    Returns {"history.{key}": (1, T_h, ...), "history.{key}_is_pad": (1, T_h) bool}.
+    """
+    reach = len(entries)
+    windows = {}
+    for key, offsets in history_offsets.items():
+        slots = []
+        for k in offsets:  # oldest → newest (offsets normalized descending)
+            distance = min(k, reach)
+            if distance > 0:
+                value = entries[-distance][key]
+            elif key == ACTION:
+                value = torch.zeros(1, action_dim)
+            else:
+                value = current_state[key]
+            slots.append(value)
+        windows[f"history.{key}"] = torch.stack(slots, dim=1)
+        windows[f"history.{key}_is_pad"] = torch.tensor([[k > reach for k in offsets]])
+    return windows
+
+
 class ReplayBuffer:
     def __init__(
         self,
@@ -145,6 +214,9 @@ class ReplayBuffer:
         self.terminal_failure_reward = terminal_failure_reward
         self.image_storage_dtype = self._normalize_image_storage_dtype(image_storage_dtype)
         self.image_storage_size = self._normalize_image_storage_size(image_storage_size)
+        # Image/depth rows kept every N-th frame (memmap caches only; see from_cache).
+        # Low-dim arrays stay dense, so action chunks / dones / history are unaffected.
+        self.image_stride = 1
         self.history_offsets = self._normalize_history_offsets(history_offsets)
         self._lock = threading.Lock()
 
@@ -369,6 +441,55 @@ class ReplayBuffer:
             self.position = (self.position + 1) % self.capacity
             self.size = min(self.size + 1, self.capacity)
 
+    def materialize_done_lists(self, cap: int) -> None:
+        """Derive complementary_info["done_list_ids"] (capacity, cap) from the per-frame
+        subtask_index column. No-op when the buffer carries no subtask annotations.
+        Call AFTER any subtask vocabulary remapping — the stored ids are final.
+        """
+        if not self.has_complementary_info or "subtask_index" not in self.complementary_info:
+            return
+        n = self.size
+        subtask_indices = self.complementary_info["subtask_index"][:n].reshape(n)
+        episode_ends = (self.dones[:n] | self.truncateds[:n]).reshape(n)
+        done_ids = torch.full((self.capacity, cap), -1, dtype=torch.long, device=self.storage_device)
+        done_ids[:n] = done_list_ids_from_subtask_indices(subtask_indices, episode_ends, cap)
+        self.complementary_info["done_list_ids"] = done_ids
+        if "done_list_ids" not in self.complementary_info_keys:
+            self.complementary_info_keys.append("done_list_ids")
+
+    def materialize_metadata(
+        self,
+        quality: int,
+        mistake: bool,
+        speed_bucket_steps: int,
+    ) -> None:
+        """π0.7-style episode metadata as complementary columns (offline buffers).
+
+        quality/mistake are dataset-level defaults (curated demos: 5 / False);
+        speed is the per-episode length bucketed by `speed_bucket_steps`,
+        broadcast to every frame of the episode.
+        """
+        n = self.size
+        ends = (self.dones[:n] | self.truncateds[:n]).reshape(n).tolist()
+        speed = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
+        episode_start = 0
+        for t, end in enumerate(ends):
+            if end or t == n - 1:
+                length = t - episode_start + 1
+                speed[episode_start : t + 1] = float(length // speed_bucket_steps)
+                episode_start = t + 1
+        self.complementary_info["metadata_quality"] = torch.full(
+            (self.capacity,), float(quality), dtype=torch.bfloat16, device=self.storage_device
+        )
+        self.complementary_info["metadata_mistake"] = torch.full(
+            (self.capacity,), float(mistake), dtype=torch.bfloat16, device=self.storage_device
+        )
+        self.complementary_info["metadata_speed"] = speed
+        for key in ("metadata_quality", "metadata_mistake", "metadata_speed"):
+            if key not in self.complementary_info_keys:
+                self.complementary_info_keys.append(key)
+        self.has_complementary_info = True
+
     def _gather_history(self, idx: torch.Tensor) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         """Assemble lookback windows for the sampled indices.
 
@@ -381,7 +502,8 @@ class ReplayBuffer:
 
         The key "action" gathers from self.actions: every fill path stores one
         executed action per frame, so actions[idx - k] is what the robot did k
-        steps ago.
+        steps ago. Keys starting with "depth." gather from complementary_info,
+        where per-frame raw depth lives (uint16, preserved).
 
         Returns ({key: (B, T_h, ...)}, {key: (B, T_h) bool}), windows oldest → newest.
         """
@@ -403,7 +525,12 @@ class ReplayBuffer:
             offs = torch.tensor(offsets, device=device)  # (T_h,) oldest → newest
             dist = torch.minimum(offs.unsqueeze(0), reach.unsqueeze(1))  # (B, T_h)
             gather_idx = (idx.unsqueeze(1) - dist) % self.capacity
-            source = self.actions if key == ACTION else self.states[key]
+            if key == ACTION:
+                source = self.actions
+            elif key.startswith("depth."):
+                source = self.complementary_info[key]
+            else:
+                source = self.states[key]
             history[key] = source[gather_idx]
             pad[key] = offs.unsqueeze(0) > reach.unsqueeze(1)
         return history, pad
@@ -416,6 +543,13 @@ class ReplayBuffer:
         with self._lock:
             batch_size = min(batch_size, self.size)
             high = max(0, self.size - 1) if self.optimize_memory and self.size < self.capacity else self.size
+
+            stride = self.image_stride
+            if stride > 1 and action_chunk_size % stride != 0:
+                raise ValueError(
+                    f"action_chunk_size={action_chunk_size} must be a multiple of "
+                    f"image_stride={stride} so idx + chunk lands on a stored image row."
+                )
 
             valid_indices = []
             collected_count = 0
@@ -432,7 +566,14 @@ class ReplayBuffer:
 
                 # Only sample enough to fill the remaining needed batch size (times a safety factor)
                 remaining = batch_size - collected_count
-                idx = torch.randint(low=0, high=high, size=(4 * remaining,), device=self.storage_device)
+                if stride > 1:
+                    # Images/depth exist only every stride-th frame: draw image-aligned
+                    # starts so observations are exact (image row = idx // stride).
+                    idx = stride * torch.randint(
+                        low=0, high=(high + stride - 1) // stride, size=(4 * remaining,), device=self.storage_device
+                    )
+                else:
+                    idx = torch.randint(low=0, high=high, size=(4 * remaining,), device=self.storage_device)
 
                 if len(self.actions.shape) == 2 and action_chunk_size > 1:
                     # Use action_chunk_size - 1 if you don't want to check the final step's done flag
@@ -459,18 +600,22 @@ class ReplayBuffer:
             batch_state = {}
             batch_next_state = {}
 
-            # First pass: load all state tensors to target device
+            # First pass: load all state tensors to target device.
+            # Image tensors hold one row per stride-th frame, so their row index is
+            # idx // stride (exact: sampled idx and idx + chunk are stride-aligned).
             for key in self.states:
-                state_arr = self.states[key][idx]
+                row = idx // stride if self._is_image_key(key) else idx
+                state_arr = self.states[key][row]
                 batch_state[key] = state_arr.to(self.device)
 
                 if not self.optimize_memory:
                     # Standard approach - load next_states directly
-                    batch_next_state[key] = self.next_states[key][idx].to(self.device)
+                    batch_next_state[key] = self.next_states[key][row].to(self.device)
                 else:
                     # Memory-optimized approach - get next_state from the next index
                     next_idx = (idx + action_chunk_size) % self.capacity
-                    batch_next_state[key] = self.states[key][next_idx].to(self.device)
+                    next_row = next_idx // stride if self._is_image_key(key) else next_idx
+                    batch_next_state[key] = self.states[key][next_row].to(self.device)
 
             # Short-term memory: lookback windows for the configured keys
             if self.history_offsets is not None:
@@ -519,10 +664,11 @@ class ReplayBuffer:
                     (idx + action_chunk_size) % self.capacity if self.optimize_memory else None
                 )
                 for key in self.complementary_info_keys:
-                    batch_complementary_info[key] = self.complementary_info[key][idx].to(self.device)
+                    row = idx // stride if key.startswith("depth.") else idx
+                    batch_complementary_info[key] = self.complementary_info[key][row].to(self.device)
                     if depth_next_idx is not None and key.startswith("depth."):
                         batch_complementary_info[f"next_{key}"] = self.complementary_info[key][
-                            depth_next_idx
+                            depth_next_idx // stride
                         ].to(self.device)
 
         # Image augmentation operates only on local batch_state/batch_next_state
@@ -706,8 +852,23 @@ class ReplayBuffer:
         non_image_state_keys = meta["non_image_state_keys"]
         image_storage_dtype = meta.get("image_storage_dtype", IMAGE_STORAGE_DTYPE_BFLOAT16)
         image_storage_size = meta.get("image_storage_size", meta.get("image_size", [224, 224]))
+        image_stride = int(meta.get("image_stride", 1))
+        # Builder writes image/depth rows for frames 0, stride, 2*stride, ...
+        image_rows = (num_transitions + image_stride - 1) // image_stride
 
-        logger.info(f"Loading buffer cache from {cache_dir} ({num_transitions} transitions)")
+        if image_stride > 1 and history_offsets:
+            strided_keys = [
+                k for k in history_offsets if cls._is_image_key(k) or k.startswith("depth.")
+            ]
+            if strided_keys:
+                raise ValueError(
+                    f"history_offsets on image/depth keys {strided_keys} are unsupported with "
+                    f"image_stride={image_stride}: lookback rows are not stored."
+                )
+
+        logger.info(
+            f"Loading buffer cache from {cache_dir} ({num_transitions} transitions, image_stride={image_stride})"
+        )
 
         replay_buffer = cls(
             capacity=num_transitions,
@@ -727,12 +888,15 @@ class ReplayBuffer:
         def _sanitize(key: str) -> str:
             return key.replace("/", "_")
 
-        def _load_memmap(key: str, shape: tuple, as_torch_dtype: torch.dtype | None = None) -> torch.Tensor:
+        def _load_memmap(
+            key: str, shape: tuple, as_torch_dtype: torch.dtype | None = None, rows: int | None = None
+        ) -> torch.Tensor:
             safe_key = _sanitize(key)
             bin_path = cache_dir / f"{safe_key}.bin"
             dtype_str = meta["dtypes"][safe_key]
             np_dtype = np.dtype(dtype_str)
-            full_shape = tuple([num_transitions] + meta["shapes"][safe_key]) if meta["shapes"][safe_key] else (num_transitions,)
+            count = num_transitions if rows is None else rows
+            full_shape = tuple([count] + meta["shapes"][safe_key]) if meta["shapes"][safe_key] else (count,)
             mm = np.memmap(str(bin_path), dtype=np_dtype, mode="c", shape=full_shape)
             t = torch.from_numpy(mm)
             if as_torch_dtype is not None and np_dtype == np.uint16:
@@ -750,7 +914,9 @@ class ReplayBuffer:
         # caches are stored as uint16 and viewed back as torch.bfloat16.
         replay_buffer.states = {}
         for key in image_keys:
-            replay_buffer.states[key] = _load_memmap(key, (), as_torch_dtype=_bf16_view_if_uint16(key))
+            replay_buffer.states[key] = _load_memmap(
+                key, (), as_torch_dtype=_bf16_view_if_uint16(key), rows=image_rows
+            )
             logger.info(f"  {key}: memmap {replay_buffer.states[key].shape} {replay_buffer.states[key].dtype}")
 
         # Non-image state: small, clone into RAM
@@ -813,7 +979,9 @@ class ReplayBuffer:
             full_key = f"depth.{k}"
             if not (cache_dir / f"{_sanitize(full_key)}.bin").exists():
                 continue
-            replay_buffer.complementary_info[full_key] = _load_memmap(full_key, (), as_torch_dtype=None)
+            replay_buffer.complementary_info[full_key] = _load_memmap(
+                full_key, (), as_torch_dtype=None, rows=image_rows
+            )
             replay_buffer.complementary_info_keys.append(full_key)
             replay_buffer.has_complementary_info = True
             logger.info(
@@ -821,6 +989,7 @@ class ReplayBuffer:
                 f"{replay_buffer.complementary_info[full_key].dtype}"
             )
 
+        replay_buffer.image_stride = image_stride
         replay_buffer.size = num_transitions
         replay_buffer.position = num_transitions % replay_buffer.capacity
         replay_buffer.initialized = True
@@ -834,6 +1003,7 @@ class ReplayBuffer:
         state_keys: Sequence[str] | None = None,
         image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
         image_storage_size: tuple[int, int] | Sequence[int] | None = (224, 224),
+        image_stride: int = 1,
     ) -> str:
         """Hash dataset identity plus replay-cache storage semantics."""
         storage_size = ReplayBuffer._normalize_image_storage_size(image_storage_size)
@@ -846,6 +1016,9 @@ class ReplayBuffer:
             "image_storage_dtype": ReplayBuffer._normalize_image_storage_dtype(image_storage_dtype),
             "image_storage_size": list(storage_size) if storage_size is not None else None,
         }
+        # Only fingerprinted when != 1 so dense caches built before this field keep their hash.
+        if image_stride != 1:
+            key_payload["image_stride"] = int(image_stride)
         key = json.dumps(key_payload, sort_keys=True)
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
@@ -862,6 +1035,7 @@ class ReplayBuffer:
         state_keys: Sequence[str] | None = None,
         image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
         image_storage_size: tuple[int, int] | Sequence[int] | None = (224, 224),
+        image_stride: int = 1,
     ) -> Path | None:
         """Check if a valid cache exists for this dataset and image storage spec."""
         cache_dir = Path(cache_dir)
@@ -870,6 +1044,7 @@ class ReplayBuffer:
             state_keys=state_keys,
             image_storage_dtype=image_storage_dtype,
             image_storage_size=image_storage_size,
+            image_stride=image_stride,
         )
         candidates = [cache_dir / fingerprint]
 
@@ -898,6 +1073,8 @@ class ReplayBuffer:
                 continue
             if cls._normalize_image_storage_size(meta_size) != storage_size:
                 continue
+            if int(meta.get("image_stride", 1)) != int(image_stride):
+                continue
             return candidate
         return None
 
@@ -918,6 +1095,7 @@ class ReplayBuffer:
         cache_dir: str | Path | None = None,
         image_storage_dtype: str = IMAGE_STORAGE_DTYPE_BFLOAT16,
         image_storage_size: tuple[int, int] | None = (224, 224),
+        image_stride: int = 1,
         history_offsets: dict[str, list[int]] | None = None,
     ) -> "ReplayBuffer":
         """
@@ -946,6 +1124,7 @@ class ReplayBuffer:
                 state_keys=state_keys,
                 image_storage_dtype=image_storage_dtype,
                 image_storage_size=image_storage_size,
+                image_stride=image_stride,
             )
             if cached is not None:
                 logger.info(f"Found memmap cache at {cached}, loading from disk...")
@@ -961,6 +1140,14 @@ class ReplayBuffer:
                 )
             else:
                 logger.info(f"No valid cache found in {cache_dir}, falling back to video decode")
+
+        if image_stride != 1:
+            # The in-RAM decode path below stores every frame; at the dataset sizes that
+            # motivate a stride, silently falling back would OOM. Fail loudly instead.
+            raise RuntimeError(
+                f"image_stride={image_stride} requires a memmap cache and none matched under "
+                f"{cache_dir!r}. Build one: lerobot_memmap_buffer_cache.py --image-stride {image_stride}"
+            )
 
         if capacity is None:
             capacity = len(lerobot_dataset)

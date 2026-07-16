@@ -24,7 +24,12 @@ pytest.importorskip("datasets", reason="datasets is required (install lerobot[da
 import torch  # noqa: E402
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
-from lerobot.rl.buffer import BatchTransition, ReplayBuffer, random_crop_vectorized  # noqa: E402
+from lerobot.rl.buffer import (  # noqa: E402
+    BatchTransition,
+    ReplayBuffer,
+    assemble_history_windows,
+    random_crop_vectorized,
+)
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_STATE, OBS_STR, REWARD  # noqa: E402
 from tests.fixtures.constants import DUMMY_REPO_ID  # noqa: E402
 
@@ -846,3 +851,179 @@ def test_history_includes_executed_actions():
     history, pad = buffer._gather_history(torch.tensor([1]))
     assert torch.equal(history[ACTION].float().squeeze(-1), torch.tensor([[100.0, 100.0, 100.0]]))
     assert torch.equal(pad[ACTION], torch.tensor([[True, True, False]]))
+
+
+def test_assemble_history_windows_matches_buffer_gather():
+    """Actor-side assembly and learner-side gather must produce identical windows."""
+    offsets = {OBS_STATE: [3, 2, 1], ACTION: [3, 2, 1]}
+    buffer = ReplayBuffer(
+        20, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True, history_offsets=offsets
+    )
+    # One episode: frame i has state i and executed action 100 + i.
+    frames = [
+        ({OBS_STATE: torch.tensor([[float(i)]])}, torch.tensor([[100.0 + i]])) for i in range(6)
+    ]
+    for i, (state, action) in enumerate(frames):
+        buffer.add(
+            state=state, action=action, reward=0.0, next_state=None, done=(i == 5), truncated=False
+        )
+
+    for now in [5, 2, 1]:
+        # Learner side: frame `now` is the current frame.
+        gathered, gathered_pad = buffer._gather_history(torch.tensor([now]))
+        # Actor side: completed steps 0..now-1 are in the deque, frame `now` is pending.
+        entries = [{OBS_STATE: s[OBS_STATE], ACTION: a} for s, a in frames[:now]]
+        windows = assemble_history_windows(entries, buffer.history_offsets, frames[now][0], action_dim=1)
+
+        for key in offsets:
+            assert torch.equal(
+                windows[f"history.{key}_is_pad"], gathered_pad[key]
+            ), f"pad mismatch key={key} now={now}"
+            mask = ~gathered_pad[key] if key == ACTION else torch.ones_like(gathered_pad[key])
+            assert torch.equal(
+                windows[f"history.{key}"].float()[mask], gathered[key].float()[mask]
+            ), f"value mismatch key={key} now={now}"
+
+
+def test_assemble_history_windows_empty_episode_start():
+    offsets = {OBS_STATE: [3, 2, 1], ACTION: [3, 2, 1]}
+    current = {OBS_STATE: torch.tensor([[7.0]])}
+
+    windows = assemble_history_windows([], offsets, current, action_dim=1)
+
+    assert torch.equal(windows[f"history.{OBS_STATE}"], torch.full((1, 3, 1), 7.0))
+    assert torch.equal(windows[f"history.{ACTION}"], torch.zeros(1, 3, 1))
+    assert windows[f"history.{OBS_STATE}_is_pad"].all()
+    assert windows[f"history.{ACTION}_is_pad"].all()
+
+
+def test_history_includes_depth_from_complementary_info():
+    """Depth history: gathered from complementary_info learner-side, deque entries actor-side,
+    identical windows on both. Depth value = frame index, uint16, shape (2, 2)."""
+    depth_key = "depth.top.depth"
+    offsets = {OBS_STATE: [3, 2, 1], depth_key: [3, 2, 1]}
+    buffer = ReplayBuffer(
+        20, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True, history_offsets=offsets
+    )
+    frames = []
+    for i in range(6):
+        state = {OBS_STATE: torch.tensor([[float(i)]])}
+        depth = torch.full((1, 2, 2), i, dtype=torch.uint16)
+        frames.append((state, depth))
+        buffer.add(
+            state=state,
+            action=torch.tensor([[0.0]]),
+            reward=0.0,
+            next_state=None,
+            done=(i == 5),
+            truncated=False,
+            complementary_info={depth_key: depth},
+        )
+
+    gathered, gathered_pad = buffer._gather_history(torch.tensor([5]))
+    assert gathered[depth_key].dtype == torch.uint16
+    assert torch.equal(gathered[depth_key][:, :, 0, 0].int(), torch.tensor([[2, 3, 4]], dtype=torch.int32))
+
+    for now in [5, 1, 0]:
+        gathered, gathered_pad = buffer._gather_history(torch.tensor([now]))
+        entries = [{OBS_STATE: s[OBS_STATE], depth_key: d} for s, d in frames[:now]]
+        current = {OBS_STATE: frames[now][0][OBS_STATE], depth_key: frames[now][1]}
+        windows = assemble_history_windows(
+            entries, {k: sorted(v, reverse=True) for k, v in offsets.items()}, current, action_dim=1
+        )
+        assert torch.equal(windows[f"history.{depth_key}_is_pad"], gathered_pad[depth_key])
+        assert torch.equal(windows[f"history.{depth_key}"], gathered[depth_key])
+
+
+# ── Long-term memory: per-frame done-lists ───────────────────────────────────
+
+
+def test_done_list_scan_semantics():
+    from lerobot.rl.buffer import done_list_ids_from_subtask_indices
+
+    # Two episodes: [2,2,5,5,1] then [7,7,-1,7,3]; episode ends at frames 4 and 9.
+    subtasks = torch.tensor([2, 2, 5, 5, 1, 7, 7, -1, 7, 3])
+    ends = torch.zeros(10, dtype=torch.bool)
+    ends[4] = ends[9] = True
+
+    out = done_list_ids_from_subtask_indices(subtasks, ends, cap=3)
+
+    expected = torch.tensor([
+        [-1, -1, -1],  # frame 0: on 2, nothing done
+        [-1, -1, -1],  # staying on 2 appends nothing
+        [2, -1, -1],   # switched 2→5: 2 is done
+        [2, -1, -1],
+        [2, 5, -1],    # switched 5→1
+        [-1, -1, -1],  # new episode: list reset
+        [-1, -1, -1],
+        [-1, -1, -1],  # -1 gap: no append, no switch
+        [-1, -1, -1],  # back on 7 after gap: still no switch
+        [7, -1, -1],   # switched 7→3
+    ])
+    assert torch.equal(out, expected)
+
+
+def test_done_list_recurrence_and_cap():
+    from lerobot.rl.buffer import done_list_ids_from_subtask_indices
+
+    # A→B→A→C: recurring A appears twice (execution history, not a set).
+    subtasks = torch.tensor([1, 2, 1, 3])
+    ends = torch.zeros(4, dtype=torch.bool)
+    out = done_list_ids_from_subtask_indices(subtasks, ends, cap=3)
+    assert torch.equal(out[3], torch.tensor([1, 2, 1]))
+
+    # cap=2 keeps the newest entries.
+    out = done_list_ids_from_subtask_indices(subtasks, ends, cap=2)
+    assert torch.equal(out[3], torch.tensor([2, 1]))
+
+
+def test_materialize_done_lists_and_sample():
+    buffer = ReplayBuffer(20, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True)
+    subtasks = [4, 4, 4, 9, 9, 9, 9, 9, 2, 2]
+    for i in range(10):
+        buffer.add(
+            state={OBS_STATE: torch.tensor([[float(i)]])},
+            action=torch.tensor([[0.0]]),
+            reward=0.0,
+            next_state=None,
+            done=(i == 9),
+            truncated=False,
+            complementary_info={"subtask_index": torch.tensor([subtasks[i]])},
+        )
+
+    buffer.materialize_done_lists(cap=4)
+
+    ids = buffer.complementary_info["done_list_ids"]
+    assert ids.shape == (20, 4)
+    assert torch.equal(ids[2], torch.tensor([-1, -1, -1, -1]))
+    assert torch.equal(ids[3], torch.tensor([4, -1, -1, -1]))
+    assert torch.equal(ids[9], torch.tensor([4, 9, -1, -1]))
+
+    batch = buffer.sample(batch_size=4, action_chunk_size=2)
+    assert batch["complementary_info"]["done_list_ids"].shape == (4, 4)
+
+
+def test_materialize_metadata_speed_buckets():
+    buffer = ReplayBuffer(20, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True)
+    # Episode 1: 7 frames; episode 2: 3 frames.
+    for episode_length in (7, 3):
+        for i in range(episode_length):
+            buffer.add(
+                state={OBS_STATE: torch.tensor([[0.0]])},
+                action=torch.tensor([[0.0]]),
+                reward=0.0,
+                next_state=None,
+                done=(i == episode_length - 1),
+                truncated=False,
+            )
+
+    buffer.materialize_metadata(quality=5, mistake=False, speed_bucket_steps=3)
+
+    speed = buffer.complementary_info["metadata_speed"].float()
+    assert (speed[:7] == 2.0).all()  # 7 // 3
+    assert (speed[7:10] == 1.0).all()  # 3 // 3
+    assert (buffer.complementary_info["metadata_quality"][:10].float() == 5.0).all()
+    assert (buffer.complementary_info["metadata_mistake"][:10].float() == 0.0).all()
+
+    batch = buffer.sample(batch_size=4, action_chunk_size=2)
+    assert batch["complementary_info"]["metadata_speed"].shape == (4,)

@@ -9,6 +9,7 @@ import shutil
 import time
 import traceback
 import threading
+from collections import deque
 from threading import Thread
 
 import matplotlib.pyplot as plt
@@ -22,7 +23,7 @@ from lerobot.policies.rtc.configuration_rtc import RTCConfig
 from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.processor import TransitionKey
-from lerobot.rl.buffer import ReplayBuffer
+from lerobot.rl.buffer import ReplayBuffer, assemble_history_windows
 from lerobot.rl.actor import push_transitions_to_transport_queue
 from lerobot.rl.gym_manipulator import (
     create_transition,
@@ -103,6 +104,14 @@ class RTCSharedState:
         self.latest_obs: dict | None = None
         self.is_intervening = False
         self.episode_active = False
+        self.history_offsets: dict[str, list[int]] | None = None
+        self.history_entries: deque | None = None
+        # Long-term memory: generated current subtask + done-list (append-on-switch,
+        # same rule as ReplayBuffer.materialize_done_lists).
+        self.current_subtask_name: str | None = None
+        self.current_subtask_index: int = -1
+        self.done_list_names: list[str] = []
+        self.done_list_ids: list[int] = []
         self.policy_reset_requested = False
         self.update_parameters_requested = False
         self.running = True
@@ -262,6 +271,54 @@ class RTCSharedState:
         with self.lock:
             self.cached_subtask_tokens = tokens.clone()
             self.cached_subtask_masks = masks.clone()
+
+    def configure_history(self, history_offsets: dict[str, list[int]] | None) -> None:
+        """Enable short-term memory: the env worker pushes one completed (state, action)
+        entry per control step; the deque holds exactly the largest lookback distance."""
+        self.history_offsets = history_offsets
+        if history_offsets is not None:
+            max_back = max(offsets[0] for offsets in history_offsets.values())
+            self.history_entries = deque(maxlen=max_back)
+
+    def update_subtask(self, name: str, index: int) -> None:
+        """Append-on-switch: when the generated subtask changes, the previous one is
+        done. Ids only track snapped subtasks (index >= 0); names track everything."""
+        with self.lock:
+            if self.current_subtask_name is not None and name != self.current_subtask_name:
+                self.done_list_names.append(self.current_subtask_name)
+                if self.current_subtask_index >= 0:
+                    self.done_list_ids.append(self.current_subtask_index)
+            self.current_subtask_name = name
+            self.current_subtask_index = index
+
+    def subtask_snapshot(self) -> tuple[str | None, int, list[str], list[int]]:
+        with self.lock:
+            return (
+                self.current_subtask_name,
+                self.current_subtask_index,
+                list(self.done_list_names),
+                list(self.done_list_ids),
+            )
+
+    def clear_subtask_state(self) -> None:
+        with self.lock:
+            self.current_subtask_name = None
+            self.current_subtask_index = -1
+            self.done_list_names = []
+            self.done_list_ids = []
+
+    def push_history(self, entry: dict) -> None:
+        with self.lock:
+            self.history_entries.append(entry)
+
+    def clear_history(self) -> None:
+        with self.lock:
+            if self.history_entries is not None:
+                self.history_entries.clear()
+
+    def history_snapshot(self) -> list[dict]:
+        with self.lock:
+            return list(self.history_entries)
 
 
 def _rerun_log_worker(q) -> None:
@@ -423,6 +480,17 @@ def rtc_inference_worker(
         time_per_chunk = 1.0 / cfg.env.fps
         task_str = cfg.policy.task
         action_dim = _action_dim(cfg)
+        subtask_enabled = int(getattr(cfg.policy, "subtask_max_new_tokens", 0)) > 0
+        subtask_interval = float(getattr(cfg.policy, "subtask_regeneration_interval", 1.0))
+        last_subtask_time: float | None = None
+        # Metadata steering at inference = prompt the best behavior (π0.7: quality 5,
+        # no mistakes; speed omitted — the clause renders partially).
+        memory_cfg = getattr(cfg.policy, "memory", None)
+        inference_metadata = (
+            {"quality": 5, "mistake": False}
+            if memory_cfg is not None and memory_cfg.metadata_enabled
+            else None
+        )
 
         while shared_state.running:
             if shared_state.check_and_clear_parameter_update():
@@ -437,6 +505,7 @@ def rtc_inference_worker(
             if shared_state.check_and_clear_reset():
                 if hasattr(policy, "reset"):
                     policy.reset()
+                last_subtask_time = None
                 continue
 
             if shared_state.is_intervening:
@@ -462,10 +531,42 @@ def rtc_inference_worker(
                 for k, v in latest_obs.items()
                 if k in cfg.policy.input_features or k.startswith("observation.depth.")
             }
+            if shared_state.history_offsets is not None:
+                # Expose current depth under the buffer-canonical key so the
+                # episode-start fallback (empty deque) can repeat it.
+                current = dict(latest_obs)
+                for k, v in latest_obs.items():
+                    if k.startswith("observation.depth."):
+                        current[f"depth.{k.removeprefix('observation.depth.')}.depth"] = v.unsqueeze(0)
+                obs_filtered.update(
+                    assemble_history_windows(
+                        shared_state.history_snapshot(),
+                        shared_state.history_offsets,
+                        current,
+                        action_dim,
+                    )
+                )
             robot_type = cfg.env.robot.type if hasattr(cfg.env, "robot") else ""
 
             current_time = time.perf_counter()
             with torch.no_grad():
+                # Subtask generation at cadence (two-prompt design). Runs in THIS
+                # thread — generation is not safe against a concurrent worker.
+                if subtask_enabled and (
+                    last_subtask_time is None
+                    or (current_time - last_subtask_time) >= subtask_interval
+                ):
+                    _, _, done_names, _ = shared_state.subtask_snapshot()
+                    raw_text, subtask_name, subtask_index = trainer.generate_subtask_text(
+                        policy, obs_filtered, task_str, cfg,
+                        preprocessor=preprocessor, done_list=done_names,
+                    )
+                    shared_state.update_subtask(subtask_name, subtask_index)
+                    last_subtask_time = current_time
+                    if subtask_index < 0:
+                        logger.warning("[RTC_INFERENCE] Subtask snap missed vocab: %r", raw_text)
+
+                current_subtask, _, current_done_names, _ = shared_state.subtask_snapshot()
                 t_preproc_start = time.perf_counter()
                 processed_batch = trainer.build_inference_batch(
                     obs_filtered,
@@ -473,6 +574,9 @@ def rtc_inference_worker(
                     cfg,
                     preprocessor=preprocessor,
                     robot_type=robot_type,
+                    subtask=current_subtask if subtask_enabled else None,
+                    done_list=current_done_names if subtask_enabled else None,
+                    metadata=inference_metadata,
                 )
                 t_preproc_end = time.perf_counter()
 
@@ -686,6 +790,8 @@ def rtc_env_worker(
                 env_processor.reset()
                 action_processor.reset()
                 action_queue.clear()
+                shared_state.clear_history()
+                shared_state.clear_subtask_state()
                 shared_state.request_reset()
                 if not standalone:
                     shared_state.request_parameter_update()
@@ -798,13 +904,24 @@ def rtc_env_worker(
                     subtask_tokens = torch.zeros(max_len, dtype=torch.long)
                     subtask_masks = torch.zeros(max_len, dtype=torch.bool)
 
+            # Long-term memory: the generated subtask + done-list ride the buffer's
+            # canonical columns so online transitions look exactly like annotated
+            # offline frames to the learner.
+            _, subtask_idx_now, _, done_ids_now = shared_state.subtask_snapshot()
             complementary_info = {
                 "discrete_penalty": torch.tensor([
                     new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
                 ]),
                 TeleopEvents.IS_INTERVENTION.value: torch.tensor([float(is_intervening)], dtype=torch.float32),
-                "subtask_index": torch.tensor([-1], dtype=torch.long),
+                "subtask_index": torch.tensor([subtask_idx_now], dtype=torch.long),
             }
+            memory_cfg = getattr(cfg.policy, "memory", None)
+            if memory_cfg is not None and int(getattr(cfg.policy, "subtask_max_new_tokens", 0)) > 0:
+                cap = memory_cfg.done_list_cap
+                tail = done_ids_now[-cap:]
+                complementary_info["done_list_ids"] = torch.tensor(
+                    [tail + [-1] * (cap - len(tail))], dtype=torch.long
+                )
             # Only carry subtask tensors when the policy actually generates them
             # (pi05: max_decoding_steps>0). Empty (0,) tensors would later trip
             # compute_episode_stats during buffer→dataset serialization.
@@ -824,6 +941,21 @@ def rtc_env_worker(
 
             observation = convert_env_obs_to_policy_format(transition[TransitionKey.OBSERVATION])
             next_observation = convert_env_obs_to_policy_format(new_transition[TransitionKey.OBSERVATION])
+
+            # Short-term memory: one completed (state, action) entry per control step,
+            # the same (state, action, depth) this frame gets in the learner buffer.
+            # Depth uses the buffer's canonical complementary key (depth.{cam}.depth),
+            # pulled unbatched from the unfiltered transition like the block above.
+            if shared_state.history_offsets is not None:
+                entry = {}
+                for k in shared_state.history_offsets:
+                    if k == ACTION:
+                        entry[k] = executed_action[..., :action_dim].reshape(1, -1)
+                    elif k.startswith("depth."):
+                        entry[k] = transition[TransitionKey.OBSERVATION][k.removeprefix("depth.")].unsqueeze(0)
+                    else:
+                        entry[k] = observation[k]
+                shared_state.push_history(entry)
             # Images go on-wire as uint8 to match the offline buffer's uint8 storage
             # (so online/offline batches concatenate) and to shrink the gRPC payload 4x.
             state_send = {k: v.mul(255).clamp(0, 255).to(torch.uint8) if "image" in k else v for k, v in observation.items()}
@@ -1287,6 +1419,11 @@ def act_with_policy_rtc_inference(
 
     shared = RTCSharedState()
     shared.running = not shutdown_event.is_set()
+    memory_cfg = getattr(cfg.policy, "memory", None)
+    history_offsets = ReplayBuffer._normalize_history_offsets(
+        memory_cfg.history_offsets(cfg.env.fps) if memory_cfg is not None else None
+    )
+    shared.configure_history(history_offsets)
     shared.replay_buffer = ReplayBuffer(
         capacity=cfg.policy.online_buffer_capacity,
         device=str(device),
@@ -1294,6 +1431,7 @@ def act_with_policy_rtc_inference(
         storage_device=getattr(cfg.policy, "storage_device", "cpu"),
         image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "uint8"),
         image_storage_size=getattr(cfg.policy, "image_storage_size", None),
+        history_offsets=history_offsets,
     )
     action_queue = ActionQueue(policy.config.rtc_config)
 
@@ -1440,6 +1578,12 @@ def act_with_policy_rtc(
 
     shared = RTCSharedState()
     shared.running = not shutdown_event.is_set()
+    memory_cfg = getattr(cfg.policy, "memory", None)
+    shared.configure_history(
+        ReplayBuffer._normalize_history_offsets(
+            memory_cfg.history_offsets(cfg.env.fps) if memory_cfg is not None else None
+        )
+    )
     action_queue = ActionQueue(policy.config.rtc_config)
 
     inf_thread = Thread(

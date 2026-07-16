@@ -55,6 +55,11 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # ── Memory (short-term observation history) ─────────────────────────────
     memory: MemoryConfig = field(default_factory=MemoryConfig)
 
+    # ── Subtask generation (two-prompt, string-level) ────────────────────────
+    subtask_max_new_tokens: int = 0  # 0 = generation disabled
+    subtask_regeneration_interval: float = 1.0  # seconds between regenerations
+    subtask_loss_weight: float = 0.0  # CE weight on generation answers; 0 = no subtask training
+
     # ── Replay buffer ──────────────────────────────────────────────────────
     storage_device: str = "cpu"
     offline_buffer_capacity: int = 100_000

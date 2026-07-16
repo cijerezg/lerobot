@@ -184,6 +184,13 @@ def main():
         default=["raw"],
         help="Image storage size as HEIGHT WIDTH, or 'raw' to keep dataset resolution (default).",
     )
+    parser.add_argument(
+        "--image-stride",
+        type=int,
+        default=1,
+        help="Store image/depth rows only every N-th frame (low-dim stays dense at every frame). "
+        "Must divide the policy chunk_size. sample() then draws image-aligned starts.",
+    )
     parser.add_argument("--inject-golden", action="store_true", default=True,
                         help="Inject is_golden=True for all frames (matches offline training)")
     args = parser.parse_args()
@@ -204,6 +211,9 @@ def main():
     num_frames = len(dataset)
     image_storage_size = parse_image_storage_size(args.image_storage_size)
     image_storage_dtype = ReplayBuffer._normalize_image_storage_dtype(args.image_storage_dtype)
+    image_stride = args.image_stride
+    if image_stride < 1:
+        parser.error("--image-stride must be >= 1")
     sample = dataset[0]
 
     state_keys = [k for k in sample if k.startswith("observation.")]
@@ -212,13 +222,16 @@ def main():
         state_keys=state_keys,
         image_storage_dtype=image_storage_dtype,
         image_storage_size=image_storage_size,
+        image_stride=image_stride,
     )
     cache_path = Path(args.cache_dir) / fingerprint
     cache_path.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Dataset: {num_frames} frames, fingerprint={fingerprint}")
     logger.info(f"Cache directory: {cache_path}")
-    logger.info(f"Image storage: dtype={image_storage_dtype}, size={image_storage_size or 'raw'}")
+    logger.info(
+        f"Image storage: dtype={image_storage_dtype}, size={image_storage_size or 'raw'}, stride={image_stride}"
+    )
 
     complementary_info_keys = [k for k in sample if k.startswith("complementary_info.")]
 
@@ -350,6 +363,7 @@ def main():
             complementary_info_keys, has_done_key, args.inject_golden,
             to_bf16_uint16, image_to_numpy,
             depth_keys, dataset.root,
+            write_images=idx % image_stride == 0,
         )
         prev_sample = current_sample
         idx += 1
@@ -365,6 +379,7 @@ def main():
         complementary_info_keys, has_done_key, args.inject_golden,
         to_bf16_uint16, image_to_numpy,
         depth_keys, dataset.root,
+        write_images=idx % image_stride == 0,
     )
     idx += 1
 
@@ -384,6 +399,7 @@ def main():
         "cache_schema_version": CACHE_SCHEMA_VERSION,
         "image_storage_dtype": image_storage_dtype,
         "image_storage_size": list(image_storage_size) if image_storage_size is not None else None,
+        "image_stride": image_stride,
         "image_size": list(image_storage_size) if image_storage_size is not None else None,
         "state_keys": state_keys,
         "image_keys": image_keys,
@@ -408,10 +424,12 @@ def _write_transition(
     to_bf16_uint16,
     image_to_numpy,
     depth_keys, dataset_root,
+    write_images=True,
 ):
-    # State images
-    for key in image_keys:
-        write_array(outputs, key, image_to_numpy(current_sample[key]))
+    # State images — skipped on non-stride-aligned frames (image row = idx // stride)
+    if write_images:
+        for key in image_keys:
+            write_array(outputs, key, image_to_numpy(current_sample[key]))
 
     # Non-image state
     for key in non_image_state_keys:
@@ -458,11 +476,13 @@ def _write_transition(
         write_array(outputs, "complementary_info.is_golden", to_bf16_uint16(torch.tensor(True, dtype=torch.float32)))
 
     # Depth sidecar: raw uint16 straight through (no bf16) so the downstream normalizer keeps 0.1mm.
-    for key in depth_keys:
-        depth = load_depth_png(
-            dataset_root, key, int(current_sample["episode_index"]), int(current_sample["frame_index"])
-        )
-        write_array(outputs, f"depth.{key}", depth)
+    # Strided together with the RGB images (same rows, same alignment).
+    if write_images:
+        for key in depth_keys:
+            depth = load_depth_png(
+                dataset_root, key, int(current_sample["episode_index"]), int(current_sample["frame_index"])
+            )
+            write_array(outputs, f"depth.{key}", depth)
 
 
 if __name__ == "__main__":

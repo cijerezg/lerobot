@@ -64,6 +64,13 @@ class Trainer(ABC):
                    via norm_tag; no anchor/delta complexity.
         """
 
+    def sync_subtask_vocabulary(self, preprocessor, dataset, is_main_process: bool = True) -> None:  # noqa: B027 — optional hook, deliberately non-abstract
+        """Refresh the prompt seam's subtask vocabulary from dataset metadata.
+
+        No-op by default; policies with subtask generation override. Called after
+        additional offline datasets load (the vocab remap extends the metadata).
+        """
+
     @abstractmethod
     def make_policy(self, cfg) -> nn.Module:
         """

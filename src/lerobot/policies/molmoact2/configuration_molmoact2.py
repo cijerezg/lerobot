@@ -117,6 +117,9 @@ class MolmoAct2Config(PreTrainedConfig):
     image_keys: list[str] = field(default_factory=list)
     image_storage_dtype: str = "uint8"
     image_storage_size: tuple[int, int] | None = None
+    # Offline memmap cache: image/depth rows kept every N-th frame (low-dim stays
+    # dense). Must divide chunk_size. Requires a cache built with the same stride.
+    image_stride: int = 1
 
     # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
     # None => depth-free: no encoder built, no depth key shipped, forward cost

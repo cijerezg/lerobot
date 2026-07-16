@@ -230,6 +230,7 @@ class MolmoAct2Trainer(Trainer):
                 action_stats_override=action_stats_override,
             )
         self._preprocessor = result[0]  # cache for critic_value_for_logging
+        self.sync_subtask_vocabulary(result[0], dataset, is_main_process)
         return result
 
     def make_policy(self, cfg) -> nn.Module:
@@ -773,6 +774,7 @@ class MolmoAct2Trainer(Trainer):
             "loss_flow": 0.0,
             "loss_discrete_ce": 0.0,
             "loss_discrete_z": 0.0,
+            "loss_subtask_ce": 0.0,
             "advantage_squashed_mean": 0.0,
             "advantage_raw_pre_override_mean": 0.0,
             "golden_fraction": 0.0,
@@ -907,6 +909,15 @@ class MolmoAct2Trainer(Trainer):
             loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
             loss_for_backward = loss.mean() if isinstance(loss, torch.Tensor) else torch.as_tensor(loss, device=actions.device)
             (loss_for_backward / grad_accum).backward()
+
+            # Subtask-generation CE (two-prompt design): separate forward on the
+            # generation prompt for annotated samples; grads accumulate alongside.
+            subtask_loss_weight = float(getattr(cfg.policy, "subtask_loss_weight", 0.0))
+            if subtask_loss_weight > 0:
+                subtask_loss = self._subtask_generation_loss(policy, raw, observations, preprocessor, cfg)
+                if subtask_loss is not None:
+                    (subtask_loss_weight * subtask_loss / grad_accum).backward()
+                    accum["loss_subtask_ce"] += float(subtask_loss.detach().item()) / grad_accum
 
             accum["loss_actor"] += float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
@@ -1093,14 +1104,23 @@ class MolmoAct2Trainer(Trainer):
         preprocessor = context["preprocessor"]
         device = getattr(cfg.policy, "device", "cpu")
         pre_input: dict[str, Any] = {**observation, "task": task_str}
+        complementary: dict[str, Any] = {}
         advantage = context.get("inference_advantage", cfg.policy.inference_advantage)
         if advantage is not None:
             if not isinstance(advantage, torch.Tensor):
                 advantage = torch.tensor([[advantage]], dtype=torch.float32)
-            pre_input[TransitionKey.COMPLEMENTARY_DATA] = {
-                "advantage": advantage,
-                "advantage_threshold": 0.0,
-            }
+            complementary["advantage"] = advantage
+            complementary["advantage_threshold"] = 0.0
+        # Memory prompt context (two-prompt design): the current generated subtask
+        # and done-list ride as strings; the prompt seam renders them.
+        if context.get("subtask"):
+            complementary["subtask"] = [context["subtask"]]
+        if context.get("done_list") is not None:
+            complementary["done_list"] = [list(context["done_list"])]
+        if context.get("metadata") is not None:
+            complementary["metadata"] = context["metadata"]
+        if complementary:
+            pre_input[TransitionKey.COMPLEMENTARY_DATA] = complementary
         with torch.no_grad():
             batch = preprocessor(pre_input)
         # One-shot depth confirmation: the delivery chain (env worker -> shared state -> filter ->
@@ -1122,6 +1142,106 @@ class MolmoAct2Trainer(Trainer):
                     "(raw sensor units)"
                 )
         return {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
+    def generate_subtask_text(
+        self,
+        policy: nn.Module,
+        observation: dict,
+        task_str: str,
+        cfg,
+        preprocessor,
+        done_list: list[str] | None = None,
+    ) -> tuple[str, str, int]:
+        """Rollout-side subtask generation (two-prompt design).
+
+        Builds the generation prompt for the current observation (unbatched, as
+        handed to build_inference_batch), greedy-decodes the answer, and snaps
+        it to the pack step's subtask vocabulary.
+
+        Returns (raw_text, name, index): name is the snapped vocabulary entry
+        when the snap succeeds, else the raw decoded text with index -1.
+        """
+        from lerobot.policies.molmoact2.processor_molmoact2 import snap_to_subtask_vocab
+        from lerobot.types import TransitionKey
+
+        step = self._pack_step(preprocessor)
+        device = getattr(cfg.policy, "device", "cpu")
+        pre_input: dict[str, Any] = {**observation, "task": task_str}
+        if done_list is not None:
+            pre_input[TransitionKey.COMPLEMENTARY_DATA] = {"done_list": [list(done_list)]}
+        step.prompt_mode = "subtask_generation"
+        try:
+            with torch.no_grad():
+                batch = preprocessor(pre_input)
+        finally:
+            step.prompt_mode = "action"
+        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+        token_ids = policy.generate_subtask_tokens(
+            batch, max_new_tokens=int(cfg.policy.subtask_max_new_tokens)
+        )
+        raw_text = step.processor.tokenizer.decode(token_ids[0], skip_special_tokens=True).strip()
+        index = snap_to_subtask_vocab(raw_text, step.subtask_names) if step.subtask_names else -1
+        name = step.subtask_names[index] if index >= 0 else raw_text
+        return raw_text, name, index
+
+    @staticmethod
+    def _pack_step(preprocessor):
+        from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep
+
+        return next(s for s in preprocessor.steps if isinstance(s, MolmoAct2PackInputsProcessorStep))
+
+    def sync_subtask_vocabulary(self, preprocessor, dataset, is_main_process: bool = True) -> None:
+        """Wire subtasks.parquet (index → name) into the pack step. Call again after
+        additional offline datasets load — the vocab remap extends dataset.meta.subtasks."""
+        from lerobot.rl.offline_dataset_utils import _idx_to_subtask_name
+
+        mapping = _idx_to_subtask_name(dataset) if dataset is not None else {}
+        if not mapping:
+            return
+        names = [mapping.get(i, "") for i in range(max(mapping) + 1)]
+        self._pack_step(preprocessor).subtask_names = names
+        if is_main_process:
+            logging.info(f"MolmoAct2 subtask vocabulary: {len(names)} entries")
+
+    def _subtask_generation_loss(
+        self, policy: nn.Module, raw_batch: dict, observations: dict, preprocessor, cfg
+    ) -> torch.Tensor | None:
+        """CE on the subtask-generation answer span (two-prompt design, training half).
+
+        Uses only samples with a subtask annotation (subtask_index >= 0); the
+        generation batch rides the full pipeline (prompt_mode toggle) so states
+        are normalized exactly like the action batch. Returns None when the
+        vocabulary isn't wired or the batch carries no annotated samples.
+        """
+        from lerobot.types import TransitionKey
+
+        step = self._pack_step(preprocessor)
+        if not step.subtask_names:
+            return None
+        comp = raw_batch.get("complementary_info") or {}
+        subtask_index = comp.get("subtask_index")
+        if subtask_index is None:
+            return None
+        flat_index = torch.as_tensor(subtask_index).reshape(-1).long()
+        idx = (flat_index >= 0).nonzero().reshape(-1)
+        if idx.numel() == 0:
+            return None
+
+        obs_valid = {k: v[idx] for k, v in observations.items() if isinstance(v, torch.Tensor)}
+        comp_valid: dict[str, Any] = {"subtask_index": flat_index[idx]}
+        if "done_list_ids" in comp:
+            comp_valid["done_list_ids"] = torch.as_tensor(comp["done_list_ids"])[idx]
+        pre_input: dict[str, Any] = {
+            **obs_valid,
+            "task": cfg.policy.task,
+            TransitionKey.COMPLEMENTARY_DATA: comp_valid,
+        }
+        step.prompt_mode = "subtask_generation"
+        try:
+            batch = preprocessor(pre_input)
+        finally:
+            step.prompt_mode = "action"
+        return policy.model(**policy._model_inputs(batch), labels=batch["labels"]).loss
 
     # ── Online loop ───────────────────────────────────────────────────────────
 

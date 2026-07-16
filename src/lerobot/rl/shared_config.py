@@ -8,7 +8,8 @@ class MemoryConfig:
     """Short-term memory (observation history) settings, model-agnostic.
 
     history_keys: observation keys to build lookback windows for (empty = disabled);
-        the key "action" adds the executed actions at the same past frames.
+        the key "action" adds the executed actions at the same past frames, and
+        "depth.{cam}.depth" (the buffer's canonical depth key) adds raw depth frames.
     history_window_seconds: how far back the window reaches.
     history_num_samples: number of past samples, evenly spaced over the window.
     """
@@ -16,6 +17,16 @@ class MemoryConfig:
     history_keys: list[str] = field(default_factory=list)
     history_window_seconds: float = 4.0
     history_num_samples: int = 4
+    # Long-term memory: max completed subtasks kept in the per-frame done-list
+    # (complementary_info["done_list_ids"], derived from subtask_index).
+    done_list_cap: int = 10
+    # π0.7-style metadata steering: label offline episodes at buffer fill
+    # (quality/mistake defaults for curated demos, speed = length bucket) and
+    # prompt quality=5 / mistake=false at inference.
+    metadata_enabled: bool = False
+    metadata_default_quality: int = 5
+    metadata_default_mistake: bool = False
+    metadata_speed_bucket_steps: int = 500
 
     def history_offsets(self, fps: float) -> dict[str, list[int]] | None:
         """Per-key lookback distances in buffer steps, e.g. 4 s / 4 samples @ 30 fps → [30, 60, 90, 120]."""

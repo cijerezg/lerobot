@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 from contextlib import suppress
 from copy import deepcopy
@@ -242,16 +243,39 @@ def _build_robot_text(
     add_control_tokens: bool,
     num_images: int,
     advantage_label: str | None = None,
+    current_subtask: str | None = None,
+    done_list: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> str:
+    """Memory clauses: None disables a clause entirely (byte-identical legacy prompt);
+    done_list=[] means memory is on but nothing is completed yet — rendered explicitly
+    so the model can tell "feature off" from "episode start"."""
     setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
     control_text = _wrap_control_text(control_mode, add_control_tokens=add_control_tokens)
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
     advantage_clause = f" The advantage is {advantage_label}." if advantage_label else ""
+    if done_list is None:
+        done_clause = ""
+    elif done_list:
+        done_clause = f" Steps already completed: {'; '.join(done_list)}."
+    else:
+        done_clause = " Steps already completed: none yet."
+    subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
+    metadata_clause = ""
+    if metadata is not None:
+        if "quality" in metadata:
+            metadata_clause += f" The quality is {int(metadata['quality'])} of 5."
+        if "mistake" in metadata:
+            metadata_clause += (
+                " The robot made a mistake." if metadata["mistake"] else " The robot made no mistakes."
+            )
+        if "speed" in metadata:
+            metadata_clause += f" The speed is {metadata['speed']}."
     prompt = (
-        f"The task is to {task}. The setup is {setup_text}.{state_clause} "
-        f"The expected control mode is {control_text}.{advantage_clause} "
+        f"The task is to {task}.{done_clause}{subtask_clause} The setup is {setup_text}.{state_clause} "
+        f"The expected control mode is {control_text}.{advantage_clause}{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
     if num_images <= 0:
@@ -261,6 +285,57 @@ def _build_robot_text(
     else:
         image_prefix = "".join(f"Image {idx + 1}<|image|>" for idx in range(num_images))
     return f"{image_prefix}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n{ACTION_OUTPUT_TOKEN}"
+
+
+def _build_subtask_generation_text(
+    *,
+    task: str,
+    discrete_state_string: str,
+    setup_type: str,
+    add_setup_tokens: bool,
+    num_images: int,
+    done_list: list[str] | None = None,
+) -> str:
+    """Generation prompt (two-prompt design): same visual/state context as the action
+    prompt, but the question asks for the next step. The assistant's answer is the
+    subtask name; at training time the caller appends it (+eos) and puts CE labels on it."""
+    setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
+    state_clause = (
+        f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
+    )
+    if done_list is None:
+        done_clause = ""
+    elif done_list:
+        done_clause = f" Steps already completed: {'; '.join(done_list)}."
+    else:
+        done_clause = " Steps already completed: none yet."
+    prompt = (
+        f"The task is to {task}.{done_clause} The setup is {setup_text}.{state_clause} "
+        f"Given these, what step should the robot perform next?"
+    )
+    if num_images <= 0:
+        image_prefix = ""
+    elif num_images == 1:
+        image_prefix = "<|image|>"
+    else:
+        image_prefix = "".join(f"Image {idx + 1}<|image|>" for idx in range(num_images))
+    return f"{image_prefix}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+
+
+def snap_to_subtask_vocab(text: str, names: list[str]) -> int:
+    """Map generated text to the standardized subtask vocabulary: normalized exact
+    match, else closest fuzzy match, else -1."""
+    import difflib
+
+    def norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
+
+    normalized = {norm(name): i for i, name in enumerate(names)}
+    key = norm(text)
+    if key in normalized:
+        return normalized[key]
+    close = difflib.get_close_matches(key, list(normalized), n=1, cutoff=0.6)
+    return normalized[close[0]] if close else -1
 
 
 def _as_text_list(value: Any, batch_size: int) -> list[str]:
@@ -517,6 +592,17 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     max_action_dim: int = 32
     env_action_dim: int | None = None
     advantage_scaling: float = 1.0
+    # Memory prompt clauses: index → name vocabulary (from subtasks.parquet) and
+    # per-component training dropout (π0.7 recipe; applied only when actions are
+    # present, i.e. training text — inference prompts are deterministic).
+    subtask_names: list[str] = field(default_factory=list)
+    subtask_dropout: float = 0.3
+    done_list_dropout: float = 0.3
+    metadata_dropout: float = 0.15
+    # Runtime toggle (not persisted): "action" builds the action prompt;
+    # "subtask_generation" builds the generation prompt/labels instead. Callers
+    # flip it around a pipeline call so generation gets the SAME normalization.
+    prompt_mode: str = "action"
 
     def __post_init__(self) -> None:
         require_package("transformers", extra="molmoact2")
@@ -565,6 +651,10 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "max_action_dim": self.max_action_dim,
             "env_action_dim": self.env_action_dim,
             "advantage_scaling": self.advantage_scaling,
+            "subtask_names": list(self.subtask_names),
+            "subtask_dropout": self.subtask_dropout,
+            "done_list_dropout": self.done_list_dropout,
+            "metadata_dropout": self.metadata_dropout,
         }
 
     def _resolve_max_sequence_length(
@@ -698,7 +788,138 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             )
         return labels
 
+    def _extract_tasks(self, observation: dict, complementary: dict, batch_size: int) -> list[str]:
+        task_source = complementary.get("task")
+        if task_source is None:
+            task_source = observation.get("task")
+        if task_source is None:
+            task_source = observation.get("observation.language")
+        if task_source is None:
+            task_source = complementary.get("language_instruction")
+        tasks = _as_text_list(task_source, batch_size)
+        if self.normalize_language:
+            tasks = [_normalize_question_text(task) for task in tasks]
+        return tasks
+
+    def _pack_subtask_generation(self, transition: EnvTransition) -> EnvTransition:
+        """Pack the subtask-generation prompt (two-prompt design). Runs INSIDE the
+        pipeline (prompt_mode toggle) so states arrive normalized like the action path.
+
+        When samples carry a subtask name (training), the text is prompt + name +
+        eos and complementary "labels" holds CE targets on the answer span only
+        (padding-side agnostic: the last answer_len non-pad positions);
+        "subtask_valid" marks samples that had a name. Without names (rollout),
+        prompts only — feed to generate_subtask_tokens.
+        """
+        transition = transition.copy()
+        observation = transition.get(TransitionKey.OBSERVATION) or {}
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+        batch_size = self._batch_size(observation, None)
+        state = self._extract_state(observation, batch_size)
+        images_by_example = self._extract_images(observation, batch_size)
+        tasks = self._extract_tasks(observation, complementary, batch_size)
+        subtask_texts = self._extract_subtask_texts(complementary, batch_size)
+        done_lists = self._extract_done_lists(complementary, batch_size)
+
+        state_np = state.detach().cpu().numpy()
+        prompts: list[str] = []
+        fulls: list[str] = []
+        flat_images: list[np.ndarray] = []
+        for batch_idx in range(batch_size):
+            images = images_by_example[batch_idx]
+            flat_images.extend(images)
+            prompt = _build_subtask_generation_text(
+                task=tasks[batch_idx],
+                discrete_state_string=_build_discrete_state_string(
+                    state_np[batch_idx], self.num_state_tokens
+                ),
+                setup_type=self.setup_type,
+                add_setup_tokens=self.add_setup_tokens,
+                num_images=len(images),
+                done_list=done_lists[batch_idx],
+            )
+            prompts.append(prompt)
+            name = subtask_texts[batch_idx]
+            fulls.append(f"{prompt}{name}{self._eos_token}" if name else prompt)
+
+        valid = torch.tensor([name is not None for name in subtask_texts])
+        build_labels = bool(valid.any())
+        inputs = self.processor(
+            text=fulls if build_labels else prompts,
+            images=flat_images,
+            return_tensors="pt",
+            padding=True,
+        )
+        if build_labels:
+            prompt_inputs = self.processor(
+                text=prompts, images=flat_images, return_tensors="pt", padding=True
+            )
+            full_lengths = inputs["attention_mask"].sum(dim=1)
+            prompt_lengths = prompt_inputs["attention_mask"].sum(dim=1)
+            labels = torch.full_like(inputs["input_ids"], -100)
+            for batch_idx in range(batch_size):
+                answer_len = int(full_lengths[batch_idx] - prompt_lengths[batch_idx])
+                if not valid[batch_idx] or answer_len <= 0:
+                    continue
+                nonpad = inputs["attention_mask"][batch_idx].nonzero().reshape(-1)
+                answer_span = nonpad[-answer_len:]
+                labels[batch_idx, answer_span] = inputs["input_ids"][batch_idx, answer_span]
+            inputs["labels"] = labels
+        complementary.update(dict(inputs))
+        complementary["subtask_valid"] = valid
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def _extract_subtask_texts(self, complementary: dict, batch_size: int) -> list[str | None]:
+        """Current-subtask text per sample: the "subtask" strings when present (rollout
+        path), else subtask_index rendered through the vocabulary (offline batches)."""
+        texts = complementary.get("subtask")
+        if texts is not None:
+            return [t if t else None for t in _as_text_list(texts, batch_size)]
+        indices = complementary.get("subtask_index")
+        if indices is None or not self.subtask_names:
+            return [None] * batch_size
+        flat = torch.as_tensor(indices).detach().cpu().reshape(-1).long().tolist()
+        if len(flat) == 1:
+            flat = flat * batch_size
+        return [self.subtask_names[i] if 0 <= i < len(self.subtask_names) else None for i in flat]
+
+    def _extract_done_lists(self, complementary: dict, batch_size: int) -> list[list[str] | None]:
+        # Rollout path: per-sample lists of names under "done_list".
+        names = complementary.get("done_list")
+        if names is not None:
+            return [list(row) if row is not None else None for row in names]
+        ids = complementary.get("done_list_ids")
+        if ids is None or not self.subtask_names:
+            return [None] * batch_size
+        ids = torch.as_tensor(ids).detach().cpu().long().reshape(batch_size, -1)
+        return [
+            [self.subtask_names[i] for i in row.tolist() if 0 <= i < len(self.subtask_names)]
+            for row in ids
+        ]
+
+    @staticmethod
+    def _extract_metadata(complementary: dict, batch_size: int) -> list[dict | None]:
+        metadata = complementary.get("metadata")
+        if metadata is not None:
+            if isinstance(metadata, dict):
+                return [metadata] * batch_size
+            return list(metadata)
+        # Offline batches: per-frame metadata columns from materialize_metadata.
+        quality = complementary.get("metadata_quality")
+        if quality is None:
+            return [None] * batch_size
+        quality = torch.as_tensor(quality).detach().cpu().float().reshape(-1)
+        mistake = torch.as_tensor(complementary["metadata_mistake"]).detach().cpu().float().reshape(-1)
+        speed = torch.as_tensor(complementary["metadata_speed"]).detach().cpu().float().reshape(-1)
+        return [
+            {"quality": int(quality[i]), "mistake": bool(mistake[i] > 0.5), "speed": int(speed[i])}
+            for i in range(batch_size)
+        ]
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        if self.prompt_mode == "subtask_generation":
+            return self._pack_subtask_generation(transition)
         transition = transition.copy()
         observation = transition.get(TransitionKey.OBSERVATION) or {}
         if not isinstance(observation, dict):
@@ -711,16 +932,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         state = self._extract_state(observation, batch_size)
         images_by_example = self._extract_images(observation, batch_size)
 
-        task_source = complementary.get("task")
-        if task_source is None:
-            task_source = observation.get("task")
-        if task_source is None:
-            task_source = observation.get("observation.language")
-        if task_source is None:
-            task_source = complementary.get("language_instruction")
-        tasks = _as_text_list(task_source, batch_size)
-        if self.normalize_language:
-            tasks = [_normalize_question_text(task) for task in tasks]
+        tasks = self._extract_tasks(observation, complementary, batch_size)
         complementary["task"] = tasks
 
         advantages = complementary.get("advantage")
@@ -756,6 +968,10 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         elif real_action_dim > 0:
             action_dim_is_pad[:, :real_action_dim] = False
 
+        subtask_texts = self._extract_subtask_texts(complementary, batch_size)
+        done_lists = self._extract_done_lists(complementary, batch_size)
+        metadata_list = self._extract_metadata(complementary, batch_size)
+
         prompt_texts: list[str] = []
         full_texts: list[str] = []
         flat_images: list[np.ndarray] = []
@@ -769,6 +985,16 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             if advantages is not None:
                 adv = np.tanh(float(advantages[batch_idx]) / self.advantage_scaling)
                 advantage_label = "positive" if adv >= advantage_threshold else "negative"
+            current_subtask = subtask_texts[batch_idx]
+            done_list = done_lists[batch_idx]
+            metadata = metadata_list[batch_idx]
+            if build_action_labels:  # training text: per-component dropout (π0.7 recipe)
+                if random.random() < self.subtask_dropout:
+                    current_subtask = None
+                if random.random() < self.done_list_dropout:
+                    done_list = None
+                if random.random() < self.metadata_dropout:
+                    metadata = None
             prompt = _build_robot_text(
                 task=tasks[batch_idx],
                 discrete_state_string=discrete_state,
@@ -778,6 +1004,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 add_control_tokens=self.add_control_tokens,
                 num_images=len(images),
                 advantage_label=advantage_label,
+                current_subtask=current_subtask,
+                done_list=done_list,
+                metadata=metadata,
             )
             prompt_texts.append(prompt)
             if build_action_labels:
