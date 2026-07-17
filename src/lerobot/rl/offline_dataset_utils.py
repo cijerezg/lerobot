@@ -73,7 +73,6 @@ def load_additional_offline_buffers(
     storage_device,
     is_main_process: bool = True,
     history_offsets: dict[str, list[int]] | None = None,
-    done_list_cap: int | None = None,
     memory_cfg=None,
 ) -> list[ReplayBuffer]:
     """Load extra offline datasets as independent ReplayBuffers.
@@ -161,10 +160,6 @@ def load_additional_offline_buffers(
             ci = buf.complementary_info["subtask_index"]
             for old_idx, new_idx in remap_table.items():
                 ci[ci == old_idx] = new_idx
-
-        # Done-lists are derived from subtask_index, so only after the remap above.
-        if done_list_cap is not None:
-            buf.materialize_done_lists(done_list_cap)
 
         if memory_cfg is not None and memory_cfg.metadata_enabled:
             buf.materialize_metadata(

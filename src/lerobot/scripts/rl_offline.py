@@ -535,14 +535,12 @@ def run_offline_training(
         history_offsets=history_offsets,
     )
     offline_replay_buffer.dataset = offline_dataset
-    if memory_cfg is not None:
-        offline_replay_buffer.materialize_done_lists(memory_cfg.done_list_cap)
-        if memory_cfg.metadata_enabled:
-            offline_replay_buffer.materialize_metadata(
-                quality=memory_cfg.metadata_default_quality,
-                mistake=memory_cfg.metadata_default_mistake,
-                speed_bucket_steps=memory_cfg.metadata_speed_bucket_steps,
-            )
+    if memory_cfg is not None and memory_cfg.metadata_enabled:
+        offline_replay_buffer.materialize_metadata(
+            quality=memory_cfg.metadata_default_quality,
+            mistake=memory_cfg.metadata_default_mistake,
+            speed_bucket_steps=memory_cfg.metadata_speed_bucket_steps,
+        )
     additional_buffers = load_additional_offline_buffers(
         cfg=cfg,
         main_dataset=offline_dataset,
@@ -550,7 +548,6 @@ def run_offline_training(
         storage_device=storage_device,
         is_main_process=True,
         history_offsets=history_offsets,
-        done_list_cap=memory_cfg.done_list_cap if memory_cfg is not None else None,
         memory_cfg=memory_cfg,
     )
     # Additional datasets may have extended the subtask vocabulary via the remap.

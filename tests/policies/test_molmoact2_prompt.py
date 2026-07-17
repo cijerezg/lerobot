@@ -32,15 +32,6 @@ def test_legacy_prompt_is_byte_identical_when_memory_off():
     assert "quality" not in prompt
 
 
-def test_done_list_clause_rendering():
-    prompt = build(done_list=["grab the near side", "make the first fold"])
-    assert "Steps already completed: grab the near side; make the first fold." in prompt
-
-    # Empty list = memory on, nothing done yet — rendered explicitly.
-    prompt = build(done_list=[])
-    assert "Steps already completed: none yet." in prompt
-
-
 def test_current_subtask_clause():
     prompt = build(current_subtask="grab the far side")
     assert "The current step is grab the far side." in prompt
@@ -61,12 +52,11 @@ def test_metadata_clause_partial_rendering():
 
 
 def test_clause_order_task_then_memory_then_setup():
-    prompt = build(done_list=["step one"], current_subtask="step two")
+    prompt = build(current_subtask="step two")
     task_pos = prompt.index("The task is to")
-    done_pos = prompt.index("Steps already completed")
     current_pos = prompt.index("The current step is")
     setup_pos = prompt.index("The setup is")
-    assert task_pos < done_pos < current_pos < setup_pos
+    assert task_pos < current_pos < setup_pos
 
 
 # ── Phase 3: subtask generation prompt + vocab snap ──────────────────────────
@@ -86,24 +76,11 @@ def test_generation_prompt_asks_for_next_step():
         setup_type="",
         add_setup_tokens=False,
         num_images=0,
-        done_list=["reach the cup"],
     )
-    assert "Steps already completed: reach the cup." in prompt
     assert "what step should the robot perform next?" in prompt
     assert prompt.endswith("<|im_start|>assistant\n")
     # The action-output token never appears — this prompt decodes text, not actions.
     assert "<action" not in prompt
-
-
-def test_generation_prompt_without_done_list():
-    prompt = _build_subtask_generation_text(
-        task="fold",
-        discrete_state_string="",
-        setup_type="",
-        add_setup_tokens=False,
-        num_images=0,
-    )
-    assert "Steps already completed" not in prompt
 
 
 def test_snap_to_subtask_vocab():

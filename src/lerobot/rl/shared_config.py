@@ -17,9 +17,6 @@ class MemoryConfig:
     history_keys: list[str] = field(default_factory=list)
     history_window_seconds: float = 4.0
     history_num_samples: int = 4
-    # Long-term memory: max completed subtasks kept in the per-frame done-list
-    # (complementary_info["done_list_ids"], derived from subtask_index).
-    done_list_cap: int = 10
     # π0.7-style metadata steering: label offline episodes at buffer fill
     # (quality/mistake defaults for curated demos, speed = length bucket) and
     # prompt quality=5 / mistake=false at inference.

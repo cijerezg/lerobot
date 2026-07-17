@@ -90,40 +90,6 @@ def random_shift(images: torch.Tensor, pad: int = 4):
     return random_crop_vectorized(images=images, output_size=(h, w))
 
 
-def done_list_ids_from_subtask_indices(
-    subtask_indices: torch.Tensor,  # (T,)
-    episode_ends: torch.Tensor,  # (T,) bool
-    cap: int,
-) -> torch.Tensor:
-    """Per-frame done-list: the subtasks completed so far in the episode, oldest → newest.
-
-    Append-on-switch with consecutive dedup: when subtask_index changes A→B at
-    frame t, A is done from frame t onward. A subtask that recurs later appends
-    again (this is execution history, not a set). Frames with index -1
-    (unannotated) neither append nor become current. The list resets after
-    episode-end frames and keeps the newest `cap` entries, padded with -1.
-
-    Returns (T, cap) long.
-    """
-    indices = [int(i) for i in subtask_indices.tolist()]
-    ends = episode_ends.tolist()
-    out = torch.full((len(indices), cap), -1, dtype=torch.long)
-    completed: list[int] = []
-    prev = -1
-    for t, cur in enumerate(indices):
-        if cur != -1:
-            if prev != -1 and cur != prev:
-                completed.append(prev)
-            prev = cur
-        tail = completed[-cap:]
-        if tail:
-            out[t, : len(tail)] = torch.tensor(tail, dtype=torch.long)
-        if ends[t]:
-            completed = []
-            prev = -1
-    return out
-
-
 def assemble_history_windows(
     entries: Sequence[dict[str, torch.Tensor]],
     history_offsets: dict[str, list[int]],
@@ -440,22 +406,6 @@ class ReplayBuffer:
 
             self.position = (self.position + 1) % self.capacity
             self.size = min(self.size + 1, self.capacity)
-
-    def materialize_done_lists(self, cap: int) -> None:
-        """Derive complementary_info["done_list_ids"] (capacity, cap) from the per-frame
-        subtask_index column. No-op when the buffer carries no subtask annotations.
-        Call AFTER any subtask vocabulary remapping — the stored ids are final.
-        """
-        if not self.has_complementary_info or "subtask_index" not in self.complementary_info:
-            return
-        n = self.size
-        subtask_indices = self.complementary_info["subtask_index"][:n].reshape(n)
-        episode_ends = (self.dones[:n] | self.truncateds[:n]).reshape(n)
-        done_ids = torch.full((self.capacity, cap), -1, dtype=torch.long, device=self.storage_device)
-        done_ids[:n] = done_list_ids_from_subtask_indices(subtask_indices, episode_ends, cap)
-        self.complementary_info["done_list_ids"] = done_ids
-        if "done_list_ids" not in self.complementary_info_keys:
-            self.complementary_info_keys.append("done_list_ids")
 
     def materialize_metadata(
         self,

@@ -106,12 +106,9 @@ class RTCSharedState:
         self.episode_active = False
         self.history_offsets: dict[str, list[int]] | None = None
         self.history_entries: deque | None = None
-        # Long-term memory: generated current subtask + done-list (append-on-switch,
-        # same rule as ReplayBuffer.materialize_done_lists).
+        # Long-term memory: generated current subtask.
         self.current_subtask_name: str | None = None
         self.current_subtask_index: int = -1
-        self.done_list_names: list[str] = []
-        self.done_list_ids: list[int] = []
         self.policy_reset_requested = False
         self.update_parameters_requested = False
         self.running = True
@@ -281,31 +278,18 @@ class RTCSharedState:
             self.history_entries = deque(maxlen=max_back)
 
     def update_subtask(self, name: str, index: int) -> None:
-        """Append-on-switch: when the generated subtask changes, the previous one is
-        done. Ids only track snapped subtasks (index >= 0); names track everything."""
         with self.lock:
-            if self.current_subtask_name is not None and name != self.current_subtask_name:
-                self.done_list_names.append(self.current_subtask_name)
-                if self.current_subtask_index >= 0:
-                    self.done_list_ids.append(self.current_subtask_index)
             self.current_subtask_name = name
             self.current_subtask_index = index
 
-    def subtask_snapshot(self) -> tuple[str | None, int, list[str], list[int]]:
+    def subtask_snapshot(self) -> tuple[str | None, int]:
         with self.lock:
-            return (
-                self.current_subtask_name,
-                self.current_subtask_index,
-                list(self.done_list_names),
-                list(self.done_list_ids),
-            )
+            return self.current_subtask_name, self.current_subtask_index
 
     def clear_subtask_state(self) -> None:
         with self.lock:
             self.current_subtask_name = None
             self.current_subtask_index = -1
-            self.done_list_names = []
-            self.done_list_ids = []
 
     def push_history(self, entry: dict) -> None:
         with self.lock:
@@ -556,17 +540,15 @@ def rtc_inference_worker(
                     last_subtask_time is None
                     or (current_time - last_subtask_time) >= subtask_interval
                 ):
-                    _, _, done_names, _ = shared_state.subtask_snapshot()
                     raw_text, subtask_name, subtask_index = trainer.generate_subtask_text(
-                        policy, obs_filtered, task_str, cfg,
-                        preprocessor=preprocessor, done_list=done_names,
+                        policy, obs_filtered, task_str, cfg, preprocessor=preprocessor,
                     )
                     shared_state.update_subtask(subtask_name, subtask_index)
                     last_subtask_time = current_time
                     if subtask_index < 0:
                         logger.warning("[RTC_INFERENCE] Subtask snap missed vocab: %r", raw_text)
 
-                current_subtask, _, current_done_names, _ = shared_state.subtask_snapshot()
+                current_subtask, _ = shared_state.subtask_snapshot()
                 t_preproc_start = time.perf_counter()
                 processed_batch = trainer.build_inference_batch(
                     obs_filtered,
@@ -575,7 +557,6 @@ def rtc_inference_worker(
                     preprocessor=preprocessor,
                     robot_type=robot_type,
                     subtask=current_subtask if subtask_enabled else None,
-                    done_list=current_done_names if subtask_enabled else None,
                     metadata=inference_metadata,
                 )
                 t_preproc_end = time.perf_counter()
@@ -904,10 +885,10 @@ def rtc_env_worker(
                     subtask_tokens = torch.zeros(max_len, dtype=torch.long)
                     subtask_masks = torch.zeros(max_len, dtype=torch.bool)
 
-            # Long-term memory: the generated subtask + done-list ride the buffer's
-            # canonical columns so online transitions look exactly like annotated
-            # offline frames to the learner.
-            _, subtask_idx_now, _, done_ids_now = shared_state.subtask_snapshot()
+            # Long-term memory: the generated subtask rides the buffer's canonical
+            # column so online transitions look exactly like annotated offline
+            # frames to the learner.
+            _, subtask_idx_now = shared_state.subtask_snapshot()
             complementary_info = {
                 "discrete_penalty": torch.tensor([
                     new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
@@ -915,13 +896,6 @@ def rtc_env_worker(
                 TeleopEvents.IS_INTERVENTION.value: torch.tensor([float(is_intervening)], dtype=torch.float32),
                 "subtask_index": torch.tensor([subtask_idx_now], dtype=torch.long),
             }
-            memory_cfg = getattr(cfg.policy, "memory", None)
-            if memory_cfg is not None and int(getattr(cfg.policy, "subtask_max_new_tokens", 0)) > 0:
-                cap = memory_cfg.done_list_cap
-                tail = done_ids_now[-cap:]
-                complementary_info["done_list_ids"] = torch.tensor(
-                    [tail + [-1] * (cap - len(tail))], dtype=torch.long
-                )
             # Only carry subtask tensors when the policy actually generates them
             # (pi05: max_decoding_steps>0). Empty (0,) tensors would later trip
             # compute_episode_stats during buffer→dataset serialization.

@@ -1112,11 +1112,9 @@ class MolmoAct2Trainer(Trainer):
             complementary["advantage"] = advantage
             complementary["advantage_threshold"] = 0.0
         # Memory prompt context (two-prompt design): the current generated subtask
-        # and done-list ride as strings; the prompt seam renders them.
+        # rides as a string; the prompt seam renders it.
         if context.get("subtask"):
             complementary["subtask"] = [context["subtask"]]
-        if context.get("done_list") is not None:
-            complementary["done_list"] = [list(context["done_list"])]
         if context.get("metadata") is not None:
             complementary["metadata"] = context["metadata"]
         if complementary:
@@ -1150,7 +1148,6 @@ class MolmoAct2Trainer(Trainer):
         task_str: str,
         cfg,
         preprocessor,
-        done_list: list[str] | None = None,
     ) -> tuple[str, str, int]:
         """Rollout-side subtask generation (two-prompt design).
 
@@ -1162,13 +1159,10 @@ class MolmoAct2Trainer(Trainer):
         when the snap succeeds, else the raw decoded text with index -1.
         """
         from lerobot.policies.molmoact2.processor_molmoact2 import snap_to_subtask_vocab
-        from lerobot.types import TransitionKey
 
         step = self._pack_step(preprocessor)
         device = getattr(cfg.policy, "device", "cpu")
         pre_input: dict[str, Any] = {**observation, "task": task_str}
-        if done_list is not None:
-            pre_input[TransitionKey.COMPLEMENTARY_DATA] = {"done_list": [list(done_list)]}
         step.prompt_mode = "subtask_generation"
         try:
             with torch.no_grad():
@@ -1229,8 +1223,6 @@ class MolmoAct2Trainer(Trainer):
 
         obs_valid = {k: v[idx] for k, v in observations.items() if isinstance(v, torch.Tensor)}
         comp_valid: dict[str, Any] = {"subtask_index": flat_index[idx]}
-        if "done_list_ids" in comp:
-            comp_valid["done_list_ids"] = torch.as_tensor(comp["done_list_ids"])[idx]
         pre_input: dict[str, Any] = {
             **obs_valid,
             "task": cfg.policy.task,
