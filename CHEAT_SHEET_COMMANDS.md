@@ -25,9 +25,9 @@ uv run lerobot/src/lerobot/scripts/lerobot_record.py \
     --dataset.repo_id=cijerezg/rebot_socks_v1 \
     --dataset.single_task="Put socks in basket by pairs" \
     --dataset.fps=30 \
-    --dataset.num_episodes=4 \
-    --dataset.episode_time_s=240 \
-    --dataset.reset_time_s=60 \
+    --dataset.num_episodes=20 \
+    --dataset.episode_time_s=300 \
+    --dataset.reset_time_s=120 \
     --dataset.push_to_hub=false \
     --display_data=true
 

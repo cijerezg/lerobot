@@ -36,6 +36,7 @@ python examples/dataset/annotate.py \
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -335,7 +336,7 @@ class VideoExtractor:
         self.console = console or Console()
 
     def extract_episode_video(
-        self, video_path: Path, start_timestamp: float, end_timestamp: float, target_fps: int = 1,
+        self, video_path: Path, start_timestamp: float, end_timestamp: float, target_fps: float = 1.0,
     ) -> Path:
         tmp_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         tmp_path = Path(tmp_file.name)
@@ -359,11 +360,12 @@ class VideoExtractor:
 # Skill Annotation Pipeline
 
 class SkillAnnotator:
-    def __init__(self, vlm: BaseVLM, video_extractor: VideoExtractor | None = None, console: Console | None = None, batch_size: int = 8):
+    def __init__(self, vlm: BaseVLM, video_extractor: VideoExtractor | None = None, console: Console | None = None, batch_size: int = 8, extract_fps: float = 1.0):
         self.vlm = vlm
         self.console = console or Console()
         self.video_extractor = video_extractor or VideoExtractor(self.console)
         self.batch_size = batch_size
+        self.extract_fps = extract_fps
 
     def annotate_dataset(self, dataset: LeRobotDataset, video_key: str, episodes: list[int] | None = None, skip_existing: bool = False) -> dict[int, EpisodeSkills]:
         episode_indices = episodes or list(range(dataset.meta.total_episodes))
@@ -407,7 +409,7 @@ class SkillAnnotator:
                 end_ts = float(ep[f"videos/{video_key}/to_timestamp"])
                 duration = end_ts - start_ts
                 
-                extracted_path = self.video_extractor.extract_episode_video(video_path, start_ts, end_ts, target_fps=1)
+                extracted_path = self.video_extractor.extract_episode_video(video_path, start_ts, end_ts, target_fps=self.extract_fps)
                 extracted_paths.append(extracted_path)
                 durations.append(duration)
                 valid_episode_indices.append(ep_idx)
@@ -491,6 +493,12 @@ def save_skill_annotations(dataset: LeRobotDataset, annotations: dict[int, Episo
     shutil.copy(subtasks_path, output_dir / "meta" / "subtasks.parquet")
     shutil.copy(skills_path, output_dir / "meta" / "skills.json")
 
+    # Step 7: Hardlink the depth sidecar (not handled by modify_features)
+    depth_dir = dataset.root / "depth"
+    if depth_dir.exists():
+        shutil.copytree(depth_dir, output_dir / "depth", copy_function=os.link)
+        console.print(f"[green]✓ Linked depth sidecar to {output_dir / 'depth'}[/green]")
+
     console.print(f"[bold green]✓ Successfully added subtask_index feature![/bold green]")
     console.print(f"  New dataset saved to: {new_dataset.root}")
     console.print(f"  Total subtasks: {len(subtasks_df)}")
@@ -508,6 +516,7 @@ def main():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dtype", type=str, default="bfloat16")
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--extract-fps", type=float, default=1.0, help="frames per second sent to the VLM per episode")
     parser.add_argument("--output-dir", type=str)
 
     args = parser.parse_args()
@@ -518,7 +527,7 @@ def main():
     dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
     vlm = get_vlm(args.model, args.device, dtype_map[args.dtype])
     
-    annotator = SkillAnnotator(vlm=vlm, console=console, batch_size=args.batch_size)
+    annotator = SkillAnnotator(vlm=vlm, console=console, batch_size=args.batch_size, extract_fps=args.extract_fps)
     annotations = annotator.annotate_dataset(dataset=dataset, video_key=args.video_key)
     
     save_skill_annotations(dataset, annotations, args.output_dir)
