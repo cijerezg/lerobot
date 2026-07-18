@@ -20,6 +20,21 @@ def _get_additional_dataset_paths(cfg) -> list[str]:
     return [str(p) for p in paths]
 
 
+def load_summary_segments(root) -> tuple[list[dict], list[str]]:
+    """Read meta/summaries.parquet (written by summary_annotate.py) into the inputs
+    ReplayBuffer.materialize_summaries expects: segment rows sorted by
+    (episode_index, segment_index) and the summary texts in the same order.
+    Returns ([], []) when the dataset has no summaries."""
+    path = Path(root) / "meta" / "summaries.parquet"
+    if not path.exists():
+        return [], []
+    import pandas as pd
+
+    df = pd.read_parquet(path).sort_values(["episode_index", "segment_index"])
+    segments = df[["episode_index", "segment_index", "from_index", "to_index"]].to_dict("records")
+    return segments, [str(s) for s in df["summary"]]
+
+
 def _idx_to_subtask_name(dataset) -> dict[int, str]:
     mapping: dict[int, str] = {}
     if not (hasattr(dataset, "meta") and hasattr(dataset.meta, "subtasks")):

@@ -63,7 +63,9 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.offline_dataset_utils import (
+    _get_additional_dataset_paths,
     load_additional_offline_buffers,
+    load_summary_segments,
     make_combined_offline_iterator,
 )
 from lerobot.rl.rl_trainer import Trainer
@@ -552,6 +554,19 @@ def run_offline_training(
     )
     # Additional datasets may have extended the subtask vocabulary via the remap.
     trainer.sync_subtask_vocabulary(preprocessor, offline_dataset, is_main_process=True)
+
+    # MEM summary memory: per-frame (conditioning, target) indices into one text
+    # table concatenated across datasets; update window = one HL tick of frames.
+    summary_window = max(1, round(getattr(cfg.policy, "subtask_regeneration_interval", 1.0) * fps))
+    segments, summary_texts = load_summary_segments(offline_dataset.root)
+    if segments:
+        offline_replay_buffer.materialize_summaries(segments, summary_window)
+    for dataset_path, buf in zip(_get_additional_dataset_paths(cfg), additional_buffers, strict=True):
+        segments, texts = load_summary_segments(dataset_path)
+        if segments:
+            buf.materialize_summaries(segments, summary_window, index_offset=len(summary_texts))
+            summary_texts += texts
+    trainer.sync_summaries(preprocessor, summary_texts, is_main_process=True)
     offline_buffers = [offline_replay_buffer, *additional_buffers]
     logging.info(
         f"[RL_OFFLINE] Buffer: {sum(len(b) for b in offline_buffers)} samples "

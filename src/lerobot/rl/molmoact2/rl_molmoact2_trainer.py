@@ -1148,21 +1148,30 @@ class MolmoAct2Trainer(Trainer):
         task_str: str,
         cfg,
         preprocessor,
-    ) -> tuple[str, str, int]:
-        """Rollout-side subtask generation (two-prompt design).
+        summary: str | None = None,
+    ) -> tuple[str, str, int, str | None]:
+        """Rollout-side subtask + summary generation (MEM high-level query).
 
         Builds the generation prompt for the current observation (unbatched, as
-        handed to build_inference_batch), greedy-decodes the answer, and snaps
-        it to the pack step's subtask vocabulary.
+        handed to build_inference_batch) conditioned on the language memory
+        `summary`, greedy-decodes the answer, splits it into subtask + updated
+        memory, and snaps the subtask to the pack step's vocabulary.
 
-        Returns (raw_text, name, index): name is the snapped vocabulary entry
-        when the snap succeeds, else the raw decoded text with index -1.
+        Returns (raw_text, name, index, new_summary): name is the snapped
+        vocabulary entry when the snap succeeds, else the decoded subtask text
+        with index -1; new_summary is None when the decode carried no memory span.
         """
-        from lerobot.policies.molmoact2.processor_molmoact2 import snap_to_subtask_vocab
+        from lerobot.policies.molmoact2.processor_molmoact2 import (
+            parse_generation_answer,
+            snap_to_subtask_vocab,
+        )
+        from lerobot.types import TransitionKey
 
         step = self._pack_step(preprocessor)
         device = getattr(cfg.policy, "device", "cpu")
         pre_input: dict[str, Any] = {**observation, "task": task_str}
+        if summary is not None:
+            pre_input[TransitionKey.COMPLEMENTARY_DATA] = {"summary": [summary]}
         step.prompt_mode = "subtask_generation"
         try:
             with torch.no_grad():
@@ -1174,9 +1183,10 @@ class MolmoAct2Trainer(Trainer):
             batch, max_new_tokens=int(cfg.policy.subtask_max_new_tokens)
         )
         raw_text = step.processor.tokenizer.decode(token_ids[0], skip_special_tokens=True).strip()
-        index = snap_to_subtask_vocab(raw_text, step.subtask_names) if step.subtask_names else -1
-        name = step.subtask_names[index] if index >= 0 else raw_text
-        return raw_text, name, index
+        subtask_text, new_summary = parse_generation_answer(raw_text)
+        index = snap_to_subtask_vocab(subtask_text, step.subtask_names) if step.subtask_names else -1
+        name = step.subtask_names[index] if index >= 0 else subtask_text
+        return raw_text, name, index, new_summary
 
     @staticmethod
     def _pack_step(preprocessor):
@@ -1196,6 +1206,13 @@ class MolmoAct2Trainer(Trainer):
         self._pack_step(preprocessor).subtask_names = names
         if is_main_process:
             logging.info(f"MolmoAct2 subtask vocabulary: {len(names)} entries")
+
+    def sync_summaries(self, preprocessor, texts: list[str], is_main_process: bool = True) -> None:
+        if not texts:
+            return
+        self._pack_step(preprocessor).summary_texts = list(texts)
+        if is_main_process:
+            logging.info(f"MolmoAct2 summary table: {len(texts)} entries")
 
     def _subtask_generation_loss(
         self, policy: nn.Module, raw_batch: dict, observations: dict, preprocessor, cfg
@@ -1223,6 +1240,9 @@ class MolmoAct2Trainer(Trainer):
 
         obs_valid = {k: v[idx] for k, v in observations.items() if isinstance(v, torch.Tensor)}
         comp_valid: dict[str, Any] = {"subtask_index": flat_index[idx]}
+        for key in ("summary_prev_index", "summary_target_index"):
+            if key in comp:
+                comp_valid[key] = torch.as_tensor(comp[key]).reshape(-1)[idx]
         pre_input: dict[str, Any] = {
             **obs_valid,
             "task": cfg.policy.task,

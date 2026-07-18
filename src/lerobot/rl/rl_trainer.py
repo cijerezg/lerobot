@@ -71,6 +71,13 @@ class Trainer(ABC):
         additional offline datasets load (the vocab remap extends the metadata).
         """
 
+    def sync_summaries(self, preprocessor, texts: list[str], is_main_process: bool = True) -> None:  # noqa: B027 — optional hook, deliberately non-abstract
+        """Wire the MEM summary text table (concatenated across offline datasets,
+        indexed by the buffers' summary_*_index columns) into the prompt seam.
+
+        No-op by default; policies with summary memory override.
+        """
+
     @abstractmethod
     def make_policy(self, cfg) -> nn.Module:
         """

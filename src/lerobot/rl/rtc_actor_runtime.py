@@ -106,9 +106,10 @@ class RTCSharedState:
         self.episode_active = False
         self.history_offsets: dict[str, list[int]] | None = None
         self.history_entries: deque | None = None
-        # Long-term memory: generated current subtask.
+        # Long-term memory: generated current subtask + MEM language memory m_t.
         self.current_subtask_name: str | None = None
         self.current_subtask_index: int = -1
+        self.current_summary: str = ""
         self.policy_reset_requested = False
         self.update_parameters_requested = False
         self.running = True
@@ -277,19 +278,23 @@ class RTCSharedState:
             max_back = max(offsets[0] for offsets in history_offsets.values())
             self.history_entries = deque(maxlen=max_back)
 
-    def update_subtask(self, name: str, index: int) -> None:
+    def update_subtask(self, name: str, index: int, summary: str | None = None) -> None:
+        """summary=None keeps the current memory (decode carried no memory span)."""
         with self.lock:
             self.current_subtask_name = name
             self.current_subtask_index = index
+            if summary is not None:
+                self.current_summary = summary
 
-    def subtask_snapshot(self) -> tuple[str | None, int]:
+    def subtask_snapshot(self) -> tuple[str | None, int, str]:
         with self.lock:
-            return self.current_subtask_name, self.current_subtask_index
+            return self.current_subtask_name, self.current_subtask_index, self.current_summary
 
     def clear_subtask_state(self) -> None:
         with self.lock:
             self.current_subtask_name = None
             self.current_subtask_index = -1
+            self.current_summary = ""
 
     def push_history(self, entry: dict) -> None:
         with self.lock:
@@ -540,15 +545,17 @@ def rtc_inference_worker(
                     last_subtask_time is None
                     or (current_time - last_subtask_time) >= subtask_interval
                 ):
-                    raw_text, subtask_name, subtask_index = trainer.generate_subtask_text(
-                        policy, obs_filtered, task_str, cfg, preprocessor=preprocessor,
+                    _, _, memory_now = shared_state.subtask_snapshot()
+                    raw_text, subtask_name, subtask_index, new_summary = trainer.generate_subtask_text(
+                        policy, obs_filtered, task_str, cfg,
+                        preprocessor=preprocessor, summary=memory_now,
                     )
-                    shared_state.update_subtask(subtask_name, subtask_index)
+                    shared_state.update_subtask(subtask_name, subtask_index, new_summary)
                     last_subtask_time = current_time
                     if subtask_index < 0:
                         logger.warning("[RTC_INFERENCE] Subtask snap missed vocab: %r", raw_text)
 
-                current_subtask, _ = shared_state.subtask_snapshot()
+                current_subtask, _, _ = shared_state.subtask_snapshot()
                 t_preproc_start = time.perf_counter()
                 processed_batch = trainer.build_inference_batch(
                     obs_filtered,
@@ -888,7 +895,7 @@ def rtc_env_worker(
             # Long-term memory: the generated subtask rides the buffer's canonical
             # column so online transitions look exactly like annotated offline
             # frames to the learner.
-            _, subtask_idx_now = shared_state.subtask_snapshot()
+            _, subtask_idx_now, _ = shared_state.subtask_snapshot()
             complementary_info = {
                 "discrete_penalty": torch.tensor([
                     new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)

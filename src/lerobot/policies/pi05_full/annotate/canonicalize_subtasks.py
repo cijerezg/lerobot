@@ -18,6 +18,10 @@ anything is written.
 
 Usage:
     python canonicalize_subtasks.py --data-dir /path/to/dataset [--dry-run]
+
+    # Validation dataset: reuse the train dataset's mapping instead of asking the
+    # LLM, so both end up with one shared vocabulary (matched by name at load time):
+    python canonicalize_subtasks.py --data-dir /path/to/validation --reuse-map /path/to/train
 """
 
 import argparse
@@ -110,6 +114,23 @@ def propose_mapping(model_name: str, device: str, coarse_goal: str, subtasks: li
     return mapping
 
 
+def load_reused_mapping(source: Path, subtasks: list[str]) -> tuple[dict[str, str], Path]:
+    """Build the mapping from another dataset's canonicalization_map.json.
+
+    `source` is the canonicalized dataset root (or the json itself). Labels the
+    source map doesn't know are kept unchanged — they just won't merge into the
+    shared vocabulary, so they're warned about unless they already ARE one of the
+    source's canonical names."""
+    path = source if source.suffix == ".json" else source / "meta" / "canonicalization_map.json"
+    source_map = json.loads(path.read_text())["mapping"]
+    canonicals = set(source_map.values())
+    mapping = {label: source_map.get(label, label) for label in subtasks}
+    unknown = [label for label in subtasks if label not in source_map and label not in canonicals]
+    if unknown:
+        console.print(f"[yellow]{len(unknown)} labels not in the reused map (kept as-is): {unknown}[/yellow]")
+    return mapping, path
+
+
 def merge_adjacent_skills(skills: list[dict]) -> list[dict]:
     merged = [dict(skills[0])]
     for skill in skills[1:]:
@@ -170,13 +191,26 @@ def main():
     parser.add_argument("--model", type=str, default="google/gemma-4-31B-it")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dry-run", action="store_true", help="print the proposed mapping and exit")
+    parser.add_argument(
+        "--reuse-map",
+        type=str,
+        default=None,
+        help="canonicalized dataset root (or canonicalization_map.json) whose mapping "
+        "is applied instead of asking the LLM — use for validation datasets so the "
+        "vocabulary matches train",
+    )
     args = parser.parse_args()
 
     root = Path(args.data_dir)
     subtasks = sorted(pd.read_parquet(root / "meta" / "subtasks.parquet").index)
-    coarse_goal = json.load(open(root / "meta" / "skills.json"))["coarse_description"]
 
-    mapping = propose_mapping(args.model, args.device, coarse_goal, subtasks)
+    if args.reuse_map:
+        mapping, map_path = load_reused_mapping(Path(args.reuse_map), subtasks)
+        model_name = f"reuse-map:{map_path}"
+    else:
+        coarse_goal = json.load(open(root / "meta" / "skills.json"))["coarse_description"]
+        mapping = propose_mapping(args.model, args.device, coarse_goal, subtasks)
+        model_name = args.model
 
     for canonical in sorted(set(mapping.values())):
         members = [old for old, new in mapping.items() if new == canonical]
@@ -185,7 +219,7 @@ def main():
     if args.dry_run:
         console.print("[yellow]Dry run: nothing written.[/yellow]")
         return
-    apply_mapping(root, mapping, args.model)
+    apply_mapping(root, mapping, model_name)
 
 
 if __name__ == "__main__":

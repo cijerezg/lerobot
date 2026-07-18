@@ -285,16 +285,21 @@ def _build_subtask_generation_text(
     setup_type: str,
     add_setup_tokens: bool,
     num_images: int,
+    summary: str | None = None,
 ) -> str:
     """Generation prompt (two-prompt design): same visual/state context as the action
-    prompt, but the question asks for the next step. The assistant's answer is the
-    subtask name; at training time the caller appends it (+eos) and puts CE labels on it."""
+    prompt, but the question asks for the next step. `summary` is the MEM language
+    memory m_t conditioning the decision (None = clause off, "" = empty memory).
+    The assistant's answer is the subtask name (+ updated memory, see
+    `parse_generation_answer`); at training time the caller appends it (+eos) and
+    puts CE labels on it."""
     setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
+    memory_clause = "" if summary is None else f" Memory: {summary or EMPTY_MEMORY_TEXT}"
     prompt = (
-        f"The task is to {task}. The setup is {setup_text}.{state_clause} "
+        f"The task is to {task}.{memory_clause} The setup is {setup_text}.{state_clause} "
         f"Given these, what step should the robot perform next?"
     )
     if num_images <= 0:
@@ -304,6 +309,28 @@ def _build_subtask_generation_text(
     else:
         image_prefix = "".join(f"Image {idx + 1}<|image|>" for idx in range(num_images))
     return f"{image_prefix}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+
+
+EMPTY_MEMORY_TEXT = "none yet."
+
+
+def build_generation_answer(subtask: str, summary: str | None) -> str:
+    """Assistant answer for the generation prompt: the subtask name, plus the updated
+    memory when summary targets are wired (None = subtask-only training)."""
+    if summary is None:
+        return subtask
+    return f"{subtask}. Memory: {summary or EMPTY_MEMORY_TEXT}"
+
+
+def parse_generation_answer(text: str) -> tuple[str, str | None]:
+    """Inverse of build_generation_answer for rollout decodes: returns
+    (subtask_text, summary), summary None when the decode carried no memory span
+    and "" for an empty memory."""
+    if "Memory:" not in text:
+        return text.strip(), None
+    subtask, _, summary = text.partition("Memory:")
+    summary = summary.strip()
+    return subtask.strip().rstrip("."), "" if summary == EMPTY_MEMORY_TEXT else summary
 
 
 def snap_to_subtask_vocab(text: str, names: list[str]) -> int:
@@ -582,6 +609,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     subtask_names: list[str] = field(default_factory=list)
     subtask_dropout: float = 0.3
     metadata_dropout: float = 0.15
+    # MEM summary memory: text table indexed by the buffer's summary_*_index
+    # columns (synced from summaries.parquet); dropout removes BOTH the prompt's
+    # memory clause and the answer's memory span (subtask-only sample).
+    summary_texts: list[str] = field(default_factory=list)
+    summary_dropout: float = 0.3
     # Runtime toggle (not persisted): "action" builds the action prompt;
     # "subtask_generation" builds the generation prompt/labels instead. Callers
     # flip it around a pipeline call so generation gets the SAME normalization.
@@ -637,6 +669,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "subtask_names": list(self.subtask_names),
             "subtask_dropout": self.subtask_dropout,
             "metadata_dropout": self.metadata_dropout,
+            "summary_texts": list(self.summary_texts),
+            "summary_dropout": self.summary_dropout,
         }
 
     def _resolve_max_sequence_length(
@@ -801,6 +835,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         images_by_example = self._extract_images(observation, batch_size)
         tasks = self._extract_tasks(observation, complementary, batch_size)
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
+        prev_summaries, target_summaries = self._extract_summaries(complementary, batch_size)
 
         state_np = state.detach().cpu().numpy()
         prompts: list[str] = []
@@ -809,6 +844,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
             flat_images.extend(images)
+            name = subtask_texts[batch_idx]
+            prev_summary = prev_summaries[batch_idx]
+            target_summary = target_summaries[batch_idx]
+            if name is not None and random.random() < self.summary_dropout:
+                prev_summary = None
+                target_summary = None
             prompt = _build_subtask_generation_text(
                 task=tasks[batch_idx],
                 discrete_state_string=_build_discrete_state_string(
@@ -817,10 +858,14 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 setup_type=self.setup_type,
                 add_setup_tokens=self.add_setup_tokens,
                 num_images=len(images),
+                summary=prev_summary,
             )
             prompts.append(prompt)
-            name = subtask_texts[batch_idx]
-            fulls.append(f"{prompt}{name}{self._eos_token}" if name else prompt)
+            if name:
+                answer = build_generation_answer(name, target_summary)
+                fulls.append(f"{prompt}{answer}{self._eos_token}")
+            else:
+                fulls.append(prompt)
 
         valid = torch.tensor([name is not None for name in subtask_texts])
         build_labels = bool(valid.any())
@@ -863,6 +908,26 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if len(flat) == 1:
             flat = flat * batch_size
         return [self.subtask_names[i] if 0 <= i < len(self.subtask_names) else None for i in flat]
+
+    def _extract_summaries(
+        self, complementary: dict, batch_size: int
+    ) -> tuple[list[str | None], list[str | None]]:
+        """(conditioning, target) summary text per sample. Rollout path: "summary"
+        strings (conditioning only, no target). Offline path: summary_prev_index /
+        summary_target_index rendered through summary_texts; -1 = empty memory ("").
+        All-None when summaries aren't wired (subtask-only training)."""
+        texts = complementary.get("summary")
+        if texts is not None:
+            return list(texts), [None] * batch_size
+        prev = complementary.get("summary_prev_index")
+        if prev is None or not self.summary_texts:
+            return [None] * batch_size, [None] * batch_size
+
+        def render(indices) -> list[str]:
+            flat = torch.as_tensor(indices).detach().cpu().reshape(-1).long().tolist()
+            return ["" if i < 0 else self.summary_texts[i] for i in flat]
+
+        return render(prev), render(complementary["summary_target_index"])
 
     @staticmethod
     def _extract_metadata(complementary: dict, batch_size: int) -> list[dict | None]:

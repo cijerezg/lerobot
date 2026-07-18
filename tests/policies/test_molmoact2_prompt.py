@@ -63,6 +63,8 @@ def test_clause_order_task_then_memory_then_setup():
 
 from lerobot.policies.molmoact2.processor_molmoact2 import (  # noqa: E402
     _build_subtask_generation_text,
+    build_generation_answer,
+    parse_generation_answer,
     snap_to_subtask_vocab,
 )
 
@@ -88,3 +90,36 @@ def test_snap_to_subtask_vocab():
     assert snap_to_subtask_vocab("  Grasp the Cup. ", VOCAB) == 1  # case/punct-insensitive
     assert snap_to_subtask_vocab("grasp cup", VOCAB) == 1          # fuzzy
     assert snap_to_subtask_vocab("do a backflip", VOCAB) == -1     # no match
+
+
+# ── MEM summary memory: generation-prompt clause + answer format ─────────────
+
+
+def gen_prompt(**overrides):
+    kwargs = {
+        "task": "fold",
+        "discrete_state_string": "",
+        "setup_type": "",
+        "add_setup_tokens": False,
+        "num_images": 0,
+    }
+    kwargs.update(overrides)
+    return _build_subtask_generation_text(**kwargs)
+
+
+def test_generation_prompt_memory_clause():
+    assert " Memory: I picked up the truck." in gen_prompt(summary="I picked up the truck.")
+    assert " Memory: none yet." in gen_prompt(summary="")  # empty memory, clause on
+    assert "Memory:" not in gen_prompt()  # feature off / dropout
+
+
+def test_generation_answer_roundtrip():
+    answer = build_generation_answer("grasp the cup", "I picked up the truck.")
+    assert answer == "grasp the cup. Memory: I picked up the truck."
+    assert parse_generation_answer(answer) == ("grasp the cup", "I picked up the truck.")
+
+    assert parse_generation_answer(build_generation_answer("grasp the cup", "")) == ("grasp the cup", "")
+
+    # Subtask-only training/decodes carry no memory span.
+    assert build_generation_answer("grasp the cup", None) == "grasp the cup"
+    assert parse_generation_answer("grasp the cup") == ("grasp the cup", None)

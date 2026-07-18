@@ -134,7 +134,7 @@ def _load_dataset(cfg):
 def render_sample(
     obs,
     gt_actions,
-    checkpoints_info,    # list of {"label": "A", "subtask": "...", "color_idx": 0}
+    checkpoints_info,    # list of {"label": "A", "subtask": "...", "color_idx": 0, "summary": ...}
     pred_traces,         # list of {"actions": tensor, "label": "A raw", "color_idx": 0, "kwargs": dict}
     gt_subtask,
     episode_idx,
@@ -143,6 +143,7 @@ def render_sample(
     joint_names=None,
     checkpoint_paths=None,
     state=None,
+    gt_summary=None,
 ):
     """
     Save one evaluation figure.
@@ -217,6 +218,12 @@ def render_sample(
                      fontsize=7.5, fontweight="bold", color="#555555", va="top")
         y_gt -= 0.10
         y_gt = _draw_lines(0.02, y_gt, _wrap(gt_subtask or "(none)", max_lines=2), "#333333")
+        if gt_summary is not None:
+            ax_info.text(0.02, y_gt, "GT memory:", transform=ax_info.transAxes,
+                         fontsize=7.5, fontweight="bold", color="#555555", va="top")
+            y_gt -= 0.10
+            y_gt = _draw_lines(0.02, y_gt, _wrap(gt_summary or "(empty)", max_lines=2),
+                               "#333333", fontsize=6.5)
         sep_y = y_gt - 0.02
         ax_info.plot([0.02, 0.98], [sep_y, sep_y], transform=ax_info.transAxes,
                      color="#cccccc", linewidth=0.6, clip_on=True)
@@ -245,7 +252,13 @@ def render_sample(
                 ax_info.text(x, y, "─ pred:", transform=ax_info.transAxes,
                              fontsize=6.5, color="#777777", va="top", style="italic")
                 y -= 0.09
-                _draw_lines(x, y, _wrap(sub, max_lines=2), "#333333", fontsize=6.5)
+                y = _draw_lines(x, y, _wrap(sub, max_lines=2), "#333333", fontsize=6.5)
+            mem = info.get("summary")
+            if mem is not None:
+                ax_info.text(x, y, "─ mem:", transform=ax_info.transAxes,
+                             fontsize=6.5, color="#777777", va="top", style="italic")
+                y -= 0.09
+                _draw_lines(x, y, _wrap(mem or "(empty)", max_lines=2), "#333333", fontsize=6.5)
 
     # ── 2×3 joint action traces ──────────────────────────────────────────────
     for j in range(min(n_joints, 6)):
@@ -304,16 +317,36 @@ def render_sample(
 # Inference per checkpoint
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk_size):
+def _summary_lookup(dataset, cfg) -> dict[int, tuple[str, str]]:
+    """global frame index -> (conditioning summary, GT target summary), using the
+    same hold/update-window label rule as training. Empty when the dataset has no
+    meta/summaries.parquet."""
+    from lerobot.rl.buffer import summary_label_spans
+    from lerobot.rl.offline_dataset_utils import load_summary_segments
+
+    segments, texts = load_summary_segments(dataset.root)
+    if not segments:
+        return {}
+    window = max(1, round(getattr(cfg.policy, "subtask_regeneration_interval", 1.0) * dataset.fps))
+    lookup: dict[int, tuple[str, str]] = {}
+    for start, stop, prev_row, target_row in summary_label_spans(segments, window):
+        pair = ("" if prev_row < 0 else texts[prev_row], "" if target_row < 0 else texts[target_row])
+        for i in range(start, stop):
+            lookup[i] = pair
+    return lookup
+
+
+def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk_size, summary_lookup):
     """
     Run inference for all samples through *adapter*.
 
     Populates frame_data[global_idx] with shared per-frame fields the first time
     it sees a global_idx. Returns:
-        preds:  {global_idx: (pred_unnorm, pred_norm, pred_subtask)}
+        preds:  {global_idx: (pred_unnorm, pred_norm, pred_subtask, generation)}
+                where generation is adapter.generate_subtask's tuple or None
         mse:    list of float, one per sample
     """
-    preds: dict[int, tuple[torch.Tensor, torch.Tensor, str | None]] = {}
+    preds: dict[int, tuple] = {}
     mse: list[float] = []
 
     adapter.suppress_logs(True)
@@ -324,21 +357,27 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
                     dataset, global_idx, chunk_size
                 )
                 gt_actions_norm = adapter.normalize_gt_actions(gt_actions, state)
+                prev_summary, target_summary = summary_lookup.get(global_idx, (None, None))
                 frame_data[global_idx] = {
                     "obs": obs, "gt_actions": gt_actions, "gt_actions_norm": gt_actions_norm,
                     "state": state, "gt_subtask": gt_subtask, "task_str": task_str,
+                    "summary_prev": prev_summary, "gt_summary": target_summary,
                 }
 
             fd = frame_data[global_idx]
             pred_unnorm, pred_norm, pred_subtask = adapter.predict_action_chunk(
                 fd["obs"], fd["task_str"], state=fd["state"], advantage=1.0,
             )
+            generation = adapter.generate_subtask(fd["obs"], fd["task_str"], summary=fd["summary_prev"])
+            if generation is not None:
+                pred_subtask = generation[1]
             this_mse = torch.nn.functional.mse_loss(pred_unnorm, fd["gt_actions"].float()).item()
             mse.append(this_mse)
-            preds[global_idx] = (pred_unnorm, pred_norm, pred_subtask)
+            preds[global_idx] = (pred_unnorm, pred_norm, pred_subtask, generation)
             logging.info(
                 f"  ep={ep_idx:04d} fr={fr_idx:04d} | mse={this_mse:.4f} | "
                 f"GT: '{fd['gt_subtask']}' | pred: '{pred_subtask or ''}'"
+                + (f" | mem: '{generation[3]}'" if generation is not None else "")
             )
     finally:
         adapter.suppress_logs(False)
@@ -403,8 +442,12 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
         return
     logging.info(f"Evaluating {len(samples)} frames …")
 
+    summary_lookup = _summary_lookup(dataset, cfg)
+    if summary_lookup:
+        logging.info("Summaries found: conditioning generation on GT memory (hold/update rule).")
+
     frame_data: dict[int, dict] = {}
-    preds, mse = _run_checkpoint(adapter, dataset, samples, frame_data, chunk_size)
+    preds, mse = _run_checkpoint(adapter, dataset, samples, frame_data, chunk_size, summary_lookup)
     logging.info(f"MSE  {path_label} ({path_str}): {sum(mse) / len(mse):.4f}")
 
     action_dim = frame_data[samples[0][2]]["gt_actions"].shape[-1]
@@ -413,10 +456,13 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
 
     for ep_idx, fr_idx, global_idx in samples:
         fd = frame_data[global_idx]
-        pred_unnorm, pred_norm, sub = preds[global_idx]
-        ckpts = [{"label": path_label, "subtask": sub, "color_idx": 0}]
+        pred_unnorm, pred_norm, sub, generation = preds[global_idx]
+        ckpts = [{
+            "label": path_label, "subtask": sub, "color_idx": 0,
+            "summary": generation[3] if generation is not None else None,
+        }]
         common = dict(
-            obs=fd["obs"], gt_subtask=fd["gt_subtask"],
+            obs=fd["obs"], gt_subtask=fd["gt_subtask"], gt_summary=fd["gt_summary"],
             episode_idx=ep_idx, frame_idx=fr_idx,
             joint_names=joint_names, checkpoint_paths=checkpoint_paths,
             checkpoints_info=ckpts,

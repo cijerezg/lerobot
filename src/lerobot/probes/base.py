@@ -129,6 +129,21 @@ class ProbablePolicy(ABC):
                   policies that don't generate subtasks.
         """
 
+    def generate_subtask(
+        self,
+        obs: dict[str, Tensor],
+        task_str: str,
+        summary: str | None = None,
+    ) -> tuple[str, str, int, str | None] | None:
+        """Optional MEM high-level query: decode the next subtask + updated memory
+        for one observation, conditioned on the language memory ``summary``.
+
+        Returns ``(raw_text, name, index, new_summary)`` like
+        ``MolmoAct2Trainer.generate_subtask_text``, or ``None`` when the policy
+        has no generation path (the default).
+        """
+        return None
+
     # ── Representations ──────────────────────────────────────────────────────
 
     @abstractmethod

@@ -90,6 +90,36 @@ def random_shift(images: torch.Tensor, pad: int = 4):
     return random_crop_vectorized(images=images, output_size=(h, w))
 
 
+def summary_label_spans(
+    segments: list[dict],
+    update_window_frames: int,
+) -> list[tuple[int, int, int, int]]:
+    """Per-frame (conditioning, target) summary rows for MEM training labels.
+
+    `segments` = summaries.parquet rows sorted by (episode_index, segment_index);
+    row i's summary is the memory AFTER that segment completes. Returns spans
+    (start, stop, prev_row, target_row) over global frame indices, row -1 = empty
+    memory. Target = summary of the segments completed before the frame (row k-1
+    for a frame in segment k). Conditioning equals the target (hold pair) except
+    on the first `update_window_frames` frames of a segment, which condition one
+    summary older — right after a completion the rollout still holds the old
+    memory, and these update pairs are where appending is learned.
+    """
+    rows_by_episode: dict[int, list[tuple[int, dict]]] = {}
+    for i, row in enumerate(segments):
+        rows_by_episode.setdefault(int(row["episode_index"]), []).append((i, row))
+    spans = []
+    for rows in rows_by_episode.values():
+        for k, (_, row) in enumerate(rows):
+            start, stop = int(row["from_index"]), int(row["to_index"])
+            completed = rows[k - 1][0] if k >= 1 else -1
+            older = rows[k - 2][0] if k >= 2 else -1
+            window_end = min(start + update_window_frames, stop)
+            spans.append((start, window_end, older, completed))
+            spans.append((window_end, stop, completed, completed))
+    return spans
+
+
 def assemble_history_windows(
     entries: Sequence[dict[str, torch.Tensor]],
     history_offsets: dict[str, list[int]],
@@ -436,6 +466,35 @@ class ReplayBuffer:
         )
         self.complementary_info["metadata_speed"] = speed
         for key in ("metadata_quality", "metadata_mistake", "metadata_speed"):
+            if key not in self.complementary_info_keys:
+                self.complementary_info_keys.append(key)
+        self.has_complementary_info = True
+
+    def materialize_summaries(
+        self,
+        segments: list[dict],
+        update_window_frames: int,
+        index_offset: int = 0,
+    ) -> None:
+        """MEM-style summary memory columns from meta/summaries.parquet (offline buffers).
+
+        `segments` are the parquet rows sorted by (episode_index, segment_index), each
+        with from_index/to_index = the segment's global dataset frame range (== buffer
+        positions; image_stride only strides image storage, not rows). Row i of
+        `segments` is entry `index_offset + i` of the summary text table, holding the
+        memory AFTER that segment completes. Pair semantics: `summary_label_spans`.
+        """
+        prev_idx = torch.full((self.capacity,), -1, dtype=torch.long, device=self.storage_device)
+        target_idx = torch.full((self.capacity,), -1, dtype=torch.long, device=self.storage_device)
+        for start, stop, prev_row, target_row in summary_label_spans(segments, update_window_frames):
+            stop = min(stop, self.size)
+            if start >= stop:
+                continue
+            prev_idx[start:stop] = index_offset + prev_row if prev_row >= 0 else -1
+            target_idx[start:stop] = index_offset + target_row if target_row >= 0 else -1
+        self.complementary_info["summary_prev_index"] = prev_idx
+        self.complementary_info["summary_target_index"] = target_idx
+        for key in ("summary_prev_index", "summary_target_index"):
             if key not in self.complementary_info_keys:
                 self.complementary_info_keys.append(key)
         self.has_complementary_info = True

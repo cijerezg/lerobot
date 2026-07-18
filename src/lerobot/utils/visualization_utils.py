@@ -108,7 +108,8 @@ def log_rerun_data(
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 elif arr.ndim == 2 and str(k).endswith(".depth"):
                     # Raw z16 depth (D405: 0.1 mm/level -> 10000 units per meter).
-                    rr.log(key, rr.DepthImage(arr, meter=10000.0), static=True)
+                    # Colormap spans 3-35 cm (D405 min range is ~7 cm); farther values saturate.
+                    rr.log(key, rr.DepthImage(arr, meter=10000.0, depth_range=(300, 3500)), static=True)
                 else:
                     img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)

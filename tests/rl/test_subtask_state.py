@@ -14,22 +14,54 @@ def test_update_subtask():
     shared = RTCSharedState()
 
     shared.update_subtask("reach the cup", 0)
-    assert shared.subtask_snapshot() == ("reach the cup", 0)
+    assert shared.subtask_snapshot() == ("reach the cup", 0, "")
 
-    shared.update_subtask("grasp the cup", 1)
-    assert shared.subtask_snapshot() == ("grasp the cup", 1)
+    shared.update_subtask("grasp the cup", 1, "I reached the cup.")
+    assert shared.subtask_snapshot() == ("grasp the cup", 1, "I reached the cup.")
+
+    # summary=None (decode without a memory span) keeps the current memory.
+    shared.update_subtask("lift the cup", 2)
+    assert shared.subtask_snapshot() == ("lift the cup", 2, "I reached the cup.")
 
     # Snap misses keep the raw text with index -1.
     shared.update_subtask("wiggle mysteriously", -1)
-    assert shared.subtask_snapshot() == ("wiggle mysteriously", -1)
+    assert shared.subtask_snapshot()[:2] == ("wiggle mysteriously", -1)
 
 
 def test_clear_subtask_state():
     shared = RTCSharedState()
-    shared.update_subtask("reach the cup", 0)
+    shared.update_subtask("reach the cup", 0, "I reached the cup.")
     shared.clear_subtask_state()
 
-    assert shared.subtask_snapshot() == (None, -1)
+    assert shared.subtask_snapshot() == (None, -1, "")
+
+
+def test_extract_summaries():
+    import torch
+
+    step = object.__new__(MolmoAct2PackInputsProcessorStep)
+    step.summary_texts = ["I did A.", "I did A and B."]
+
+    # Offline path: index columns rendered through the table; -1 = empty memory.
+    prev, target = step._extract_summaries(
+        {
+            "summary_prev_index": torch.tensor([-1, 0]),
+            "summary_target_index": torch.tensor([0, 1]),
+        },
+        batch_size=2,
+    )
+    assert prev == ["", "I did A."]
+    assert target == ["I did A.", "I did A and B."]
+
+    # Rollout path: conditioning strings only, no target.
+    prev, target = step._extract_summaries({"summary": ["I did A."]}, batch_size=1)
+    assert prev == ["I did A."] and target == [None]
+
+    # Not wired: all None (subtask-only training).
+    assert step._extract_summaries({}, batch_size=2) == ([None, None], [None, None])
+    step.summary_texts = []
+    prev, target = step._extract_summaries({"summary_prev_index": torch.tensor([0])}, batch_size=1)
+    assert prev == [None] and target == [None]
 
 
 def test_extract_metadata_from_columns():

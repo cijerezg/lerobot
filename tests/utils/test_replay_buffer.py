@@ -935,6 +935,60 @@ def test_history_includes_depth_from_complementary_info():
         assert torch.equal(windows[f"history.{depth_key}"], gathered[depth_key])
 
 
+def test_materialize_summaries_hold_and_update_pairs():
+    buffer = ReplayBuffer(20, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True)
+    for i in range(10):
+        buffer.add(
+            state={OBS_STATE: torch.tensor([[float(i)]])},
+            action=torch.tensor([[0.0]]),
+            reward=0.0,
+            next_state=None,
+            done=(i == 9),
+            truncated=False,
+        )
+    # One episode, three segments: frames [0,4), [4,7), [7,10); table rows 0,1,2.
+    segments = [
+        {"episode_index": 0, "segment_index": 0, "from_index": 0, "to_index": 4},
+        {"episode_index": 0, "segment_index": 1, "from_index": 4, "to_index": 7},
+        {"episode_index": 0, "segment_index": 2, "from_index": 7, "to_index": 10},
+    ]
+    buffer.materialize_summaries(segments, update_window_frames=2)
+
+    prev = buffer.complementary_info["summary_prev_index"][:10]
+    target = buffer.complementary_info["summary_target_index"][:10]
+    # Target = memory of completed segments: -1 (empty) in segment 0, then rows 0, 1.
+    assert target.tolist() == [-1, -1, -1, -1, 0, 0, 0, 1, 1, 1]
+    # Conditioning: equals target on hold frames; the first 2 frames of each
+    # segment condition on the older summary (update pairs: -1 -> 0, 0 -> 1).
+    assert prev.tolist() == [-1, -1, -1, -1, -1, -1, 0, 0, 0, 1]
+
+    batch = buffer.sample(batch_size=4, action_chunk_size=2)
+    assert batch["complementary_info"]["summary_prev_index"].shape == (4,)
+    assert batch["complementary_info"]["summary_target_index"].dtype == torch.long
+
+
+def test_materialize_summaries_index_offset():
+    buffer = ReplayBuffer(10, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True)
+    for i in range(6):
+        buffer.add(
+            state={OBS_STATE: torch.tensor([[0.0]])},
+            action=torch.tensor([[0.0]]),
+            reward=0.0,
+            next_state=None,
+            done=(i == 5),
+            truncated=False,
+        )
+    segments = [
+        {"episode_index": 0, "segment_index": 0, "from_index": 0, "to_index": 3},
+        {"episode_index": 0, "segment_index": 1, "from_index": 3, "to_index": 6},
+    ]
+    buffer.materialize_summaries(segments, update_window_frames=1, index_offset=5)
+
+    # Additional-dataset rows land after the main table: row 0 becomes entry 5.
+    assert buffer.complementary_info["summary_target_index"][:6].tolist() == [-1, -1, -1, 5, 5, 5]
+    assert buffer.complementary_info["summary_prev_index"][:6].tolist() == [-1, -1, -1, -1, 5, 5]
+
+
 def test_materialize_metadata_speed_buckets():
     buffer = ReplayBuffer(20, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True)
     # Episode 1: 7 frames; episode 2: 3 frames.

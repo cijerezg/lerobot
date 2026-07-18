@@ -9,8 +9,9 @@ autocast, action-mode dispatch, slicing to the configured action dim, and
 float32 conversion. The adapter just builds the preprocessor input, calls
 predict, and unnormalises the result.
 
-MolmoAct2 does not generate subtasks, so ``pred_subtask`` is always ``None``.
-It also only supports absolute action encoding, so ``state`` is unused.
+``pred_subtask`` from predict_action_chunk is always ``None``; subtask + summary
+generation (the MEM high-level query) is a separate decode exposed via
+``generate_subtask``. Only absolute action encoding needs no ``state``.
 """
 
 from __future__ import annotations
@@ -142,6 +143,22 @@ class MolmoAct2Adapter(ProbablePolicy):
             unnorm = self._postprocessor(norm_actions)
         pred_unnorm = unnorm.squeeze(0).float().cpu()
         return pred_unnorm, pred_norm, None
+
+    @torch.no_grad()
+    def generate_subtask(
+        self,
+        obs: dict[str, Tensor],
+        task_str: str,
+        summary: str | None = None,
+    ) -> tuple[str, str, int, str | None] | None:
+        if int(getattr(self._cfg.policy, "subtask_max_new_tokens", 0)) <= 0:
+            return None
+        from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
+
+        obs_on_device = {k: v.to(self._device) for k, v in obs.items()}
+        return MolmoAct2Trainer().generate_subtask_text(
+            self._policy, obs_on_device, task_str, self._cfg, self._preprocessor, summary=summary
+        )
 
     def capture_attention(
         self,
