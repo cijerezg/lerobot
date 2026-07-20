@@ -242,17 +242,17 @@ def _build_robot_text(
     add_setup_tokens: bool,
     add_control_tokens: bool,
     num_images: int,
-    advantage_label: str | None = None,
     current_subtask: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> str:
     """Memory clauses: None disables a clause entirely (byte-identical legacy prompt)."""
     setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
     control_text = _wrap_control_text(control_mode, add_control_tokens=add_control_tokens)
+    setup_clause = f" The setup is {setup_text}." if setup_text else ""
+    control_clause = f" The expected control mode is {control_text}." if control_text else ""
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
-    advantage_clause = f" The advantage is {advantage_label}." if advantage_label else ""
     subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
     metadata_clause = ""
     if metadata is not None:
@@ -265,8 +265,8 @@ def _build_robot_text(
         if "speed" in metadata:
             metadata_clause += f" The speed is {metadata['speed']}."
     prompt = (
-        f"The task is to {task}.{subtask_clause} The setup is {setup_text}.{state_clause} "
-        f"The expected control mode is {control_text}.{advantage_clause}{metadata_clause} "
+        f"The task is to {task}.{subtask_clause}{setup_clause}{state_clause}"
+        f"{control_clause}{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
     if num_images <= 0:
@@ -290,16 +290,17 @@ def _build_subtask_generation_text(
     """Generation prompt (two-prompt design): same visual/state context as the action
     prompt, but the question asks for the next step. `summary` is the MEM language
     memory m_t conditioning the decision (None = clause off, "" = empty memory).
-    The assistant's answer is the subtask name (+ updated memory, see
-    `parse_generation_answer`); at training time the caller appends it (+eos) and
-    puts CE labels on it."""
+    The assistant's answer is memory-first: the updated memory, then the subtask
+    (see `parse_generation_answer`); at training time the caller appends it (+eos)
+    and puts CE labels on it."""
     setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
+    setup_clause = f" The setup is {setup_text}." if setup_text else ""
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
     memory_clause = "" if summary is None else f" Memory: {summary or EMPTY_MEMORY_TEXT}"
     prompt = (
-        f"The task is to {task}.{memory_clause} The setup is {setup_text}.{state_clause} "
+        f"The task is to {task}.{memory_clause}{setup_clause}{state_clause} "
         f"Given these, what step should the robot perform next?"
     )
     if num_images <= 0:
@@ -315,22 +316,32 @@ EMPTY_MEMORY_TEXT = "none yet."
 
 
 def build_generation_answer(subtask: str, summary: str | None) -> str:
-    """Assistant answer for the generation prompt: the subtask name, plus the updated
-    memory when summary targets are wired (None = subtask-only training)."""
+    """Assistant answer for the generation prompt, memory-first: the updated memory is
+    decoded before the subtask so subtask selection conditions on the fresh summary
+    (None = subtask-only training)."""
     if summary is None:
         return subtask
-    return f"{subtask}. Memory: {summary or EMPTY_MEMORY_TEXT}"
+    return f"{generation_answer_memory_prefix(summary)} Subtask: {subtask}"
+
+
+def generation_answer_memory_prefix(summary: str | None) -> str | None:
+    """The "Memory: …" prefix of build_generation_answer; None for subtask-only answers.
+    Used to split the answer-span labels into memory vs subtask tokens."""
+    if summary is None:
+        return None
+    return f"Memory: {summary or EMPTY_MEMORY_TEXT}"
 
 
 def parse_generation_answer(text: str) -> tuple[str, str | None]:
     """Inverse of build_generation_answer for rollout decodes: returns
     (subtask_text, summary), summary None when the decode carried no memory span
     and "" for an empty memory."""
-    if "Memory:" not in text:
+    if "Subtask:" not in text:
         return text.strip(), None
-    subtask, _, summary = text.partition("Memory:")
-    summary = summary.strip()
-    return subtask.strip().rstrip("."), "" if summary == EMPTY_MEMORY_TEXT else summary
+    memory, _, subtask = text.partition("Subtask:")
+    memory = memory.strip()
+    memory = memory.removeprefix("Memory:").strip()
+    return subtask.strip().rstrip("."), "" if memory == EMPTY_MEMORY_TEXT else memory
 
 
 def snap_to_subtask_vocab(text: str, names: list[str]) -> int:
@@ -602,7 +613,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     chunk_size: int = 30
     max_action_dim: int = 32
     env_action_dim: int | None = None
-    advantage_scaling: float = 1.0
     # Memory prompt clauses: index → name vocabulary (from subtasks.parquet) and
     # per-component training dropout (π0.7 recipe; applied only when actions are
     # present, i.e. training text — inference prompts are deterministic).
@@ -665,7 +675,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "chunk_size": self.chunk_size,
             "max_action_dim": self.max_action_dim,
             "env_action_dim": self.env_action_dim,
-            "advantage_scaling": self.advantage_scaling,
             "subtask_names": list(self.subtask_names),
             "subtask_dropout": self.subtask_dropout,
             "metadata_dropout": self.metadata_dropout,
@@ -691,6 +700,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_horizon=action_horizon,
             include_discrete_action=include_discrete_action,
         )
+
+    def _fix_attention_mask(self, inputs) -> None:
+        """Recompute attention_mask from the pad id: the HF processor's insert_bos assumes
+        LEFT padding, so with the tokenizer's right padding it marks trailing pad tokens
+        as valid — the model would attend padding and the answer-span label math breaks."""
+        pad_id = self.processor.tokenizer.pad_token_id
+        inputs["attention_mask"] = (inputs["input_ids"] != pad_id).to(inputs["attention_mask"].dtype)
 
     def _batch_size(self, observation: dict[str, Any], action: Tensor | None) -> int:
         if action is not None:
@@ -840,6 +856,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         state_np = state.detach().cpu().numpy()
         prompts: list[str] = []
         fulls: list[str] = []
+        mids: list[str] = []  # prompt + memory prefix; splits the answer span into memory/subtask
         flat_images: list[np.ndarray] = []
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
@@ -864,8 +881,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             if name:
                 answer = build_generation_answer(name, target_summary)
                 fulls.append(f"{prompt}{answer}{self._eos_token}")
+                memory_prefix = generation_answer_memory_prefix(target_summary)
+                mids.append(prompt if memory_prefix is None else f"{prompt}{memory_prefix}")
             else:
                 fulls.append(prompt)
+                mids.append(prompt)
 
         valid = torch.tensor([name is not None for name in subtask_texts])
         build_labels = bool(valid.any())
@@ -875,13 +895,26 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             return_tensors="pt",
             padding=True,
         )
+        self._fix_attention_mask(inputs)
         if build_labels:
+            pad_id = self.processor.tokenizer.pad_token_id
             prompt_inputs = self.processor(
                 text=prompts, images=flat_images, return_tensors="pt", padding=True
             )
             full_lengths = inputs["attention_mask"].sum(dim=1)
-            prompt_lengths = prompt_inputs["attention_mask"].sum(dim=1)
+            prompt_lengths = (prompt_inputs["input_ids"] != pad_id).sum(dim=1)
+            mid_lengths = (
+                prompt_lengths
+                if mids == prompts
+                else (
+                    self.processor(text=mids, images=flat_images, return_tensors="pt", padding=True)[
+                        "input_ids"
+                    ]
+                    != pad_id
+                ).sum(dim=1)
+            )
             labels = torch.full_like(inputs["input_ids"], -100)
+            summary_mask = torch.zeros_like(labels, dtype=torch.bool)
             for batch_idx in range(batch_size):
                 answer_len = int(full_lengths[batch_idx] - prompt_lengths[batch_idx])
                 if not valid[batch_idx] or answer_len <= 0:
@@ -889,7 +922,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 nonpad = inputs["attention_mask"][batch_idx].nonzero().reshape(-1)
                 answer_span = nonpad[-answer_len:]
                 labels[batch_idx, answer_span] = inputs["input_ids"][batch_idx, answer_span]
+                memory_len = int(mid_lengths[batch_idx] - prompt_lengths[batch_idx])
+                if memory_len > 0:
+                    summary_mask[batch_idx, answer_span[:memory_len]] = True
             inputs["labels"] = labels
+            inputs["summary_label_mask"] = summary_mask
         complementary.update(dict(inputs))
         complementary["subtask_valid"] = valid
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
@@ -937,14 +974,18 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 return [metadata] * batch_size
             return list(metadata)
         # Offline batches: per-frame metadata columns from materialize_metadata.
+        # Speed is optional (omitted for single-operator data); the clause renders partially.
         quality = complementary.get("metadata_quality")
         if quality is None:
             return [None] * batch_size
         quality = torch.as_tensor(quality).detach().cpu().float().reshape(-1)
         mistake = torch.as_tensor(complementary["metadata_mistake"]).detach().cpu().float().reshape(-1)
-        speed = torch.as_tensor(complementary["metadata_speed"]).detach().cpu().float().reshape(-1)
+        speed = complementary.get("metadata_speed")
+        if speed is not None:
+            speed = torch.as_tensor(speed).detach().cpu().float().reshape(-1)
         return [
-            {"quality": int(quality[i]), "mistake": bool(mistake[i] > 0.5), "speed": int(speed[i])}
+            {"quality": int(quality[i]), "mistake": bool(mistake[i] > 0.5)}
+            | ({"speed": int(speed[i])} if speed is not None else {})
             for i in range(batch_size)
         ]
 
@@ -965,26 +1006,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         tasks = self._extract_tasks(observation, complementary, batch_size)
         complementary["task"] = tasks
-
-        advantages = complementary.get("advantage")
-        if isinstance(advantages, torch.Tensor):
-            advantages = advantages.detach().cpu().float().numpy().flatten()
-        elif advantages is not None:
-            advantages = np.asarray(advantages, dtype=np.float32).flatten()
-
-        advantage_threshold: float | None = None
-        if advantages is not None:
-            raw_threshold = complementary.get("advantage_threshold")
-            if raw_threshold is None:
-                raise ValueError(
-                    "MolmoAct2 processor requires complementary_data['advantage_threshold'] "
-                    "when 'advantage' is provided. Training callers pass the per-batch top-K "
-                    "quantile; inference passes 0.0 as a sign-based default."
-                )
-            if isinstance(raw_threshold, torch.Tensor):
-                advantage_threshold = float(raw_threshold.detach().cpu().item())
-            else:
-                advantage_threshold = float(raw_threshold)
 
         action_padded = None
         action_horizon_is_pad = None
@@ -1011,10 +1032,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             images = images_by_example[batch_idx]
             flat_images.extend(images)
             discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
-            advantage_label: str | None = None
-            if advantages is not None:
-                adv = np.tanh(float(advantages[batch_idx]) / self.advantage_scaling)
-                advantage_label = "positive" if adv >= advantage_threshold else "negative"
             current_subtask = subtask_texts[batch_idx]
             metadata = metadata_list[batch_idx]
             if build_action_labels:  # training text: per-component dropout (π0.7 recipe)
@@ -1030,7 +1047,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 add_setup_tokens=self.add_setup_tokens,
                 add_control_tokens=self.add_control_tokens,
                 num_images=len(images),
-                advantage_label=advantage_label,
                 current_subtask=current_subtask,
                 metadata=metadata,
             )
@@ -1047,6 +1063,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         text = full_texts if build_action_labels else prompt_texts
         inputs = self.processor(text=text, images=flat_images, return_tensors="pt", padding=True)
+        self._fix_attention_mask(inputs)
         if action is None:
             action_horizon = self.chunk_size
         elif action.ndim == 2:
@@ -1190,7 +1207,6 @@ def make_molmoact2_pre_post_processors(
             chunk_size=chunk_size,
             max_action_dim=config.expected_max_action_dim,
             env_action_dim=env_action_dim,
-            advantage_scaling=float(getattr(config, "advantage_scaling", 1.0)),
         ),
         DeviceProcessorStep(device=config.device),
     ]

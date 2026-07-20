@@ -989,9 +989,9 @@ def test_materialize_summaries_index_offset():
     assert buffer.complementary_info["summary_prev_index"][:6].tolist() == [-1, -1, -1, -1, 5, 5]
 
 
-def test_materialize_metadata_speed_buckets():
+def test_materialize_metadata_from_dataset_rows():
     buffer = ReplayBuffer(20, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True)
-    # Episode 1: 7 frames; episode 2: 3 frames.
+    # Episode 0: 7 frames; episode 1: 3 frames.
     for episode_length in (7, 3):
         for i in range(episode_length):
             buffer.add(
@@ -1003,13 +1003,24 @@ def test_materialize_metadata_speed_buckets():
                 truncated=False,
             )
 
-    buffer.materialize_metadata(quality=5, mistake=False, speed_bucket_steps=3)
+    episode_rows = [
+        {"episode_index": 0, "quality": 4, "from_index": 0, "to_index": 7},
+        {"episode_index": 1, "quality": 3, "from_index": 7, "to_index": 10},
+    ]
+    mistake_rows = [
+        {"episode_index": 0, "from_index": 0, "to_index": 4, "mistake": False},
+        {"episode_index": 0, "from_index": 4, "to_index": 7, "mistake": True},
+        {"episode_index": 1, "from_index": 7, "to_index": 10, "mistake": False},
+    ]
+    buffer.materialize_metadata(episode_rows, mistake_rows)
 
-    speed = buffer.complementary_info["metadata_speed"].float()
-    assert (speed[:7] == 2.0).all()  # 7 // 3
-    assert (speed[7:10] == 1.0).all()  # 3 // 3
-    assert (buffer.complementary_info["metadata_quality"][:10].float() == 5.0).all()
-    assert (buffer.complementary_info["metadata_mistake"][:10].float() == 0.0).all()
+    quality = buffer.complementary_info["metadata_quality"].float()
+    assert (quality[:7] == 4.0).all()
+    assert (quality[7:10] == 3.0).all()
+    mistake = buffer.complementary_info["metadata_mistake"].float()
+    assert mistake[:10].tolist() == [0, 0, 0, 0, 1, 1, 1, 0, 0, 0]
+    # No speed column: omitted by design, the prompt clause renders partially.
+    assert "metadata_speed" not in buffer.complementary_info
 
     batch = buffer.sample(batch_size=4, action_chunk_size=2)
-    assert batch["complementary_info"]["metadata_speed"].shape == (4,)
+    assert batch["complementary_info"]["metadata_quality"].shape == (4,)

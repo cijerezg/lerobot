@@ -65,6 +65,7 @@ from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.offline_dataset_utils import (
     _get_additional_dataset_paths,
     load_additional_offline_buffers,
+    load_metadata_rows,
     load_summary_segments,
     make_combined_offline_iterator,
 )
@@ -538,11 +539,7 @@ def run_offline_training(
     )
     offline_replay_buffer.dataset = offline_dataset
     if memory_cfg is not None and memory_cfg.metadata_enabled:
-        offline_replay_buffer.materialize_metadata(
-            quality=memory_cfg.metadata_default_quality,
-            mistake=memory_cfg.metadata_default_mistake,
-            speed_bucket_steps=memory_cfg.metadata_speed_bucket_steps,
-        )
+        offline_replay_buffer.materialize_metadata(*load_metadata_rows(offline_dataset.root))
     additional_buffers = load_additional_offline_buffers(
         cfg=cfg,
         main_dataset=offline_dataset,

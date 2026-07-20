@@ -73,28 +73,15 @@ class MolmoAct2Adapter(ProbablePolicy):
         self,
         obs: dict[str, Tensor],
         task_str: str,
-        advantage: float | None = 1.0,
         gt_actions: Tensor | None = None,
     ) -> dict:
-        """Build the preprocessor input for molmoact2 probe forwards.
-
-        Passes ``advantage`` via ``TransitionKey.COMPLEMENTARY_DATA`` so the
-        :class:`MolmoAct2PackInputsProcessorStep` picks it up and binds the
-        "negative"/"positive" advantage clause into the prompt — same path the
-        actor update uses. Pass ``advantage=None`` to omit the clause entirely
-        (the critic is trained without it; see ``_critic_batch``).
-        """
+        """Build the preprocessor input for molmoact2 probe forwards."""
         device = self._device
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
         flat = {
             **obs_on_device,
             "task": task_str,
         }
-        if advantage is not None:
-            flat[TransitionKey.COMPLEMENTARY_DATA] = {
-                "advantage": torch.tensor([[advantage]], device=device, dtype=torch.float32),
-                "advantage_threshold": 0.0,
-            }
         if gt_actions is not None:
             flat[ACTION] = gt_actions
         batch = self._preprocessor(flat)
@@ -128,9 +115,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         obs: dict[str, Tensor],
         task_str: str,
         state: Tensor | None = None,  # noqa: ARG002 — anchor comes from obs[OBS_STATE]
-        advantage: float = 1.0,
+        advantage: float | None = None,  # noqa: ARG002 — molmoact2 prompts carry no advantage clause
     ) -> tuple[Tensor, Tensor, str | None]:
-        batch = self._make_batch(obs, task_str, advantage=advantage)
+        batch = self._make_batch(obs, task_str)
         # MolmoAct2Policy.predict_action_chunk returns [B, n_action_steps, action_dim],
         # already sliced and float32. See modeling_molmoact2.py:2004.
         norm_actions = self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode()).float()
@@ -191,7 +178,7 @@ class MolmoAct2Adapter(ProbablePolicy):
             action_targets = gt_actions[:chunk_size, :action_dim].unsqueeze(0).to(device)
 
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
-        batch = self._make_batch(obs, task_str, advantage=1.0, gt_actions=action_targets)
+        batch = self._make_batch(obs, task_str, gt_actions=action_targets)
         model_inputs = self._policy._model_inputs(batch)
         num_t = max(1, int(getattr(self._policy.config, "num_flow_timesteps", 1)))
         action_dtype = next(self._policy._action_expert().parameters()).dtype
@@ -576,10 +563,10 @@ class MolmoAct2Adapter(ProbablePolicy):
 
     def _critic_batch(self, obs: dict[str, Tensor], task_str: str) -> dict:
         # No advantage clause: the critic is trained on prompts without one
-        # (update_critic / compute_advantage never thread advantage into the
+        # (update_critic never threads advantage into the
         # critic forward). Injecting "positive"/"negative" here would feed the
         # critic an out-of-distribution prompt it never saw during training.
-        return self._make_batch(obs, task_str, advantage=None)
+        return self._make_batch(obs, task_str)
 
     @torch.no_grad()
     def predict_value(self, obs: dict[str, Tensor], task_str: str) -> float:
@@ -633,7 +620,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         h_act = action_expert.blocks[-1].register_forward_hook(_hook("action_expert"))
 
         try:
-            batch = self._make_batch(obs, task_str, advantage=1.0)
+            batch = self._make_batch(obs, task_str)
             self._set_probe_cuda_graph_enabled(False)
             # NOTE: predict_action_chunk runs the full flow-matching loop.
             # Captured hidden states reflect the LAST step. Same caveat as

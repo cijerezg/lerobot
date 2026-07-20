@@ -98,7 +98,6 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     critic_target_update_weight: float = 0.005
     critic_target_update_every: int = 4
     discount: float = 0.97
-    advantage_scaling: float = 0.2
     utd_ratio: int = 1
     critic_warmup_steps: int = 0
     policy_update_freq: int = 1
@@ -110,22 +109,6 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     pretrained_merge_targets: list[str] = field(default_factory=lambda: ["policy", "critic"])
 
     # ── Inference ─────────────────────────────────────────────────────────
-    # Constant advantage value injected as prompt conditioning at inference.
-    # Threaded through build_inference_batch into complementary_data["advantage"];
-    # the processor bins it into a "negative"/"positive" label clause.
-    # Set to null/None to drop the clause entirely — match this to training:
-    # use null with skip_critic=True (actor saw no clause), keep 1.0 with
-    # skip_critic=False (actor was trained on advantage-conditioned prompts).
-    inference_advantage: float | None = 1.0
-
-    # ── Advantage binning ─────────────────────────────────────────────────
-    # Per-batch top-K positive labeling: the top advantage_top_k_fraction of
-    # samples (ranked by squashed advantage) receive the "positive" label, the
-    # rest "negative". The threshold pool excludes is_golden and is_intervention
-    # samples — those are forced positive by override and would otherwise
-    # saturate the quantile. All-override batches use threshold=-inf (everyone
-    # positive).
-    advantage_top_k_fraction: float = 0.3
     torch_compile: bool = False
 
     # ── Action encoding ───────────────────────────────────────────────────

@@ -35,6 +35,23 @@ def load_summary_segments(root) -> tuple[list[dict], list[str]]:
     return segments, [str(s) for s in df["summary"]]
 
 
+def load_metadata_rows(root) -> tuple[list[dict], list[dict]]:
+    """Read meta/episode_metadata.parquet + meta/mistakes.parquet (written by
+    metadata_annotate.py) into the inputs ReplayBuffer.materialize_metadata
+    expects. Raises when missing: metadata_enabled requires annotated datasets."""
+    meta = Path(root) / "meta"
+    for name in ("episode_metadata.parquet", "mistakes.parquet"):
+        if not (meta / name).exists():
+            raise FileNotFoundError(
+                f"metadata_enabled but {meta / name} is missing — run metadata_annotate.py on this dataset."
+            )
+    import pandas as pd
+
+    episode_rows = pd.read_parquet(meta / "episode_metadata.parquet").to_dict("records")
+    mistake_rows = pd.read_parquet(meta / "mistakes.parquet").to_dict("records")
+    return episode_rows, mistake_rows
+
+
 def _idx_to_subtask_name(dataset) -> dict[int, str]:
     mapping: dict[int, str] = {}
     if not (hasattr(dataset, "meta") and hasattr(dataset.meta, "subtasks")):
@@ -177,11 +194,7 @@ def load_additional_offline_buffers(
                 ci[ci == old_idx] = new_idx
 
         if memory_cfg is not None and memory_cfg.metadata_enabled:
-            buf.materialize_metadata(
-                quality=memory_cfg.metadata_default_quality,
-                mistake=memory_cfg.metadata_default_mistake,
-                speed_bucket_steps=memory_cfg.metadata_speed_bucket_steps,
-            )
+            buf.materialize_metadata(*load_metadata_rows(dataset_path))
 
         # Force is_golden=False (cache may carry True from --inject-golden).
         ci_dict = buf.complementary_info

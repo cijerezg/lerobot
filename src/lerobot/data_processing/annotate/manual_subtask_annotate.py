@@ -4,7 +4,7 @@ manual_subtask_annotate.py
 How to Run:
 -------------------
 From the root of your LeRobot repository (or where your python environment has lerobot installed), run:
-    python lerobot/src/lerobot/policies/pi05_full/annotate/manual_subtask_annotate.py
+    python lerobot/src/lerobot/data_processing/annotate/manual_subtask_annotate.py
 
 Once running, a local web server will start. Open the printed URL (usually http://localhost:7860) in your browser.
 
@@ -22,7 +22,7 @@ import yaml
 
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.policies.pi05_full.annotate.subtask_annotate import (
+from lerobot.data_processing.annotate.subtask_annotate import (
     VideoExtractor,
     Skill,
     EpisodeSkills,

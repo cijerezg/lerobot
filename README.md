@@ -4,6 +4,9 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 
+**I am currently implementing pi07, so many things will be broken for now.**
+
+
 This repo is a research-oriented version of [LeRobot](https://github.com/huggingface/lerobot). The focus is on having SOTA algorithms (e.g., RECAP) and SOTA models (e.g., MolmoAct2) and tooling for examining the model's internals such as attention maps, clustering of internal representations. 
 
 This is an active project and we expect to continually add more features and capabilities. Happy to take requests.

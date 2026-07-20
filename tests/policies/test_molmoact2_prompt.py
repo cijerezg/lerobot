@@ -115,7 +115,7 @@ def test_generation_prompt_memory_clause():
 
 def test_generation_answer_roundtrip():
     answer = build_generation_answer("grasp the cup", "I picked up the truck.")
-    assert answer == "grasp the cup. Memory: I picked up the truck."
+    assert answer == "Memory: I picked up the truck. Subtask: grasp the cup"
     assert parse_generation_answer(answer) == ("grasp the cup", "I picked up the truck.")
 
     assert parse_generation_answer(build_generation_answer("grasp the cup", "")) == ("grasp the cup", "")

@@ -366,7 +366,7 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
 
             fd = frame_data[global_idx]
             pred_unnorm, pred_norm, pred_subtask = adapter.predict_action_chunk(
-                fd["obs"], fd["task_str"], state=fd["state"], advantage=1.0,
+                fd["obs"], fd["task_str"], state=fd["state"],
             )
             generation = adapter.generate_subtask(fd["obs"], fd["task_str"], summary=fd["summary_prev"])
             if generation is not None:

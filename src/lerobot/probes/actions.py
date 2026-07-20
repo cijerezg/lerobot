@@ -163,7 +163,7 @@ def collect_eval_dataset(adapter: ProbablePolicy, dataset, samples,
                 dataset, global_idx, chunk_size
             )
             pred_unnorm, _, _ = adapter.predict_action_chunk(
-                obs, task_str, state=state, advantage=1.0,
+                obs, task_str, state=state,
             )
 
             gt_pca_rows.append(

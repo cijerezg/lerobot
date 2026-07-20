@@ -73,7 +73,7 @@ def cli(cfg: PointmapBitIdentityConfig):
     # the gate-0 signal, so we instead compare depth-on vs depth-off within a single build.
     adapter = ProbablePolicy.for_config(cfg, device, dataset=dataset)
     adapter._set_probe_cuda_graph_enabled(False)  # graph capture/replay is not bit-stable vs eager
-    batch = adapter._make_batch(obs, task_str, advantage=1.0)
+    batch = adapter._make_batch(obs, task_str)
     policy = adapter.policy
 
     def predict(label: str) -> torch.Tensor:

@@ -147,7 +147,6 @@ class Trainer(ABC):
             critic_histogram_from_critic (np.ndarray), target_value_histogram (np.ndarray)
         """
 
-    @abstractmethod
     def compute_advantage(
         self,
         policy: nn.Module,
@@ -159,7 +158,9 @@ class Trainer(ABC):
         cfg,
     ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """
-        Compute TD advantage and squash it.
+        Compute TD advantage and squash it. Optional hook — only trainers that
+        condition the actor prompt on advantage implement it (PI05). MolmoAct2
+        uses metadata steering instead and has no advantage anywhere.
 
         raw_advantage      = reward + discount * V_target(s') - V(s)
         squashed_advantage = tanh(raw_advantage / advantage_scaling)
@@ -167,6 +168,7 @@ class Trainer(ABC):
         Returns:
             raw_advantage [B,1], squashed_advantage [B,1], value_info dict
         """
+        raise NotImplementedError(f"{type(self).__name__} does not use advantage conditioning.")
 
     # ── Actor ─────────────────────────────────────────────────────────────────
 

@@ -439,33 +439,28 @@ class ReplayBuffer:
 
     def materialize_metadata(
         self,
-        quality: int,
-        mistake: bool,
-        speed_bucket_steps: int,
+        episode_rows: list[dict],
+        mistake_rows: list[dict],
     ) -> None:
-        """π0.7-style episode metadata as complementary columns (offline buffers).
+        """π0.7-style metadata columns from meta/episode_metadata.parquet +
+        meta/mistakes.parquet (offline buffers; written by metadata_annotate.py,
+        loaded via load_metadata_rows).
 
-        quality/mistake are dataset-level defaults (curated demos: 5 / False);
-        speed is the per-episode length bucketed by `speed_bucket_steps`,
-        broadcast to every frame of the episode.
+        quality (1-5) broadcasts per episode, mistake (boolean) per subtask
+        window; row from_index/to_index are global dataset frame ranges (==
+        buffer positions, as with summaries). Speed is deliberately absent —
+        the prompt clause renders partially.
         """
-        n = self.size
-        ends = (self.dones[:n] | self.truncateds[:n]).reshape(n).tolist()
-        speed = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
-        episode_start = 0
-        for t, end in enumerate(ends):
-            if end or t == n - 1:
-                length = t - episode_start + 1
-                speed[episode_start : t + 1] = float(length // speed_bucket_steps)
-                episode_start = t + 1
-        self.complementary_info["metadata_quality"] = torch.full(
-            (self.capacity,), float(quality), dtype=torch.bfloat16, device=self.storage_device
-        )
-        self.complementary_info["metadata_mistake"] = torch.full(
-            (self.capacity,), float(mistake), dtype=torch.bfloat16, device=self.storage_device
-        )
-        self.complementary_info["metadata_speed"] = speed
-        for key in ("metadata_quality", "metadata_mistake", "metadata_speed"):
+        quality = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
+        mistake = torch.zeros(self.capacity, dtype=torch.bfloat16, device=self.storage_device)
+        for row in episode_rows:
+            quality[row["from_index"] : min(int(row["to_index"]), self.size)] = float(row["quality"])
+        for row in mistake_rows:
+            if row["mistake"]:
+                mistake[row["from_index"] : min(int(row["to_index"]), self.size)] = 1.0
+        self.complementary_info["metadata_quality"] = quality
+        self.complementary_info["metadata_mistake"] = mistake
+        for key in ("metadata_quality", "metadata_mistake"):
             if key not in self.complementary_info_keys:
                 self.complementary_info_keys.append(key)
         self.has_complementary_info = True
@@ -679,6 +674,28 @@ class ReplayBuffer:
                         batch_complementary_info[f"next_{key}"] = self.complementary_info[key][
                             depth_next_idx // stride
                         ].to(self.device)
+
+            # TEMP DEBUG (manual stride check — remove after): needs async_prefetch: false
+            # so this runs in the main thread and pdb attaches.
+            if stride > 1 and not getattr(self, "_stride_debug_done", False):
+                self._stride_debug_done = True
+                print(f"[STRIDE DEBUG] image_stride={stride}  size={self.size}")
+                print(f"[STRIDE DEBUG] sampled idx[:8]: {idx[:8].tolist()}")
+                print(f"[STRIDE DEBUG] all idx stride-aligned: {bool((idx % stride == 0).all().item())}")
+                print(f"[STRIDE DEBUG] image rows idx//stride [:8]: {(idx[:8] // stride).tolist()}")
+                state0 = batch_state.get("observation.state")
+                if state0 is not None:
+                    print(f"[STRIDE DEBUG] state[idx0] (dense row {int(idx[0])}): {[round(v, 2) for v in state0[0].tolist()]}")
+                print(f"[STRIDE DEBUG] action[idx0, t=0] (dense, should ≈ state): {[round(v, 2) for v in batch_actions[0, 0].tolist()]}")
+                if batch_complementary_info is not None:
+                    for k in ("subtask_index", "summary_prev_index", "summary_target_index", "metadata_quality", "metadata_mistake"):
+                        if k in batch_complementary_info:
+                            print(f"[STRIDE DEBUG] {k}[:8]: {batch_complementary_info[k][:8].tolist()}")
+                    for k in batch_complementary_info:
+                        if k.startswith("depth."):
+                            d = batch_complementary_info[k][0].float()
+                            print(f"[STRIDE DEBUG] {k} row idx0//stride: shape={tuple(d.shape)} med={d.median().item():.0f} holes={(d == 0).float().mean().item():.3f}")
+                import pdb; pdb.set_trace()
 
         # Image augmentation operates only on local batch_state/batch_next_state
         # tensors -- safe to do outside the lock.

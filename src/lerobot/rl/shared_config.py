@@ -17,13 +17,10 @@ class MemoryConfig:
     history_keys: list[str] = field(default_factory=list)
     history_window_seconds: float = 4.0
     history_num_samples: int = 4
-    # π0.7-style metadata steering: label offline episodes at buffer fill
-    # (quality/mistake defaults for curated demos, speed = length bucket) and
+    # π0.7-style metadata steering: per-episode quality + per-window mistake
+    # loaded from the dataset (metadata_annotate.py; speed omitted) and
     # prompt quality=5 / mistake=false at inference.
     metadata_enabled: bool = False
-    metadata_default_quality: int = 5
-    metadata_default_mistake: bool = False
-    metadata_speed_bucket_steps: int = 500
 
     def history_offsets(self, fps: float) -> dict[str, list[int]] | None:
         """Per-key lookback distances in buffer steps, e.g. 4 s / 4 samples @ 30 fps → [30, 60, 90, 120]."""
