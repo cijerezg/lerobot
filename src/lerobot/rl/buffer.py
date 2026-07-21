@@ -675,28 +675,6 @@ class ReplayBuffer:
                             depth_next_idx // stride
                         ].to(self.device)
 
-            # TEMP DEBUG (manual stride check — remove after): needs async_prefetch: false
-            # so this runs in the main thread and pdb attaches.
-            if stride > 1 and not getattr(self, "_stride_debug_done", False):
-                self._stride_debug_done = True
-                print(f"[STRIDE DEBUG] image_stride={stride}  size={self.size}")
-                print(f"[STRIDE DEBUG] sampled idx[:8]: {idx[:8].tolist()}")
-                print(f"[STRIDE DEBUG] all idx stride-aligned: {bool((idx % stride == 0).all().item())}")
-                print(f"[STRIDE DEBUG] image rows idx//stride [:8]: {(idx[:8] // stride).tolist()}")
-                state0 = batch_state.get("observation.state")
-                if state0 is not None:
-                    print(f"[STRIDE DEBUG] state[idx0] (dense row {int(idx[0])}): {[round(v, 2) for v in state0[0].tolist()]}")
-                print(f"[STRIDE DEBUG] action[idx0, t=0] (dense, should ≈ state): {[round(v, 2) for v in batch_actions[0, 0].tolist()]}")
-                if batch_complementary_info is not None:
-                    for k in ("subtask_index", "summary_prev_index", "summary_target_index", "metadata_quality", "metadata_mistake"):
-                        if k in batch_complementary_info:
-                            print(f"[STRIDE DEBUG] {k}[:8]: {batch_complementary_info[k][:8].tolist()}")
-                    for k in batch_complementary_info:
-                        if k.startswith("depth."):
-                            d = batch_complementary_info[k][0].float()
-                            print(f"[STRIDE DEBUG] {k} row idx0//stride: shape={tuple(d.shape)} med={d.median().item():.0f} holes={(d == 0).float().mean().item():.3f}")
-                import pdb; pdb.set_trace()
-
         # Image augmentation operates only on local batch_state/batch_next_state
         # tensors -- safe to do outside the lock.
         if self.use_drq and image_keys:

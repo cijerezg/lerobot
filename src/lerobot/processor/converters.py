@@ -166,6 +166,9 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
         A dictionary with the extracted complementary data.
     """
     pad_keys = {k: v for k, v in batch.items() if "_is_pad" in k}
+    # Short-term memory lookback windows (ReplayBuffer.sample() / assemble_history_windows);
+    # "history.{key}" doesn't start with OBS_PREFIX so it's otherwise dropped entirely.
+    history_keys = {k: v for k, v in batch.items() if k.startswith("history.")}
     task_key = {"task": batch["task"]} if "task" in batch else {}
     subtask_key = {"subtask": batch["subtask"]} if "subtask" in batch else {}
     user_prompt_key = {"user_prompt": batch["user_prompt"]} if "user_prompt" in batch else {}
@@ -175,6 +178,7 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
 
     return {
         **pad_keys,
+        **history_keys,
         **task_key,
         **subtask_key,
         **user_prompt_key,

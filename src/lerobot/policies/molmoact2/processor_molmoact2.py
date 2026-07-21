@@ -244,6 +244,7 @@ def _build_robot_text(
     num_images: int,
     current_subtask: str | None = None,
     metadata: dict[str, Any] | None = None,
+    history_states: list[str] | None = None,
 ) -> str:
     """Memory clauses: None disables a clause entirely (byte-identical legacy prompt)."""
     setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
@@ -254,6 +255,11 @@ def _build_robot_text(
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
     subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
+    history_clause = (
+        f" The recent states of the robot, oldest to newest, were {' '.join(history_states)}."
+        if history_states
+        else ""
+    )
     metadata_clause = ""
     if metadata is not None:
         if "quality" in metadata:
@@ -265,7 +271,7 @@ def _build_robot_text(
         if "speed" in metadata:
             metadata_clause += f" The speed is {metadata['speed']}."
     prompt = (
-        f"The task is to {task}.{subtask_clause}{setup_clause}{state_clause}"
+        f"The task is to {task}.{subtask_clause}{setup_clause}{state_clause}{history_clause}"
         f"{control_clause}{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
@@ -624,6 +630,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     # memory clause and the answer's memory span (subtask-only sample).
     summary_texts: list[str] = field(default_factory=list)
     summary_dropout: float = 0.3
+    # Short-term memory: recent-state clause built from the buffer/RTC lookback windows
+    # (ReplayBuffer.sample() / assemble_history_windows, complementary key
+    # "history.{OBS_STATE}"). Absent key = clause off (byte-identical legacy prompt);
+    # dropout only applies to training text, same convention as the other clauses.
+    history_dropout: float = 0.3
     # Runtime toggle (not persisted): "action" builds the action prompt;
     # "subtask_generation" builds the generation prompt/labels instead. Callers
     # flip it around a pipeline call so generation gets the SAME normalization.
@@ -680,6 +691,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "metadata_dropout": self.metadata_dropout,
             "summary_texts": list(self.summary_texts),
             "summary_dropout": self.summary_dropout,
+            "history_dropout": self.history_dropout,
         }
 
     def _resolve_max_sequence_length(
@@ -966,6 +978,23 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         return render(prev), render(complementary["summary_target_index"])
 
+    def _extract_history_states(self, complementary: dict, batch_size: int) -> list[list[str] | None]:
+        """Discrete-state strings for the short-term history window (oldest → newest
+        per sample), read from complementary key "history.{OBS_STATE}" (shape
+        (B, T_h, D), the ReplayBuffer.sample()/assemble_history_windows lookback).
+        None per sample when history wasn't gathered (memory.history_keys empty or
+        doesn't include OBS_STATE) — same clause-off convention as subtask/metadata."""
+        history = complementary.get(f"history.{OBS_STATE}")
+        if history is None:
+            return [None] * batch_size
+        arr = torch.as_tensor(history, dtype=torch.float32).detach().cpu().numpy()
+        if arr.ndim == 2:
+            arr = arr[None]
+        return [
+            [_build_discrete_state_string(arr[b, t], self.num_state_tokens) for t in range(arr.shape[1])]
+            for b in range(batch_size)
+        ]
+
     @staticmethod
     def _extract_metadata(complementary: dict, batch_size: int) -> list[dict | None]:
         metadata = complementary.get("metadata")
@@ -1022,6 +1051,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         metadata_list = self._extract_metadata(complementary, batch_size)
+        history_states_list = self._extract_history_states(complementary, batch_size)
 
         prompt_texts: list[str] = []
         full_texts: list[str] = []
@@ -1034,11 +1064,14 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
             current_subtask = subtask_texts[batch_idx]
             metadata = metadata_list[batch_idx]
+            history_states = history_states_list[batch_idx]
             if build_action_labels:  # training text: per-component dropout (π0.7 recipe)
                 if random.random() < self.subtask_dropout:
                     current_subtask = None
                 if random.random() < self.metadata_dropout:
                     metadata = None
+                if random.random() < self.history_dropout:
+                    history_states = None
             prompt = _build_robot_text(
                 task=tasks[batch_idx],
                 discrete_state_string=discrete_state,
@@ -1047,6 +1080,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 add_setup_tokens=self.add_setup_tokens,
                 add_control_tokens=self.add_control_tokens,
                 num_images=len(images),
+                history_states=history_states,
                 current_subtask=current_subtask,
                 metadata=metadata,
             )
@@ -1179,6 +1213,11 @@ def make_molmoact2_pre_post_processors(
     action_encoding = getattr(config, "action_encoding", "absolute")
     use_anchor = action_encoding in ("anchor", "delta")
 
+    # MemoryConfig lives on the RL wrapper config (MolmoAct2RLConfig.memory), not on the
+    # bare MolmoAct2Config used for BC/eval, hence the getattr default.
+    memory_cfg = getattr(config, "memory", None)
+    history_dropout = memory_cfg.history_dropout if memory_cfg is not None else 0.3
+
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
@@ -1207,6 +1246,7 @@ def make_molmoact2_pre_post_processors(
             chunk_size=chunk_size,
             max_action_dim=config.expected_max_action_dim,
             env_action_dim=env_action_dim,
+            history_dropout=history_dropout,
         ),
         DeviceProcessorStep(device=config.device),
     ]

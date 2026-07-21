@@ -30,6 +30,7 @@ def test_legacy_prompt_is_byte_identical_when_memory_off():
     assert "Steps already completed" not in prompt
     assert "current step" not in prompt
     assert "quality" not in prompt
+    assert "recent states" not in prompt
 
 
 def test_current_subtask_clause():
@@ -49,6 +50,19 @@ def test_metadata_clause_partial_rendering():
 
     prompt = build(metadata={})
     assert "quality" not in prompt and "mistake" not in prompt and "speed" not in prompt
+
+
+def test_history_clause_renders_when_present():
+    prompt = build(history_states=["<state_start><state_1></state_end>", "<state_start><state_2></state_end>"])
+    assert (
+        "The recent states of the robot, oldest to newest, were "
+        "<state_start><state_1></state_end> <state_start><state_2></state_end>." in prompt
+    )
+
+
+def test_history_clause_off_when_empty_or_none():
+    assert "recent states" not in build(history_states=None)
+    assert "recent states" not in build(history_states=[])
 
 
 def test_clause_order_task_then_memory_then_setup():
