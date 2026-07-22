@@ -22,6 +22,7 @@ MOLMOACT2_IMAGE_TOKENS_PER_IMAGE = 196
 MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET = 80
 MOLMOACT2_TASK_TOKEN_BUDGET = 32
 MOLMOACT2_SEQUENCE_LENGTH_MARGIN = 32
+MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET = 16
 MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE = 64
 MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS = 4
 MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP = 6
@@ -60,6 +61,7 @@ def infer_molmoact2_max_sequence_length(
     action_dim: int,
     action_horizon: int,
     include_discrete_action: bool,
+    history_num_samples: int = 0,
 ) -> int:
     """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout."""
     if num_images < 1:
@@ -78,6 +80,12 @@ def infer_molmoact2_max_sequence_length(
         + state_dim
         + MOLMOACT2_SEQUENCE_LENGTH_MARGIN
     )
+    if history_num_samples > 0:
+        # Short-term memory clause: each past state renders as a discrete-state string
+        # (state_dim tokens + start/end wrappers + separator), after a fixed preamble.
+        prompt_tokens += (
+            history_num_samples * (state_dim + 3) + MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET
+        )
     action_tokens = 0
     if include_discrete_action:
         action_tokens_per_step = max(

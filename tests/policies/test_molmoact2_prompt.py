@@ -4,7 +4,19 @@ import pytest
 
 pytest.importorskip("transformers", reason="molmoact2 processor module imports policy deps")
 
-from lerobot.policies.molmoact2.processor_molmoact2 import _build_robot_text  # noqa: E402
+import torch
+
+from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
+from lerobot.policies.molmoact2.configuration_molmoact2 import (  # noqa: E402
+    infer_molmoact2_max_sequence_length,
+)
+from lerobot.policies.molmoact2.processor_molmoact2 import (  # noqa: E402
+    MolmoAct2MaskedNormalizerProcessorStep,
+    _build_robot_text,
+)
+from lerobot.processor.converters import create_transition  # noqa: E402
+from lerobot.types import TransitionKey  # noqa: E402
+from lerobot.utils.constants import OBS_STATE  # noqa: E402
 
 
 def build(**overrides):
@@ -63,6 +75,46 @@ def test_history_clause_renders_when_present():
 def test_history_clause_off_when_empty_or_none():
     assert "recent states" not in build(history_states=None)
     assert "recent states" not in build(history_states=[])
+
+
+def test_history_state_normalized_same_as_current_state():
+    """history.{OBS_STATE} rides in COMPLEMENTARY_DATA (batch_to_transition routes any
+    "history.*" key there, not OBSERVATION), so the base NormalizerProcessorStep would
+    skip it entirely and it would reach the prompt as raw joint values. The MolmoAct2
+    normalizer must apply the exact same OBS_STATE stats to it."""
+    features = {OBS_STATE: PolicyFeature(FeatureType.STATE, (2,))}
+    norm_map = {FeatureType.STATE: NormalizationMode.MIN_MAX}
+    stats = {OBS_STATE: {"min": torch.tensor([0.0, -1.0]), "max": torch.tensor([1.0, 1.0])}}
+    normalizer = MolmoAct2MaskedNormalizerProcessorStep(features=features, norm_map=norm_map, stats=stats)
+
+    current_state = torch.tensor([[0.5, 0.0]])
+    history_state = torch.tensor([[[0.5, 0.0], [1.0, 1.0]]])  # (B=1, T_h=2, D=2)
+    transition = create_transition(
+        observation={OBS_STATE: current_state},
+        complementary_data={"history.observation.state": history_state},
+    )
+
+    normalized = normalizer(transition)
+    normalized_current = normalized[TransitionKey.OBSERVATION][OBS_STATE]
+    normalized_history = normalized[TransitionKey.COMPLEMENTARY_DATA]["history.observation.state"]
+
+    # Same stats, same math: the history's first (oldest) frame equals the current state's result.
+    assert torch.allclose(normalized_history[0, 0], normalized_current[0], atol=1e-6)
+    assert torch.allclose(normalized_history[0, 1], torch.tensor([1.0, 1.0]), atol=1e-6)
+
+
+def test_max_sequence_length_budgets_history_clause():
+    """The inferred sequence cap must grow with the history clause, or enabling
+    memory.history_keys trips the pack step's hard length check."""
+    kwargs = dict(
+        num_images=2, state_dim=7, action_dim=7, action_horizon=50, include_discrete_action=True
+    )
+    base = infer_molmoact2_max_sequence_length(**kwargs)
+    with_history = infer_molmoact2_max_sequence_length(**kwargs, history_num_samples=8)
+    # 8 samples * (7 state tokens + 3 wrappers) + 16 preamble = 96 raw tokens, which
+    # survives the round-up-to-64 regardless of the base's slack.
+    assert with_history > base
+    assert infer_molmoact2_max_sequence_length(**kwargs, history_num_samples=0) == base
 
 
 def test_clause_order_task_then_memory_then_setup():

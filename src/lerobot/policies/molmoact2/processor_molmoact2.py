@@ -550,7 +550,24 @@ class _MolmoAct2MaskedNormalizationMixin:
 @ProcessorStepRegistry.register(name="molmoact2_masked_normalizer")
 @dataclass
 class MolmoAct2MaskedNormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin, NormalizerProcessorStep):
-    pass
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        """The base normalizer only touches OBSERVATION/ACTION; the short-term-memory
+        history window rides in COMPLEMENTARY_DATA (batch_to_transition routes any
+        "history.*" key there), so without this it would reach the prompt as raw
+        (un-normalized) joint values instead of the [-1, 1] range _build_discrete_state_string
+        expects — normalize it here with the exact same OBS_STATE stats/mask."""
+        transition = super().__call__(transition)
+        history_key = f"history.{OBS_STATE}"
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if isinstance(complementary, dict) and history_key in complementary and OBS_STATE in self.features:
+            transition = transition.copy()
+            complementary = dict(complementary)
+            tensor = torch.as_tensor(complementary[history_key])
+            complementary[history_key] = self._apply_transform(
+                tensor, OBS_STATE, self.features[OBS_STATE].type, inverse=False
+            )
+            transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
 
 
 @ProcessorStepRegistry.register(name="molmoact2_masked_unnormalizer")
@@ -702,6 +719,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         action_dim: int,
         action_horizon: int,
         include_discrete_action: bool,
+        history_num_samples: int = 0,
     ) -> int:
         if self.max_sequence_length is not None:
             return int(self.max_sequence_length)
@@ -711,6 +729,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_dim=action_dim,
             action_horizon=action_horizon,
             include_discrete_action=include_discrete_action,
+            history_num_samples=history_num_samples,
         )
 
     def _fix_attention_mask(self, inputs) -> None:
@@ -1110,6 +1129,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_dim=max(real_action_dim, 1),
             action_horizon=action_horizon,
             include_discrete_action=build_action_labels,
+            history_num_samples=max((len(h) for h in history_states_list if h), default=0),
         )
         if int(inputs["input_ids"].shape[1]) > max_sequence_length:
             raise ValueError(

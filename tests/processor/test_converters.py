@@ -243,6 +243,30 @@ def test_batch_to_transition_with_index_fields():
     assert comp_data["task"] == batch["task"]
 
 
+def test_batch_to_transition_keeps_history_windows():
+    """"history.{key}" doesn't start with OBS_PREFIX, so without explicit handling it
+    would be silently dropped by batch_to_transition (neither an observation nor
+    caught by any other complementary-data rule) — short-term memory's lookback
+    windows must survive into complementary_data instead."""
+    batch = {
+        OBS_STATE: torch.randn(1, 7),
+        ACTION: torch.randn(1, 4),
+        REWARD: 1.5,
+        DONE: False,
+        "task": ["pick_cube"],
+        "history.observation.state": torch.randn(1, 4, 7),
+        "history.observation.state_is_pad": torch.zeros(1, 4, dtype=torch.bool),
+    }
+
+    transition = batch_to_transition(batch)
+    comp_data = transition[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert torch.equal(comp_data["history.observation.state"], batch["history.observation.state"])
+    assert torch.equal(
+        comp_data["history.observation.state_is_pad"], batch["history.observation.state_is_pad"]
+    )
+
+
 def testtransition_to_batch_with_index_fields():
     """Test that transition_to_batch handles index and task_index fields correctly."""
 
