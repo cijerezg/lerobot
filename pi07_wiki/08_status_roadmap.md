@@ -24,7 +24,8 @@ reconciled in config.
 | Metadata steering (quality/mistake) | done | on |
 | History: buffer sample + actor deque | done, parity-tested | on (2026-07-22) |
 | History consumption: proprio clause + image frames | done (Phase 6 partial) | on: states + top/wrist frames @1s, dropout 0.3 |
-| History consumption: action / depth | not built | — |
+| History consumption: depth (time-embedded pointmap slots) | done 2026-07-21 | on |
+| History consumption: action | not built (causal-confusion ablation) | — |
 | Distributional critic (HL-Gauss 201, σ-ratio 8.0) | done | off |
 | RECAP advantage conditioning | done (pi05-proven, molmoact2 seam) | off |
 | CUDA graphs with depth | parked (moot under RTC) | — |
@@ -33,10 +34,11 @@ reconciled in config.
 
 1. Finish/evaluate the current offline run; offline_inference probe: subtask +
    memory quality per checkpoint.
-2. History smoke enabled 2026-07-22 (`history_keys`: state + top/wrist images +
-   depth). Verify first steps, then compare offline eval vs the no-history
-   baseline (causal-confusion check). Remaining unbuilt: action/depth history
-   consumption architecture (Phase 6 proper).
+2. History smoke VERIFIED 2026-07-22 (`history_keys`: state + top/wrist images +
+   depth; pad masks, distinct slots, both prompt shapes confirmed on a real
+   batch). Next: train, then compare offline eval vs the no-history baseline
+   (causal-confusion check). Remaining unbuilt: action-history consumption;
+   richer architectures only if the prompt path underperforms.
 3. Hardware rollout (cable verified): live HL decode + summary bookkeeping over a
    long episode; `z_max_mm` sanity on wrist-mounted depth; gate long-run growth.
 4. Online data: label recorded rollouts post-hoc (metadata before mixing —

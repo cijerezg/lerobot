@@ -128,10 +128,18 @@ What the model actually sees today:
   "Images i to j are earlier frames" span clause
   (`_extract_history_images`, [processor_molmoact2.py:1025](../src/lerobot/policies/molmoact2/processor_molmoact2.py#L1025)).
   The sequence-length budget accounts for them.
-- **Action / depth history** — plumbed through the buffers but not consumed; an
-  architecture decision (candidates: MEM-style compression, HAMLET moment tokens,
-  or a DepthStream-style gated stream — the proven in-house pattern). Whether past
-  *actions* should be fed at all stays a causal-confusion ablation.
+- **Depth history** — consumed (built 2026-07-21): the pointmap encoder takes the
+  `history.depth.{cam}.depth` window through the same per-patch CNN with learned
+  per-slot time embeddings (past oldest→newest + current), concatenating
+  `(T_h+1)·N` tokens into the DepthStream; `DepthPointmapConfig.history_num_samples`
+  (0 = no new params, old checkpoints load) syncs from `memory.history_num_samples`.
+  v1 does **not** re-project past frames into the current camera frame (the wrist
+  moves) — slots are only time-marked; FK re-projection is the fallback if
+  α-telemetry shows history unused.
+- **Action history** — plumbed through the buffers but not consumed; whether past
+  *actions* should be fed at all stays a causal-confusion ablation (candidates if
+  a richer channel is ever wanted: MEM-style compression, HAMLET moment tokens, a
+  DepthStream-style gated stream).
 
 ## 3. Long-term memory: subtask + MEM summary
 

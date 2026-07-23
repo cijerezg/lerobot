@@ -141,7 +141,7 @@ prompts match training.
 | `policy.subtask_max_new_tokens` | 128 | HL decode budget ("Memory: … Subtask: …") |
 | `policy.subtask_loss_weight` | 1.0 | generation CE on |
 | `policy.memory.metadata_enabled` | true | quality/mistake clauses from dataset meta |
-| `policy.memory.history_keys` | state + top/wrist images + depth | short-term history on (2026-07-22 smoke); depth gathered but unconsumed |
+| `policy.memory.history_keys` | state + top/wrist images + depth | short-term history on; all three channels consumed (smoke-verified 2026-07-22) |
 | `policy.pointmap_config` | set | depth on; factory intrinsics; z ∈ [70, 800] mm |
 | `policy.depth_lr` | 5e-4 | depth group LR |
 | `policy.image_stride` | 5 | must match the memmap cache build |
