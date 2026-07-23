@@ -64,6 +64,13 @@ class DepthPointmapConfig:
     stream_layers: int | None = None  # M; None ⇒ one depth block per action-expert layer (M = L)
     stream_mlp_ratio: float = 4.0
 
+    # Temporal history: past depth frames encoded as additional token slots ahead of
+    # the current frame (0 = current frame only). Synced from memory.history_num_samples
+    # by MolmoAct2RLConfig.__post_init__ when the depth key is in memory.history_keys.
+    # Past frames are NOT re-projected into the current camera frame (the wrist moves;
+    # design §A.6.5) — slots are distinguished by a learned time embedding only.
+    history_num_samples: int = 0
+
     def __post_init__(self) -> None:
         if not self.depth_key:
             raise ValueError("DepthPointmapConfig requires a depth_key (bare camera name).")

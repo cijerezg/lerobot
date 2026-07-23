@@ -264,3 +264,57 @@ def test_stream_gradient_flows_to_all_params():
     assert s.read_k_proj.weight.grad is not None
     assert s.blocks[0].self_attn.q_proj.weight.grad is not None
     assert s.blocks[0].cross_attn.k_proj.weight.grad is not None
+
+
+def test_encoder_history_slots():
+    """Depth history v1 (design §A.6.5): T_h past frames encoded by the same CNN,
+    marked by a per-slot time embedding (no re-projection into the current camera
+    frame), concatenated oldest → newest ahead of the current frame."""
+    cfg = DepthPointmapConfig(
+        image_size=(80, 80), patch_size=40, depth_units_mm=1.0, history_num_samples=2
+    )
+    enc = DepthPointmapEncoder(cfg, d_mem=16).eval()
+    n = enc.num_tokens  # 4
+
+    current = torch.full((1, 80, 80), 300.0)
+    batch = {
+        "observation.depth.wrist": current,
+        "history.depth.wrist.depth": torch.stack([current, current], dim=1),  # (1, 2, 80, 80)
+        "history.depth.wrist.depth_is_pad": torch.tensor([[False, False]]),
+    }
+    mem = enc.memory_from_batch(batch, batch_size=1, device=torch.device("cpu"))
+    assert mem.shape == (1, 3 * n, 16)
+    assert enc.null_memory(2).shape == (2, 3 * n, 16)
+
+    # Identical depth in different slots differs only by the time embedding.
+    slot0, slot1, cur = mem[0, :n], mem[0, n : 2 * n], mem[0, 2 * n :]
+    assert not torch.allclose(slot0, slot1)
+    assert not torch.allclose(slot1, cur)
+    assert torch.allclose(slot0 - enc.time_embed[0], slot1 - enc.time_embed[1], atol=1e-5)
+
+
+def test_encoder_history_pad_and_missing():
+    cfg = DepthPointmapConfig(
+        image_size=(80, 80), patch_size=40, depth_units_mm=1.0, history_num_samples=2
+    )
+    enc = DepthPointmapEncoder(cfg, d_mem=16).eval()
+    n = enc.num_tokens
+    cpu = torch.device("cpu")
+
+    current = torch.full((1, 80, 80), 300.0)
+    batch = {
+        "observation.depth.wrist": current,
+        "history.depth.wrist.depth": torch.stack([current, current], dim=1),
+        "history.depth.wrist.depth_is_pad": torch.tensor([[True, False]]),
+    }
+    mem = enc.memory_from_batch(batch, batch_size=1, device=cpu)
+    # Padded oldest slot = null bank + its slot's time embedding.
+    assert torch.allclose(mem[0, :n], enc.null_tokens + enc.time_embed[0])
+    assert not torch.allclose(mem[0, n : 2 * n], enc.null_tokens + enc.time_embed[1])
+
+    # Missing window: all history slots null, the current slot unaffected.
+    mem_missing = enc.memory_from_batch({"observation.depth.wrist": current}, batch_size=1, device=cpu)
+    assert mem_missing.shape == (1, 3 * n, 16)
+    assert torch.allclose(mem_missing[0, :n], enc.null_tokens + enc.time_embed[0])
+    assert torch.allclose(mem_missing[0, n : 2 * n], enc.null_tokens + enc.time_embed[1])
+    assert torch.allclose(mem_missing[0, 2 * n :], mem[0, 2 * n :])

@@ -726,6 +726,7 @@ class MolmoAct2Trainer(Trainer):
                 dataset=dataset,
                 cfg=cfg,
             )
+            import pdb; pdb.set_trace()  # TEMP history smoke: inspect history.* + decoded prompt, then remove
 
             loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
             loss_for_backward = loss.mean() if isinstance(loss, torch.Tensor) else torch.as_tensor(loss, device=actions.device)

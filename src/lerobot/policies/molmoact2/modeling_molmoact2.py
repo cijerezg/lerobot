@@ -903,10 +903,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
             self.config.chunk_size = int(metadata["action_horizon"])
         if metadata.get("n_action_steps") is not None:
             self.config.n_action_steps = int(metadata["n_action_steps"])
-        if not self.config.setup_type and metadata.get("setup_type") is not None:
-            self.config.setup_type = str(metadata["setup_type"])
-        if not self.config.control_mode and metadata.get("control_mode") is not None:
-            self.config.control_mode = str(metadata["control_mode"])
         if not self.config.image_keys and isinstance(metadata.get("camera_keys"), list):
             self.config.image_keys = [str(key) for key in metadata["camera_keys"]]
 

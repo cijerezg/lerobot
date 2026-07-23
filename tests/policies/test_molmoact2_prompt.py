@@ -4,6 +4,7 @@ import pytest
 
 pytest.importorskip("transformers", reason="molmoact2 processor module imports policy deps")
 
+import numpy as np
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
@@ -23,10 +24,6 @@ def build(**overrides):
     kwargs = {
         "task": "fold the towel",
         "discrete_state_string": "",
-        "setup_type": "",
-        "control_mode": "",
-        "add_setup_tokens": False,
-        "add_control_tokens": False,
         "num_images": 0,
     }
     kwargs.update(overrides)
@@ -34,15 +31,14 @@ def build(**overrides):
 
 
 def test_legacy_prompt_is_byte_identical_when_memory_off():
-    """All memory params None → the exact pre-memory prompt (checkpoint compatibility)."""
+    """All memory params None → the exact base prompt (no optional clause renders)."""
     prompt = build()
-    assert (
-        "The task is to fold the towel. The setup is" in prompt
+    assert prompt == (
+        "<|im_start|>user\n"
+        "The task is to fold the towel. "
+        "Given these, what action should the robot take to complete the task?<|im_end|>\n"
+        "<|im_start|>assistant\n<action_output>"
     ), f"unexpected legacy prompt: {prompt}"
-    assert "Steps already completed" not in prompt
-    assert "current step" not in prompt
-    assert "quality" not in prompt
-    assert "recent states" not in prompt
 
 
 def test_current_subtask_clause():
@@ -70,6 +66,38 @@ def test_history_clause_renders_when_present():
         "The recent states of the robot, oldest to newest, were "
         "<state_start><state_1></state_end> <state_start><state_2></state_end>." in prompt
     )
+
+
+def test_history_image_spans_clause():
+    prompt = build(history_image_spans=[("top", 3, 6)], num_images=6)
+    assert "Images 3 to 6 are earlier frames from the top camera, oldest to newest." in prompt
+    # Image tokens count the appended history frames too.
+    assert prompt.count("<|image|>") == 6
+
+    assert "earlier frames" not in build(history_image_spans=None)
+    assert "earlier frames" not in build(history_image_spans=[])
+
+
+def test_extract_history_images_from_complementary():
+    from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep
+
+    # The method reads only its arguments (no processor state): call it unbound.
+    extract = MolmoAct2PackInputsProcessorStep._extract_history_images
+    frames = torch.randint(0, 255, (2, 4, 3, 8, 8), dtype=torch.uint8)  # (B, T_h, C, H, W)
+    complementary = {
+        "history.observation.images.top": frames,
+        "history.observation.images.top_is_pad": torch.zeros(2, 4, dtype=torch.bool),
+    }
+
+    out = extract(None, complementary, 2)
+    assert len(out) == 2
+    cam, images = out[0][0]
+    assert cam == "top"
+    assert len(images) == 4
+    assert images[0].shape == (8, 8, 3)  # _normalize_image: CHW -> HWC, uint8
+    assert images[0].dtype == np.uint8
+
+    assert extract(None, {}, 2) == [None, None]
 
 
 def test_history_clause_off_when_empty_or_none():
@@ -117,12 +145,12 @@ def test_max_sequence_length_budgets_history_clause():
     assert infer_molmoact2_max_sequence_length(**kwargs, history_num_samples=0) == base
 
 
-def test_clause_order_task_then_memory_then_setup():
-    prompt = build(current_subtask="step two")
+def test_clause_order_task_then_memory_then_state():
+    prompt = build(current_subtask="step two", discrete_state_string="<state_start><state_0><state_end>")
     task_pos = prompt.index("The task is to")
     current_pos = prompt.index("The current step is")
-    setup_pos = prompt.index("The setup is")
-    assert task_pos < current_pos < setup_pos
+    state_pos = prompt.index("The current state of the robot is")
+    assert task_pos < current_pos < state_pos
 
 
 # ── Phase 3: subtask generation prompt + vocab snap ──────────────────────────
@@ -141,8 +169,6 @@ def test_generation_prompt_asks_for_next_step():
     prompt = _build_subtask_generation_text(
         task="put the cup on the shelf",
         discrete_state_string="",
-        setup_type="",
-        add_setup_tokens=False,
         num_images=0,
     )
     assert "what step should the robot perform next?" in prompt
@@ -165,8 +191,6 @@ def gen_prompt(**overrides):
     kwargs = {
         "task": "fold",
         "discrete_state_string": "",
-        "setup_type": "",
-        "add_setup_tokens": False,
         "num_images": 0,
     }
     kwargs.update(overrides)

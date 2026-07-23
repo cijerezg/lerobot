@@ -53,10 +53,6 @@ ACTION_TOKEN_PREFIX = "<action_"  # nosec B105
 STATE_START_TOKEN = "<state_start>"  # nosec B105
 STATE_END_TOKEN = "<state_end>"  # nosec B105
 STATE_TOKEN_PREFIX = "<state_"  # nosec B105
-SETUP_START_TOKEN = "<setup_start>"  # nosec B105
-SETUP_END_TOKEN = "<setup_end>"  # nosec B105
-CONTROL_START_TOKEN = "<control_start>"  # nosec B105
-CONTROL_END_TOKEN = "<control_end>"  # nosec B105
 
 _QUESTION_TRAILING_SENTENCE_PUNCTUATION = ".,!?;:,\u2026"
 _QUESTION_TRAILING_CLOSERS = "\"'\u201d\u2019)]}"
@@ -204,24 +200,6 @@ def _normalize_question_text(text: str) -> str:
     return normalized.lower()
 
 
-def _wrap_setup_text(setup_type: str, add_setup_tokens: bool) -> str:
-    setup_type = str(setup_type or "")
-    if setup_type.startswith(SETUP_START_TOKEN) and setup_type.endswith(SETUP_END_TOKEN):
-        return setup_type
-    if not setup_type or not add_setup_tokens:
-        return setup_type
-    return f"{SETUP_START_TOKEN}{setup_type}{SETUP_END_TOKEN}"
-
-
-def _wrap_control_text(control_mode: str, add_control_tokens: bool) -> str:
-    control_mode = str(control_mode or "")
-    if control_mode.startswith(CONTROL_START_TOKEN) and control_mode.endswith(CONTROL_END_TOKEN):
-        return control_mode
-    if not control_mode or not add_control_tokens:
-        return control_mode
-    return f"{CONTROL_START_TOKEN}{control_mode}{CONTROL_END_TOKEN}"
-
-
 def _build_discrete_state_string(state: np.ndarray, num_state_tokens: int) -> str:
     if num_state_tokens <= 0:
         raise ValueError(f"num_state_tokens must be > 0, got {num_state_tokens}.")
@@ -237,20 +215,16 @@ def _build_robot_text(
     *,
     task: str,
     discrete_state_string: str,
-    setup_type: str,
-    control_mode: str,
-    add_setup_tokens: bool,
-    add_control_tokens: bool,
     num_images: int,
     current_subtask: str | None = None,
     metadata: dict[str, Any] | None = None,
     history_states: list[str] | None = None,
+    history_image_spans: list[tuple[str, int, int]] | None = None,
 ) -> str:
-    """Memory clauses: None disables a clause entirely (byte-identical legacy prompt)."""
-    setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
-    control_text = _wrap_control_text(control_mode, add_control_tokens=add_control_tokens)
-    setup_clause = f" The setup is {setup_text}." if setup_text else ""
-    control_clause = f" The expected control mode is {control_text}." if control_text else ""
+    """Memory clauses: None disables a clause entirely (byte-identical legacy prompt).
+
+    history_image_spans: (camera, first, last) 1-based image numbers of past frames
+    appended after the current camera images (pretraining layout keeps cameras first)."""
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
@@ -259,6 +233,10 @@ def _build_robot_text(
         f" The recent states of the robot, oldest to newest, were {' '.join(history_states)}."
         if history_states
         else ""
+    )
+    history_clause += "".join(
+        f" Images {first} to {last} are earlier frames from the {cam} camera, oldest to newest."
+        for cam, first, last in history_image_spans or []
     )
     metadata_clause = ""
     if metadata is not None:
@@ -271,8 +249,8 @@ def _build_robot_text(
         if "speed" in metadata:
             metadata_clause += f" The speed is {metadata['speed']}."
     prompt = (
-        f"The task is to {task}.{subtask_clause}{setup_clause}{state_clause}{history_clause}"
-        f"{control_clause}{metadata_clause} "
+        f"The task is to {task}.{subtask_clause}{state_clause}{history_clause}"
+        f"{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
     if num_images <= 0:
@@ -288,8 +266,6 @@ def _build_subtask_generation_text(
     *,
     task: str,
     discrete_state_string: str,
-    setup_type: str,
-    add_setup_tokens: bool,
     num_images: int,
     summary: str | None = None,
 ) -> str:
@@ -299,14 +275,12 @@ def _build_subtask_generation_text(
     The assistant's answer is memory-first: the updated memory, then the subtask
     (see `parse_generation_answer`); at training time the caller appends it (+eos)
     and puts CE labels on it."""
-    setup_text = _wrap_setup_text(setup_type, add_setup_tokens=add_setup_tokens)
-    setup_clause = f" The setup is {setup_text}." if setup_text else ""
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
     memory_clause = "" if summary is None else f" Memory: {summary or EMPTY_MEMORY_TEXT}"
     prompt = (
-        f"The task is to {task}.{memory_clause}{setup_clause}{state_clause} "
+        f"The task is to {task}.{memory_clause}{state_clause} "
         f"Given these, what step should the robot perform next?"
     )
     if num_images <= 0:
@@ -626,9 +600,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     action_mode: str = "both"
     discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
     image_keys: list[str] = field(default_factory=list)
+    normalize_language: bool = True
+    # Accepted and ignored: present in processor configs saved before the setup/control
+    # prompt clauses were removed (2026-07-22), and saved configs load as raw kwargs.
     setup_type: str = ""
     control_mode: str = ""
-    normalize_language: bool = True
     add_setup_tokens: bool = True
     add_control_tokens: bool = True
     num_state_tokens: int = 256
@@ -693,11 +669,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "action_mode": self.action_mode,
             "discrete_action_tokenizer": self.discrete_action_tokenizer,
             "image_keys": list(self.image_keys),
-            "setup_type": self.setup_type,
-            "control_mode": self.control_mode,
             "normalize_language": self.normalize_language,
-            "add_setup_tokens": self.add_setup_tokens,
-            "add_control_tokens": self.add_control_tokens,
             "num_state_tokens": self.num_state_tokens,
             "max_sequence_length": self.max_sequence_length,
             "chunk_size": self.chunk_size,
@@ -903,8 +875,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 discrete_state_string=_build_discrete_state_string(
                     state_np[batch_idx], self.num_state_tokens
                 ),
-                setup_type=self.setup_type,
-                add_setup_tokens=self.add_setup_tokens,
                 num_images=len(images),
                 summary=prev_summary,
             )
@@ -1014,6 +984,27 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             for b in range(batch_size)
         ]
 
+    def _extract_history_images(
+        self, complementary: dict, batch_size: int
+    ) -> list[list[tuple[str, list[np.ndarray]]] | None]:
+        """Past camera frames for the short-term memory window, read from complementary
+        keys "history.{OBS_IMAGES}.{cam}" (B, T_h, C, H, W; uint8 cache rows or
+        policy-format floats — _normalize_image reconciles both). Per sample: a list of
+        (camera, frames oldest → newest), or None when no image history was gathered."""
+        prefix = f"history.{OBS_IMAGES}."
+        keys = sorted(k for k in complementary if k.startswith(prefix) and not k.endswith("_is_pad"))
+        if not keys:
+            return [None] * batch_size
+        out = []
+        for batch_idx in range(batch_size):
+            entry = []
+            for key in keys:
+                frames = complementary[key]
+                item = frames[batch_idx] if getattr(frames, "ndim", 0) >= 5 else frames
+                entry.append((key.removeprefix(prefix), [_normalize_image(f) for f in item]))
+            out.append(entry)
+        return out
+
     @staticmethod
     def _extract_metadata(complementary: dict, batch_size: int) -> list[dict | None]:
         metadata = complementary.get("metadata")
@@ -1071,37 +1062,49 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         metadata_list = self._extract_metadata(complementary, batch_size)
         history_states_list = self._extract_history_states(complementary, batch_size)
+        history_images_list = self._extract_history_images(complementary, batch_size)
 
         prompt_texts: list[str] = []
         full_texts: list[str] = []
         flat_images: list[np.ndarray] = []
         state_np = state.detach().cpu().numpy()
         build_action_labels = action is not None and self.action_mode in {"discrete", "both"}
+        max_num_images = 0
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
-            flat_images.extend(images)
             discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
             current_subtask = subtask_texts[batch_idx]
             metadata = metadata_list[batch_idx]
             history_states = history_states_list[batch_idx]
+            history_images = history_images_list[batch_idx]
             if build_action_labels:  # training text: per-component dropout (π0.7 recipe)
                 if random.random() < self.subtask_dropout:
                     current_subtask = None
                 if random.random() < self.metadata_dropout:
                     metadata = None
                 if random.random() < self.history_dropout:
+                    # One flip drops the whole short-term block: states and frames
+                    # describe the same window, dropping them independently would
+                    # let the model exploit whichever survived.
                     history_states = None
+                    history_images = None
+            history_image_spans = None
+            if history_images:
+                images = list(images)
+                history_image_spans = []
+                for cam, frames in history_images:
+                    history_image_spans.append((cam, len(images) + 1, len(images) + len(frames)))
+                    images.extend(frames)
+            flat_images.extend(images)
+            max_num_images = max(max_num_images, len(images))
             prompt = _build_robot_text(
                 task=tasks[batch_idx],
                 discrete_state_string=discrete_state,
-                setup_type=self.setup_type,
-                control_mode=self.control_mode,
-                add_setup_tokens=self.add_setup_tokens,
-                add_control_tokens=self.add_control_tokens,
                 num_images=len(images),
                 history_states=history_states,
                 current_subtask=current_subtask,
                 metadata=metadata,
+                history_image_spans=history_image_spans,
             )
             prompt_texts.append(prompt)
             if build_action_labels:
@@ -1124,7 +1127,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         else:
             action_horizon = int(action.shape[1])
         max_sequence_length = self._resolve_max_sequence_length(
-            num_images=max((len(images) for images in images_by_example), default=0),
+            num_images=max_num_images,
             state_dim=int(state.shape[-1]),
             action_dim=max(real_action_dim, 1),
             action_horizon=action_horizon,
@@ -1209,8 +1212,6 @@ def make_molmoact2_pre_post_processors(
     image_keys = list(config.image_keys)
     if not image_keys and isinstance(hf_metadata.get("camera_keys"), list):
         image_keys = [str(key) for key in hf_metadata["camera_keys"]]
-    setup_type = config.setup_type or str(hf_metadata.get("setup_type") or "")
-    control_mode = config.control_mode or str(hf_metadata.get("control_mode") or "")
     chunk_size = int(hf_metadata.get("action_horizon") or config.chunk_size)
 
     masked_dataset_stats = _add_gripper_masks_to_stats(
@@ -1256,11 +1257,7 @@ def make_molmoact2_pre_post_processors(
             action_mode=config.action_mode,
             discrete_action_tokenizer=config.discrete_action_tokenizer,
             image_keys=image_keys,
-            setup_type=setup_type,
-            control_mode=control_mode,
             normalize_language=config.normalize_language,
-            add_setup_tokens=config.add_setup_tokens,
-            add_control_tokens=config.add_control_tokens,
             num_state_tokens=config.num_state_tokens,
             max_sequence_length=config.max_sequence_length,
             chunk_size=chunk_size,

@@ -168,6 +168,15 @@ class MolmoAct2RLConfig(MolmoAct2Config):
                         f"action_clamp_limits[{idx}] min must be <= max, got {limits!r}."
                     )
 
+        # Depth history rides the pointmap path: the memory block is the single source
+        # of truth for the window shape, synced here so both encoder sites (policy +
+        # critic) see it.
+        if (
+            self.pointmap_config is not None
+            and f"depth.{self.pointmap_config.depth_key}.depth" in self.memory.history_keys
+        ):
+            self.pointmap_config.history_num_samples = self.memory.history_num_samples
+
 
 # ── Critic ─────────────────────────────────────────────────────────────────
 

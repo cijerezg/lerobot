@@ -120,8 +120,6 @@ class MolmoAct2Config(PreTrainedConfig):
     discrete_generation_max_steps: int | None = None
     norm_tag: str | None = "so100_so101_molmoact2"
 
-    setup_type: str = ""
-    control_mode: str = ""
     image_keys: list[str] = field(default_factory=list)
     image_storage_dtype: str = "uint8"
     image_storage_size: tuple[int, int] | None = None
@@ -137,8 +135,6 @@ class MolmoAct2Config(PreTrainedConfig):
     # is bit-identical to depth-free at init (gate α=0).
     pointmap_config: DepthPointmapConfig | None = None
     normalize_language: bool = True
-    add_setup_tokens: bool = True
-    add_control_tokens: bool = True
     normalize_gripper: bool = False
     num_state_tokens: int = 256
     # Leave unset for the default MolmoAct2 sequence budget inferred from the fixed

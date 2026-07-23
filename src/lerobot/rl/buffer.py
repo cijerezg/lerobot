@@ -271,6 +271,27 @@ class ReplayBuffer:
     def _is_image_key(key: str) -> bool:
         return key.startswith(OBS_IMAGE) or "images" in key
 
+    @classmethod
+    def _validate_history_stride(
+        cls, history_offsets: dict[str, list[int]] | None, image_stride: int
+    ) -> None:
+        """Image/depth history lookback must land on stored rows: with image_stride > 1
+        the cache holds image rows only for frames 0, stride, 2*stride, ..., so every
+        offset on an image/depth key must be a multiple of the stride."""
+        if image_stride <= 1 or not history_offsets:
+            return
+        for key, offsets in history_offsets.items():
+            if not (cls._is_image_key(key) or key.startswith("depth.")):
+                continue
+            misaligned = [o for o in offsets if o % image_stride != 0]
+            if misaligned:
+                raise ValueError(
+                    f"history offsets {misaligned} on {key!r} are not multiples of "
+                    f"image_stride={image_stride}: those rows are not stored. Adjust "
+                    f"memory.history_window_seconds / history_num_samples so every "
+                    f"offset lands on the stride grid."
+                )
+
     def _prepare_image_for_storage(self, tensor: torch.Tensor) -> torch.Tensor:
         if self.image_storage_size is not None and tensor.shape[-2:] != self.image_storage_size:
             tensor = F_vision.resize(tensor, self.image_storage_size)
@@ -525,9 +546,17 @@ class ReplayBuffer:
 
         history = {}
         pad = {}
+        stride = self.image_stride
         for key, offsets in self.history_offsets.items():
             offs = torch.tensor(offsets, device=device)  # (T_h,) oldest → newest
             dist = torch.minimum(offs.unsqueeze(0), reach.unsqueeze(1))  # (B, T_h)
+            strided = stride > 1 and (self._is_image_key(key) or key.startswith("depth."))
+            if strided:
+                # Image/depth rows exist only every stride-th frame. Offsets are
+                # validated multiples of the stride and sampled idx is stride-aligned,
+                # so only clamped slots (dist == reach) can land off-grid: snap them
+                # down to the nearest stored frame, still inside the episode.
+                dist = dist - dist % stride
             gather_idx = (idx.unsqueeze(1) - dist) % self.capacity
             if key == ACTION:
                 source = self.actions
@@ -535,7 +564,7 @@ class ReplayBuffer:
                 source = self.complementary_info[key]
             else:
                 source = self.states[key]
-            history[key] = source[gather_idx]
+            history[key] = source[gather_idx // stride if strided else gather_idx]
             pad[key] = offs.unsqueeze(0) > reach.unsqueeze(1)
         return history, pad
 
@@ -860,15 +889,7 @@ class ReplayBuffer:
         # Builder writes image/depth rows for frames 0, stride, 2*stride, ...
         image_rows = (num_transitions + image_stride - 1) // image_stride
 
-        if image_stride > 1 and history_offsets:
-            strided_keys = [
-                k for k in history_offsets if cls._is_image_key(k) or k.startswith("depth.")
-            ]
-            if strided_keys:
-                raise ValueError(
-                    f"history_offsets on image/depth keys {strided_keys} are unsupported with "
-                    f"image_stride={image_stride}: lookback rows are not stored."
-                )
+        cls._validate_history_stride(history_offsets, image_stride)
 
         logger.info(
             f"Loading buffer cache from {cache_dir} ({num_transitions} transitions, image_stride={image_stride})"

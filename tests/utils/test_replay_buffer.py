@@ -1024,3 +1024,48 @@ def test_materialize_metadata_from_dataset_rows():
 
     batch = buffer.sample(batch_size=4, action_chunk_size=2)
     assert batch["complementary_info"]["metadata_quality"].shape == (4,)
+
+
+def test_history_strided_image_rows():
+    """from_cache with image_stride > 1 stores image rows only for frames 0, stride,
+    2*stride, ...: the history gather must map frame index -> compact row (// stride)
+    and snap episode-start-clamped slots down to the stride grid."""
+    image_key = "observation.images.top"
+    buffer = ReplayBuffer(
+        12,
+        "cpu",
+        [OBS_STATE, image_key],
+        use_drq=False,
+        optimize_memory=True,
+        history_offsets={OBS_STATE: [4, 2], image_key: [4, 2]},
+    )
+    _fill_episode(buffer, first_value=0, length=5)  # frames 0-4, done at 4
+    _fill_episode(buffer, first_value=5, length=7)  # frames 5-11
+    # Mimic the cache layout: compact image rows for frames 0, 2, ..., 10 (value = frame).
+    buffer.image_stride = 2
+    buffer.states[image_key] = torch.tensor([[0.0], [2.0], [4.0], [6.0], [8.0], [10.0]])
+
+    # idx=10, mid-episode (reach 5): both offsets land on the grid, no snapping.
+    history, pad = buffer._gather_history(torch.tensor([10]))
+    assert torch.equal(history[image_key].squeeze(-1), torch.tensor([[6.0, 8.0]]))
+    assert torch.equal(pad[image_key], torch.tensor([[False, False]]))
+
+    # idx=8, 2nd episode (reach 3): the clamped oldest slot (dist 3, off-grid) snaps
+    # down to dist 2 -> frame 6; states keep the exact clamp (frame 5).
+    history, pad = buffer._gather_history(torch.tensor([8]))
+    assert torch.equal(history[image_key].squeeze(-1), torch.tensor([[6.0, 6.0]]))
+    assert torch.equal(history[OBS_STATE].float().squeeze(-1), torch.tensor([[5.0, 6.0]]))
+    assert torch.equal(pad[image_key], torch.tensor([[True, False]]))
+
+
+def test_validate_history_stride():
+    aligned = {"observation.images.top": [30, 60], OBS_STATE: [30, 60]}
+    ReplayBuffer._validate_history_stride(aligned, 5)  # no raise
+
+    # State offsets are unstrided storage: never checked.
+    ReplayBuffer._validate_history_stride({OBS_STATE: [31, 62]}, 5)
+
+    with pytest.raises(ValueError, match="not multiples of image_stride"):
+        ReplayBuffer._validate_history_stride({"observation.images.top": [30, 62]}, 5)
+    with pytest.raises(ValueError, match="depth.wrist.depth"):
+        ReplayBuffer._validate_history_stride({"depth.wrist.depth": [31]}, 5)

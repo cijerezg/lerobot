@@ -168,9 +168,18 @@ class DepthPointmapEncoder(nn.Module):
 
         self.modality_embed = nn.Parameter(torch.randn(d_mem) * 0.02)
         self.null_tokens = nn.Parameter(torch.randn(self.num_tokens, d_mem) * 0.02)
+        # Temporal slots: [0 .. T_h-1] = past frames oldest → newest, [-1] = current.
+        # Only created when history is on, so historyless checkpoints load unchanged.
+        if config.history_num_samples > 0:
+            self.time_embed = nn.Parameter(torch.randn(config.history_num_samples + 1, d_mem) * 0.02)
 
     def null_memory(self, batch_size: int) -> Tensor:
-        return self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
+        """Null bank for the full token assembly (history slots included when on)."""
+        null = self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
+        t_h = self.config.history_num_samples
+        if t_h == 0:
+            return null
+        return torch.cat([null + self.time_embed[i] for i in [*range(t_h), -1]], dim=1)
 
     def forward(self, pointmap: Tensor) -> Tensor:
         cfg = self.config
@@ -216,9 +225,23 @@ class DepthPointmapEncoder(nn.Module):
         Returns memory (B, N, d_mem) — the DepthStream's initial tokens.
         """
         cfg = self.config
-        depth = batch.get(f"observation.depth.{cfg.depth_key}")
+        memory = self._encode_depth(batch.get(f"observation.depth.{cfg.depth_key}"), batch_size, device)
+        if cfg.history_num_samples > 0:
+            memory = torch.cat(
+                [self._history_memory(batch, batch_size, device), memory + self.time_embed[-1]], dim=1
+            )
+        if self.training and cfg.dropout_prob > 0:
+            dropped = torch.rand(memory.shape[0], device=memory.device) < cfg.dropout_prob
+            memory = torch.where(
+                dropped[:, None, None], self.null_memory(memory.shape[0]).to(memory.dtype), memory
+            )
+        return memory
+
+    def _encode_depth(self, depth: Tensor | None, batch_size: int, device: torch.device) -> Tensor:
+        """One frame slot (B, N, d_mem): back-project → encode; null bank when missing."""
+        cfg = self.config
         if depth is None:
-            return self.null_memory(batch_size)
+            return self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
         depth = torch.as_tensor(depth).to(device=device)
         pointmap = back_project(
             depth,
@@ -227,10 +250,31 @@ class DepthPointmapEncoder(nn.Module):
             z_min_mm=cfg.z_min_mm,
             z_max_mm=cfg.z_max_mm,
         )
-        memory = self(pointmap)
-        if self.training and cfg.dropout_prob > 0:
-            dropped = torch.rand(memory.shape[0], device=memory.device) < cfg.dropout_prob
-            memory = torch.where(
-                dropped[:, None, None], self.null_memory(memory.shape[0]).to(memory.dtype), memory
+        return self(pointmap)
+
+    def _history_memory(self, batch: dict[str, Tensor], batch_size: int, device: torch.device) -> Tensor:
+        """Past-frame slots (B, T_h·N, d_mem), oldest → newest, each with its slot's
+        time embedding. Reads the buffer-canonical history window
+        history.depth.{depth_key}.depth (B, T_h, H, W); padded slots (episode start,
+        see the _is_pad mask) and a missing window take the null bank instead."""
+        cfg = self.config
+        t_h = cfg.history_num_samples
+        null = self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
+        window = batch.get(f"history.depth.{cfg.depth_key}.depth")
+        if window is None:
+            return torch.cat([null + self.time_embed[i] for i in range(t_h)], dim=1)
+        window = torch.as_tensor(window).to(device=device)
+        if window.shape[1] != t_h:
+            raise ValueError(
+                f"depth history window has {window.shape[1]} frames, expected "
+                f"history_num_samples={t_h}."
             )
-        return memory
+        flat = window.reshape(batch_size * t_h, *window.shape[2:])
+        tokens = self._encode_depth(flat, batch_size * t_h, device)
+        tokens = tokens.reshape(batch_size, t_h, self.num_tokens, -1)
+        pad = batch.get(f"history.depth.{cfg.depth_key}.depth_is_pad")
+        if pad is not None:
+            pad = torch.as_tensor(pad).to(device=tokens.device, dtype=torch.bool)
+            tokens = torch.where(pad[:, :, None, None], null.unsqueeze(1).to(tokens.dtype), tokens)
+        tokens = tokens + self.time_embed[:t_h, None, :]
+        return tokens.reshape(batch_size, t_h * self.num_tokens, -1)
