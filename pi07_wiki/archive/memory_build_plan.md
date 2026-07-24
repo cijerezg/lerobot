@@ -376,19 +376,76 @@ generation machinery (Phase 3) — the summary seam builds on those.
 - [ ] Acceptance (data-dependent): toggling metadata at inference changes
       behavior measurably on the offline eval; training curves stable.
 
-## Phase 6 — architecture (DEFERRED — placeholder only)
+## Phase 6 — MEM video encoder + continuous state history (DECIDED 2026-07-22)
 
-How `observation.history.*` enters the model: candidates are MEM-style
-spatio-temporal compression, HAMLET moment tokens + memory module, or a
-DepthStream-style co-evolving stream with gated additive read (gate-0
-bit-identity, the proven in-house pattern). Whatever is chosen:
+Design in [../04_memory.md](../04_memory.md) §2.4 (MEM arXiv 2603.03596).
+Decisions locked: encoder path only (prompt-image history path DELETED — token
+count explodes: ~1,700 LLM tokens/step for 2 cams × 4 frames); continuous
+proprio-history tokens behind a text lead-in; 5 past + current @ 1 s; no gate
+($e(0)=0$ is the identity story); repeat-padding v1 (no ViT attention mask).
 
-- [ ] New from-scratch modules must be whitelisted in `_apply_actor_freeze` /
-      `_apply_critic_freeze` (`rl/molmoact2/rl_molmoact2_trainer.py:289,331`) or
-      their gates never train (the pointmap gate lesson).
+### Config ✅ BUILT 2026-07-22
+- [x] `MemoryConfig`: `history_window_seconds` 4.0→5.0, `history_num_samples`
+      4→5 (offsets [30,60,90,120,150] @ 30 fps).
+- [x] `DepthPointmapConfig.history_num_samples` syncs → depth slots 4→5 past
+      (time-embedding table grows; from-scratch module, no checkpoint concern).
+- [x] New `MolmoAct2Config` fields: `temporal_layer_stride` (4) +
+      `history_stride_seconds` (1.0, a provided field — no auto-derivation, set
+      both in YAML if the window changes). Enable = history tensors present.
+
+### Processor (`processor_molmoact2.py`) ✅ BUILT 2026-07-22
+- [x] DELETED `_extract_history_images`, `history_image_spans` + the
+      "Images i to j are earlier frames" clause, and the per-state text budget.
+- [x] `_extract_history_image_stack`: history frames through
+      `image_processor.preprocess` (same resize/normalize; asserts crop_mode
+      "resize" via crop count) → complementary `history_images`
+      (B, cams, T_h, 729, 588) **bfloat16** + `history_image_times` (T_h,)
+      seconds oldest→newest + `history_images_mask` (B,). Cameras must cover
+      exactly the prompt image_keys (hard error on subset).
+- [x] State-history clause: lead-in + `T_h` × `<extra_0>` (`STATE_HISTORY_TOKEN`);
+      id resolved from the tokenizer and shipped per batch as
+      `state_history_token_id`; `history_state_values` (B, T_h, D) float32 keeps
+      the existing normalization seam.
+- [x] One `history_dropout` flip per sample gates placeholders AND the sample's
+      row in `history_images_mask` → exact K=1 pretrained path. Generation pack
+      ships `history_images` too (no state clause there, §1.2 unchanged).
+
+### Modeling (`modeling_molmoact2.py`) ✅ BUILT 2026-07-22
+- [x] `encode_image` extension: stash-based transport (consume-once, cleared on
+      history-free batches), history slices concat'd time-last, e(t) =
+      PE(t) − PE(0) sinusoidal-seconds added at each temporal resblock INPUT
+      (paper eq.), union-softmax at resblocks (i+1) % stride == 0 →
+      {3,7,11,15,19,23}, past rows dropped after 23, current rows sliced at the
+      taps (18 pre-drop). Gradient checkpointing preserved (e_t passed as arg,
+      not closure — the non-leaf-capture footgun).
+- [x] Attention: per-query-frame loop (peak n×(n+T) scores ≈ 550 MB fp32 at
+      B=32); `/ math.sqrt` division matching the module's eager path; float32
+      scores/softmax; per-sample mask −inf on the temporal block only.
+- [x] `state_history_projector` (D_state→2560, the ONLY new weights) on the
+      policy; projected embeds ADDED at placeholder positions in
+      `build_input_embeddings` (count-checked 0-or-T_h per sample); whitelisted
+      in `_apply_actor_freeze`; rides the fresh-params "depth" optimizer group —
+      which also keeps it OUT of pretrained_merge_targets (the checkpoint has no
+      projector weights; a merge would drag it to init).
+
+### Verification
+- [x] Unit tests (`tests/policies/test_molmoact2_mem_encoder.py`): union softmax
+      ≡ naive per-query reference; causality (older frames never read newer;
+      NB a constant perturbation is invisible — LayerNorm removes it);
+      mask-off ≡ plain spatial block exactly; e(0) = 0; no-history
+      `encode_image` bit-identical to the pre-MEM loop; token-count invariant;
+      camera-count mismatch raises; stash consume-once. Prompt tests updated
+      (placeholder clause, stack extractor, budget).
+- [ ] Real-batch verification folded into the first `rl_offline` run (standalone
+      smoke was written, passed review as a design, then deleted 2026-07-22):
+      confirm on the first steps that the pack/forward doesn't crash on real
+      weights, the trainable-param log lists `state_history_projector`, and loss
+      is finite. The targeted invariants (image-token count, projector grads,
+      mask-all-False K=1) are covered by the unit tests above; the run only has
+      to prove they hold on the real checkpoint.
+- [x] Buffer/actor gather parity untouched (data side unchanged beyond 4→5).
 - [ ] Critic reads the same trunk → memory reaches the critic through the
-      existing seam; verify, don't assume.
-- [ ] History dropout p=0.3 wired at the batch level regardless of architecture.
+      existing seam; verify when the critic comes back on (skip_critic now).
 
 ## Phase 7 — training + validation
 

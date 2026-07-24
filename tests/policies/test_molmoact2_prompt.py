@@ -60,49 +60,64 @@ def test_metadata_clause_partial_rendering():
     assert "quality" not in prompt and "mistake" not in prompt and "speed" not in prompt
 
 
-def test_history_clause_renders_when_present():
-    prompt = build(history_states=["<state_start><state_1></state_end>", "<state_start><state_2></state_end>"])
+def test_history_clause_renders_placeholders():
+    from lerobot.policies.molmoact2.processor_molmoact2 import STATE_HISTORY_TOKEN
+
+    prompt = build(num_history_states=3)
     assert (
-        "The recent states of the robot, oldest to newest, were "
-        "<state_start><state_1></state_end> <state_start><state_2></state_end>." in prompt
+        f"The recent states of the robot, oldest to newest, are {STATE_HISTORY_TOKEN * 3}." in prompt
     )
+    # Image history never renders in the prompt (MEM video encoder path).
+    assert "earlier frames" not in prompt
 
 
-def test_history_image_spans_clause():
-    prompt = build(history_image_spans=[("top", 3, 6)], num_images=6)
-    assert "Images 3 to 6 are earlier frames from the top camera, oldest to newest." in prompt
-    # Image tokens count the appended history frames too.
-    assert prompt.count("<|image|>") == 6
+def test_extract_history_image_stack_from_complementary():
+    from types import SimpleNamespace
 
-    assert "earlier frames" not in build(history_image_spans=None)
-    assert "earlier frames" not in build(history_image_spans=[])
-
-
-def test_extract_history_images_from_complementary():
     from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep
 
-    # The method reads only its arguments (no processor state): call it unbound.
-    extract = MolmoAct2PackInputsProcessorStep._extract_history_images
-    frames = torch.randint(0, 255, (2, 4, 3, 8, 8), dtype=torch.uint8)  # (B, T_h, C, H, W)
+    # Stub the HF image processor: one crop per frame (crop_mode "resize"), so the
+    # reshape/order/times logic is tested without loading the checkpoint processor.
+    def fake_image_processor(images):
+        return {"pixel_values": np.arange(len(images), dtype=np.float32)[:, None, None].repeat(
+            4, axis=1
+        ).repeat(5, axis=2)}
+
+    stub = SimpleNamespace(
+        processor=SimpleNamespace(image_processor=fake_image_processor),
+        history_stride_seconds=1.0,
+    )
+    extract = MolmoAct2PackInputsProcessorStep._extract_history_image_stack
+    frames = torch.randint(0, 255, (2, 3, 3, 8, 8), dtype=torch.uint8)  # (B, T_h, C, H, W)
     complementary = {
         "history.observation.images.top": frames,
-        "history.observation.images.top_is_pad": torch.zeros(2, 4, dtype=torch.bool),
+        "history.observation.images.top_is_pad": torch.zeros(2, 3, dtype=torch.bool),
+        "history.observation.images.wrist": frames,
+        "history.observation.images.wrist_is_pad": torch.zeros(2, 3, dtype=torch.bool),
     }
+    image_keys = ["observation.images.top", "observation.images.wrist"]
 
-    out = extract(None, complementary, 2)
-    assert len(out) == 2
-    cam, images = out[0][0]
-    assert cam == "top"
-    assert len(images) == 4
-    assert images[0].shape == (8, 8, 3)  # _normalize_image: CHW -> HWC, uint8
-    assert images[0].dtype == np.uint8
+    out, times = extract(stub, complementary, image_keys, 2)
+    assert out.shape == (2, 2, 3, 4, 5)  # (B, cams, T_h, patches, patch_dim)
+    assert out.dtype == torch.bfloat16
+    # Flat order is (b, cam, t): sample 1 / cam wrist / slot 0 is flat frame 9.
+    assert out[1, 1, 0, 0, 0].item() == 9.0
+    # Times are seconds-before-now, oldest → newest.
+    assert times.tolist() == [3.0, 2.0, 1.0]
 
-    assert extract(None, {}, 2) == [None, None]
+    assert extract(stub, {}, image_keys, 2) is None
+    # A camera subset is a config error, not a silent partial stack.
+    with pytest.raises(ValueError, match="exactly the prompt cameras"):
+        extract(
+            stub,
+            {"history.observation.images.top": frames},
+            image_keys,
+            2,
+        )
 
 
-def test_history_clause_off_when_empty_or_none():
-    assert "recent states" not in build(history_states=None)
-    assert "recent states" not in build(history_states=[])
+def test_history_clause_off_when_zero():
+    assert "recent states" not in build(num_history_states=0)
 
 
 def test_history_state_normalized_same_as_current_state():
@@ -138,9 +153,10 @@ def test_max_sequence_length_budgets_history_clause():
         num_images=2, state_dim=7, action_dim=7, action_horizon=50, include_discrete_action=True
     )
     base = infer_molmoact2_max_sequence_length(**kwargs)
-    with_history = infer_molmoact2_max_sequence_length(**kwargs, history_num_samples=8)
-    # 8 samples * (7 state tokens + 3 wrappers) + 16 preamble = 96 raw tokens, which
-    # survives the round-up-to-64 regardless of the base's slack.
+    with_history = infer_molmoact2_max_sequence_length(**kwargs, history_num_samples=64)
+    # 64 placeholder positions + 16 lead-in = 80 raw tokens, which survives the
+    # round-up-to-64 regardless of the base's slack. (Realistic T_h is 5; the
+    # budget is linear so the large value only makes the assertion robust.)
     assert with_history > base
     assert infer_molmoact2_max_sequence_length(**kwargs, history_num_samples=0) == base
 

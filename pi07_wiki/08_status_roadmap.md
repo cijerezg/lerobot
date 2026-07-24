@@ -23,8 +23,9 @@ reconciled in config.
 | MEM summary memory (hold/update seam) | done, verified on real training 2026-07-19 | on |
 | Metadata steering (quality/mistake) | done | on |
 | History: buffer sample + actor deque | done, parity-tested | on (2026-07-22) |
-| History consumption: proprio clause + image frames | done (Phase 6 partial) | on: states + top/wrist frames @1s, dropout 0.3 |
-| History consumption: depth (time-embedded pointmap slots) | done 2026-07-21 | on |
+| History consumption: MEM video encoder (images) + continuous state tokens | BUILT 2026-07-22, unit-tested (04_memory §2.4, build plan Phase 6); real-batch smoke pending (`smoke_mem_encoder.py`) | next run |
+| ~~History consumption: prompt path (frames as prompt images + states as text)~~ | deleted 2026-07-22 (LLM token explosion) | was on in current run — those checkpoints orphaned |
+| History consumption: depth (time-embedded pointmap slots) | done 2026-07-21 | on (slots 4→5 with Phase 6 config) |
 | History consumption: action | not built (causal-confusion ablation) | — |
 | Distributional critic (HL-Gauss 201, σ-ratio 8.0) | done | off |
 | RECAP advantage conditioning | done (pi05-proven, molmoact2 seam) | off |
@@ -34,11 +35,11 @@ reconciled in config.
 
 1. Finish/evaluate the current offline run; offline_inference probe: subtask +
    memory quality per checkpoint.
-2. History smoke VERIFIED 2026-07-22 (`history_keys`: state + top/wrist images +
-   depth; pad masks, distinct slots, both prompt shapes confirmed on a real
-   batch). Next: train, then compare offline eval vs the no-history baseline
-   (causal-confusion check). Remaining unbuilt: action-history consumption;
-   richer architectures only if the prompt path underperforms.
+2. Build Phase 6: MEM video encoder + continuous state history
+   (04_memory §2.4; prompt-image path deleted same day its smoke passed —
+   design superseded it). Then train and compare offline eval vs the
+   no-history baseline (causal-confusion check). Remaining unbuilt:
+   action-history consumption (still a causal-confusion ablation).
 3. Hardware rollout (cable verified): live HL decode + summary bookkeeping over a
    long episode; `z_max_mm` sanity on wrist-mounted depth; gate long-run growth.
 4. Online data: label recorded rollouts post-hoc (metadata before mixing —

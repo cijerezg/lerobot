@@ -298,9 +298,13 @@ class MolmoAct2Trainer(Trainer):
             if name.startswith("critic.") or name.startswith("critic_target."):
                 continue  # critic handled separately
 
-            if "pointmap_encoder" in name or "depth_stream" in name:
-                # Fresh point-map depth modules (encoder + co-evolving stream + gate/sink),
-                # trained from scratch — always trainable, mirroring the critic's depth_*
+            if (
+                "pointmap_encoder" in name
+                or "depth_stream" in name
+                or "state_history_projector" in name
+            ):
+                # Fresh from-scratch modules (point-map depth + MEM state-history
+                # projector) — always trainable, mirroring the critic's depth_*
                 # branch in _apply_critic_freeze. Without this they fall through to the
                 # else-branch below and get frozen, so the actor gate α never learns.
                 param.requires_grad = True
@@ -387,14 +391,17 @@ class MolmoAct2Trainer(Trainer):
 
     @staticmethod
     def _split_depth_group(policy: nn.Module, cfg, groups: list[dict]) -> list[dict]:
-        """Move from-scratch depth params (pointmap_encoder/depth_stream, incl. gate and
-        sink) out of the policy group into their own "depth" group at depth_lr: the
-        pretrained-model lr is too slow for fresh modules, and the separate group name
-        keeps them out of pretrained_merge_targets (the checkpoint has no depth weights,
-        so a merge would drag them back toward their init)."""
+        """Move from-scratch params (pointmap_encoder/depth_stream incl. gate and sink,
+        plus the MEM state_history_projector) out of the policy group into their own
+        "depth" group at depth_lr: the pretrained-model lr is too slow for fresh
+        modules, and the separate group name keeps them out of
+        pretrained_merge_targets (the checkpoint has none of these weights, so a
+        merge would drag them back toward their init)."""
         depth_ids = {
             id(p) for name, p in policy.named_parameters()
-            if "pointmap_encoder" in name or "depth_stream" in name
+            if "pointmap_encoder" in name
+            or "depth_stream" in name
+            or "state_history_projector" in name
         }
         policy_group = next(g for g in groups if g["name"] == "policy")
         depth_params = [p for p in policy_group["params"] if id(p) in depth_ids]

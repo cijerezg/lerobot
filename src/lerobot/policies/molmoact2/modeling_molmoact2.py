@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import types
 from collections import defaultdict, deque
@@ -18,7 +19,7 @@ from torch import Tensor, nn
 from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
 from ..depth_pointmap.modeling_pointmap import DepthPointmapEncoder
@@ -231,15 +232,32 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
         x = self.transformer.wte(input_ids)
 
         image_features = None
-        if images is not None:
-            image_features = self.vision_backbone(images, token_pooling).to(x.device)
-            is_image_patch = input_ids.reshape(-1) == self.config.image_patch_id
-            if is_image_patch.sum() != len(image_features):
-                raise RuntimeError(
-                    f"Expected {int(is_image_patch.sum())} image patch embeddings, got {len(image_features)}."
-                )
+        state_history = getattr(self, "_lerobot_state_history", None)
+        self._lerobot_state_history = None  # consume-once, like the vision stash
+        if images is not None or state_history is not None:
             flat_x = x.reshape(-1, x.shape[-1]).clone()
-            flat_x[is_image_patch] = flat_x[is_image_patch] + image_features
+            if images is not None:
+                image_features = self.vision_backbone(images, token_pooling).to(x.device)
+                is_image_patch = input_ids.reshape(-1) == self.config.image_patch_id
+                if is_image_patch.sum() != len(image_features):
+                    raise RuntimeError(
+                        f"Expected {int(is_image_patch.sum())} image patch embeddings, got {len(image_features)}."
+                    )
+                flat_x[is_image_patch] = flat_x[is_image_patch] + image_features
+            if state_history is not None:
+                # Continuous state-history tokens (04_memory.md §2.4): projected past
+                # states ADDED onto the STATE_HISTORY_TOKEN placeholder embeddings,
+                # mirroring the image-patch scatter. Samples whose clause was dropped
+                # contribute zero placeholder positions.
+                embeds, token_id = state_history  # (B, T_h, D), int
+                is_state = input_ids == token_id
+                counts = is_state.sum(dim=1)
+                t_h = int(embeds.shape[1])
+                if not bool(((counts == 0) | (counts == t_h)).all()):
+                    raise RuntimeError(
+                        f"State-history placeholders per sample must be 0 or {t_h}, got {counts.tolist()}."
+                    )
+                flat_x[is_state.reshape(-1)] += embeds.to(flat_x.dtype)[counts > 0].reshape(-1, embeds.shape[-1])
             x = flat_x.reshape_as(x)
 
         x = self.transformer.emb_drop(x)
@@ -249,7 +267,79 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
     backbone._lerobot_leaf_safe_input_embedding_update_patched = True
 
 
-def _patch_memory_efficient_vision_backbone(backbone: Any, *, gradient_checkpointing: bool) -> None:
+def _sinusoidal_seconds_embedding(times: Tensor, dim: int) -> Tensor:
+    """MEM e(t): sinusoidal in real seconds with the boundary condition e(0) = 0
+    (04_memory.md §2.4). Standard sinusoidal PE has cos(0) = 1, so we use
+    PE(t) - PE(0): sin terms unchanged, cos terms become cos(wt) - 1. Computed in
+    float32 (cast at the bf16 boundary by the caller). times: (T,) → (T, dim)."""
+    times = times.to(torch.float32)
+    half = dim // 2
+    freqs = torch.exp(
+        torch.arange(half, dtype=torch.float32, device=times.device) * (-math.log(10000.0) / half)
+    )
+    angles = times[:, None] * freqs[None, :]
+    emb = torch.zeros((times.shape[0], dim), dtype=torch.float32, device=times.device)
+    emb[:, 0::2] = torch.sin(angles)
+    emb[:, 1::2] = torch.cos(angles) - 1.0
+    return emb
+
+
+def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tensor | None) -> Tensor:
+    """One MEM temporal resblock (04_memory.md §2.4): same weights as the spatial
+    block, extended key set in ONE softmax. For the query at patch i of frame t:
+    keys = all patches of frame t (spatial) + patch i of strictly older frames
+    (causal). e(t) is added at the layer input (paper eq.; accumulates in the
+    residual stream). history_on masks a sample's temporal keys entirely
+    (history dropout → the sample computes the exact K=1 pretrained op).
+
+    x: (BC, T, n, D) frames oldest → newest (current last); e_t: (T, D);
+    history_on: (BC,) bool or None. Queries loop over frames (peak memory
+    ~n*(n+T) scores per frame instead of a (Tn)^2 union)."""
+    attn = block.attention
+    x = x + e_t.to(x.dtype)[None, :, None, :]
+    h = block.attention_norm(x)
+
+    bc, num_frames, n, _ = h.shape
+    heads, kv_heads, head_dim = attn.num_heads, attn.num_key_value_heads, attn.head_dim
+    q = attn.wq(h).view(bc, num_frames, n, heads, head_dim)
+    k = attn.wk(h).view(bc, num_frames, n, kv_heads, head_dim)
+    v = attn.wv(h).view(bc, num_frames, n, kv_heads, head_dim)
+    if heads != kv_heads:
+        k = k.repeat_interleave(attn.num_key_value_groups, dim=3, output_size=heads)
+        v = v.repeat_interleave(attn.num_key_value_groups, dim=3, output_size=heads)
+
+    og_dtype = q.dtype
+    if attn.float32_attention:
+        q, k = q.to(torch.float32), k.to(torch.float32)
+    dropout_p = attn.attention_dropout if block.training else 0.0
+
+    outs = []
+    for t in range(num_frames):
+        q_t = q[:, t] / math.sqrt(head_dim)  # divide, matching the module's eager path
+        scores = torch.einsum("bqhd,bkhd->bhqk", q_t, k[:, t])  # (BC, H, n, n)
+        if t > 0:
+            temporal = torch.einsum("bnhd,bsnhd->bhns", q_t, k[:, :t])  # (BC, H, n, t)
+            if history_on is not None:
+                temporal = temporal.masked_fill(
+                    ~history_on.view(bc, 1, 1, 1), torch.finfo(temporal.dtype).min
+                )
+            scores = torch.cat([scores, temporal], dim=-1)
+        weights = F.softmax(scores, dim=-1, dtype=torch.float32)
+        weights = F.dropout(weights, p=dropout_p, training=block.training).to(v.dtype)
+        out_t = torch.einsum("bhqk,bkhd->bqhd", weights[..., :n], v[:, t])
+        if t > 0:
+            out_t = out_t + torch.einsum("bhns,bsnhd->bnhd", weights[..., n:], v[:, :t])
+        outs.append(out_t)
+
+    out = torch.stack(outs, dim=1).to(og_dtype).reshape(bc, num_frames, n, heads * head_dim)
+    x = x + attn.residual_dropout(attn.wo(out))
+    x = x + block.feed_forward(block.ffn_norm(x))
+    return x
+
+
+def _patch_memory_efficient_vision_backbone(
+    backbone: Any, *, gradient_checkpointing: bool, temporal_layer_stride: int
+) -> None:
     vision_backbone = getattr(backbone, "vision_backbone", None)
     if vision_backbone is None or getattr(
         vision_backbone, "_lerobot_memory_efficient_vision_backbone_patched", False
@@ -265,24 +355,81 @@ def _patch_memory_efficient_vision_backbone(backbone: Any, *, gradient_checkpoin
         return
 
     def _encode_image(self, images: Tensor) -> Tensor:
+        """Single-frame path is byte-identical to the pre-MEM encoder. With a stashed
+        history (MEM video encoder, 04_memory.md §2.4): past frames ride as extra
+        time slices through the shared ViT, every temporal_layer_stride-th resblock
+        runs the union-key temporal attention, and past rows are dropped after the
+        last temporal layer — the returned features (and the LLM sequence) keep the
+        single-frame shape exactly."""
+        history = getattr(self, "_lerobot_history", None)
+        self._lerobot_history = None  # consume-once: no stale reuse across forwards
+
         batch_size, num_crops, num_patches, patch_dim = images.shape
         images = images.view(batch_size * num_crops, num_patches, patch_dim)
 
         x = self.image_vit.patch_embedding(images)
         x = self.image_vit.add_pos_emb(x, self.image_vit.config.image_num_patch)
 
+        num_frames = 1
+        e_t = None
+        history_on = None
+        if history is not None:
+            frames, times, mask = history
+            cams, t_h = int(frames.shape[1]), int(frames.shape[2])
+            if cams != num_crops:
+                raise ValueError(
+                    f"MEM video encoder expects one crop per camera (crop_mode 'resize'): "
+                    f"history has {cams} cameras but the batch has {num_crops} crops."
+                )
+            num_frames = t_h + 1
+            hist = frames.to(device=x.device, dtype=x.dtype).reshape(
+                batch_size * cams * t_h, num_patches, patch_dim
+            )
+            x_hist = self.image_vit.patch_embedding(hist)
+            x_hist = self.image_vit.add_pos_emb(x_hist, self.image_vit.config.image_num_patch)
+            # (BC, T, n, D): history oldest → newest, current frame last (t = 0 s).
+            x = torch.cat(
+                [
+                    x_hist.view(batch_size * cams, t_h, num_patches, -1),
+                    x.view(batch_size * cams, 1, num_patches, -1),
+                ],
+                dim=1,
+            )
+            times_full = torch.cat([times.to(x.device), torch.zeros(1, device=x.device)])
+            e_t = _sinusoidal_seconds_embedding(times_full, x.shape[-1])
+            if mask is not None:
+                history_on = mask.to(x.device).repeat_interleave(cams)
+
+        stride = max(int(self._lerobot_temporal_layer_stride), 1)
+        num_layers = len(self.image_vit.transformer.resblocks)
+        temporal_layers = {i for i in range(num_layers) if (i + 1) % stride == 0}
+        last_temporal = max(temporal_layers) if temporal_layers else -1
+
         needed_layers = {int(layer) for layer in self.vit_layers}
         selected_features: dict[int, Tensor] = {}
         use_checkpoint = bool(
             self._lerobot_vision_gradient_checkpointing and self.training and torch.is_grad_enabled()
         )
-        for layer_idx, block in enumerate(self.image_vit.transformer.resblocks):
+
+        def run(fn, *args):
             if use_checkpoint:
-                x = torch.utils.checkpoint.checkpoint(block, x, use_reentrant=False)
+                return torch.utils.checkpoint.checkpoint(fn, *args, use_reentrant=False)
+            return fn(*args)
+
+        for layer_idx, block in enumerate(self.image_vit.transformer.resblocks):
+            if num_frames > 1 and layer_idx in temporal_layers:
+                x = run(_temporal_vision_block, block, x, e_t, history_on)
+            elif num_frames > 1:
+                x = run(block, x.reshape(-1, num_patches, x.shape[-1])).view(x.shape)
             else:
-                x = block(x)
+                x = run(block, x)
             if layer_idx in needed_layers:
-                selected_features[layer_idx] = x
+                # Only current-frame rows are features; past rows exist solely as
+                # attention context (the token-count invariant).
+                selected_features[layer_idx] = x[:, -1] if num_frames > 1 else x
+            if num_frames > 1 and layer_idx == last_temporal:
+                x = x[:, -1]  # drop past rows: no temporal layers remain to read them
+                num_frames = 1
 
         if len(selected_features) != len(needed_layers):
             missing = sorted(needed_layers - set(selected_features))
@@ -296,6 +443,8 @@ def _patch_memory_efficient_vision_backbone(backbone: Any, *, gradient_checkpoin
 
     vision_backbone.encode_image = types.MethodType(_encode_image, vision_backbone)
     vision_backbone._lerobot_vision_gradient_checkpointing = bool(gradient_checkpointing)
+    vision_backbone._lerobot_temporal_layer_stride = int(temporal_layer_stride)
+    vision_backbone._lerobot_history = None
     vision_backbone._lerobot_memory_efficient_vision_backbone_patched = True
 
 
@@ -968,6 +1117,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         _patch_memory_efficient_vision_backbone(
             self._backbone(),
             gradient_checkpointing=bool(self.config.gradient_checkpointing),
+            temporal_layer_stride=int(self.config.temporal_layer_stride),
         )
         _patch_training_kv_collection(self._backbone())
         _patch_numpy_dtype_cast(self._backbone())
@@ -1004,6 +1154,18 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 num_layers=num_layers,
             ).to(device=device, dtype=torch.float32)
             _patch_action_expert_pointmap_read(action_expert, self.depth_stream)
+
+        # Continuous state-history tokens (04_memory.md §2.4): one shared linear
+        # projecting a past proprio state into the text embedding space, scattered
+        # onto STATE_HISTORY_TOKEN placeholders. The ONLY new weights of the MEM
+        # build — whitelist in _apply_actor_freeze/_apply_critic_freeze.
+        self.state_history_projector: nn.Linear | None = None
+        state_feature = self.config.input_features.get(OBS_STATE)
+        if state_feature is not None and state_feature.shape:
+            wte_weight = self._backbone().transformer.wte.weight
+            self.state_history_projector = nn.Linear(
+                int(state_feature.shape[0]), int(wte_weight.shape[-1])
+            ).to(device=wte_weight.device, dtype=torch.float32)
 
         self.train(self.training)
 
@@ -1186,12 +1348,48 @@ class MolmoAct2Policy(PreTrainedPolicy):
         return groups
 
     def _model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        self._stash_history_inputs(batch)
         compute_dtype = _torch_dtype(self.config.dtype)
         return {
             key: value.to(dtype=compute_dtype) if value.is_floating_point() else value
             for key, value in batch.items()
             if key in _MODEL_INPUT_KEYS and value is not None
         }
+
+    def _stash_history_inputs(self, batch: dict[str, Tensor]) -> None:
+        """MEM short-term memory transport (04_memory.md §2.4). History rides the
+        batch, not the backbone kwargs: the video-encoder frames are stashed on the
+        vision backbone (consumed inside encode_image) and the projected past states
+        on the backbone (consumed inside build_input_embeddings). Consume-once
+        semantics on both stashes; every forward path funnels through
+        _model_inputs, so a stash never crosses forwards. Single inference thread
+        only — same constraint as the attention-capture patches."""
+        backbone = self._backbone()
+        device = next(self.model.parameters()).device
+
+        frames = batch.get("history_images")
+        if frames is None:
+            backbone.vision_backbone._lerobot_history = None  # never leak across batches
+        else:
+            backbone.vision_backbone._lerobot_history = (
+                frames.to(device),
+                batch["history_image_times"].to(device),
+                batch["history_images_mask"].to(device),
+            )
+
+        states = batch.get("history_state_values")
+        if states is None:
+            backbone._lerobot_state_history = None
+        else:
+            if self.state_history_projector is None:
+                raise RuntimeError(
+                    "history_state_values present but the policy has no state_history_projector "
+                    "(config.input_features lacks observation.state)."
+                )
+            embeds = self.state_history_projector(
+                states.to(device=device, dtype=self.state_history_projector.weight.dtype)
+            )
+            backbone._lerobot_state_history = (embeds, int(batch["state_history_token_id"]))
 
     def _run_prefix_backbone(self, model_inputs: dict[str, Tensor]) -> Any:
         """Run the prefix backbone forward (``use_cache``); ``outputs`` carries past_key_values."""

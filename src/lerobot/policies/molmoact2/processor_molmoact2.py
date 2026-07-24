@@ -53,6 +53,10 @@ ACTION_TOKEN_PREFIX = "<action_"  # nosec B105
 STATE_START_TOKEN = "<state_start>"  # nosec B105
 STATE_END_TOKEN = "<state_end>"  # nosec B105
 STATE_TOKEN_PREFIX = "<state_"  # nosec B105
+# Placeholder for one past proprio state (04_memory.md §2.4): an unused reserved
+# token whose input embedding gets the linearly projected state ADDED on top,
+# mirroring the <im_patch> + image-features scatter.
+STATE_HISTORY_TOKEN = "<extra_0>"  # nosec B105
 
 _QUESTION_TRAILING_SENTENCE_PUNCTUATION = ".,!?;:,\u2026"
 _QUESTION_TRAILING_CLOSERS = "\"'\u201d\u2019)]}"
@@ -218,25 +222,23 @@ def _build_robot_text(
     num_images: int,
     current_subtask: str | None = None,
     metadata: dict[str, Any] | None = None,
-    history_states: list[str] | None = None,
-    history_image_spans: list[tuple[str, int, int]] | None = None,
+    num_history_states: int = 0,
 ) -> str:
-    """Memory clauses: None disables a clause entirely (byte-identical legacy prompt).
+    """Memory clauses: None/0 disables a clause entirely (byte-identical legacy prompt).
 
-    history_image_spans: (camera, first, last) 1-based image numbers of past frames
-    appended after the current camera images (pretraining layout keeps cameras first)."""
+    num_history_states: past proprio states rendered as continuous placeholder
+    positions (one STATE_HISTORY_TOKEN per timestep, oldest to newest; the model
+    scatters projected states onto them — 04_memory.md §2.4). Image history is
+    NOT in the prompt: it enters through the MEM video encoder."""
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
     subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
     history_clause = (
-        f" The recent states of the robot, oldest to newest, were {' '.join(history_states)}."
-        if history_states
+        f" The recent states of the robot, oldest to newest, are "
+        f"{STATE_HISTORY_TOKEN * num_history_states}."
+        if num_history_states > 0
         else ""
-    )
-    history_clause += "".join(
-        f" Images {first} to {last} are earlier frames from the {cam} camera, oldest to newest."
-        for cam, first, last in history_image_spans or []
     )
     metadata_clause = ""
     if metadata is not None:
@@ -623,11 +625,14 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     # memory clause and the answer's memory span (subtask-only sample).
     summary_texts: list[str] = field(default_factory=list)
     summary_dropout: float = 0.3
-    # Short-term memory: recent-state clause built from the buffer/RTC lookback windows
-    # (ReplayBuffer.sample() / assemble_history_windows, complementary key
-    # "history.{OBS_STATE}"). Absent key = clause off (byte-identical legacy prompt);
-    # dropout only applies to training text, same convention as the other clauses.
+    # Short-term memory (04_memory.md §2.4): state history becomes continuous
+    # placeholder tokens, image history rides to the MEM video encoder as tensors
+    # (complementary keys "history.{OBS_STATE}" / "history.{OBS_IMAGES}.{cam}").
+    # Absent keys = clause/tensors off (byte-identical legacy prompt); one dropout
+    # flip removes the WHOLE block (states + frames) for training text only.
+    # history_stride_seconds parameterizes the e(t) time stamps.
     history_dropout: float = 0.3
+    history_stride_seconds: float = 1.0
     # Runtime toggle (not persisted): "action" builds the action prompt;
     # "subtask_generation" builds the generation prompt/labels instead. Callers
     # flip it around a pipeline call so generation gets the SAME normalization.
@@ -657,6 +662,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             )
         self._action_start_id = _single_token_id(self.processor.tokenizer, ACTION_START_TOKEN)
         self._action_end_id = _single_token_id(self.processor.tokenizer, ACTION_END_TOKEN)
+        self._state_history_id = _single_token_id(self.processor.tokenizer, STATE_HISTORY_TOKEN)
         self._eos_token = self.processor.tokenizer.eos_token or ""
         self._eos_token_id = self.processor.tokenizer.eos_token_id
 
@@ -681,6 +687,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "summary_texts": list(self.summary_texts),
             "summary_dropout": self.summary_dropout,
             "history_dropout": self.history_dropout,
+            "history_stride_seconds": self.history_stride_seconds,
         }
 
     def _resolve_max_sequence_length(
@@ -855,12 +862,16 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         tasks = self._extract_tasks(observation, complementary, batch_size)
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         prev_summaries, target_summaries = self._extract_summaries(complementary, batch_size)
+        history_stack = self._extract_history_image_stack(
+            complementary, self._resolve_image_keys(observation), batch_size
+        )
 
         state_np = state.detach().cpu().numpy()
         prompts: list[str] = []
         fulls: list[str] = []
         mids: list[str] = []  # prompt + memory prefix; splits the answer span into memory/subtask
         flat_images: list[np.ndarray] = []
+        history_on = torch.ones(batch_size, dtype=torch.bool)
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
             flat_images.extend(images)
@@ -870,6 +881,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             if name is not None and random.random() < self.summary_dropout:
                 prev_summary = None
                 target_summary = None
+            if name is not None and random.random() < self.history_dropout:
+                history_on[batch_idx] = False  # training text only; the encoder sees K=1
             prompt = _build_subtask_generation_text(
                 task=tasks[batch_idx],
                 discrete_state_string=_build_discrete_state_string(
@@ -929,6 +942,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             inputs["labels"] = labels
             inputs["summary_label_mask"] = summary_mask
         complementary.update(dict(inputs))
+        if history_stack is not None:
+            frames, times = history_stack
+            complementary["history_images"] = frames
+            complementary["history_image_times"] = times
+            complementary["history_images_mask"] = history_on
         complementary["subtask_valid"] = valid
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
@@ -967,43 +985,71 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         return render(prev), render(complementary["summary_target_index"])
 
-    def _extract_history_states(self, complementary: dict, batch_size: int) -> list[list[str] | None]:
-        """Discrete-state strings for the short-term history window (oldest → newest
-        per sample), read from complementary key "history.{OBS_STATE}" (shape
-        (B, T_h, D), the ReplayBuffer.sample()/assemble_history_windows lookback).
-        None per sample when history wasn't gathered (memory.history_keys empty or
-        doesn't include OBS_STATE) — same clause-off convention as subtask/metadata."""
+    def _extract_history_states(self, complementary: dict, batch_size: int) -> Tensor | None:
+        """Normalized past states for the short-term history window, read from
+        complementary key "history.{OBS_STATE}" (the ReplayBuffer.sample()/
+        assemble_history_windows lookback, already normalized like the current
+        state upstream). Returns (B, T_h, D) float32 oldest → newest, or None when
+        history wasn't gathered. Consumed as continuous state tokens (§2.4): one
+        STATE_HISTORY_TOKEN position per timestep, projected by the model."""
         history = complementary.get(f"history.{OBS_STATE}")
         if history is None:
-            return [None] * batch_size
-        arr = torch.as_tensor(history, dtype=torch.float32).detach().cpu().numpy()
+            return None
+        arr = torch.as_tensor(history, dtype=torch.float32).detach().cpu()
         if arr.ndim == 2:
             arr = arr[None]
-        return [
-            [_build_discrete_state_string(arr[b, t], self.num_state_tokens) for t in range(arr.shape[1])]
-            for b in range(batch_size)
-        ]
+        if int(arr.shape[0]) != batch_size:
+            raise ValueError(
+                f"history.{OBS_STATE} batch size {int(arr.shape[0])} does not match {batch_size}."
+            )
+        return arr
 
-    def _extract_history_images(
-        self, complementary: dict, batch_size: int
-    ) -> list[list[tuple[str, list[np.ndarray]]] | None]:
-        """Past camera frames for the short-term memory window, read from complementary
-        keys "history.{OBS_IMAGES}.{cam}" (B, T_h, C, H, W; uint8 cache rows or
-        policy-format floats — _normalize_image reconciles both). Per sample: a list of
-        (camera, frames oldest → newest), or None when no image history was gathered."""
+    def _extract_history_image_stack(
+        self, complementary: dict, image_keys: list[str], batch_size: int
+    ) -> tuple[Tensor, Tensor] | None:
+        """Past camera frames for the MEM video encoder, read from complementary keys
+        "history.{OBS_IMAGES}.{cam}" (B, T_h, C, H, W; uint8 cache rows or policy-format
+        floats — _normalize_image reconciles both). Frames go through the SAME
+        image-processor transform as the prompt images (crop_mode "resize": one crop,
+        729 patches) and ride to the model as a separate tensor, never as prompt images.
+
+        Returns (frames, times): frames (B, cams, T_h, num_patches, patch_dim) bfloat16
+        (the ViT consumes bf16; halves transport vs float32) with cams ordered like the
+        prompt images, times (T_h,) seconds-before-now oldest → newest (for the
+        sinusoidal e(t)); or None when no image history."""
         prefix = f"history.{OBS_IMAGES}."
-        keys = sorted(k for k in complementary if k.startswith(prefix) and not k.endswith("_is_pad"))
+        keys = [k for k in complementary if k.startswith(prefix) and not k.endswith("_is_pad")]
         if not keys:
-            return [None] * batch_size
-        out = []
+            return None
+        expected = [key for key in image_keys if f"history.{key}" in keys]
+        if len(expected) != len(image_keys) or len(keys) != len(image_keys):
+            raise ValueError(
+                f"MEM video encoder needs image history for exactly the prompt cameras "
+                f"{image_keys}, got history keys {sorted(keys)}."
+            )
+        flat_frames: list[np.ndarray] = []
+        num_slots = None
         for batch_idx in range(batch_size):
-            entry = []
-            for key in keys:
-                frames = complementary[key]
+            for key in image_keys:
+                frames = complementary[f"history.{key}"]
                 item = frames[batch_idx] if getattr(frames, "ndim", 0) >= 5 else frames
-                entry.append((key.removeprefix(prefix), [_normalize_image(f) for f in item]))
-            out.append(entry)
-        return out
+                if num_slots is None:
+                    num_slots = len(item)
+                flat_frames.extend(_normalize_image(f) for f in item)
+        pixel_values = self.processor.image_processor(images=flat_frames)["pixel_values"]
+        pixel_values = torch.as_tensor(np.asarray(pixel_values)).to(torch.bfloat16)
+        if int(pixel_values.shape[0]) != batch_size * len(image_keys) * num_slots:
+            raise ValueError(
+                "MEM video encoder requires crop_mode 'resize' (one crop per frame); "
+                f"got {int(pixel_values.shape[0])} crops for "
+                f"{batch_size * len(image_keys) * num_slots} history frames."
+            )
+        frames = pixel_values.view(batch_size, len(image_keys), num_slots, *pixel_values.shape[1:])
+        times = torch.tensor(
+            [self.history_stride_seconds * (num_slots - j) for j in range(num_slots)],
+            dtype=torch.float32,
+        )
+        return frames, times
 
     @staticmethod
     def _extract_metadata(complementary: dict, batch_size: int) -> list[dict | None]:
@@ -1061,8 +1107,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         metadata_list = self._extract_metadata(complementary, batch_size)
-        history_states_list = self._extract_history_states(complementary, batch_size)
-        history_images_list = self._extract_history_images(complementary, batch_size)
+        history_states = self._extract_history_states(complementary, batch_size)
+        image_keys = self._resolve_image_keys(observation)
+        history_stack = self._extract_history_image_stack(complementary, image_keys, batch_size)
 
         prompt_texts: list[str] = []
         full_texts: list[str] = []
@@ -1070,41 +1117,35 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         state_np = state.detach().cpu().numpy()
         build_action_labels = action is not None and self.action_mode in {"discrete", "both"}
         max_num_images = 0
+        history_on = torch.ones(batch_size, dtype=torch.bool)
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
             discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
             current_subtask = subtask_texts[batch_idx]
             metadata = metadata_list[batch_idx]
-            history_states = history_states_list[batch_idx]
-            history_images = history_images_list[batch_idx]
             if build_action_labels:  # training text: per-component dropout (π0.7 recipe)
                 if random.random() < self.subtask_dropout:
                     current_subtask = None
                 if random.random() < self.metadata_dropout:
                     metadata = None
                 if random.random() < self.history_dropout:
-                    # One flip drops the whole short-term block: states and frames
-                    # describe the same window, dropping them independently would
-                    # let the model exploit whichever survived.
-                    history_states = None
-                    history_images = None
-            history_image_spans = None
-            if history_images:
-                images = list(images)
-                history_image_spans = []
-                for cam, frames in history_images:
-                    history_image_spans.append((cam, len(images) + 1, len(images) + len(frames)))
-                    images.extend(frames)
+                    # One flip drops the whole short-term block: state placeholders
+                    # AND the sample's temporal keys in the video encoder — the
+                    # sample degenerates to the exact K=1 pretrained path.
+                    history_on[batch_idx] = False
             flat_images.extend(images)
             max_num_images = max(max_num_images, len(images))
             prompt = _build_robot_text(
                 task=tasks[batch_idx],
                 discrete_state_string=discrete_state,
                 num_images=len(images),
-                history_states=history_states,
+                num_history_states=(
+                    int(history_states.shape[1])
+                    if history_states is not None and history_on[batch_idx]
+                    else 0
+                ),
                 current_subtask=current_subtask,
                 metadata=metadata,
-                history_image_spans=history_image_spans,
             )
             prompt_texts.append(prompt)
             if build_action_labels:
@@ -1132,7 +1173,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_dim=max(real_action_dim, 1),
             action_horizon=action_horizon,
             include_discrete_action=build_action_labels,
-            history_num_samples=max((len(h) for h in history_states_list if h), default=0),
+            history_num_samples=int(history_states.shape[1]) if history_states is not None else 0,
         )
         if int(inputs["input_ids"].shape[1]) > max_sequence_length:
             raise ValueError(
@@ -1145,6 +1186,14 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         complementary.update(dict(inputs))
         complementary["action_dim_is_pad"] = action_dim_is_pad
+        if history_states is not None:
+            complementary["history_state_values"] = history_states
+            complementary["state_history_token_id"] = torch.tensor(self._state_history_id)
+        if history_stack is not None:
+            frames, times = history_stack
+            complementary["history_images"] = frames
+            complementary["history_image_times"] = times
+            complementary["history_images_mask"] = history_on
         if action_horizon_is_pad is not None:
             complementary["action_horizon_is_pad"] = action_horizon_is_pad
 
@@ -1264,6 +1313,7 @@ def make_molmoact2_pre_post_processors(
             max_action_dim=config.expected_max_action_dim,
             env_action_dim=env_action_dim,
             history_dropout=history_dropout,
+            history_stride_seconds=config.history_stride_seconds,
         ),
         DeviceProcessorStep(device=config.device),
     ]

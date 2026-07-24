@@ -81,11 +81,9 @@ def infer_molmoact2_max_sequence_length(
         + MOLMOACT2_SEQUENCE_LENGTH_MARGIN
     )
     if history_num_samples > 0:
-        # Short-term memory clause: each past state renders as a discrete-state string
-        # (state_dim tokens + start/end wrappers + separator), after a fixed preamble.
-        prompt_tokens += (
-            history_num_samples * (state_dim + 3) + MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET
-        )
+        # Short-term memory clause: a fixed text lead-in plus one continuous
+        # placeholder position per past state (pi07_wiki/04_memory.md §2.4).
+        prompt_tokens += history_num_samples + MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET
     action_tokens = 0
     if include_discrete_action:
         action_tokens_per_step = max(
@@ -126,6 +124,18 @@ class MolmoAct2Config(PreTrainedConfig):
     # Offline memmap cache: image/depth rows kept every N-th frame (low-dim stays
     # dense). Must divide chunk_size. Requires a cache built with the same stride.
     image_stride: int = 1
+
+    # --- MEM video encoder (pi07_wiki/04_memory.md §2.4) -----------------------
+    # Image history enters the ViT as extra time slices; every
+    # temporal_layer_stride-th resblock extends its attention keys with the
+    # same-patch positions of strictly older frames (causal, one softmax), and
+    # past-frame rows are dropped before the LLM — zero extra LLM tokens.
+    # history_stride_seconds parameterizes the sinusoidal e(t) time stamps
+    # (past frame k of T_h → k * stride seconds before now, current = 0);
+    # synced from memory.history_window_seconds / history_num_samples on the
+    # RL config.
+    temporal_layer_stride: int = 4
+    history_stride_seconds: float = 1.0
 
     # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
     # None => depth-free: no encoder built, no depth key shipped, forward cost

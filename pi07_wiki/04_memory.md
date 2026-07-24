@@ -10,7 +10,9 @@ absent, and with everything off the prompt is byte-identical to the legacy model
 
 Literature anchors: π0.7 (arXiv 2604.15483 — history frames @ 1 s stride, history
 dropout 0.3, component dropouts, inference metadata quality 5 / mistake false);
-PI MEM (recurrent LLM-annotated summary memory); HAMLET (arXiv 2510.00695 —
+PI MEM (arXiv 2603.03596 — video encoder w/ temporal attention every 4th layer +
+recurrent LLM-annotated summary memory; 5 past frames @ 1 s pretrain, stretches
+to 18 @ inference); HAMLET (arXiv 2510.00695 —
 causal-confusion caution: window/stride/dropout must be ablatable).
 
 ## 1. Prompt anatomy
@@ -21,11 +23,15 @@ causal-confusion caution: window/stride/dropout must be ablatable).
 The task is to {task}.
 [ The current step is {subtask}. ]                                   ← HL subtask
 The current state of the robot is {discrete state string}.
-[ The recent states of the robot, oldest to newest, were {s_1 … s_T}. ]  ← proprio history
-[ Images i to j are earlier frames from the {cam} camera, oldest to newest. ]  ← frame history
+[ The recent states of the robot, oldest to newest, are: <T_h continuous positions> ]  ← proprio history (§2.4)
 [ The quality is {q} of 5. ] [ The robot made {a mistake | no mistakes}. ]     ← metadata
 Given these, what action should the robot take to complete the task?
 ```
+
+Image history is **not in the prompt** — it enters through the MEM video encoder
+(§2.4) at zero LLM-token cost. The proprio-history clause keeps its text lead-in,
+but the values are continuous embeddings (one sequence position per past state),
+not digit strings.
 
 The pretraining-era setup/control clauses ("The setup is `<setup_start>…`",
 "The expected control mode is …") were **removed 2026-07-22** — they existed to
@@ -84,10 +90,15 @@ Configured by the shared, model-agnostic `MemoryConfig`
 
 ```python
 history_keys: list[str] = []        # empty = disabled (zero behavior change)
-history_window_seconds: float = 4.0
-history_num_samples: int = 4        # 4 s @ 30 fps → offsets [30, 60, 90, 120]
+history_window_seconds: float = 5.0
+history_num_samples: int = 5        # 5 s @ 30 fps → offsets [30, 60, 90, 120, 150]
 history_dropout: float = 0.3
 ```
+
+(Widened 4→5 past frames 2026-07-22 to match MEM's pretraining setup — 5 past +
+current, 1 s stride. The sinusoidal e(t) in §2.4 is parameterized in real seconds,
+so stride/count can be stretched at inference without retraining — MEM shows
+6-frame training generalizing to 18 frames / 54 s.)
 
 `history_offsets(fps)` converts once to per-key step offsets. Valid keys: any
 observation key, `action` (executed actions), and the canonical depth key
@@ -115,20 +126,21 @@ restart, **not** on intervention (buffers keep contiguous frames across takeover
 unit-tested value-for-value); the inference worker merges the windows into the
 observation before `build_inference_batch`.
 
-### 2.3 Consumption (Phase 6 — partially built)
+### 2.3 Consumption (redesigned 2026-07-22 → MEM architecture, §2.4)
 
-What the model actually sees today:
-
-- **Proprio history** — consumed: each past state rendered as a discrete-state
-  string in the "recent states" clause, with the same normalization as the current
-  state (`_extract_history_states`,
-  [processor_molmoact2.py:1008](../src/lerobot/policies/molmoact2/processor_molmoact2.py#L1008)).
-- **Image history** — consumed: past frames appended as extra prompt images after
-  the current cameras (pretraining layout keeps cameras first) with the
-  "Images i to j are earlier frames" span clause
-  (`_extract_history_images`, [processor_molmoact2.py:1025](../src/lerobot/policies/molmoact2/processor_molmoact2.py#L1025)).
-  The sequence-length budget accounts for them.
-- **Depth history** — consumed (built 2026-07-21): the pointmap encoder takes the
+- **Proprio history** — continuous state tokens (§2.4): each past state is
+  linearly projected into the backbone embedding space, one sequence position per
+  timestep, behind a text lead-in clause. The previous discrete-string rendering
+  (`_extract_history_states` digit strings) is replaced; normalization (same
+  transform as the current state) is unchanged.
+- **Image history** — MEM video encoder (§2.4): past frames enter the ViT as
+  extra time slices with temporal attention every 4th layer and are dropped
+  before the LLM — zero extra LLM tokens. The prompt-image path (past frames as
+  extra prompt images + "Images i to j are earlier frames" clause,
+  `_extract_history_images`) is **deleted 2026-07-22**: 2 cams × 4 frames cost
+  ~1,700 LLM tokens per step, paid again in KV at every decode. Checkpoints
+  trained with that prompt format are orphaned by design.
+- **Depth history** — consumed (built 2026-07-21, unchanged): the pointmap encoder takes the
   `history.depth.{cam}.depth` window through the same per-patch CNN with learned
   per-slot time embeddings (past oldest→newest + current), concatenating
   `(T_h+1)·N` tokens into the DepthStream; `DepthPointmapConfig.history_num_samples`
@@ -140,6 +152,72 @@ What the model actually sees today:
   *actions* should be fed at all stays a causal-confusion ablation (candidates if
   a richer channel is ever wanted: MEM-style compression, HAMLET moment tokens, a
   DepthStream-style gated stream).
+
+### 2.4 MEM video encoder + continuous state history (design 2026-07-22)
+
+From PI's MEM paper (arXiv 2603.03596). Decisions: encoder path is THE image
+history path (prompt path deleted); continuous proprio-history tokens; 5 past +
+current @ 1 s; **no gate** (the $e(0)=0$ boundary condition is the identity
+story — nothing new is added to the attention path, unlike DepthStream);
+repeat-padding v1 (pad mask not threaded into ViT attention; a repeated first
+frame at episode start is approximately truthful — masking is the contained
+fallback if early-episode telemetry looks off).
+
+**Video encoder.** $K$ frames per camera (oldest → current, $t$ = seconds before
+now, current $t=0$), $n=729$ patches per frame (crop_mode "resize": one 378×378
+crop per camera — "same patch across time" is the same index in one grid). All
+frames share the pretrained 27-layer ViT. Most layers are spatial-only, run
+per-frame exactly as today. At every 4th resblock (0-indexed 3, 7, 11, 15, 19,
+23), two changes:
+
+1. Time stamp at the layer input (paper eq.; accumulates in the residual stream):
+
+$$z^{p,t}_{l-1} \leftarrow z^{p,t}_{l-1} + e(t), \qquad e(0)=0$$
+
+with $e$ sinusoidal in real seconds — this is what lets stride/count stretch at
+inference.
+
+2. Extended key set, same $W_q, W_k, W_v, W_o$, one softmax. For the query at
+patch $i$ of frame $t$ (every frame, causal — not just the current one):
+
+$$\mathrm{keys}(t,i) = \{k_{t,j}\}_{j=1..n} \cup \{k_{t',i} : t' \text{ older than } t\}$$
+
+i.e. own frame spatially + the same patch position in strictly older frames.
+Spatial and temporal context compete in a single normalization; complexity
+$\mathcal{O}(Kn^2 + nK^2)$, not $\mathcal{O}(K^2n^2)$.
+
+After resblock 23 (the last temporal layer) past-frame rows are discarded; only
+current-frame rows reach the feature taps (`vit_layers` [−9, −3] = resblocks 18,
+24 — the tap at 18 collects while past rows are still in flight, so current rows
+are sliced at concat time), pooling, projector, LLM. **Invariant: the
+vision-backbone output shape and the LLM sequence are byte-identical to the
+single-frame model** — past frames influence the output only through attention
+reads. With $K=1$ the op is *literally* the pretrained layer ($e(0)=0$, empty
+temporal key set) → bit-identity test, and the history-dropout sample (whole
+short-term block, images + states together) degenerates to exactly the
+pretrained path.
+
+**Continuous state history.** Each past state (normalized with the current
+state's transform) is projected by one shared linear layer to one sequence
+position:
+
+$$h_{t-k} = W s_{t-k} + b, \qquad s_{t-k} \in \mathbb{R}^7,\ W \in \mathbb{R}^{2560\times 7}$$
+
+rendered behind a text lead-in ("The recent states of the robot, oldest to
+newest, are:") as $T_h$ placeholder tokens whose embeddings are overwritten by
+the scatter mechanism image patches already use
+([modeling_molmoact2.py:242](../src/lerobot/policies/molmoact2/modeling_molmoact2.py#L242)).
+Which timestep is which = sequence order. ~5 positions replace ~20–30 digit-string
+tokens per state, and the LLM gets full float precision instead of parsing
+digits. $W$ is the **only new parameter in the whole build** → freeze-whitelist
++ optimizer-group entries required (the pointmap gate lesson). The current state
+stays a text clause (pretraining format); the generation prompt keeps its §1.2
+shape (no proprio-history clause) but HL decodes see image history automatically
+through the shared encoder.
+
+Not adopted from our own parked list: gates, HAMLET moment tokens,
+DepthStream-style streams — MEM ships none of them. Build checklist: Phase 6 of
+[archive/memory_build_plan.md](archive/memory_build_plan.md).
 
 ## 3. Long-term memory: subtask + MEM summary
 

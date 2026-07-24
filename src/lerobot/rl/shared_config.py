@@ -15,8 +15,8 @@ class MemoryConfig:
     """
 
     history_keys: list[str] = field(default_factory=list)
-    history_window_seconds: float = 4.0
-    history_num_samples: int = 4
+    history_window_seconds: float = 5.0
+    history_num_samples: int = 5
     # π0.7 recipe: dropout on the consumption-side history clause (training text only).
     history_dropout: float = 0.3
     # π0.7-style metadata steering: per-episode quality + per-window mistake
@@ -25,7 +25,7 @@ class MemoryConfig:
     metadata_enabled: bool = False
 
     def history_offsets(self, fps: float) -> dict[str, list[int]] | None:
-        """Per-key lookback distances in buffer steps, e.g. 4 s / 4 samples @ 30 fps → [30, 60, 90, 120]."""
+        """Per-key lookback distances in buffer steps, e.g. 5 s / 5 samples @ 30 fps → [30, 60, 90, 120, 150]."""
         if not self.history_keys:
             return None
         stride = self.history_window_seconds * fps / self.history_num_samples
