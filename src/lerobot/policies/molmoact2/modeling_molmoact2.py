@@ -1162,10 +1162,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.state_history_projector: nn.Linear | None = None
         state_feature = self.config.input_features.get(OBS_STATE)
         if state_feature is not None and state_feature.shape:
-            wte_weight = self._backbone().transformer.wte.weight
+            # Output dim = the LLM token-embedding width (the projected state is ADDED
+            # onto placeholder token embeddings). Read it from config, not the wte
+            # module: MolmoAct2Embedding splits the table into embedding/new_embedding
+            # Parameters and exposes no .weight.
+            d_text = int(self._hf_model().config.text_config.hidden_size)
+            device = next(self.model.parameters()).device
             self.state_history_projector = nn.Linear(
-                int(state_feature.shape[0]), int(wte_weight.shape[-1])
-            ).to(device=wte_weight.device, dtype=torch.float32)
+                int(state_feature.shape[0]), d_text
+            ).to(device=device, dtype=torch.float32)
 
         self.train(self.training)
 

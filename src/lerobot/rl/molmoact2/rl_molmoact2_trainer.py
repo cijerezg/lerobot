@@ -1012,7 +1012,14 @@ class MolmoAct2Trainer(Trainer):
         if idx.numel() == 0:
             return None
 
-        obs_valid = {k: v[idx] for k, v in observations.items() if isinstance(v, torch.Tensor)}
+        # uint16 (raw depth, incl. history.depth.*) can't be index-gathered on CUDA;
+        # route those through CPU. Everything else indexes in place.
+        def _gather(v: torch.Tensor) -> torch.Tensor:
+            if v.dtype == torch.uint16:
+                return v.cpu()[idx.cpu()].to(v.device)
+            return v[idx]
+
+        obs_valid = {k: _gather(v) for k, v in observations.items() if isinstance(v, torch.Tensor)}
         comp_valid: dict[str, Any] = {"subtask_index": flat_index[idx]}
         for key in ("summary_prev_index", "summary_target_index"):
             if key in comp:
