@@ -303,3 +303,94 @@ python -m lerobot.probes.critic --config path/to/config.yaml
 | `critic_grad_frames` | `200` | Frames sampled for $\|\nabla_\text{vision} V\|$ (forward + backward) |
 
 ---
+
+## 9. MEM History Influence
+
+**What it does**: Measures how much the short-term memory (the MEM video encoder over past frames + the continuous proprio-history tokens, see [`04_memory.md` §2.4](../../pi07_wiki/04_memory.md)) actually shifts the policy's predicted action chunk.
+
+**Why it matters**: The memory path adds parameters and tokens, but that is worthless if the model ignores them. A dead memory feature reads ~0 here; a working one moves the actions, and — the causal-confusion question — the movement should track training. Because the MEM encoder has **no gate** (unlike the depth read), history influences the output from step 0 with pretrained attention weights, so the signal to watch is the *trend* and the *per-channel split*, not the raw magnitude.
+
+### Computation
+
+The memory is not sampled or synthesized — it is the frame's **actual observed past**. For a probe frame at global index $g$ (episode start $g_0$), the lookback window is the real frames at offsets $[150,120,90,60,30]$ steps (5→1 s ago at 30 fps), oldest → newest, repeat-padded to $g_0$ on underflow (the buffer's π0.7 pad rule):
+
+$$V = (I_{g-150},\dots,I_{g-30})\ \text{per camera}, \qquad S = (s_{g-150},\dots,s_{g-30}).$$
+
+The four **conditions** are not different memories — they are the *same* memory $m=(V,S)$ selectively revealed by two binary gates applied at the model input (the token sequence, and hence its length and positions, is identical across all four; only content is gated):
+
+- $u\in\{0,1\}$ — image history, via `history_images_mask`. $u=0$ masks the past-frame temporal-attention keys to $-\infty$, so the ViT computes the exact single-frame (K=1) encoding; $u=1$ enables full temporal attention over $V$.
+- $w\in\{0,1\}$ — state history, via presence of `history_state_values`. $w=0$ skips the scatter (placeholders keep their base reserved-token embedding); $w=1$ adds the projected states $W s_{g-k}+b$.
+
+The flow head is deterministic once its noise is fixed. With a fixed seed $\epsilon$ (a fresh generator seeded identically before each call; CUDA graphs off for eager determinism), let
+
+$$a^{(u,w)} = \pi_\theta\big(o_g,\ \tau,\ m;\ u,\ w,\ \epsilon\big)\ \in\ \mathbb{R}^{H\times d}, \qquad H=50,\ d=7$$
+
+be the **normalized** action chunk (q01/q99 space, $\approx[-1,1]$ per joint). Per frame, against the memoryless baseline $a^{(0,0)}$:
+
+$$\mathrm{RMSE}_c=\sqrt{\frac{1}{Hd}\sum_{t,j}\big(a^{(c)}_{t,j}-a^{(0,0)}_{t,j}\big)^2}, \qquad \mathrm{max}_c=\max_{t,j}\big|a^{(c)}_{t,j}-a^{(0,0)}_{t,j}\big|$$
+
+for the three conditions $c\in\{\text{full}=(1,1),\ \text{images}=(1,0),\ \text{states}=(0,1)\}$, reported as the mean over probe frames. This is a **discrete causal intervention** — the finite-difference analog of $\lVert\partial a/\partial m\rVert$ — holding frame, task, noise, and weights fixed, so the delta is attributable solely to the gated memory. Three deliberate choices:
+
+- **Same $\epsilon$ across conditions** isolates conditioning from flow stochasticity; a varying seed would measure noise variance instead.
+- **$a^{(0,0)}$ as the anchor** makes this a within-model sensitivity (same $\theta$, memory gated off), not a model-vs-model gap.
+- **No additivity is assumed**: $\mathrm{influence}_\text{images}+\mathrm{influence}_\text{states}\neq\mathrm{influence}_\text{full}$ in general, because the two channels interact through the shared LLM — so `full` is measured directly, never summed.
+
+**Interpretation**: `full` is total memory influence; `images` / `states` isolate each channel. `images`≈0 while `states` moves (or vice versa) flags a dead channel. A value that stays flat *and* buys no loss improvement from memory is the causal-confusion signal — memory present but unused.
+
+### Outputs
+
+| File | Description |
+|------|-------------|
+| `influence.json` | Per-frame and mean RMSE / max-\|Δ\| for full / images / states |
+| `influence.png` | Bar chart of the mean per-channel action Δ vs no-memory |
+
+Registered probe only (runs at each validation step; no standalone CLI). Skips itself when no short-term memory is configured or `action_mode: discrete`.
+
+### Config
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_mem_history_influence` | `false` | Enable this probe |
+| `n_frames_per_episode` | `128` | Frames measured per episode (× 4 forwards each — heavy; lower for quick loops) |
+| `max_episodes` | `5` | Episodes sampled |
+| `random_seed` | `42` | Frame-sampling seed |
+
+---
+
+## 10. MEM Temporal Attention Mass
+
+**What it does**: For each temporal layer of the MEM video encoder, measures what fraction of the **current frame's** attention mass lands on **past frames** (rather than on its own frame's patches).
+
+**Why it matters**: This is the mechanism-level read on whether the temporal path engages at all, and at what depth. Probe 9 asks "does memory change the output"; this asks "is the encoder actually looking at the past" — a temporal mass pinned at the uniform floor means the past keys are being ignored regardless of what the downstream action does.
+
+### Computation
+
+The MEM encoder makes every $\text{temporal\_layer\_stride}$-th ViT layer attend, per patch, over a union of keys: its own frame's $n=729$ patches plus the *same patch position* in each strictly-older frame (causal), all in one softmax ([`04_memory.md` §2.4](../../pi07_wiki/04_memory.md)). With $T$ frames in the window (here $T=6$: 5 past + current) and softmax weights $\alpha^{(\ell)}_{h,i}(\cdot)$, the temporal mass of the current-frame query at patch $i$, head $h$, layer $\ell$ is the weight on its $T-1$ past keys:
+
+$$\mu^{(\ell)}_{h,i}=\sum_{t'=0}^{T-2}\alpha^{(\ell)}_{h,i}\big(\text{patch }i\text{ of frame }t'\big)\ \in [0,1].$$
+
+The probe records the mean over batch, heads, and patches, one scalar per temporal layer, averaged over frames:
+
+$$\bar\mu^{(\ell)}=\frac{1}{B\,H\,n}\sum_{b,h,i}\mu^{(\ell)}_{b,h,i}.$$
+
+**Interpretation**: read $\bar\mu^{(\ell)}$ against the **uniform baseline** $\tfrac{T-1}{\,n+T-1\,}=\tfrac{5}{734}\approx 0.0068$ — the mass a query would place on the past if attention were flat over all keys. Near that floor means no preferential use of history; well above it means the current frame is actively pulling from the past at that depth. Rising values over training (and which layers rise) show the mechanism waking up.
+
+### Outputs
+
+| File | Description |
+|------|-------------|
+| `temporal_attention.json` | Per-layer mean ± std temporal mass |
+| `temporal_attention.png` | Bar chart of past-frame attention mass by ViT temporal layer |
+
+Registered probe only (runs at each validation step; no standalone CLI). Implemented via a zero-overhead capture hook in `_temporal_vision_block` (`_MEM_TEMPORAL_CAPTURE`, no-op when disabled). Skips itself when no image history is configured.
+
+### Config
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enable_mem_temporal_attention` | `false` | Enable this probe |
+| `n_frames_per_episode` | `128` | Frames measured per episode (one prefix forward each) |
+| `max_episodes` | `5` | Episodes sampled |
+| `random_seed` | `42` | Frame-sampling seed |
+
+---

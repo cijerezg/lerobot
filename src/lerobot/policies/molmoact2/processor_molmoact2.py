@@ -1200,6 +1200,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if action_padded is not None:
             transition[TransitionKey.ACTION] = action_padded
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+
+
         return transition
 
     def transform_features(

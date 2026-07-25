@@ -777,6 +777,8 @@ class MolmoAct2Trainer(Trainer):
                 discrete_z_loss_list.append(discrete_z_loss_raw.detach().float().view(-1))
 
         actor_grad_norm = torch.nn.utils.clip_grad_norm_(actor_params, clip_norm).item()
+
+
         policy_opt.step()
         if depth_opt is not None:
             depth_opt.step()

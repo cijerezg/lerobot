@@ -182,6 +182,8 @@ _VALIDATION_PROBES = (
         "lerobot.probes.spatial_memorization_action_jacobian",
         "spatial_memorization_action_jacobian",
     ),
+    _ValidationProbeSpec("enable_mem_history_influence", "lerobot.probes.mem_history_influence", "mem_history_influence"),
+    _ValidationProbeSpec("enable_mem_temporal_attention", "lerobot.probes.mem_temporal_attention", "mem_temporal_attention"),
 )
 
 

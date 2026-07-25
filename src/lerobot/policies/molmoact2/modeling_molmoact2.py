@@ -284,6 +284,12 @@ def _sinusoidal_seconds_embedding(times: Tensor, dim: int) -> Tensor:
     return emb
 
 
+# Probe hook (lerobot.probes.mem_temporal_attention): when enabled, each temporal
+# resblock appends the current frame's mean attention mass on past-frame keys (a
+# scalar in [0, 1]) in layer call order. No-op / zero overhead when disabled.
+_MEM_TEMPORAL_CAPTURE: dict[str, Any] = {"enabled": False, "records": []}
+
+
 def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tensor | None) -> Tensor:
     """One MEM temporal resblock (04_memory.md §2.4): same weights as the spatial
     block, extended key set in ONE softmax. For the query at patch i of frame t:
@@ -325,6 +331,10 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
                 )
             scores = torch.cat([scores, temporal], dim=-1)
         weights = F.softmax(scores, dim=-1, dtype=torch.float32)
+        if _MEM_TEMPORAL_CAPTURE["enabled"] and t == num_frames - 1 and t > 0:
+            # Current frame's mass on past-frame keys (fraction of the union softmax),
+            # meaned over batch/heads/patches — one scalar per temporal layer.
+            _MEM_TEMPORAL_CAPTURE["records"].append(float(weights[..., n:].sum(-1).mean()))
         weights = F.dropout(weights, p=dropout_p, training=block.training).to(v.dtype)
         out_t = torch.einsum("bhqk,bkhd->bqhd", weights[..., :n], v[:, t])
         if t > 0:
@@ -439,6 +449,8 @@ def _patch_memory_efficient_vision_backbone(
         if self.num_prefix_tokens > 0:
             image_features = image_features[:, 1:]
         image_features = image_features.view(batch_size, num_crops, num_patches, -1)
+
+
         return image_features
 
     vision_backbone.encode_image = types.MethodType(_encode_image, vision_backbone)
@@ -1395,6 +1407,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 states.to(device=device, dtype=self.state_history_projector.weight.dtype)
             )
             backbone._lerobot_state_history = (embeds, int(batch["state_history_token_id"]))
+
 
     def _run_prefix_backbone(self, model_inputs: dict[str, Tensor]) -> Any:
         """Run the prefix backbone forward (``use_cache``); ``outputs`` carries past_key_values."""

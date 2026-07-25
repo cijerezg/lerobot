@@ -288,6 +288,8 @@ class ProbeConfig:
     enable_action_drift_jacobian: bool = False  # per-frame causal A*J maps (needs backward)
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
     enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
+    enable_mem_history_influence: bool = False  # MEM: how much history (full/image/state) shifts the action chunk
+    enable_mem_temporal_attention: bool = False  # MEM: per-layer current-frame attention mass on past frames
 
     # Common
     output_dir: str = "outputs/probe"

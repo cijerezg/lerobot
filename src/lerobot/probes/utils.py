@@ -168,6 +168,30 @@ def get_frame_data(dataset, global_idx: int, chunk_size: int):
     return obs, gt_actions, state, gt_subtask, task_str, episode_idx, frame_idx
 
 
+def assemble_frame_history(dataset, global_idx: int, memory_cfg, fps: float, keys: list[str]) -> dict:
+    """Gather the short-term lookback window for one dataset frame, matching the
+    ReplayBuffer's oldest→newest slots (buffer.py `_gather_history` /
+    `_normalize_history_offsets`): offsets sorted descending, and invalid slots that
+    reach before the episode start repeat the episode's first frame (the π0.7
+    repeat-pad rule).
+
+    Returns ``{f"history.{key}": tensor (1, T_h, ...)}`` for each requested key,
+    ready to drop into the obs dict — ``batch_to_transition`` routes ``history.*``
+    to COMPLEMENTARY_DATA, where the MolmoAct2 pack step reads it.
+    """
+    n = memory_cfg.history_num_samples
+    stride = memory_cfg.history_window_seconds * fps / n
+    offsets = sorted({round(stride * i) for i in range(1, n + 1)}, reverse=True)  # oldest → newest
+    frame_idx = int(dataset[global_idx]["frame_index"].item())
+    ep_start = global_idx - frame_idx  # first global index of this episode
+    slot_frames = [dataset[max(global_idx - o, ep_start)] for o in offsets]
+    return {
+        f"history.{key}": torch.stack([f[key] for f in slot_frames]).unsqueeze(0)
+        for key in keys
+        if key in slot_frames[0]
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Episode / frame sampling
 # ──────────────────────────────────────────────────────────────────────────────
