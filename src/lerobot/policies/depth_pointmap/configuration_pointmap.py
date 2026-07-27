@@ -53,23 +53,39 @@ class DepthPointmapConfig:
 
     # Modality dropout p_drop: swap to the learned null bank at train time.
     dropout_prob: float = 0.25
+    # Anti-laziness RGB dropout (depth_redesign_options.md §4.3): at train time,
+    # mask the depth camera's <im_patch> span out of the attention mask with this
+    # probability — nothing attends the span, no gradient flows through its vision
+    # path, and the depth stream's wrist bridge is killed per-row from the same
+    # mask. Those samples are solvable only through depth. Independent of the
+    # depth modality dropout above. 0 disables.
+    rgb_dropout_prob: float = 0.15
+
+    # Patch-CNN trunk widths (the two hidden stages; the third stage outputs the
+    # stream width). Bumped from (32, 64) 2026-07-25 — depth capacity is cheap next
+    # to the 6B backbone.
+    cnn_hidden_channels: tuple[int, int] = (128, 256)
 
     # --- MoT co-evolving depth stream (depth_pointmap_design.md Part B) ------
     # The encoder's tokens co-evolve through M light transformer blocks (depth
     # self-attention + cross-attention to the wrist-cam KV), read per-layer by the
-    # action expert via a gated additive SDPA + a zero-value sink (revised §3.3).
-    # These gate Phase 3 only; the Phase-2 A.3 read ignores them.
+    # action expert as extra columns in its context softmax with a learned bias.
+    # These settings affect the co-evolving stream only.
     stream_width: int = 512  # d_d — depth stream width (lean, design D4)
     stream_num_heads: int = 8  # heads for the depth self/cross-attention
     stream_layers: int | None = None  # M; None ⇒ one depth block per action-expert layer (M = L)
     stream_mlp_ratio: float = 4.0
 
-    # Temporal history: past depth frames encoded as additional token slots ahead of
-    # the current frame (0 = current frame only). Synced from memory.history_num_samples
-    # by MolmoAct2RLConfig.__post_init__ when the depth key is in memory.history_keys.
-    # Past frames are NOT re-projected into the current camera frame (the wrist moves;
-    # design §A.6.5) — slots are distinguished by a learned time embedding only.
+    # Temporal history (depth_history_design.md): past depth frames ride the shared
+    # patch CNN and are fused into the current frame by same-pixel temporal attention
+    # after every CNN block; past rows are dropped before pooling, so the encoder
+    # always emits N tokens (0 = current frame only, no fusion modules built).
+    # Synced from memory.history_num_samples / history_window_seconds by
+    # MolmoAct2RLConfig.__post_init__ when the depth key is in memory.history_keys.
+    # Past frames are NOT re-projected into the current camera frame (the wrist
+    # moves) — frames are told apart by the sinusoidal e(Δt) stamp only.
     history_num_samples: int = 0
+    history_window_seconds: float = 5.0
 
     def __post_init__(self) -> None:
         if not self.depth_key:
@@ -89,6 +105,14 @@ class DepthPointmapConfig:
             raise ValueError(f"num_wavelengths must be ≥ 1, got {self.num_wavelengths}.")
         if not 0 <= self.dropout_prob < 1:
             raise ValueError(f"dropout_prob must be in [0, 1), got {self.dropout_prob}.")
+        if not 0 <= self.rgb_dropout_prob < 1:
+            raise ValueError(f"rgb_dropout_prob must be in [0, 1), got {self.rgb_dropout_prob}.")
+        if not self.cnn_hidden_channels or any(c <= 0 for c in self.cnn_hidden_channels):
+            raise ValueError(f"cnn_hidden_channels must be positive, got {self.cnn_hidden_channels}.")
+        if self.history_num_samples < 0:
+            raise ValueError(f"history_num_samples must be >= 0, got {self.history_num_samples}.")
+        if self.history_window_seconds <= 0:
+            raise ValueError(f"history_window_seconds must be > 0, got {self.history_window_seconds}.")
         if self.stream_width <= 0 or self.stream_width % self.stream_num_heads:
             raise ValueError(
                 f"stream_width {self.stream_width} must be > 0 and divisible by "

@@ -80,8 +80,8 @@ The same rule will apply to any future history-consumption module.
 
 Optimizer groups (`get_optimizer_groups` + `_split_depth_group`): per-component
 learning rates (ViT / connector / LLM / action expert) plus a dedicated **"depth"
-group at `depth_lr = 5e-4`** for `pointmap_encoder` + `depth_stream` (gate and sink
-included), excluded from the pretrained merge. Grad clip over actor params only.
+group at `depth_lr = 5e-4`** for `pointmap_encoder` + `depth_stream` (joint-read
+bias included), excluded from the pretrained merge. Grad clip over actor params only.
 
 **Pretrained merge**: fires once at a configured step (current run: 8000,
 α = 0.2) — soft-merge back toward the pretrained weights; depth group excluded;
@@ -122,8 +122,11 @@ Fully bypassed in the current offline run.
 ## 5. Telemetry
 
 Console + wandb via the `accum` dict → `log_metrics`: `loss_flow`,
-`loss_discrete_ce`, `loss_subtask_ce`, `loss_summary_ce`, `pointmap_gate`,
-`pointmap_gate_absmax` (the meaningful one), `pointmap_gate_grad_absmax`.
+`loss_discrete_ce`, `loss_subtask_ce`, `loss_summary_ce`; depth (joint softmax,
+03_depth §B.3): `depth_attn_mass_mean`/`_max` + per-layer `depth_attn_mass/lNN`
+(captured on the first micro-batch of logged actor updates), `depth_bias_{mean,min,max}`
+(the learned per-layer column bias, init −2), `depth_grad_norm_preclip` (read
+before `clip_grad_norm_`).
 Validation probes at `val_freq` (offline_inference shows GT + predicted subtask
 and memory per checkpoint; critic probes self-skip under skip_critic). Probes must
 thread `cfg.policy.inference_advantage` — not a hardcoded advantage — so eval

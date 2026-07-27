@@ -25,8 +25,9 @@ from lerobot.utils.import_utils import require_package
 from ..depth_pointmap.modeling_pointmap import DepthPointmapEncoder
 from ..depth_pointmap.modeling_stream import (
     DepthStream,
-    gated_depth_read,
+    depth_attention_mass,
     gather_kv_at_indices,
+    join_depth_columns,
     wrist_cam_token_indices,
 )
 from ..rtc.modeling_rtc import RTCProcessor
@@ -288,6 +289,28 @@ def _sinusoidal_seconds_embedding(times: Tensor, dim: int) -> Tensor:
 # resblock appends the current frame's mean attention mass on past-frame keys (a
 # scalar in [0, 1]) in layer call order. No-op / zero overhead when disabled.
 _MEM_TEMPORAL_CAPTURE: dict[str, Any] = {"enabled": False, "records": []}
+
+# Telemetry hook for the joint depth softmax (depth_redesign_options.md §5.1): when
+# enabled, every patched cross-attention appends its mean softmax mass on the depth
+# columns, in layer call order (36 scalars per forward). Costs one eager attention
+# recompute per layer — enable on log steps only, single thread (same constraint as
+# the other capture patches). No-op / zero overhead when disabled.
+_POINTMAP_MASS_CAPTURE: dict[str, Any] = {"enabled": False, "records": []}
+
+
+def set_pointmap_mass_capture(enabled: bool) -> None:
+    _POINTMAP_MASS_CAPTURE["enabled"] = bool(enabled)
+    _POINTMAP_MASS_CAPTURE["records"] = []
+
+
+def drain_pointmap_mass_records() -> list[float]:
+    records = list(_POINTMAP_MASS_CAPTURE["records"])
+    _POINTMAP_MASS_CAPTURE["records"] = []
+    if not records:
+        return []
+    # One device→host transfer for the whole capture. Converting each layer's
+    # scalar to float at the read site serializes the GPU once per layer.
+    return torch.stack(records).to(dtype=torch.float32, device="cpu").tolist()
 
 
 def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tensor | None) -> Tensor:
@@ -814,24 +837,26 @@ def _patch_numpy_dtype_cast(backbone: Any) -> None:
 
 
 def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) -> None:
-    """Teach the action expert the point-map MoT read (depth_pointmap_design.md §B.4).
+    """Teach the action expert the point-map depth read (depth_redesign_options.md §5.2).
 
-    Every block's cross-attention output becomes
+    Every block's cross-attention runs ONE joint softmax over context and depth columns:
 
-        out = sdpa(q, K_ctx, V_ctx) + tanh(α_ℓ) · sdpa(q, [K_dℓ, k_⋆], [V_dℓ, 0])
+        out = sdpa(q, [K_ctx ; K_dℓ], [V_ctx ; V_dℓ], mask=[ctx mask ; b_ℓ])
 
     where (K_dℓ, V_dℓ) are the per-layer co-evolved depth state projected into the action
-    expert's head space and k_⋆ is the zero-value sink (see _gated_pointmap_depth_read). At
-    α_ℓ=0 the added term is exactly zero ⇒ the expert is bit-identical to the depth-free
-    model. Both reads are static-shape SDPA ⇒ CUDA-graph friendly.
+    expert's head space and b_ℓ = depth_stream.depth_bias[ℓ] is a learned score bias on
+    the depth columns (init −2: soft start — small initial depth mass without the old
+    extra α multiplier; the α-gated additive read this replaces never trained, see
+    depth_redesign_options.md §2). Abstention needs no sink: context keys are the sink.
+    Single static-shape SDPA ⇒ CUDA-graph friendly.
 
     The co-evolving ``depth_stream`` is captured by closure (not attached to the expert, so
     it is registered once on the policy). Inference handoff: the policy sets
     ``action_expert._lerobot_pointmap = (init_tokens_f32, wrist_sel)`` once per control step;
     the patched prepare_context slices the wrist-cam KV from the prefix, runs the stream, and
-    attaches the per-layer depth K/V + gate + sink to the context. The training loop runs the
-    stream block-by-block itself and passes ``depth_kv`` / ``depth_gate`` / ``depth_sink``
-    directly. All patched methods keep their original behaviour when no depth context exists.
+    attaches the per-layer depth K/V + depth_bias to the context. The training loop runs the
+    stream block-by-block itself and passes ``depth_kv`` / ``depth_bias`` directly. All
+    patched methods keep their original behaviour when no depth context exists.
     """
     if getattr(action_expert, "_lerobot_pointmap_read_patched", False):
         return
@@ -839,9 +864,7 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
 
     modulate = sys.modules[type(action_expert).__module__]._modulate
 
-    def cross_attn_forward(
-        self, x, *, kv_k, kv_v, attn_mask=None, depth_kv=None, depth_gate=None, depth_sink=None
-    ):
+    def cross_attn_forward(self, x, *, kv_k, kv_v, attn_mask=None, depth_kv=None, depth_bias=None):
         bsz, tgt_len, _ = x.shape
         q = self.q_proj(x).view(bsz, tgt_len, self.num_heads, self.head_dim)
         k = self._as_heads(kv_k)
@@ -850,9 +873,18 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
         if self.q_norm is not None:
             q = self.q_norm(q)
         q = q.transpose(1, 2)  # (B, Tq, H, Dh)
-        out = self._attention(q, k, v, attn_mask=attn_mask)  # context read (SDPA), unchanged
         if depth_kv is not None:
-            out = out + depth_gate.to(out.dtype) * gated_depth_read(q, depth_kv, depth_sink)
+            # Joint softmax (depth_redesign_options.md §5.2): the depth tokens are extra
+            # columns of the SAME softmax, with the learned per-layer bias b_ℓ on their
+            # scores. Replaces the retired α-gated additive read.
+            k, v, attn_mask = join_depth_columns(
+                attn_mask, k=k, v=v, depth_kv=depth_kv, depth_bias=depth_bias
+            )
+            if _POINTMAP_MASS_CAPTURE["enabled"]:
+                _POINTMAP_MASS_CAPTURE["records"].append(
+                    depth_attention_mass(q, k, attn_mask, num_depth=depth_kv[0].shape[1])
+                )
+        out = self._attention(q, k, v, attn_mask=attn_mask)
         out = out.reshape(bsz, tgt_len, self.hidden_size)
         return self.out_drop(self.out_proj(out))
 
@@ -868,8 +900,7 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
         modulation=None,
         rope_cache=None,
         depth_kv=None,
-        depth_gate=None,
-        depth_sink=None,
+        depth_bias=None,
     ):
         if modulation is None:
             modulation = self.modulation(conditioning).chunk(9, dim=1)
@@ -896,8 +927,7 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
             kv_v=cross_kv[1],
             attn_mask=attn_mask,
             depth_kv=depth_kv,
-            depth_gate=depth_gate,
-            depth_sink=depth_sink,
+            depth_bias=depth_bias,
         )
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.ff_norm(x), shift_mlp, scale_mlp))
         return x
@@ -911,6 +941,14 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
             init_tokens, wrist_sel = handoff
             dtype = kwargs["dtype"]
             encoder_kv_states = kwargs["encoder_kv_states"]
+            # Wrist-bridge switch from the attention mask (RGB dropout masks the wrist
+            # span; this direct gather bypasses attention masks). All-on at inference.
+            encoder_attention_mask = kwargs.get("encoder_attention_mask")
+            bridge_on = None
+            if encoder_attention_mask is not None:
+                bridge_on = torch.gather(
+                    encoder_attention_mask.to(torch.bool), 1, wrist_sel
+                ).any(dim=1)
             device_type = init_tokens.device.type
             with torch.autocast(device_type=device_type, enabled=False):
                 wrist_keys, wrist_values = [], []
@@ -918,7 +956,9 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
                     wk, wv = gather_kv_at_indices(k_in.float(), v_in.float(), wrist_sel)
                     wrist_keys.append(wk)
                     wrist_values.append(wv)
-                states = depth_stream(init_tokens.float(), wrist_keys, wrist_values)
+                states = depth_stream(
+                    init_tokens.float(), wrist_keys, wrist_values, cross_on=bridge_on
+                )
                 read_kv = [depth_stream.read_kv(state) for state in states]
             depth_keys, depth_values = [], []
             for block, (k_d, v_d) in zip(self.blocks, read_kv, strict=True):
@@ -930,8 +970,7 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
                 depth_values.append(v_d)
             context.depth_keys = depth_keys
             context.depth_values = depth_values
-            context.depth_gate = depth_stream.gate_value().to(dtype=dtype)  # (L,)
-            context.depth_sink = depth_stream.sink_logit.to(dtype=dtype)  # (L, H)
+            context.depth_bias = depth_stream.depth_bias.to(dtype=dtype)  # (L,)
         return context
 
     def forward_with_context(self, actions, timesteps, *, context, modulation=None):
@@ -951,8 +990,7 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
             final_modulation = modulation.final_modulation
         depth_keys = getattr(context, "depth_keys", None)
         depth_values = getattr(context, "depth_values", None)
-        depth_gate = getattr(context, "depth_gate", None)  # (L,)
-        depth_sink = getattr(context, "depth_sink", None)  # (L, H)
+        depth_bias = getattr(context, "depth_bias", None)  # (L,)
         x = self.action_embed(actions)
         if context.valid_action is not None:
             x = x * context.valid_action
@@ -969,8 +1007,7 @@ def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) ->
                 modulation=block_modulation,
                 rope_cache=context.rope_cache,
                 depth_kv=None if depth_keys is None else (depth_keys[idx], depth_values[idx]),
-                depth_gate=None if depth_gate is None else depth_gate[idx],
-                depth_sink=None if depth_sink is None else depth_sink[idx],
+                depth_bias=None if depth_bias is None else depth_bias[idx],
             )
             if context.valid_action is not None:
                 x = x * context.valid_action
@@ -1138,9 +1175,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         # Point-map depth read (fresh float32 modules; memory cast to the model dtype at
         # the read boundary). When pointmap_config is set, point-map tokens co-evolve
-        # through a DepthStream and enter the action expert via the gated additive SDPA +
-        # sink read (depth_pointmap_design.md §B.4). Bit-identical at α=0; patching
-        # the expert is a behaviour no-op until a depth context is actually passed.
+        # through a DepthStream and enter the action expert as extra columns in its
+        # context softmax with a learned per-layer bias (depth_pointmap_design.md §B.3).
+        # Patching is a no-op until a depth context is actually passed.
         self.pointmap_encoder: DepthPointmapEncoder | None = None
         self.depth_stream: DepthStream | None = None
         if self.config.pointmap_config is not None:
@@ -1446,8 +1483,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
             raise ValueError(f"action_horizon must be >= 1, got {action_horizon}.")
         hf_model = self._hf_model()
         for cfg in (getattr(hf_model, "config", None), getattr(self._backbone(), "config", None)):
-            if cfg is not None:
-                cfg.max_action_horizon = int(action_horizon)
+            if cfg is None:
+                continue
+            cfg.max_action_horizon = int(action_horizon)
+            # The action expert validates against its own sub-config in forward_with_context,
+            # so the override has to land there too or generation caps at the checkpoint value.
+            if getattr(cfg, "action_expert_config", None) is not None:
+                cfg.action_expert_config.max_action_horizon = int(action_horizon)
 
     def _generation_action_horizon(self) -> int:
         chunk_size = getattr(self.config, "chunk_size", None)
@@ -1847,10 +1889,19 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 num_images=num_images,
                 cam_index=cam_index,
             )
-            # NOTE: the gate tanh(α_ℓ) is read INSIDE run_layer (below) straight off the
-            # parameter, not precomputed here — under gradient checkpointing a non-leaf
-            # intermediate captured by closure loses its gradient to α (see
-            # depth_pointmap_gate_gradient.md). Reading the param in-region matches sink_logit.
+            # Wrist-bridge switch (B,): False where RGB dropout masked the wrist span —
+            # the stream's direct K/V gather bypasses attention masks, so it must be
+            # killed here from the same mask (single source of truth).
+            depth_bridge_on = None
+            train_attention_mask = model_inputs.get("attention_mask")
+            if train_attention_mask is not None:
+                depth_bridge_on = torch.gather(
+                    train_attention_mask.to(torch.bool), 1, depth_wrist_sel
+                ).any(dim=1)
+            # NOTE: the per-layer depth_bias b_ℓ is read INSIDE run_layer (below) straight
+            # off the parameter, not precomputed here — under gradient checkpointing a
+            # non-leaf intermediate captured by closure can lose its gradient path (see
+            # depth_pointmap_gate_gradient.md for the α-era incident).
 
         hidden_states, causal_mask_mapping, position_ids, cache_position = (
             self._prepare_joint_training_backbone_inputs(model_inputs)
@@ -1968,7 +2019,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 wk, wv = gather_kv_at_indices(key_states, value_states, depth_wrist_sel)
                 with torch.autocast(device_type=device.type, enabled=False):
                     next_depth_state = self.depth_stream.blocks[layer_idx](
-                        layer_depth_state, wk.float(), wv.float()
+                        layer_depth_state, wk.float(), wv.float(), cross_on=depth_bridge_on
                     )
                     k_d, v_d = self.depth_stream.read_kv(next_depth_state)
                 k_d = k_d.to(dtype=layer_action_hidden.dtype)
@@ -1981,8 +2032,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     v_d = self._expand_mask(v_d, num_flow_timesteps)
                 depth_kwargs = {
                     "depth_kv": (k_d, v_d),
-                    "depth_gate": torch.tanh(self.depth_stream.gate[layer_idx]).to(dtype=layer_action_hidden.dtype),
-                    "depth_sink": self.depth_stream.sink_logit[layer_idx].to(dtype=layer_action_hidden.dtype),
+                    "depth_bias": self.depth_stream.depth_bias[layer_idx],
                 }
             next_action_hidden = action_block(
                 layer_action_hidden,

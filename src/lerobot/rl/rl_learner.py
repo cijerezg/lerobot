@@ -345,6 +345,7 @@ def add_actor_information_and_train(
                 dataset=offline_dataset,
                 device=device_name,
                 cfg=cfg,
+                optimization_step=optimization_step,
             )
         else:
             training_infos = trainer.update_critic(
@@ -368,6 +369,7 @@ def add_actor_information_and_train(
                     dataset=offline_dataset,
                     device=device_name,
                     cfg=cfg,
+                    optimization_step=optimization_step,
                 )
                 training_infos.update(actor_infos)
 

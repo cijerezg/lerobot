@@ -59,9 +59,11 @@ prediction vs GT) and the HL query — per frame conditioned on the **GT** memor
 via `summary_label_spans` (the same hold/update rule as training) — and renders a
 panel with GT subtask + GT memory + per-checkpoint predictions. The molmoact2
 adapter reuses `generate_subtask_text`; it returns None (panel empty) when
-`subtask_max_new_tokens = 0`. `probes/pointmap_bit_identity.py` checks gate-0
-bit-identity against the real checkpoint
-(`uv run python -m lerobot.probes.pointmap_bit_identity --config config_rl.yaml`).
+`subtask_max_new_tokens = 0`. `probes/depth_modality_probe.py` runs the 2×2
+{RGB±, depth±} matrix + per-layer depth attention mass + input sensitivities
+against the real checkpoint (replaced the gate-0 bit-identity probe 2026-07-26 —
+no gate exists under the joint softmax read;
+`uv run python -m lerobot.probes.depth_modality_probe --config config_rl.yaml`).
 
 ## 5. Latency notes
 

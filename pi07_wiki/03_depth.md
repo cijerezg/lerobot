@@ -1,9 +1,10 @@
 # 03 — Depth: point-map tokens + co-evolving stream
 
-Status: **built and validated end-to-end** (built 2026-06-15; GPU training +
-on-robot inference validated 2026-06-20). This is the live and only depth path —
-it replaced the earlier gripper-frame TSDF box entirely. Camera intrinsics are now
-the D405 factory calibration (the 2026-06 "placeholder K" caveat is resolved).
+Status: **built end-to-end** (Part A 2026-06-15; GPU training + on-robot
+inference validated 2026-06-20; history fusion rebuilt 2026-07-25; the read
+rebuilt as a joint softmax 2026-07-26 — §B.3, first training run pending). This
+is the live and only depth path — it replaced the earlier gripper-frame TSDF box
+entirely. Camera intrinsics are the D405 factory calibration.
 
 Code: [`policies/depth_pointmap/`](../src/lerobot/policies/depth_pointmap/)
 (`configuration_pointmap.py`, `modeling_pointmap.py`, `modeling_stream.py`) plus
@@ -12,8 +13,11 @@ the read patch in
 Everything is gated on `pointmap_config` (`None` = depth-free, zero cost).
 
 Two halves: **A** — turn one wrist depth frame into 192 metric patch tokens.
-**B** — co-evolve those tokens through a DepthStream and let the frozen action
-expert read them per layer through a zero-init gate.
+**B** — co-evolve those tokens through a DepthStream and let the action expert
+read them per layer through a joint softmax (depth tokens as extra context
+columns; rebuilt 2026-07-26, replacing the α-gated additive read that never
+trained — full decision record in
+[depth_redesign_options.md](depth_redesign_options.md)).
 
 ---
 
@@ -68,8 +72,26 @@ with $s = 25$ mm (`coord_scale_mm`, keeps CNN inputs O(1)) and the constant
 $\bar Z$ channel conditioning on absolute range (depth noise $\propto z^2$;
 `include_centroid_depth: true`). Implementation: reshape to $(B{\cdot}192, 5, 40, 40)$
 and run `PatchShapeCNN` — three stride-2 GroupNorm/SiLU residual blocks
-(40→20→10→5), global-average-pool to $d_d$
-([modeling_pointmap.py:103-136](../src/lerobot/policies/depth_pointmap/modeling_pointmap.py#L103-L136)).
+(channels 5→128→256→$d_d$, resolution 40→20→10→5; widened from 32/64 hiddens
+2026-07-25), global-average-pool to $d_d$
+([modeling_pointmap.py](../src/lerobot/policies/depth_pointmap/modeling_pointmap.py)).
+
+### A.3.1 Short-term history (temporal attention in the CNN)
+
+Rebuilt 2026-07-25 ([depth_history_design.md](depth_history_design.md)) to
+mirror the MEM video encoder: the 5-frame depth window rides the **same** CNN
+as extra batch rows, and a `TemporalFusion` after each block lets every pixel
+of the current frame attend that pixel across all frames (itself included —
+the abstain route) in one softmax, with sinusoidal $e(\Delta t)$ frame stamps
+and a pixelwise MLP. Past rows are dropped before pooling, so **the encoder
+always emits 192 tokens** — history changes token content, never token count
+(the earlier token-concat build that fed $(T_h{+}1)\cdot192$ tokens to the
+stream is deleted). The shared `history_images_mask` dropout draw masks the
+past keys, computing exactly the missing-window op. Encoder total ≈ 9M params
+(trunk 4.75M + fusion 4.14M; heads 2/4/8).
+If the current patch is completely empty, its fused feature and absolute PE use
+the newest valid historical centroid; it falls back to the null bank when history
+is masked/missing or that patch is empty in every frame.
 
 The CNN is 2D in *structure* (dense image plane, hole-friendly via the mask, no
 quantization) but 3D in *content* (every pixel carries its metric offset). A 3D
@@ -115,9 +137,8 @@ fix (DepthVLA, arXiv 2510.13375) is a mixture-of-transformers: the depth
 representation evolves through the stack so layer ℓ of the action expert reads
 depth *as it exists at layer ℓ*. Our departures from DepthVLA: (1) we have real
 metric depth, so the tokenizer is the Part-A encoder, not an RGB→depth estimator;
-(2) MolmoAct2 stays frozen — a zero-init gate makes step 0 bit-identical;
-(3) no reconstruction aux loss — flow loss only (dropped 2026-06-14; viable
-because the gate deadlock is soft, §B.5).
+(2) no reconstruction aux loss — flow loss only (dropped 2026-06-14); the
+anti-laziness lever is wrist-RGB dropout instead (§B.3.1).
 
 ### B.2 Attention coupling (LOCKED)
 
@@ -153,7 +174,7 @@ def forward(self, t, wrist_k, wrist_v):          # DepthStreamBlock
     return t
 ```
 
-The stream owns the per-layer gate `α` and per-(layer, head) `sink_logit`.
+The stream owns the per-layer depth-column bias `depth_bias` (init −2, §B.3).
 
 ### B.2.1 The wrist-cam bridge and the read projections, explicitly
 
@@ -187,74 +208,113 @@ block's per-head cross-attn `k_norm`. This mirrors the action expert's own singl
 shared `context_k_proj`/`context_v_proj`: **layer-specificity comes only from
 $D_\ell$, never from the projection**.
 
-**The read with the sink weight**, per layer $\ell$, head $h$, query $q$. The sink
-is one extra column with zero key, zero value, and learned logit
-$\beta_{\ell h}$ = `sink_logit[ℓ,h]` (zero-init) as an additive bias:
-
-$$s_j = \frac{q \cdot k_{d,\ell,j}}{\sqrt{D_h}}\ (j = 1..N), \qquad s_\star = \beta_{\ell h}, \qquad
-r = \frac{\sum_j e^{s_j}\, v_{d,\ell,j}}{\sum_j e^{s_j} + e^{\beta_{\ell h}}}$$
-
-$$o = \mathrm{SDPA}(q, K_{ctx,\ell}, V_{ctx,\ell}) + \tanh(\alpha_\ell)\, r$$
-
-The zero value means the sink contributes nothing to the numerator — it only eats
-normalization mass. All $s_j \ll \beta_{\ell h}$ ⇒ $r \to 0$ (absolute
-abstaining); without the sink the softmax sums to 1 over depth tokens and can only
-abstain relatively. $\beta_{\ell h}$ is constant in $q$: one global abstain
-threshold per (layer, head).
-
 #### TO REVISE (flagged 2026-07-22, decide later)
 
 - **Shared read projections**: no per-layer $W^r_K, W^r_V$ — is one $d_d \to
   d_{act}$ map enough for early-fine vs late-semantic depth states, or should the
   read be per-layer (cost: $2 L d_d d_{act}$ params)?
-- **Query-independent sink**: the abstain threshold $\beta_{\ell h}$ doesn't
-  depend on $q$ (zero sink key). Alternative: learn $k_\star$ so
-  $s_\star = q \cdot k_\star/\sqrt{D_h} + \beta_{\ell h}$ — per-query abstaining.
 - **Post-RoPE K/V as the bridge input**: the stream re-projects the VLM's cached
   keys/values (position phases baked in) rather than layer hidden states —
   convenient (already cached for the expert) but not obviously the right feature
   space for the depth cross-attention.
 
-### B.3 The read — additive gated SDPA + sink
+### B.3 The read — joint softmax over context + depth columns
 
-Decided 2026-06-14, patched into every block's cross-attention
-([modeling_molmoact2.py:681-696](../src/lerobot/policies/molmoact2/modeling_molmoact2.py#L681-L696)):
+Decided and built 2026-07-26 ([depth_redesign_options.md](depth_redesign_options.md)
+§5.2; replaces the 2026-06-14 α-gated additive read — post-mortem in §B.4).
+Patched into every block's cross-attention: the depth tokens are appended as
+extra key/value columns of the **same** softmax the expert already runs over the
+LLM context, with one learned per-layer score bias on the depth columns
+(`join_depth_columns` in
+[modeling_stream.py](../src/lerobot/policies/depth_pointmap/modeling_stream.py)):
 
 ```python
-out = self._attention(q, k, v, attn_mask=attn_mask)        # frozen context read
 if depth_kv is not None:
-    out = out + depth_gate.to(out.dtype) * gated_depth_read(q, depth_kv, depth_sink)
+    k, v, attn_mask = join_depth_columns(attn_mask, k=k, v=v,
+                                         depth_kv=depth_kv, depth_bias=depth_bias)
+out = self._attention(q, k, v, attn_mask=attn_mask)   # ONE SDPA, T_ctx + 192 columns
 ```
 
-$$o = \mathrm{SDPA}(q,\ K_{ctx,\ell},\ V_{ctx,\ell})\ +\ \tanh(\alpha_\ell)\cdot \mathrm{SDPA}\big(q,\ [K_{d,\ell},\ k_\star],\ [V_{d,\ell},\ 0]\big)$$
+Per layer $\ell$, head $h$, query $i$, with $b_\ell$ = `depth_bias[ℓ]`:
 
-- **Bit-identity at init:** $\tanh(0) = 0$ makes the second term exactly zero, so
-  step 0 is bitwise the frozen depth-free policy. Guardrail:
-  `probes/pointmap_bit_identity.py`.
-- **The sink** $k_\star$ is one extra key column *inside the depth softmax* with a
-  zero key, zero value, and a learned per-(layer, head) logit injected as an
-  additive attention bias ([modeling_stream.py:44-69](../src/lerobot/policies/depth_pointmap/modeling_stream.py#L44-L69)).
-  When no depth token scores above the sink bar, the softmax mass parks on the
-  sink and the read → 0: **absolute abstaining** without leaving SDPA.
-- **Why not one joint softmax** over $[ctx \cup depth \cup sink]$ with scaled depth
-  values: in a joint softmax the depth/sink *keys* absorb probability mass even
-  when their values are zeroed, so at init
-  $o = (\text{context read}) \cdot \frac{Z_{ctx}}{Z_{ctx} + Z_{d} + Z_\star} \neq \text{context read}$
-  — it fails the gate-0 probe. The additive form is the price of exact
-  bit-identity. Both calls are static-shape → compile-friendly.
-- $|\tanh| < 1$ doubles as a per-layer amplitude ceiling: depth can never exceed
-  the context read. Free insurance on a frozen policy.
+$$o_i = \sum_{j \in ctx} w_{ij}\, v_j + \sum_{m \in depth} w_{im}\, v_{d,m}, \qquad
+w = \mathrm{softmax}\Big(\big[\ q_i \cdot k_j / \sqrt{D_h}\ ;\ \ q_i \cdot k_{d,m} / \sqrt{D_h} + b_\ell\ \big]\Big)$$
+
+- **No gate, no sink.** Depth competes with context for one normalization mass —
+  the same mechanism every other modality uses. Abstention is free: mass parks on
+  the context columns when depth is uninformative.
+- **$b_\ell$ init −2** (soft start): each depth column's odds are multiplied by
+  $e^{-2} \approx 0.135$; total depth mass also depends on the 192 depth columns
+  and the number/content of valid context columns. Being additive *inside* the
+  softmax, $b_\ell$ avoids the extra multiplicative $\tanh(\alpha)$ bottleneck,
+  although content-gradient magnitude still scales with actual depth mass (verified:
+  `test_joint_softmax_matches_eager_and_bias_gets_gradient` also proves the
+  $b_\ell$ gradient flows through SDPA's `attn_mask` on this torch build).
+- **No bit-identity at init**, deliberately: the old design bought exactness at
+  step 0 (frozen-policy assumption) at the price of the entire depth path never
+  training (§B.4). The expert is trainable and heals the small init perturbation.
+- Single static-shape SDPA → compile-friendly; padding mask handled by
+  concatenation (context columns keep their pad mask, depth columns are always
+  valid).
 
 Wiring: training threads `depth_state` through the layer loop in
 `_compute_flow_matching_loss_joint_per_layer` (one stream block per layer, stream
 in float32 with autocast off, read K/V cast to the action dtype and expanded to the
-flow-timestep batch at the read site). Inference runs the whole stream inside the
-patched `prepare_context` ([modeling_molmoact2.py:746-774](../src/lerobot/policies/molmoact2/modeling_molmoact2.py#L746-L774))
-and caches per-layer depth K/V + gate + sink on the context; the policy hands the
-encoder tokens over via `action_expert._lerobot_pointmap = (init_tokens, wrist_sel)`
-once per control step.
+flow-timestep batch at the read site; `depth_bias[ℓ]` read in-region inside
+`run_layer` — gradient-checkpointing closure rule). Inference runs the whole
+stream inside the patched `prepare_context` and caches per-layer depth K/V +
+`depth_bias` on the context; the policy hands the encoder tokens over via
+`action_expert._lerobot_pointmap = (init_tokens, wrist_sel)` once per control
+step.
 
-### B.4 The soft deadlock, and the two bugs that hid it
+### B.3.1 Anti-laziness: wrist-RGB dropout (attention masking)
+
+Modality-laziness counterpart of the read (depth_redesign_options.md §2.3, §4.3):
+with RGB explaining the demos, even a healthy depth path gets ~no gradient. At
+train time, with probability `pointmap_config.rgb_dropout_prob` (default 0.15),
+the depth camera's contribution is **removed from attention** for that sample:
+
+$$\text{attention\_mask}\big[b,\ S_b[cT_w : (c{+}1)T_w]\big] = 0$$
+
+i.e. the camera's `<im_patch>` span (same span the depth stream slices) leaves the
+mask. Consequences — this is *removal*, not corruption: nothing attends those
+tokens (LLM prefix and the expert's cross-attention both consume this mask), so
+**no gradient reaches the vision tower through that camera**, and the model sees
+absence rather than a black image it could learn as a cue. Token layout, RoPE and
+`position_ids` are untouched (positions are `arange`, not a mask cumsum), so the
+prompt geometry is identical to an undropped sample. Applied **after**
+`_build_labels` (the answer-span math reads the mask). The video-encoder history
+frames of that camera need no separate treatment: temporal fusion is per-camera,
+so they only ever reach the LLM through the masked current-frame span.
+
+Two consumers gather wrist features **directly**, bypassing attention masks — the
+actor's `DepthStream` wrist bridge and the critic's `depth_blocks`. Both take a
+per-row `cross_on` switch derived from the *same* mask
+(`attention_mask.gather(1, wrist_sel).any(1)`), which zeroes the cross-attention
+residual for dropped rows: forward contribution and gradient both vanish, and the
+row's depth stream runs depth-only (self-attn + MLP). Single source of truth —
+the mask — for every path.
+
+Independent of the depth-modality dropout (`dropout_prob` 0.25) and the shared
+history dropout. Training-text path only; inference is unaffected (`cross_on` is
+all-True when the mask has no zeros in the span).
+
+Telemetry (replaces `pointmap_gate*`): `depth_attn_mass/*` (per-layer softmax
+mass on depth columns, captured on the first micro-batch of logged actor updates),
+`depth_bias_{mean,min,max}`, `depth_grad_norm_preclip` (read BEFORE
+`clip_grad_norm_` — the α-era metric read after it and understated ~4×), plus
+`probes/depth_modality_probe.py`: the 2×2 {RGB±, depth±} MSE matrix vs GT,
+pairwise action deltas, per-layer mass, and finite-difference input
+sensitivities (depth vs RGB).
+
+### B.4 HISTORICAL — the α-gate soft deadlock (retired 2026-07-26)
+
+The 2026-06→07 read was $o = \mathrm{SDPA}(q, K_{ctx}, V_{ctx}) +
+\tanh(\alpha_\ell)\, r_\ell$ with zero-init α and a zero-value sink column.
+It never trained: across every run to 1025 steps, $\tanh\alpha$ absmax sat at
+~0.007 with no trend (an Adam random walk; a real signal ⇒ α ≈ 0.5 by step
+1000). Kept here as the post-mortem — the freeze-bug lessons at the end remain
+load-bearing.
 
 At init, differentiate the depth term $\tanh(\alpha_\ell)\, r_\ell$:
 
@@ -273,14 +333,11 @@ silences the gate kills the entire stream. Two real incidents (2026-06-20):
    ([rl_molmoact2_trainer.py:287](../src/lerobot/rl/molmoact2/rl_molmoact2_trainer.py#L287)),
    mirroring the branch the critic already had. **Rule: every new from-scratch
    module must be whitelisted in both freeze functions.**
-2. **Gradient checkpointing + closures.** The per-layer gate must be read
-   **in-region** inside `run_layer` directly from the parameter
-   (`torch.tanh(self.depth_stream.gate[idx])`), like `sink_logit` — a non-leaf
-   captured by closure into a checkpointed region can lose its gradient path.
+2. **Gradient checkpointing + closures.** Per-layer parameters must be read
+   **in-region** inside `run_layer` directly from the parameter (today:
+   `self.depth_stream.depth_bias[layer_idx]`) — a non-leaf captured by closure
+   into a checkpointed region can lose its gradient path.
    (Adopted as a safety invariant; the actual 2026-06-20 culprit was bug 1.)
-
-Telemetry: watch `pointmap_gate_absmax`, not the mean — the mean can hide signed
-per-layer movement. Healthy start: gate grad ~1e-3 at step 0, absmax climbing.
 
 ### B.5 dtype boundary
 
@@ -288,8 +345,8 @@ The stream and encoder run float32; the critic runs bf16 and **shares the encode
 class**. `fourier_position_encoding` intentionally computes its sin/cos ladder in
 float32 (precision over the mm range) and the encoder casts the PE to the
 projection weight dtype before `pos_proj` — without that cast the bf16 critic
-crashes at `pos_proj`. This surfaced on the first GPU train step; the bit-identity
-probe only exercises the float32 actor path and cannot catch it.
+crashes at `pos_proj`. This surfaced on the first GPU train step; float32-only
+actor probes cannot catch it.
 
 ### B.6 Critic depth read
 
@@ -306,15 +363,18 @@ V(s′) the EMA copy (depth modules are critic parameters, so they ride
 
 ### B.7 Cost and parked work
 
-192 tokens at width 512, run once per observation: <1% of the forward; the only
-per-step cost is action→depth keys — negligible. Capacity ($d_d$), not FLOPs, is
-the real knob; prune $M$ later via per-layer α telemetry. **CUDA graphs are
-force-OFF** when `pointmap_config` is set — parked deliberately: our config runs
-RTC, whose denoise loop is eager and never touches the action graph, so graphs-off
-costs nothing. If ever revisited (non-RTC + measured action-loop bottleneck): the
+192 tokens at width 512, run once per observation; the per-denoise-step cost is
+192 extra key columns in the expert's cross-attention — negligible. The stream is
+~170M fresh params (36 blocks × 4.7M) — under the joint softmax its gradients are
+scaled by actual depth mass without the old extra α multiplier; watch the held-out 2×2 probe for
+overfitting (R3D warning) and prune $M$ via per-layer `depth_attn_mass`
+telemetry if layers stay shut. **CUDA graphs are force-OFF** when
+`pointmap_config` is set — parked deliberately: our config runs RTC, whose
+denoise loop is eager and never touches the action graph, so graphs-off costs
+nothing. If ever revisited (non-RTC + measured action-loop bottleneck): the
 checkpoint's `_clone_static_context`/`_copy_context_` don't know the depth K/V
-fields, so a graph replay would silently drop the depth read — register them as
-static inputs and add a gate-OPEN eager-vs-graph test first.
+fields, so a graph replay would silently drop the depth columns — register them
+as static inputs and add an eager-vs-graph test first.
 
 ### B.8 Sources
 
@@ -326,9 +386,12 @@ Flamingo (per-layer tanh gate precedent); also PointACT 2605.21414, GST-VLA
 ### B.9 Hardware checklist for a meaningful run
 
 - [x] Wrist mount + calibrated intrinsics (factory K in config since 2026-07-02)
-- [ ] `z_max_mm` sanity on real wrist-to-object range (the 2026-06 smoke, taken
-      while the D405 was still top-mounted, saw median ≈ 5.5 m vs cutoff 800 mm →
-      most patches null; re-check on wrist-mounted recordings)
+- [x] `z_max_mm` sanity on real wrist-to-object range — verified 2026-07-26 on
+      rebot-socks-annotated-v2 (all 6 eps): 88–95 % of pixels in [70, 800] mm,
+      median ≈ 300 mm, 95–99 % patches non-null (the 5.5 m smoke was the old
+      top mount)
 - [x] Raw depth end-to-end: uint16 Z16, PNG16 sidecars, no hole-fill in recordings
       (masking lives in the encoder), `depth_units_mm = 0.1`
-- [ ] Train long enough for the gate to grow so depth measurably shapes behavior
+- [ ] First joint-softmax training run: watch `depth_attn_mass/*`,
+      `depth_grad_norm_preclip`, and the 2×2 probe's mse(rgb_only) −
+      mse(rgb+depth)

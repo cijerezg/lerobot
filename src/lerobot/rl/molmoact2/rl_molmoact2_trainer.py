@@ -391,7 +391,7 @@ class MolmoAct2Trainer(Trainer):
 
     @staticmethod
     def _split_depth_group(policy: nn.Module, cfg, groups: list[dict]) -> list[dict]:
-        """Move from-scratch params (pointmap_encoder/depth_stream incl. gate and sink,
+        """Move from-scratch params (pointmap_encoder/depth_stream incl. read bias,
         plus the MEM state_history_projector) out of the policy group into their own
         "depth" group at depth_lr: the pretrained-model lr is too slow for fresh
         modules, and the separate group name keeps them out of
@@ -648,6 +648,10 @@ class MolmoAct2Trainer(Trainer):
 
         Handles gradient accumulation.  Only the "policy" optimizer is touched here.
         """
+        from lerobot.policies.molmoact2.modeling_molmoact2 import (
+            drain_pointmap_mass_records,
+            set_pointmap_mass_capture,
+        )
         from lerobot.rl.buffer import concatenate_batch_transitions
 
         grad_accum = int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
@@ -677,6 +681,15 @@ class MolmoAct2Trainer(Trainer):
         discrete_z_loss_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
+        depth_on = getattr(policy, "depth_stream", None) is not None
+        optimization_step = kwargs.get("optimization_step")
+        log_freq = max(1, int(getattr(cfg, "log_freq", 1)))
+        # Callers pass the outer optimization step. Keep the fallback enabled for
+        # direct/unit callers that do not, but production training only pays for
+        # depth telemetry on steps whose returned metrics are actually logged.
+        capture_depth_telemetry = (
+            optimization_step is None or int(optimization_step) % log_freq == 0
+        )
 
         # Identify actor params for grad clipping (excludes critic).
         critic_param_ids: set[int] = set()
@@ -688,7 +701,7 @@ class MolmoAct2Trainer(Trainer):
             if p.requires_grad and id(p) not in critic_param_ids
         ]
 
-        for _ in range(grad_accum):
+        for accum_idx in range(grad_accum):
             raw = next(online_iter)
             if offline_iter is not None:
                 raw_off = next(offline_iter)
@@ -734,7 +747,23 @@ class MolmoAct2Trainer(Trainer):
                 cfg=cfg,
             )
 
-            loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
+            # Depth attention-mass capture (depth_redesign_options.md §5.1) on the
+            # first micro-batch only: one eager score recompute per layer.
+            capture_mass = depth_on and capture_depth_telemetry and accum_idx == 0
+            mass: list[float] = []
+            if capture_mass:
+                set_pointmap_mass_capture(True)
+            try:
+                loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
+            finally:
+                if capture_mass:
+                    mass = drain_pointmap_mass_records()
+                    set_pointmap_mass_capture(False)
+            if mass:
+                accum["depth_attn_mass_mean"] = sum(mass) / len(mass)
+                accum["depth_attn_mass_max"] = max(mass)
+                for layer_idx, layer_mass in enumerate(mass):
+                    accum[f"depth_attn_mass/l{layer_idx:02d}"] = layer_mass
             loss_for_backward = loss.mean() if isinstance(loss, torch.Tensor) else torch.as_tensor(loss, device=actions.device)
             (loss_for_backward / grad_accum).backward()
 
@@ -776,6 +805,27 @@ class MolmoAct2Trainer(Trainer):
             if isinstance(discrete_z_loss_raw, torch.Tensor):
                 discrete_z_loss_list.append(discrete_z_loss_raw.detach().float().view(-1))
 
+        # Pre-clip depth-path gradient norm (depth_redesign_options.md §5.1) — read
+        # BEFORE clip_grad_norm_ rescales grads in place (the α-era metric read after
+        # the clip and understated the gradient ~4× at the observed norms).
+        if depth_on and capture_depth_telemetry:
+            depth_grads = [
+                p.grad.detach().float()
+                for name, p in policy.named_parameters()
+                if p.grad is not None and ("pointmap_encoder" in name or "depth_stream" in name)
+            ]
+            if depth_grads:
+                # Foreach computes all per-tensor norms without 1,000+ Python
+                # float conversions/device synchronizations; stack and transfer
+                # only the final scalar.
+                per_tensor_norms = torch._foreach_norm(depth_grads, 2)
+                depth_grad_norm = torch.linalg.vector_norm(
+                    torch.stack([norm.float() for norm in per_tensor_norms])
+                )
+                accum["depth_grad_norm_preclip"] = depth_grad_norm.item()
+            else:
+                accum["depth_grad_norm_preclip"] = 0.0
+
         actor_grad_norm = torch.nn.utils.clip_grad_norm_(actor_params, clip_norm).item()
 
 
@@ -784,16 +834,14 @@ class MolmoAct2Trainer(Trainer):
             depth_opt.step()
 
         accum["actor_grad_norm"] = actor_grad_norm
-        # Point-map MoT gate uptake (depth_pointmap_design.md §B.5): per-layer tanh(α_ℓ).
-        # Mean tracks overall admission; abs-max flags any single layer opening first.
-        if getattr(policy, "depth_stream", None) is not None:
-            pointmap_gate = policy.depth_stream.gate_value()  # (L,)
-            accum["pointmap_gate"] = pointmap_gate.mean().item()
-            accum["pointmap_gate_absmax"] = pointmap_gate.abs().max().item()
-            gate_grad = policy.depth_stream.gate.grad
-            accum["pointmap_gate_grad_absmax"] = (
-                0.0 if gate_grad is None else gate_grad.abs().max().item()
-            )
+        # Joint-softmax depth telemetry (depth_redesign_options.md §5.1): the learned
+        # per-layer depth-column bias b_ℓ (init −2; movement = layers changing their
+        # default depth admission). Influence itself is depth_attn_mass/* above.
+        if depth_on and capture_depth_telemetry:
+            bias = policy.depth_stream.depth_bias.detach()
+            accum["depth_bias_mean"] = bias.mean().item()
+            accum["depth_bias_min"] = bias.min().item()
+            accum["depth_bias_max"] = bias.max().item()
 
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)
@@ -1103,7 +1151,7 @@ class MolmoAct2Trainer(Trainer):
         wandb_logger,
         _policy: nn.Module,
     ) -> None:
-        console_keys = ("loss_flow", "loss_discrete_ce", "loss_subtask_ce", "loss_summary_ce", "actor_grad_norm", "loss_critic", "pointmap_gate")
+        console_keys = ("loss_flow", "loss_discrete_ce", "loss_subtask_ce", "loss_summary_ce", "actor_grad_norm", "loss_critic", "depth_attn_mass_mean")
         console_scalars = {
             k: training_infos[k]
             for k in console_keys

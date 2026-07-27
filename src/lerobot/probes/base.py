@@ -107,6 +107,8 @@ class ProbablePolicy(ABC):
         task_str: str,
         state: Tensor | None = None,
         advantage: float = 1.0,
+        subtask: str | None = None,
+        metadata: dict | None = None,
     ) -> tuple[Tensor, Tensor, str | None]:
         """
         Run one forward pass and return predicted actions.
@@ -118,6 +120,9 @@ class ProbablePolicy(ABC):
                 anchor/delta action encoding by policies that support it).
             advantage: scalar advantage hint for policies trained with it
                 (pi05 RL); ignored by policies that don't use it.
+            subtask: optional current high-level subtask for policies whose action
+                prompt consumes one.
+            metadata: optional rollout metadata prompt context.
 
         Returns:
             ``(pred_unnorm, pred_norm, pred_subtask)`` where

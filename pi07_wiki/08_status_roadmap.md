@@ -80,4 +80,5 @@ reconciled in config.
   stripped.
 - `rl_learner.py` ignores `cfg.resume` — always fresh; transfer online data via
   `additional_offline_dataset_paths`.
-- Watch `pointmap_gate_absmax`, not the mean.
+- Depth influence: watch `depth_attn_mass/*` + the 2×2 probe
+  (`probes/depth_modality_probe.py`); the α-gate metrics are gone (2026-07-26).

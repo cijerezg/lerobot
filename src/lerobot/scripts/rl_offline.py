@@ -661,6 +661,7 @@ def run_offline_training(
                 gradient_accumulation_steps=gradient_accumulation_steps,
                 clip_grad_norm_value=clip_grad_norm_value,
                 cast_to_bf16_fn=cast_to_bf16_fn,
+                optimization_step=optimization_step,
             )
         else:
             # Full RL: critic then actor (respecting critic_warmup_steps)
@@ -697,6 +698,7 @@ def run_offline_training(
                     gradient_accumulation_steps=gradient_accumulation_steps,
                     clip_grad_norm_value=clip_grad_norm_value,
                     cast_to_bf16_fn=cast_to_bf16_fn,
+                    optimization_step=optimization_step,
                 )
                 training_infos.update(actor_infos)
 

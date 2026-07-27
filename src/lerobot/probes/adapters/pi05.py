@@ -99,6 +99,8 @@ class Pi05Adapter(ProbablePolicy):
         task_str: str,
         state: Tensor | None = None,
         advantage: float = 1.0,
+        subtask: str | None = None,  # noqa: ARG002 — pi05 generates its own subtask
+        metadata: dict | None = None,  # noqa: ARG002 — pi05 has no metadata prompt
     ) -> tuple[Tensor, Tensor, str | None]:
         device = self._device
         action_dim = self.action_dim

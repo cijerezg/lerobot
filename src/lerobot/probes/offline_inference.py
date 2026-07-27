@@ -28,6 +28,7 @@ Usage examples:
         --eval_random_n 5 --eval_checkpoint_b /path/to/other/checkpoint
 """
 
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -42,13 +43,13 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import build_sample_list, get_frame_data
+from lerobot.probes.utils import assemble_frame_history, build_sample_list, get_frame_data
 from lerobot.rl.inference_utils import apply_butterworth_filter
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
 
-# SO-100 joint names in action-vector order. Both pi05 and molmoact2 target SO-100.
+# Known action-vector layouts used by the current probe targets.
 SO100_JOINT_NAMES = [
     "shoulder_pan",
     "shoulder_lift",
@@ -57,6 +58,24 @@ SO100_JOINT_NAMES = [
     "wrist_roll",
     "gripper",
 ]
+
+REBOT_JOINT_NAMES = [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_yaw",
+    "wrist_roll",
+    "gripper",
+]
+
+
+def _joint_names_for_dim(action_dim: int) -> list[str]:
+    if action_dim == len(REBOT_JOINT_NAMES):
+        return REBOT_JOINT_NAMES
+    if action_dim == len(SO100_JOINT_NAMES):
+        return SO100_JOINT_NAMES
+    return [f"joint_{i}" for i in range(action_dim)]
 
 
 @dataclass
@@ -151,21 +170,22 @@ def render_sample(
     Layout:
       Row 0, cols 0..K-1  — camera images
       Row 0, col -1       — subtask info box (when a spare column exists)
-      Rows 1-2, 3 cols    — 2×3 joint action traces (all checkpoints overlaid)
+      Remaining rows      — all joint action traces (all checkpoints overlaid)
     """
     from matplotlib.gridspec import GridSpec
 
-    camera_keys = sorted(k for k in obs if "images" in k)
+    camera_keys = sorted(k for k in obs if k.startswith("observation.images."))
     n_cameras = len(camera_keys)
     n_joints = gt_actions.shape[-1]
     chunk_size = gt_actions.shape[0]
     steps = np.arange(chunk_size)
 
-    n_cols = 3
-    fig = plt.figure(figsize=(14, 9))
+    n_cols = 4 if n_joints > 6 else 3
+    n_action_rows = max(1, (n_joints + n_cols - 1) // n_cols)
+    fig = plt.figure(figsize=(4.6 * n_cols, 4.8 + 2.4 * n_action_rows))
     gs = GridSpec(
-        3, n_cols, figure=fig,
-        height_ratios=[1.8, 1.0, 1.0],
+        1 + n_action_rows, n_cols, figure=fig,
+        height_ratios=[1.8] + [1.0] * n_action_rows,
         hspace=0.50, wspace=0.35,
         top=0.91, bottom=0.07, left=0.07, right=0.97,
     )
@@ -261,9 +281,9 @@ def render_sample(
                 _draw_lines(x, y, _wrap(mem or "(empty)", max_lines=2), "#333333", fontsize=6.5)
 
     # ── 2×3 joint action traces ──────────────────────────────────────────────
-    for j in range(min(n_joints, 6)):
-        row = (j // 3) + 1
-        col = j % 3
+    for j in range(n_joints):
+        row = (j // n_cols) + 1
+        col = j % n_cols
         ax = fig.add_subplot(gs[row, col])
 
         if state is not None and j < state.shape[-1]:
@@ -336,7 +356,7 @@ def _summary_lookup(dataset, cfg) -> dict[int, tuple[str, str]]:
     return lookup
 
 
-def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk_size, summary_lookup):
+def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk_size, summary_lookup, cfg):
     """
     Run inference for all samples through *adapter*.
 
@@ -348,6 +368,7 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
     """
     preds: dict[int, tuple] = {}
     mse: list[float] = []
+    memory_ablation: list[dict] = []
 
     adapter.suppress_logs(True)
     try:
@@ -356,6 +377,17 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
                 obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
                     dataset, global_idx, chunk_size
                 )
+                memory_cfg = getattr(cfg.policy, "memory", None)
+                if memory_cfg is not None and memory_cfg.history_keys and memory_cfg.history_num_samples > 0:
+                    obs.update(
+                        assemble_frame_history(
+                            dataset,
+                            global_idx,
+                            memory_cfg,
+                            dataset.fps,
+                            list(memory_cfg.history_keys),
+                        )
+                    )
                 gt_actions_norm = adapter.normalize_gt_actions(gt_actions, state)
                 prev_summary, target_summary = summary_lookup.get(global_idx, (None, None))
                 frame_data[global_idx] = {
@@ -367,8 +399,26 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
             fd = frame_data[global_idx]
             pred_unnorm, pred_norm, pred_subtask = adapter.predict_action_chunk(
                 fd["obs"], fd["task_str"], state=fd["state"],
+                subtask=fd["gt_subtask"], metadata={"quality": 5, "mistake": False},
             )
             generation = adapter.generate_subtask(fd["obs"], fd["task_str"], summary=fd["summary_prev"])
+            generation_empty = None
+            if generation is not None and fd["summary_prev"] and fd["gt_subtask"]:
+                generation_empty = adapter.generate_subtask(fd["obs"], fd["task_str"], summary=None)
+                if generation_empty is not None:
+                    memory_ablation.append(
+                        {
+                            "episode_idx": int(ep_idx),
+                            "frame_idx": int(fr_idx),
+                            "global_idx": int(global_idx),
+                            "gt_subtask": fd["gt_subtask"],
+                            "gt_memory": fd["summary_prev"],
+                            "gt_memory_pred_subtask": generation[1],
+                            "empty_memory_pred_subtask": generation_empty[1],
+                            "gt_memory_pred_summary": generation[3],
+                            "empty_memory_pred_summary": generation_empty[3],
+                        }
+                    )
             if generation is not None:
                 pred_subtask = generation[1]
             this_mse = torch.nn.functional.mse_loss(pred_unnorm, fd["gt_actions"].float()).item()
@@ -382,7 +432,38 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
     finally:
         adapter.suppress_logs(False)
 
-    return preds, mse
+    return preds, mse, memory_ablation
+
+
+def _write_memory_ablation(rows: list[dict], output_dir: str) -> None:
+    if not rows:
+        return
+
+    def _correct(pred: str, target: str) -> bool:
+        return pred.strip().casefold() == target.strip().casefold()
+
+    gt_correct = [_correct(row["gt_memory_pred_subtask"], row["gt_subtask"]) for row in rows]
+    empty_correct = [_correct(row["empty_memory_pred_subtask"], row["gt_subtask"]) for row in rows]
+    changed = [
+        row["gt_memory_pred_subtask"].strip().casefold()
+        != row["empty_memory_pred_subtask"].strip().casefold()
+        for row in rows
+    ]
+    summary = {
+        "n_frames_with_nonempty_gt_memory": len(rows),
+        "gt_memory_subtask_accuracy": float(np.mean(gt_correct)),
+        "empty_memory_subtask_accuracy": float(np.mean(empty_correct)),
+        "accuracy_delta": float(np.mean(gt_correct) - np.mean(empty_correct)),
+        "decode_changed_fraction": float(np.mean(changed)),
+    }
+    with open(os.path.join(output_dir, "memory_ablation.json"), "w") as f:
+        json.dump({"summary": summary, "per_frame": rows}, f, indent=2)
+    logging.info(
+        "[offline_inference] memory ablation "
+        f"n={len(rows)}  GT-memory acc={summary['gt_memory_subtask_accuracy']:.3f}  "
+        f"empty-memory acc={summary['empty_memory_subtask_accuracy']:.3f}  "
+        f"delta={summary['accuracy_delta']:+.3f}"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -447,11 +528,14 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
         logging.info("Summaries found: conditioning generation on GT memory (hold/update rule).")
 
     frame_data: dict[int, dict] = {}
-    preds, mse = _run_checkpoint(adapter, dataset, samples, frame_data, chunk_size, summary_lookup)
+    preds, mse, memory_ablation = _run_checkpoint(
+        adapter, dataset, samples, frame_data, chunk_size, summary_lookup, cfg
+    )
     logging.info(f"MSE  {path_label} ({path_str}): {sum(mse) / len(mse):.4f}")
+    _write_memory_ablation(memory_ablation, output_dir)
 
     action_dim = frame_data[samples[0][2]]["gt_actions"].shape[-1]
-    joint_names = SO100_JOINT_NAMES[:action_dim]
+    joint_names = _joint_names_for_dim(action_dim)
     checkpoint_paths = {path_label: path_str}
 
     for ep_idx, fr_idx, global_idx in samples:

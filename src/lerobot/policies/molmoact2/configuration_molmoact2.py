@@ -140,9 +140,9 @@ class MolmoAct2Config(PreTrainedConfig):
     # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
     # None => depth-free: no encoder built, no depth key shipped, forward cost
     # unchanged. When set, the DepthPointmapEncoder tokenizes the wrist depth and a
-    # co-evolving DepthStream feeds the action expert via a gated additive SDPA + sink
-    # read (depth_pointmap_design.md §B.4); the VLM prefix is untouched, and the read
-    # is bit-identical to depth-free at init (gate α=0).
+    # co-evolving DepthStream adds depth columns to the action expert's context
+    # softmax with a learned per-layer bias (depth_pointmap_design.md §B.3); the VLM
+    # prefix is untouched.
     pointmap_config: DepthPointmapConfig | None = None
     normalize_language: bool = True
     normalize_gripper: bool = False

@@ -74,6 +74,8 @@ class MolmoAct2Adapter(ProbablePolicy):
         obs: dict[str, Tensor],
         task_str: str,
         gt_actions: Tensor | None = None,
+        subtask: str | None = None,
+        metadata: dict | None = None,
     ) -> dict:
         """Build the preprocessor input for molmoact2 probe forwards."""
         device = self._device
@@ -82,6 +84,13 @@ class MolmoAct2Adapter(ProbablePolicy):
             **obs_on_device,
             "task": task_str,
         }
+        complementary: dict = {}
+        if subtask:
+            complementary["subtask"] = [subtask]
+        if metadata is not None:
+            complementary["metadata"] = metadata
+        if complementary:
+            flat[TransitionKey.COMPLEMENTARY_DATA] = complementary
         if gt_actions is not None:
             flat[ACTION] = gt_actions
         batch = self._preprocessor(flat)
@@ -116,8 +125,10 @@ class MolmoAct2Adapter(ProbablePolicy):
         task_str: str,
         state: Tensor | None = None,  # noqa: ARG002 — anchor comes from obs[OBS_STATE]
         advantage: float | None = None,  # noqa: ARG002 — molmoact2 prompts carry no advantage clause
+        subtask: str | None = None,
+        metadata: dict | None = None,
     ) -> tuple[Tensor, Tensor, str | None]:
-        batch = self._make_batch(obs, task_str)
+        batch = self._make_batch(obs, task_str, subtask=subtask, metadata=metadata)
         # MolmoAct2Policy.predict_action_chunk returns [B, n_action_steps, action_dim],
         # already sliced and float32. See modeling_molmoact2.py:2004.
         norm_actions = self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode()).float()

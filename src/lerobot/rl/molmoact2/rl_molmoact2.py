@@ -91,7 +91,7 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     value_support_max: float = 0.0
     hl_gauss_sigma_ratio: float = 5.0
     critic_lr: float = 1e-4
-    # From-scratch depth modules (pointmap_encoder + depth_stream, incl. gate/sink) get
+    # From-scratch depth modules (pointmap_encoder + depth_stream, incl. read bias) get
     # their own optimizer group: pretrained-lr is too slow for fresh params, and a separate
     # group name keeps them out of pretrained_merge_targets (checkpoint has no depth weights).
     depth_lr: float = 5e-4
@@ -176,6 +176,7 @@ class MolmoAct2RLConfig(MolmoAct2Config):
             and f"depth.{self.pointmap_config.depth_key}.depth" in self.memory.history_keys
         ):
             self.pointmap_config.history_num_samples = self.memory.history_num_samples
+            self.pointmap_config.history_window_seconds = self.memory.history_window_seconds
 
 
 # ── Critic ─────────────────────────────────────────────────────────────────
@@ -341,6 +342,7 @@ class MolmoAct2Critic(nn.Module):
         image_patch_id: int,
         num_images: int,
         cam_index: int,
+        attention_mask: Tensor | None = None,
     ) -> Tensor | None:
         """Co-evolve point-map depth tokens attending the critic's wrist-cam tokens (D6).
 
@@ -359,9 +361,15 @@ class MolmoAct2Critic(nn.Module):
             input_ids, image_patch_id=image_patch_id, num_images=num_images, cam_index=cam_index
         )
         wrist, _ = gather_kv_at_indices(inputs_embeds, inputs_embeds, sel)  # (B, T_w, D)
+        # RGB dropout masks the wrist span out of attention; this direct gather bypasses
+        # attention masks, so the bridge is killed per-row from the same mask (mirrors the
+        # actor stream's cross_on).
+        cross_on = None
+        if attention_mask is not None:
+            cross_on = torch.gather(attention_mask.to(torch.bool), 1, sel).any(dim=1)
         tokens = init
         for block in self.depth_blocks:
-            tokens = block(tokens, wrist, wrist)
+            tokens = block(tokens, wrist, wrist, cross_on=cross_on)
         return self.depth_read_proj(tokens)  # (B, N, D)
 
     # ── Forward pass ──────────────────────────────────────────────────────────
@@ -610,6 +618,7 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
                 image_patch_id=image_patch_id,
                 num_images=num_images,
                 cam_index=cam_index,
+                attention_mask=attention_mask,
             )
         return critic_module(inputs_embeds, attention_mask.to(torch.bool), depth_tokens=depth_tokens)
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import os
 import random
 from dataclasses import dataclass
@@ -101,8 +102,12 @@ def _warn_overcommit_if_risky(probe_name: str) -> None:
     )
 
 
-def build_episode_samples(dataset, episodes_str, random_n, subsample, seed=None):
-    """Return ``[(ep_idx, [(fr_idx, global_idx), ...]), ...]``."""
+def build_episode_samples(dataset, episodes_str, random_n, subsample, seed=None, max_frames=None):
+    """Return ``[(ep_idx, [(fr_idx, global_idx), ...]), ...]``.
+
+    ``max_frames`` widens the stride past ``subsample`` so that many frames span the
+    whole episode: an unbounded walk of a 4000-frame episode is hours of rendering.
+    """
     ep_to_indices = build_episode_index(dataset)
     selected: list[int] = []
 
@@ -124,7 +129,10 @@ def build_episode_samples(dataset, episodes_str, random_n, subsample, seed=None)
     samples = []
     for ep_idx in selected:
         indices = ep_to_indices[ep_idx]
-        ep_frames = [(fr_idx, indices[fr_idx]) for fr_idx in range(0, len(indices), subsample)]
+        stride = subsample
+        if max_frames:
+            stride = max(stride, math.ceil(len(indices) / max_frames))
+        ep_frames = [(fr_idx, indices[fr_idx]) for fr_idx in range(0, len(indices), stride)]
         if ep_frames:
             samples.append((ep_idx, ep_frames))
     return samples
@@ -1137,12 +1145,15 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
         random_n=p.max_episodes,
         subsample=getattr(p, "attn_eval_subsample", 1),
         seed=p.random_seed,
+        max_frames=p.n_frames_per_episode,
     )
     if not samples:
         logging.warning(f"  No samples in {ds_output_dir}, skipping.")
         return
 
-    fps = getattr(ds, "fps", 30) / max(1, getattr(p, "attn_eval_subsample", 1))
+    stride = samples[0][1][1][0] - samples[0][1][0][0] if len(samples[0][1]) > 1 else 1
+    fps = min(10, 4 * getattr(ds, "fps", 30) / stride)  # <=4x real time, <=10 fps display
+    logging.info(f"  {len(samples)} episode(s) x {len(samples[0][1])} frames (stride {stride})")
     _warn_overcommit_if_risky("ATTN")
 
     for ep_idx, ep_frames in samples:
@@ -1217,6 +1228,9 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
                         out_path = os.path.join(ep_dir, f"{key}.mp4")
                         writers[layer_idx][key] = imageio.get_writer(
                             out_path, fps=fps, macro_block_size=1,
+                            # Panels are megabytes per raw frame; at a low fps ffmpeg
+                            # can't estimate the rate within the default 5M probe.
+                            input_params=["-probesize", "100M"],
                         )
                     writers[layer_idx][key].append_data(frame_np)
 

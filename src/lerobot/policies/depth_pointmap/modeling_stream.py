@@ -18,21 +18,24 @@ wrist-cam only** (design §3.2) and has no action dependence, so it is a pure fu
 of the observation — computed once per observation and reused across all flow-matching
 denoising steps.
 
-Action-read bridge (the revised §3.3 read, decided 2026-06-14 — *additive*, not a
-single joint softmax, because a joint softmax is not bit-identical at gate 0). For
-action layer ℓ the action expert computes
+Action-read bridge (JOINT softmax, decided 2026-07-26 — depth_redesign_options.md
+§5.2; replaces the α-gated additive read whose scalar gate never trained). For
+action layer ℓ the action expert runs ONE softmax over context and depth columns:
 
-    out = SDPA(q, K_ctx, V_ctx)  +  tanh(α_ℓ) · SDPA(q, [K_dℓ, k_⋆], [V_dℓ, 0])
+    out = SDPA(q, [K_ctx ; K_dℓ], [V_ctx ; V_dℓ], mask=[ctx mask ; b_ℓ])
 
 where (K_dℓ, V_dℓ) are this module's per-layer depth state projected into the action
-expert's head space (``read_kv``), k_⋆ is a zero sink key whose per-(layer,head) logit
-``sink_logit[ℓ,h]`` is injected as an additive attention bias (absolute abstaining),
-and α_ℓ is the per-layer zero-init gate (``tanh(0)=0`` ⇒ the depth term is bitwise
-zero at init ⇒ frozen-policy bit-identity). The SDPA itself lives in the action
-expert; this module owns the projections, α, and the sink logits. Fresh float32.
+expert's head space (``read_kv``) and ``b_ℓ = depth_bias[ℓ]`` is a learned per-layer
+score bias on the depth columns (init −2: initial depth mass ×e⁻² without zeroing
+content gradients — additive inside the softmax, unlike the retired multiplicative
+gate). Abstention needs no sink column: the context keys are the natural sink. The
+SDPA itself lives in the action expert; this module owns the projections and
+``depth_bias``. Fresh float32.
 """
 
 from __future__ import annotations
+
+import math
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -41,32 +44,48 @@ from torch import Tensor, nn
 from .configuration_pointmap import DepthPointmapConfig
 
 
-def gated_depth_read(q: Tensor, depth_kv: tuple[Tensor, Tensor], sink_logit: Tensor) -> Tensor:
-    """Additive depth read via one SDPA over [depth tokens, zero sink] (MoT §3.3, revised).
+def join_depth_columns(
+    attn_mask: Tensor | None,
+    *,
+    k: Tensor,
+    v: Tensor,
+    depth_kv: tuple[Tensor, Tensor],
+    depth_bias: Tensor,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Extend a cross-attention key set with depth columns for the joint softmax
+    (depth_redesign_options.md §5.2).
 
-    A single static-shape SDPA (compile-friendly — regains CUDA graphs vs the A.3 manual
-    einsum; SDPA applies its own 1/√d scale). The sink is one extra key column with a zero
-    key (raw score 0), a zero value (contributes nothing), and a learned per-head logit
-    injected as an additive attention bias — so when no depth token scores above the sink
-    bar, attention parks on the sink and the read → 0 (absolute abstaining).
+    k, v:       (B, T_ctx, H, Dh) context keys/values.
+    depth_kv:   (K_d, V_d), each (B, N, H, Dh) — the layer's depth state in action
+                head space (already k-normed by the caller, like the context keys).
+    attn_mask:  (B, 1, 1, T_ctx) additive context mask (0 valid / finfo.min pad),
+                or None.
+    depth_bias: () scalar — this layer's learned score bias b_ℓ on the depth
+                columns; kept in the graph (the returned mask carries its grad).
 
-    q:          (B, Tq, H, Dh) post-q_norm action queries.
-    depth_kv:   (K_d, V_d), each (B, N, H, Dh) — the layer's depth state in action head space.
-    sink_logit: (H,) learned per-head sink logit.
-    Returns the read content (B, Tq, H, Dh); the caller scales by tanh(α_ℓ) and adds it to
-    the context read, so at α=0 the term is bitwise zero (frozen-policy bit-identity).
+    Returns (k_joint, v_joint, mask_joint) with T_ctx + N columns, mask
+    (B or 1, 1, 1, T_ctx + N).
     """
     k_d, v_d = depth_kv
-    b, n, h, dh = k_d.shape
-    zero = k_d.new_zeros(b, 1, h, dh)
-    k = torch.cat([k_d, zero], dim=1)  # (B, N+1, H, Dh)
-    v = torch.cat([v_d, zero], dim=1)
-    bias = k_d.new_zeros(h, n + 1)
-    bias[:, n] = sink_logit.to(k_d.dtype)  # depth columns: 0; sink column: per-head logit
-    out = F.scaled_dot_product_attention(
-        q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), attn_mask=bias.view(1, h, 1, n + 1)
-    )  # (B, H, Tq, Dh)
-    return out.transpose(1, 2).contiguous()
+    n_d = k_d.shape[1]
+    ctx_cols = k.new_zeros(1, 1, 1, k.shape[1]) if attn_mask is None else attn_mask
+    bias_cols = depth_bias.to(ctx_cols.dtype).reshape(1, 1, 1, 1).expand(*ctx_cols.shape[:-1], n_d)
+    mask_joint = torch.cat([ctx_cols, bias_cols], dim=-1)
+    return torch.cat([k, k_d], dim=1), torch.cat([v, v_d], dim=1), mask_joint
+
+
+def depth_attention_mass(
+    q: Tensor, k_joint: Tensor, mask_joint: Tensor, *, num_depth: int
+) -> Tensor:
+    """Mean softmax mass on the depth columns — the influence telemetry that
+    replaces the retired gate metric. q: (B, Tq, H, Dh) post-q_norm queries,
+    k_joint/mask_joint from join_depth_columns. Detached, eager; call on probe
+    steps only."""
+    with torch.no_grad():
+        scores = torch.einsum("bqhd,bkhd->bhqk", q.float(), k_joint.float())
+        scores = scores / math.sqrt(q.shape[-1]) + mask_joint.float()
+        weights = scores.softmax(dim=-1)
+        return weights[..., -num_depth:].sum(dim=-1).mean()
 
 
 def wrist_cam_token_indices(
@@ -92,6 +111,37 @@ def wrist_cam_token_indices(
     per_image = total // num_images
     cols = is_img.nonzero(as_tuple=False)[:, 1].view(input_ids.shape[0], total)
     return cols[:, cam_index * per_image : (cam_index + 1) * per_image]  # (B, T_cam)
+
+
+def mask_camera_patch_span(
+    attention_mask: Tensor,
+    input_ids: Tensor,
+    *,
+    image_patch_id: int,
+    num_images: int,
+    cam_index: int,
+    rows: Tensor | None = None,
+) -> Tensor:
+    """Return ``attention_mask`` with one camera's image-patch span disabled.
+
+    ``rows`` selects the batch rows to mask; ``None`` masks every row. This is the
+    single production implementation shared by training-time RGB dropout and the
+    depth-modality probe, so the probe's RGB− condition exercises the same mask
+    semantics (including the model-side bridge kill derived from this mask).
+    """
+    masked = attention_mask.clone()
+    sel = wrist_cam_token_indices(
+        input_ids,
+        image_patch_id=image_patch_id,
+        num_images=num_images,
+        cam_index=cam_index,
+    )
+    if rows is None:
+        rows = torch.arange(input_ids.shape[0], device=input_ids.device)
+    else:
+        rows = rows.to(device=input_ids.device, dtype=torch.long)
+    masked[rows[:, None], sel[rows]] = 0
+    return masked
 
 
 def gather_kv_at_indices(key: Tensor, value: Tensor, sel: Tensor) -> tuple[Tensor, Tensor]:
@@ -169,7 +219,13 @@ class StreamMLP(nn.Module):
 
 
 class DepthStreamBlock(nn.Module):
-    """One co-evolution block: depth self-attn + depth→wrist-cam cross-attn + MLP."""
+    """One co-evolution block: depth self-attn + depth→wrist-cam cross-attn + MLP.
+
+    ``cross_on`` (B,) bool kills the wrist bridge per row: the RGB-dropout
+    attention mask (processor-side) doesn't reach this direct K/V gather, so
+    dropped samples must zero the cross-attn residual here — forward contribution
+    and gradient both vanish (×0), and the row's stream runs depth-only
+    (self-attn + MLP), the correct "no RGB" semantics."""
 
     def __init__(self, *, d_d: int, d_vlm: int, num_heads: int, mlp_ratio: float) -> None:
         super().__init__()
@@ -180,20 +236,25 @@ class DepthStreamBlock(nn.Module):
         self.norm_mlp = nn.LayerNorm(d_d)
         self.mlp = StreamMLP(d_d, mlp_ratio)
 
-    def forward(self, t: Tensor, wrist_k: Tensor, wrist_v: Tensor) -> Tensor:
+    def forward(
+        self, t: Tensor, wrist_k: Tensor, wrist_v: Tensor, cross_on: Tensor | None = None
+    ) -> Tensor:
         h = self.norm_self(t)
         t = t + self.self_attn(h, h, h)
-        t = t + self.cross_attn(self.norm_cross(t), wrist_k, wrist_v)
+        cross = self.cross_attn(self.norm_cross(t), wrist_k, wrist_v)
+        if cross_on is not None:
+            cross = cross * cross_on.to(cross.dtype).view(-1, 1, 1)
+        t = t + cross
         t = t + self.mlp(self.norm_mlp(t))
         return t
 
 
 class DepthStream(nn.Module):
-    """M co-evolving depth blocks + the per-layer action-read bridge (α, sink, K/V proj).
+    """M co-evolving depth blocks + the per-layer action-read bridge (depth_bias, K/V proj).
 
     ``d_act`` is the action expert width (= ``num_action_heads · action_head_dim``);
     the read projections map the depth state (width d_d) into the action expert's head
-    space so the gated additive read can SDPA action queries against depth keys/values.
+    space so the joint softmax can attend depth columns next to the context columns.
     """
 
     def __init__(
@@ -227,20 +288,26 @@ class DepthStream(nn.Module):
         self.read_k_proj = nn.Linear(d_d, d_act)
         self.read_v_proj = nn.Linear(d_d, d_act)
 
-        # Per-layer zero-init gate α_ℓ (tanh(0)=0 ⇒ bit-identity) and per-(layer,head)
-        # sink logit (zero ⇒ sink starts neutral; the read adds it as a bias column).
-        self.gate = nn.Parameter(torch.zeros(num_layers))
-        self.sink_logit = nn.Parameter(torch.zeros(num_layers, num_action_heads))
+        # Per-layer learned score bias b_ℓ on the depth columns of the joint softmax
+        # (depth_redesign_options.md §5.2). Init −2: initial depth mass ×e⁻² ≈ 0.135 —
+        # a soft start that, being additive INSIDE the softmax, does not zero the
+        # content gradients (the failure mode of the retired multiplicative α gate).
+        self.depth_bias = nn.Parameter(torch.full((num_layers,), -2.0))
 
-    def gate_value(self) -> Tensor:
-        return torch.tanh(self.gate)  # (num_layers,)
-
-    def forward(self, init_tokens: Tensor, wrist_keys: list[Tensor], wrist_values: list[Tensor]) -> list[Tensor]:
+    def forward(
+        self,
+        init_tokens: Tensor,
+        wrist_keys: list[Tensor],
+        wrist_values: list[Tensor],
+        cross_on: Tensor | None = None,
+    ) -> list[Tensor]:
         """Co-evolve the depth tokens through the M blocks.
 
         init_tokens: (B, N, d_d) from the point-map encoder.
         wrist_keys / wrist_values: length-M lists, each (B, T_w, d_vlm) — the VLM's
         per-layer cached K / V sliced to the wrist-camera token span.
+        cross_on: (B,) bool or None — per-row wrist-bridge switch (False for
+        RGB-dropped samples; see DepthStreamBlock).
 
         Returns a length-M list of depth states (B, N, d_d); state ℓ (the output of
         block ℓ) is what the action expert's layer ℓ reads.
@@ -253,7 +320,7 @@ class DepthStream(nn.Module):
         t = init_tokens
         states = []
         for block, wk, wv in zip(self.blocks, wrist_keys, wrist_values, strict=True):
-            t = block(t, wk, wv)
+            t = block(t, wk, wv, cross_on=cross_on)
             states.append(t)
         return states
 

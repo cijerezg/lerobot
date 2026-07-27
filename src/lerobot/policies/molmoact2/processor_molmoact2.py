@@ -633,6 +633,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     # history_stride_seconds parameterizes the e(t) time stamps.
     history_dropout: float = 0.3
     history_stride_seconds: float = 1.0
+    # Anti-laziness RGB dropout (depth_redesign_options.md §4.3): mask ONE camera's
+    # <im_patch> span out of the attention mask (the depth camera's), so the sample
+    # is solvable only through depth — nothing attends the span, no gradient flows
+    # through its vision path. Training text only, independent draw per sample.
+    # rgb_dropout_key is the bare camera name; empty or rgb_dropout 0 disables.
+    rgb_dropout: float = 0.0
+    rgb_dropout_key: str = ""
     # Runtime toggle (not persisted): "action" builds the action prompt;
     # "subtask_generation" builds the generation prompt/labels instead. Callers
     # flip it around a pipeline call so generation gets the SAME normalization.
@@ -663,6 +670,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         self._action_start_id = _single_token_id(self.processor.tokenizer, ACTION_START_TOKEN)
         self._action_end_id = _single_token_id(self.processor.tokenizer, ACTION_END_TOKEN)
         self._state_history_id = _single_token_id(self.processor.tokenizer, STATE_HISTORY_TOKEN)
+        self._image_patch_id = _single_token_id(self.processor.tokenizer, "<im_patch>")
         self._eos_token = self.processor.tokenizer.eos_token or ""
         self._eos_token_id = self.processor.tokenizer.eos_token_id
 
@@ -688,6 +696,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "summary_dropout": self.summary_dropout,
             "history_dropout": self.history_dropout,
             "history_stride_seconds": self.history_stride_seconds,
+            "rgb_dropout": self.rgb_dropout,
+            "rgb_dropout_key": self.rgb_dropout_key,
         }
 
     def _resolve_max_sequence_length(
@@ -1118,6 +1128,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         build_action_labels = action is not None and self.action_mode in {"discrete", "both"}
         max_num_images = 0
         history_on = torch.ones(batch_size, dtype=torch.bool)
+        rgb_drop_cam = None
+        rgb_dropped = torch.zeros(batch_size, dtype=torch.bool)
+        if build_action_labels and self.rgb_dropout > 0 and self.rgb_dropout_key:
+            drop_key = f"{OBS_IMAGES}.{self.rgb_dropout_key}"
+            resolved_keys = self._resolve_image_keys(observation)
+            if drop_key in resolved_keys:
+                rgb_drop_cam = resolved_keys.index(drop_key)
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
             discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
@@ -1133,6 +1150,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                     # AND the sample's temporal keys in the video encoder — the
                     # sample degenerates to the exact K=1 pretrained path.
                     history_on[batch_idx] = False
+                if rgb_drop_cam is not None and random.random() < self.rgb_dropout:
+                    # Anti-laziness RGB dropout: the camera's <im_patch> span is
+                    # masked out of attention below — token layout unchanged, no
+                    # consumer attends it, no gradient through its vision path.
+                    rgb_dropped[batch_idx] = True
             flat_images.extend(images)
             max_num_images = max(max_num_images, len(images))
             prompt = _build_robot_text(
@@ -1183,6 +1205,26 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         if build_action_labels:
             inputs["labels"] = self._build_labels(inputs["input_ids"], inputs["attention_mask"])
+
+        if rgb_drop_cam is not None and bool(rgb_dropped.any()):
+            # RGB dropout = attention masking (depth_redesign_options.md §4.3): the
+            # dropped camera's <im_patch> span leaves the attention mask, so no
+            # consumer attends those tokens and no gradient reaches the vision tower
+            # through them. Positions/RoPE are unaffected (position_ids are arange,
+            # not mask-cumsum). The depth stream's wrist bridge bypasses this mask and
+            # is killed model-side by deriving its per-row switch from this same mask.
+            # Applied AFTER _build_labels (answer-span math reads the mask).
+            from lerobot.policies.depth_pointmap.modeling_stream import mask_camera_patch_span
+
+            rows = rgb_dropped.nonzero(as_tuple=True)[0]
+            inputs["attention_mask"] = mask_camera_patch_span(
+                inputs["attention_mask"],
+                inputs["input_ids"],
+                image_patch_id=self._image_patch_id,
+                num_images=max_num_images,
+                cam_index=rgb_drop_cam,
+                rows=rows,
+            )
 
         complementary.update(dict(inputs))
         complementary["action_dim_is_pad"] = action_dim_is_pad
@@ -1289,6 +1331,11 @@ def make_molmoact2_pre_post_processors(
     # bare MolmoAct2Config used for BC/eval, hence the getattr default.
     memory_cfg = getattr(config, "memory", None)
     history_dropout = memory_cfg.history_dropout if memory_cfg is not None else 0.3
+    # Anti-laziness RGB dropout rides pointmap_config (depth_redesign_options.md §4.3):
+    # the blacked camera is the depth camera; depth-free configs get 0 (no-op).
+    pointmap_cfg = getattr(config, "pointmap_config", None)
+    rgb_dropout = pointmap_cfg.rgb_dropout_prob if pointmap_cfg is not None else 0.0
+    rgb_dropout_key = pointmap_cfg.depth_key if pointmap_cfg is not None else ""
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
@@ -1316,6 +1363,8 @@ def make_molmoact2_pre_post_processors(
             env_action_dim=env_action_dim,
             history_dropout=history_dropout,
             history_stride_seconds=config.history_stride_seconds,
+            rgb_dropout=rgb_dropout,
+            rgb_dropout_key=rgb_dropout_key,
         ),
         DeviceProcessorStep(device=config.device),
     ]

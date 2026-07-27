@@ -24,6 +24,16 @@ class MemoryConfig:
     # prompt quality=5 / mistake=false at inference.
     metadata_enabled: bool = False
 
+    def __post_init__(self) -> None:
+        if self.history_num_samples < 0:
+            raise ValueError(f"history_num_samples must be >= 0, got {self.history_num_samples}.")
+        if self.history_keys and self.history_num_samples == 0:
+            raise ValueError("history_num_samples must be >= 1 when history_keys are enabled.")
+        if self.history_window_seconds <= 0:
+            raise ValueError(f"history_window_seconds must be > 0, got {self.history_window_seconds}.")
+        if not 0 <= self.history_dropout < 1:
+            raise ValueError(f"history_dropout must be in [0, 1), got {self.history_dropout}.")
+
     def history_offsets(self, fps: float) -> dict[str, list[int]] | None:
         """Per-key lookback distances in buffer steps, e.g. 5 s / 5 samples @ 30 fps → [30, 60, 90, 120, 150]."""
         if not self.history_keys:

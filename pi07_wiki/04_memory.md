@@ -140,14 +140,19 @@ observation before `build_inference_batch`.
   `_extract_history_images`) is **deleted 2026-07-22**: 2 cams × 4 frames cost
   ~1,700 LLM tokens per step, paid again in KV at every decode. Checkpoints
   trained with that prompt format are orphaned by design.
-- **Depth history** — consumed (built 2026-07-21, unchanged): the pointmap encoder takes the
-  `history.depth.{cam}.depth` window through the same per-patch CNN with learned
-  per-slot time embeddings (past oldest→newest + current), concatenating
-  `(T_h+1)·N` tokens into the DepthStream; `DepthPointmapConfig.history_num_samples`
-  (0 = no new params, old checkpoints load) syncs from `memory.history_num_samples`.
-  v1 does **not** re-project past frames into the current camera frame (the wrist
-  moves) — slots are only time-marked; FK re-projection is the fallback if
-  α-telemetry shows history unused.
+- **Depth history** — consumed; **rebuilt 2026-07-25** to mirror the video
+  encoder ([depth_history_design.md](depth_history_design.md); the 2026-07-21
+  token-concat build predated the video-encoder decision and fed `(T_h+1)·N`
+  tokens to the stream). Now: the `history.depth.{cam}.depth` window rides the
+  shared patch CNN as extra batch rows; a `TemporalFusion` after each CNN block
+  (same-pixel attention over all frames incl. the current one, sinusoidal
+  e(Δt), MLP) fuses the past into the current frame; past rows are dropped
+  before pooling, so the stream always sees `N = 192` tokens. The shared
+  `history_images_mask` dropout draw masks the past keys (≡ missing window ≡
+  cold deque). `DepthPointmapConfig.history_num_samples` (0 = no new params)
+  and `history_window_seconds` sync from `memory.*`. v1 does **not** re-project
+  past frames into the current camera frame (the wrist moves) — frames carry
+  only the e(Δt) stamp; FK re-projection stays the fallback.
 - **Action history** — plumbed through the buffers but not consumed; whether past
   *actions* should be fed at all stays a causal-confusion ablation (candidates if
   a richer channel is ever wanted: MEM-style compression, HAMLET moment tokens, a

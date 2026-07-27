@@ -15,7 +15,12 @@ scale (a near patch has small Δ, a far one large), so f is translation-invarian
 local shape; the absolute centroid goes to the position encoding g instead.
 
 Emits (B, N, d_mem) tokens that feed the co-evolving DepthStream (modeling_stream.py);
-the per-layer read gate + sink live on that stream, not here. Units: millimeters.
+the joint-softmax read projections and per-layer bias live on that stream. Units: millimeters.
+
+Short-term history (depth_history_design.md): past frames ride the same CNN as extra
+batch rows and are fused into the current frame by same-pixel temporal attention
+(TemporalFusion) after every block — the CNN analog of the MEM video encoder's
+temporal layers. Past rows are dropped before pooling, so N never changes.
 """
 
 from __future__ import annotations
@@ -100,6 +105,85 @@ def _group_norm(channels: int) -> nn.GroupNorm:
     return nn.GroupNorm(math.gcd(8, channels), channels)
 
 
+def _sinusoidal_seconds_embedding(times_s: Tensor, dim: int) -> Tensor:
+    """e(Δt) with e(0) = 0 — the same convention as the MEM video encoder
+    (modeling_molmoact2._sinusoidal_seconds_embedding): standard sinusoidal PE
+    shifted by PE(0), so the current frame (Δt = 0) carries a zero stamp.
+    times_s: (T,) seconds in the past → (T, dim), float32."""
+    times_s = times_s.to(torch.float32)
+    half = dim // 2
+    freqs = torch.exp(
+        torch.arange(half, dtype=torch.float32, device=times_s.device) * (-math.log(10000.0) / half)
+    )
+    angles = times_s[:, None] * freqs[None, :]
+    emb = torch.zeros((times_s.shape[0], dim), dtype=torch.float32, device=times_s.device)
+    emb[:, 0::2] = torch.sin(angles)
+    emb[:, 1::2] = torch.cos(angles) - 1.0
+    return emb
+
+
+class TemporalFusion(nn.Module):
+    """Same-pixel temporal attention + MLP after one CNN block (depth_history_design.md §2).
+
+    The input holds the same patch at T time slices, oldest → newest with the
+    current frame last. Each slice is stamped with sinusoidal e(Δt) (attention is
+    permutation-invariant, so it must be told frame ages; e(0) = 0), then every
+    pixel of the current frame queries that pixel across all frames in one softmax —
+    itself included, which is the abstain route: when no past frame is informative
+    the mass parks on the current frame. Past frames are keys/values only and pass
+    through unchanged; the fused current frame is refined by a pixelwise MLP. All
+    projections are 1×1 convs (per-pixel linear maps shared across pixels/patches).
+    """
+
+    MLP_RATIO = 4
+
+    def __init__(self, channels: int, times_s: Tensor) -> None:
+        super().__init__()
+        self.num_heads = max(1, channels // 64)
+        if channels % self.num_heads:
+            self.num_heads = 1
+        self.head_dim = channels // self.num_heads
+        self.norm_attn = _group_norm(channels)
+        self.q_proj = nn.Conv2d(channels, channels, 1)
+        self.k_proj = nn.Conv2d(channels, channels, 1)
+        self.v_proj = nn.Conv2d(channels, channels, 1)
+        self.o_proj = nn.Conv2d(channels, channels, 1)
+        self.norm_mlp = _group_norm(channels)
+        hidden = channels * self.MLP_RATIO
+        self.mlp = nn.Sequential(
+            nn.Conv2d(channels, hidden, 1), nn.SiLU(), nn.Conv2d(hidden, channels, 1)
+        )
+        # (T_h+1, C) e(Δt) stamp; derived from the config, so not checkpointed.
+        self.register_buffer(
+            "time_embed", _sinusoidal_seconds_embedding(times_s, channels), persistent=False
+        )
+
+    def forward(self, x: Tensor, history_on: Tensor | None) -> Tensor:
+        """x: (M, T, C, H, W), current frame last, T ≤ len(time_embed) (T = 1 when
+        the window is missing — cold deque / plain eval). history_on: (M,) bool or
+        None; False masks the sample's past keys (the shared MEM history-dropout
+        draw), which computes exactly the T = 1 op. Returns x with the current
+        slice fused, past slices untouched."""
+        m, t, c, h, w = x.shape
+        stamped = x + self.time_embed[-t:].to(x.dtype).view(1, t, c, 1, 1)
+        normed = self.norm_attn(stamped.reshape(m * t, c, h, w))
+        k = self.k_proj(normed).view(m, t, self.num_heads, self.head_dim, h * w)
+        v = self.v_proj(normed).view(m, t, self.num_heads, self.head_dim, h * w)
+        q = self.q_proj(normed.view(m, t, c, h, w)[:, -1])
+        q = q.view(m, self.num_heads, self.head_dim, h * w)
+        scores = torch.einsum("mhdp,mthdp->mthp", q, k) / math.sqrt(self.head_dim)
+        if history_on is not None and t > 1:
+            past = torch.zeros(t, dtype=torch.bool, device=x.device)
+            past[:-1] = True
+            blocked = past.view(1, t, 1, 1) & ~history_on.view(m, 1, 1, 1)
+            scores = scores.masked_fill(blocked, torch.finfo(scores.dtype).min)
+        weights = scores.softmax(dim=1)
+        fused = torch.einsum("mthp,mthdp->mhdp", weights, v).reshape(m, c, h, w)
+        current = x[:, -1] + self.o_proj(fused)
+        current = current + self.mlp(self.norm_mlp(current))
+        return torch.cat([x[:, :-1], current.unsqueeze(1)], dim=1)
+
+
 class PatchResidualBlock2d(nn.Module):
     """Stride-2 residual downsampling block, GroupNorm/SiLU (design §3)."""
 
@@ -122,18 +206,24 @@ class PatchShapeCNN(nn.Module):
 
     Shared across all patches (a conv shares its filters by construction). Applied
     to (M, C_in, P, P) and global-average-pooled to (M, d_out). For P=40 the three
-    stride-2 blocks downsample 40→20→10→5 before pooling.
+    stride-2 blocks downsample 40→20→10→5 before pooling. `blocks` is a ModuleList
+    (same state-dict keys as the former Sequential) so the encoder's history path
+    can interleave a TemporalFusion after each block; `out_channels` tells it the
+    per-block widths.
     """
 
     def __init__(self, in_channels: int, hidden: tuple[int, ...], d_out: int) -> None:
         super().__init__()
         dims = (in_channels, *hidden, d_out)
-        self.blocks = nn.Sequential(
-            *(PatchResidualBlock2d(dims[i], dims[i + 1]) for i in range(len(dims) - 1))
+        self.out_channels = dims[1:]
+        self.blocks = nn.ModuleList(
+            PatchResidualBlock2d(dims[i], dims[i + 1]) for i in range(len(dims) - 1)
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.blocks(x).mean(dim=(-1, -2))
+        for block in self.blocks:
+            x = block(x)
+        return x.mean(dim=(-1, -2))
 
 
 class DepthPointmapEncoder(nn.Module):
@@ -142,13 +232,11 @@ class DepthPointmapEncoder(nn.Module):
     Input : (B, 4, H, W) from build via back_project.
     Output: (B, N, d_mem) tokens, N = (H/P)(W/P), where d_mem is the depth-stream
     width. These tokens then co-evolve through the DepthStream (modeling_stream.py),
-    which owns the per-layer read gate; this encoder is gate-free.
+    which owns the joint-softmax read projections and bias.
 
     null_tokens is the learned per-patch bank substituted for empty patches (all
     pixels invalid) and under whole-sample modality dropout / depth-missing.
     """
-
-    NUM_HIDDEN = (32, 64)
 
     def __init__(self, config: DepthPointmapConfig, *, d_mem: int) -> None:
         super().__init__()
@@ -157,7 +245,7 @@ class DepthPointmapEncoder(nn.Module):
         self.num_tokens = (height // config.patch_size) * (width // config.patch_size)
 
         in_channels = 4 + (1 if config.include_centroid_depth else 0)
-        self.cnn = PatchShapeCNN(in_channels, self.NUM_HIDDEN, d_mem)
+        self.cnn = PatchShapeCNN(in_channels, config.cnn_hidden_channels, d_mem)
 
         # PE bounds derived so they track the far cutoff (design §4): λ_min = near
         # token spacing P·z_min/fx, λ_max = 2·z_max (must span the scene or alias).
@@ -168,23 +256,30 @@ class DepthPointmapEncoder(nn.Module):
 
         self.modality_embed = nn.Parameter(torch.randn(d_mem) * 0.02)
         self.null_tokens = nn.Parameter(torch.randn(self.num_tokens, d_mem) * 0.02)
-        # Temporal slots: [0 .. T_h-1] = past frames oldest → newest, [-1] = current.
-        # Only created when history is on, so historyless checkpoints load unchanged.
+        # Short-term history (depth_history_design.md): one TemporalFusion per CNN
+        # block, fusing past frames into the current one inside the trunk. Only
+        # created when history is on, so historyless checkpoints load unchanged.
+        self.temporal_fusions: nn.ModuleList | None = None
         if config.history_num_samples > 0:
-            self.time_embed = nn.Parameter(torch.randn(config.history_num_samples + 1, d_mem) * 0.02)
+            stride_s = config.history_window_seconds / config.history_num_samples
+            times_s = torch.tensor(
+                [stride_s * (config.history_num_samples - i) for i in range(config.history_num_samples)]
+                + [0.0]
+            )  # seconds in the past, oldest → newest, current (0 s) last
+            self.temporal_fusions = nn.ModuleList(
+                TemporalFusion(c, times_s) for c in self.cnn.out_channels
+            )
 
     def null_memory(self, batch_size: int) -> Tensor:
-        """Null bank for the full token assembly (history slots included when on)."""
-        null = self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
-        t_h = self.config.history_num_samples
-        if t_h == 0:
-            return null
-        return torch.cat([null + self.time_embed[i] for i in [*range(t_h), -1]], dim=1)
+        """Null bank for the token assembly — (B, N, d_mem); history never changes
+        the token count, so there are no history slots to null."""
+        return self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
 
-    def forward(self, pointmap: Tensor) -> Tensor:
+    def _patch_inputs(self, pointmap: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """(B, 4, H, W) point map → per-patch CNN input, centroids, empty mask:
+        cnn_in (B, N, C_in, P, P), centroid (B, N, 3) mm, empty (B, N) bool."""
         cfg = self.config
         p = cfg.patch_size
-        pointmap = pointmap.to(self.pos_proj.weight.dtype)
         patches = patchify(pointmap, p)  # (B, N, 4, P, P)
         b, n = patches.shape[:2]
         coords = patches[:, :, :3]  # (B, N, 3, P, P)
@@ -199,8 +294,79 @@ class DepthPointmapEncoder(nn.Module):
         if cfg.include_centroid_depth:
             zbar = (centroid[:, :, 2:3] / cfg.coord_scale_mm)[..., None, None]  # (B, N, 1, 1, 1)
             cnn_in = torch.cat([cnn_in, zbar.expand(b, n, 1, p, p)], dim=2)
+        return cnn_in, centroid, empty
 
-        f = self.cnn(cnn_in.reshape(b * n, cnn_in.shape[2], p, p)).reshape(b, n, -1)
+    def forward(
+        self,
+        pointmap: Tensor,
+        history_pointmaps: Tensor | None = None,
+        history_on: Tensor | None = None,
+    ) -> Tensor:
+        """Point maps → (B, N, d_mem) tokens. history_pointmaps (B, T_h, 4, H, W),
+        oldest → newest, rides the shared CNN blocks and is fused into the current
+        frame by the temporal attention (built iff history_num_samples > 0); the
+        token count is N regardless. history_on (B,) bool masks a sample's past
+        keys (history dropout). A fully empty current patch falls back to the newest
+        valid historical centroid and fused feature; it routes to the null bank when
+        history is masked/missing or every frame's patch is empty."""
+        cfg = self.config
+        pointmap = pointmap.to(self.pos_proj.weight.dtype)
+        cnn_in, centroid, empty = self._patch_inputs(pointmap)
+        b, n = cnn_in.shape[:2]
+        history_enabled = None
+        if history_on is not None:
+            history_enabled = history_on.to(device=pointmap.device, dtype=torch.bool)
+            if history_enabled.shape != (b,):
+                raise ValueError(
+                    f"history_on must have shape ({b},), got {tuple(history_enabled.shape)}."
+                )
+
+        if self.temporal_fusions is None:
+            f = self.cnn(cnn_in.reshape(b * n, *cnn_in.shape[2:])).reshape(b, n, -1)
+        else:
+            x = cnn_in.unsqueeze(2)  # (B, N, 1, C_in, P, P) — current frame last
+            if history_pointmaps is not None:
+                t_h = history_pointmaps.shape[1]
+                if t_h != cfg.history_num_samples:
+                    raise ValueError(
+                        f"history_pointmaps has {t_h} frames, expected "
+                        f"history_num_samples={cfg.history_num_samples}."
+                    )
+                hist_in, hist_centroid, hist_empty = self._patch_inputs(
+                    history_pointmaps.to(device=pointmap.device, dtype=pointmap.dtype).reshape(
+                        b * t_h, *history_pointmaps.shape[2:]
+                    )
+                )
+                hist_centroid = hist_centroid.reshape(b, t_h, n, 3)
+                hist_empty = hist_empty.reshape(b, t_h, n)
+                history_valid = ~hist_empty
+                if history_enabled is not None:
+                    history_valid = history_valid & history_enabled[:, None, None]
+                has_valid_history = history_valid.any(dim=1)
+                latest_from_end = (
+                    history_valid.flip(dims=(1,)).to(dtype=torch.int64).argmax(dim=1)
+                )
+                latest_idx = t_h - 1 - latest_from_end
+                fallback_centroid = torch.gather(
+                    hist_centroid,
+                    dim=1,
+                    index=latest_idx[:, None, :, None].expand(-1, 1, -1, 3),
+                ).squeeze(1)
+                recover_from_history = empty & has_valid_history
+                centroid = torch.where(recover_from_history[..., None], fallback_centroid, centroid)
+                empty = empty & ~has_valid_history
+                hist_in = hist_in.reshape(b, t_h, n, *hist_in.shape[2:]).transpose(1, 2)
+                x = torch.cat([hist_in, x], dim=2)  # (B, N, T_h+1, C_in, P, P)
+            x = x.reshape(b * n, *x.shape[2:])  # (M, T, C_in, P, P)
+            on = None
+            if history_enabled is not None:
+                on = history_enabled.repeat_interleave(n)
+            for block, fusion in zip(self.cnn.blocks, self.temporal_fusions, strict=True):
+                m, t = x.shape[:2]
+                y = block(x.reshape(m * t, *x.shape[2:]))
+                x = fusion(y.view(m, t, *y.shape[1:]), on)
+            f = x[:, -1].mean(dim=(-1, -2)).reshape(b, n, -1)  # past rows dropped here
+
         pe = fourier_position_encoding(
             centroid.reshape(b * n, 3),
             lambda_max_mm=self.lambda_max_mm,
@@ -219,17 +385,42 @@ class DepthPointmapEncoder(nn.Module):
         """Depth tokens from a policy batch: back-project → encode (design §1, §5).
 
         Consumes raw metric depth from observation.depth.{depth_key} (no [0,1]
-        normalizer on this path). Swaps in the learned null bank under modality
-        dropout at train time and whenever depth is missing, keeping shapes static.
+        normalizer on this path). The history window
+        history.depth.{depth_key}.depth (B, T_h, H, W), oldest → newest, is
+        back-projected per frame and fused inside the CNN (depth_history_design.md);
+        `history_images_mask` — the one shared MEM history-dropout draw — masks a
+        sample's temporal keys. A missing window computes the same op as a fully
+        masked one (T = 1 attention). Padded slots at episode start arrive
+        repeat-padded from the buffer clamp and are used as-is (repeat-pad v1, like
+        the video encoder); the _is_pad sidecar is deliberately ignored. Swaps in
+        the learned null bank under modality dropout at train time and whenever
+        depth is missing, keeping shapes static.
 
         Returns memory (B, N, d_mem) — the DepthStream's initial tokens.
         """
         cfg = self.config
-        memory = self._encode_depth(batch.get(f"observation.depth.{cfg.depth_key}"), batch_size, device)
-        if cfg.history_num_samples > 0:
-            memory = torch.cat(
-                [self._history_memory(batch, batch_size, device), memory + self.time_embed[-1]], dim=1
-            )
+        depth = batch.get(f"observation.depth.{cfg.depth_key}")
+        if depth is None:
+            memory = self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
+        else:
+            pointmap = self._backproject(torch.as_tensor(depth).to(device=device))
+            history_pm = history_on = None
+            if self.temporal_fusions is not None:
+                window = batch.get(f"history.depth.{cfg.depth_key}.depth")
+                if window is not None:
+                    window = torch.as_tensor(window).to(device=device)
+                    if window.shape[1] != cfg.history_num_samples:
+                        raise ValueError(
+                            f"depth history window has {window.shape[1]} frames, expected "
+                            f"history_num_samples={cfg.history_num_samples}."
+                        )
+                    history_pm = self._backproject(
+                        window.reshape(batch_size * cfg.history_num_samples, *window.shape[2:])
+                    ).reshape(batch_size, cfg.history_num_samples, *pointmap.shape[1:])
+                    mask = batch.get("history_images_mask")
+                    if mask is not None:
+                        history_on = torch.as_tensor(mask).to(device=device, dtype=torch.bool)
+            memory = self(pointmap, history_pm, history_on)
         if self.training and cfg.dropout_prob > 0:
             dropped = torch.rand(memory.shape[0], device=memory.device) < cfg.dropout_prob
             memory = torch.where(
@@ -237,44 +428,12 @@ class DepthPointmapEncoder(nn.Module):
             )
         return memory
 
-    def _encode_depth(self, depth: Tensor | None, batch_size: int, device: torch.device) -> Tensor:
-        """One frame slot (B, N, d_mem): back-project → encode; null bank when missing."""
+    def _backproject(self, depth: Tensor) -> Tensor:
         cfg = self.config
-        if depth is None:
-            return self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
-        depth = torch.as_tensor(depth).to(device=device)
-        pointmap = back_project(
+        return back_project(
             depth,
             intrinsics=tuple(cfg.intrinsics),
             depth_units_mm=cfg.depth_units_mm,
             z_min_mm=cfg.z_min_mm,
             z_max_mm=cfg.z_max_mm,
         )
-        return self(pointmap)
-
-    def _history_memory(self, batch: dict[str, Tensor], batch_size: int, device: torch.device) -> Tensor:
-        """Past-frame slots (B, T_h·N, d_mem), oldest → newest, each with its slot's
-        time embedding. Reads the buffer-canonical history window
-        history.depth.{depth_key}.depth (B, T_h, H, W); padded slots (episode start,
-        see the _is_pad mask) and a missing window take the null bank instead."""
-        cfg = self.config
-        t_h = cfg.history_num_samples
-        null = self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
-        window = batch.get(f"history.depth.{cfg.depth_key}.depth")
-        if window is None:
-            return torch.cat([null + self.time_embed[i] for i in range(t_h)], dim=1)
-        window = torch.as_tensor(window).to(device=device)
-        if window.shape[1] != t_h:
-            raise ValueError(
-                f"depth history window has {window.shape[1]} frames, expected "
-                f"history_num_samples={t_h}."
-            )
-        flat = window.reshape(batch_size * t_h, *window.shape[2:])
-        tokens = self._encode_depth(flat, batch_size * t_h, device)
-        tokens = tokens.reshape(batch_size, t_h, self.num_tokens, -1)
-        pad = batch.get(f"history.depth.{cfg.depth_key}.depth_is_pad")
-        if pad is not None:
-            pad = torch.as_tensor(pad).to(device=tokens.device, dtype=torch.bool)
-            tokens = torch.where(pad[:, :, None, None], null.unsqueeze(1).to(tokens.dtype), tokens)
-        tokens = tokens + self.time_embed[:t_h, None, :]
-        return tokens.reshape(batch_size, t_h * self.num_tokens, -1)
