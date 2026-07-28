@@ -1629,7 +1629,8 @@ def concatenate_batch_transitions(
              # right_val shape: (right_len, ...)
              # padding shape: (left_len, ...) + right_val.shape[1:]
              shape = (left_len,) + right_val.shape[1:]
-             padding = torch.zeros(shape, dtype=right_val.dtype, device=right_val.device)
+             fill_value = -1 if key.endswith("_index") else 0
+             padding = torch.full(shape, fill_value, dtype=right_val.dtype, device=right_val.device)
              left_info[key] = torch.cat([padding, right_val], dim=0)
 
         # 3. Present only in Left (Missing in Right) -> Pad Right
@@ -1639,7 +1640,8 @@ def concatenate_batch_transitions(
              # Wait! 'left_info' is a mutable reference to the dictionary in 'left_batch_transitions'.
              # Since we haven't modified 'left_info[key]' yet in this loop, 'left_val' IS the original tensor from the left batch.
              shape = (right_len,) + left_val.shape[1:]
-             padding = torch.zeros(shape, dtype=left_val.dtype, device=left_val.device)
+             fill_value = -1 if key.endswith("_index") else 0
+             padding = torch.full(shape, fill_value, dtype=left_val.dtype, device=left_val.device)
              left_info[key] = torch.cat([left_val, padding], dim=0)
 
     return left_batch_transitions

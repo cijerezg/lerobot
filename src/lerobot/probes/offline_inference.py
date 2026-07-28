@@ -415,6 +415,8 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
                             "gt_memory": fd["summary_prev"],
                             "gt_memory_pred_subtask": generation[1],
                             "empty_memory_pred_subtask": generation_empty[1],
+                            "gt_memory_raw_decode": generation[0],
+                            "empty_memory_raw_decode": generation_empty[0],
                             "gt_memory_pred_summary": generation[3],
                             "empty_memory_pred_summary": generation_empty[3],
                         }
@@ -464,6 +466,83 @@ def _write_memory_ablation(rows: list[dict], output_dir: str) -> None:
         f"empty-memory acc={summary['empty_memory_subtask_accuracy']:.3f}  "
         f"delta={summary['accuracy_delta']:+.3f}"
     )
+
+
+def _render_memory_ablation(rows: list[dict], frame_data: dict[int, dict], output_dir: str) -> None:
+    """Contact sheet: current images and the full GT-memory/empty-memory decodes."""
+    if not rows:
+        return
+    import textwrap
+
+    shown = rows[:12]
+    fig, axes = plt.subplots(len(shown), 4, figsize=(19, 3.4 * len(shown)), squeeze=False)
+
+    def _image(tensor: torch.Tensor) -> np.ndarray:
+        item = tensor.detach().float().cpu().squeeze()
+        if item.ndim == 3 and item.shape[0] in (1, 3):
+            item = item.permute(1, 2, 0)
+        array = item.numpy()
+        if array.max() <= 1.0:
+            array = (array * 255).clip(0, 255).astype(np.uint8)
+        return array
+
+    def _wrapped(value, width=52, limit=500) -> str:
+        text = str(value or "(empty)")
+        if len(text) > limit:
+            text = text[: limit - 1] + "…"
+        return textwrap.fill(text, width=width)
+
+    for row_idx, row in enumerate(shown):
+        fd = frame_data[row["global_idx"]]
+        camera_keys = sorted(k for k in fd["obs"] if k.startswith("observation.images."))
+        for col_idx in range(2):
+            ax = axes[row_idx, col_idx]
+            if col_idx < len(camera_keys):
+                key = camera_keys[col_idx]
+                ax.imshow(_image(fd["obs"][key]))
+                ax.set_title(f"ep {row['episode_idx']} fr {row['frame_idx']} — {key.split('.')[-1]}")
+            ax.axis("off")
+
+        target = row["gt_subtask"].strip().casefold()
+        conditions = (
+            (
+                "GT memory",
+                row["gt_memory_pred_subtask"],
+                f"INPUT MEMORY:\n{_wrapped(row['gt_memory'])}\n\nRAW DECODE:\n"
+                f"{_wrapped(row['gt_memory_raw_decode'])}",
+            ),
+            (
+                "Empty memory",
+                row["empty_memory_pred_subtask"],
+                f"INPUT MEMORY:\nnone yet.\n\nRAW DECODE:\n{_wrapped(row['empty_memory_raw_decode'])}",
+            ),
+        )
+        for offset, (name, prediction, body) in enumerate(conditions, start=2):
+            ax = axes[row_idx, offset]
+            correct = prediction.strip().casefold() == target
+            ax.set_facecolor("#E8F5E9" if correct else "#FDECEC")
+            ax.text(
+                0.02,
+                0.97,
+                f"GT SUBTASK: {row['gt_subtask']}\nPREDICTED: {prediction}\n\n{body}",
+                transform=ax.transAxes,
+                va="top",
+                ha="left",
+                fontsize=7.2,
+                family="monospace",
+            )
+            ax.set_title(f"{name} — {'CORRECT' if correct else 'WRONG'}", fontweight="bold")
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+    fig.suptitle(
+        f"Language-memory ablation: same observation, GT memory vs empty memory "
+        f"(showing {len(shown)}/{len(rows)} frames)",
+        fontsize=14,
+        fontweight="bold",
+    )
+    fig.savefig(os.path.join(output_dir, "memory_ablation.png"), bbox_inches="tight", dpi=140)
+    plt.close(fig)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -533,6 +612,7 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
     )
     logging.info(f"MSE  {path_label} ({path_str}): {sum(mse) / len(mse):.4f}")
     _write_memory_ablation(memory_ablation, output_dir)
+    _render_memory_ablation(memory_ablation, frame_data, output_dir)
 
     action_dim = frame_data[samples[0][2]]["gt_actions"].shape[-1]
     joint_names = _joint_names_for_dim(action_dim)

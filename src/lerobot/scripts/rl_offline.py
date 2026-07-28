@@ -34,6 +34,7 @@ Compared to offline_learner_pi05.py this script:
   - Defers all model-specific logic to Trainer
 """
 
+import contextlib
 import dataclasses
 import gc
 import logging
@@ -41,6 +42,7 @@ import os
 import sys
 import tempfile
 import time
+import traceback
 import warnings
 from pathlib import Path
 from pprint import pformat
@@ -60,14 +62,17 @@ from torch import nn
 from lerobot.cameras import opencv, realsense  # noqa: F401
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.factory import make_dataset
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.offline_dataset_utils import (
     _get_additional_dataset_paths,
+    get_offline_dataset_sources,
+    get_offline_dataset_weights,
     load_additional_offline_buffers,
     load_metadata_rows,
+    load_offline_dataset,
     load_summary_segments,
     make_combined_offline_iterator,
+    materialize_dataset_labels,
 )
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.utils import build_named_adamw_optimizers, cast_to_bf16
@@ -169,6 +174,54 @@ class _ValidationProbeSpec:
     run_attr: str = "run"
 
 
+class _ProbeConsoleFilter(logging.Filter):
+    """Keep routine probe progress out of the training console."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno >= logging.WARNING
+
+
+@contextlib.contextmanager
+def _quiet_probe_logging(probe_output_dir: str):
+    """Save detailed probe logs locally while keeping the console succinct."""
+    output_dir = Path(probe_output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_path = output_dir / "probe.log"
+
+    root_logger = logging.getLogger()
+    existing_handlers = tuple(root_logger.handlers)
+    console_handlers = [
+        handler
+        for handler in existing_handlers
+        if isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, logging.FileHandler)
+    ]
+    detail_handler = logging.FileHandler(log_path, mode="w")
+    formatter = next(
+        (handler.formatter for handler in existing_handlers if handler.formatter is not None),
+        logging.Formatter("%(levelname)s %(asctime)s %(name)s:%(lineno)d %(message)s"),
+    )
+    detail_handler.setFormatter(formatter)
+    detail_handler.setLevel(logging.DEBUG)
+    root_logger.addHandler(detail_handler)
+
+    console_filter = _ProbeConsoleFilter()
+    for handler in console_handlers:
+        handler.addFilter(console_filter)
+
+    try:
+        yield log_path
+    except Exception:
+        detail_handler.stream.write("\n" + traceback.format_exc())
+        detail_handler.flush()
+        raise
+    finally:
+        root_logger.removeHandler(detail_handler)
+        detail_handler.close()
+        for handler in console_handlers:
+            handler.removeFilter(console_filter)
+
+
 _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_actions", "lerobot.probes.actions", "actions"),
     _ValidationProbeSpec("enable_offline_inference", "lerobot.probes.offline_inference", "offline_inference"),
@@ -235,19 +288,20 @@ def _run_validation_probes(
                 continue
             logging.info(f"[VAL step={step}] probe '{spec.output_subdir}' started")
             try:
-                module = importlib.import_module(spec.module_path)
-                run_probe = getattr(module, spec.run_attr)
                 probe_output_dir = os.path.join(output_root, spec.output_subdir)
-                if spec.output_subdir == "actions":
-                    run_probe(
-                        adapter,
-                        reference_dataset if reference_dataset is not None else val_dataset,
-                        cfg,
-                        probe_output_dir,
-                        eval_dataset=val_dataset,
-                    )
-                else:
-                    run_probe(adapter, val_dataset, cfg, probe_output_dir)
+                with _quiet_probe_logging(probe_output_dir):
+                    module = importlib.import_module(spec.module_path)
+                    run_probe = getattr(module, spec.run_attr)
+                    if spec.output_subdir == "actions":
+                        run_probe(
+                            adapter,
+                            reference_dataset if reference_dataset is not None else val_dataset,
+                            cfg,
+                            probe_output_dir,
+                            eval_dataset=val_dataset,
+                        )
+                    else:
+                        run_probe(adapter, val_dataset, cfg, probe_output_dir)
             except Exception as exc:
                 logging.warning(f"[VAL step={step}] probe '{spec.output_subdir}' failed: {exc}")
             else:
@@ -493,10 +547,16 @@ def run_offline_training(
     logging.info(f"[RL_OFFLINE] Trainable params: {len(trainable)}")
 
     # ── Offline dataset & replay buffer ───────────────────────────────────────
-    logging.info("[RL_OFFLINE] Loading offline dataset …")
-    offline_dataset = make_dataset(cfg)
-    offline_dataset.delta_timestamps = None
-    offline_dataset.delta_indices = None
+    sources = get_offline_dataset_sources(cfg)
+    if not sources:
+        raise ValueError("Offline training requires at least one dataset source.")
+    normalization_source = sources[0]
+    logging.info(
+        "[RL_OFFLINE] Loading normalization source %s from %s",
+        normalization_source.name,
+        normalization_source.root,
+    )
+    offline_dataset = load_offline_dataset(cfg, normalization_source)
 
     # ── Preprocessors ─────────────────────────────────────────────────────────
     preprocessor, postprocessor = trainer.make_processors(
@@ -523,6 +583,22 @@ def run_offline_training(
     if history_offsets is not None:
         logging.info(f"[RL_OFFLINE] History lookback (steps @ {fps} fps): {history_offsets}")
 
+    if getattr(cfg, "cache_policy", "fallback") == "require":
+        cache_dir = getattr(cfg, "buffer_cache_dir", None)
+        cached = None if cache_dir is None else ReplayBuffer.find_cache(
+            offline_dataset,
+            cache_dir,
+            state_keys=cfg.policy.input_features.keys(),
+            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+            image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
+            image_stride=getattr(cfg.policy, "image_stride", 1),
+        )
+        if cached is None:
+            raise FileNotFoundError(
+                f"No matching replay cache for normalization source {normalization_source.name!r} "
+                f"({normalization_source.root}) under {cache_dir!r}."
+            )
+
     offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
         offline_dataset,
         device=device,
@@ -540,6 +616,10 @@ def run_offline_training(
         history_offsets=history_offsets,
     )
     offline_replay_buffer.dataset = offline_dataset
+    offline_replay_buffer.offline_source = normalization_source
+    materialize_dataset_labels(
+        offline_replay_buffer, offline_dataset, offline_dataset, source_index=0, is_main_process=True
+    )
     if memory_cfg is not None and memory_cfg.metadata_enabled:
         offline_replay_buffer.materialize_metadata(*load_metadata_rows(offline_dataset.root))
     additional_buffers = load_additional_offline_buffers(
@@ -598,6 +678,7 @@ def run_offline_training(
         async_prefetch=async_prefetch,
         queue_size=2,
         action_chunk_size=cfg.policy.n_action_steps,
+        weights=get_offline_dataset_weights(cfg),
     )
 
     # ── Validation dataset (used by probes) ───────────────────────────────────

@@ -23,7 +23,7 @@ uv run lerobot/src/lerobot/scripts/lerobot_record.py \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
     --dataset.repo_id=cijerezg/rebot_socks_v1 \
-    --dataset.single_task="Put socks in basket by pairs" \
+    --dataset.single_task="Put socks in brown basket" \
     --dataset.fps=30 \
     --dataset.num_episodes=20 \
     --dataset.episode_time_s=300 \

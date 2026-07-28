@@ -286,8 +286,10 @@ def _sinusoidal_seconds_embedding(times: Tensor, dim: int) -> Tensor:
 
 
 # Probe hook (lerobot.probes.mem_temporal_attention): when enabled, each temporal
-# resblock appends the current frame's mean attention mass on past-frame keys (a
-# scalar in [0, 1]) in layer call order. No-op / zero overhead when disabled.
+# resblock retains compact current-frame summaries in layer call order:
+# total past mass, mass by camera/head/history age, and total past mass by query
+# patch. No-op / zero overhead when disabled; capture tensors stay on device until
+# the probe drains them after the prefix forward.
 _MEM_TEMPORAL_CAPTURE: dict[str, Any] = {"enabled": False, "records": []}
 
 # Telemetry hook for the joint depth softmax (depth_redesign_options.md §5.1): when
@@ -355,9 +357,18 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
             scores = torch.cat([scores, temporal], dim=-1)
         weights = F.softmax(scores, dim=-1, dtype=torch.float32)
         if _MEM_TEMPORAL_CAPTURE["enabled"] and t == num_frames - 1 and t > 0:
-            # Current frame's mass on past-frame keys (fraction of the union softmax),
-            # meaned over batch/heads/patches — one scalar per temporal layer.
-            _MEM_TEMPORAL_CAPTURE["records"].append(float(weights[..., n:].sum(-1).mean()))
+            # past: (batch*cameras, heads, query patches, history ages), oldest→newest.
+            # These reductions retain the dimensions needed to answer whether the
+            # model reads particular moments/heads/regions rather than merely proving
+            # that a nonzero mean exists.
+            past = weights[..., n:]
+            _MEM_TEMPORAL_CAPTURE["records"].append(
+                {
+                    "mean": past.sum(dim=-1).mean().detach(),
+                    "by_bc_head_age": past.mean(dim=2).detach(),
+                    "by_bc_patch": past.sum(dim=-1).mean(dim=1).detach(),
+                }
+            )
         weights = F.dropout(weights, p=dropout_p, training=block.training).to(v.dtype)
         out_t = torch.einsum("bhqk,bkhd->bqhd", weights[..., :n], v[:, t])
         if t > 0:

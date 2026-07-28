@@ -474,9 +474,10 @@ class MolmoAct2Trainer(Trainer):
                 next_observations, raw.get("complementary_info"), cfg, key_prefix="next_depth."
             )
 
-            # Preprocess observations for current and next states.
-            curr_batch = preprocessor({**observations, "task": cfg.policy.task})
-            next_batch = preprocessor({**next_observations, "task": cfg.policy.task})
+            # Critic and target must see the same per-sample task as the actor.
+            tasks = self._resolve_batch_tasks(raw, cfg.policy.task, rewards.shape[0])
+            curr_batch = preprocessor({**observations, "task": tasks})
+            next_batch = preprocessor({**next_observations, "task": tasks})
 
             _fwd_critic = getattr(policy, "forward_critic")
             _fwd_target = getattr(policy, "forward_critic_target")
@@ -601,10 +602,11 @@ class MolmoAct2Trainer(Trainer):
         action_dim = self._action_dim(cfg)
         actions = actions[..., :action_dim]
 
+        tasks = self._resolve_batch_tasks(raw_batch, cfg.policy.task, actions.shape[0])
         pre_input: dict[str, Any] = {
             **observations,
             "action": actions,
-            "task": cfg.policy.task,
+            "task": tasks,
         }
         raw_comp = raw_batch.get("complementary_info") or {}
         comp = {
@@ -1015,10 +1017,25 @@ class MolmoAct2Trainer(Trainer):
 
         return next(s for s in preprocessor.steps if isinstance(s, MolmoAct2PackInputsProcessorStep))
 
+    def _resolve_batch_tasks(self, raw_batch: dict, fallback_task: str, batch_size: int) -> list[str]:
+        complementary = raw_batch.get("complementary_info") or {}
+        indices = complementary.get("task_index")
+        mapping = getattr(self, "_task_index_to_name", {})
+        if indices is None or not mapping:
+            return [fallback_task] * batch_size
+        flat = torch.as_tensor(indices).detach().cpu().reshape(-1).long().tolist()
+        if len(flat) != batch_size:
+            raise ValueError(f"Expected {batch_size} task indices, got {len(flat)}.")
+        return [mapping.get(index, fallback_task) if index >= 0 else fallback_task for index in flat]
+
     def sync_subtask_vocabulary(self, preprocessor, dataset, is_main_process: bool = True) -> None:
-        """Wire subtasks.parquet (index → name) into the pack step. Call again after
-        additional offline datasets load — the vocab remap extends dataset.meta.subtasks."""
-        from lerobot.rl.offline_dataset_utils import _idx_to_subtask_name
+        """Wire collection-global task/subtask vocabularies into the trainer and pack step."""
+        from lerobot.rl.offline_dataset_utils import _idx_to_subtask_name, _idx_to_task_name
+
+        task_mapping = _idx_to_task_name(dataset) if dataset is not None else {}
+        self._task_index_to_name = task_mapping
+        if is_main_process and task_mapping:
+            logging.info(f"MolmoAct2 task vocabulary: {len(task_mapping)} entries")
 
         mapping = _idx_to_subtask_name(dataset) if dataset is not None else {}
         if not mapping:
@@ -1074,9 +1091,11 @@ class MolmoAct2Trainer(Trainer):
         for key in ("summary_prev_index", "summary_target_index"):
             if key in comp:
                 comp_valid[key] = torch.as_tensor(comp[key]).reshape(-1)[idx]
+        tasks = self._resolve_batch_tasks(raw_batch, cfg.policy.task, flat_index.numel())
+        valid_tasks = [tasks[int(i)] for i in idx.detach().cpu().tolist()]
         pre_input: dict[str, Any] = {
             **obs_valid,
-            "task": cfg.policy.task,
+            "task": valid_tasks,
             TransitionKey.COMPLEMENTARY_DATA: comp_valid,
         }
         step.prompt_mode = "subtask_generation"

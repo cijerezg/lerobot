@@ -289,7 +289,7 @@ class ProbeConfig:
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
     enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
     enable_mem_history_influence: bool = False  # MEM: how much history (full/image/state) shifts the action chunk
-    enable_mem_temporal_attention: bool = False  # MEM: per-layer current-frame attention mass on past frames
+    enable_mem_temporal_attention: bool = False  # MEM: temporal-read distributions + spatial examples
 
     # Common
     output_dir: str = "outputs/probe"
@@ -333,6 +333,10 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     offline_output_dir: str | None = None
     offline_save_freq: int | None = None
     buffer_cache_dir: str | None = None
+    # "fallback" decodes video when a source cache is missing; "require"
+    # fails before training so a collection cannot accidentally decode one
+    # uncached dataset for hours.
+    cache_policy: str = "fallback"
     use_rerun: bool = True
     video_logging_cameras: list[str] | None = None  # derived from policy.image_features in validate() when unset
     episode_logging_freq: int = 4
@@ -349,5 +353,9 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
 
     def validate(self) -> None:
         super().validate()
+        if self.cache_policy not in {"fallback", "require"}:
+            raise ValueError(
+                f"cache_policy must be 'fallback' or 'require', got {self.cache_policy!r}."
+            )
         if self.video_logging_cameras is None and self.policy is not None:
             self.video_logging_cameras = [k.split(".")[-1] for k in self.policy.image_features]

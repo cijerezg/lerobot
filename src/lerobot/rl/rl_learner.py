@@ -39,15 +39,18 @@ from torch.multiprocessing import Process, Queue
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.factory import make_dataset
 import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
 import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
 from lerobot.robots import rebot_b601_follower, so_follower   # noqa: F401 — registers robot configs
 from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — registers teleop configs
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.offline_dataset_utils import (
+    get_offline_dataset_sources,
+    get_offline_dataset_weights,
     load_additional_offline_buffers,
+    load_offline_dataset,
     make_combined_offline_iterator,
+    materialize_dataset_labels,
 )
 from lerobot.rl.learner import (
     check_nan_in_transition,
@@ -257,6 +260,7 @@ def add_actor_information_and_train(
             is_main_process=True,
         )
         offline_buffers = [offline_replay_buffer, *additional_buffers]
+        trainer.sync_subtask_vocabulary(preprocessor, offline_dataset, is_main_process=True)
         batch_size = batch_size // 2
 
     # ── Initial weight push ───────────────────────────────────────────────────
@@ -316,6 +320,7 @@ def add_actor_information_and_train(
                 async_prefetch=async_prefetch,
                 queue_size=2,
                 action_chunk_size=cfg.policy.n_action_steps,
+                weights=get_offline_dataset_weights(cfg),
             )
 
         t0 = time.time()
@@ -643,9 +648,27 @@ def _init_offline_buffer(
     device,
     storage_device,
 ) -> ReplayBuffer:
-    offline_dataset = make_dataset(cfg)
-    offline_dataset.delta_timestamps = None
-    offline_dataset.delta_indices = None
+    sources = get_offline_dataset_sources(cfg)
+    if not sources:
+        raise ValueError("Offline replay initialization requires at least one dataset source.")
+    source = sources[0]
+    offline_dataset = load_offline_dataset(cfg, source)
+
+    if getattr(cfg, "cache_policy", "fallback") == "require":
+        cache_dir = getattr(cfg, "buffer_cache_dir", None)
+        cached = None if cache_dir is None else ReplayBuffer.find_cache(
+            offline_dataset,
+            cache_dir,
+            state_keys=cfg.policy.input_features.keys(),
+            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+            image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
+            image_stride=getattr(cfg.policy, "image_stride", 1),
+        )
+        if cached is None:
+            raise FileNotFoundError(
+                f"No matching replay cache for normalization source {source.name!r} "
+                f"({source.root}) under {cache_dir!r}."
+            )
 
     buf = ReplayBuffer.from_lerobot_dataset(
         offline_dataset,
@@ -663,6 +686,10 @@ def _init_offline_buffer(
         image_stride=getattr(cfg.policy, "image_stride", 1),
     )
     buf.dataset = offline_dataset
+    buf.offline_source = source
+    materialize_dataset_labels(
+        buf, offline_dataset, offline_dataset, source_index=0, is_main_process=True
+    )
     return buf
 
 

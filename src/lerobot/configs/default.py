@@ -21,11 +21,34 @@ from lerobot.utils.import_utils import get_safe_default_video_backend
 
 
 @dataclass
+class OfflineDatasetSourceConfig:
+    """One physical LeRobot dataset in an offline training collection."""
+
+    root: str
+    repo_id: str | None = None
+    name: str | None = None
+    weight: float = 1.0
+    normalization_source: bool = False
+    episodes: list[int] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.root:
+            raise ValueError("Offline dataset source root must not be empty.")
+        if self.weight <= 0:
+            raise ValueError(f"Offline dataset source weight must be positive, got {self.weight}.")
+        if self.episodes is not None:
+            if any(ep < 0 for ep in self.episodes):
+                raise ValueError(
+                    f"Episode indices must be non-negative, got: {[ep for ep in self.episodes if ep < 0]}"
+                )
+            if len(self.episodes) != len(set(self.episodes)):
+                duplicates = sorted({ep for ep in self.episodes if self.episodes.count(ep) > 1})
+                raise ValueError(f"Episode indices contain duplicates: {duplicates}")
+
+
+@dataclass
 class DatasetConfig:
-    # You may provide a list of datasets here. `train.py` creates them all and concatenates them. Note: only data
-    # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
-    # "dataset_index" into the returned item. The index mapping is made according to the order in which the
-    # datasets are provided.
+    # Standard training uses one repo_id. Offline RL may declare separate physical sources below.
     repo_id: str
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
@@ -40,7 +63,11 @@ class DatasetConfig:
     # This reduces memory and speeds up DataLoader IPC. The training pipeline handles the conversion.
     return_uint8: bool = False
     streaming: bool = False
+    # Preferred offline-RL collection format. Sources stay as independent datasets and buffers.
+    # Exactly one source may provide normalization stats; the first is used when none is marked.
+    sources: list[OfflineDatasetSourceConfig] = field(default_factory=list)
     # Paths to additional offline datasets to merge with the primary dataset
+    # (legacy shorthand; use ``sources`` for weights and source-specific repo IDs).
     additional_offline_dataset_paths: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -10,14 +11,119 @@ from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
 from lerobot.utils.constants import ACTION
 
 
-def _get_additional_dataset_paths(cfg) -> list[str]:
+@dataclass(frozen=True)
+class OfflineDatasetSource:
+    """Resolved runtime description of one physical offline dataset."""
+
+    name: str
+    root: str | None
+    repo_id: str
+    weight: float
+    normalization_source: bool = False
+    episodes: list[int] | None = None
+
+
+def _source_field(source, name: str, default=None):
+    if isinstance(source, dict):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
+def get_offline_dataset_sources(cfg) -> list[OfflineDatasetSource]:
+    """Resolve explicit collection sources or the legacy primary + additional paths."""
     dataset_cfg = getattr(cfg, "dataset", None)
     if dataset_cfg is None:
         return []
-    paths = getattr(dataset_cfg, "additional_offline_dataset_paths", None)
-    if not paths:
-        return []
-    return [str(p) for p in paths]
+    configured = list(getattr(dataset_cfg, "sources", None) or [])
+    legacy_paths = list(getattr(dataset_cfg, "additional_offline_dataset_paths", None) or [])
+    if configured and legacy_paths:
+        raise ValueError("Use dataset.sources or additional_offline_dataset_paths, not both.")
+    fallback_repo_id = str(getattr(dataset_cfg, "repo_id", None) or "local/dataset")
+    if configured:
+        marked = [
+            i
+            for i, source in enumerate(configured)
+            if _source_field(source, "normalization_source", False)
+        ]
+        if len(marked) > 1:
+            raise ValueError("Exactly one dataset source may set normalization_source=true.")
+        primary_index = marked[0] if marked else 0
+        ordered = [configured[primary_index], *(s for i, s in enumerate(configured) if i != primary_index)]
+        resolved = []
+        for i, source in enumerate(ordered):
+            root = str(_source_field(source, "root"))
+            repo_id = str(_source_field(source, "repo_id", None) or fallback_repo_id)
+            name = _source_field(source, "name", None) or Path(root).name
+            weight = float(_source_field(source, "weight", 1.0))
+            if weight <= 0:
+                raise ValueError(f"Dataset source {name!r} has non-positive weight {weight}.")
+            resolved.append(
+                OfflineDatasetSource(
+                    name=str(name),
+                    root=root,
+                    repo_id=repo_id,
+                    weight=weight,
+                    normalization_source=i == 0,
+                    episodes=_source_field(source, "episodes", None),
+                )
+            )
+        return resolved
+    root = getattr(dataset_cfg, "root", None)
+    primary_name = Path(root).name if root else fallback_repo_id.split("/")[-1]
+    sources = [
+        OfflineDatasetSource(
+            name=primary_name,
+            root=str(root) if root is not None else None,
+            repo_id=fallback_repo_id,
+            weight=1.0,
+            normalization_source=True,
+            episodes=getattr(dataset_cfg, "episodes", None),
+        )
+    ]
+    sources.extend(
+        OfflineDatasetSource(
+            name=Path(path).name,
+            root=str(path),
+            repo_id=fallback_repo_id,
+            weight=1.0,
+        )
+        for path in legacy_paths
+    )
+    return sources
+
+
+def load_offline_dataset(cfg, source: OfflineDatasetSource) -> LeRobotDataset:
+    """Load one collection source without concatenating it with its peers."""
+    from lerobot.transforms import ImageTransforms
+
+    dataset_cfg = cfg.dataset
+    image_transforms = (
+        ImageTransforms(dataset_cfg.image_transforms) if dataset_cfg.image_transforms.enable else None
+    )
+    episodes = source.episodes
+    if episodes is None and source.normalization_source and dataset_cfg.max_episodes is not None:
+        episodes = list(range(dataset_cfg.max_episodes))
+    dataset = LeRobotDataset(
+        source.repo_id,
+        root=source.root,
+        episodes=episodes,
+        image_transforms=image_transforms,
+        revision=dataset_cfg.revision,
+        video_backend=dataset_cfg.video_backend,
+        return_uint8=True,
+        tolerance_s=cfg.tolerance_s,
+    )
+    dataset.delta_timestamps = None
+    dataset.delta_indices = None
+    return dataset
+
+
+def _get_additional_dataset_paths(cfg) -> list[str]:
+    return [source.root for source in get_offline_dataset_sources(cfg)[1:] if source.root is not None]
+
+
+def get_offline_dataset_weights(cfg) -> list[float]:
+    return [source.weight for source in get_offline_dataset_sources(cfg)]
 
 
 def load_summary_segments(root) -> tuple[list[dict], list[str]]:
@@ -52,50 +158,163 @@ def load_metadata_rows(root) -> tuple[list[dict], list[dict]]:
     return episode_rows, mistake_rows
 
 
-def _idx_to_subtask_name(dataset) -> dict[int, str]:
+def _idx_to_name(dataset, table_name: str, index_column: str, text_column: str) -> dict[int, str]:
     mapping: dict[int, str] = {}
-    if not (hasattr(dataset, "meta") and hasattr(dataset.meta, "subtasks")):
+    meta = getattr(dataset, "meta", None)
+    table = getattr(meta, table_name, None) if meta is not None else None
+    if not hasattr(table, "columns") or index_column not in table.columns:
         return mapping
-    df = dataset.meta.subtasks
-    if not hasattr(df, "columns") or "subtask_index" not in df.columns:
-        return mapping
-    for idx, row in df.iterrows():
-        name = idx if isinstance(idx, str) else row.get("subtask", str(idx))
-        mapping[int(row["subtask_index"])] = name
+    for idx, row in table.iterrows():
+        name = idx if isinstance(idx, str) else row.get(text_column, str(idx))
+        mapping[int(row[index_column])] = str(name)
     return mapping
 
 
+def _idx_to_task_name(dataset) -> dict[int, str]:
+    return _idx_to_name(dataset, "tasks", "task_index", "task")
+
+
+def _idx_to_subtask_name(dataset) -> dict[int, str]:
+    return _idx_to_name(dataset, "subtasks", "subtask_index", "subtask")
+
+
+def _label_key(name: str) -> str:
+    """Conservative matching only; raw LLM wording remains the stored vocabulary text."""
+    return " ".join(name.strip().split()).casefold().rstrip(".")
+
+
+def _remap_vocabulary(
+    target_dataset,
+    source_dataset,
+    *,
+    table_name: str,
+    index_column: str,
+    text_column: str,
+    is_main_process: bool = False,
+) -> dict[int, int]:
+    target = _idx_to_name(target_dataset, table_name, index_column, text_column)
+    source = _idx_to_name(source_dataset, table_name, index_column, text_column)
+    if not source:
+        return {}
+    key_to_index = {_label_key(name): idx for idx, name in target.items()}
+    next_index = max(target, default=-1) + 1
+    remap: dict[int, int] = {}
+    new_rows: list[tuple[str, int]] = []
+    for old_index, name in source.items():
+        key = _label_key(name)
+        if key in key_to_index:
+            remap[old_index] = key_to_index[key]
+        else:
+            remap[old_index] = next_index
+            key_to_index[key] = next_index
+            new_rows.append((name, next_index))
+            next_index += 1
+    if new_rows:
+        import pandas as pd
+
+        meta = target_dataset.meta
+        table = getattr(meta, table_name, None)
+        additions = pd.DataFrame(
+            {index_column: [index for _, index in new_rows]},
+            index=pd.Index([name for name, _ in new_rows], name=text_column),
+        )
+        setattr(meta, table_name, additions if table is None else pd.concat([table, additions]))
+    if is_main_process:
+        logging.info("[OfflineCollection] %s remap: %s", table_name, remap)
+    return remap
+
+
+def remap_tasks_for_dataset(target_dataset, source_dataset, is_main_process: bool = False) -> dict[int, int]:
+    return _remap_vocabulary(
+        target_dataset,
+        source_dataset,
+        table_name="tasks",
+        index_column="task_index",
+        text_column="task",
+        is_main_process=is_main_process,
+    )
+
+
 def remap_subtasks_for_dataset(target_dataset, source_dataset, is_main_process: bool = False) -> dict[int, int]:
-    """Map source subtask indices into the target dataset subtask index space."""
-    remap_table: dict[int, int] = {}
-    target_idx_to_name = _idx_to_subtask_name(target_dataset)
-    source_idx_to_name = _idx_to_subtask_name(source_dataset)
-    if not source_idx_to_name:
-        return remap_table
+    return _remap_vocabulary(
+        target_dataset,
+        source_dataset,
+        table_name="subtasks",
+        index_column="subtask_index",
+        text_column="subtask",
+        is_main_process=is_main_process,
+    )
 
-    target_name_to_idx = {name: idx for idx, name in target_idx_to_name.items()}
-    next_new_index = max(target_idx_to_name.keys()) + 1 if target_idx_to_name else 0
 
-    for old_idx, name in source_idx_to_name.items():
-        if name in target_name_to_idx:
-            remap_table[old_idx] = target_name_to_idx[name]
-            continue
+def _dataset_index_column(dataset, key: str) -> torch.Tensor | None:
+    hf_dataset = dataset.hf_dataset
+    if key not in hf_dataset.column_names:
+        return None
+    values = hf_dataset.data.column(key).to_numpy(zero_copy_only=False).copy()
+    return torch.as_tensor(values, dtype=torch.long)
 
-        new_idx = next_new_index
-        remap_table[old_idx] = new_idx
-        target_name_to_idx[name] = new_idx
-        target_idx_to_name[new_idx] = name
-        next_new_index += 1
 
-        if hasattr(target_dataset, "meta") and hasattr(target_dataset.meta, "subtasks"):
-            import pandas as pd
+def _remap_indices(values: torch.Tensor, remap: dict[int, int]) -> torch.Tensor:
+    result = torch.full_like(values, -1)
+    for old_index, new_index in remap.items():
+        result[values == old_index] = new_index
+    return result
 
-            new_row = pd.DataFrame([{"subtask_index": new_idx}], index=[name])
-            target_dataset.meta.subtasks = pd.concat([target_dataset.meta.subtasks, new_row])
 
-    if is_main_process and remap_table:
-        logging.info("[AdditionalOffline] Remapping subtasks: %s", remap_table)
-    return remap_table
+def _install_buffer_column(buffer: ReplayBuffer, key: str, values: torch.Tensor, fill_value: int = -1) -> None:
+    """Install a dataset-order label tensor in the replay buffer's physical slot order."""
+    target = torch.full(
+        (buffer.capacity, *values.shape[1:]),
+        fill_value,
+        dtype=values.dtype,
+        device=buffer.storage_device,
+    )
+    start = max(0, len(values) - buffer.capacity)
+    source = values[start:].to(buffer.storage_device)
+    slots = torch.arange(start, len(values), device=buffer.storage_device) % buffer.capacity
+    target[slots] = source
+    buffer.complementary_info[key] = target
+    if key not in buffer.complementary_info_keys:
+        buffer.complementary_info_keys.append(key)
+    buffer.has_complementary_info = True
+
+
+def materialize_dataset_labels(
+    buffer: ReplayBuffer,
+    dataset,
+    vocabulary_dataset,
+    source_index: int,
+    is_main_process: bool = False,
+) -> None:
+    """Overlay current task/subtask labels on heavy cache data without decoding video."""
+    task_indices = _dataset_index_column(dataset, "task_index")
+    if task_indices is None:
+        raise ValueError(f"Offline dataset {dataset.root} has no task_index column.")
+    task_remap = remap_tasks_for_dataset(vocabulary_dataset, dataset, is_main_process)
+    _install_buffer_column(buffer, "task_index", _remap_indices(task_indices, task_remap))
+    subtask_indices = _dataset_index_column(dataset, "subtask_index")
+    if subtask_indices is not None:
+        subtask_remap = remap_subtasks_for_dataset(vocabulary_dataset, dataset, is_main_process)
+        _install_buffer_column(buffer, "subtask_index", _remap_indices(subtask_indices, subtask_remap))
+    _install_buffer_column(
+        buffer,
+        "source_index",
+        torch.full_like(task_indices, int(source_index)),
+        fill_value=-1,
+    )
+
+
+def resolve_task_strings(raw_batch: dict, dataset, fallback_task: str, batch_size: int) -> list[str]:
+    """Hydrate collection-global task indices into per-sample prompt strings."""
+    complementary = raw_batch.get("complementary_info") or {}
+    indices = complementary.get("task_index")
+    mapping = _idx_to_task_name(dataset)
+    if indices is None or not mapping:
+        return [fallback_task] * batch_size
+    flat = torch.as_tensor(indices).detach().cpu().reshape(-1).long().tolist()
+    if len(flat) != batch_size:
+        raise ValueError(f"Expected {batch_size} task indices, got {len(flat)}.")
+    return [mapping.get(index, fallback_task) if index >= 0 else fallback_task for index in flat]
 
 
 def load_additional_offline_buffers(
@@ -107,56 +326,46 @@ def load_additional_offline_buffers(
     history_offsets: dict[str, list[int]] | None = None,
     memory_cfg=None,
 ) -> list[ReplayBuffer]:
-    """Load extra offline datasets as independent ReplayBuffers.
-
-    Each returned buffer is sized to its own dataset (memmap-backed when a
-    matching cache exists under cfg.buffer_cache_dir), so loading does not
-    grow the main offline buffer or touch its memmap. Sampling across the
-    main + additional buffers is the caller's job — see
-    `make_combined_offline_iterator`.
-
-    Subtask indices are remapped into the main dataset's subtask vocabulary
-    in-place on each additional buffer's RAM-resident `complementary_info`.
-    `is_golden` is forced to False on every additional buffer (the cache may
-    have it baked in as True from --inject-golden — we overwrite).
-    """
-    paths = _get_additional_dataset_paths(cfg)
-    if not paths:
+    """Load collection peers as independent cached buffers with fresh label overlays."""
+    sources = get_offline_dataset_sources(cfg)[1:]
+    if not sources:
         return []
-
-    repo_id = getattr(cfg.dataset, "repo_id", None)
     state_keys = list(cfg.policy.input_features.keys())
     cache_dir = getattr(cfg, "buffer_cache_dir", None)
+    cache_policy = getattr(cfg, "cache_policy", "fallback")
     image_storage_dtype = getattr(cfg.policy, "image_storage_dtype", "bfloat16")
     image_storage_size = getattr(cfg.policy, "image_storage_size", None)
     image_stride = getattr(cfg.policy, "image_stride", 1)
-
     buffers: list[ReplayBuffer] = []
-    for dataset_path in paths:
+    for source_index, source in enumerate(sources, start=1):
         if is_main_process:
-            logging.info("[AdditionalOffline] Loading dataset from %s", dataset_path)
-
-        additional_dataset = LeRobotDataset(repo_id=repo_id, root=Path(dataset_path))
-        additional_dataset.delta_timestamps = None
-        additional_dataset.delta_indices = None
-
-        remap_table = remap_subtasks_for_dataset(main_dataset, additional_dataset, is_main_process)
-
+            logging.info(
+                "[OfflineCollection] Loading %s from %s (weight=%s)",
+                source.name,
+                source.root,
+                source.weight,
+            )
+        dataset = load_offline_dataset(cfg, source)
         cached = None
         if cache_dir is not None:
             cached = ReplayBuffer.find_cache(
-                additional_dataset,
+                dataset,
                 cache_dir,
                 state_keys=state_keys,
                 image_storage_dtype=image_storage_dtype,
                 image_storage_size=image_storage_size,
                 image_stride=image_stride,
             )
-
+        if cached is None and cache_policy == "require":
+            raise FileNotFoundError(
+                f"No matching replay cache for source {source.name!r} ({source.root}) under "
+                f"{cache_dir!r}. Build it with lerobot_memmap_buffer_cache.py using the "
+                "same image storage dtype, size, and stride."
+            )
         if cached is not None:
             if is_main_process:
-                logging.info("[AdditionalOffline] Found memmap cache at %s; loading from disk", cached)
-            buf = ReplayBuffer.from_cache(
+                logging.info("[OfflineCollection] Found memmap cache at %s", cached)
+            buffer = ReplayBuffer.from_cache(
                 cache_dir=cached,
                 device=device,
                 use_drq=False,
@@ -165,13 +374,11 @@ def load_additional_offline_buffers(
         else:
             if is_main_process:
                 logging.info(
-                    "[AdditionalOffline] No memmap cache for %s under %s; falling back to video decode. "
-                    "Run lerobot_memmap_buffer_cache.py to build the cache for fast loads.",
-                    dataset_path,
-                    cache_dir,
+                    "[OfflineCollection] No cache for %s; falling back to video decode",
+                    source.name,
                 )
-            buf = ReplayBuffer.from_lerobot_dataset(
-                additional_dataset,
+            buffer = ReplayBuffer.from_lerobot_dataset(
+                dataset,
                 device=device,
                 state_keys=state_keys,
                 storage_device=storage_device,
@@ -182,41 +389,42 @@ def load_additional_offline_buffers(
                 image_stride=image_stride,
                 history_offsets=history_offsets,
             )
-
-        # Remap subtask indices on the (RAM-resident) complementary_info tensor.
-        if (
-            remap_table
-            and buf.has_complementary_info
-            and "subtask_index" in buf.complementary_info
-        ):
-            ci = buf.complementary_info["subtask_index"]
-            for old_idx, new_idx in remap_table.items():
-                ci[ci == old_idx] = new_idx
-
+        materialize_dataset_labels(buffer, dataset, main_dataset, source_index, is_main_process)
+        buffer.dataset = dataset
+        buffer.offline_source = source
         if memory_cfg is not None and memory_cfg.metadata_enabled:
-            buf.materialize_metadata(*load_metadata_rows(dataset_path))
-
-        # Force is_golden=False (cache may carry True from --inject-golden).
-        ci_dict = buf.complementary_info
-        if "is_golden" in ci_dict:
-            ci_dict["is_golden"].fill_(0)
+            buffer.materialize_metadata(*load_metadata_rows(dataset.root))
+        if "is_golden" in buffer.complementary_info:
+            buffer.complementary_info["is_golden"].fill_(0)
         else:
-            existing = next(iter(ci_dict.values()), None)
-            ig_device = existing.device if existing is not None else storage_device
-            ci_dict["is_golden"] = torch.zeros(buf.size, dtype=torch.bfloat16, device=ig_device)
-            if "is_golden" not in buf.complementary_info_keys:
-                buf.complementary_info_keys.append("is_golden")
-            buf.has_complementary_info = True
-
-        if is_main_process:
-            logging.info(
-                "[AdditionalOffline] Loaded %s — %d transitions",
-                dataset_path,
-                buf.size,
+            _install_buffer_column(
+                buffer,
+                "is_golden",
+                torch.zeros(len(dataset), dtype=torch.bfloat16),
+                fill_value=0,
             )
-        buffers.append(buf)
-
+        buffers.append(buffer)
+        if is_main_process:
+            logging.info("[OfflineCollection] Loaded %s: %d transitions", source.name, buffer.size)
     return buffers
+
+
+def _weighted_batch_sizes(batch_size: int, weights: list[float]) -> list[int]:
+    if not weights or any(weight <= 0 for weight in weights):
+        raise ValueError(f"Offline dataset weights must all be positive, got {weights}.")
+    if batch_size < len(weights):
+        raise ValueError(
+            f"batch_size={batch_size} must be at least the number of dataset sources={len(weights)}."
+        )
+    remaining = batch_size - len(weights)
+    total = sum(weights)
+    quotas = [remaining * weight / total for weight in weights]
+    extras = [int(quota) for quota in quotas]
+    leftover = remaining - sum(extras)
+    order = sorted(range(len(weights)), key=lambda i: quotas[i] - extras[i], reverse=True)
+    for i in order[:leftover]:
+        extras[i] += 1
+    return [1 + extra for extra in extras]
 
 
 def make_combined_offline_iterator(
@@ -225,35 +433,29 @@ def make_combined_offline_iterator(
     async_prefetch: bool = True,
     queue_size: int = 2,
     action_chunk_size: int = 50,
+    weights: list[float] | None = None,
 ):
-    """Yield batches drawn equally from every buffer (main + additionals).
-
-    Each call to `next(...)` produces a batch of `batch_size` transitions split
-    evenly: every buffer contributes `batch_size // N`, and the first
-    `batch_size % N` get one extra. Per-buffer iterators preserve their own
-    async prefetch threads, so this composes with `get_iterator`'s prefetch.
-    """
+    """Yield fixed-size batches drawn from independent buffers by source weight."""
     if not buffers:
         raise ValueError("make_combined_offline_iterator needs at least one buffer.")
-
-    n = len(buffers)
-    per_buf = [batch_size // n] * n
-    for i in range(batch_size % n):
-        per_buf[i] += 1
-
-    iters = [
-        b.get_iterator(
-            batch_size=per_buf[i],
+    if weights is None:
+        weights = [1.0] * len(buffers)
+    if len(weights) != len(buffers):
+        raise ValueError(f"Expected {len(buffers)} weights, got {len(weights)}.")
+    per_buffer = _weighted_batch_sizes(batch_size, weights)
+    logging.info("[OfflineCollection] Batch allocation: %s (weights=%s)", per_buffer, weights)
+    iterators = [
+        buffer.get_iterator(
+            batch_size=per_buffer[i],
             async_prefetch=async_prefetch,
             queue_size=queue_size,
             action_chunk_size=action_chunk_size,
         )
-        for i, b in enumerate(buffers)
+        for i, buffer in enumerate(buffers)
     ]
-
     while True:
-        batch = next(iters[0])
-        for it in iters[1:]:
+        batch = next(iterators[0])
+        for iterator in iterators[1:]:
             action_dim = batch[ACTION].shape[-1]
-            batch = concatenate_batch_transitions(batch, next(it), action_dim=action_dim)
+            batch = concatenate_batch_transitions(batch, next(iterator), action_dim=action_dim)
         yield batch

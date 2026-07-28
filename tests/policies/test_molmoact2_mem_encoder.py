@@ -16,6 +16,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from lerobot.policies.molmoact2.modeling_molmoact2 import (  # noqa: E402
+    _MEM_TEMPORAL_CAPTURE,
     _patch_memory_efficient_vision_backbone,
     _sinusoidal_seconds_embedding,
     _temporal_vision_block,
@@ -147,6 +148,26 @@ def test_temporal_block_causality():
     assert torch.equal(out[:, 0], base[:, 0])  # older frame untouched
     assert not torch.allclose(out[:, 1], base[:, 1])
     assert not torch.allclose(out[:, 2], base[:, 2])  # current reads the past
+
+
+def test_temporal_capture_retains_interpretable_dimensions():
+    block = StubBlock().eval()
+    x = torch.randn(2, 3, PATCHES, DIM)
+    e_t = _sinusoidal_seconds_embedding(torch.tensor([2.0, 1.0, 0.0]), DIM)
+    _MEM_TEMPORAL_CAPTURE["records"].clear()
+    _MEM_TEMPORAL_CAPTURE["enabled"] = True
+    try:
+        _temporal_vision_block(block, x, e_t, None)
+    finally:
+        _MEM_TEMPORAL_CAPTURE["enabled"] = False
+    assert len(_MEM_TEMPORAL_CAPTURE["records"]) == 1
+    record = _MEM_TEMPORAL_CAPTURE["records"][0]
+    assert record["mean"].ndim == 0
+    assert record["by_bc_head_age"].shape == (2, HEADS, 2)
+    assert record["by_bc_patch"].shape == (2, PATCHES)
+    assert torch.allclose(
+        record["mean"], record["by_bc_head_age"].sum(dim=-1).mean(), atol=1e-7
+    )
 
 
 # ── encode_image: stash, drop, shape invariant, bit-identity ─────────────────

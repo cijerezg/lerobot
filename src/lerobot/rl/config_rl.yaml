@@ -34,9 +34,17 @@ dataset:
   repo_id: cijerezg/yellow-car-offline-training-v2
   use_imagenet_stats: false
   max_episodes: null
-  additional_offline_dataset_paths: []   # datasets generated from inference
+  # Preferred separate-dataset collection. The normalization source is loaded
+  # first and supplies processor stats; every source keeps its own replay cache.
+  sources: []
+  # sources:
+  #   - {name: atomic_pick, root: outputs/atomic-pick, weight: 1.0, normalization_source: true}
+  #   - {name: atomic_place, root: outputs/atomic-place, weight: 1.0}
+  #   - {name: pick_place, root: outputs/pick-place, weight: 2.0}
+  additional_offline_dataset_paths: []   # legacy equal-weight shorthand
 
 buffer_cache_dir: outputs/buffer_cache-v7  # Cache directory for the buffer
+cache_policy: fallback  # set to require after building every source cache
 
 # -----------------------------------------------------------------------------
 # RL flags (shared)

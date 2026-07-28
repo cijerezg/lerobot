@@ -152,6 +152,11 @@ def main():
     parser.add_argument("--repo-id", type=str, default=None)
     parser.add_argument("--data-dir", type=str, default=None)
     parser.add_argument("--cache-dir", type=str, required=True)
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Return successfully when the matching fingerprint already has metadata.json.",
+    )
     parser.add_argument("--video-backend", type=str, default="pyav", choices=["pyav", "torchcodec"])
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument(
@@ -225,6 +230,9 @@ def main():
         image_stride=image_stride,
     )
     cache_path = Path(args.cache_dir) / fingerprint
+    if args.skip_existing and (cache_path / "metadata.json").exists():
+        logger.info("Matching cache already exists at %s; skipping", cache_path)
+        return
     cache_path.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Dataset: {num_frames} frames, fingerprint={fingerprint}")
