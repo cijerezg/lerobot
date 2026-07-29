@@ -237,6 +237,7 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
     display_compressed_images: bool = False,
+    depth_stride: int = 1,
 ):
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
@@ -328,7 +329,7 @@ def record_loop(
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
-            write_depth(dataset, obs)  # PNG16 depth alongside the dataset (uint16-preserving), post-add for correct indices
+            write_depth(dataset, obs, depth_stride)  # PNG16 depth alongside the dataset (uint16-preserving), post-add for correct indices
 
         if display_data:
             log_rerun_data(
@@ -467,6 +468,7 @@ def record(
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
                     display_compressed_images=display_compressed_images,
+                    depth_stride=cfg.dataset.depth_stride,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment

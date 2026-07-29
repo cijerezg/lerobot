@@ -39,6 +39,10 @@ class DatasetRecordConfig:
     num_episodes: int = 50
     # Encode frames in the dataset into video
     video: bool = True
+    # Record PNG16 depth every N-th frame (30Hz -> 10Hz at 3). Depth is the bulk of on-disk
+    # size and the buffer cache only reads stride-aligned rows, so this must divide the
+    # training-side `image_stride` (which must itself divide `chunk_size`).
+    depth_stride: int = 1
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
     # Upload on private repository on the Hugging Face hub.

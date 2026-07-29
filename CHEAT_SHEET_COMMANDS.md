@@ -22,14 +22,20 @@ uv run lerobot/src/lerobot/scripts/lerobot_record.py \
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/rebot_socks_v1 \
+    --dataset.repo_id=cijerezg/rebot_sorting_clothes_v1 \
     --dataset.single_task="Put socks in brown basket" \
     --dataset.fps=30 \
-    --dataset.num_episodes=20 \
+    --dataset.depth_stride=3 \
+    --dataset.num_episodes=16 \
     --dataset.episode_time_s=300 \
     --dataset.reset_time_s=120 \
     --dataset.push_to_hub=false \
     --display_data=true
+
+`depth_stride=3` writes PNG16 wrist depth at 10Hz instead of 30Hz (actions/proprio/RGB stay 30Hz).
+Depth is ~83% of on-disk size and the buffer cache only reads stride-aligned rows, so this is a
+3x saving on the dominant term with nothing lost. It must equal `policy.image_stride` in
+config_rl.yaml, and that must divide `policy.chunk_size`.
 
 ## Offline training prep (run once per new dataset)
 
@@ -46,7 +52,11 @@ uv run python -m lerobot.scripts.lerobot_memmap_buffer_cache \
     --repo-id cijerezg/rebot_dataset_dummy_v1 \
     --data-dir outputs/rebot_dataset_dummy_v1 \
     --cache-dir outputs/buffer_cache-rebot-dummy-v1 \
-    --image-storage-dtype uint8
+    --image-storage-dtype uint8 \
+    --image-stride 3
+
+`--image-stride` must match `policy.image_stride` in config_rl.yaml (it is part of the cache
+fingerprint — a mismatch is a hard error, not a silent fallback) and must divide `chunk_size`.
 
 ## Offline training (config: config_rl.yaml at repo root)
 
