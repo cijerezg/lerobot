@@ -17,7 +17,8 @@ the first window); the hold/update pairing (summary_label_spans) and the memory-
 decode seam consume these rows unchanged.
 
 Usage:
-    python summary_annotate.py --data-dir /path/to/dataset --video-key observation.images.top [--dry-run]
+    python summary_annotate.py --data-dir /path/to/dataset \
+        --video-keys observation.images.top observation.images.wrist [--dry-run]
 """
 
 import argparse
@@ -49,13 +50,28 @@ def create_summary_prompt(coarse_goal: str, prev_summary: str) -> str:
         Its memory so far:
         {prev}
 
-        The frames show its most recent actions. Update the memory. Aim for the
-        shortest text that still tells the full story: someone reading only the
-        memory should know exactly what has been done and how far along the task
-        is. Ground progress in what is visible: how many socks are in the basket
-        and how many are still on the table. Socks move one at a time and a pair
-        is complete when both of its socks are in the basket — track partially
-        moved pairs explicitly. First person, past tense. Don't invent progress
+        The frames show its most recent actions. Update the memory.
+
+        Describe the world, never judge the performance. Where things ended up
+        is a fact and belongs in ("I dropped the sock beside the basket");
+        whether the robot did well is a judgment and does not ("I failed to
+        grasp the sock"). Never write that something was attempted, retried,
+        failed, or was difficult — a window spent grasping nothing is simply a
+        window in which nothing moved.
+
+        Count both sides absolutely every time, even when unchanged: how many
+        items are in the container and how many are still outside it. An item
+        that has been picked up but not yet released is in neither place, so
+        account for it separately or the counts stop adding up. Never
+        state how far along the task is, as a fraction, percentage, or phase —
+        the total isn't knowable from the frames. Items move one at a time; if
+        the goal groups them, a group is complete only once all its members are
+        in the container, so say when a group is partly moved.
+
+        If nothing visible changed, or the arm hides the scene, repeat the
+        memory above word for word.
+
+        At most two sentences. First person, past tense. Don't invent progress
         the frames don't show.
 
         Reply with only JSON: {{"summary": "<updated memory>"}}
@@ -74,21 +90,37 @@ def episode_windows(from_index: int, to_index: int, window_frames: int) -> list[
     ]
 
 
-def segment_frames(video_path: Path, start_s: float, end_s: float) -> list[Image.Image]:
-    """Evenly sampled RGB frames spanning [start_s, end_s], decoded via the ffmpeg CLI
-    (the dataset videos are AV1; OpenCV's bundled decoder can't read them)."""
-    n = int(np.clip(round(end_s - start_s), 2, MAX_FRAMES_PER_WINDOW))
+def decode_frame(video_path: Path, t: float) -> Image.Image | None:
+    """Single RGB frame at t, decoded via the ffmpeg CLI (the dataset videos are AV1;
+    OpenCV's bundled decoder can't read them)."""
+    out = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video_path),
+         "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
+        capture_output=True,
+    )
+    if out.returncode != 0 or not out.stdout:
+        return None
+    return Image.open(io.BytesIO(out.stdout)).convert("RGB")
+
+
+def segment_frames(views: list[tuple[Path, float]], duration_s: float) -> list[Image.Image]:
+    """Evenly sampled frames spanning duration_s from each view's start. Every returned
+    frame is all views at one shared instant, stacked left to right, so a multi-camera
+    window still reads as a single coherent sequence."""
+    n = int(np.clip(round(duration_s), 2, MAX_FRAMES_PER_WINDOW))
     frames = []
-    for t in np.linspace(start_s, end_s, n):
-        out = subprocess.run(
-            ["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video_path),
-             "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
-            capture_output=True,
-        )
-        if out.returncode == 0 and out.stdout:
-            frames.append(Image.open(io.BytesIO(out.stdout)).convert("RGB"))
+    for offset in np.linspace(0.0, duration_s, n):
+        tiles = [decode_frame(path, start_s + offset) for path, start_s in views]
+        if any(tile is None for tile in tiles):
+            continue
+        canvas = Image.new("RGB", (sum(t.width for t in tiles), max(t.height for t in tiles)))
+        x = 0
+        for tile in tiles:
+            canvas.paste(tile, (x, 0))
+            x += tile.width
+        frames.append(canvas)
     if not frames:
-        raise ValueError(f"No frames decoded from {video_path} in [{start_s:.2f}, {end_s:.2f}]s")
+        raise ValueError(f"No frames decoded from {[str(p) for p, _ in views]}")
     return frames
 
 
@@ -115,7 +147,8 @@ def generate_summary(
 def main():
     parser = argparse.ArgumentParser(description="Generate video-based MEM summary chains on a fixed time grid")
     parser.add_argument("--data-dir", type=str, required=True)
-    parser.add_argument("--video-key", type=str, required=True)
+    parser.add_argument("--video-keys", type=str, nargs="+", required=True,
+                        help="camera(s) to watch; multiple views are stacked left to right")
     parser.add_argument("--window-seconds", type=float, default=12.0, help="memory update interval")
     parser.add_argument("--model", type=str, default="google/gemma-4-31B-it")
     parser.add_argument("--device", type=str, default="cuda")
@@ -158,19 +191,24 @@ def main():
     rows = []
     for ep_idx in sorted(windows_by_episode):
         ep = episodes_meta.loc[ep_idx]
-        video_path = root / info["video_path"].format(
-            video_key=args.video_key,
-            chunk_index=int(ep[f"videos/{args.video_key}/chunk_index"]),
-            file_index=int(ep[f"videos/{args.video_key}/file_index"]),
-        )
-        video_from_ts = float(ep[f"videos/{args.video_key}/from_timestamp"])
+        views = [
+            (
+                root / info["video_path"].format(
+                    video_key=key,
+                    chunk_index=int(ep[f"videos/{key}/chunk_index"]),
+                    file_index=int(ep[f"videos/{key}/file_index"]),
+                ),
+                float(ep[f"videos/{key}/from_timestamp"]),
+            )
+            for key in args.video_keys
+        ]
         ep_from_index = int(ep["dataset_from_index"])
 
         summary = ""
         for k, win in enumerate(windows_by_episode[ep_idx]):
-            start_s = video_from_ts + (win["from_index"] - ep_from_index) / fps
-            end_s = video_from_ts + (win["to_index"] - 1 - ep_from_index) / fps
-            frames = segment_frames(video_path, start_s, end_s)
+            offset_s = (win["from_index"] - ep_from_index) / fps
+            duration_s = (win["to_index"] - 1 - win["from_index"]) / fps
+            frames = segment_frames([(path, ts + offset_s) for path, ts in views], duration_s)
             summary = generate_summary(model, processor, args.device, frames, coarse_goal, summary)
             console.print(f"[green]ep {ep_idx} win {k}:[/green] {summary}")
             rows.append({
@@ -185,7 +223,7 @@ def main():
     pd.DataFrame(rows).to_parquet(out_path, engine="pyarrow", compression="snappy")
     with open(root / "meta" / "summaries_info.json", "w") as f:
         json.dump(
-            {"model": args.model, "coarse_description": coarse_goal, "video_key": args.video_key,
+            {"model": args.model, "coarse_description": coarse_goal, "video_keys": args.video_keys,
              "window_seconds": args.window_seconds},
             f, indent=2,
         )

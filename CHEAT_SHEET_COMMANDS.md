@@ -22,8 +22,8 @@ uv run lerobot/src/lerobot/scripts/lerobot_record.py \
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/rebot_sorting_clothes_v1 \
-    --dataset.single_task="Put socks in brown basket" \
+    --dataset.repo_id=cijerezg/rebot_sorting_clothes_v3-1 \
+    --dataset.single_task="Put sock in brown basket and shirts in bin" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \
