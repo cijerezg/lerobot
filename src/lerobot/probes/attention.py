@@ -45,7 +45,7 @@ import torch.nn.functional as F
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import AttentionCaptureResult, ProbablePolicy
-from lerobot.probes.utils import build_episode_index, get_frame_data, load_extra_dataset
+from lerobot.probes.utils import build_episode_index, get_frame_data, load_extra_dataset, load_probe_dataset
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
@@ -1273,10 +1273,7 @@ def probe_cli(cfg: ProbeAttentionConfig):
     os.makedirs(output_dir, exist_ok=True)
     logging.info(f"Output dir: {output_dir}")
 
-    from lerobot.datasets.factory import make_dataset
-    dataset = make_dataset(cfg)
-    dataset.delta_timestamps = None
-    dataset.delta_indices = None
+    dataset = load_probe_dataset(cfg)
 
     logging.info("Loading policy adapter …")
     adapter = ProbablePolicy.for_config(cfg, device, dataset=dataset)

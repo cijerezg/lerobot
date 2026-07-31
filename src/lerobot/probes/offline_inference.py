@@ -43,7 +43,7 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import assemble_frame_history, build_sample_list, get_frame_data
+from lerobot.probes.utils import assemble_frame_history, build_sample_list, get_frame_data, load_probe_dataset
 from lerobot.rl.inference_utils import apply_butterworth_filter
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -133,14 +133,12 @@ def _set_policy_checkpoint_path(policy_cfg, checkpoint: str) -> bool:
 
 def _load_dataset(cfg):
     """Load dataset, honouring cfg.val_dataset_path if set (works for both policies)."""
-    from lerobot.datasets.factory import make_dataset
     val_path = getattr(cfg, "val_dataset_path", None)
-    if val_path:
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-        logging.info(f"Loading eval dataset from val_dataset_path: {val_path}")
-        dataset = LeRobotDataset(repo_id=cfg.dataset.repo_id, root=val_path)
-    else:
-        dataset = make_dataset(cfg)
+    if not val_path:
+        return load_probe_dataset(cfg)
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    logging.info(f"Loading eval dataset from val_dataset_path: {val_path}")
+    dataset = LeRobotDataset(repo_id=cfg.dataset.repo_id, root=val_path)
     dataset.delta_timestamps = None
     dataset.delta_indices = None
     return dataset

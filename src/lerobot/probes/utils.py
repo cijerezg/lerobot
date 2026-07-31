@@ -53,6 +53,35 @@ def makedirs(*paths: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Dataset loading
+# ──────────────────────────────────────────────────────────────────────────────
+
+def load_probe_dataset(cfg) -> LeRobotDataset:
+    """Load the dataset a standalone probe CLI should run on.
+
+    ``make_dataset`` resolves ``cfg.dataset.repo_id`` + ``cfg.dataset.root``, but an
+    offline-RL config declares its data under ``dataset.sources`` and leaves ``root``
+    unset — so the plain call goes looking on the Hub for a repo_id that only names the
+    collection. Fall back to the normalization source's root (the same one rl_offline
+    trains against and hands the probes as their reference dataset).
+    """
+    from lerobot.datasets.factory import make_dataset
+
+    if cfg.dataset.root is None:
+        from lerobot.rl.offline_dataset_utils import get_offline_dataset_sources
+
+        sources = get_offline_dataset_sources(cfg)
+        if sources and sources[0].root is not None:
+            cfg.dataset.root = sources[0].root
+            logging.info(f"[probe] dataset.root unset; using sources[0]: {cfg.dataset.root}")
+
+    dataset = make_dataset(cfg)
+    dataset.delta_timestamps = None
+    dataset.delta_indices = None
+    return dataset
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Dataset frame reading (no policy involvement)
 # ──────────────────────────────────────────────────────────────────────────────
 

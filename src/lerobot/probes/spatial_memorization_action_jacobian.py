@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.spatial_memorization_attention import run_jacobian
+from lerobot.probes.utils import load_probe_dataset
 from lerobot.probes.base import ProbablePolicy
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -39,10 +40,7 @@ def probe_cli(cfg: ProbeSpatialMemorizationActionJacobianConfig):
     os.makedirs(output_dir, exist_ok=True)
     logging.info(f"Output dir: {output_dir}")
 
-    from lerobot.datasets.factory import make_dataset
-    primary_dataset = make_dataset(cfg)
-    primary_dataset.delta_timestamps = None
-    primary_dataset.delta_indices = None
+    primary_dataset = load_probe_dataset(cfg)
 
     logging.info("Loading policy adapter ...")
     adapter = ProbablePolicy.for_config(cfg, device, dataset=primary_dataset)

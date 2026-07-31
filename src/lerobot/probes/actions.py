@@ -57,6 +57,7 @@ from lerobot.probes.utils import (
     dataset_display_name,
     get_subtask_idx,
     load_extra_dataset,
+    load_probe_dataset,
     makedirs,
     plotly_3d_layout,
     ref_bg_trace_3d,
@@ -796,10 +797,7 @@ def probe_cli(cfg: ProbeActionsConfig):
     adapter = root_dataset = None
     if p.mode in ("collect", "all"):
         device = get_safe_torch_device(try_device=cfg.policy.device)
-        from lerobot.datasets.factory import make_dataset
-        root_dataset = make_dataset(cfg)
-        root_dataset.delta_timestamps = None
-        root_dataset.delta_indices = None
+        root_dataset = load_probe_dataset(cfg)
         logging.info("Loading policy adapter …")
         adapter = ProbablePolicy.for_config(cfg, device, dataset=root_dataset)
 

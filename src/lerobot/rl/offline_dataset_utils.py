@@ -148,11 +148,15 @@ def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
     for key in (ACTION, OBS_STATE):
         if key not in stats:
             continue
-        columns = [
-            pq.read_table(f, columns=[key]).to_pandas()[key]
-            for root in roots
-            for f in sorted(Path(root).rglob("data/**/*.parquet"))
-        ]
+        columns = []
+        for root in roots:
+            files = sorted(Path(root).rglob("data/**/*.parquet"))
+            if not files:
+                raise FileNotFoundError(
+                    f"Offline source {root} has no data/**/*.parquet. Pooling would silently "
+                    "normalize without it, so refusing to continue."
+                )
+            columns.extend(pq.read_table(f, columns=[key]).to_pandas()[key] for f in files)
         values = np.concatenate([np.stack(c.values) for c in columns]).astype(np.float32)
         pooled = {
             "min": values.min(axis=0),

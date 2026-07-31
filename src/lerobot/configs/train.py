@@ -290,6 +290,7 @@ class ProbeConfig:
     enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
     enable_mem_history_influence: bool = False  # MEM: how much history (full/image/state) shifts the action chunk
     enable_mem_temporal_attention: bool = False  # MEM: temporal-read distributions + spatial examples
+    enable_action_trace: bool = False  # 3D URDF trace: table clearance + multimodality fan (open-loop)
 
     # Common
     output_dir: str = "outputs/probe"
@@ -323,6 +324,14 @@ class ProbeConfig:
     # Critic values distribution
     critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution
     critic_grad_frames: int = 200  # frames sampled for ||dV/dvision|| (forward+backward)
+
+    # Action trace (URDF forward kinematics; open-loop pre-flight)
+    trace_episodes: str | None = None  # comma-separated episode indices; None = all
+    trace_anchor_stride_s: float = 2.0  # seconds between anchor frames
+    trace_max_anchors_per_episode: int = 30
+    trace_n_samples: int = 8  # independent flow draws per anchor — the fan
+    trace_table_z: float = 0.0  # table plane height (m). 0 = the arm's own mounting plane.
+    trace_clearance_warn_m: float = 0.01  # samples dipping below this are drawn red
 
 
 @dataclass(kw_only=True)

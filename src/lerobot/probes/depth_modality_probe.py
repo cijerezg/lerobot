@@ -42,7 +42,7 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
     set_pointmap_mass_capture,
 )
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import get_frame_data
+from lerobot.probes.utils import get_frame_data, load_probe_dataset
 from lerobot.scripts.lerobot_memmap_buffer_cache import load_depth_png
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -84,11 +84,7 @@ def cli(cfg: DepthModalityProbeConfig):
         raise SystemExit("policy.pointmap_config is null in this config — nothing to probe.")
     device = get_safe_torch_device(try_device=cfg.policy.device)
 
-    from lerobot.datasets.factory import make_dataset
-
-    dataset = make_dataset(cfg)
-    dataset.delta_timestamps = None
-    dataset.delta_indices = None
+    dataset = load_probe_dataset(cfg)
 
     adapter = ProbablePolicy.for_config(cfg, device, dataset=dataset)
     adapter._set_probe_cuda_graph_enabled(False)

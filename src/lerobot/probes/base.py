@@ -73,14 +73,12 @@ class ProbablePolicy(ABC):
         existing Trainer + policy factories, then wraps everything in the
         matching adapter subclass.
         """
-        from lerobot.datasets.factory import make_dataset
         from lerobot.policies.factory import make_policy
+        from lerobot.probes.utils import load_probe_dataset
         from lerobot.rl.rl_trainer import Trainer
 
         if dataset is None:
-            dataset = make_dataset(cfg)
-            dataset.delta_timestamps = None
-            dataset.delta_indices = None
+            dataset = load_probe_dataset(cfg)
 
         trainer = Trainer.for_config(cfg)
         preprocessor, postprocessor = trainer.make_processors(

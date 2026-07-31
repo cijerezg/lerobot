@@ -47,7 +47,7 @@ import torch.nn.functional as F
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import build_episode_index, get_frame_data, load_extra_dataset
+from lerobot.probes.utils import build_episode_index, get_frame_data, load_extra_dataset, load_probe_dataset
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
@@ -64,20 +64,38 @@ _STD_EPS = 1e-8
 # Sampling — one random frame per unique episode
 # ──────────────────────────────────────────────────────────────────────────────
 
-def sample_one_per_episode(dataset, n_frames: int, seed: int = 42):
-    """Return ``[(ep_idx, fr_idx, global_idx), ...]`` (one frame per episode)."""
+def sample_spread_over_episodes(dataset, n_frames: int, seed: int = 42):
+    """Return ``[(ep_idx, fr_idx, global_idx), ...]``, ``n_frames`` spread over episodes.
+
+    One random frame per episode while episodes last — distinct episodes is the most
+    diverse way to spend a frame budget. Past that the shortfall is shared out and each
+    episode contributes several evenly-spaced frames, so a single-episode validation set
+    still produces an aggregate instead of the one map that ``_probe_one_dataset``
+    discards for having fewer than two samples.
+    """
     ep_to_indices = build_episode_index(dataset)
     all_eps = sorted(ep_to_indices.keys())
+    if not all_eps:
+        return []
     rng = random.Random(seed)
     rng.shuffle(all_eps)
     selected = all_eps[:n_frames]
 
+    per_episode = [1] * len(selected)
+    for i in range(max(n_frames - len(selected), 0)):
+        per_episode[i % len(selected)] += 1
+
     samples = []
-    for ep_idx in selected:
+    for ep_idx, count in zip(selected, per_episode, strict=True):
         indices = ep_to_indices[ep_idx]
-        global_idx = rng.choice(indices)
-        fr_idx = dataset.hf_dataset[global_idx]["frame_index"].item()
-        samples.append((ep_idx, fr_idx, global_idx))
+        if count == 1:
+            picks = [rng.choice(indices)]
+        else:
+            step = len(indices) / count
+            picks = [indices[min(int((i + 0.5) * step), len(indices) - 1)] for i in range(count)]
+        for global_idx in picks:
+            fr_idx = dataset.hf_dataset[global_idx]["frame_index"].item()
+            samples.append((ep_idx, fr_idx, global_idx))
     return samples
 
 
@@ -423,11 +441,11 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg, *, requires_grad: bool = F
         f"requires_grad={requires_grad}"
     )
 
-    samples = sample_one_per_episode(dataset, n_frames=n_frames, seed=seed)
+    samples = sample_spread_over_episodes(dataset, n_frames=n_frames, seed=seed)
     if not samples:
         logging.warning("  No samples; skipping.")
         return
-    logging.info(f"  Sampled {len(samples)} frames from {len(samples)} episodes")
+    logging.info(f"  Sampled {len(samples)} frames from {len({s[0] for s in samples})} episodes")
 
     collected, n_heads, meta_by_key = collect_aggregates(
         adapter,
@@ -491,10 +509,7 @@ def probe_cli(cfg: ProbeSpatialMemorizationConfig):
     os.makedirs(output_dir, exist_ok=True)
     logging.info(f"Output dir: {output_dir}")
 
-    from lerobot.datasets.factory import make_dataset
-    primary_dataset = make_dataset(cfg)
-    primary_dataset.delta_timestamps = None
-    primary_dataset.delta_indices = None
+    primary_dataset = load_probe_dataset(cfg)
 
     logging.info("Loading policy adapter …")
     adapter = ProbablePolicy.for_config(cfg, device, dataset=primary_dataset)

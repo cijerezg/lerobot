@@ -23,9 +23,11 @@ is multimodal, and taking the other sock is a valid rollout that scores as a lar
 Cartesian distance. Read the fan, and prefer ``ee_err_best`` over ``ee_err_mean`` when
 judging fit; use real rollouts for the closed-loop question.
 
-Run:
+Runs inside rl_offline's validation loop when ``probe_parameters.enable_action_trace`` is
+set, or standalone:
+
     python -m lerobot.probes.action_trace_probe --config config_rl.yaml \
-        --anchor_stride_s 2.0 --n_samples 8
+        --probe_parameters.trace_anchor_stride_s 2.0 --probe_parameters.trace_n_samples 8
 """
 
 import csv
@@ -40,7 +42,13 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import assemble_frame_history, build_episode_index, get_frame_data, makedirs
+from lerobot.probes.utils import (
+    assemble_frame_history,
+    build_episode_index,
+    get_frame_data,
+    load_probe_dataset,
+    makedirs,
+)
 from lerobot.robots.rebot_b601_follower.kinematics import LINK_NAMES, RebotKinematics
 from lerobot.scripts.lerobot_memmap_buffer_cache import load_depth_png
 from lerobot.utils.constants import OBS_STATE
@@ -50,25 +58,25 @@ from lerobot.utils.utils import init_logging
 
 @dataclass
 class ActionTraceProbeConfig(TrainRLServerPipelineConfig):
-    episodes: str = ""  # comma-separated episode indices; empty = all
-    anchor_stride_s: float = 2.0  # seconds between anchor frames
-    max_anchors_per_episode: int = 30
-    n_samples: int = 8  # independent flow draws per anchor — the fan
-    table_z: float = 0.0  # table plane height (m). 0 = the arm's own mounting plane.
-    clearance_warn_m: float = 0.01  # samples dipping below this are drawn red
-    out_dir: str = "outputs/action_trace_probe"
+    """Tunables live under ``cfg.probe_parameters`` (the ``trace_*`` fields)."""
 
 
-def _anchor_frames(dataset, cfg) -> list[tuple[int, int]]:
-    """``(episode_idx, global_idx)`` anchors, evenly spaced in time within each episode."""
+def _anchor_frames(dataset, p, depth_stride: int) -> list[tuple[int, int]]:
+    """``(episode_idx, global_idx)`` anchors, evenly spaced in time within each episode.
+
+    Anchors are snapped down onto the depth-sidecar grid: depth is written every
+    ``depth_stride`` frames, and ``load_depth_png`` raises on any frame in between.
+    """
     ep_to_indices = build_episode_index(dataset)
-    wanted = {int(e) for e in cfg.episodes.split(",") if e.strip() != ""}
-    stride = max(int(round(cfg.anchor_stride_s * dataset.fps)), 1)
+    wanted = {int(e) for e in (p.trace_episodes or "").split(",") if e.strip() != ""}
+    stride = max(int(round(p.trace_anchor_stride_s * dataset.fps)), 1)
+    stride -= stride % depth_stride
+    stride = max(stride, depth_stride)
     anchors = []
     for ep_idx in sorted(ep_to_indices):
         if wanted and ep_idx not in wanted:
             continue
-        indices = ep_to_indices[ep_idx][::stride][: cfg.max_anchors_per_episode]
+        indices = ep_to_indices[ep_idx][::stride][: p.trace_max_anchors_per_episode]
         anchors.extend((ep_idx, global_idx) for global_idx in indices)
     return anchors
 
@@ -145,7 +153,7 @@ def _analyse(kin: RebotKinematics, gt_chunk: np.ndarray, samples: list[np.ndarra
     }
 
 
-def _figure(records: list[dict], cfg) -> "go.Figure":  # noqa: F821
+def _figure(records: list[dict], p) -> "go.Figure":  # noqa: F821
     """One 3D scene with a slider over anchors — not one scene per anchor.
 
     Judging table clearance needs the viewer to orbit to a side view, which is only
@@ -162,7 +170,7 @@ def _figure(records: list[dict], cfg) -> "go.Figure":  # noqa: F821
     def sample_traces(record):
         traces = []
         for ee, clearance in zip(record["sample_ee"], record["sample_clearance"]):
-            unsafe = clearance < cfg.clearance_warn_m
+            unsafe = clearance < p.trace_clearance_warn_m
             traces.append(
                 go.Scatter3d(
                     x=ee[:, 0], y=ee[:, 1], z=ee[:, 2], mode="lines",
@@ -194,13 +202,13 @@ def _figure(records: list[dict], cfg) -> "go.Figure":  # noqa: F821
     table = go.Mesh3d(
         x=[table_x[0], table_x[1], table_x[1], table_x[0]],
         y=[table_y[0], table_y[0], table_y[1], table_y[1]],
-        z=[cfg.table_z] * 4,
+        z=[p.trace_table_z] * 4,
         i=[0, 0], j=[1, 2], k=[2, 3],
         color="#c8b89a", opacity=0.35, name="table", showlegend=True, hoverinfo="skip",
     )
     fig = go.Figure(data=[table, gt_trace(first), skeleton_trace(first), *sample_traces(first)])
 
-    updated = list(range(1, 3 + cfg.n_samples))
+    updated = list(range(1, 3 + p.trace_n_samples))
     fig.frames = [
         go.Frame(
             data=[gt_trace(r), skeleton_trace(r), *sample_traces(r)],
@@ -244,51 +252,47 @@ def _title(record: dict) -> str:
     )
 
 
-@parser.wrap()
-def cli(cfg: ActionTraceProbeConfig):
-    init_logging()
-    device = get_safe_torch_device(try_device=cfg.policy.device)
-    makedirs(cfg.out_dir)
-
-    from lerobot.datasets.factory import make_dataset
-
-    dataset = make_dataset(cfg)
-    dataset.delta_timestamps = None
-    dataset.delta_indices = None
-
-    adapter = ProbablePolicy.for_config(cfg, device, dataset=dataset)
-    adapter._set_probe_cuda_graph_enabled(False)  # fresh flow noise per draw; keep eager
+def run(adapter, dataset, cfg, output_dir):
+    """Probe entry point shared by the CLI and rl_offline's validation loop."""
+    p = cfg.probe_parameters
+    makedirs(output_dir)
     kin = RebotKinematics()
 
-    anchors = _anchor_frames(dataset, cfg)
+    anchors = _anchor_frames(dataset, p, int(getattr(cfg.policy, "image_stride", 1)))
     if not anchors:
-        raise SystemExit(f"No anchors selected (episodes={cfg.episodes!r}).")
+        raise ValueError(f"No anchors selected (trace_episodes={p.trace_episodes!r}).")
     logging.info(
-        f"[action_trace] {len(anchors)} anchors x {cfg.n_samples} samples = "
-        f"{len(anchors) * cfg.n_samples} forward passes"
+        f"[action_trace] {len(anchors)} anchors x {p.trace_n_samples} samples = "
+        f"{len(anchors) * p.trace_n_samples} forward passes"
     )
 
+    # Fresh flow noise per draw: a replayed CUDA graph would hand every sample the
+    # same noise and collapse the fan. Restored below so training is unaffected.
+    adapter._set_probe_cuda_graph_enabled(False)
     records = []
-    for n, (ep_idx, global_idx) in enumerate(anchors):
-        obs, gt_actions, subtask, task_str, frame_idx = _observation(dataset, cfg, global_idx)
-        samples = [
-            # Deployment-condition metadata: ask for the best behaviour the steering
-            # offers. Passing None omits the clause the policy was trained with.
-            adapter.predict_action_chunk(
-                obs, task_str, subtask=subtask, metadata={"quality": 5, "mistake": False}
-            )[0].numpy()
-            for _ in range(cfg.n_samples)
-        ]
-        record = _analyse(kin, gt_actions.numpy(), samples, cfg.table_z)
-        record.update(episode=ep_idx, frame=frame_idx, global_idx=global_idx)
-        records.append(record)
-        logging.info(f"[{n + 1}/{len(anchors)}] {_title(record)}")
+    try:
+        for n, (ep_idx, global_idx) in enumerate(anchors):
+            obs, gt_actions, subtask, task_str, frame_idx = _observation(dataset, cfg, global_idx)
+            samples = [
+                # Deployment-condition metadata: ask for the best behaviour the steering
+                # offers. Passing None omits the clause the policy was trained with.
+                adapter.predict_action_chunk(
+                    obs, task_str, subtask=subtask, metadata={"quality": 5, "mistake": False}
+                )[0].numpy()
+                for _ in range(p.trace_n_samples)
+            ]
+            record = _analyse(kin, gt_actions.numpy(), samples, p.trace_table_z)
+            record.update(episode=ep_idx, frame=frame_idx, global_idx=global_idx)
+            records.append(record)
+            logging.info(f"[{n + 1}/{len(anchors)}] {_title(record)}")
+    finally:
+        adapter._restore_probe_cuda_graph_enabled()
 
-    fig = _figure(records, cfg)
-    html_path = os.path.join(cfg.out_dir, "action_trace.html")
+    fig = _figure(records, p)
+    html_path = os.path.join(output_dir, "action_trace.html")
     fig.write_html(html_path, include_plotlyjs="cdn", auto_play=False)
 
-    csv_path = os.path.join(cfg.out_dir, "metrics.csv")
+    csv_path = os.path.join(output_dir, "metrics.csv")
     with open(csv_path, "w", newline="") as handle:
         columns = ["episode", "frame", "global_idx", *records[0]["metrics"]]
         writer = csv.DictWriter(handle, fieldnames=columns)
@@ -310,12 +314,25 @@ def cli(cfg: ActionTraceProbeConfig):
             f"  ep{r['episode']} frame {r['frame']:5d}  terminal spread "
             f"{m['spread_terminal']*1000:6.1f} mm   EE err best {m['ee_err_best']*1000:6.1f} mm"
         )
-    breaches = [r for r in records if r["metrics"]["clearance_pred"] < cfg.clearance_warn_m]
-    logging.info(
-        f"{len(breaches)}/{len(records)} anchors predict a pass within "
-        f"{cfg.clearance_warn_m*1000:.0f} mm of the table."
+    breaches = [r for r in records if r["metrics"]["clearance_pred"] < p.trace_clearance_warn_m]
+    # WARNING so it survives the console filter rl_offline installs around probes.
+    log = logging.warning if breaches else logging.info
+    log(
+        f"[action_trace] {len(breaches)}/{len(records)} anchors predict a pass within "
+        f"{p.trace_clearance_warn_m*1000:.0f} mm of the table."
     )
     logging.info(f"wrote {html_path} and {csv_path}")
+
+
+@parser.wrap()
+def cli(cfg: ActionTraceProbeConfig):
+    init_logging()
+    device = get_safe_torch_device(try_device=cfg.policy.device)
+    dataset = load_probe_dataset(cfg)
+    adapter = ProbablePolicy.for_config(cfg, device, dataset=dataset)
+    output_dir = os.path.join(cfg.probe_parameters.output_dir, "action_trace")
+    run(adapter, dataset, cfg, output_dir)
+    logging.info(f"Done. Output in {output_dir}/")
 
 
 def main() -> None:
