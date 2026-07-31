@@ -47,7 +47,14 @@ import torch.nn.functional as F
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import build_episode_index, get_frame_data, load_extra_dataset, load_probe_dataset
+from lerobot.probes.utils import (
+    _snap_position,
+    build_episode_index,
+    load_extra_dataset,
+    load_probe_dataset,
+    probe_frame_inputs,
+    probe_image_stride,
+)
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
@@ -64,7 +71,7 @@ _STD_EPS = 1e-8
 # Sampling — one random frame per unique episode
 # ──────────────────────────────────────────────────────────────────────────────
 
-def sample_spread_over_episodes(dataset, n_frames: int, seed: int = 42):
+def sample_spread_over_episodes(dataset, n_frames: int, seed: int = 42, stride: int = 1):
     """Return ``[(ep_idx, fr_idx, global_idx), ...]``, ``n_frames`` spread over episodes.
 
     One random frame per episode while episodes last — distinct episodes is the most
@@ -72,6 +79,8 @@ def sample_spread_over_episodes(dataset, n_frames: int, seed: int = 42):
     episode contributes several evenly-spaced frames, so a single-episode validation set
     still produces an aggregate instead of the one map that ``_probe_one_dataset``
     discards for having fewer than two samples.
+
+    ``stride`` snaps every pick onto the stored image/depth grid.
     """
     ep_to_indices = build_episode_index(dataset)
     all_eps = sorted(ep_to_indices.keys())
@@ -94,7 +103,7 @@ def sample_spread_over_episodes(dataset, n_frames: int, seed: int = 42):
             step = len(indices) / count
             picks = [indices[min(int((i + 0.5) * step), len(indices) - 1)] for i in range(count)]
         for global_idx in picks:
-            fr_idx = dataset.hf_dataset[global_idx]["frame_index"].item()
+            _, fr_idx, global_idx = _snap_position(dataset, indices, indices.index(global_idx), stride)
             samples.append((ep_idx, fr_idx, global_idx))
     return samples
 
@@ -330,6 +339,7 @@ def collect_aggregates(
     samples,
     layers,
     timestep,
+    cfg,
     *,
     requires_grad: bool = False,
 ):
@@ -348,17 +358,17 @@ def collect_aggregates(
 
     for i, (ep_idx, fr_idx, global_idx) in enumerate(samples):
         logging.debug(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
-        obs, gt_actions, state, _, task_str, _, _ = get_frame_data(
-            dataset, global_idx, chunk_size,
-        )
+        frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
         result = adapter.capture_attention(
-            obs,
-            task_str,
-            state=state,
+            frame["obs"],
+            frame["task"],
+            state=frame["state"],
             timestep=timestep,
             layers=layers,
             requires_grad=requires_grad,
-            gt_actions=gt_actions if requires_grad else None,
+            gt_actions=frame["gt_actions"] if requires_grad else None,
+            subtask=frame["subtask"],
+            metadata=frame["metadata"],
         )
 
         if not result.cross_attn_by_layer:
@@ -441,7 +451,9 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg, *, requires_grad: bool = F
         f"requires_grad={requires_grad}"
     )
 
-    samples = sample_spread_over_episodes(dataset, n_frames=n_frames, seed=seed)
+    samples = sample_spread_over_episodes(
+        dataset, n_frames=n_frames, seed=seed, stride=probe_image_stride(cfg)
+    )
     if not samples:
         logging.warning("  No samples; skipping.")
         return
@@ -453,6 +465,7 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg, *, requires_grad: bool = F
         samples,
         layers,
         timestep,
+        cfg,
         requires_grad=requires_grad,
     )
 

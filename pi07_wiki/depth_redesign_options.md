@@ -309,7 +309,7 @@ cross-attn; RGB dropout in `MolmoAct2PackInputsProcessorStep` (zeroes the depth
 camera's `<im_patch>` span in `attention_mask`, after `_build_labels`, training
 text only) + `cross_on` bridge kill in `DepthStreamBlock` and the critic's
 `compute_depth_tokens`; telemetry in the
-trainer (`depth_attn_mass/*` first-micro-batch capture on log steps, `depth_bias_*`,
+trainer (`depth_attn_mass_mean`/`_max` first-micro-batch capture on log steps, `depth_bias_mean`,
 `depth_grad_norm_preclip`); `probes/depth_modality_probe.py` replaces the
 bit-identity probe. The b_ℓ-gradient-through-SDPA-mask assumption is covered by
 `test_joint_softmax_matches_eager_and_bias_gets_gradient`. Old α-era checkpoints
@@ -334,9 +334,10 @@ draw is unchanged.
 
 Always-on wandb scalars (training loop):
 
-- `depth_attn_mass/{ℓ}` — fraction of the joint softmax's mass on depth
-  columns, averaged over queries and heads; free in path (a); the working
-  replacement for `pointmap_gate`.
+- `depth_attn_mass_mean`/`_max` — fraction of the joint softmax's mass on depth
+  columns, averaged over queries and heads, then aggregated over stream layers;
+  free in path (a); the working replacement for `pointmap_gate`. The per-layer
+  `{ℓ}` breakdown is probe-only (one wandb panel per layer is unreadable).
 - Pre-clip depth-group gradient norm (current metric reads post-clip, ~4×
   understated at the observed grad norms).
 

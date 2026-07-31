@@ -44,6 +44,23 @@ ACTION_3D_VIEWS = {
 REPR_COLORINGS = ["by_episode", "by_frame", "by_subtask"]
 CHUNK_SIZE = 1024 * 1024
 
+# Probes whose output is a flat set of files under one directory (plus an optional
+# examples/ subdir). They get a uniform "View" picker over whatever they wrote,
+# so a probe that adds a panel shows up without touching the viewer.
+# (section id, title, probe subdir, media kind, glob patterns)
+PROBE_SECTIONS = (
+    ("mem_history_influence", "MEM History Influence", "mem_history_influence", "image",
+     ("*.png", "examples/*.png")),
+    ("mem_temporal_attention", "MEM Temporal Attention", "mem_temporal_attention", "image",
+     ("*.png", "examples/*.png")),
+    ("metadata_steering", "Metadata Steering", "metadata_steering", "image",
+     ("*.png", "examples/*.png")),
+    ("depth_modality", "Depth Modality", "depth_modality", "image", ("*.png",)),
+    ("attention_budget", "Attention Budget", "attention_budget", "image", ("*.png",)),
+    ("subtask_sweep", "Subtask Sweep", "subtask_sweep", "image", ("*.png",)),
+    ("action_trace", "Action Trace (3D)", "action_trace", "html", ("*.html",)),
+)
+
 
 @dataclass(frozen=True)
 class MediaItem:
@@ -257,6 +274,26 @@ def discover_critic_values_files(val_dir: Path, steps: list[str]) -> list[str]:
     return sorted(seen, key=sort_key)
 
 
+def discover_probe_views(val_dir: Path, steps: list[str], probe_dir: str, patterns) -> list[str]:
+    """Relative file names a flat probe wrote, unioned over the selected steps.
+
+    Unioning rather than taking the first non-empty step means a panel that only
+    exists at some checkpoints (an examples/ frame picked by percentile, say) is
+    still selectable; missing entries render as gaps, which is the existing
+    behaviour for every other section.
+    """
+    views: set[str] = set()
+    for step in steps:
+        base = val_dir / step / probe_dir
+        if not base.exists():
+            continue
+        for pattern in patterns:
+            views.update(path.relative_to(base).as_posix() for path in base.glob(pattern))
+    # Top-level summary panels first, then examples/ — the first entry is the
+    # section's default view, and the summary is what you want to open on.
+    return sorted(views, key=lambda name: ("/" in name, name))
+
+
 def discover_critic_trace_episodes(val_dir: Path, steps: list[str]) -> list[str]:
     episodes: set[str] = set()
     for step in steps:
@@ -330,6 +367,10 @@ class ValidationViewer:
         self.att_episodes, self.att_layers = discover_attention_episodes_layers(self.val_dir, self.steps)
         self.att_files = discover_attention_files(self.val_dir, self.steps, self.att_episodes, self.att_layers)
         self.offline_inference_frames = discover_offline_inference_frames(self.val_dir, self.steps)
+        self.has_memory_ablation = any(
+            (self.val_dir / step / "offline_inference" / "memory_ablation.png").exists()
+            for step in self.steps
+        )
 
         self.adj_groups = discover_action_drift_jacobian_groups(self.val_dir, self.steps)
         self.adj_layers = discover_action_drift_jacobian_layers(self.val_dir, self.steps, self.adj_groups)
@@ -353,6 +394,14 @@ class ValidationViewer:
         )
         self.cv_files = discover_critic_values_files(self.val_dir, self.steps)
         self.cv_trace_eps = discover_critic_trace_episodes(self.val_dir, self.steps)
+        self.probe_views = {
+            section: discover_probe_views(self.val_dir, self.steps, probe_dir, patterns)
+            for section, _title, probe_dir, _media, patterns in PROBE_SECTIONS
+        }
+        self.probe_specs = {
+            section: (probe_dir, media)
+            for section, _title, probe_dir, media, _patterns in PROBE_SECTIONS
+        }
 
     def manifest(self) -> dict:
         sections = [
@@ -419,15 +468,23 @@ class ValidationViewer:
                     ],
                 }
             )
-        if self.offline_inference_frames:
+        if self.offline_inference_frames or self.has_memory_ablation:
+            spaces = ["Unnormalized", "Normalized"]
+            if self.has_memory_ablation:
+                spaces.append("Memory ablation")
             sections.append(
                 {
                     "id": "offline_inference",
                     "title": "Offline Inference",
                     "media": "image",
                     "controls": [
-                        {"name": "space", "label": "Space", "choices": ["Unnormalized", "Normalized"]},
-                        {"name": "frame", "label": "Frame", "choices": self.offline_inference_frames},
+                        {"name": "space", "label": "Space", "choices": spaces},
+                        {
+                            "name": "frame",
+                            "label": "Frame",
+                            "choices": self.offline_inference_frames,
+                            "showWhenAny": {"space": ["Unnormalized", "Normalized"]},
+                        },
                     ],
                 }
             )
@@ -494,6 +551,19 @@ class ValidationViewer:
                             "showWhen": {"mode": "Trace curves"},
                         },
                     ],
+                }
+            )
+
+        for section, title, _probe_dir, media, _patterns in PROBE_SECTIONS:
+            views = self.probe_views.get(section) or []
+            if not views:
+                continue
+            sections.append(
+                {
+                    "id": section,
+                    "title": title,
+                    "media": media,
+                    "controls": [{"name": "view", "label": "View", "choices": views}],
                 }
             )
 
@@ -610,21 +680,32 @@ class ValidationViewer:
             ]
         elif section == "offline_inference":
             space = params.get("space", "Unnormalized")
-            frame = params.get(
-                "frame", self.offline_inference_frames[0] if self.offline_inference_frames else ""
-            )
-            subdirs = ("unnormalized_eval", "unnormalized") if space == "Unnormalized" else (
-                "normalized_eval",
-                "normalized",
-            )
-            items = [
-                MediaItem(
-                    step,
-                    step_label(step),
-                    _first_existing_rel(self.val_dir / step / "offline_inference", subdirs) / f"{frame}.png",
+            if space == "Memory ablation":
+                items = [
+                    MediaItem(
+                        step,
+                        step_label(step),
+                        self.val_dir / step / "offline_inference" / "memory_ablation.png",
+                    )
+                    for step in steps
+                ]
+            else:
+                frame = params.get(
+                    "frame", self.offline_inference_frames[0] if self.offline_inference_frames else ""
                 )
-                for step in steps
-            ]
+                subdirs = ("unnormalized_eval", "unnormalized") if space == "Unnormalized" else (
+                    "normalized_eval",
+                    "normalized",
+                )
+                items = [
+                    MediaItem(
+                        step,
+                        step_label(step),
+                        _first_existing_rel(self.val_dir / step / "offline_inference", subdirs)
+                        / f"{frame}.png",
+                    )
+                    for step in steps
+                ]
         elif section == "action_drift_jacobian":
             media = "video"
             group = params.get("group", self.adj_groups[0] if self.adj_groups else "")
@@ -684,6 +765,16 @@ class ValidationViewer:
                     MediaItem(step, step_label(step), self.val_dir / step / "critic" / fname)
                     for step in steps
                 ]
+        elif section in self.probe_specs:
+            probe_dir, media = self.probe_specs[section]
+            views = self.probe_views.get(section) or []
+            view = params.get("view", views[0] if views else "")
+            if views and view not in views:
+                view = views[0]
+            items = [
+                MediaItem(step, step_label(step), self.val_dir / step / probe_dir / view)
+                for step in steps
+            ]
         else:
             raise ValueError(f"Unknown section: {section}")
 

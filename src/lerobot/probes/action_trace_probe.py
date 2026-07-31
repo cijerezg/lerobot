@@ -16,6 +16,12 @@ Three questions it answers, in decreasing order of what it can prove:
   3. **Fit.** Cartesian error against GT, reported both as the mean over samples and the
      best sample, because they mean different things (see below).
 
+COMMANDED vs MEASURED. Every action — GT or predicted — is a commanded (leader) pose,
+while the skeleton and the ``gripper now`` diamond are the measured follower pose. On
+this arm the follower trails its command by a median 45 mm at the end-effector, so the
+diamond does *not* sit on the traces, and the dotted ``follower lag`` segment is that
+gap, not a step of motion.
+
 OPEN-LOOP. Every anchor restarts the policy from a demo state, so this measures *intended*
 motion, never closed-loop behaviour: compounding error and recovery from drift are
 invisible by construction. Divergence from GT is also not automatically error — the task
@@ -27,7 +33,7 @@ Runs inside rl_offline's validation loop when ``probe_parameters.enable_action_t
 set, or standalone:
 
     python -m lerobot.probes.action_trace_probe --config config_rl.yaml \
-        --probe_parameters.trace_anchor_stride_s 2.0 --probe_parameters.trace_n_samples 8
+        --probe_parameters.trace_anchor_stride_s 2.0 --probe_parameters.trace_n_samples 5
 """
 
 import csv
@@ -37,20 +43,17 @@ import sys
 from dataclasses import dataclass
 
 import numpy as np
-import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.utils import (
-    assemble_frame_history,
     build_episode_index,
-    get_frame_data,
     load_probe_dataset,
     makedirs,
+    probe_frame_inputs,
 )
 from lerobot.robots.rebot_b601_follower.kinematics import LINK_NAMES, RebotKinematics
-from lerobot.scripts.lerobot_memmap_buffer_cache import load_depth_png
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -59,6 +62,15 @@ from lerobot.utils.utils import init_logging
 @dataclass
 class ActionTraceProbeConfig(TrainRLServerPipelineConfig):
     """Tunables live under ``cfg.probe_parameters`` (the ``trace_*`` fields)."""
+
+
+# One colour per flow draw, so a sample can be followed through the fan and matched to
+# its clearance in the legend. Red is deliberately absent: it stays the table-breach
+# signal, and reds/greens are kept apart for colour-blind readers.
+SAMPLE_COLORS = (
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#17becf", "#8c564b",
+    "#e377c2", "#7f7f7f", "#bcbd22", "#393b79", "#637939", "#8c6d31",
+)
 
 
 def _anchor_frames(dataset, p, depth_stride: int) -> list[tuple[int, int]]:
@@ -83,21 +95,15 @@ def _anchor_frames(dataset, p, depth_stride: int) -> list[tuple[int, int]]:
 
 def _observation(dataset, cfg, global_idx: int):
     """One frame's obs (with depth + short-term history attached), GT chunk, and context."""
-    obs, gt_actions, _state, subtask, task_str, ep_idx, frame_idx = get_frame_data(
-        dataset, global_idx, int(cfg.policy.chunk_size)
+    frame = probe_frame_inputs(dataset, cfg, global_idx, int(cfg.policy.chunk_size))
+    return (
+        frame["obs"],
+        frame["gt_actions"],
+        frame["subtask"],
+        frame["task"],
+        frame["metadata"],
+        frame["frame_idx"],
     )
-    pointmap_config = getattr(cfg.policy, "pointmap_config", None)
-    if pointmap_config is not None:
-        depth_key = pointmap_config.depth_key
-        depth = load_depth_png(dataset.root, f"{depth_key}.depth", ep_idx, frame_idx)
-        obs[f"observation.depth.{depth_key}"] = torch.from_numpy(depth.astype(np.float32)).reshape(
-            1, 1, *depth.shape
-        )
-    memory_cfg = getattr(cfg.policy, "memory", None)
-    if memory_cfg is not None and memory_cfg.history_keys and memory_cfg.history_num_samples > 0:
-        keys = [k for k in memory_cfg.history_keys if k == OBS_STATE or "images" in k]
-        obs.update(assemble_frame_history(dataset, global_idx, memory_cfg, cfg.env.fps, keys))
-    return obs, gt_actions, subtask, task_str, frame_idx
 
 
 def _pairwise_spread(points: np.ndarray) -> np.ndarray:
@@ -118,8 +124,25 @@ def _pairwise_spread(points: np.ndarray) -> np.ndarray:
     return distances.sum(axis=(0, 1)) / (k * (k - 1))
 
 
-def _analyse(kin: RebotKinematics, gt_chunk: np.ndarray, samples: list[np.ndarray], table_z: float):
-    """FK the GT and predicted chunks, and reduce them to traces + scalar metrics."""
+def _analyse(
+    kin: RebotKinematics,
+    state: np.ndarray,
+    gt_chunk: np.ndarray,
+    samples: list[np.ndarray],
+    table_z: float,
+):
+    """FK the GT and predicted chunks, and reduce them to traces + scalar metrics.
+
+    ``state`` is the *measured* follower pose at the anchor; every action in the dataset
+    is a *commanded* leader pose. Those are not the same point in space: the follower
+    trails its command by ~0.25 s of motion under load, which on this arm is a median
+    45 mm at the end-effector — two thirds of the length of a whole 30-step chunk.
+
+    So no trace is anchored on the measured pose. Chunks are drawn exactly as they are,
+    starting at their own first action, and the state→first-command offset is reported
+    as ``follower_lag`` and drawn as its own dashed segment. Joining them would fabricate
+    a leading step longer than the motion the chunk actually contains.
+    """
     horizon = min(len(gt_chunk), min(len(s) for s in samples))
     gt_chunk = gt_chunk[:horizon]
     samples = [s[:horizon] for s in samples]
@@ -135,11 +158,16 @@ def _analyse(kin: RebotKinematics, gt_chunk: np.ndarray, samples: list[np.ndarra
     worst_sample = int(sample_z.min(axis=1).argmin())
     worst_step = int(sample_z[worst_sample].argmin())
 
+    start_ee = kin.ee_path(state[None])[0]  # (3,) — where the gripper actually is right now
     return {
+        "start_ee": start_ee,
         "gt_ee": gt_ee,
         "sample_ee": sample_ee,
         "sample_clearance": sample_z.min(axis=1) - table_z,  # (K,) per-sample worst
-        "anchor_skeleton": kin.link_origins(gt_chunk[:1])[0],
+        "sample_worst_link": [
+            LINK_NAMES[int(owner[int(z.argmin())])] for owner, z in zip(sample_owner, sample_z, strict=True)
+        ],
+        "anchor_skeleton": kin.link_origins(state[None])[0],
         "worst_pose": samples[worst_sample][worst_step],
         "metrics": {
             "ee_err_mean": float(errors.mean()),
@@ -149,6 +177,9 @@ def _analyse(kin: RebotKinematics, gt_chunk: np.ndarray, samples: list[np.ndarra
             "clearance_gt": float(gt_z.min() - table_z),
             "clearance_pred": float(sample_z.min() - table_z),
             "clearance_link": LINK_NAMES[int(sample_owner[worst_sample][worst_step])],
+            # Property of the teleop data, not of the checkpoint: how far the measured
+            # pose sits behind the command it is chasing at this anchor.
+            "follower_lag": float(np.linalg.norm(gt_ee[0] - start_ee)),
         },
     }
 
@@ -161,7 +192,11 @@ def _figure(records: list[dict], p) -> "go.Figure":  # noqa: F821
     """
     import plotly.graph_objects as go
 
-    points = np.concatenate([r["gt_ee"] for r in records] + [r["sample_ee"].reshape(-1, 3) for r in records])
+    points = np.concatenate(
+        [r["gt_ee"] for r in records]
+        + [r["sample_ee"].reshape(-1, 3) for r in records]
+        + [r["start_ee"][None] for r in records]
+    )
     lo, hi = points.min(axis=0), points.max(axis=0)
     pad = 0.05
     table_x = [lo[0] - pad, hi[0] + pad]
@@ -169,25 +204,60 @@ def _figure(records: list[dict], p) -> "go.Figure":  # noqa: F821
 
     def sample_traces(record):
         traces = []
-        for ee, clearance in zip(record["sample_ee"], record["sample_clearance"]):
+        zipped = zip(
+            record["sample_ee"], record["sample_clearance"], record["sample_worst_link"], strict=True
+        )
+        for k, (ee, clearance, link) in enumerate(zipped):
             unsafe = clearance < p.trace_clearance_warn_m
+            # Identity comes from colour, so a breach cannot be recoloured red without
+            # losing which sample it was: it is flagged by a dashed, heavier line and
+            # by its legend entry instead.
             traces.append(
                 go.Scatter3d(
-                    x=ee[:, 0], y=ee[:, 1], z=ee[:, 2], mode="lines",
-                    line=dict(color="#d62728" if unsafe else "#1f77b4", width=4),
-                    opacity=0.95 if unsafe else 0.55,
-                    name=f"sample (clr {clearance*1000:.0f} mm)",
-                    showlegend=False,
+                    x=ee[:, 0], y=ee[:, 1], z=ee[:, 2],
+                    mode="lines+markers",
+                    line=dict(
+                        color=SAMPLE_COLORS[k % len(SAMPLE_COLORS)],
+                        width=6 if unsafe else 3,
+                        dash="dash" if unsafe else "solid",
+                    ),
+                    marker=dict(size=2, color=SAMPLE_COLORS[k % len(SAMPLE_COLORS)]),
+                    opacity=1.0 if unsafe else 0.6,
+                    name=(
+                        f"sample {k} — {clearance*1000:.0f} mm ({link})"
+                        + ("  ⚠ TABLE" if unsafe else "")
+                    ),
                 )
             )
         return traces
 
     def gt_trace(record):
+        # Deliberately the heaviest line in the scene: it is the one thing every sample
+        # is read against, and it has to stay findable inside the fan.
         ee = record["gt_ee"]
         return go.Scatter3d(
             x=ee[:, 0], y=ee[:, 1], z=ee[:, 2], mode="lines+markers",
-            line=dict(color="#111111", width=7), marker=dict(size=2.5, color="#111111"),
+            line=dict(color="#111111", width=11), marker=dict(size=4, color="#111111"),
             name="ground truth",
+        )
+
+    def gt_end_trace(record):
+        x, y, z = record["gt_ee"][-1]
+        return go.Scatter3d(
+            x=[x], y=[y], z=[z], mode="markers",
+            marker=dict(size=9, color="#111111", symbol="square",
+                        line=dict(color="#ffffff", width=1)),
+            name="ground truth — chunk end",
+        )
+
+    def lag_trace(record):
+        """Measured pose → the command it is chasing. Not motion: teleop tracking error."""
+        here, commanded = record["start_ee"], record["gt_ee"][0]
+        return go.Scatter3d(
+            x=[here[0], commanded[0]], y=[here[1], commanded[1]], z=[here[2], commanded[2]],
+            mode="lines",
+            line=dict(color="#999999", width=3, dash="dot"),
+            name=f"follower lag — {record['metrics']['follower_lag']*1000:.0f} mm (not motion)",
         )
 
     def skeleton_trace(record):
@@ -195,8 +265,24 @@ def _figure(records: list[dict], p) -> "go.Figure":  # noqa: F821
         return go.Scatter3d(
             x=pts[:, 0], y=pts[:, 1], z=pts[:, 2], mode="lines+markers",
             line=dict(color="#888888", width=9), marker=dict(size=4, color="#555555"),
-            name="arm at anchor",
+            name="arm now (measured state)",
         )
+
+    def start_trace(record):
+        x, y, z = record["start_ee"]
+        return go.Scatter3d(
+            x=[x], y=[y], z=[z], mode="markers",
+            marker=dict(size=7, color="#111111", symbol="diamond",
+                        line=dict(color="#ffffff", width=1)),
+            name="gripper now (measured, behind the command)",
+        )
+
+    def anchor_traces(record):
+        """Everything that is re-drawn when the slider moves, in a fixed order."""
+        return [
+            gt_trace(record), gt_end_trace(record), skeleton_trace(record),
+            start_trace(record), lag_trace(record), *sample_traces(record),
+        ]
 
     first = records[0]
     table = go.Mesh3d(
@@ -206,12 +292,15 @@ def _figure(records: list[dict], p) -> "go.Figure":  # noqa: F821
         i=[0, 0], j=[1, 2], k=[2, 3],
         color="#c8b89a", opacity=0.35, name="table", showlegend=True, hoverinfo="skip",
     )
-    fig = go.Figure(data=[table, gt_trace(first), skeleton_trace(first), *sample_traces(first)])
+    fig = go.Figure(data=[table, *anchor_traces(first)])
 
-    updated = list(range(1, 3 + p.trace_n_samples))
+    # Everything except the table (index 0) is re-drawn per anchor, and the slider frames
+    # must name exactly those trace indices — so the count is taken from the data itself
+    # rather than recounted by hand.
+    updated = list(range(1, len(fig.data)))
     fig.frames = [
         go.Frame(
-            data=[gt_trace(r), skeleton_trace(r), *sample_traces(r)],
+            data=anchor_traces(r),
             traces=updated,
             name=str(i),
             layout=dict(title=dict(text=_title(r))),
@@ -248,7 +337,8 @@ def _title(record: dict) -> str:
         f"clearance pred {m['clearance_pred']*1000:+.0f} mm ({m['clearance_link']}), "
         f"GT {m['clearance_gt']*1000:+.0f} mm   |   "
         f"fan spread {m['spread_terminal']*1000:.0f} mm   |   "
-        f"EE err best {m['ee_err_best']*1000:.0f} / mean {m['ee_err_mean']*1000:.0f} mm"
+        f"EE err best {m['ee_err_best']*1000:.0f} / mean {m['ee_err_mean']*1000:.0f} mm   |   "
+        f"follower lag {m['follower_lag']*1000:.0f} mm"
     )
 
 
@@ -272,16 +362,21 @@ def run(adapter, dataset, cfg, output_dir):
     records = []
     try:
         for n, (ep_idx, global_idx) in enumerate(anchors):
-            obs, gt_actions, subtask, task_str, frame_idx = _observation(dataset, cfg, global_idx)
+            obs, gt_actions, subtask, task_str, metadata, frame_idx = _observation(
+                dataset, cfg, global_idx
+            )
             samples = [
-                # Deployment-condition metadata: ask for the best behaviour the steering
-                # offers. Passing None omits the clause the policy was trained with.
+                # No generator: the spread across draws IS the measurement here, so
+                # every sample must get fresh flow noise. Deployment-condition
+                # metadata comes from probe_frame_inputs — ask for the best
+                # behaviour the steering offers.
                 adapter.predict_action_chunk(
-                    obs, task_str, subtask=subtask, metadata={"quality": 5, "mistake": False}
+                    obs, task_str, subtask=subtask, metadata=metadata
                 )[0].numpy()
                 for _ in range(p.trace_n_samples)
             ]
-            record = _analyse(kin, gt_actions.numpy(), samples, p.trace_table_z)
+            state = obs[OBS_STATE].reshape(-1).numpy()
+            record = _analyse(kin, state, gt_actions.numpy(), samples, p.trace_table_z)
             record.update(episode=ep_idx, frame=frame_idx, global_idx=global_idx)
             records.append(record)
             logging.info(f"[{n + 1}/{len(anchors)}] {_title(record)}")

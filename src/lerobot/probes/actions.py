@@ -54,6 +54,8 @@ from lerobot.probes.utils import (
     ax_style,
     frame_colors_rgba,
     get_frame_data,
+    probe_frame_inputs,
+    probe_image_stride,
     dataset_display_name,
     get_subtask_idx,
     load_extra_dataset,
@@ -145,11 +147,16 @@ def fit_manifold(X_ref, cfg, pca_dir):
 
 @torch.no_grad()
 def collect_eval_dataset(adapter: ProbablePolicy, dataset, samples,
-                         pca, reducer2d, reducer3d):
-    """Run inference and project GT + pred through the fitted manifold."""
+                         pca, reducer2d, reducer3d, cfg):
+    """Run inference and project GT + pred through the fitted manifold.
+
+    Inference runs in the deployment regime (subtask + metadata clauses, short-term
+    history, wrist depth) so the projected point is the one a rollout would produce.
+    """
     import warnings
 
     chunk_size    = adapter.chunk_size
+    seed          = int(getattr(cfg.probe_parameters, "random_seed", 0))
     gt_pca_rows   = []
     pred_pca_rows = []
     metadata      = []
@@ -160,11 +167,14 @@ def collect_eval_dataset(adapter: ProbablePolicy, dataset, samples,
             if i % 100 == 0:
                 logging.debug(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
 
-            obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
-                dataset, global_idx, chunk_size
-            )
+            frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
+            gt_actions, gt_subtask, task_str = frame["gt_actions"], frame["subtask"], frame["task"]
+            # Seeded per frame so the projected point moves only when the policy does.
+            generator = torch.Generator(device=adapter.device)
+            generator.manual_seed(seed + int(global_idx))
             pred_unnorm, _, _ = adapter.predict_action_chunk(
-                obs, task_str, state=state,
+                frame["obs"], task_str, state=frame["state"],
+                subtask=gt_subtask, metadata=frame["metadata"], generator=generator,
             )
 
             gt_pca_rows.append(
@@ -770,10 +780,11 @@ def run(adapter, root_dataset, cfg, output_dir, *, eval_dataset=None):
                 n_per_episode=p.n_frames_per_episode,
                 max_episodes=p.max_episodes,
                 seed=p.random_seed,
+                stride=probe_image_stride(cfg),
             )
             logging.info(f"  {len(eval_samples)} frames")
             cache["datasets"][ds_name] = collect_eval_dataset(
-                adapter, dataset, eval_samples, pca, reducer2d, reducer3d,
+                adapter, dataset, eval_samples, pca, reducer2d, reducer3d, cfg,
             )
 
         torch.save(cache, cache_path)

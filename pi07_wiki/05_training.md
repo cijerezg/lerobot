@@ -122,11 +122,14 @@ Fully bypassed in the current offline run.
 ## 5. Telemetry
 
 Console + wandb via the `accum` dict → `log_metrics`: `loss_flow`,
-`loss_discrete_ce`, `loss_subtask_ce`, `loss_summary_ce`; depth (joint softmax,
-03_depth §B.3): `depth_attn_mass_mean`/`_max` + per-layer `depth_attn_mass/lNN`
-(captured on the first micro-batch of logged actor updates), `depth_bias_{mean,min,max}`
-(the learned per-layer column bias, init −2), `depth_grad_norm_preclip` (read
-before `clip_grad_norm_`).
+`loss_discrete_ce`, `loss_subtask_ce`, `loss_summary_ce` (+ its `/hold` and
+`/update` split — read `/update`, see 04_memory §3); depth (joint softmax,
+03_depth §B.3): `depth_attn_mass_mean`/`_max` (captured on the first micro-batch
+of logged actor updates), `depth_bias_mean` (mean of the learned per-layer column
+biases, init −2), `depth_grad_norm_preclip` (read before `clip_grad_norm_`).
+Depth telemetry is aggregate-only by design: per-layer series are one panel per
+stream layer and belong in `probes/depth_modality_probe.py`, which prints the
+full profile on demand.
 Validation probes at `val_freq` (offline_inference shows GT + predicted subtask
 and memory per checkpoint; critic probes self-skip under skip_critic). Probes must
 thread `cfg.policy.inference_advantage` — not a hardcoded advantage — so eval

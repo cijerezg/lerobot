@@ -8,9 +8,14 @@ directly — so the same probe code works across policies.
 Dispatch mirrors :meth:`lerobot.rl.rl_trainer.Trainer.for_config`: call
 ``ProbablePolicy.for_config(cfg, device)`` and you get the right adapter.
 
-The interface grows as probes need more from policies. Today: enough for the
-action and offline_inference probes. Future probes will add methods (e.g.
-``embed_sequence``, ``forward_with_attention_capture``, ``get_value``).
+Two conventions every probe depends on:
+
+* **Deployment prompt.** Forward-running methods take ``subtask`` and ``metadata``
+  so a probe can reproduce the prompt a rollout actually issues. Omitting them is
+  a measurement choice, not a default — see ``probes.utils.probe_frame_inputs``.
+* **Seeded noise.** ``predict_action_chunk`` takes a ``generator`` so an A/B over
+  conditions (or over checkpoints) is not confounded by flow noise. Adapters whose
+  sampler is deterministic ignore it.
 """
 
 from __future__ import annotations
@@ -107,6 +112,7 @@ class ProbablePolicy(ABC):
         advantage: float = 1.0,
         subtask: str | None = None,
         metadata: dict | None = None,
+        generator: "torch.Generator | None" = None,
     ) -> tuple[Tensor, Tensor, str | None]:
         """
         Run one forward pass and return predicted actions.
@@ -121,6 +127,11 @@ class ProbablePolicy(ABC):
             subtask: optional current high-level subtask for policies whose action
                 prompt consumes one.
             metadata: optional rollout metadata prompt context.
+            generator: RNG for the flow/diffusion noise. ``None`` draws from the
+                global RNG, which makes any A/B through this method
+                noise-confounded — pass a seeded generator when comparing
+                conditions or checkpoints, and ``None`` only when the spread
+                across draws is the measurement (e.g. the action-trace fan).
 
         Returns:
             ``(pred_unnorm, pred_norm, pred_subtask)`` where
@@ -158,6 +169,7 @@ class ProbablePolicy(ABC):
         timestep: float = 1.0,
         gt_actions: Tensor | None = None,
         gt_subtask: str | None = None,
+        metadata: dict | None = None,
     ) -> dict[str, Tensor]:
         """Run a probe forward and return mean-pooled hidden states per site.
 
@@ -165,8 +177,10 @@ class ProbablePolicy(ABC):
             gt_actions: dataset GT action chunk ``[chunk_size, action_dim]``, used
                 by policies that build action-token streams from GT (pi05). May be
                 ignored by policies that don't (molmoact2).
-            gt_subtask: dataset subtask string, used by pi05 to populate
-                subtask_tokens in the preprocessor. Ignored by molmoact2.
+            gt_subtask: dataset subtask string. pi05 uses it to populate
+                subtask_tokens; molmoact2 puts it in the action prompt's subtask
+                clause, so the representation is the one the deployed prompt yields.
+            metadata: rollout metadata clause for policies whose prompt carries one.
 
         Returns ``dict[site_name -> Tensor[hidden_dim]]``. Site names are
         policy-specific:
@@ -218,15 +232,23 @@ class ProbablePolicy(ABC):
         layers: list[int] | None = None,
         requires_grad: bool = False,
         gt_actions: Tensor | None = None,
+        subtask: str | None = None,
+        metadata: dict | None = None,
     ) -> AttentionCaptureResult:
         """
         Run a probe-time forward and return per-layer attention plus the
         sequence metadata the probe needs to label / overlay.
 
+        Adapters must neutralise any training-time prompt/modality dropout for the
+        duration of the capture (``probes.utils.suppress_pack_dropout``): the
+        capture drives a flow loss, which is exactly what switches those draws on.
+
         Args:
             obs: observation tensors, batch dim 1.
             task_str: high-level task language string.
             state: ``[state_dim]`` current joint state, if available.
+            subtask: subtask clause for the action prompt.
+            metadata: metadata clause for the action prompt.
             timestep: diffusion / flow-matching timestep for the suffix noise
                 (matches the single-timestep convention from pi05's probe).
             layers: which layer indices to capture; ``None`` means all layers.

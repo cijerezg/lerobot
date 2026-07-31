@@ -11,6 +11,9 @@ For each sampled frame and each requested layer, emits:
   overlay_<cam>_summary.mp4   — mean-over-heads heatmaps over each camera
                                 (only if the adapter returns ``img*`` segments)
   overlay_<cam>_heads.mp4     — per-head grid for each camera segment
+  overlay_depth_summary.mp4   — the same, over the point-map depth columns of the
+                                joint softmax, drawn on the depth map (named
+                                ``depth_nullbank`` when the frame carried no depth)
   cross_matrix_mean.mp4       — cross-attn matrix view (rows=actions, cols=encoder),
                                 mean over heads, with segment dividers
   cross_matrix_heads.mp4      — per-head 2×4 grid of the same matrix
@@ -45,7 +48,13 @@ import torch.nn.functional as F
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import AttentionCaptureResult, ProbablePolicy
-from lerobot.probes.utils import build_episode_index, get_frame_data, load_extra_dataset, load_probe_dataset
+from lerobot.probes.utils import (
+    build_episode_index,
+    load_extra_dataset,
+    load_probe_dataset,
+    probe_frame_inputs,
+    probe_image_stride,
+)
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
@@ -102,11 +111,16 @@ def _warn_overcommit_if_risky(probe_name: str) -> None:
     )
 
 
-def build_episode_samples(dataset, episodes_str, random_n, subsample, seed=None, max_frames=None):
+def build_episode_samples(
+    dataset, episodes_str, random_n, subsample, seed=None, max_frames=None, grid_stride=1
+):
     """Return ``[(ep_idx, [(fr_idx, global_idx), ...]), ...]``.
 
     ``max_frames`` widens the stride past ``subsample`` so that many frames span the
     whole episode: an unbounded walk of a 4000-frame episode is hours of rendering.
+    ``grid_stride`` (``policy.image_stride``) rounds the walk up to a multiple of the
+    stored image/depth grid, so every frame is one the model can actually be given
+    depth for and one it was trained on.
     """
     ep_to_indices = build_episode_index(dataset)
     selected: list[int] = []
@@ -132,6 +146,8 @@ def build_episode_samples(dataset, episodes_str, random_n, subsample, seed=None,
         stride = subsample
         if max_frames:
             stride = max(stride, math.ceil(len(indices) / max_frames))
+        if grid_stride > 1:
+            stride = max(grid_stride, math.ceil(stride / grid_stride) * grid_stride)
         ep_frames = [(fr_idx, indices[fr_idx]) for fr_idx in range(0, len(indices), stride)]
         if ep_frames:
             samples.append((ep_idx, ep_frames))
@@ -175,12 +191,17 @@ def cv2_heatmap(heatmap, title, img_h, img_w, vmax=None, vmin=0.0):
     return h_rgb
 
 
-def _attn_values_to_image_heatmap(per_head: torch.Tensor, n_p: int, img_h: int, img_w: int):
-    """Upsample per-head patch attention from [H, n_p*n_p] to image size."""
+def _attn_values_to_image_heatmap(per_head: torch.Tensor, grid_hw, img_h: int, img_w: int):
+    """Upsample per-head patch attention from [H, rows*cols] to image size.
+
+    ``grid_hw`` is ``(rows, cols)``; camera segments pass a square grid, the
+    point-map depth segment is 12x16.
+    """
     n_heads = per_head.shape[0]
+    rows, cols = (grid_hw, grid_hw) if isinstance(grid_hw, int) else grid_hw
 
     def _up(x):
-        grid = x.reshape(n_p, n_p).float()
+        grid = x.reshape(rows, cols).float()
         up = F.interpolate(grid[None, None], size=(img_h, img_w),
                            mode="bicubic", align_corners=False)
         return up.squeeze().clamp(min=0)
@@ -248,9 +269,10 @@ def _extract_overlay_grids(result: AttentionCaptureResult, layer_idx: int):
     """Pass-1 helper for episode-wide vmax: extract per-camera image and per-head
     patch-grid attention. Returns a list of dicts ready to feed ``_render_overlays_from_grids``.
 
-    Each entry: ``{cam_name, img_np, per_head_grid [H, n_p*n_p], n_p}``. The grids
-    live at patch resolution so an episode-wide percentile can be computed cheaply.
-    Upsampling to image size is deferred to the render pass.
+    Each entry: ``{cam_name, img_np, per_head_grid [H, rows*cols], grid_hw}``. The
+    grids live at patch resolution so an episode-wide percentile can be computed
+    cheaply; upsampling to image size is deferred to the render pass. Camera grids
+    are square; the point-map depth block appended at the end is 12x16.
     """
     cross_attn = result.cross_attn_by_layer.get(layer_idx)
     if cross_attn is None:
@@ -310,9 +332,44 @@ def _extract_overlay_grids(result: AttentionCaptureResult, layer_idx: int):
             "cam_name": cam_name,
             "img_np": img_np,
             "per_head_grid": per_head_grid.detach().cpu().float(),
-            "n_p": n_p,
+            "grid_hw": (n_p, n_p),
         })
+
+    depth_grid = _extract_depth_overlay_grid(result, attn)
+    if depth_grid is not None:
+        out.append(depth_grid)
     return out
+
+
+def _extract_depth_overlay_grid(result: AttentionCaptureResult, attn: torch.Tensor):
+    """Overlay entry for the point-map depth columns of the joint softmax.
+
+    The depth block is a 12x16 row-major patch grid, not a square camera grid, and
+    it is rendered over the depth map itself rather than a camera image. Returns
+    ``None`` when the policy is depth-free or the grid could not be resolved.
+    """
+    segment = result.extras.get("depth_segment")
+    if not segment or segment.get("grid_hw") is None:
+        return None
+    indices = [int(i) for i in segment["indices"] if 0 <= int(i) < int(attn.shape[-1])]
+    if len(indices) != segment["grid_hw"][0] * segment["grid_hw"][1]:
+        return None
+
+    image = segment.get("image")
+    if torch.is_tensor(image):
+        img_t = image.squeeze(0).cpu() * 0.5 + 0.5
+        img_np = (img_t.clamp(0, 1).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+    else:
+        rows, cols = segment["grid_hw"]
+        img_np = np.zeros((rows * 16, cols * 16, 3), dtype=np.uint8)
+
+    name = "depth_nullbank" if segment.get("is_null_bank") else "depth"
+    return {
+        "cam_name": name,
+        "img_np": img_np,
+        "per_head_grid": _attn_indices_to_patch_grid(attn, indices).detach().cpu().float(),
+        "grid_hw": tuple(segment["grid_hw"]),
+    }
 
 
 def _render_overlays_from_grids(grids, vmax_overrides=None):
@@ -338,10 +395,11 @@ def _render_overlays_from_grids(grids, vmax_overrides=None):
         cam_name = g["cam_name"]
         img_np = g["img_np"]
         per_head_grid = g["per_head_grid"]
-        n_p = int(g["n_p"])
         img_h, img_w = img_np.shape[:2]
 
-        per_head, mean_map = _attn_values_to_image_heatmap(per_head_grid, n_p, img_h, img_w)
+        per_head, mean_map = _attn_values_to_image_heatmap(
+            per_head_grid, g["grid_hw"], img_h, img_w
+        )
 
         mean_key = f"{cam_name}_mean"
         if mean_key in overrides:
@@ -544,6 +602,13 @@ def _matrix_indices_from_result(result: AttentionCaptureResult, encoder_len: int
             explicit[str(name)] = indices
         for name, indices in result.extras.get("text_token_indices_by_segment", {}).items():
             explicit[str(name)] = indices
+        # The joint depth softmax puts N extra key columns after the prompt. They
+        # carry real mass, so they get their own column block rather than being
+        # dropped by the "only labelled columns are displayed" rule below.
+        depth_segment = result.extras.get("depth_segment")
+        if depth_segment:
+            name = "depth_nullbank" if depth_segment.get("is_null_bank") else "depth"
+            explicit[name] = depth_segment["indices"]
 
     selected: list[int] = []
     display_segments: list[tuple[str, int, int]] = []
@@ -859,54 +924,79 @@ def _text_blocks_for_action_matrix(result: AttentionCaptureResult):
     return blocks
 
 
+# Clause markers for the MolmoAct2 action prompt, in the fixed order
+# `_build_robot_text` emits them (processor_molmoact2.py):
+#
+#   "The task is to {task}." " The current step is {subtask}."
+#   " The current state of the robot is {<state_*>}."
+#   " The recent states of the robot, oldest to newest, are {<extra_0> x T}."
+#   " The quality is {n} of 5." " The robot made {a mistake|no mistakes}."
+#   " Given these, what action should the robot take to complete the task?"
+#
+# Each entry is (group, substrings). Matching walks forward through the decoded
+# labels and never rewinds, so a marker can only fire after the previous clause —
+# that is what keeps "state" off the `<state_*>` values, and the trailing
+# "...complete the task?" from being mistaken for the opening task clause. A
+# clause that was dropped simply never matches, and the preceding group extends.
+_PROMPT_CLAUSE_MARKERS = (
+    ("task", ("task",)),
+    ("subtask", ("step",)),
+    ("state", ("state",)),
+    ("state history", ("recent",)),
+    ("metadata", ("qual", "mistak")),
+    ("question", ("given",)),
+)
+
+_PROMPT_GROUP_ORDER = (
+    "task",
+    "subtask",
+    "state",
+    "state history",
+    "metadata",
+    "question",
+    "other prompt",
+)
+
+
 def _prompt_group_bounds(labels: list[str]) -> dict[str, tuple[int, int]]:
     """Return compact prompt groups over decoded non-image token labels.
 
-    MolmoAct2 packs task, state, setup/control, advantage, and chat scaffolding
-    into one text stream. The grouping is only a visualization aid; it does not
-    imply separate model streams.
+    MolmoAct2 packs every clause into one text stream; this grouping is a
+    visualization aid and does not imply separate model streams. It exists so the
+    panel can answer which clause the action queries actually read — in
+    particular the metadata (quality / mistake) steering clause and the proprio
+    history placeholders, which older revisions lumped into "other prompt".
     """
     low = [label.lower() for label in labels]
 
-    def first(patterns, start=0):
-        for idx in range(start, len(low)):
+    def clause_start(marker: int) -> int:
+        """Back up from the keyword to the start of its sentence.
+
+        Every clause is a sentence, so the tokens between the previous "." (or the
+        end of a special token like ``<state_end>``) and the keyword — "The current",
+        "The" — belong to this clause, not the previous one. Bounded to three tokens
+        so an unexpected tokenization cannot swallow the whole prompt.
+        """
+        idx = marker
+        for _ in range(3):
+            if idx == 0 or "." in low[idx - 1] or ">" in low[idx - 1]:
+                break
+            idx -= 1
+        return idx
+
+    starts: list[tuple[str, int]] = []
+    cursor = 0
+    for name, patterns in _PROMPT_CLAUSE_MARKERS:
+        for idx in range(cursor, len(low)):
             if any(pattern in low[idx] for pattern in patterns):
-                return idx
-        return None
-
-    state_start = first(["state_start", "<state_"])
-    state_end = None
-    if state_start is not None:
-        state_end = first(["state_end"], state_start)
-        if state_end is None:
-            # Six state values plus start/end is the common SO-100 case; fall
-            # back conservatively if the tokenizer splits state tokens oddly.
-            state_end = min(len(labels) - 1, state_start + 7)
-
-    task_start = first(["task"])
-    task_end_candidates = []
-    if task_start is not None:
-        for pats in (["setup"], ["current"], ["state_start", "<state_"], ["expected"], ["control"], ["advantage"], ["given"]):
-            b = first(pats, task_start + 1)
-            if b is not None:
-                task_end_candidates.append(b)
-    task_end = min(task_end_candidates) if task_end_candidates else None
-
-    control_start_candidates = []
-    for pats in (["setup"], ["expected"], ["control"], ["advantage"]):
-        b = first(pats)
-        if b is not None:
-            control_start_candidates.append(b)
-    control_start = min(control_start_candidates) if control_start_candidates else None
-    control_end = first(["given"], control_start + 1) if control_start is not None else None
+                starts.append((name, clause_start(idx)))
+                cursor = idx + 1
+                break
 
     bounds: dict[str, tuple[int, int]] = {}
-    if task_start is not None:
-        bounds["task"] = (task_start, task_end if task_end is not None else len(labels))
-    if state_start is not None and state_end is not None:
-        bounds["state"] = (state_start, min(len(labels), state_end + 1))
-    if control_start is not None:
-        bounds["setup/control/adv"] = (control_start, control_end if control_end is not None else len(labels))
+    for position, (name, start) in enumerate(starts):
+        end = starts[position + 1][1] if position + 1 < len(starts) else len(labels)
+        bounds[name] = (start, end)
     return bounds
 
 
@@ -929,31 +1019,24 @@ def _group_prompt_indices(result: AttentionCaptureResult, text_blocks, encoder_l
 
     lang_labels = [label for _, label, seg in prompt_entries if seg == "language"]
     bounds = _prompt_group_bounds(lang_labels)
-    buckets: dict[str, list[tuple[int, str]]] = {
-        "task": [],
-        "state": [],
-        "setup/control/adv": [],
-        "subtask": [],
-        "other prompt": [],
-    }
+    buckets: dict[str, list[tuple[int, str]]] = {name: [] for name in _PROMPT_GROUP_ORDER}
 
     lang_pos = 0
     for idx, label, seg in prompt_entries:
         assigned = None
         if seg == "subtask":
+            # pi05 carries the subtask in its own token stream; molmoact2 keeps it
+            # inline and picks it up from the language bounds below.
             assigned = "subtask"
         else:
-            for group_name in ("state", "task", "setup/control/adv"):
-                if group_name in bounds:
-                    s, e = bounds[group_name]
-                    if s <= lang_pos < e:
-                        assigned = group_name
-                        break
+            for group_name, (s, e) in bounds.items():
+                if s <= lang_pos < e:
+                    assigned = group_name
+                    break
             lang_pos += 1
         buckets[assigned or "other prompt"].append((idx, label))
 
-    order = ["task", "state", "setup/control/adv", "subtask", "other prompt"]
-    return [(name, buckets[name]) for name in order if buckets[name]]
+    return [(name, buckets[name]) for name in _PROMPT_GROUP_ORDER if buckets[name]]
 
 
 def _extract_action_text_data(result: AttentionCaptureResult, layer_idx: int):
@@ -1109,6 +1192,12 @@ def _attention_metadata_summary(result: AttentionCaptureResult, layer_idx: int) 
             name: _summarize_indices([idx for idx, _ in entries]) for name, entries in prompt_groups
         }
 
+    depth_segment = result.extras.get("depth_segment")
+    if depth_segment:
+        raw_indices["depth_columns"] = _summarize_indices(depth_segment["indices"])
+        raw_indices["depth_columns"]["grid_hw"] = depth_segment.get("grid_hw")
+        raw_indices["depth_columns"]["is_null_bank"] = bool(depth_segment.get("is_null_bank"))
+
     return {
         "layer": int(layer_idx),
         "cross_shape": list(cross.shape) if torch.is_tensor(cross) else None,
@@ -1146,6 +1235,7 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
         subsample=getattr(p, "attn_eval_subsample", 1),
         seed=p.random_seed,
         max_frames=p.n_frames_per_episode,
+        grid_stride=probe_image_stride(cfg),
     )
     if not samples:
         logging.warning(f"  No samples in {ds_output_dir}, skipping.")
@@ -1165,9 +1255,10 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
         layer_buf: dict[int, list[dict]] = {l: [] for l in attn_layers}  # noqa: E741
 
         for fr_idx, global_idx in ep_frames:
-            obs, _, state, _, task_str, _, _ = get_frame_data(ds, global_idx, chunk_size)
+            frame = probe_frame_inputs(ds, cfg, global_idx, chunk_size)
             result = adapter.capture_attention(
-                obs, task_str, state=state, timestep=timestep, layers=attn_layers,
+                frame["obs"], frame["task"], state=frame["state"], timestep=timestep,
+                layers=attn_layers, subtask=frame["subtask"], metadata=frame["metadata"],
             )
 
             for layer_idx in attn_layers:

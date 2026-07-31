@@ -276,8 +276,14 @@ class TrainPipelineConfig(HubMixin):
 
 @dataclass
 class ProbeConfig:
-    """Parameters for the PI05 probe scripts (actions, representations, attention,
-    offline eval, spatial memorization)."""
+    """Parameters for the diagnostic probes under ``lerobot.probes``.
+
+    Every probe that runs a model forward does so in the deployment regime — the
+    subtask and metadata clauses, short-term history, and wrist depth a rollout
+    carries (``probes.utils.probe_frame_inputs``) — and every sampler snaps its
+    anchors onto the ``policy.image_stride`` grid, because that is where stored
+    image rows and depth sidecar PNGs exist.
+    """
 
     # Enable / disable individual probes
     enable_actions: bool = True
@@ -291,6 +297,10 @@ class ProbeConfig:
     enable_mem_history_influence: bool = False  # MEM: how much history (full/image/state) shifts the action chunk
     enable_mem_temporal_attention: bool = False  # MEM: temporal-read distributions + spatial examples
     enable_action_trace: bool = False  # 3D URDF trace: table clearance + multimodality fan (open-loop)
+    enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
+    enable_depth_modality: bool = False  # point-map depth: 2x2 modality grid, per-layer mass, b_l
+    enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
+    enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
 
     # Common
     output_dir: str = "outputs/probe"
@@ -309,17 +319,27 @@ class ProbeConfig:
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1
     umap_seed: int = 42
-    sites: str = "prefix,suffix"
     ep_3d_a: int = 0
     ep_3d_b: int = 1
-    subtask_injection: bool = True
 
     # Attention / spatial / Jacobian
-    validation_batch_size: int = 32
     attn_eval_episodes: str | None = None
     attn_eval_subsample: int = 2
     spatial_layers: str = "0,9,17"
     spatial_n_frames: int = 32  # total frames (1 per unique episode)
+
+    # Depth modality (2x2 conditions x FD sensitivity per frame, so keep it small)
+    depth_modality_n_frames: int = 6
+
+    # Attention budget. Reuses spatial_layers and n_frames_per_episode (one capture
+    # per frame covers every layer). budget_fd_sensitivity adds a causal series at
+    # two extra forwards per frame — mass says "read", FD says "load-bearing".
+    budget_fd_sensitivity: bool = False
+
+    # Subtask sweep: n_frames x (max_labels + n_seeds) forwards, so keep all three small.
+    subtask_sweep_n_frames: int = 8
+    subtask_sweep_max_labels: int = 16
+    subtask_sweep_n_seeds: int = 3
 
     # Critic values distribution
     critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution
@@ -329,7 +349,7 @@ class ProbeConfig:
     trace_episodes: str | None = None  # comma-separated episode indices; None = all
     trace_anchor_stride_s: float = 2.0  # seconds between anchor frames
     trace_max_anchors_per_episode: int = 30
-    trace_n_samples: int = 8  # independent flow draws per anchor — the fan
+    trace_n_samples: int = 5  # independent flow draws per anchor — the fan
     trace_table_z: float = 0.0  # table plane height (m). 0 = the arm's own mounting plane.
     trace_clearance_warn_m: float = 0.01  # samples dipping below this are drawn red
 

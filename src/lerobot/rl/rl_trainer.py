@@ -142,7 +142,7 @@ class Trainer(ABC):
         Handles gradient accumulation, grad clipping, and Polyak target-network update.
 
         Returns at minimum:
-            loss_critic, loss_critic_ce, loss_critic_mse, critic_grad_norm,
+            loss_critic, loss_critic_mse, critic_grad_norm,
             critic_value_mean, td_error_mean, target_value_mean,
             critic_histogram_from_critic (np.ndarray), target_value_histogram (np.ndarray)
         """

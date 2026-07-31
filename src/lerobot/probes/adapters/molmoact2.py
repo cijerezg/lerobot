@@ -16,6 +16,8 @@ generation (the MEM high-level query) is a separate decode exposed via
 
 from __future__ import annotations
 
+import logging
+
 import torch
 from torch import Tensor
 
@@ -27,7 +29,7 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
     register_action_attention_probing,
 )
 from lerobot.probes.base import AttentionCaptureResult, ProbablePolicy
-from lerobot.probes.utils import find_normalizer_step
+from lerobot.probes.utils import find_normalizer_step, suppress_pack_dropout
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
@@ -127,11 +129,16 @@ class MolmoAct2Adapter(ProbablePolicy):
         advantage: float | None = None,  # noqa: ARG002 — molmoact2 prompts carry no advantage clause
         subtask: str | None = None,
         metadata: dict | None = None,
+        generator: torch.Generator | None = None,
     ) -> tuple[Tensor, Tensor, str | None]:
         batch = self._make_batch(obs, task_str, subtask=subtask, metadata=metadata)
         # MolmoAct2Policy.predict_action_chunk returns [B, n_action_steps, action_dim],
         # already sliced and float32. See modeling_molmoact2.py:2004.
-        norm_actions = self._policy.predict_action_chunk(batch, inference_action_mode=self._inference_action_mode()).float()
+        norm_actions = self._policy.predict_action_chunk(
+            batch,
+            inference_action_mode=self._inference_action_mode(),
+            generator=generator,
+        ).float()
         pred_norm = norm_actions.squeeze(0).float().cpu()
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if action_encoding in ("anchor", "delta"):
@@ -167,6 +174,8 @@ class MolmoAct2Adapter(ProbablePolicy):
         layers: list[int] | None = None,
         requires_grad: bool = False,
         gt_actions: Tensor | None = None,
+        subtask: str | None = None,
+        metadata: dict | None = None,
     ) -> AttentionCaptureResult:
         # Register the action-expert hooks once per adapter. The hooks stay
         # installed (no-ops when the global flag is off), so this is safe.
@@ -175,10 +184,27 @@ class MolmoAct2Adapter(ProbablePolicy):
             self._attn_hooks_registered = True
 
         if requires_grad:
-            return self._capture_attention_jacobian(obs, task_str, timestep, layers, gt_actions)
-        return self._capture_attention_viz(obs, task_str, timestep, layers)
+            return self._capture_attention_jacobian(
+                obs, task_str, timestep, layers, gt_actions, subtask, metadata
+            )
+        return self._capture_attention_viz(obs, task_str, timestep, layers, subtask, metadata)
 
-    def _flow_probe_inputs(self, obs, task_str, timestep, gt_actions: Tensor | None = None):
+    def _flow_probe_inputs(
+        self,
+        obs,
+        task_str,
+        timestep,
+        gt_actions: Tensor | None = None,
+        subtask: str | None = None,
+        metadata: dict | None = None,
+    ):
+        """Pack the batch + timesteps for a flow-loss capture.
+
+        The batch carries an ACTION (the flow target), which is what flips
+        ``build_action_labels`` in the pack step and arms subtask/metadata/summary/
+        history/RGB dropout. `suppress_pack_dropout` holds them at zero so the
+        capture sees exactly the prompt and the cameras the caller asked for.
+        """
         device = self._device
         chunk_size = self.chunk_size
         action_dim = self.action_dim
@@ -189,7 +215,10 @@ class MolmoAct2Adapter(ProbablePolicy):
             action_targets = gt_actions[:chunk_size, :action_dim].unsqueeze(0).to(device)
 
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
-        batch = self._make_batch(obs, task_str, gt_actions=action_targets)
+        with suppress_pack_dropout(self._preprocessor):
+            batch = self._make_batch(
+                obs, task_str, gt_actions=action_targets, subtask=subtask, metadata=metadata
+            )
         model_inputs = self._policy._model_inputs(batch)
         num_t = max(1, int(getattr(self._policy.config, "num_flow_timesteps", 1)))
         action_dtype = next(self._policy._action_expert().parameters()).dtype
@@ -199,9 +228,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         return obs_on_device, batch, model_inputs, timesteps_tensor
 
     @torch.no_grad()
-    def _capture_attention_viz(self, obs, task_str, timestep, layers):
+    def _capture_attention_viz(self, obs, task_str, timestep, layers, subtask=None, metadata=None):
         obs_on_device, batch, model_inputs, timesteps_tensor = self._flow_probe_inputs(
-            obs, task_str, timestep,
+            obs, task_str, timestep, None, subtask, metadata,
         )
         _MOLMOACT2_PROBING_CAPTURE.clear()
         _MOLMOACT2_PROBING_CAPTURE["enabled"] = True
@@ -227,7 +256,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         self_attn  = {k: v for k, v in self_raw.items()  if k in wanted}
         return self._pack_molmoact2_result(cross_attn, self_attn, batch, obs_on_device)
 
-    def _capture_attention_jacobian(self, obs, task_str, timestep, layers, gt_actions=None):
+    def _capture_attention_jacobian(
+        self, obs, task_str, timestep, layers, gt_actions=None, subtask=None, metadata=None
+    ):
         """Per-layer forward+backward through the training flow path, returns
         causal maps ``A * |dA|`` packed into ``cross_attn_by_layer`` /
         ``self_attn_by_layer``.
@@ -241,7 +272,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         other layers go through SDPA.
         """
         obs_on_device, batch, model_inputs, timesteps_tensor = self._flow_probe_inputs(
-            obs, task_str, timestep, gt_actions,
+            obs, task_str, timestep, gt_actions, subtask, metadata,
         )
         action_expert = self._policy._action_expert()
         n_layers = len(action_expert.blocks)
@@ -545,6 +576,61 @@ class MolmoAct2Adapter(ProbablePolicy):
             extras["image_pooling_by_segment"] = pooling_by_segment
         return encoder_segments, image_tensors, patches_per_cam, extras
 
+    def _depth_attention_extras(self, batch: dict, obs_on_device: dict[str, Tensor], encoder_seq_len: int):
+        """Locate the point-map depth columns of the joint cross-attention softmax.
+
+        ``join_depth_columns`` (modeling_stream.py) extends K/V with the per-layer
+        depth state *before* the attention call, so a captured cross-attention row
+        is ``[context columns ; N depth columns]``. The context columns are the
+        prefix K/V, one per ``input_ids`` position, so the depth block is simply the
+        tail — everything past the prompt length. Without this the depth columns are
+        real attention mass that no segment names and every panel silently drops.
+
+        Returns ``{}`` when the policy has no depth path.
+        """
+        pointmap_config = getattr(self._cfg.policy, "pointmap_config", None)
+        input_ids = batch.get("input_ids")
+        if pointmap_config is None or not torch.is_tensor(input_ids) or encoder_seq_len <= 0:
+            return {}
+        n_context = int(input_ids.shape[-1])
+        n_depth = encoder_seq_len - n_context
+        if n_depth <= 0:
+            return {}
+
+        height, width = pointmap_config.image_size
+        patch = int(pointmap_config.patch_size)
+        grid_hw = (height // patch, width // patch)  # row-major, see pointmap.patchify
+        if grid_hw[0] * grid_hw[1] != n_depth:
+            logging.warning(
+                f"[probe] {n_depth} depth columns do not match the {grid_hw} point-map grid; "
+                "labelling the block but skipping its spatial overlay."
+            )
+            grid_hw = None
+
+        depth = obs_on_device.get(f"observation.depth.{pointmap_config.depth_key}")
+        image = None
+        if torch.is_tensor(depth):
+            # Display-scale the raw 0.1 mm levels over the configured working range,
+            # in the [-1, 1] convention the overlay renderer expects. Invalid pixels
+            # (0) stay at the floor rather than dominating the scale.
+            units = float(pointmap_config.depth_units_mm)
+            lo = float(pointmap_config.z_min_mm) / units
+            hi = float(pointmap_config.z_max_mm) / units
+            frame = depth.detach().float().cpu().reshape(1, 1, *depth.shape[-2:])
+            valid = frame > 0
+            scaled = ((frame - lo) / max(hi - lo, 1e-6)).clamp(0.0, 1.0) * valid
+            image = (scaled * 2.0 - 1.0).expand(1, 3, -1, -1).contiguous()
+
+        return {
+            "depth_segment": {
+                "name": "depth",
+                "indices": list(range(n_context, encoder_seq_len)),
+                "grid_hw": grid_hw,
+                "image": image,
+                "is_null_bank": not torch.is_tensor(depth),
+            }
+        }
+
     def _pack_molmoact2_result(self, cross_attn, self_attn, batch, obs_on_device):
         """Wrap captured attention dicts in an AttentionCaptureResult."""
         encoder_seq_len = 0
@@ -556,6 +642,14 @@ class MolmoAct2Adapter(ProbablePolicy):
         )
         extras = {"_capture_caveat": "viz path: last flow-matching step"}
         extras.update(image_extras)
+
+        depth_extras = self._depth_attention_extras(batch, obs_on_device, encoder_seq_len)
+        extras.update(depth_extras)
+        if depth_extras:
+            segment = depth_extras["depth_segment"]
+            encoder_segments = list(encoder_segments) + [
+                (segment["name"], segment["indices"][0], segment["indices"][-1] + 1)
+            ]
 
         return AttentionCaptureResult(
             cross_attn_by_layer=cross_attn,
@@ -612,7 +706,8 @@ class MolmoAct2Adapter(ProbablePolicy):
         state: Tensor | None = None,        # noqa: ARG002 — absolute-only
         timestep: float = 1.0,               # noqa: ARG002 — captured from last flow step
         gt_actions: Tensor | None = None,    # noqa: ARG002 — molmoact2 doesn't need GT actions
-        gt_subtask: str | None = None,       # noqa: ARG002 — no subtask path
+        gt_subtask: str | None = None,
+        metadata: dict | None = None,
     ) -> dict[str, Tensor]:
         backbone = self._policy._backbone()
         transformer = backbone.transformer
@@ -631,7 +726,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         h_act = action_expert.blocks[-1].register_forward_hook(_hook("action_expert"))
 
         try:
-            batch = self._make_batch(obs, task_str)
+            batch = self._make_batch(obs, task_str, subtask=gt_subtask, metadata=metadata)
             self._set_probe_cuda_graph_enabled(False)
             # NOTE: predict_action_chunk runs the full flow-matching loop.
             # Captured hidden states reflect the LAST step. Same caveat as

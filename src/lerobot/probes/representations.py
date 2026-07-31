@@ -48,7 +48,8 @@ from lerobot.probes.utils import (
     ax_style,
     build_episode_index,
     frame_colors_rgba,
-    get_frame_data,
+    probe_frame_inputs,
+    probe_image_stride,
     get_subtask_idx,
     load_extra_dataset,
     load_probe_dataset,
@@ -93,12 +94,11 @@ def collect_activations(adapter: ProbablePolicy, dataset, samples, cfg):
         if i % 100 == 0:
             logging.debug(f"  [{i + 1}/{len(samples)}] ep={ep_idx:04d} fr={fr_idx:04d}")
 
-        obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
-            dataset, global_idx, chunk_size,
-        )
+        frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
+        gt_subtask, task_str = frame["subtask"], frame["task"]
         reps = adapter.capture_representations(
-            obs, task_str, state=state, timestep=timestep,
-            gt_actions=gt_actions, gt_subtask=gt_subtask,
+            frame["obs"], task_str, state=frame["state"], timestep=timestep,
+            gt_actions=frame["gt_actions"], gt_subtask=gt_subtask, metadata=frame["metadata"],
         )
         for site, vec in reps.items():
             per_site.setdefault(site, []).append(vec)
@@ -409,6 +409,7 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg):
             n_per_episode=p.n_frames_per_episode,
             max_episodes=p.max_episodes,
             seed=p.random_seed,
+            stride=probe_image_stride(cfg),
         )
         ep_to_indices = build_episode_index(dataset)
         sampled_eps = {ep for ep, _, _ in samples}

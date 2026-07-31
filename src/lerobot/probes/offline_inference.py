@@ -15,6 +15,13 @@ Two output subdirectories:
   unnormalized_eval/   actions in dataset units
   normalized_eval/     actions in normalised model space (GT via adapter.normalize_gt_actions)
 
+Plus, at the top level:
+  action_metrics.json  normalized-space MSE, split per joint, against the hold-still
+                       and dataset-mean baselines (``skill_vs_*`` is the fraction of
+                       each baseline's error the policy removes)
+  memory_ablation.*    GT-memory vs empty-memory subtask decode, when the dataset
+                       carries summaries
+
 Usage examples:
     # Random sample
     python -m lerobot.probes.offline_inference config.yaml --eval_random_n 10
@@ -43,22 +50,18 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import assemble_frame_history, build_sample_list, get_frame_data, load_probe_dataset
+from lerobot.probes.utils import (
+    build_sample_list,
+    load_probe_dataset,
+    probe_frame_inputs,
+    probe_image_stride,
+)
 from lerobot.rl.inference_utils import apply_butterworth_filter
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
 
-# Known action-vector layouts used by the current probe targets.
-SO100_JOINT_NAMES = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
-
+# The target embodiment: rebot B601, 7-DOF. Anything else falls back to indices.
 REBOT_JOINT_NAMES = [
     "shoulder_pan",
     "shoulder_lift",
@@ -73,8 +76,6 @@ REBOT_JOINT_NAMES = [
 def _joint_names_for_dim(action_dim: int) -> list[str]:
     if action_dim == len(REBOT_JOINT_NAMES):
         return REBOT_JOINT_NAMES
-    if action_dim == len(SO100_JOINT_NAMES):
-        return SO100_JOINT_NAMES
     return [f"joint_{i}" for i in range(action_dim)]
 
 
@@ -367,37 +368,41 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
     preds: dict[int, tuple] = {}
     mse: list[float] = []
     memory_ablation: list[dict] = []
+    seed = int(getattr(cfg.probe_parameters, "random_seed", 0))
 
     adapter.suppress_logs(True)
     try:
         for ep_idx, fr_idx, global_idx in samples:
             if global_idx not in frame_data:
-                obs, gt_actions, state, gt_subtask, task_str, _, _ = get_frame_data(
-                    dataset, global_idx, chunk_size
-                )
-                memory_cfg = getattr(cfg.policy, "memory", None)
-                if memory_cfg is not None and memory_cfg.history_keys and memory_cfg.history_num_samples > 0:
-                    obs.update(
-                        assemble_frame_history(
-                            dataset,
-                            global_idx,
-                            memory_cfg,
-                            dataset.fps,
-                            list(memory_cfg.history_keys),
-                        )
-                    )
-                gt_actions_norm = adapter.normalize_gt_actions(gt_actions, state)
+                frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
+                state = frame["state"]
+                gt_actions = frame["gt_actions"]
                 prev_summary, target_summary = summary_lookup.get(global_idx, (None, None))
                 frame_data[global_idx] = {
-                    "obs": obs, "gt_actions": gt_actions, "gt_actions_norm": gt_actions_norm,
-                    "state": state, "gt_subtask": gt_subtask, "task_str": task_str,
+                    "obs": frame["obs"],
+                    "gt_actions": gt_actions,
+                    "gt_actions_norm": adapter.normalize_gt_actions(gt_actions, state),
+                    # "the arm holds still": the normalized encoding of a chunk that
+                    # repeats the measured state. Under anchor/delta this is the zero
+                    # vector before normalization, and it is the floor any useful
+                    # policy has to beat.
+                    "hold_norm": adapter.normalize_gt_actions(
+                        state[: gt_actions.shape[-1]].unsqueeze(0).repeat(gt_actions.shape[0], 1),
+                        state,
+                    ) if state is not None else None,
+                    "state": state, "gt_subtask": frame["subtask"], "task_str": frame["task"],
+                    "metadata": frame["metadata"],
                     "summary_prev": prev_summary, "gt_summary": target_summary,
                 }
 
             fd = frame_data[global_idx]
+            # Seeded per frame: flow noise is then identical across checkpoints, so a
+            # change in the number is a change in the policy, not in the draw.
+            generator = torch.Generator(device=adapter.device)
+            generator.manual_seed(seed + int(global_idx))
             pred_unnorm, pred_norm, pred_subtask = adapter.predict_action_chunk(
                 fd["obs"], fd["task_str"], state=fd["state"],
-                subtask=fd["gt_subtask"], metadata={"quality": 5, "mistake": False},
+                subtask=fd["gt_subtask"], metadata=fd["metadata"], generator=generator,
             )
             generation = adapter.generate_subtask(fd["obs"], fd["task_str"], summary=fd["summary_prev"])
             generation_empty = None
@@ -421,11 +426,11 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
                     )
             if generation is not None:
                 pred_subtask = generation[1]
-            this_mse = torch.nn.functional.mse_loss(pred_unnorm, fd["gt_actions"].float()).item()
+            this_mse = float((pred_norm - fd["gt_actions_norm"]).pow(2).mean())
             mse.append(this_mse)
             preds[global_idx] = (pred_unnorm, pred_norm, pred_subtask, generation)
             logging.info(
-                f"  ep={ep_idx:04d} fr={fr_idx:04d} | mse={this_mse:.4f} | "
+                f"  ep={ep_idx:04d} fr={fr_idx:04d} | mse_norm={this_mse:.4f} | "
                 f"GT: '{fd['gt_subtask']}' | pred: '{pred_subtask or ''}'"
                 + (f" | mem: '{generation[3]}'" if generation is not None else "")
             )
@@ -433,6 +438,69 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
         adapter.suppress_logs(False)
 
     return preds, mse, memory_ablation
+
+
+def _write_action_metrics(preds, frame_data, samples, joint_names, output_dir: str) -> dict:
+    """Normalized-space action error against the two constants worth beating.
+
+    The old headline was a raw deg^2 MSE over all joints. On the 7-DOF rebot the
+    gripper's spread (sigma ~76 deg) is an order of magnitude above wrist_yaw's
+    (~11 deg), so that number was mostly gripper, in units that change whenever the
+    normalization stats do, and with nothing to compare it to. Everything here is in
+    the normalized model space the policy is actually trained in, and every figure
+    sits next to:
+
+      hold          — repeat the measured state for the whole chunk (arm holds still)
+      dataset mean  — the mean GT chunk over the sampled frames (best constant)
+
+    A policy that does not beat both is not predicting; ``skill_vs_hold`` and
+    ``skill_vs_mean`` are the fraction of each baseline's error it removes.
+    """
+    order = [g for _, _, g in samples if g in preds]
+    if not order:
+        return {}
+
+    gt = torch.stack([frame_data[g]["gt_actions_norm"] for g in order]).float()
+    pred = torch.stack([preds[g][1] for g in order]).float()
+    dataset_mean = gt.mean(dim=0, keepdim=True).expand_as(gt)
+
+    def _mse(a, b):
+        return float((a - b).pow(2).mean())
+
+    def _per_joint(a, b):
+        return (a - b).pow(2).mean(dim=(0, 1)).tolist()
+
+    metrics = {
+        "n_frames": len(order),
+        "space": "normalized",
+        "mse_norm": _mse(pred, gt),
+        "mse_norm_by_joint": dict(zip(joint_names, _per_joint(pred, gt))),
+        "baseline_dataset_mean": _mse(dataset_mean, gt),
+        "mse_unnormalized_deg2": float(
+            torch.stack([(preds[g][0] - frame_data[g]["gt_actions"]).pow(2).mean() for g in order]).mean()
+        ),
+    }
+
+    holds = [frame_data[g]["hold_norm"] for g in order]
+    if all(h is not None for h in holds):
+        hold = torch.stack(holds).float()
+        metrics["baseline_hold"] = _mse(hold, gt)
+        metrics["skill_vs_hold"] = 1.0 - metrics["mse_norm"] / max(metrics["baseline_hold"], 1e-12)
+    metrics["skill_vs_mean"] = 1.0 - metrics["mse_norm"] / max(metrics["baseline_dataset_mean"], 1e-12)
+
+    with open(os.path.join(output_dir, "action_metrics.json"), "w") as f:
+        json.dump(metrics, f, indent=2)
+
+    worst = sorted(metrics["mse_norm_by_joint"].items(), key=lambda kv: -kv[1])[:3]
+    logging.info(
+        f"[offline_inference] mse_norm={metrics['mse_norm']:.4f}  "
+        f"hold={metrics.get('baseline_hold', float('nan')):.4f}  "
+        f"dataset-mean={metrics['baseline_dataset_mean']:.4f}  "
+        f"skill_vs_hold={metrics.get('skill_vs_hold', float('nan')):+.3f}  "
+        f"skill_vs_mean={metrics['skill_vs_mean']:+.3f}  "
+        f"worst joints: {', '.join(f'{k} {v:.4f}' for k, v in worst)}"
+    )
+    return metrics
 
 
 def _write_memory_ablation(rows: list[dict], output_dir: str) -> None:
@@ -594,6 +662,7 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
         frames_str=getattr(cfg, "eval_frames", None),
         random_n=random_n, chunk_size=chunk_size,
         seed=getattr(cfg, "eval_random_seed", None) or p.random_seed,
+        stride=probe_image_stride(cfg),
     )
     if not samples:
         logging.warning("[offline_inference] no samples selected, skipping.")
@@ -608,12 +677,13 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
     preds, mse, memory_ablation = _run_checkpoint(
         adapter, dataset, samples, frame_data, chunk_size, summary_lookup, cfg
     )
-    logging.info(f"MSE  {path_label} ({path_str}): {sum(mse) / len(mse):.4f}")
+    logging.info(f"mse_norm  {path_label} ({path_str}): {sum(mse) / len(mse):.4f}")
     _write_memory_ablation(memory_ablation, output_dir)
     _render_memory_ablation(memory_ablation, frame_data, output_dir)
 
     action_dim = frame_data[samples[0][2]]["gt_actions"].shape[-1]
     joint_names = _joint_names_for_dim(action_dim)
+    _write_action_metrics(preds, frame_data, samples, joint_names, output_dir)
     checkpoint_paths = {path_label: path_str}
 
     for ep_idx, fr_idx, global_idx in samples:

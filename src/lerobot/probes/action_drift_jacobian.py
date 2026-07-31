@@ -35,14 +35,12 @@ from __future__ import annotations
 import csv
 import logging
 import os
-import random
 from dataclasses import dataclass
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import imageio
 import numpy as np
-import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
@@ -61,7 +59,12 @@ from lerobot.probes.attention import (
     build_episode_samples,
 )
 from lerobot.probes.base import ProbablePolicy
-from lerobot.probes.utils import get_frame_data, load_extra_dataset, load_probe_dataset
+from lerobot.probes.utils import (
+    load_extra_dataset,
+    load_probe_dataset,
+    probe_frame_inputs,
+    probe_image_stride,
+)
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
@@ -88,6 +91,7 @@ def _probe_dataset(adapter, ds, ds_output_dir, layers, timestep, cfg):
         subsample=getattr(p, "attn_eval_subsample", 1),
         seed=p.random_seed,
         max_frames=p.n_frames_per_episode,
+        grid_stride=probe_image_stride(cfg),
     )
     if not samples:
         logging.warning(f"  No samples in {ds_output_dir}, skipping.")
@@ -109,14 +113,15 @@ def _probe_dataset(adapter, ds, ds_output_dir, layers, timestep, cfg):
         layer_buf: dict[int, list[dict]] = {l: [] for l in layers}  # noqa: E741
 
         for fr_idx, global_idx in ep_frames:
-            obs, gt_actions, state, _, task_str, _, _ = get_frame_data(ds, global_idx, chunk_size)
+            frame = probe_frame_inputs(ds, cfg, global_idx, chunk_size)
 
             # Causal maps come back packed into cross_attn_by_layer /
             # self_attn_by_layer in the same shape as the regular attention
             # probe, so the renderers from attention.py work unchanged.
             result = adapter.capture_attention(
-                obs, task_str, state=state, timestep=timestep, layers=layers,
-                requires_grad=True, gt_actions=gt_actions,
+                frame["obs"], frame["task"], state=frame["state"], timestep=timestep,
+                layers=layers, requires_grad=True, gt_actions=frame["gt_actions"],
+                subtask=frame["subtask"], metadata=frame["metadata"],
             )
 
             for layer_idx in layers:

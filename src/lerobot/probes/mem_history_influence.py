@@ -30,7 +30,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from lerobot.probes.utils import assemble_frame_history, get_frame_data, makedirs, sample_episodes_evenly
+from lerobot.probes.utils import (
+    assemble_frame_history,
+    get_frame_data,
+    makedirs,
+    probe_frame_inputs,
+    probe_image_stride,
+    sample_episodes_evenly,
+)
 from lerobot.utils.constants import OBS_STATE
 
 
@@ -41,19 +48,22 @@ _CONDITION_STYLE = {
     "states": ("#9B5DE5", ":"),
 }
 
-_SO100_JOINT_NAMES = [
-    "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper",
-]
 _REBOT_JOINT_NAMES = [
     "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll", "gripper",
 ]
 
 
 def _variant_observation(obs: dict, images_on: bool, states_on: bool) -> dict:
-    """Remove disabled history channels before packing the prompt/model inputs."""
+    """Remove disabled history channels before packing the prompt/model inputs.
+
+    Depth history rides the point-map encoder rather than the MEM video encoder, so
+    it is left alone by every condition here: this probe isolates the MEM channels,
+    and `depth_modality_probe` covers the depth path. Keeping it constant means the
+    four conditions differ only in what the caller intends.
+    """
     out = dict(obs)
     for key in list(out):
-        if not key.startswith("history."):
+        if not key.startswith("history.") or key.startswith("history.depth."):
             continue
         remove_state = key == f"history.{OBS_STATE}" and not states_on
         remove_images = "images" in key and not images_on
@@ -129,8 +139,6 @@ def _render_example(dataset, memory_cfg, fps: float, diagnostic: dict, label: st
     action_dim = diagnostic["gt"].shape[-1]
     if action_dim == len(_REBOT_JOINT_NAMES):
         joint_names = _REBOT_JOINT_NAMES
-    elif action_dim == len(_SO100_JOINT_NAMES):
-        joint_names = _SO100_JOINT_NAMES
     else:
         joint_names = [f"joint_{joint}" for joint in range(action_dim)]
     for joint in range(action_dim):
@@ -180,26 +188,20 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     p = cfg.probe_parameters
     device = adapter.device
     fps = cfg.env.fps
-    # MEM channels only: state + camera history (depth rides the separate pointmap path).
-    keys = [k for k in memory_cfg.history_keys if k == OBS_STATE or "images" in k]
 
     adapter._set_probe_cuda_graph_enabled(False)  # varying mask per condition; keep eager
-    samples = sample_episodes_evenly(dataset, p.n_frames_per_episode, p.max_episodes, p.random_seed)
+    samples = sample_episodes_evenly(
+        dataset, p.n_frames_per_episode, p.max_episodes, p.random_seed, probe_image_stride(cfg)
+    )
 
     conditions = {"full": (True, True), "none": (False, False), "images": (True, False), "states": (False, True)}
     rows: list[dict] = []
     diagnostics: list[dict] = []
     for _ep, _fr, global_idx in samples:
-        obs, gt_actions, state, subtask, task_str, _ep_i, _fr_i = get_frame_data(
-            dataset, global_idx, int(cfg.policy.chunk_size)
-        )
-        obs.update(assemble_frame_history(dataset, global_idx, memory_cfg, fps, keys))
-        full_batch = adapter._make_batch(
-            obs,
-            task_str,
-            subtask=subtask,
-            metadata={"quality": 5, "mistake": False},
-        )
+        frame = probe_frame_inputs(dataset, cfg, global_idx, int(cfg.policy.chunk_size))
+        obs, gt_actions, state = frame["obs"], frame["gt_actions"], frame["state"]
+        subtask, task_str, metadata = frame["subtask"], frame["task"], frame["metadata"]
+        full_batch = adapter._make_batch(obs, task_str, subtask=subtask, metadata=metadata)
         if "history_images_mask" not in full_batch and "history_state_values" not in full_batch:
             logging.warning("[mem_history_influence] batch carries no history tensors — skipping frame.")
             continue
@@ -207,24 +209,16 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         gt_norm = adapter.normalize_gt_actions(gt_actions, state)
         acts: dict[str, torch.Tensor] = {}
         for name, (img_on, st_on) in conditions.items():
-            batch = adapter._make_batch(
-                _variant_observation(obs, img_on, st_on),
-                task_str,
-                subtask=subtask,
-                metadata={"quality": 5, "mistake": False},
-            )
             gen = torch.Generator(device=device)
             gen.manual_seed(0)  # same flow noise across conditions
-            acts[name] = (
-                adapter.policy.predict_action_chunk(
-                    batch,
-                    inference_action_mode="continuous",
-                    generator=gen,
-                )
-                .squeeze(0)
-                .float()
-                .cpu()
-            )
+            acts[name] = adapter.predict_action_chunk(
+                _variant_observation(obs, img_on, st_on),
+                task_str,
+                state=state,
+                subtask=subtask,
+                metadata=metadata,
+                generator=gen,
+            )[1]
         base = acts["none"]
         gt_mse = {name: float((act - gt_norm).pow(2).mean()) for name, act in acts.items()}
         row = {

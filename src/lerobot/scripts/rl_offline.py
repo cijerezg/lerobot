@@ -239,6 +239,10 @@ _VALIDATION_PROBES = (
     ),
     _ValidationProbeSpec("enable_mem_history_influence", "lerobot.probes.mem_history_influence", "mem_history_influence"),
     _ValidationProbeSpec("enable_mem_temporal_attention", "lerobot.probes.mem_temporal_attention", "mem_temporal_attention"),
+    _ValidationProbeSpec("enable_metadata_steering", "lerobot.probes.metadata_steering", "metadata_steering"),
+    _ValidationProbeSpec("enable_depth_modality", "lerobot.probes.depth_modality_probe", "depth_modality"),
+    _ValidationProbeSpec("enable_attention_budget", "lerobot.probes.attention_budget", "attention_budget"),
+    _ValidationProbeSpec("enable_subtask_sweep", "lerobot.probes.subtask_sweep", "subtask_sweep"),
 )
 
 

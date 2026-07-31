@@ -299,9 +299,10 @@ Independent of the depth-modality dropout (`dropout_prob` 0.25) and the shared
 history dropout. Training-text path only; inference is unaffected (`cross_on` is
 all-True when the mask has no zeros in the span).
 
-Telemetry (replaces `pointmap_gate*`): `depth_attn_mass/*` (per-layer softmax
-mass on depth columns, captured on the first micro-batch of logged actor updates),
-`depth_bias_{mean,min,max}`, `depth_grad_norm_preclip` (read BEFORE
+Telemetry (replaces `pointmap_gate*`): `depth_attn_mass_mean`/`_max` (softmax
+mass on depth columns, aggregated over stream layers, captured on the first
+micro-batch of logged actor updates — the per-layer breakdown is probe-only),
+`depth_bias_mean`, `depth_grad_norm_preclip` (read BEFORE
 `clip_grad_norm_` — the α-era metric read after it and understated ~4×), plus
 `probes/depth_modality_probe.py`: the 2×2 {RGB±, depth±} MSE matrix vs GT,
 pairwise action deltas, per-layer mass, and finite-difference input
@@ -392,6 +393,6 @@ Flamingo (per-layer tanh gate precedent); also PointACT 2605.21414, GST-VLA
       top mount)
 - [x] Raw depth end-to-end: uint16 Z16, PNG16 sidecars, no hole-fill in recordings
       (masking lives in the encoder), `depth_units_mm = 0.1`
-- [ ] First joint-softmax training run: watch `depth_attn_mass/*`,
+- [ ] First joint-softmax training run: watch `depth_attn_mass_mean`/`_max`,
       `depth_grad_norm_preclip`, and the 2×2 probe's mse(rgb_only) −
       mse(rgb+depth)

@@ -26,7 +26,14 @@ import torch
 from torch.nn import functional
 
 from lerobot.policies.molmoact2.modeling_molmoact2 import _MEM_TEMPORAL_CAPTURE
-from lerobot.probes.utils import assemble_frame_history, get_frame_data, makedirs, sample_episodes_evenly
+from lerobot.probes.utils import (
+    assemble_frame_history,
+    get_frame_data,
+    makedirs,
+    probe_frame_inputs,
+    probe_image_stride,
+    sample_episodes_evenly,
+)
 
 
 def _temporal_layer_indices(policy) -> list[int]:
@@ -227,7 +234,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     p = cfg.probe_parameters
     fps = cfg.env.fps
     layers = _temporal_layer_indices(adapter.policy)
-    samples = sample_episodes_evenly(dataset, p.n_frames_per_episode, p.max_episodes, p.random_seed)
+    samples = sample_episodes_evenly(
+        dataset, p.n_frames_per_episode, p.max_episodes, p.random_seed, probe_image_stride(cfg)
+    )
 
     temporal_mass_rows: list[np.ndarray] = []
     head_age_rows: list[np.ndarray] = []
@@ -243,11 +252,14 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     adapter._set_probe_cuda_graph_enabled(False)
     try:
         for ep_idx, frame_idx, global_idx in samples:
-            obs, _gt, _state, _subtask, task_str, _ep_i, _fr_i = get_frame_data(
-                dataset, global_idx, int(cfg.policy.chunk_size)
+            # The temporal read lives in the ViT, so the prompt clauses do not reach
+            # it; the frame builder is used for the image history and for a prompt
+            # consistent with the other probes.
+            frame = probe_frame_inputs(dataset, cfg, global_idx, int(cfg.policy.chunk_size))
+            obs, task_str = frame["obs"], frame["task"]
+            batch = adapter._make_batch(
+                obs, task_str, subtask=frame["subtask"], metadata=frame["metadata"]
             )
-            obs.update(assemble_frame_history(dataset, global_idx, memory_cfg, fps, image_history_keys))
-            batch = adapter._make_batch(obs, task_str)
             if "history_images" not in batch:
                 continue
 

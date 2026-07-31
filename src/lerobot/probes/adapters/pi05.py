@@ -101,6 +101,7 @@ class Pi05Adapter(ProbablePolicy):
         advantage: float = 1.0,
         subtask: str | None = None,  # noqa: ARG002 — pi05 generates its own subtask
         metadata: dict | None = None,  # noqa: ARG002 — pi05 has no metadata prompt
+        generator: "torch.Generator | None" = None,  # noqa: ARG002 — pi05 sampler takes no generator
     ) -> tuple[Tensor, Tensor, str | None]:
         device = self._device
         action_dim = self.action_dim
@@ -161,6 +162,8 @@ class Pi05Adapter(ProbablePolicy):
         layers: list[int] | None = None,
         requires_grad: bool = False,
         gt_actions: Tensor | None = None,  # noqa: ARG002 - pi05 Jacobian uses ||pred action||
+        subtask: str | None = None,  # noqa: ARG002 — pi05 generates its own subtask
+        metadata: dict | None = None,  # noqa: ARG002 — pi05 has no metadata prompt
     ) -> AttentionCaptureResult:
         # Top-level dispatch — visualization vs Jacobian (causal map) capture.
         if requires_grad:
@@ -452,6 +455,7 @@ class Pi05Adapter(ProbablePolicy):
         timestep: float = 1.0,
         gt_actions: Tensor | None = None,
         gt_subtask: str | None = None,
+        metadata: dict | None = None,  # noqa: ARG002 — pi05 has no metadata prompt
     ) -> dict[str, Tensor]:
         device = self._device
         if gt_actions is None:

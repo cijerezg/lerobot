@@ -530,7 +530,6 @@ class MolmoAct2Trainer(Trainer):
 
         return {
             "loss_critic": accum_ce,
-            "loss_critic_ce": accum_ce,
             "loss_critic_mse": all_td_error.square().mean().item(),
             "critic_grad_norm": grad_norm,
             "critic_value_mean": all_v_curr.mean().item(),
@@ -683,6 +682,7 @@ class MolmoAct2Trainer(Trainer):
         discrete_z_loss_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
+        summary_split: dict[str, list[float]] = {}
         depth_on = getattr(policy, "depth_stream", None) is not None
         optimization_step = kwargs.get("optimization_step")
         log_freq = max(1, int(getattr(cfg, "log_freq", 1)))
@@ -762,10 +762,11 @@ class MolmoAct2Trainer(Trainer):
                     mass = drain_pointmap_mass_records()
                     set_pointmap_mass_capture(False)
             if mass:
+                # Aggregates only: the per-layer breakdown was one W&B panel per
+                # stream layer, and the profile is only ever read deliberately —
+                # probes/depth_modality_probe.py prints it per layer on demand.
                 accum["depth_attn_mass_mean"] = sum(mass) / len(mass)
                 accum["depth_attn_mass_max"] = max(mass)
-                for layer_idx, layer_mass in enumerate(mass):
-                    accum[f"depth_attn_mass/l{layer_idx:02d}"] = layer_mass
             loss_for_backward = loss.mean() if isinstance(loss, torch.Tensor) else torch.as_tensor(loss, device=actions.device)
             (loss_for_backward / grad_accum).backward()
 
@@ -779,6 +780,13 @@ class MolmoAct2Trainer(Trainer):
                     (subtask_loss_weight * generation_loss / grad_accum).backward()
                     accum["loss_subtask_ce"] += generation_parts["loss_subtask_ce"] / grad_accum
                     accum["loss_summary_ce"] += generation_parts["loss_summary_ce"] / grad_accum
+                    # Averaged over the micro-batches that actually held such pairs,
+                    # not over grad_accum: update pairs are rare, and crediting a
+                    # micro-batch without them as 0.0 would sink the update curve
+                    # and mimic the learning this metric exists to disprove.
+                    for key in ("loss_summary_ce/hold", "loss_summary_ce/update"):
+                        if key in generation_parts:
+                            summary_split.setdefault(key, []).append(generation_parts[key])
 
             accum["loss_actor"] += float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
@@ -836,21 +844,23 @@ class MolmoAct2Trainer(Trainer):
             depth_opt.step()
 
         accum["actor_grad_norm"] = actor_grad_norm
-        # Joint-softmax depth telemetry (depth_redesign_options.md §5.1): the learned
-        # per-layer depth-column bias b_ℓ (init −2; movement = layers changing their
-        # default depth admission). Influence itself is depth_attn_mass/* above.
+        # Joint-softmax depth telemetry (depth_redesign_options.md §5.1): mean over
+        # the learned per-layer depth-column biases b_ℓ (init −2; movement off −2 =
+        # layers changing their default depth admission). Influence itself is
+        # depth_attn_mass_mean/_max above.
         if depth_on and capture_depth_telemetry:
-            bias = policy.depth_stream.depth_bias.detach()
-            accum["depth_bias_mean"] = bias.mean().item()
-            accum["depth_bias_min"] = bias.min().item()
-            accum["depth_bias_max"] = bias.max().item()
+            accum["depth_bias_mean"] = policy.depth_stream.depth_bias.detach().mean().item()
+
+        for key, values in summary_split.items():
+            accum[key] = sum(values) / len(values)
 
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)
             accum["actor_loss_histogram"] = all_actor_loss.cpu().numpy()
         if flow_loss_per_sample_list:
             all_flow_per_sample = torch.cat(flow_loss_per_sample_list)
-            accum["flow_loss_per_sample_mean"] = all_flow_per_sample.mean().item()
+            # No _mean here: it is loss_flow by construction (action_flow_loss is
+            # this same per-sample tensor's mean).
             accum["flow_loss_per_sample_std"] = all_flow_per_sample.std().item() if all_flow_per_sample.numel() > 1 else 0.0
             accum["flow_loss_per_sample_histogram"] = all_flow_per_sample.cpu().numpy()
         if flow_loss_per_timestep_list and flow_timesteps_list:
@@ -859,13 +869,9 @@ class MolmoAct2Trainer(Trainer):
             low_t = all_flow_timesteps < 0.3
             high_t = all_flow_timesteps > 0.7
             if bool(low_t.any()):
-                low_mean = all_flow_by_timestep[low_t].mean().item()
-                accum["flow_loss_timestep/mean_lt_0.3"] = low_mean
-                accum["flow_loss_noise/mean_low_noise_lt_0.3"] = low_mean
+                accum["flow_loss_timestep/mean_lt_0.3"] = all_flow_by_timestep[low_t].mean().item()
             if bool(high_t.any()):
-                high_mean = all_flow_by_timestep[high_t].mean().item()
-                accum["flow_loss_timestep/mean_gt_0.7"] = high_mean
-                accum["flow_loss_noise/mean_high_noise_gt_0.7"] = high_mean
+                accum["flow_loss_timestep/mean_gt_0.7"] = all_flow_by_timestep[high_t].mean().item()
         if flow_loss_per_action_step_list:
             all_flow_by_action_step = torch.cat(flow_loss_per_action_step_list, dim=0)
             horizon = int(all_flow_by_action_step.shape[1])
@@ -1119,6 +1125,24 @@ class MolmoAct2Trainer(Trainer):
             "loss_subtask_ce": per_token[~summary_tokens].mean().item() if (~summary_tokens).any() else 0.0,
             "loss_summary_ce": per_token[summary_tokens].mean().item() if summary_tokens.any() else 0.0,
         }
+        # Hold/update split of the summary CE. A hold pair conditions on the same
+        # summary it must emit (prev_row == target_row, summary_label_spans); an
+        # update pair conditions one summary older and is the only place appending
+        # is learned. Holds outnumber updates, so the pooled mean above falls even
+        # when the model has merely learned to copy its conditioning — this split
+        # is what distinguishes that from real summarization.
+        prev_index = comp_valid.get("summary_prev_index")
+        target_index = comp_valid.get("summary_target_index")
+        if prev_index is not None and target_index is not None and summary_tokens.any():
+            # target_mask.nonzero() is row-major, matching how per_token was flattened.
+            token_rows = target_mask.nonzero(as_tuple=True)[0]
+            is_hold = (prev_index == target_index).to(token_rows.device)[token_rows]
+            hold_tokens = summary_tokens & is_hold
+            update_tokens = summary_tokens & ~is_hold
+            if hold_tokens.any():
+                parts["loss_summary_ce/hold"] = per_token[hold_tokens].mean().item()
+            if update_tokens.any():
+                parts["loss_summary_ce/update"] = per_token[update_tokens].mean().item()
         return per_token.mean(), parts
 
     # ── Online loop ───────────────────────────────────────────────────────────

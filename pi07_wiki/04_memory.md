@@ -306,6 +306,19 @@ $$\mathcal L_{gen} = -\sum_{j \in \text{answer span}} \log p_\theta\big(y_j \mid
 
 backpropagated separately, weighted by `subtask_loss_weight` (config: 1.0), logged
 as `loss_subtask_ce` / `loss_summary_ce` (the memory-prefix split of the span).
+
+The summary CE is additionally split into `loss_summary_ce/hold` and
+`loss_summary_ce/update` by whether the sample's pair has
+`summary_prev_index == summary_target_index` (§2.3, `summary_label_spans`). This
+guards the failure mode the recurrent summary is most prone to: hold pairs
+condition on the summary they must emit, so copying the conditioning solves them,
+and they outnumber update pairs by roughly
+`(segment_len − update_window_frames) / update_window_frames`. The pooled
+`loss_summary_ce` therefore falls steadily for a model that has only learned to
+copy. **Only `/update` measures whether appending is being learned** — if it
+plateaus while `/hold` keeps dropping, the memory has collapsed to an echo, and
+the pooled curve will not show it. Each is averaged over the micro-batches that
+contained such pairs, so a rare-update batch does not contribute a spurious zero.
 The vocab is wired from `meta/subtasks.parquet` by `sync_subtask_vocabulary` and
 re-synced after additional datasets extend it via the remap.
 
