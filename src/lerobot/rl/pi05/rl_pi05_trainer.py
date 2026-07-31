@@ -3,7 +3,7 @@ PI05Trainer — concrete Trainer for PI05RLPolicy.
 
 Critic:  distributional TD with HL-Gauss soft targets.
 Actor:   flow matching + subtask CE auxiliary loss, conditioned on squashed advantage.
-Special: intervention and golden-dataset transitions override the computed advantage with 1.0.
+Special: intervention transitions override the computed advantage with 1.0.
 """
 from __future__ import annotations
 
@@ -335,25 +335,11 @@ class PI05Trainer(Trainer):
         cfg,
     ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """
-        TD advantage with intervention and golden-dataset overrides.
+        TD advantage with intervention override.
 
-        Intervention transitions and golden-dataset transitions receive
-        raw_advantage = 1.0 regardless of critic output, bypassing the critic pass
-        entirely when all transitions in the batch are golden.
+        Intervention transitions receive raw_advantage = 1.0 regardless of critic output.
         """
         comp_data = batch.get(TransitionKey.COMPLEMENTARY_DATA) or batch.get("complementary_info", {})
-        is_golden_mask = None
-
-        if "is_golden" in comp_data:
-            is_golden = comp_data["is_golden"]
-            is_golden_mask = (is_golden > 0.5)
-            if is_golden_mask.shape != rewards.shape:
-                is_golden_mask = is_golden_mask.view(rewards.shape)
-            if is_golden_mask.all():
-                raw_adv = torch.ones_like(rewards).view(-1, 1)
-                squashed = torch.tanh(raw_adv / cfg.policy.advantage_scaling)
-                zeros = torch.zeros_like(raw_adv)
-                return raw_adv, squashed, {"current_v": zeros, "target_v": zeros, "raw_adv_flat": raw_adv.view(-1)}
 
         fwd = preprocess_batch_for_pi05(
             policy=policy,
@@ -369,11 +355,6 @@ class PI05Trainer(Trainer):
             target_v = critic_out["target_values"]
             current_v = critic_out["critic_values"]
             raw_adv = target_v - current_v
-
-            if is_golden_mask is not None:
-                if is_golden_mask.shape != raw_adv.shape:
-                    is_golden_mask = is_golden_mask.view(raw_adv.shape)
-                raw_adv[is_golden_mask] = 1.0
 
             intervention_key = TeleopEvents.IS_INTERVENTION.value
             if intervention_key in comp_data:

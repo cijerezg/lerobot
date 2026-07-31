@@ -16,20 +16,21 @@ from lerobot.rl.offline_dataset_utils import (
 )
 
 
-def _fake_dataset(tasks, task_indices, subtasks, subtask_indices, root):
+def _fake_dataset(tasks, task_indices, subtasks, subtask_indices, root, episode_indices=None):
+    columns = {"task_index": task_indices}
+    if subtask_indices is not None:
+        columns["subtask_index"] = subtask_indices
+    if episode_indices is not None:
+        columns["episode_index"] = episode_indices
     return SimpleNamespace(
         root=root,
         meta=SimpleNamespace(
-            tasks=pd.DataFrame(
-                {"task_index": range(len(tasks))}, index=pd.Index(tasks, name="task")
-            ),
+            tasks=pd.DataFrame({"task_index": range(len(tasks))}, index=pd.Index(tasks, name="task")),
             subtasks=pd.DataFrame(
                 {"subtask_index": range(len(subtasks))}, index=pd.Index(subtasks, name="subtask")
             ),
         ),
-        hf_dataset=Dataset.from_dict(
-            {"task_index": task_indices, "subtask_index": subtask_indices}
-        ),
+        hf_dataset=Dataset.from_dict(columns),
     )
 
 
@@ -72,9 +73,7 @@ def test_weighted_batch_sizes_are_exact_and_keep_every_source_present():
 
 
 def test_current_task_and_subtask_labels_overlay_cached_buffer():
-    vocabulary = _fake_dataset(
-        ["pick object"], [0], ["grasp object"], [0], "/main"
-    )
+    vocabulary = _fake_dataset(["pick object"], [0], ["grasp object"], [0], "/main")
     source = _fake_dataset(
         ["pick and place"],
         [0, 0, 0],
@@ -94,6 +93,66 @@ def test_current_task_and_subtask_labels_overlay_cached_buffer():
     assert resolve_task_strings(raw, vocabulary, "fallback", 3) == ["pick and place"] * 3
 
 
+def test_subtask_windows_overlay_when_frame_column_is_missing(tmp_path):
+    root = tmp_path / "annotated"
+    meta = root / "meta"
+    meta.mkdir(parents=True)
+    (meta / "subtask_windows.json").write_text(
+        """
+        {
+          "episodes": {
+            "0": [
+              {"from_index": 0, "to_index": 2, "subtask": "Grasp object."},
+              {"from_index": 3, "to_index": 5, "subtask": "place object"}
+            ]
+          }
+        }
+        """
+    )
+    dataset = _fake_dataset(
+        ["pick and place"],
+        [0, 0, 0, 0, 0],
+        ["grasp object", "place object"],
+        None,
+        root,
+        episode_indices=[0, 0, 0, 0, 0],
+    )
+    buffer = _fake_buffer(capacity=5)
+
+    materialize_dataset_labels(buffer, dataset, dataset, source_index=0)
+
+    assert buffer.complementary_info["subtask_index"].tolist() == [0, 0, -1, 1, 1]
+
+
+def test_subtask_windows_reject_overlapping_ranges(tmp_path):
+    root = tmp_path / "annotated"
+    meta = root / "meta"
+    meta.mkdir(parents=True)
+    (meta / "subtask_windows.json").write_text(
+        """
+        {
+          "episodes": {
+            "0": [
+              {"from_index": 0, "to_index": 2, "subtask": "grasp object"},
+              {"from_index": 1, "to_index": 3, "subtask": "place object"}
+            ]
+          }
+        }
+        """
+    )
+    dataset = _fake_dataset(
+        ["pick and place"],
+        [0, 0, 0],
+        ["grasp object", "place object"],
+        None,
+        root,
+        episode_indices=[0, 0, 0],
+    )
+
+    with pytest.raises(ValueError, match="overlaps an earlier window"):
+        materialize_dataset_labels(_fake_buffer(capacity=3), dataset, dataset, source_index=0)
+
+
 def test_missing_task_index_uses_rollout_fallback():
     dataset = _fake_dataset(["pick"], [0], ["grasp"], [0], "/main")
     raw = {"complementary_info": {"task_index": torch.tensor([-1, 0])}}
@@ -106,7 +165,9 @@ def test_molmoact2_resolves_a_different_task_for_each_sample():
     raw = {"complementary_info": {"task_index": torch.tensor([1, -1, 0])}}
 
     assert trainer._resolve_batch_tasks(raw, "rollout fallback", 3) == [
-        "pick and place", "rollout fallback", "pick"
+        "pick and place",
+        "rollout fallback",
+        "pick",
     ]
 
 

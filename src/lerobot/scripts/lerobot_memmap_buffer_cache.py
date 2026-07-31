@@ -68,7 +68,6 @@ Options:
     --num-workers    DataLoader workers for parallel decoding (default: min(4, cpu_count))
     --flush-every    Flush output files every N frames (default: 512; 0 disables periodic flush)
     --drop-cache     After periodic flush, ask Linux to evict already-written cache pages
-    --inject-golden  Tag every frame with is_golden=True (default: True)
 """
 
 import argparse
@@ -196,8 +195,6 @@ def main():
         help="Store image/depth rows only every N-th frame (low-dim stays dense at every frame). "
         "Must divide the policy chunk_size. sample() then draws image-aligned starts.",
     )
-    parser.add_argument("--inject-golden", action="store_true", default=True,
-                        help="Inject is_golden=True for all frames (matches offline training)")
     args = parser.parse_args()
 
     if args.data_dir is None and args.repo_id is None:
@@ -307,10 +304,6 @@ def main():
             shapes[f"complementary_info.{key}"] = ()
             dtypes_np[f"complementary_info.{key}"] = np.uint16
 
-    if args.inject_golden:
-        shapes["complementary_info.is_golden"] = ()
-        dtypes_np["complementary_info.is_golden"] = np.uint16
-
     for key in depth_keys:
         ep0, fr0 = int(sample["episode_index"]), int(sample["frame_index"])
         shapes[f"depth.{key}"] = load_depth_png(dataset.root, key, ep0, fr0).shape
@@ -368,7 +361,7 @@ def main():
         _write_transition(
             outputs, idx, prev_sample, current_sample, is_last,
             state_keys, image_keys, non_image_state_keys,
-            complementary_info_keys, has_done_key, args.inject_golden,
+            complementary_info_keys, has_done_key,
             to_bf16_uint16, image_to_numpy,
             depth_keys, dataset.root,
             write_images=idx % image_stride == 0,
@@ -384,7 +377,7 @@ def main():
     _write_transition(
         outputs, idx, prev_sample, None, True,
         state_keys, image_keys, non_image_state_keys,
-        complementary_info_keys, has_done_key, args.inject_golden,
+        complementary_info_keys, has_done_key,
         to_bf16_uint16, image_to_numpy,
         depth_keys, dataset.root,
         write_images=idx % image_stride == 0,
@@ -414,7 +407,6 @@ def main():
         "non_image_state_keys": non_image_state_keys,
         "complementary_info_keys": list(complementary_info_keys),
         "depth_keys": list(depth_keys),
-        "inject_golden": args.inject_golden,
         "shapes": {sanitize_key(k): list(v) if isinstance(v, tuple) else v for k, v in shapes.items()},
         "dtypes": {sanitize_key(k): np.dtype(v).str for k, v in dtypes_np.items()},
     }
@@ -428,7 +420,7 @@ def main():
 def _write_transition(
     outputs, idx, current_sample, next_sample, is_last,
     state_keys, image_keys, non_image_state_keys,
-    complementary_info_keys, has_done_key, inject_golden,
+    complementary_info_keys, has_done_key,
     to_bf16_uint16,
     image_to_numpy,
     depth_keys, dataset_root,
@@ -479,9 +471,6 @@ def _write_transition(
             write_array(outputs, f"complementary_info.{key}", to_bf16_uint16(val))
         else:
             write_array(outputs, f"complementary_info.{key}", to_bf16_uint16(torch.tensor(val, dtype=torch.float32)))
-
-    if inject_golden:
-        write_array(outputs, "complementary_info.is_golden", to_bf16_uint16(torch.tensor(True, dtype=torch.float32)))
 
     # Depth sidecar: raw uint16 straight through (no bf16) so the downstream normalizer keeps 0.1mm.
     # Strided together with the RGB images (same rows, same alignment).

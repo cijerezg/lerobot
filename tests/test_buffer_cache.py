@@ -39,7 +39,7 @@ def _write_synthetic_cache(
     image_keys: list[str] | None = None,
     non_image_state_keys: list[str] | None = None,
     action_dim: int = 6,
-    inject_golden: bool = True,
+    with_complementary: bool = True,
     image_storage_dtype: str = "bfloat16",
     image_size: tuple[int, int] = IMAGE_SIZE,
 ) -> dict:
@@ -83,10 +83,10 @@ def _write_synthetic_cache(
     dtypes_np["episode_ends"] = np.bool_
 
     comp_keys: list[str] = []
-    if inject_golden:
-        shapes["complementary_info.is_golden"] = ()
-        dtypes_np["complementary_info.is_golden"] = np.uint16
-        comp_keys.append("is_golden")
+    if with_complementary:
+        shapes["complementary_info.is_intervention"] = ()
+        dtypes_np["complementary_info.is_intervention"] = np.uint16
+        comp_keys.append("is_intervention")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -139,10 +139,10 @@ def _write_synthetic_cache(
     raw["dones"] = dones
     raw["episode_ends"] = dones
 
-    if inject_golden:
-        golden = torch.ones(n)
-        memmaps["complementary_info.is_golden"][:] = _bf16_to_uint16(golden)
-        raw["complementary_info.is_golden"] = golden.to(torch.bfloat16)
+    if with_complementary:
+        intervention = torch.ones(n)
+        memmaps["complementary_info.is_intervention"][:] = _bf16_to_uint16(intervention)
+        raw["complementary_info.is_intervention"] = intervention.to(torch.bfloat16)
 
     for mm in memmaps.values():
         mm.flush()
@@ -161,7 +161,6 @@ def _write_synthetic_cache(
         "image_keys": image_keys,
         "non_image_state_keys": non_image_state_keys,
         "complementary_info_keys": comp_keys,
-        "inject_golden": inject_golden,
         "shapes": {
             _sanitize(k): list(v) if isinstance(v, tuple) else v
             for k, v in shapes.items()
@@ -247,14 +246,14 @@ class TestFromCache:
         assert torch.equal(buf.rewards, raw["rewards"])
 
     def test_complementary_info(self, cache_dir):
-        _write_synthetic_cache(cache_dir, num_transitions=50, inject_golden=True)
+        _write_synthetic_cache(cache_dir, num_transitions=50, with_complementary=True)
         buf = ReplayBuffer.from_cache(cache_dir, device="cpu")
         assert buf.has_complementary_info
-        assert "is_golden" in buf.complementary_info
-        assert buf.complementary_info["is_golden"].shape == (50,)
+        assert "is_intervention" in buf.complementary_info
+        assert buf.complementary_info["is_intervention"].shape == (50,)
 
     def test_no_complementary_info(self, cache_dir):
-        _write_synthetic_cache(cache_dir, num_transitions=50, inject_golden=False)
+        _write_synthetic_cache(cache_dir, num_transitions=50, with_complementary=False)
         buf = ReplayBuffer.from_cache(cache_dir, device="cpu")
         assert not buf.has_complementary_info
 

@@ -73,6 +73,7 @@ from lerobot.rl.offline_dataset_utils import (
     load_summary_segments,
     make_combined_offline_iterator,
     materialize_dataset_labels,
+    pool_lowdim_stats,
 )
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.utils import build_named_adamw_optimizers, cast_to_bf16
@@ -557,6 +558,7 @@ def run_offline_training(
         normalization_source.root,
     )
     offline_dataset = load_offline_dataset(cfg, normalization_source)
+    pool_lowdim_stats(cfg, offline_dataset, is_main_process=True)
 
     # ── Preprocessors ─────────────────────────────────────────────────────────
     preprocessor, postprocessor = trainer.make_processors(
@@ -608,7 +610,6 @@ def run_offline_training(
         capacity=cfg.policy.offline_buffer_capacity,
         reward_normalization_constant=cfg.policy.reward_normalization_constant,
         terminal_failure_reward=cfg.policy.terminal_failure_reward,
-        inject_complementary_info={"is_golden": getattr(cfg, "treat_main_dataset_as_golden", False)},
         cache_dir=getattr(cfg, "buffer_cache_dir", None),
         image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
         image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),

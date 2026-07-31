@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,7 @@ import torch
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 
 @dataclass(frozen=True)
@@ -41,9 +42,7 @@ def get_offline_dataset_sources(cfg) -> list[OfflineDatasetSource]:
     fallback_repo_id = str(getattr(dataset_cfg, "repo_id", None) or "local/dataset")
     if configured:
         marked = [
-            i
-            for i, source in enumerate(configured)
-            if _source_field(source, "normalization_source", False)
+            i for i, source in enumerate(configured) if _source_field(source, "normalization_source", False)
         ]
         if len(marked) > 1:
             raise ValueError("Exactly one dataset source may set normalization_source=true.")
@@ -124,6 +123,57 @@ def _get_additional_dataset_paths(cfg) -> list[str]:
 
 def get_offline_dataset_weights(cfg) -> list[float]:
     return [source.weight for source in get_offline_dataset_sources(cfg)]
+
+
+def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
+    """Replace the normalization source's action/state stats with pooled ones.
+
+    Only ``sources[0]`` supplies normalization stats, but normalized state and
+    action are clamped to [-1, 1] downstream: quantiles from one dataset collapse
+    whatever the other sources reach beyond them. Quantiles do not aggregate from
+    per-dataset summaries, so recompute them exactly over the pooled low-dim
+    columns — a few hundred thousand rows of two 7-vectors, cheap to read.
+    Visual stats are untouched (VISUAL is IDENTITY-normalized).
+    """
+    import numpy as np
+    import pyarrow.parquet as pq
+
+    from lerobot.datasets.compute_stats import DEFAULT_QUANTILES
+
+    roots = [source.root for source in get_offline_dataset_sources(cfg) if source.root is not None]
+    stats = getattr(getattr(dataset, "meta", None), "stats", None)
+    if len(roots) < 2 or not stats:
+        return
+
+    for key in (ACTION, OBS_STATE):
+        if key not in stats:
+            continue
+        columns = [
+            pq.read_table(f, columns=[key]).to_pandas()[key]
+            for root in roots
+            for f in sorted(Path(root).rglob("data/**/*.parquet"))
+        ]
+        values = np.concatenate([np.stack(c.values) for c in columns]).astype(np.float32)
+        pooled = {
+            "min": values.min(axis=0),
+            "max": values.max(axis=0),
+            "mean": values.mean(axis=0),
+            "std": values.std(axis=0),
+            "count": np.array([len(values)]),
+        }
+        for q in DEFAULT_QUANTILES:
+            pooled[f"q{int(q * 100):02d}"] = np.quantile(values, q, axis=0)
+        if is_main_process:
+            logging.info(
+                "[OfflineCollection] Pooled %s stats over %d roots / %d frames: "
+                "q01 %s -> %s",
+                key,
+                len(roots),
+                len(values),
+                np.round(stats[key]["q01"], 1),
+                np.round(pooled["q01"], 1),
+            )
+        stats[key] = pooled
 
 
 def load_summary_segments(root) -> tuple[list[dict], list[str]]:
@@ -235,7 +285,9 @@ def remap_tasks_for_dataset(target_dataset, source_dataset, is_main_process: boo
     )
 
 
-def remap_subtasks_for_dataset(target_dataset, source_dataset, is_main_process: bool = False) -> dict[int, int]:
+def remap_subtasks_for_dataset(
+    target_dataset, source_dataset, is_main_process: bool = False
+) -> dict[int, int]:
     return _remap_vocabulary(
         target_dataset,
         source_dataset,
@@ -254,6 +306,88 @@ def _dataset_index_column(dataset, key: str) -> torch.Tensor | None:
     return torch.as_tensor(values, dtype=torch.long)
 
 
+def _subtask_indices_from_windows(dataset, num_frames: int) -> torch.Tensor | None:
+    """Materialize reviewed subtask windows when no frame-level column exists.
+
+    ``meta/subtask_windows.json`` stores global ``[from_index, to_index)`` frame
+    ranges with subtask text. The text is resolved through
+    ``meta/subtasks.parquet`` so the result uses the dataset-local vocabulary;
+    collection remapping happens later in :func:`materialize_dataset_labels`.
+    """
+    root = getattr(dataset, "root", None)
+    if root is None:
+        return None
+    path = Path(root) / "meta" / "subtask_windows.json"
+    if not path.exists():
+        return None
+
+    with path.open() as f:
+        payload = json.load(f)
+    episodes = payload.get("episodes") if isinstance(payload, dict) else None
+    if not isinstance(episodes, dict):
+        raise ValueError(f"{path} must contain an 'episodes' object.")
+
+    index_to_name = _idx_to_subtask_name(dataset)
+    if not index_to_name:
+        raise ValueError(f"{path} exists but {Path(root) / 'meta' / 'subtasks.parquet'} is missing or empty.")
+    name_to_index: dict[str, int] = {}
+    for index, name in index_to_name.items():
+        key = _label_key(name)
+        existing = name_to_index.get(key)
+        if existing is not None and existing != index:
+            raise ValueError(
+                f"Duplicate normalized subtask label {name!r} in {Path(root) / 'meta' / 'subtasks.parquet'}."
+            )
+        name_to_index[key] = index
+
+    result = torch.full((num_frames,), -1, dtype=torch.long)
+    assigned = torch.zeros(num_frames, dtype=torch.bool)
+    episode_indices = _dataset_index_column(dataset, "episode_index")
+    for raw_episode_index, windows in episodes.items():
+        try:
+            episode_index = int(raw_episode_index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{path} has a non-integer episode key {raw_episode_index!r}.") from exc
+        if not isinstance(windows, list):
+            raise ValueError(f"{path} episode {episode_index} must contain a list of windows.")
+        for window_index, window in enumerate(windows):
+            if not isinstance(window, dict):
+                raise ValueError(f"{path} episode {episode_index} window {window_index} must be an object.")
+            try:
+                start = int(window["from_index"])
+                stop = int(window["to_index"])
+                subtask = str(window["subtask"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{path} episode {episode_index} window {window_index} must define "
+                    "integer from_index/to_index and a subtask."
+                ) from exc
+            if not (0 <= start < stop <= num_frames):
+                raise ValueError(
+                    f"{path} episode {episode_index} window {window_index} has invalid "
+                    f"frame range [{start}, {stop}) for a {num_frames}-frame dataset."
+                )
+            if assigned[start:stop].any():
+                raise ValueError(
+                    f"{path} episode {episode_index} window {window_index} overlaps an earlier "
+                    f"window in frame range [{start}, {stop})."
+                )
+            if episode_indices is not None and not torch.all(episode_indices[start:stop] == episode_index):
+                raise ValueError(
+                    f"{path} episode {episode_index} window {window_index} range [{start}, {stop}) "
+                    "contains frames from another episode."
+                )
+            subtask_index = name_to_index.get(_label_key(subtask))
+            if subtask_index is None:
+                raise ValueError(
+                    f"{path} episode {episode_index} window {window_index} uses unknown "
+                    f"subtask {subtask!r}; add it to meta/subtasks.parquet."
+                )
+            result[start:stop] = subtask_index
+            assigned[start:stop] = True
+    return result
+
+
 def _remap_indices(values: torch.Tensor, remap: dict[int, int]) -> torch.Tensor:
     result = torch.full_like(values, -1)
     for old_index, new_index in remap.items():
@@ -261,7 +395,9 @@ def _remap_indices(values: torch.Tensor, remap: dict[int, int]) -> torch.Tensor:
     return result
 
 
-def _install_buffer_column(buffer: ReplayBuffer, key: str, values: torch.Tensor, fill_value: int = -1) -> None:
+def _install_buffer_column(
+    buffer: ReplayBuffer, key: str, values: torch.Tensor, fill_value: int = -1
+) -> None:
     """Install a dataset-order label tensor in the replay buffer's physical slot order."""
     target = torch.full(
         (buffer.capacity, *values.shape[1:]),
@@ -293,6 +429,13 @@ def materialize_dataset_labels(
     task_remap = remap_tasks_for_dataset(vocabulary_dataset, dataset, is_main_process)
     _install_buffer_column(buffer, "task_index", _remap_indices(task_indices, task_remap))
     subtask_indices = _dataset_index_column(dataset, "subtask_index")
+    if subtask_indices is None:
+        subtask_indices = _subtask_indices_from_windows(dataset, len(task_indices))
+        if subtask_indices is not None and is_main_process:
+            logging.info(
+                "[OfflineCollection] Materialized subtask_index from %s",
+                Path(dataset.root) / "meta" / "subtask_windows.json",
+            )
     if subtask_indices is not None:
         subtask_remap = remap_subtasks_for_dataset(vocabulary_dataset, dataset, is_main_process)
         _install_buffer_column(buffer, "subtask_index", _remap_indices(subtask_indices, subtask_remap))
@@ -383,7 +526,6 @@ def load_additional_offline_buffers(
                 state_keys=state_keys,
                 storage_device=storage_device,
                 optimize_memory=True,
-                inject_complementary_info={"is_golden": False},
                 image_storage_dtype=image_storage_dtype,
                 image_storage_size=image_storage_size,
                 image_stride=image_stride,
@@ -394,15 +536,6 @@ def load_additional_offline_buffers(
         buffer.offline_source = source
         if memory_cfg is not None and memory_cfg.metadata_enabled:
             buffer.materialize_metadata(*load_metadata_rows(dataset.root))
-        if "is_golden" in buffer.complementary_info:
-            buffer.complementary_info["is_golden"].fill_(0)
-        else:
-            _install_buffer_column(
-                buffer,
-                "is_golden",
-                torch.zeros(len(dataset), dtype=torch.bfloat16),
-                fill_value=0,
-            )
         buffers.append(buffer)
         if is_main_process:
             logging.info("[OfflineCollection] Loaded %s: %d transitions", source.name, buffer.size)

@@ -18,30 +18,27 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 logging.basicConfig(level=logging.INFO, force=True)
 logger = logging.getLogger(__name__)
 
-def compute_action_stats(
+def collect_chunks(
     root_dir: str,
     chunk_size: int = 50,
     encoding: str = "delta",
 ):
+    """Encoded action chunks for one dataset root, as a list of [T, D] tensors."""
     root = Path(root_dir)
     meta_dir = root / "meta"
     data_dir = root / "data"
-    
+
     if not meta_dir.exists() or not data_dir.exists():
         logger.error(f"Invalid dataset structure in {root_dir}")
-        return
-        
-    # 1. Load basic info
-    with open(meta_dir / "info.json") as f:
-        info = json.load(f)
-    
-    # 2. Load episode metadata (to know where episodes start/end)
+        return []
+
+    # 1. Load episode metadata (to know where episodes start/end)
     # We need this to ensure we don't compute displacements across episode boundaries
     episode_meta_files = sorted(list((meta_dir / "episodes").rglob("*.parquet")))
     if not episode_meta_files:
-        logger.error("No episode metadata found.")
-        return
-        
+        logger.error(f"No episode metadata found in {root_dir}.")
+        return []
+
     episodes_df = pd.concat([pd.read_parquet(f) for f in episode_meta_files])
     logger.info(f"Loaded metadata for {len(episodes_df)} episodes")
 
@@ -95,13 +92,33 @@ def compute_action_stats(
                 
             all_chunks.append(chunk_data)
 
+    logger.info(f"{root.name}: {len(all_chunks)} chunks")
+    return all_chunks
+
+
+def compute_action_stats(
+    root_dirs: list[str],
+    chunk_size: int = 50,
+    encoding: str = "delta",
+):
+    """Pooled stats over every training dataset root.
+
+    Normalized state/action are clamped to [-1, 1] downstream, so the stats must
+    span every root that trains — quantiles from a single dataset collapse the
+    parts of the workspace the other datasets visit.
+    """
+    all_chunks = []
+    for root_dir in root_dirs:
+        all_chunks.extend(collect_chunks(root_dir, chunk_size, encoding))
+
     if not all_chunks:
         logger.error(f"No valid {encoding} samples found.")
         return
 
     # [N, T, D]
     all_chunks = torch.stack(all_chunks)
-    
+    logger.info(f"Pooled {all_chunks.shape[0]} chunks from {len(root_dirs)} dataset(s)")
+
     stats = {}
     stats["min"] = all_chunks.min(dim=0).values
     stats["max"] = all_chunks.max(dim=0).values
@@ -172,18 +189,25 @@ def plot_stats(stats: dict, output_path: Path, repo_id: str, encoding: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=str, required=True, help="Path to local dataset directory")
+    parser.add_argument("--root", type=str, required=True, nargs="+",
+                        help="Local dataset directories; pass every root that trains so the "
+                             "quantiles span the whole workspace")
     parser.add_argument("--output-dir", type=str, default="outputs/stats", help="Where to save stats")
+    parser.add_argument("--name", type=str, default=None,
+                        help="Output basename; defaults to the single root's directory name")
     parser.add_argument("--chunk-size", type=int, default=50, help="Action horizon")
     parser.add_argument("--encoding", type=str, required=True, choices=["absolute", "anchor", "delta"], help="Action encoding method")
     args = parser.parse_args()
+
+    if args.name is None and len(args.root) > 1:
+        parser.error("--name is required when passing more than one --root.")
 
     stats = compute_action_stats(args.root, args.chunk_size, args.encoding)
     if stats:
         output_path = Path(args.output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        repo_id = Path(args.root).name
+        repo_id = args.name or Path(args.root[0]).name
         save_file = output_path / f"action_stats_{args.encoding}_{repo_id.replace('/', '_')}.pt"
         torch.save(stats, save_file)
         logger.info(f"Stats saved to {save_file}")

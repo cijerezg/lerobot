@@ -2,8 +2,8 @@
 
 """
 π0.7-style steering metadata, end to end: per-episode quality 1-5 (human) +
-per-subtask-window mistake flag (LLM suspicion score 0-10, thresholded into
-flags at review time, human-confirmed).
+per-review-window mistake flag (candidate suspicion score 0-10, thresholded
+into flags at review time, human-confirmed).
 Speed is deliberately omitted (single-operator data; pace variation is carried
 by the mistake channel; the prompt clause renders partially).
 
@@ -55,17 +55,22 @@ def load_meta(root: Path):
     info = json.load(open(root / "meta" / "info.json"))
     windows = json.load(open(root / "meta" / "subtask_windows.json"))["episodes"]
     episodes_meta = pd.concat(
-        [pd.read_parquet(f) for f in sorted(glob.glob(str(root / "meta" / "episodes" / "**" / "*.parquet"), recursive=True))]
+        [
+            pd.read_parquet(f)
+            for f in sorted(glob.glob(str(root / "meta" / "episodes" / "**" / "*.parquet"), recursive=True))
+        ]
     ).set_index("episode_index")
     return info, float(info["fps"]), windows, episodes_meta
 
 
 # ── annotate: LLM mistake suspicion pass ─────────────────────────────────────
 
+
 def create_mistake_prompt(coarse_goal: str, subtask: str, n_top: int, n_wrist: int) -> str:
     wrist_clause = (
         f" The first {n_top} frames are the overhead view in time order; the last {n_wrist} are the wrist camera."
-        if n_wrist else ""
+        if n_wrist
+        else ""
     )
     return textwrap.dedent(f"""\
         A robot is working on this task: "{coarse_goal}"
@@ -114,7 +119,9 @@ def cmd_annotate(args):
 
     console.print(f"[cyan]Loading {args.model}...[/cyan]")
     processor = AutoProcessor.from_pretrained(args.model)
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16, device_map=args.device)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, torch_dtype=torch.bfloat16, device_map=args.device
+    )
 
     episode_keys = (
         [str(args.preview_episode)] if args.preview_episode is not None else sorted(windows, key=int)
@@ -130,11 +137,15 @@ def cmd_annotate(args):
         for win in windows[ep_key]:
             t0 = (win["from_index"] - ep_from_index) / fps
             t1 = (win["to_index"] - 1 - ep_from_index) / fps
-            frames = [f for fr in ANNOTATE_TOP_FRACS if (f := frame_at(top_path, top_from + t0 + fr * (t1 - t0)))]
+            frames = [
+                f for fr in ANNOTATE_TOP_FRACS if (f := frame_at(top_path, top_from + t0 + fr * (t1 - t0)))
+            ]
             n_top = len(frames)
             n_wrist = 0
             if args.wrist_key:
-                wrist = [f for fr in WRIST_FRACS if (f := frame_at(wrist_path, wrist_from + t0 + fr * (t1 - t0)))]
+                wrist = [
+                    f for fr in WRIST_FRACS if (f := frame_at(wrist_path, wrist_from + t0 + fr * (t1 - t0)))
+                ]
                 frames += wrist
                 n_wrist = len(wrist)
             score, evidence = judge_window(
@@ -142,10 +153,15 @@ def cmd_annotate(args):
             )
             color = "red" if score >= MISTAKE_SCORE_THRESHOLD else "green"
             console.print(f"[{color}]ep {ep_key} {t0:5.0f}-{t1:3.0f}s: score={score:g}[/{color}] {evidence}")
-            rows.append({
-                "from_index": win["from_index"], "to_index": win["to_index"],
-                "subtask": win["subtask"], "score": score, "evidence": evidence,
-            })
+            rows.append(
+                {
+                    "from_index": win["from_index"],
+                    "to_index": win["to_index"],
+                    "subtask": win["subtask"],
+                    "score": score,
+                    "evidence": evidence,
+                }
+            )
         results[ep_key] = rows
 
     if args.preview_episode is not None:
@@ -163,10 +179,39 @@ def cmd_annotate(args):
 
 # ── review: video UI, server-side state, writes the dataset ──────────────────
 
-def write_metadata(root: Path, windows, episodes_meta, candidates, state) -> str:
+
+def validate_candidate_windows(candidates, windows, episodes_meta) -> None:
+    """Require one ordered, gap-free candidate grid for every dataset episode."""
+    expected_episodes = set(windows)
+    candidate_episodes = set(candidates)
+    if candidate_episodes != expected_episodes:
+        missing = sorted(expected_episodes - candidate_episodes, key=int)
+        extra = sorted(candidate_episodes - expected_episodes, key=int)
+        raise ValueError(f"Candidate episode mismatch: missing={missing}, extra={extra}")
+    for ep_key in sorted(expected_episodes, key=int):
+        episode = episodes_meta.loc[int(ep_key)]
+        cursor = int(episode["dataset_from_index"])
+        episode_stop = int(episode["dataset_to_index"])
+        for window_index, row in enumerate(candidates[ep_key]):
+            start = int(row["from_index"])
+            stop = int(row["to_index"])
+            if start != cursor or stop <= start or stop > episode_stop:
+                raise ValueError(
+                    f"Invalid candidate grid at episode {ep_key} window {window_index}: "
+                    f"expected start {cursor}, got [{start}, {stop}) with episode stop {episode_stop}."
+                )
+            cursor = stop
+        if cursor != episode_stop:
+            raise ValueError(
+                f"Candidate grid for episode {ep_key} ends at {cursor}, expected {episode_stop}."
+            )
+
+
+def write_metadata(root: Path, windows, episodes_meta, candidates, state, candidate_info=None) -> str:
     """Validate the review state and write the three meta files. Raises ValueError."""
     if candidates is None:
         raise ValueError("Mistake flags are pending — run the annotate stage, then restart review.")
+    validate_candidate_windows(candidates, windows, episodes_meta)
     quality = {int(k): v for k, v in state.get("quality", {}).items()}
     missing = sorted(set(int(k) for k in windows) - set(quality))
     if missing:
@@ -203,22 +248,31 @@ def write_metadata(root: Path, windows, episodes_meta, candidates, state) -> str
             "episode_index": int(ep_key),
             "from_index": w["from_index"],
             "to_index": w["to_index"],
-            "mistake": decisions.get((int(ep_key), w["from_index"], w["to_index"]), False),
+            "mistake": (
+                decisions.get((int(ep_key), w["from_index"], w["to_index"]), False)
+                if (int(ep_key), w["from_index"], w["to_index"]) in flagged
+                else False
+            ),
         }
         for ep_key in sorted(windows, key=int)
-        for w in windows[ep_key]
+        for w in candidates[ep_key]
     ]
     pd.DataFrame(episode_rows).to_parquet(root / "meta" / "episode_metadata.parquet", engine="pyarrow")
     pd.DataFrame(mistake_rows).to_parquet(root / "meta" / "mistakes.parquet", engine="pyarrow")
     n_mistakes = sum(r["mistake"] for r in mistake_rows)
     with open(root / "meta" / "metadata_info.json", "w") as f:
-        json.dump({
-            "quality_by_episode": {str(r["episode_index"]): r["quality"] for r in episode_rows},
-            "n_windows": len(mistake_rows),
-            "n_flagged": len(flagged),
-            "n_mistakes": n_mistakes,
-            "speed": "omitted",
-        }, f, indent=2)
+        json.dump(
+            {
+                "quality_by_episode": {str(r["episode_index"]): r["quality"] for r in episode_rows},
+                "n_windows": len(mistake_rows),
+                "n_flagged": len(flagged),
+                "n_mistakes": n_mistakes,
+                "speed": "omitted",
+                "mistake_candidates": candidate_info or {},
+            },
+            f,
+            indent=2,
+        )
     return (
         f"Wrote quality for {len(episode_rows)} episodes and "
         f"{n_mistakes}/{len(mistake_rows)} mistake windows to {root / 'meta'}"
@@ -422,11 +476,19 @@ def cmd_review(args):
     root = Path(args.data_dir)
     info, fps, windows, episodes_meta = load_meta(root)
     candidates_path = root / "meta" / "mistake_candidates.json"
-    candidates = json.load(open(candidates_path))["episodes"] if candidates_path.exists() else None
+    candidate_payload = json.load(open(candidates_path)) if candidates_path.exists() else None
+    candidates = candidate_payload["episodes"] if candidate_payload is not None else None
+    candidate_info = (
+        {k: v for k, v in candidate_payload.items() if k != "episodes"} if candidate_payload else {}
+    )
     if candidates:
+        validate_candidate_windows(candidates, windows, episodes_meta)
         for wins in candidates.values():
             for w in wins:
-                w["mistake"] = w["score"] >= args.threshold
+                if "score" in w:
+                    w["mistake"] = w["score"] >= args.threshold
+                else:
+                    w["mistake"] = bool(w.get("mistake", False))
     state_path = root / "meta" / "metadata_review_state.json"
     state = json.load(open(state_path)) if state_path.exists() else {"quality": {}, "windows": {}}
 
@@ -443,22 +505,24 @@ def cmd_review(args):
             video_files[(cam_idx, ep_key)] = path
             videos.append({"name": key.split(".")[-1], "from_ts": from_ts})
         flagged = [w for w in candidates.get(ep_key, []) if w["mistake"]] if candidates else []
-        episodes_payload.append({
-            "ep": ep_key,
-            "duration": duration,
-            "videos": videos,
-            "flagged": [
-                {
-                    "id": f"{ep_key}:{w['from_index']}:{w['to_index']}",
-                    "t0": (w["from_index"] - ep_from_index) / fps,
-                    "t1": (w["to_index"] - 1 - ep_from_index) / fps,
-                    "subtask": w["subtask"],
-                    "score": w["score"],
-                    "evidence": w.get("evidence", ""),
-                }
-                for w in flagged
-            ],
-        })
+        episodes_payload.append(
+            {
+                "ep": ep_key,
+                "duration": duration,
+                "videos": videos,
+                "flagged": [
+                    {
+                        "id": f"{ep_key}:{w['from_index']}:{w['to_index']}",
+                        "t0": (w["from_index"] - ep_from_index) / fps,
+                        "t1": (w["to_index"] - 1 - ep_from_index) / fps,
+                        "subtask": w["subtask"],
+                        "score": w.get("score", 10 if w["mistake"] else 0),
+                        "evidence": w.get("evidence", ""),
+                    }
+                    for w in flagged
+                ],
+            }
+        )
     payload = {"episodes": episodes_payload, "has_candidates": candidates is not None, "state": state}
     page = APP_HTML.replace("__PAYLOAD__", json.dumps(payload))
 
@@ -497,7 +561,14 @@ def cmd_review(args):
                 self._send(200, b"ok")
             elif self.path == "/finalize":
                 try:
-                    message = write_metadata(root, windows, episodes_meta, candidates, state)
+                    message = write_metadata(
+                        root,
+                        windows,
+                        episodes_meta,
+                        candidates,
+                        state,
+                        candidate_info=candidate_info | {"review_threshold": args.threshold},
+                    )
                     console.print(f"[bold green]✓ {message}[/bold green]")
                     self._send(200, message.encode())
                 except ValueError as e:
@@ -540,7 +611,8 @@ def cmd_review(args):
     n_flagged = sum(len(e["flagged"]) for e in episodes_payload)
     status = (
         f"{n_flagged} flagged windows (score >= {args.threshold:g})"
-        if candidates else "mistake flags pending (quality scoring only)"
+        if candidates
+        else "mistake flags pending (quality scoring only)"
     )
     console.print(f"[bold green]Review UI at {url}[/bold green] — {len(episodes_payload)} episodes, {status}")
     console.print("Decisions auto-save; 'Write to dataset' writes the meta files. Ctrl-C to stop.")
@@ -561,16 +633,21 @@ def main():
     p.add_argument("--wrist-key", type=str, default=None)
     p.add_argument("--model", type=str, default="google/gemma-4-31B-it")
     p.add_argument("--device", type=str, default="cuda")
-    p.add_argument("--preview-episode", type=int, default=None,
-                   help="judge a single episode and print flags; no writes")
+    p.add_argument(
+        "--preview-episode", type=int, default=None, help="judge a single episode and print flags; no writes"
+    )
     p.set_defaults(func=cmd_annotate)
 
     p = sub.add_parser("review", help="video review UI; saves state and writes the dataset")
     p.add_argument("--data-dir", type=str, required=True)
     p.add_argument("--host", type=str, default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--threshold", type=float, default=MISTAKE_SCORE_THRESHOLD,
-                   help="windows with LLM suspicion score >= this are flagged for review")
+    p.add_argument(
+        "--threshold",
+        type=float,
+        default=MISTAKE_SCORE_THRESHOLD,
+        help="windows with LLM suspicion score >= this are flagged for review",
+    )
     p.set_defaults(func=cmd_review)
 
     args = parser.parse_args()

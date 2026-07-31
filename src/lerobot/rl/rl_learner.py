@@ -679,7 +679,6 @@ def _init_offline_buffer(
         capacity=cfg.policy.offline_buffer_capacity,
         reward_normalization_constant=float(getattr(cfg.policy, "reward_normalization_constant", 1.0)),
         terminal_failure_reward=float(getattr(cfg.policy, "terminal_failure_reward", -10.0)),
-        inject_complementary_info={"is_golden": cfg.treat_main_dataset_as_golden},
         cache_dir=cfg.buffer_cache_dir,
         image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
         image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),

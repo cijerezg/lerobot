@@ -50,7 +50,6 @@ cache_policy: fallback  # set to require after building every source cache
 # RL flags (shared)
 # -----------------------------------------------------------------------------
 skip_critic: true    # Skip critic if not interested in RECAP. It also saved VRAM and training is faster.
-treat_main_dataset_as_golden: true  # True assumes advantage is 1 (optimal action always). If dataset is from teleop, set to true
 
 # -----------------------------------------------------------------------------
 # Validation (shared)

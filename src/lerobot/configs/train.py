@@ -348,8 +348,7 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     val_split: float = 0.0
     val_freq: int = 1000
     val_on_start: bool = False
-    skip_critic: bool = False             # skip all critic training (forward+backward); actor advantage uses golden bypass
-    treat_main_dataset_as_golden: bool = True  # tag main offline dataset frames is_golden=True (advantage bypass); set False for non-expert main datasets
+    skip_critic: bool = False             # skip all critic training (forward+backward)
 
     def validate(self) -> None:
         super().validate()
