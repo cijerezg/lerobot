@@ -35,11 +35,13 @@ Registered probe: enable with ``probe_parameters.enable_metadata_steering``.
 import json
 import logging
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     frame_metadata_lookup,
     makedirs,
@@ -249,15 +251,67 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     examples_dir = os.path.join(output_dir, "examples")
     makedirs(examples_dir)
     ranked = sorted(range(len(rows)), key=lambda i: -rows[i]["good_vs_bad_rmse"])
+    examples = []
     for index in ranked[:3]:
         row = rows[index]
-        _render_example(
-            diagnostics[index],
-            os.path.join(
-                examples_dir,
-                f"sep_ep{row['episode_idx']:04d}_fr{row['frame_idx']:06d}.png",
-            ),
+        name = f"examples/sep_ep{row['episode_idx']:04d}_fr{row['frame_idx']:06d}.png"
+        _render_example(diagnostics[index], os.path.join(output_dir, name))
+        examples.append(
+            Panel(
+                name,
+                f"Largest separation #{len(examples) + 1} — episode {row['episode_idx']}, "
+                f"frame {row['frame_idx']}",
+                "One line per metadata condition against black GT. If the four lines sit on top of "
+                "each other, the clause changed nothing on the frame where it changed the most.",
+            )
         )
+
+    write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Metadata Steering",
+        group="Steering",
+        claim="Does the quality / mistake clause reach the actions, or is it decorative?",
+        summary=summary,
+        see_also=["subtask_sweep", "mem_history_influence"],
+        metrics=[
+            Metric(
+                "good_vs_bad_rmse", "Steering range (good vs bad)", good="high", fmt=4, primary=True,
+                note=(
+                    "Compare against the flow-noise floor from Subtask Sweep before believing a "
+                    "small non-zero value."
+                ),
+                refs=["subtask_sweep"],
+            ),
+            Metric("good_vs_bad_maxabs", "Steering range, max |Δ|", good="high", fmt=4),
+            Metric(
+                "gt_gt_mse_improvement", "Usefulness of GT labels", good="high", fmt=4, baseline=0.0, primary=True,
+                note="Negative means conditioning on what actually happened made the prediction worse.",
+            ),
+            Metric("good_gt_mse_improvement", "Usefulness of quality-5 / no-mistake",
+                   good="high", fmt=4, baseline=0.0, primary=True),
+            Metric(
+                "n_frames_gt_mistake", "Frames flagged as mistakes", good="none", fmt=0, primary=True,
+                note=(
+                    "Zero here empties the only split where 'good' and 'gt' disagree by "
+                    "construction, so the mistake-split numbers below it mean nothing."
+                ),
+            ),
+            Metric("n_frames", "Frames measured", good="none", fmt=0),
+        ],
+        panels=[
+            Panel(
+                "metadata_steering.png",
+                "Influence, usefulness, and steering range split by the GT mistake flag",
+                "Left: how far each clause moves the chunk away from no-clause. Middle: whether that "
+                "movement improves the GT fit — bars below zero mean the clause actively hurts. "
+                "Right: the good-vs-bad gap, which is the range the policy actually exposes.",
+                primary=True,
+                refs=["subtask_sweep"],
+            ),
+            *examples,
+        ],
+    )
 
     logging.info(
         f"[metadata_steering] n={len(rows)} ({len(flagged)} GT-mistake)  "

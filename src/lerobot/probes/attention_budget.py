@@ -1,4 +1,4 @@
-"""Where the action tokens spend their cross-attention, and how that shifts over frames.
+r"""Where the action tokens spend their cross-attention, and how that shifts over frames.
 
 Every action query runs one softmax over the whole encoder key axis: both camera
 token blocks, the point-map depth columns, each prompt clause, and the chat
@@ -15,12 +15,14 @@ else falls *mechanically*. Segment levels are therefore mutually confounded and 
 story about one segment's level is not safe. Two transforms fix this and are what
 the panels actually plot:
 
-* **centered log-ratio**, the standard statistic for simplex data —
-  ``clr(m)_S = log m_S - mean_S' log m_S'``. Shifts in clr are shifts in the
-  *composition*, not in one segment's arbitrary level.
-* **pairwise log-ratio** ``log(m_A / m_B)`` for a specific hypothesis. It is
+* **centered log-ratio**, the standard statistic for simplex data,
+  $\text{clr}(m)_S = \log m_S - \frac{1}{n}\sum_{S'} \log m_{S'}$ over the $n$
+  segments. Shifts in clr are shifts in the *composition*, not in one segment's
+  arbitrary level.
+* **pairwise log-ratio** $\log(m_A / m_B)$ for a specific hypothesis. It is
   invariant to whatever every other segment does, which makes
-  ``log(depth / img_wrist)`` the honest test of "depth matters more up close".
+  $\log(m_\text{depth} / m_\text{wrist})$ the honest test of "depth matters more
+  up close".
 
 Two controls ship alongside, because both failure modes are real:
 
@@ -32,6 +34,12 @@ Two controls ship alongside, because both failure modes are real:
   "return to home"), so their raw series confounds "attends more" with "clause got
   longer". Every other segment has a fixed column count, where the count cancels in
   any across-frame comparison and per-token normalization would only add noise.
+
+A filmstrip runs along the bottom of the figure: the model-view RGB of each camera
+segment plus the wrist depth map, for an evenly spaced subset of the sampled frames.
+The frame-axis panels carry x-ticks at exactly those frames and the distance scatter
+labels the same ones, so every feature of the series can be traced back to the scene
+that produced it — a budget move is only interpretable next to its frame.
 
 ## Two things this probe cannot tell you
 
@@ -57,6 +65,8 @@ Registered probe: enable with ``probe_parameters.enable_attention_budget``.
 import json
 import logging
 import os
+import sys
+import textwrap
 
 import matplotlib
 matplotlib.use("Agg")
@@ -65,6 +75,7 @@ import numpy as np
 import torch
 
 from lerobot.probes.attention import _group_prompt_indices, _text_blocks_for_action_matrix
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     makedirs,
     probe_frame_inputs,
@@ -191,6 +202,58 @@ def _median_valid_depth_mm(obs: dict, pointmap_config) -> float:
     return float(valid.median()) * float(pointmap_config.depth_units_mm)
 
 
+def _thumbnails(result, obs: dict, pointmap_config, max_width: int = 160) -> dict[str, np.ndarray]:
+    """Small previews keyed by the same segment names the budget uses.
+
+    RGB comes from the model-view crops, not the raw observation, so the picture is
+    what the attended tokens were actually built from. Depth stays in mm and keeps
+    its zeros, which the renderer masks off rather than painting as near-camera.
+    """
+    thumbs: dict[str, np.ndarray] = {}
+    for name, tensor in (result.extras.get("image_tensors_by_segment") or {}).items():
+        if "_crop" in str(name) or not torch.is_tensor(tensor):
+            continue
+        image = (tensor.squeeze(0).detach().float().cpu() * 0.5 + 0.5).clamp(0, 1).permute(1, 2, 0)
+        array = image.numpy()
+        step = max(1, array.shape[1] // max_width)
+        thumbs[str(name)] = (array[::step, ::step] * 255).astype(np.uint8)
+
+    depth = obs.get(f"observation.depth.{pointmap_config.depth_key}") if pointmap_config else None
+    if torch.is_tensor(depth):
+        array = depth.detach().float().cpu().squeeze().numpy() * float(pointmap_config.depth_units_mm)
+        step = max(1, array.shape[1] // max_width)
+        thumbs["depth"] = array[::step, ::step]
+    return thumbs
+
+
+def _filmstrip(fig, grid, keys: list[str], picks: np.ndarray, thumbnails: list[dict], frame_meta: list[dict]) -> None:
+    """One column per picked frame, one row per modality, aligned to the frame axis."""
+    valid = np.concatenate(
+        [thumbnails[f]["depth"][thumbnails[f]["depth"] > 0].ravel() for f in picks if "depth" in thumbnails[f]]
+        or [np.zeros(1)]
+    )
+    low, high = np.percentile(valid, [5, 95]) if valid.size > 1 else (0.0, 1.0)
+
+    for row, key in enumerate(keys):
+        for col, frame in enumerate(picks):
+            ax = fig.add_subplot(grid[row, col])
+            thumb = thumbnails[frame].get(key)
+            if thumb is not None and key == "depth":
+                ax.imshow(np.where(thumb > 0, thumb, np.nan), cmap="turbo", vmin=low, vmax=high)
+            elif thumb is not None:
+                ax.imshow(thumb)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if row == 0:
+                meta = frame_meta[frame]
+                ax.set_title(f"f{frame}  ep{meta['episode_idx']}:{meta['frame_idx']}", fontsize=7, pad=2)
+            if col == 0:
+                label = "depth (mm)" if key == "depth" else key
+                ax.set_ylabel(label, fontsize=8, color=_color(key), fontweight="bold")
+            if row == len(keys) - 1:
+                ax.set_xlabel(textwrap.fill(frame_meta[frame].get("subtask") or "", 18), fontsize=5.5)
+
+
 def _render(
     names: list[str],
     mass: np.ndarray,          # [frames, layers, segments]
@@ -200,12 +263,31 @@ def _render(
     frame_meta: list[dict],
     depth_mm: np.ndarray,
     token_counts: dict[str, int],
+    thumbnails: list[dict],
     output_path: str,
 ) -> None:
     focus = len(layers) // 2  # middle probed layer: past the near-positional early stack
-    fig, axes = plt.subplots(2, 3, figsize=(20, 10.5))
     steps = np.arange(len(frame_meta))
     colors = [_color(n) for n in names]
+
+    strip_keys = sorted({k for t in thumbnails for k in t if k != "depth"})
+    strip_keys += ["depth"] if any("depth" in t for t in thumbnails) else []
+    picks = np.unique(np.linspace(0, len(frame_meta) - 1, min(len(frame_meta), 12)).round().astype(int))
+    strip_height = 1.25 * len(strip_keys)
+
+    fig = plt.figure(figsize=(20, 10.5 + strip_height))
+    if strip_keys:
+        outer = fig.add_gridspec(
+            2, 1, height_ratios=[10.5, strip_height], hspace=0.10,
+            left=0.045, right=0.985, top=0.93, bottom=0.055,
+        )
+        panels = outer[0].subgridspec(2, 3, hspace=0.34, wspace=0.22)
+        _filmstrip(fig, outer[1].subgridspec(len(strip_keys), len(picks), hspace=0.06, wspace=0.03),
+                   strip_keys, picks, thumbnails, frame_meta)
+    else:
+        panels = fig.add_gridspec(2, 3, hspace=0.34, wspace=0.22,
+                                  left=0.045, right=0.985, top=0.93, bottom=0.06)
+    axes = np.array([[fig.add_subplot(panels[r, c]) for c in range(3)] for r in range(2)])
 
     axes[0, 0].stackplot(steps, mass[:, focus, :].T, labels=names, colors=colors, alpha=0.9)
     axes[0, 0].set_ylim(0, 1)
@@ -222,6 +304,11 @@ def _render(
     axes[0, 1].set_ylabel("centered log-ratio")
     axes[0, 1].set_title(f"Compositional shift, layer {layers[focus]}\n(level-invariant; this is the real signal)")
     axes[0, 1].legend(fontsize=6, ncol=2)
+
+    # Tick only where a filmstrip thumbnail exists, so a tick label names a picture.
+    if strip_keys:
+        for ax in (axes[0, 0], axes[0, 1]):
+            ax.set_xticks(picks, [f"f{p}" for p in picks], fontsize=7)
 
     image = axes[0, 2].imshow(mass.mean(axis=0).T, aspect="auto", cmap="viridis", vmin=0.0)
     axes[0, 2].set_xticks(range(len(layers)), [str(layer) for layer in layers])
@@ -241,6 +328,10 @@ def _render(
         if finite.sum() >= 3:
             rho, p = _spearman(depth_mm[finite], ratio[finite])
             ax.scatter(depth_mm[finite], ratio[finite], s=26, alpha=0.75, color="#e6194b")
+            for frame in picks:
+                if finite[frame]:
+                    ax.annotate(f"f{frame}", (depth_mm[frame], ratio[frame]), fontsize=6,
+                                alpha=0.7, xytext=(3, 3), textcoords="offset points")
             ax.set_title(f"log(depth / {wrist}) vs scene distance\nSpearman rho={rho:+.2f} (p={p:.3g})")
         else:
             ax.set_title(f"log(depth / {wrist}) vs scene distance — no valid depth")
@@ -258,6 +349,8 @@ def _render(
     axes[1, 1].set_ylabel("normalized row entropy")
     axes[1, 1].set_title("Sharpening control\n(flat here ⇒ composition moves are real)")
     axes[1, 1].legend(fontsize=7)
+    if strip_keys:
+        axes[1, 1].set_xticks(picks, [f"f{p}" for p in picks], fontsize=7)
 
     query_mass = by_query[:, focus, :, :].mean(axis=0)  # [segments, Q]
     image = axes[1, 2].imshow(query_mass, aspect="auto", cmap="magma", vmin=0.0)
@@ -275,7 +368,6 @@ def _render(
         fontsize=14,
         fontweight="bold",
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(output_path, bbox_inches="tight", dpi=125)
     plt.close(fig)
 
@@ -309,6 +401,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     frame_meta: list[dict] = []
     depth_mm: list[float] = []
     fd_rows: list[dict] = []
+    thumbnails: list[dict] = []
 
     try:
         for ep_idx, fr_idx, global_idx in samples:
@@ -359,6 +452,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 _median_valid_depth_mm(frame["obs"], pointmap_config)
                 if pointmap_config is not None else float("nan")
             )
+            thumbnails.append(_thumbnails(result, frame["obs"], pointmap_config))
 
             if want_fd:
                 fd_rows.append(_fd_sensitivity(adapter, frame, pointmap_config))
@@ -394,7 +488,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         frame_idx=np.asarray([m["frame_idx"] for m in frame_meta]),
     )
     _render(names, mass, by_query, entropy, layers, frame_meta, depth_array,
-            token_counts, os.path.join(output_dir, "budget.png"))
+            token_counts, thumbnails, os.path.join(output_dir, "budget.png"))
 
     focus = len(layers) // 2
     ranked = sorted(names, key=lambda n: -mass[:, focus, names.index(n)].mean())
@@ -413,6 +507,81 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             f"[attention_budget] log(depth/wrist) vs scene distance: rho={rho:+.3f} "
             f"(p={summary['depth_distance_spearman']['p']:.3g}); negative ⇒ depth share rises up close"
         )
+
+    focus_key = str(layers[focus])
+    clr_at_focus = _clr(mass[:, focus, :])
+    write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Attention Budget",
+        group="Attention",
+        claim="How is the fixed attention budget split across modalities, and what moves it?",
+        summary=summary,
+        see_also=["attention", "depth_modality", "offline_inference"],
+        metrics=[
+            Metric(
+                "budget_sums_to.min", "Budget partition completeness", good="high", fmt=4, primary=True,
+                baseline=1.0, warn=0.99, bad=0.98,
+                note=(
+                    "Every row sums to 1 by construction, so a value below 1 means the column "
+                    "partition is missing mass and every share below is diluted by an unknown amount."
+                ),
+            ),
+            Metric(
+                "clr_std_max", "Largest compositional shift (clr std)", good="none", fmt=3, primary=True,
+                value=float(clr_at_focus.std(axis=0).max()),
+                note=f"most variable segment: {volatile[0]}",
+            ),
+            Metric(
+                "entropy_at_focus", "Row entropy at the focus layer", good="none", fmt=3, primary=True,
+                value=float(entropy[:, focus].mean()),
+                note=(
+                    "The sharpening control. If this is flat while the composition moves, the "
+                    "composition move is real rather than the whole distribution tightening."
+                ),
+            ),
+            Metric(
+                "entropy_std_by_layer." + focus_key, "Entropy spread across frames",
+                good="none", fmt=3,
+            ),
+            Metric(
+                "depth_distance_spearman.rho", "log(depth / wrist) vs scene distance",
+                good="low", fmt=3, baseline=0.0, refs=["depth_modality"], primary=True,
+                note=(
+                    "Negative means depth takes a larger share as the scene gets closer. Mediated, "
+                    "not causal: approaching an object changes phase, gripper state and pixels at once."
+                ),
+            ),
+            Metric("depth_distance_spearman.p", "…its p-value", good="low", fmt=4),
+            Metric(
+                "fd_sensitivity_mean.depth", "Causal sensitivity to depth", good="none", fmt=4,
+                note="Only populated with --probe_parameters.budget_fd_sensitivity. Mass says a "
+                     "segment was read; this says perturbing it changes the actions.",
+            ),
+            Metric("fd_sensitivity_mean.rgb_wrist", "Causal sensitivity to wrist RGB",
+                   good="none", fmt=4),
+            Metric("focus_layer", "Focus layer", good="none", fmt=0),
+            Metric("n_frames", "Frames measured", good="none", fmt=0),
+        ],
+        panels=[
+            Panel(
+                "budget.png",
+                f"Attention budget across {len(frame_meta)} frames, focus layer {layers[focus]}",
+                "Six panels over one filmstrip. **Top left** is the raw share per segment per frame — "
+                "read it for scale only, since the shares are mechanically coupled. **Top middle** is "
+                "the same data in centred log-ratio and is the panel that actually carries the signal: "
+                "movement here is a change of composition, not of level. **Top right** shows how the "
+                "split evolves with depth through the layers. **Bottom left** tests whether depth's "
+                "share rises as the scene gets closer. **Bottom middle** is the sharpening control — "
+                "flat entropy means the composition moves above are genuine. **Bottom right** splits "
+                "the budget by position within the action chunk. The filmstrip's frames line up with "
+                "the x-ticks above, so any feature in the series can be traced to the scene that "
+                "produced it.",
+                primary=True,
+                refs=["attention"],
+            ),
+        ],
+    )
 
 
 def _fd_sensitivity(adapter, frame, pointmap_config) -> dict:

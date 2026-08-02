@@ -470,6 +470,42 @@ def test_encoder_valid_history_recovers_fully_empty_current_patch():
     assert torch.allclose(dropped, null)
 
 
+@pytest.mark.parametrize("chunk_rows", [0, 4, 2])
+@pytest.mark.parametrize("history", [2, 0])
+def test_encoder_checkpointing_changes_nothing_but_memory(history, chunk_rows):
+    """Checkpointing the patch CNN, and chunking it over patch rows, must be exact.
+
+    Chunking is only sound because every op in the trunk (convs, GroupNorm, the
+    same-pixel temporal attention, the final spatial mean) is independent across
+    patch rows; a future op that mixes rows would silently break this.
+    """
+    cfg = DepthPointmapConfig(
+        image_size=(80, 80), patch_size=40, depth_units_mm=1.0,
+        history_num_samples=history, dropout_prob=0.0, encoder_chunk_rows=chunk_rows,
+    )
+    batch = {"observation.depth.wrist": torch.rand(3, 80, 80) * 400 + 100}
+    if history:
+        batch["history.depth.wrist.depth"] = torch.rand(3, history, 80, 80) * 400 + 100
+        batch["history_images_mask"] = torch.tensor([True, False, True])
+
+    grads = []
+    outs = []
+    for gradient_checkpointing in (False, True):
+        torch.manual_seed(0)
+        enc = DepthPointmapEncoder(
+            cfg, d_mem=16, gradient_checkpointing=gradient_checkpointing
+        ).train()
+        out = enc.memory_from_batch(batch, batch_size=3, device=torch.device("cpu"))
+        out.pow(2).mean().backward()
+        outs.append(out.detach())
+        grads.append({n: p.grad.clone() for n, p in enc.named_parameters() if p.grad is not None})
+
+    torch.testing.assert_close(outs[0], outs[1], rtol=1e-5, atol=1e-6)
+    assert grads[0].keys() == grads[1].keys() and grads[0]
+    for name in grads[0]:
+        torch.testing.assert_close(grads[0][name], grads[1][name], rtol=1e-4, atol=1e-7, msg=name)
+
+
 def test_config_rejects_negative_history_samples():
     with pytest.raises(ValueError, match="history_num_samples"):
         DepthPointmapConfig(history_num_samples=-1)

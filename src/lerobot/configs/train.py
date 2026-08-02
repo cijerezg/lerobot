@@ -314,7 +314,16 @@ class ProbeConfig:
     # Actions / representations
     ref_max_episodes: int = 40
     ref_n_frames_per_episode: int = 256
-    action_pca_dims: int = 50  # action-manifold PCA
+    action_pca_dims: int = 50  # action-manifold PCA — the space every action metric is measured in
+    # Reference frames nearest in state space that a prediction is allowed to match
+    # against ("is this motion performed *from here*"). Too wide and it degenerates to
+    # the global nearest neighbour; too narrow and the neighbourhood is noise.
+    action_nn_state_k: int = 256
+    # Where the fitted reference manifold is cached. None = action_manifold.pt one level
+    # above the probe's output, i.e. shared by every validation step of a run. Point
+    # several runs at one path to hold the coordinate system fixed across checkpoints; a
+    # refit is logged loudly because it invalidates comparison with earlier runs.
+    action_manifold_cache: str | None = None
     repr_pca_dims: int = 100
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1

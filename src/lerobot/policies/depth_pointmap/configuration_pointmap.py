@@ -66,6 +66,17 @@ class DepthPointmapConfig:
     # to the 6B backbone.
     cnn_hidden_channels: tuple[int, int] = (128, 256)
 
+    # Gradient-checkpointing granularity for the patch CNN, in patch rows (a row is
+    # one patch of one sample, so a batch of B contributes B·N rows). The trunk is
+    # recomputed one chunk at a time, which caps the recompute peak at a value set by
+    # this number instead of letting it scale with the batch: the trunk holds
+    # full-resolution feature maps for every frame, and at the (128, 256) widths above
+    # that is the single largest activation in the whole model. Every op in it (convs,
+    # GroupNorm, the same-pixel temporal attention, the final spatial mean) is
+    # independent across rows, so splitting them is exact. 0 = one chunk (no cap).
+    # Only consulted when the policy enables gradient checkpointing.
+    encoder_chunk_rows: int = 384
+
     # --- MoT co-evolving depth stream (depth_pointmap_design.md Part B) ------
     # The encoder's tokens co-evolve through M light transformer blocks (depth
     # self-attention + cross-attention to the wrist-cam KV), read per-layer by the
@@ -109,6 +120,8 @@ class DepthPointmapConfig:
             raise ValueError(f"rgb_dropout_prob must be in [0, 1), got {self.rgb_dropout_prob}.")
         if not self.cnn_hidden_channels or any(c <= 0 for c in self.cnn_hidden_channels):
             raise ValueError(f"cnn_hidden_channels must be positive, got {self.cnn_hidden_channels}.")
+        if self.encoder_chunk_rows < 0:
+            raise ValueError(f"encoder_chunk_rows must be >= 0, got {self.encoder_chunk_rows}.")
         if self.history_num_samples < 0:
             raise ValueError(f"history_num_samples must be >= 0, got {self.history_num_samples}.")
         if self.history_window_seconds <= 0:

@@ -325,7 +325,13 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
 
     x: (BC, T, n, D) frames oldest → newest (current last); e_t: (T, D);
     history_on: (BC,) bool or None. Queries loop over frames (peak memory
-    ~n*(n+T) scores per frame instead of a (Tn)^2 union)."""
+    ~n*(n+T) scores per frame instead of a (Tn)^2 union), and each frame's
+    attention is checkpointed on its own: this block already runs inside the
+    per-resblock checkpoint, so during that recompute every frame's (n, n+t) scores
+    would otherwise be live at once — ~584 MiB per sample per temporal layer at 729
+    patches. Holding one frame instead of T costs a second recompute of the six
+    temporal layers and changes no arithmetic.
+    """
     attn = block.attention
     x = x + e_t.to(x.dtype)[None, :, None, :]
     h = block.attention_norm(x)
@@ -344,9 +350,7 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
         q, k = q.to(torch.float32), k.to(torch.float32)
     dropout_p = attn.attention_dropout if block.training else 0.0
 
-    outs = []
-    for t in range(num_frames):
-        q_t = q[:, t] / math.sqrt(head_dim)  # divide, matching the module's eager path
+    def frame_out(q_t: Tensor, k: Tensor, v: Tensor, t: int) -> Tensor:
         scores = torch.einsum("bqhd,bkhd->bhqk", q_t, k[:, t])  # (BC, H, n, n)
         if t > 0:
             temporal = torch.einsum("bnhd,bsnhd->bhns", q_t, k[:, :t])  # (BC, H, n, t)
@@ -373,7 +377,22 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
         out_t = torch.einsum("bhqk,bkhd->bqhd", weights[..., :n], v[:, t])
         if t > 0:
             out_t = out_t + torch.einsum("bhns,bsnhd->bnhd", weights[..., n:], v[:, :t])
-        outs.append(out_t)
+        return out_t
+
+    # Capture appends to a module-global list, so it must not run twice per frame.
+    use_checkpoint = (
+        block.training and torch.is_grad_enabled() and not _MEM_TEMPORAL_CAPTURE["enabled"]
+    )
+
+    outs = []
+    for t in range(num_frames):
+        q_t = q[:, t] / math.sqrt(head_dim)  # divide, matching the module's eager path
+        if use_checkpoint:
+            outs.append(
+                torch.utils.checkpoint.checkpoint(frame_out, q_t, k, v, t, use_reentrant=False)
+            )
+        else:
+            outs.append(frame_out(q_t, k, v, t))
 
     out = torch.stack(outs, dim=1).to(og_dtype).reshape(bc, num_frames, n, heads * head_dim)
     x = x + attn.residual_dropout(attn.wo(out))
@@ -1203,9 +1222,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     f"count {num_layers} (the action expert reads one depth state per layer)."
                 )
             cross_attn = action_expert.blocks[0].cross_attn
-            self.pointmap_encoder = DepthPointmapEncoder(pm_config, d_mem=pm_config.stream_width).to(
-                device=device, dtype=torch.float32
-            )
+            self.pointmap_encoder = DepthPointmapEncoder(
+                pm_config,
+                d_mem=pm_config.stream_width,
+                gradient_checkpointing=bool(self.config.gradient_checkpointing),
+            ).to(device=device, dtype=torch.float32)
             self.depth_stream = DepthStream(
                 pm_config,
                 d_vlm=int(action_expert.llm_kv_dim),
@@ -1993,17 +2014,30 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else:
                 position_embeddings_i = position_embeddings
 
-            layer_outputs = decoder_block(
-                layer_hidden,
-                position_embeddings=position_embeddings_i,
-                attention_mask=causal_mask_mapping,
-                position_ids=position_ids,
-                past_key_values=None,
-                output_attentions=False,
-                use_cache=False,
-                cache_position=cache_position,
-                collect_layer_kv_states=True,
-            )
+            # run_layer is itself the checkpoint unit, but MolmoAct2DecoderLayer is a
+            # transformers GradientCheckpointingLayer whose __call__ would wrap this
+            # call in a second checkpoint — the outer one has already discarded the
+            # block's activations, so the inner one saves nothing and only buys a
+            # third execution of the layer per micro-batch (measured 3.00x vs 2.00x).
+            # Toggled per call rather than once at load: the flag has to be off during
+            # the outer recompute too, which runs this function again from backward.
+            # The generation forward goes through the HF loop and still needs it on.
+            was_checkpointing = decoder_block.gradient_checkpointing
+            decoder_block.gradient_checkpointing = False
+            try:
+                layer_outputs = decoder_block(
+                    layer_hidden,
+                    position_embeddings=position_embeddings_i,
+                    attention_mask=causal_mask_mapping,
+                    position_ids=position_ids,
+                    past_key_values=None,
+                    output_attentions=False,
+                    use_cache=False,
+                    cache_position=cache_position,
+                    collect_layer_kv_states=True,
+                )
+            finally:
+                decoder_block.gradient_checkpointing = was_checkpointing
             next_hidden = layer_outputs[0]
             key_states, value_states = self._decoder_layer_kv_outputs(layer_outputs, output_attentions=False)
             key_states = backbone._cache_to_sequence(key_states)

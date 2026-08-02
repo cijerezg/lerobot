@@ -1,4 +1,4 @@
-"""Does the subtask clause reach the actions at all? (the old plan's P3)
+r"""Does the subtask clause reach the actions at all? (the old plan's P3)
 
 Hop two of the memory chain. The summary memory never enters the action prompt — it
 reaches behaviour only through the decoded subtask — so if the subtask clause does
@@ -12,13 +12,14 @@ action prompt, identical fixed-seed flow noise on every pass, and ask two questi
 
 **1. Does the clause move the output more than noise does?** Vocabulary spread is
 compared against a *seed floor* — the same prompt re-sampled under different flow
-seeds. Both are RMSE in normalized action space, so
+seeds. With $a_\ell$ the chunk under label $\ell$ and $a^{(s)}$ the chunk under
+seed $s$, both measured as RMSE in normalized action space,
 
-    separation = mean pairwise spread across labels / spread across seeds
+    $$S = \frac{\text{mean}_{\ell \neq \ell'} \lVert a_\ell - a_{\ell'} \rVert}{\text{mean}_{s \neq s'} \lVert a^{(s)} - a^{(s')} \rVert}$$
 
-is the honest statistic. A raw spread of 0.05 means nothing on its own; 0.05 against
-a seed floor of 0.05 means the clause does nothing, and against a floor of 0.005 it
-means the clause dominates. This is the number to read first.
+is the honest statistic. A raw spread of $0.05$ means nothing on its own: against a
+seed floor of $0.05$ the clause does nothing, and against a floor of $0.005$ it
+dominates. This is the number to read first.
 
 **2. Is the clause used *correctly*?** For each frame, rank the vocabulary by MSE
 against the demonstrated chunk and record where the ground-truth label lands. If the
@@ -34,6 +35,7 @@ Registered probe: enable with ``probe_parameters.enable_subtask_sweep``.
 import json
 import logging
 import os
+import sys
 
 import matplotlib
 matplotlib.use("Agg")
@@ -41,6 +43,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     makedirs,
     probe_frame_inputs,
@@ -229,6 +232,52 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     with open(os.path.join(output_dir, "subtask_sweep.json"), "w") as f:
         json.dump(summary, f, indent=2)
     _render(rows, vocabulary, example, output_dir)
+
+    write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Subtask Sweep",
+        group="Steering",
+        claim="Does swapping the subtask clause move the chunk more than flow noise does?",
+        summary=summary,
+        see_also=["metadata_steering", "mem_history_influence", "offline_inference"],
+        metrics=[
+            Metric(
+                "separation_median", "Separation (vocabulary / seed floor)", good="high", fmt=2,
+                baseline=1.0, bad=1.2, warn=2.0, primary=True,
+                note="At 1.0 the clause does nothing and hop two of the memory chain is severed.",
+            ),
+            Metric("separation_mean", "Separation (mean)", good="high", fmt=2, baseline=1.0),
+            Metric("vocab_spread_mean", "Spread across labels", good="none", fmt=4,
+                   note="Meaningless alone — only its ratio to the seed floor is interpretable."),
+            Metric("seed_floor_mean", "Seed floor (same clause, new noise)", good="none", fmt=4),
+            Metric(
+                "gt_rank_mean", "GT label rank", good="low", fmt=1, primary=True,
+                baseline=summary["gt_rank_uniform_expectation"],
+                warn=summary["gt_rank_uniform_expectation"] * 0.8,
+                bad=summary["gt_rank_uniform_expectation"],
+                note=(
+                    f"Uniform expectation is {summary['gt_rank_uniform_expectation']:.1f} of "
+                    f"{len(vocabulary)}. At uniform, the clause is read but not understood."
+                ),
+            ),
+            Metric("gt_rank_top1_fraction", "GT label ranked first", good="high", fmt=2, primary=True,
+                   baseline=1.0 / max(len(vocabulary), 1)),
+            Metric("n_labels", "Vocabulary size", good="none", fmt=0),
+            Metric("n_frames", "Frames measured", good="none", fmt=0),
+        ],
+        panels=[
+            Panel(
+                "subtask_sweep.png",
+                "Chunk distance per vocabulary label, with the seed floor marked",
+                "Bars are how far each label moves the chunk; the dashed line is what re-running one "
+                "label under different noise produces. Bars buried under the dashed line mean the "
+                "clause is doing nothing — read the ratio $S$, never the bar heights.",
+                primary=True,
+                refs=["metadata_steering"],
+            ),
+        ],
+    )
 
     logging.info(
         f"[subtask_sweep] n={len(rows)}  vocab spread={summary['vocab_spread_mean']:.4f}  "

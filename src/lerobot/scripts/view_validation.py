@@ -27,18 +27,19 @@ SPATIAL_ACTION_JACOBIAN_DIRS = (
 )
 
 ACTION_VIEWS = {
+    "Distances": "actions/2d/distances.png",
+    "By subtask (ratio)": "actions/2d/per_subtask.png",
+    "Drift over time": "actions/2d/drift_over_time.png",
+    "Manifold": ("actions/2d/manifold.png", "actions/2d/trajectories.png"),
     "Overview": "actions/2d/overview.png",
-    "Trajectories": ("actions/2d/trajectories.png", "actions/2d/val/trajectories.png"),
     "By frame": ("actions/2d/by_frame.png", "actions/2d/val/by_frame.png"),
     "By subtask": ("actions/2d/by_subtask.png", "actions/2d/val/by_subtask.png"),
-    "NN distances": ("actions/2d/nn_distances.png", "actions/2d/val/nn_distances.png"),
 }
 
 ACTION_3D_VIEWS = {
     "3D Overview": "actions/3d/overview.html",
     "3D by episode": "actions/3d/by_episode.html",
     "3D by frame": "actions/3d/by_frame.html",
-    "3D by subtask": "actions/3d/by_subtask.html",
 }
 
 REPR_COLORINGS = ["by_episode", "by_frame", "by_subtask"]

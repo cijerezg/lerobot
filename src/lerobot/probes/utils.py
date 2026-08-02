@@ -319,6 +319,42 @@ def get_frame_data(dataset, global_idx: int, chunk_size: int):
     return obs, gt_actions, state, gt_subtask, task_str, episode_idx, frame_idx
 
 
+def get_action_chunk_lowdim(dataset, global_idx: int, chunk_size: int):
+    """GT action chunk + state for one frame, without decoding video.
+
+    `get_frame_data` opens `dataset[global_idx]`, which decodes every camera for a
+    frame whose images are then discarded — ten thousand frames' worth when the
+    action probe fits its reference manifold. Actions, state and episode columns all
+    live in the parquet, so a reference pass never needs the video decoder.
+
+    Chunks stop at the episode boundary and repeat the last action to length, matching
+    `get_frame_data`.
+
+    Returns ``(gt_actions [chunk_size, action_dim] raw, state [state_dim] or None,
+    episode_idx, frame_idx)``.
+    """
+    row = dataset.hf_dataset[global_idx]
+    episode_idx = int(row["episode_index"].item())
+    frame_idx = int(row["frame_index"].item())
+
+    actions = []
+    for offset in range(chunk_size):
+        candidate_idx = global_idx + offset
+        if candidate_idx >= len(dataset):
+            break
+        item = dataset.hf_dataset[candidate_idx]
+        if int(item["episode_index"].item()) != episode_idx:
+            break
+        actions.append(item["action"].detach().clone().float())
+
+    while len(actions) < chunk_size:
+        actions.append(actions[-1].clone())
+    gt_actions = torch.stack(actions[:chunk_size])
+
+    state = row["observation.state"].float() if "observation.state" in row else None
+    return gt_actions, state, episode_idx, frame_idx
+
+
 def probe_frame_inputs(
     dataset,
     cfg,

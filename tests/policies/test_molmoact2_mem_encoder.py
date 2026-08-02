@@ -256,3 +256,87 @@ def test_encode_image_camera_count_mismatch_raises():
     vb._lerobot_history = (torch.randn(2, 1, 3, PATCHES, 6), torch.tensor([3.0, 2.0, 1.0]), None)
     with pytest.raises(ValueError, match="one crop per camera"):
         vb.encode_image(torch.randn(2, 2, PATCHES, 6))
+
+
+# ---------------------------------------------------------------------------
+# Per-frame checkpointing (activation memory of the temporal blocks)
+# ---------------------------------------------------------------------------
+
+
+def test_temporal_block_checkpointing_is_arithmetically_invisible():
+    """train() checkpoints each query frame, eval() does not. Both must produce the
+    same output AND the same gradients — the whole point is that only liveness of the
+    (n, n+t) score matrices changes."""
+    block = StubBlock()
+    e_t = _sinusoidal_seconds_embedding(torch.tensor([2.0, 1.0, 0.0]), DIM)
+    history_on = torch.tensor([False, True])
+
+    def run(training):
+        torch.manual_seed(1)
+        x = torch.randn(2, 3, PATCHES, DIM, requires_grad=True)
+        block.train(training)
+        out = _temporal_vision_block(block, x, e_t, history_on)
+        grads = torch.autograd.grad(out.square().sum(), [x, *block.parameters()])
+        return out, grads
+
+    (out_ckpt, grads_ckpt), (out_plain, grads_plain) = run(True), run(False)
+    assert torch.equal(out_ckpt, out_plain)
+    for g_ckpt, g_plain in zip(grads_ckpt, grads_plain, strict=True):
+        assert torch.allclose(g_ckpt, g_plain, atol=1e-6), (g_ckpt - g_plain).abs().max()
+
+
+def test_temporal_block_capture_records_once_under_training():
+    """Capture appends to a module global, so the frame must not be checkpointed while
+    it is enabled — a recompute would double every record."""
+    block = StubBlock().train()
+    x = torch.randn(2, 4, PATCHES, DIM, requires_grad=True)
+    e_t = _sinusoidal_seconds_embedding(torch.tensor([3.0, 2.0, 1.0, 0.0]), DIM)
+    _MEM_TEMPORAL_CAPTURE["records"].clear()
+    _MEM_TEMPORAL_CAPTURE["enabled"] = True
+    try:
+        _temporal_vision_block(block, x, e_t, None).square().sum().backward()
+    finally:
+        _MEM_TEMPORAL_CAPTURE["enabled"] = False
+    assert len(_MEM_TEMPORAL_CAPTURE["records"]) == 1
+    _MEM_TEMPORAL_CAPTURE["records"].clear()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="peak-memory probe needs CUDA")
+def test_temporal_block_checkpointing_drops_peak_activation_memory():
+    """The saving this exists for: score matrices stop accumulating over frames.
+    Sized so the (n, n+t) scores dominate everything else in the block."""
+    n, dim, heads, frames = 512, 64, 8, 6
+
+    class WideAttention(StubAttention):
+        def __init__(self):
+            super().__init__()
+            self.num_heads = self.num_key_value_heads = heads
+            self.head_dim = dim // heads
+            self.wq = nn.Linear(dim, dim)
+            self.wk = nn.Linear(dim, dim)
+            self.wv = nn.Linear(dim, dim)
+            self.wo = nn.Linear(dim, dim)
+
+    block = StubBlock()
+    block.attention = WideAttention()
+    block.attention_norm = nn.LayerNorm(dim)
+    block.ffn_norm = nn.LayerNorm(dim)
+    block.feed_forward = nn.Sequential(nn.Linear(dim, dim * 2), nn.GELU(), nn.Linear(dim * 2, dim))
+    block = block.cuda()
+    e_t = _sinusoidal_seconds_embedding(torch.arange(frames, 0, -1, dtype=torch.float32).cuda(), dim)
+
+    def peak(training):
+        block.train(training)
+        x = torch.randn(2, frames, n, dim, device="cuda", requires_grad=True)
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        base = torch.cuda.memory_allocated()
+        _temporal_vision_block(block, x, e_t, None).square().sum()
+        torch.cuda.synchronize()
+        return torch.cuda.max_memory_allocated() - base
+
+    plain, checkpointed = peak(False), peak(True)
+    # frames score matrices live at once vs one: well over 2x even with the rest of
+    # the block counted in.
+    assert checkpointed * 2 < plain, f"checkpointed={checkpointed} plain={plain}"

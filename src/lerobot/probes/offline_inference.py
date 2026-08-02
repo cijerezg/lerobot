@@ -38,6 +38,7 @@ Usage examples:
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
@@ -50,6 +51,7 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     build_sample_list,
     load_probe_dataset,
@@ -503,9 +505,9 @@ def _write_action_metrics(preds, frame_data, samples, joint_names, output_dir: s
     return metrics
 
 
-def _write_memory_ablation(rows: list[dict], output_dir: str) -> None:
+def _write_memory_ablation(rows: list[dict], output_dir: str) -> dict:
     if not rows:
-        return
+        return {}
 
     def _correct(pred: str, target: str) -> bool:
         return pred.strip().casefold() == target.strip().casefold()
@@ -532,6 +534,7 @@ def _write_memory_ablation(rows: list[dict], output_dir: str) -> None:
         f"empty-memory acc={summary['empty_memory_subtask_accuracy']:.3f}  "
         f"delta={summary['accuracy_delta']:+.3f}"
     )
+    return summary
 
 
 def _render_memory_ablation(rows: list[dict], frame_data: dict[int, dict], output_dir: str) -> None:
@@ -611,6 +614,95 @@ def _render_memory_ablation(rows: list[dict], frame_data: dict[int, dict], outpu
     plt.close(fig)
 
 
+def _write_manifest(output_dir: str, action_metrics: dict, memory_summary: dict, samples) -> dict:
+    """Describe the two Offline Inference readouts without viewer-side special cases."""
+    summary = {"action": action_metrics, "memory": memory_summary}
+    metrics = [
+        Metric(
+            "action.skill_vs_hold", "Skill recovered vs hold-still", good="high", fmt=3,
+            baseline=0.0, primary=True,
+            note="Positive means the policy removes error relative to repeating the current pose.",
+        ),
+        Metric(
+            "action.skill_vs_mean", "Skill recovered vs dataset mean", good="high", fmt=3,
+            baseline=0.0, primary=True,
+            note="Positive means the policy beats the best constant chunk over these sampled frames.",
+        ),
+        Metric(
+            "action.mse_norm", "Normalized action MSE", good="low", fmt=4, primary=True,
+            note="Read against both baseline errors below; its absolute scale is model-normalized.",
+        ),
+        Metric("action.baseline_hold", "Hold-still baseline MSE", good="none", fmt=4),
+        Metric("action.baseline_dataset_mean", "Dataset-mean baseline MSE", good="none", fmt=4),
+        Metric("action.n_frames", "Frames evaluated", good="none", fmt=0),
+    ]
+    if memory_summary:
+        metrics.extend(
+            [
+                Metric(
+                    "memory.accuracy_delta", "Subtask accuracy gain from GT memory",
+                    good="high", fmt=3, baseline=0.0, primary=True,
+                    note="GT-memory accuracy minus empty-memory accuracy on identical observations.",
+                ),
+                Metric(
+                    "memory.gt_memory_subtask_accuracy", "GT-memory subtask accuracy", good="high", fmt=3,
+                ),
+                Metric(
+                    "memory.empty_memory_subtask_accuracy", "Empty-memory subtask accuracy",
+                    good="none", fmt=3,
+                ),
+                Metric(
+                    "memory.decode_changed_fraction", "Memory changed the decoded subtask",
+                    good="none", fmt=3,
+                ),
+            ]
+        )
+
+    panels = []
+    for index, (episode_idx, frame_idx, _) in enumerate(samples):
+        filename = f"ep{episode_idx:04d}_fr{frame_idx:04d}.png"
+        panels.append(
+            Panel(
+                f"normalized_eval/{filename}",
+                f"Normalized action trace — episode {episode_idx}, frame {frame_idx}",
+                how="Blue is the demonstrated chunk; the coloured traces are the policy prediction. "
+                     "Judge whether their shape and timing agree in normalized model space, then use "
+                     "the headline baseline-relative metrics for the aggregate verdict.",
+                primary=index == 0,
+            )
+        )
+        panels.append(
+            Panel(
+                f"unnormalized_eval/{filename}",
+                f"Robot-space action trace — episode {episode_idx}, frame {frame_idx}",
+                how="The same prediction in dataset units. Use this to identify which physical joint "
+                     "drives an error; compare checkpoints with the normalized metrics, not this scale.",
+            )
+        )
+    if memory_summary:
+        panels.append(
+            Panel(
+                "memory_ablation.png",
+                "Language-memory ablation: identical observation with GT or empty memory",
+                how="Each row holds the observation fixed. Compare the GT-memory and empty-memory "
+                     "decoded subtasks; a change only matters when it moves the prediction toward GT.",
+                refs=["subtask_sweep", "mem_history_influence"],
+            )
+        )
+
+    return write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Offline Inference",
+        group="Actions",
+        claim="Does the checkpoint beat simple action baselines, and what does its memory change?",
+        summary=summary,
+        metrics=metrics,
+        panels=panels,
+        see_also=["actions", "subtask_sweep", "mem_history_influence"],
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
@@ -678,12 +770,12 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
         adapter, dataset, samples, frame_data, chunk_size, summary_lookup, cfg
     )
     logging.info(f"mse_norm  {path_label} ({path_str}): {sum(mse) / len(mse):.4f}")
-    _write_memory_ablation(memory_ablation, output_dir)
+    memory_summary = _write_memory_ablation(memory_ablation, output_dir)
     _render_memory_ablation(memory_ablation, frame_data, output_dir)
 
     action_dim = frame_data[samples[0][2]]["gt_actions"].shape[-1]
     joint_names = _joint_names_for_dim(action_dim)
-    _write_action_metrics(preds, frame_data, samples, joint_names, output_dir)
+    action_metrics = _write_action_metrics(preds, frame_data, samples, joint_names, output_dir)
     checkpoint_paths = {path_label: path_str}
 
     for ep_idx, fr_idx, global_idx in samples:
@@ -710,6 +802,7 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
             output_dir=dir_norm, state=None,
         )
 
+    _write_manifest(output_dir, action_metrics, memory_summary, samples)
     logging.debug(f"Done. {len(samples)} plots saved to {dir_unnorm}/ and {dir_norm}/")
 
 

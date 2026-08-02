@@ -29,6 +29,7 @@ import math
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+import torch.utils.checkpoint
 from torch import Tensor, nn
 
 from .configuration_pointmap import DepthPointmapConfig
@@ -238,9 +239,12 @@ class DepthPointmapEncoder(nn.Module):
     pixels invalid) and under whole-sample modality dropout / depth-missing.
     """
 
-    def __init__(self, config: DepthPointmapConfig, *, d_mem: int) -> None:
+    def __init__(
+        self, config: DepthPointmapConfig, *, d_mem: int, gradient_checkpointing: bool = False
+    ) -> None:
         super().__init__()
         self.config = config
+        self.gradient_checkpointing = gradient_checkpointing
         height, width = config.image_size
         self.num_tokens = (height // config.patch_size) * (width // config.patch_size)
 
@@ -274,6 +278,43 @@ class DepthPointmapEncoder(nn.Module):
         """Null bank for the token assembly — (B, N, d_mem); history never changes
         the token count, so there are no history slots to null."""
         return self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
+
+    def _fuse_trunk(self, x: Tensor, history_on: Tensor | None) -> Tensor:
+        """History trunk: (M, T, C_in, P, P) → (M, d_mem). One TemporalFusion after
+        each CNN block; past rows are dropped at the final pooling."""
+        for block, fusion in zip(self.cnn.blocks, self.temporal_fusions, strict=True):
+            m, t = x.shape[:2]
+            y = block(x.reshape(m * t, *x.shape[2:]))
+            x = fusion(y.view(m, t, *y.shape[1:]), history_on)
+        return x[:, -1].mean(dim=(-1, -2))
+
+    def _plain_trunk(self, x: Tensor, history_on: Tensor | None) -> Tensor:  # noqa: ARG002
+        """Historyless trunk: (M, C_in, P, P) → (M, d_mem)."""
+        return self.cnn(x)
+
+    def _run_trunk(self, trunk, x: Tensor, history_on: Tensor | None) -> Tensor:
+        """Run a trunk over the patch-row axis in gradient-checkpointed chunks.
+
+        The trunk is the model's largest activation by a wide margin (full-resolution
+        feature maps × every history frame, in float32), and it is the one module that
+        used to run without checkpointing. Chunking is exact — every op inside is
+        independent across patch rows — and it is what keeps the recompute peak from
+        scaling with the batch. See ``encoder_chunk_rows``."""
+        if not (self.gradient_checkpointing and self.training and torch.is_grad_enabled()):
+            return trunk(x, history_on)
+        rows = self.config.encoder_chunk_rows or x.shape[0]
+        return torch.cat(
+            [
+                torch.utils.checkpoint.checkpoint(
+                    trunk,
+                    x[start : start + rows],
+                    None if history_on is None else history_on[start : start + rows],
+                    use_reentrant=False,
+                )
+                for start in range(0, x.shape[0], rows)
+            ],
+            dim=0,
+        )
 
     def _patch_inputs(self, pointmap: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """(B, 4, H, W) point map → per-patch CNN input, centroids, empty mask:
@@ -322,7 +363,9 @@ class DepthPointmapEncoder(nn.Module):
                 )
 
         if self.temporal_fusions is None:
-            f = self.cnn(cnn_in.reshape(b * n, *cnn_in.shape[2:])).reshape(b, n, -1)
+            f = self._run_trunk(
+                self._plain_trunk, cnn_in.reshape(b * n, *cnn_in.shape[2:]), None
+            ).reshape(b, n, -1)
         else:
             x = cnn_in.unsqueeze(2)  # (B, N, 1, C_in, P, P) — current frame last
             if history_pointmaps is not None:
@@ -361,11 +404,7 @@ class DepthPointmapEncoder(nn.Module):
             on = None
             if history_enabled is not None:
                 on = history_enabled.repeat_interleave(n)
-            for block, fusion in zip(self.cnn.blocks, self.temporal_fusions, strict=True):
-                m, t = x.shape[:2]
-                y = block(x.reshape(m * t, *x.shape[2:]))
-                x = fusion(y.view(m, t, *y.shape[1:]), on)
-            f = x[:, -1].mean(dim=(-1, -2)).reshape(b, n, -1)  # past rows dropped here
+            f = self._run_trunk(self._fuse_trunk, x, on).reshape(b, n, -1)  # past rows dropped inside
 
         pe = fourier_position_encoding(
             centroid.reshape(b * n, 3),
