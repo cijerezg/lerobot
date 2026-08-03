@@ -291,12 +291,12 @@ class ProbeConfig:
     enable_attention: bool = True
     enable_offline_inference: bool = True
     enable_spatial_memorization: bool = True
-    enable_action_drift_jacobian: bool = False  # per-frame causal A*J maps (needs backward)
+    enable_action_drift_jacobian: bool = False  # subtask-conditioned action-output/token Jacobians
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
     enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
     enable_mem_history_influence: bool = False  # MEM: how much history (full/image/state) shifts the action chunk
     enable_mem_temporal_attention: bool = False  # MEM: temporal-read distributions + spatial examples
-    enable_action_trace: bool = False  # 3D URDF trace: table clearance + multimodality fan (open-loop)
+    enable_action_trace: bool = False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
     enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
     enable_depth_modality: bool = False  # point-map depth: 2x2 modality grid, per-layer mass, b_l
     enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
@@ -310,6 +310,10 @@ class ProbeConfig:
     offline_inference_n_frames: int = 5
     random_seed: int = 42
     timestep: float = 0.5  # single diffusion timestep used by all probes
+    # Action sensitivity: sample real frames within every episode/subtask and
+    # estimate each grouped full-horizon Jacobian norm with this many VJPs.
+    action_sensitivity_frames_per_subtask: int = 6
+    action_sensitivity_projections: int = 4
 
     # Actions / representations
     ref_max_episodes: int = 40

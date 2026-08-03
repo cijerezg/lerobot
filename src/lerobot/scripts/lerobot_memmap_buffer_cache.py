@@ -121,10 +121,73 @@ def write_array(outputs: dict[str, object], key: str, value: np.ndarray | np.gen
     outputs[sanitize_key(key)].write(array.tobytes(order="C"))
 
 
-def load_depth_png(root, depth_key: str, episode_index: int, frame_index: int) -> np.ndarray:
-    """Read one frame's sidecar depth PNG (uint16, raw 0.1mm levels) written by depth_writer.py."""
-    path = Path(root) / "depth" / depth_key / f"episode-{episode_index:06d}" / f"frame-{frame_index:06d}.png"
-    depth = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+_DEPTH_FRAMES: dict[tuple[str, str, int], list[int]] = {}
+_DEPTH_DELTA: dict[tuple[str, str, int], int] = {}
+
+
+def _episode_depth_frames(root, depth_key: str, episode_index: int) -> list[int]:
+    """Sorted frame indices that actually have a depth PNG, listed once per episode."""
+    cache_key = (str(root), depth_key, episode_index)
+    if cache_key not in _DEPTH_FRAMES:
+        d = Path(root) / "depth" / depth_key / f"episode-{episode_index:06d}"
+        if not d.is_dir():
+            raise FileNotFoundError(f"Missing depth sidecar directory: {d}")
+        _DEPTH_FRAMES[cache_key] = sorted(int(p.stem.split("-")[1]) for p in d.glob("frame-*.png"))
+    return _DEPTH_FRAMES[cache_key]
+
+
+def _episode_depth_step(root, depth_key: str, episode_index: int) -> int:
+    """The episode's own depth sampling period, in frames (1 = every frame).
+
+    Read off the sidecar rather than taken from config: the corpus mixes 30 Hz depth
+    (pre-``depth_stride`` recordings) with 10 Hz depth in the same dataset.
+    """
+    frames = _episode_depth_frames(root, depth_key, episode_index)
+    return min((b - a for a, b in zip(frames, frames[1:])), default=1)
+
+
+def load_depth_png(
+    root, depth_key: str, episode_index: int, frame_index: int, *, max_delta: int | None = None
+) -> np.ndarray:
+    """Read one frame's sidecar depth PNG (uint16, raw 0.1mm levels) written by depth_writer.py.
+
+    Depth is captured at 10 Hz (``--dataset.depth_stride 3``) while RGB is 30 Hz, so only
+    every 3rd frame has a PNG. The cache selects rows on the GLOBAL frame grid, but each
+    episode's PNGs sit on whatever phase it was recorded at — and consolidating sessions
+    by task renumbered the global index space without preserving that phase. For 8 of the
+    41 merged episodes the two grids are offset by a constant 1-2 frames, and the frames
+    the global grid asks for were never captured (there is no denser source: depth was
+    never a video stream).
+
+    ``max_delta`` bounds how far the nearest PNG may be. The default (None) derives it
+    from the episode's own sampling period — 0 for 30 Hz depth, 2 for 10 Hz — so a dense
+    episode still demands an exact hit while a strided one tolerates exactly its phase
+    offset, and no caller has to know which kind it is holding. The offset is constant
+    per episode, so this is a systematic 33-66 ms RGB/depth skew in the affected
+    episodes, not random jitter, and it stays under the depth sampling period the model
+    is already quantized to. Anything farther away is real missing data and still raises.
+    """
+    ep_dir = Path(root) / "depth" / depth_key / f"episode-{episode_index:06d}"
+    path = ep_dir / f"frame-{frame_index:06d}.png"
+    # exists() first: cv2.imread logs its own warning on every miss, and a phase-mismatched
+    # episode misses on every stored row — thousands of lines of noise per episode.
+    depth = cv2.imread(str(path), cv2.IMREAD_UNCHANGED) if path.exists() else None
+    if depth is None and max_delta is None:
+        max_delta = _episode_depth_step(root, depth_key, episode_index) - 1
+    if depth is None and max_delta > 0:
+        available = _episode_depth_frames(root, depth_key, episode_index)
+        nearest = min(available, key=lambda f: (abs(f - frame_index), f), default=None)
+        if nearest is not None and abs(nearest - frame_index) <= max_delta:
+            cache_key = (str(root), depth_key, episode_index)
+            if cache_key not in _DEPTH_DELTA:
+                _DEPTH_DELTA[cache_key] = nearest - frame_index
+                logger.warning(
+                    "[depth] ep%d %s: PNG grid is offset from the global stride grid; "
+                    "using the nearest PNG (delta %+d frames, %.0f ms). Phase mismatch, not missing data.",
+                    episode_index, depth_key, nearest - frame_index,
+                    abs(nearest - frame_index) / 30.0 * 1000.0,
+                )
+            depth = cv2.imread(str(ep_dir / f"frame-{nearest:06d}.png"), cv2.IMREAD_UNCHANGED)
     if depth is None:
         raise FileNotFoundError(f"Missing depth sidecar PNG: {path}")
     return depth
@@ -365,6 +428,7 @@ def main():
             to_bf16_uint16, image_to_numpy,
             depth_keys, dataset.root,
             write_images=idx % image_stride == 0,
+            depth_max_delta=image_stride - 1,
         )
         prev_sample = current_sample
         idx += 1
@@ -381,6 +445,7 @@ def main():
         to_bf16_uint16, image_to_numpy,
         depth_keys, dataset.root,
         write_images=idx % image_stride == 0,
+        depth_max_delta=image_stride - 1,
     )
     idx += 1
 
@@ -425,6 +490,7 @@ def _write_transition(
     image_to_numpy,
     depth_keys, dataset_root,
     write_images=True,
+    depth_max_delta=0,
 ):
     # State images — skipped on non-stride-aligned frames (image row = idx // stride)
     if write_images:
@@ -477,7 +543,8 @@ def _write_transition(
     if write_images:
         for key in depth_keys:
             depth = load_depth_png(
-                dataset_root, key, int(current_sample["episode_index"]), int(current_sample["frame_index"])
+                dataset_root, key, int(current_sample["episode_index"]),
+                int(current_sample["frame_index"]), max_delta=depth_max_delta,
             )
             write_array(outputs, f"depth.{key}", depth)
 

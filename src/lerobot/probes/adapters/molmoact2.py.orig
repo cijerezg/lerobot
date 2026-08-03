@@ -131,56 +131,14 @@ class MolmoAct2Adapter(ProbablePolicy):
         metadata: dict | None = None,
         generator: torch.Generator | None = None,
     ) -> tuple[Tensor, Tensor, str | None]:
-        return self.predict_action_chunk_in_mode(
-            obs,
-            task_str,
-            inference_action_mode=self._inference_action_mode(),
-            state=state,
-            advantage=advantage,
-            subtask=subtask,
-            metadata=metadata,
-            generator=generator,
-        )
-
-    @torch.no_grad()
-    def predict_action_chunk_in_mode(
-        self,
-        obs: dict[str, Tensor],
-        task_str: str,
-        *,
-        inference_action_mode: str,
-        state: Tensor | None = None,  # noqa: ARG002 — anchor comes from obs[OBS_STATE]
-        advantage: float | None = None,  # noqa: ARG002 — molmoact2 prompts carry no advantage clause
-        subtask: str | None = None,
-        metadata: dict | None = None,
-        generator: torch.Generator | None = None,
-    ) -> tuple[Tensor, Tensor, str | None]:
-        """Predict through one explicitly selected MolmoAct2 action decoder."""
-        if inference_action_mode not in {"continuous", "discrete"}:
-            raise ValueError(
-                "inference_action_mode must be either 'continuous' or 'discrete', "
-                f"got {inference_action_mode!r}."
-            )
         batch = self._make_batch(obs, task_str, subtask=subtask, metadata=metadata)
         # MolmoAct2Policy.predict_action_chunk returns [B, n_action_steps, action_dim],
         # already sliced and float32. See modeling_molmoact2.py:2004.
-        rtc_config = getattr(self._policy.config, "rtc_config", None)
-        restore_rtc = bool(
-            inference_action_mode == "discrete"
-            and rtc_config is not None
-            and bool(getattr(rtc_config, "enabled", False))
-        )
-        if restore_rtc:
-            rtc_config.enabled = False
-        try:
-            norm_actions = self._policy.predict_action_chunk(
-                batch,
-                inference_action_mode=inference_action_mode,
-                generator=generator,
-            ).float()
-        finally:
-            if restore_rtc:
-                rtc_config.enabled = True
+        norm_actions = self._policy.predict_action_chunk(
+            batch,
+            inference_action_mode=self._inference_action_mode(),
+            generator=generator,
+        ).float()
         pred_norm = norm_actions.squeeze(0).float().cpu()
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if action_encoding in ("anchor", "delta"):

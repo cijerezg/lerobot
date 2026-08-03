@@ -261,7 +261,7 @@ GROUPS = (
     "Sensitivity",
     "Representation",
     "Critic",
-    "Memory",
+    "History",
     "Steering",
     "Depth",
     "Other",
@@ -273,16 +273,16 @@ GROUPS = (
 # probes adopt write_index().
 PROBE_META = {
     "offline_inference":                  ("Offline Inference", "Actions", "offline_inference.py"),
-    "action_trace":                       ("Action Trace (3-D)", "Actions", "action_trace_probe.py"),
+    "action_trace":                       ("Action Inspector", "Actions", "action_trace_probe.py"),
     "attention":                          ("Attention Maps", "Attention", "attention.py"),
     "attention_budget":                   ("Attention Budget", "Attention", "attention_budget.py"),
     "spatial_memorization_attention":     ("Spatial Memorization (Attention)", "Attention", "spatial_memorization_attention.py"),
-    "action_drift_jacobian":              ("Action Drift Jacobian", "Sensitivity", "action_drift_jacobian.py"),
+    "action_drift_jacobian":              ("Subtask Action Sensitivity", "Sensitivity", "action_drift_jacobian.py"),
     "spatial_memorization_action_jacobian": ("Spatial Memorization (Jacobian)", "Sensitivity", "spatial_memorization_action_jacobian.py"),
     "representations":                    ("Representations", "Representation", "representations.py"),
     "critic":                             ("Critic Values", "Critic", "critic.py"),
-    "mem_history_influence":              ("MEM History Influence", "Memory", "mem_history_influence.py"),
-    "mem_temporal_attention":             ("MEM Temporal Attention", "Memory", "mem_temporal_attention.py"),
+    "mem_history_influence":              ("MEM History Influence", "History", "mem_history_influence.py"),
+    "mem_temporal_attention":             ("MEM Temporal Attention", "History", "mem_temporal_attention.py"),
     "metadata_steering":                  ("Metadata Steering", "Steering", "metadata_steering.py"),
     "subtask_sweep":                      ("Subtask Sweep", "Steering", "subtask_sweep.py"),
     "depth_modality":                     ("Depth Modality", "Depth", "depth_modality_probe.py"),
@@ -303,6 +303,12 @@ actually reaches the actions.
 Read them in that order: the headline number first, then the probe that explains
 the part you doubt.
 
+**Everything the model produces is an action.** The policy generates no text: the
+subtask is a clause the prompt carries in, and the long-term summary memory was
+dropped (2026-08-01). So no probe here scores a decode, and "does the subtask
+matter" is answered the only way left — by varying the input and measuring the
+actions (``subtask_sweep``, ``metadata_steering``).
+
 ## Conventions that apply to every probe
 
 **The deployment prompt.** Probes build the prompt a rollout actually issues —
@@ -315,8 +321,9 @@ the robot never sees does not describe the robot.
 without, RGB vs RGB+depth) re-runs the same frame with the same seeded
 generator, so the only difference between the two runs is the condition. Without
 this, every delta is confounded by the sampler, and small effects are
-indistinguishable from noise. Where the spread across draws *is* the
-measurement — the action-trace fan — the seed is deliberately left free.
+indistinguishable from noise. Where the spread across draws *is* the measurement — the Action Inspector fan —
+each draw gets its own deterministic seed. The fan remains independent while sample 0
+can be matched exactly to Offline Inference and every checkpoint sees the same noise.
 
 **The noise floor.** A conditioning effect only counts if it exceeds what
 re-running the same condition under different noise would produce anyway.

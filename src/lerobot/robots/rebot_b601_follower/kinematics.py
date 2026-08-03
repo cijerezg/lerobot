@@ -80,6 +80,10 @@ class RebotKinematics:
         """``(T, 3)`` end-effector positions."""
         return self.frames(q_deg)[:, LINK_NAMES.index(EE_LINK), :3, 3]
 
+    def ee_rotations(self, q_deg: np.ndarray) -> np.ndarray:
+        """``(T, 3, 3)`` end-effector rotation matrices in the base frame."""
+        return self.frames(q_deg)[:, LINK_NAMES.index(EE_LINK), :3, :3]
+
     def hull_points(self, frames: np.ndarray) -> dict[str, np.ndarray]:
         """Transform every link hull into the base frame.
 
@@ -95,6 +99,20 @@ class RebotKinematics:
             for i, name in enumerate(LINK_NAMES)
         }
 
+    def min_heights_by_link(self, frames: np.ndarray) -> np.ndarray:
+        """``(T, n_links)`` minimum hull height for each link placement.
+
+        The base column is retained so callers can explicitly select safety groups
+        (whole moving arm, distal tool, forearm) without recomputing FK or hulls.
+        """
+        points = self.hull_points(frames)
+        return np.stack([points[name][:, :, 2].min(axis=1) for name in LINK_NAMES], axis=1)
+
+    def min_height_from_frames(self, frames: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Whole-moving-arm minimum from precomputed frames."""
+        per_link = self.min_heights_by_link(frames)[:, 1:]
+        return per_link.min(axis=1), per_link.argmin(axis=1) + 1
+
     def min_height(self, q_deg: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Lowest point of the moving arm at each timestep.
 
@@ -105,7 +123,4 @@ class RebotKinematics:
             ``(z_min (T,), link_index (T,))`` — the height in metres and which link owns
             it, so a violation can be attributed to the elbow rather than the gripper.
         """
-        frames = self.frames(q_deg)
-        points = self.hull_points(frames)
-        per_link = np.stack([points[name][:, :, 2].min(axis=1) for name in LINK_NAMES[1:]], axis=1)
-        return per_link.min(axis=1), per_link.argmin(axis=1) + 1
+        return self.min_height_from_frames(self.frames(q_deg))

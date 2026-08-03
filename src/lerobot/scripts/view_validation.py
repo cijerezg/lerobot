@@ -36,12 +36,6 @@ ACTION_VIEWS = {
     "By subtask": ("actions/2d/by_subtask.png", "actions/2d/val/by_subtask.png"),
 }
 
-ACTION_3D_VIEWS = {
-    "3D Overview": "actions/3d/overview.html",
-    "3D by episode": "actions/3d/by_episode.html",
-    "3D by frame": "actions/3d/by_frame.html",
-}
-
 REPR_COLORINGS = ["by_episode", "by_frame", "by_subtask"]
 CHUNK_SIZE = 1024 * 1024
 
@@ -59,7 +53,7 @@ PROBE_SECTIONS = (
     ("depth_modality", "Depth Modality", "depth_modality", "image", ("*.png",)),
     ("attention_budget", "Attention Budget", "attention_budget", "image", ("*.png",)),
     ("subtask_sweep", "Subtask Sweep", "subtask_sweep", "image", ("*.png",)),
-    ("action_trace", "Action Trace (3D)", "action_trace", "html", ("*.html",)),
+    ("action_trace", "Action Inspector", "action_trace", "html", ("*.html",)),
 )
 
 
@@ -123,13 +117,14 @@ def discover_attention_files(
                 layer_dir = val_dir / step / "attention" / f"{episode}_{layer}"
                 if not layer_dir.exists():
                     continue
-                for path in layer_dir.glob("*.mp4"):
-                    if path.name.startswith("overlay_"):
-                        found.add(path.name.removeprefix("overlay_"))
-                    elif path.name.startswith("heatmap_"):
-                        found.add(path.name.removeprefix("heatmap_"))
-                    else:
-                        found.add(path.name)
+                for pattern in ("*.mp4", "*.png"):
+                    for path in layer_dir.glob(pattern):
+                        if path.name.startswith("overlay_"):
+                            found.add(path.name.removeprefix("overlay_"))
+                        elif path.name.startswith("heatmap_"):
+                            found.add(path.name.removeprefix("heatmap_"))
+                        else:
+                            found.add(path.name)
         if found:
             break
     return sorted(found)
@@ -314,7 +309,9 @@ def _probe_dir_for_step(val_dir: Path, step: str, probe_dirs: str | tuple[str, .
 
 
 def _attention_real_fname(layer: str, fname: str) -> str:
-    if fname.startswith(("matrix_", "cross_matrix", "self_matrix", "action_text_matrix")):
+    # Only the camera/depth panels carry the overlay_/heatmap_ prefix; the prompt
+    # figure is written under its own name.
+    if fname.startswith("action_to_prompt"):
         return fname
     return f"{'overlay_' if layer == 'L00' else 'heatmap_'}{fname}"
 
@@ -368,10 +365,6 @@ class ValidationViewer:
         self.att_episodes, self.att_layers = discover_attention_episodes_layers(self.val_dir, self.steps)
         self.att_files = discover_attention_files(self.val_dir, self.steps, self.att_episodes, self.att_layers)
         self.offline_inference_frames = discover_offline_inference_frames(self.val_dir, self.steps)
-        self.has_memory_ablation = any(
-            (self.val_dir / step / "offline_inference" / "memory_ablation.png").exists()
-            for step in self.steps
-        )
 
         self.adj_groups = discover_action_drift_jacobian_groups(self.val_dir, self.steps)
         self.adj_layers = discover_action_drift_jacobian_layers(self.val_dir, self.steps, self.adj_groups)
@@ -415,7 +408,6 @@ class ValidationViewer:
                         "name": "view",
                         "label": "View",
                         "choices": list(ACTION_VIEWS)
-                        + list(ACTION_3D_VIEWS)
                         + [f"Episode: {ep}" for ep in self.episodes],
                     }
                 ],
@@ -469,10 +461,8 @@ class ValidationViewer:
                     ],
                 }
             )
-        if self.offline_inference_frames or self.has_memory_ablation:
+        if self.offline_inference_frames:
             spaces = ["Unnormalized", "Normalized"]
-            if self.has_memory_ablation:
-                spaces.append("Memory ablation")
             sections.append(
                 {
                     "id": "offline_inference",
@@ -600,21 +590,15 @@ class ValidationViewer:
                     for step in steps
                 ]
             else:
-                if view in ACTION_3D_VIEWS:
-                    media = "html"
-                    rel = ACTION_3D_VIEWS[view]
-                    items = [
-                        MediaItem(step, step_label(step), self.val_dir / step / rel)
-                        for step in steps
-                    ]
-                else:
-                    rel = ACTION_VIEWS.get(view, ACTION_VIEWS["Overview"])
-                    items = [
-                        MediaItem(step, step_label(step), _first_existing_rel(self.val_dir / step, rel))
-                        for step in steps
-                    ]
+                rel = ACTION_VIEWS.get(view, ACTION_VIEWS["Overview"])
+                items = [
+                    MediaItem(step, step_label(step), _first_existing_rel(self.val_dir / step, rel))
+                    for step in steps
+                ]
         elif section == "attention":
-            media = "video"
+            # The camera/depth overlays are per-frame videos; action_to_prompt is a
+            # single episode-aggregated figure. One section, two media kinds.
+            media = "image" if params.get("file", "").endswith(".png") else "video"
             episode = params.get("episode", self.att_episodes[0] if self.att_episodes else "")
             layer = params.get("layer", self.att_layers[0] if self.att_layers else "")
             fname = params.get("file", self.att_files[0] if self.att_files else "")
@@ -681,32 +665,22 @@ class ValidationViewer:
             ]
         elif section == "offline_inference":
             space = params.get("space", "Unnormalized")
-            if space == "Memory ablation":
-                items = [
-                    MediaItem(
-                        step,
-                        step_label(step),
-                        self.val_dir / step / "offline_inference" / "memory_ablation.png",
-                    )
-                    for step in steps
-                ]
-            else:
-                frame = params.get(
-                    "frame", self.offline_inference_frames[0] if self.offline_inference_frames else ""
+            frame = params.get(
+                "frame", self.offline_inference_frames[0] if self.offline_inference_frames else ""
+            )
+            subdirs = ("unnormalized_eval", "unnormalized") if space == "Unnormalized" else (
+                "normalized_eval",
+                "normalized",
+            )
+            items = [
+                MediaItem(
+                    step,
+                    step_label(step),
+                    _first_existing_rel(self.val_dir / step / "offline_inference", subdirs)
+                    / f"{frame}.png",
                 )
-                subdirs = ("unnormalized_eval", "unnormalized") if space == "Unnormalized" else (
-                    "normalized_eval",
-                    "normalized",
-                )
-                items = [
-                    MediaItem(
-                        step,
-                        step_label(step),
-                        _first_existing_rel(self.val_dir / step / "offline_inference", subdirs)
-                        / f"{frame}.png",
-                    )
-                    for step in steps
-                ]
+                for step in steps
+            ]
         elif section == "action_drift_jacobian":
             media = "video"
             group = params.get("group", self.adj_groups[0] if self.adj_groups else "")

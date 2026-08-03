@@ -57,6 +57,24 @@ class AttentionCaptureResult:
     extras:              dict = field(default_factory=dict)
 
 
+@dataclass
+class ActionSensitivityResult:
+    """Token-level action-output Jacobian energy for one real probe frame.
+
+    ``scores_by_group`` maps a human action-group name to one non-negative score
+    per conditioning token. ``token_metadata`` carries the patch/token layout
+    used by the attention renderer; these values are gradients, not attention.
+    """
+
+    scores_by_group: dict[str, Tensor]
+    token_metadata: AttentionCaptureResult
+    action_groups: dict[str, list[int]]
+    timestep: float
+    num_flow_samples: int
+    num_projections: int
+    extras: dict = field(default_factory=dict)
+
+
 class ProbablePolicy(ABC):
     """Adapter over a trained policy, exposing the surface probes need."""
 
@@ -129,9 +147,10 @@ class ProbablePolicy(ABC):
             metadata: optional rollout metadata prompt context.
             generator: RNG for the flow/diffusion noise. ``None`` draws from the
                 global RNG, which makes any A/B through this method
-                noise-confounded — pass a seeded generator when comparing
-                conditions or checkpoints, and ``None`` only when the spread
-                across draws is the measurement (e.g. the action-trace fan).
+                noise-confounded. Pass a seeded generator when comparing
+                conditions or checkpoints. Measurements of sampling spread should
+                still use independent explicit seeds, as the Action Inspector does,
+                so the fan is reproducible.
 
         Returns:
             ``(pred_unnorm, pred_norm, pred_subtask)`` where
@@ -142,21 +161,6 @@ class ProbablePolicy(ABC):
                 - ``pred_subtask``: decoded subtask string, or ``None`` for
                   policies that don't generate subtasks.
         """
-
-    def generate_subtask(
-        self,
-        obs: dict[str, Tensor],
-        task_str: str,
-        summary: str | None = None,
-    ) -> tuple[str, str, int, str | None] | None:
-        """Optional MEM high-level query: decode the next subtask + updated memory
-        for one observation, conditioned on the language memory ``summary``.
-
-        Returns ``(raw_text, name, index, new_summary)`` like
-        ``MolmoAct2Trainer.generate_subtask_text``, or ``None`` when the policy
-        has no generation path (the default).
-        """
-        return None
 
     # ── Representations ──────────────────────────────────────────────────────
 
@@ -259,6 +263,24 @@ class ProbablePolicy(ABC):
                 gradient probe is defined relative to a flow/action target.
         """
 
+    def capture_action_sensitivity(
+        self,
+        obs: dict[str, Tensor],
+        task_str: str,
+        *,
+        gt_actions: Tensor,
+        action_groups: dict[str, list[int]],
+        timestep: float = 0.5,
+        num_projections: int = 4,
+        seed: int = 0,
+        subtask: str | None = None,
+        metadata: dict | None = None,
+    ) -> ActionSensitivityResult:
+        """Differentiate grouped flow outputs with respect to conditioning tokens."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement capture_action_sensitivity."
+        )
+
     # ── GT normalisation (for plotting in normalised space) ──────────────────
 
     @abstractmethod
@@ -311,6 +333,15 @@ class ProbablePolicy(ABC):
 
     def suppress_logs(self, enabled: bool) -> None:
         """Silence policy debug logging during probing. Default: no-op."""
+        return None
+
+    def _set_probe_cuda_graph_enabled(self, enabled: bool) -> None:  # noqa: ARG002
+        """Temporarily control replayed inference graphs. Default: unsupported/no-op."""
+        return None
+
+    def _restore_probe_cuda_graph_enabled(self) -> None:
+        """Restore the adapter's normal inference-graph policy. Default: no-op."""
+        return None
 
 
 def _adapter_for_type(policy_type: str | None) -> type[ProbablePolicy]:

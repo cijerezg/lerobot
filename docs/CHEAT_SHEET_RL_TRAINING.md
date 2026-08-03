@@ -145,6 +145,37 @@ Checkpoints land under:
 <offline_output_dir>/checkpoints/
 ```
 
+## Probe Viewer
+
+Browse the probe output a run wrote under `<offline_output_dir>/validation/step_*/`:
+
+```bash
+uv run --project lerobot python -m lerobot.scripts.view_probes \
+  outputs/molmoact2_offline_rebot_all-v1
+```
+
+It serves a local page on `http://127.0.0.1:7870` and opens a browser tab. The
+directory is rescanned on every request, so checkpoints that finish mid-session
+show up on refresh.
+
+Point it at a single checkpoint instead of the whole run by passing the
+`validation/` directory or one `step_*` directory:
+
+```bash
+uv run --project lerobot python -m lerobot.scripts.view_probes \
+  outputs/molmoact2_offline_rebot_all-v1/validation/step_010000
+```
+
+Other options:
+
+```bash
+uv run --project lerobot python -m lerobot.scripts.view_probes \
+  outputs/molmoact2_offline_rebot_all-v1 \
+  --host=0.0.0.0 \
+  --port=7871 \
+  --no-open
+```
+
 ## Standalone Robot Inference
 
 Run the configured policy on the real robot without the online learner/actor
@@ -206,8 +237,8 @@ uv run --project lerobot lerobot-find-port
 
 ## Notes
 
-- `rl_offline.py` and `benchmark_inference.py` are in `lerobot.scripts`, so the
-  module form is `python -m lerobot.scripts.<name>`.
+- `rl_offline.py`, `benchmark_inference.py`, and `view_probes.py` are in
+  `lerobot.scripts`, so the module form is `python -m lerobot.scripts.<name>`.
 - `inference_async.py`, `rl_learner.py`, and `rl_actor_async.py` are in
   `lerobot.rl`, so their module form is `python -m lerobot.rl.<name>`.
 - Keep the working directory at the workspace root unless you intentionally want

@@ -1,11 +1,12 @@
 r"""Does the subtask clause reach the actions at all? (the old plan's P3)
 
-Hop two of the memory chain. The summary memory never enters the action prompt — it
-reaches behaviour only through the decoded subtask — so if the subtask clause does
-not move the action chunk, the entire annotate → summarize → decode → act chain is
-severed at the last step and every upstream annotation is decorative *for control*,
-however good its CE looks. That makes this the probe that gates the interpretation
-of the rest of the memory diagnostics, and the one that justifies deleting things.
+The subtask is an input and nothing else: the policy stopped generating one
+(2026-08-01), so no decode stands between the annotation and the behaviour. What is
+written in that clause at rollout — by an operator, a script, or a higher-level
+planner — is what the model gets. This probe is therefore the whole test of whether
+the subtask vocabulary is worth annotating for control: if sweeping it does not move
+the action chunk, every subtask label in every dataset is decorative *for control*,
+however good its CE looks.
 
 Method: fix a frame, sweep every subtask in the dataset vocabulary through the
 action prompt, identical fixed-seed flow noise on every pass, and ask two questions.
@@ -245,7 +246,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             Metric(
                 "separation_median", "Separation (vocabulary / seed floor)", good="high", fmt=2,
                 baseline=1.0, bad=1.2, warn=2.0, primary=True,
-                note="At 1.0 the clause does nothing and hop two of the memory chain is severed.",
+                note="At 1.0 the clause does nothing and the subtask annotations buy no control.",
             ),
             Metric("separation_mean", "Separation (mean)", good="high", fmt=2, baseline=1.0),
             Metric("vocab_spread_mean", "Spread across labels", good="none", fmt=4,

@@ -22,7 +22,7 @@ uv run lerobot/src/lerobot/scripts/lerobot_record.py \
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/rebot_sorting_clothes_v3-2 \
+    --dataset.repo_id=cijerezg/rebot_sorting_clothes_v3-4 \
     --dataset.single_task="Put sock in brown basket and shirts in bin" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
@@ -73,4 +73,16 @@ Full run:
 
 uv run python -m lerobot.scripts.rl_offline \
     --config_path=config_rl.yaml
+
+## Probe viewer
+
+Browser UI over a run's validation probes (serves on http://127.0.0.1:7870):
+
+uv run python -m lerobot.scripts.view_probes outputs/molmoact2_offline_rebot_all-v1
+
+Takes a run directory, its `validation/`, or a single `step_*` dir. It re-scans
+`<run>/validation/step_*/<probe>/` on every request, so a checkpoint that lands
+mid-session shows up on refresh — no export step. `--port` to move it, `--no-open` to
+skip the browser tab. Probes are written by the validation loop only when their
+`probe_parameters.enable_*` flag is set in config_rl.yaml.
 

@@ -35,12 +35,6 @@ is multimodal, and taking the other sock is a valid rollout that scores as a lar
 Cartesian distance. Read the fan, and prefer ``ee_err_best`` over ``ee_err_mean`` when
 judging fit; use real rollouts for the closed-loop question.
 
-TWO DECODERS. On an ``action_mode=both`` checkpoint run with
-``inference_action_mode=continuous``, a second panel puts the greedy FAST reconstruction
-beside the flow fan in two scale-locked scenes. It stays a picture: FAST is greedy and
-quantized, and depth reaches only the flow path, so the two sides are not comparable
-enough to scalarise into a decoder score.
-
 Runs inside rl_offline's validation loop when ``probe_parameters.enable_action_trace`` is
 set, or standalone:
 
@@ -63,7 +57,6 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.action_decoder_comparison import (
-    FLOW_COMPARE_COUNT,
     build_figure as build_decoder_comparison_figure,
     write_html as write_decoder_comparison_html,
 )
@@ -1194,20 +1187,7 @@ def _write_manifest(
             Panel(
                 "decoder_comparison.html",
                 "FAST and flow reconstructions side by side",
-                how=(
-                    "The same observation and ground truth in two 3-D scenes that share one cubic "
-                    "range and one camera: the greedy FAST reconstruction on the left, "
-                    f"{FLOW_COMPARE_COUNT} fixed-seed flow draws on the right. Drag either scene and "
-                    "both orbit together, so a shape difference between columns is a difference in "
-                    "commanded geometry, not in scale.\n\n"
-                    "Read it as a picture, not a score — nothing here is scalarised, and the two "
-                    "sides are not equivalent. FAST is greedy, so it has no fan and carries the "
-                    "action tokenizer's quantization error; flow does not. The discrete path never "
-                    "runs the action expert, so with point-map depth configured the depth stream "
-                    "reaches the flow draws and structurally cannot reach FAST. A FAST decode that "
-                    "failed at an anchor says so in that scene's legend."
-                ),
-                refs=["offline_inference"],
+                how="The same observation and ground truth appear in two locked-scale 3-D scenes: one greedy FAST reconstruction on the left and three fixed-noise flow reconstructions on the right. This view is deliberately visual and adds no decoder-comparison score.",
             )
         )
     return write_index(
@@ -1292,16 +1272,11 @@ def run(adapter, dataset, cfg, output_dir):
     fps = float(dataset.fps)
 
     decoder_predict = getattr(adapter, "predict_action_chunk_in_mode", None)
-    # Only a "both" checkpoint holds two decoders, and the comparison is only a
-    # comparison when the fan itself is the flow one: under
-    # inference_action_mode=discrete every draw is the same greedy FAST decode, and the
-    # right-hand scene would claim to show flow while showing FAST three times.
     has_decoder_comparison = bool(
         callable(decoder_predict)
         and getattr(cfg.policy, "action_mode", None) == "both"
-        and getattr(cfg.policy, "inference_action_mode", None) == "continuous"
     )
-    flow_sample_count = max(int(p.trace_n_samples), FLOW_COMPARE_COUNT if has_decoder_comparison else 1)
+    flow_sample_count = max(int(p.trace_n_samples), 3 if has_decoder_comparison else 1)
 
     anchors = sample_action_inspector_frames(dataset, p, stride=int(getattr(cfg.policy, "image_stride", 1)))
     if not anchors:
@@ -1357,11 +1332,7 @@ def run(adapter, dataset, cfg, output_dir):
                         subtask=subtask,
                         metadata=metadata,
                     )[0].numpy()
-                # The comparison scene is a secondary view: a checkpoint that generates
-                # no decodable action tokens, or a machine that cannot fetch the FAST
-                # tokenizer, must not take the inspector down with it. The failure is
-                # logged and shown in the scene's own legend.
-                except Exception as exc:
+                except (RuntimeError, ValueError, AssertionError) as exc:
                     fast_error = f"{type(exc).__name__}: {exc}"[:240]
                     logging.warning(
                         f"[action_trace] FAST decode failed at ep{episode_idx}:{frame_idx}: {fast_error}"
@@ -1386,7 +1357,12 @@ def run(adapter, dataset, cfg, output_dir):
                 cameras=_camera_context(obs),
             )
             if has_decoder_comparison:
-                record.update(fast_error=fast_error, fast_chunk=None, fast_ee=None)
+                record.update(
+                    flow_compare_count=min(3, len(samples)),
+                    fast_error=fast_error,
+                    fast_chunk=None,
+                    fast_ee=None,
+                )
                 if fast_prediction is not None:
                     fast_chunk = np.asarray(
                         fast_prediction[: len(record["gt_chunk"])], dtype=np.float64
@@ -1404,12 +1380,6 @@ def run(adapter, dataset, cfg, output_dir):
     html_path = os.path.join(output_dir, "action_trace.html")
     _write_dashboard_html(fig, records, html_path)
 
-    comparison_html_path = None
-    if has_decoder_comparison:
-        comparison_fig = build_decoder_comparison_figure(records, p.trace_table_z, fps=fps)
-        comparison_html_path = os.path.join(output_dir, "decoder_comparison.html")
-        write_decoder_comparison_html(comparison_fig, comparison_html_path)
-
     csv_path = os.path.join(output_dir, "metrics.csv")
     with open(csv_path, "w", newline="") as handle:
         columns = ["episode", "frame", "global_idx", *records[0]["metrics"]]
@@ -1418,9 +1388,7 @@ def run(adapter, dataset, cfg, output_dir):
         for record in records:
             writer.writerow({key: record.get(key, record["metrics"].get(key)) for key in columns})
 
-    _write_manifest(
-        records, output_dir, has_decoder_comparison=has_decoder_comparison
-    )
+    _write_manifest(records, output_dir)
 
     logging.info("── largest initial policy target gaps ──")
     for record in sorted(records, key=lambda item: -item["metrics"]["initial_gap_pred_max"])[:10]:

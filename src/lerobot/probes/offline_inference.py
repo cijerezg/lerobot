@@ -8,7 +8,7 @@ Policy-agnostic: works for any policy with a registered
 For each selected frame, saves a figure with:
   - Camera images at the sampled timestep
   - 2×3 grid of predicted vs GT action chunk traces (per joint)
-  - Subtask info panel (GT + predicted if the policy generates subtasks)
+  - The subtask clause the frame was conditioned on
   - Optional checkpoint A vs B overlay
 
 Two output subdirectories:
@@ -19,8 +19,13 @@ Plus, at the top level:
   action_metrics.json  normalized-space MSE, split per joint, against the hold-still
                        and dataset-mean baselines (``skill_vs_*`` is the fraction of
                        each baseline's error the policy removes)
-  memory_ablation.*    GT-memory vs empty-memory subtask decode, when the dataset
-                       carries summaries
+
+This probe measures actions only. It used to also decode a subtask and ablate the
+language memory that conditioned that decode; both were removed 2026-08-01, when
+the policy stopped generating anything (``subtask_max_new_tokens: 0``,
+``subtask_loss_weight: 0``) and the summary memory was dropped. The subtask is now
+an input the deployment prompt carries, so the question "does that clause reach the
+actions" belongs to ``subtask_sweep``, which answers it causally.
 
 Usage examples:
     # Random sample
@@ -53,10 +58,12 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
+    action_inspector_sample_seed,
     build_sample_list,
     load_probe_dataset,
     probe_frame_inputs,
     probe_image_stride,
+    sample_action_inspector_frames,
 )
 from lerobot.rl.inference_utils import apply_butterworth_filter
 from lerobot.utils.device_utils import get_safe_torch_device
@@ -154,7 +161,7 @@ def _load_dataset(cfg):
 def render_sample(
     obs,
     gt_actions,
-    checkpoints_info,    # list of {"label": "A", "subtask": "...", "color_idx": 0, "summary": ...}
+    checkpoints_info,    # list of {"label": "A", "color_idx": 0}
     pred_traces,         # list of {"actions": tensor, "label": "A raw", "color_idx": 0, "kwargs": dict}
     gt_subtask,
     episode_idx,
@@ -163,14 +170,13 @@ def render_sample(
     joint_names=None,
     checkpoint_paths=None,
     state=None,
-    gt_summary=None,
 ):
     """
     Save one evaluation figure.
 
     Layout:
       Row 0, cols 0..K-1  — camera images
-      Row 0, col -1       — subtask info box (when a spare column exists)
+      Row 0, col -1       — conditioning info box (when a spare column exists)
       Remaining rows      — all joint action traces (all checkpoints overlaid)
     """
     from matplotlib.gridspec import GridSpec
@@ -235,16 +241,12 @@ def render_sample(
             return y
 
         y_gt = 0.97
-        ax_info.text(0.02, y_gt, "GT subtask:", transform=ax_info.transAxes,
+        # The subtask is an input the prompt carried, not something the policy
+        # produced — there is no predicted counterpart to compare it against.
+        ax_info.text(0.02, y_gt, "Subtask clause:", transform=ax_info.transAxes,
                      fontsize=7.5, fontweight="bold", color="#555555", va="top")
         y_gt -= 0.10
         y_gt = _draw_lines(0.02, y_gt, _wrap(gt_subtask or "(none)", max_lines=2), "#333333")
-        if gt_summary is not None:
-            ax_info.text(0.02, y_gt, "GT memory:", transform=ax_info.transAxes,
-                         fontsize=7.5, fontweight="bold", color="#555555", va="top")
-            y_gt -= 0.10
-            y_gt = _draw_lines(0.02, y_gt, _wrap(gt_summary or "(empty)", max_lines=2),
-                               "#333333", fontsize=6.5)
         sep_y = y_gt - 0.02
         ax_info.plot([0.02, 0.98], [sep_y, sep_y], transform=ax_info.transAxes,
                      color="#cccccc", linewidth=0.6, clip_on=True)
@@ -266,20 +268,6 @@ def render_sample(
                     short_path = "…" + short_path[-(wrap_w - 1):]
                 ax_info.text(x, y, short_path, transform=ax_info.transAxes,
                              fontsize=6.0, color="#888888", va="top", clip_on=True)
-                y -= 0.09
-
-            sub = info.get("subtask")
-            if sub:
-                ax_info.text(x, y, "─ pred:", transform=ax_info.transAxes,
-                             fontsize=6.5, color="#777777", va="top", style="italic")
-                y -= 0.09
-                y = _draw_lines(x, y, _wrap(sub, max_lines=2), "#333333", fontsize=6.5)
-            mem = info.get("summary")
-            if mem is not None:
-                ax_info.text(x, y, "─ mem:", transform=ax_info.transAxes,
-                             fontsize=6.5, color="#777777", va="top", style="italic")
-                y -= 0.09
-                _draw_lines(x, y, _wrap(mem or "(empty)", max_lines=2), "#333333", fontsize=6.5)
 
     # ── 2×3 joint action traces ──────────────────────────────────────────────
     for j in range(n_joints):
@@ -338,48 +326,29 @@ def render_sample(
 # Inference per checkpoint
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _summary_lookup(dataset, cfg) -> dict[int, tuple[str, str]]:
-    """global frame index -> (conditioning summary, GT target summary), using the
-    same hold/update-window label rule as training. Empty when the dataset has no
-    meta/summaries.parquet."""
-    from lerobot.rl.buffer import summary_label_spans
-    from lerobot.rl.offline_dataset_utils import load_summary_segments
-
-    segments, texts = load_summary_segments(dataset.root)
-    if not segments:
-        return {}
-    window = max(1, round(getattr(cfg.policy, "subtask_regeneration_interval", 1.0) * dataset.fps))
-    lookup: dict[int, tuple[str, str]] = {}
-    for start, stop, prev_row, target_row in summary_label_spans(segments, window):
-        pair = ("" if prev_row < 0 else texts[prev_row], "" if target_row < 0 else texts[target_row])
-        for i in range(start, stop):
-            lookup[i] = pair
-    return lookup
-
-
-def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk_size, summary_lookup, cfg):
+def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk_size, cfg):
     """
     Run inference for all samples through *adapter*.
 
     Populates frame_data[global_idx] with shared per-frame fields the first time
     it sees a global_idx. Returns:
-        preds:  {global_idx: (pred_unnorm, pred_norm, pred_subtask, generation)}
-                where generation is adapter.generate_subtask's tuple or None
+        preds:  {global_idx: (pred_unnorm, pred_norm)}
         mse:    list of float, one per sample
     """
     preds: dict[int, tuple] = {}
     mse: list[float] = []
-    memory_ablation: list[dict] = []
     seed = int(getattr(cfg.probe_parameters, "random_seed", 0))
 
     adapter.suppress_logs(True)
+    # Match Action Inspector sample 0 exactly. Disabling replayed graphs prevents a
+    # captured noise tensor from overriding the per-frame generator.
+    adapter._set_probe_cuda_graph_enabled(False)
     try:
         for ep_idx, fr_idx, global_idx in samples:
             if global_idx not in frame_data:
                 frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
                 state = frame["state"]
                 gt_actions = frame["gt_actions"]
-                prev_summary, target_summary = summary_lookup.get(global_idx, (None, None))
                 frame_data[global_idx] = {
                     "obs": frame["obs"],
                     "gt_actions": gt_actions,
@@ -394,52 +363,29 @@ def _run_checkpoint(adapter: ProbablePolicy, dataset, samples, frame_data, chunk
                     ) if state is not None else None,
                     "state": state, "gt_subtask": frame["subtask"], "task_str": frame["task"],
                     "metadata": frame["metadata"],
-                    "summary_prev": prev_summary, "gt_summary": target_summary,
                 }
 
             fd = frame_data[global_idx]
             # Seeded per frame: flow noise is then identical across checkpoints, so a
             # change in the number is a change in the policy, not in the draw.
             generator = torch.Generator(device=adapter.device)
-            generator.manual_seed(seed + int(global_idx))
-            pred_unnorm, pred_norm, pred_subtask = adapter.predict_action_chunk(
+            generator.manual_seed(action_inspector_sample_seed(seed, global_idx, 0))
+            pred_unnorm, pred_norm, _ = adapter.predict_action_chunk(
                 fd["obs"], fd["task_str"], state=fd["state"],
                 subtask=fd["gt_subtask"], metadata=fd["metadata"], generator=generator,
             )
-            generation = adapter.generate_subtask(fd["obs"], fd["task_str"], summary=fd["summary_prev"])
-            generation_empty = None
-            if generation is not None and fd["summary_prev"] and fd["gt_subtask"]:
-                generation_empty = adapter.generate_subtask(fd["obs"], fd["task_str"], summary=None)
-                if generation_empty is not None:
-                    memory_ablation.append(
-                        {
-                            "episode_idx": int(ep_idx),
-                            "frame_idx": int(fr_idx),
-                            "global_idx": int(global_idx),
-                            "gt_subtask": fd["gt_subtask"],
-                            "gt_memory": fd["summary_prev"],
-                            "gt_memory_pred_subtask": generation[1],
-                            "empty_memory_pred_subtask": generation_empty[1],
-                            "gt_memory_raw_decode": generation[0],
-                            "empty_memory_raw_decode": generation_empty[0],
-                            "gt_memory_pred_summary": generation[3],
-                            "empty_memory_pred_summary": generation_empty[3],
-                        }
-                    )
-            if generation is not None:
-                pred_subtask = generation[1]
             this_mse = float((pred_norm - fd["gt_actions_norm"]).pow(2).mean())
             mse.append(this_mse)
-            preds[global_idx] = (pred_unnorm, pred_norm, pred_subtask, generation)
+            preds[global_idx] = (pred_unnorm, pred_norm)
             logging.info(
                 f"  ep={ep_idx:04d} fr={fr_idx:04d} | mse_norm={this_mse:.4f} | "
-                f"GT: '{fd['gt_subtask']}' | pred: '{pred_subtask or ''}'"
-                + (f" | mem: '{generation[3]}'" if generation is not None else "")
+                f"subtask: '{fd['gt_subtask']}'"
             )
     finally:
+        adapter._restore_probe_cuda_graph_enabled()
         adapter.suppress_logs(False)
 
-    return preds, mse, memory_ablation
+    return preds, mse
 
 
 def _write_action_metrics(preds, frame_data, samples, joint_names, output_dir: str) -> dict:
@@ -505,118 +451,9 @@ def _write_action_metrics(preds, frame_data, samples, joint_names, output_dir: s
     return metrics
 
 
-def _write_memory_ablation(rows: list[dict], output_dir: str) -> dict:
-    if not rows:
-        return {}
-
-    def _correct(pred: str, target: str) -> bool:
-        return pred.strip().casefold() == target.strip().casefold()
-
-    gt_correct = [_correct(row["gt_memory_pred_subtask"], row["gt_subtask"]) for row in rows]
-    empty_correct = [_correct(row["empty_memory_pred_subtask"], row["gt_subtask"]) for row in rows]
-    changed = [
-        row["gt_memory_pred_subtask"].strip().casefold()
-        != row["empty_memory_pred_subtask"].strip().casefold()
-        for row in rows
-    ]
-    summary = {
-        "n_frames_with_nonempty_gt_memory": len(rows),
-        "gt_memory_subtask_accuracy": float(np.mean(gt_correct)),
-        "empty_memory_subtask_accuracy": float(np.mean(empty_correct)),
-        "accuracy_delta": float(np.mean(gt_correct) - np.mean(empty_correct)),
-        "decode_changed_fraction": float(np.mean(changed)),
-    }
-    with open(os.path.join(output_dir, "memory_ablation.json"), "w") as f:
-        json.dump({"summary": summary, "per_frame": rows}, f, indent=2)
-    logging.info(
-        "[offline_inference] memory ablation "
-        f"n={len(rows)}  GT-memory acc={summary['gt_memory_subtask_accuracy']:.3f}  "
-        f"empty-memory acc={summary['empty_memory_subtask_accuracy']:.3f}  "
-        f"delta={summary['accuracy_delta']:+.3f}"
-    )
-    return summary
-
-
-def _render_memory_ablation(rows: list[dict], frame_data: dict[int, dict], output_dir: str) -> None:
-    """Contact sheet: current images and the full GT-memory/empty-memory decodes."""
-    if not rows:
-        return
-    import textwrap
-
-    shown = rows[:12]
-    fig, axes = plt.subplots(len(shown), 4, figsize=(19, 3.4 * len(shown)), squeeze=False)
-
-    def _image(tensor: torch.Tensor) -> np.ndarray:
-        item = tensor.detach().float().cpu().squeeze()
-        if item.ndim == 3 and item.shape[0] in (1, 3):
-            item = item.permute(1, 2, 0)
-        array = item.numpy()
-        if array.max() <= 1.0:
-            array = (array * 255).clip(0, 255).astype(np.uint8)
-        return array
-
-    def _wrapped(value, width=52, limit=500) -> str:
-        text = str(value or "(empty)")
-        if len(text) > limit:
-            text = text[: limit - 1] + "…"
-        return textwrap.fill(text, width=width)
-
-    for row_idx, row in enumerate(shown):
-        fd = frame_data[row["global_idx"]]
-        camera_keys = sorted(k for k in fd["obs"] if k.startswith("observation.images."))
-        for col_idx in range(2):
-            ax = axes[row_idx, col_idx]
-            if col_idx < len(camera_keys):
-                key = camera_keys[col_idx]
-                ax.imshow(_image(fd["obs"][key]))
-                ax.set_title(f"ep {row['episode_idx']} fr {row['frame_idx']} — {key.split('.')[-1]}")
-            ax.axis("off")
-
-        target = row["gt_subtask"].strip().casefold()
-        conditions = (
-            (
-                "GT memory",
-                row["gt_memory_pred_subtask"],
-                f"INPUT MEMORY:\n{_wrapped(row['gt_memory'])}\n\nRAW DECODE:\n"
-                f"{_wrapped(row['gt_memory_raw_decode'])}",
-            ),
-            (
-                "Empty memory",
-                row["empty_memory_pred_subtask"],
-                f"INPUT MEMORY:\nnone yet.\n\nRAW DECODE:\n{_wrapped(row['empty_memory_raw_decode'])}",
-            ),
-        )
-        for offset, (name, prediction, body) in enumerate(conditions, start=2):
-            ax = axes[row_idx, offset]
-            correct = prediction.strip().casefold() == target
-            ax.set_facecolor("#E8F5E9" if correct else "#FDECEC")
-            ax.text(
-                0.02,
-                0.97,
-                f"GT SUBTASK: {row['gt_subtask']}\nPREDICTED: {prediction}\n\n{body}",
-                transform=ax.transAxes,
-                va="top",
-                ha="left",
-                fontsize=7.2,
-                family="monospace",
-            )
-            ax.set_title(f"{name} — {'CORRECT' if correct else 'WRONG'}", fontweight="bold")
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-    fig.suptitle(
-        f"Language-memory ablation: same observation, GT memory vs empty memory "
-        f"(showing {len(shown)}/{len(rows)} frames)",
-        fontsize=14,
-        fontweight="bold",
-    )
-    fig.savefig(os.path.join(output_dir, "memory_ablation.png"), bbox_inches="tight", dpi=140)
-    plt.close(fig)
-
-
-def _write_manifest(output_dir: str, action_metrics: dict, memory_summary: dict, samples) -> dict:
-    """Describe the two Offline Inference readouts without viewer-side special cases."""
-    summary = {"action": action_metrics, "memory": memory_summary}
+def _write_manifest(output_dir: str, action_metrics: dict, samples) -> dict:
+    """Describe the Offline Inference readout without viewer-side special cases."""
+    summary = {"action": action_metrics}
     metrics = [
         Metric(
             "action.skill_vs_hold", "Skill recovered vs hold-still", good="high", fmt=3,
@@ -636,27 +473,6 @@ def _write_manifest(output_dir: str, action_metrics: dict, memory_summary: dict,
         Metric("action.baseline_dataset_mean", "Dataset-mean baseline MSE", good="none", fmt=4),
         Metric("action.n_frames", "Frames evaluated", good="none", fmt=0),
     ]
-    if memory_summary:
-        metrics.extend(
-            [
-                Metric(
-                    "memory.accuracy_delta", "Subtask accuracy gain from GT memory",
-                    good="high", fmt=3, baseline=0.0, primary=True,
-                    note="GT-memory accuracy minus empty-memory accuracy on identical observations.",
-                ),
-                Metric(
-                    "memory.gt_memory_subtask_accuracy", "GT-memory subtask accuracy", good="high", fmt=3,
-                ),
-                Metric(
-                    "memory.empty_memory_subtask_accuracy", "Empty-memory subtask accuracy",
-                    good="none", fmt=3,
-                ),
-                Metric(
-                    "memory.decode_changed_fraction", "Memory changed the decoded subtask",
-                    good="none", fmt=3,
-                ),
-            ]
-        )
 
     panels = []
     for index, (episode_idx, frame_idx, _) in enumerate(samples):
@@ -679,23 +495,12 @@ def _write_manifest(output_dir: str, action_metrics: dict, memory_summary: dict,
                      "drives an error; compare checkpoints with the normalized metrics, not this scale.",
             )
         )
-    if memory_summary:
-        panels.append(
-            Panel(
-                "memory_ablation.png",
-                "Language-memory ablation: identical observation with GT or empty memory",
-                how="Each row holds the observation fixed. Compare the GT-memory and empty-memory "
-                     "decoded subtasks; a change only matters when it moves the prediction toward GT.",
-                refs=["subtask_sweep", "mem_history_influence"],
-            )
-        )
-
     return write_index(
         output_dir,
         sys.modules[__name__],
         title="Offline Inference",
         group="Actions",
-        claim="Does the checkpoint beat simple action baselines, and what does its memory change?",
+        claim="Does the checkpoint beat the simple action baselines on held-out frames?",
         summary=summary,
         metrics=metrics,
         panels=panels,
@@ -748,30 +553,33 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
     chunk_size = adapter.chunk_size
     path_str = path_str or _policy_checkpoint_path(cfg.policy)
 
-    samples = build_sample_list(
-        dataset,
-        episodes_str=getattr(cfg, "eval_episodes", None),
-        frames_str=getattr(cfg, "eval_frames", None),
-        random_n=random_n, chunk_size=chunk_size,
-        seed=getattr(cfg, "eval_random_seed", None) or p.random_seed,
-        stride=probe_image_stride(cfg),
-    )
+    explicit_episodes = getattr(cfg, "eval_episodes", None)
+    explicit_random_n = getattr(cfg, "eval_random_n", 0)
+    if getattr(p, "enable_action_trace", False) and not explicit_episodes and not explicit_random_n:
+        samples = sample_action_inspector_frames(
+            dataset, p, stride=probe_image_stride(cfg)
+        )
+        logging.info(
+            f"Using {len(samples)} shared Action Inspector anchors so the 2-D and 3-D "
+            "views show the same observation and seeded sample 0."
+        )
+    else:
+        samples = build_sample_list(
+            dataset,
+            episodes_str=explicit_episodes,
+            frames_str=getattr(cfg, "eval_frames", None),
+            random_n=random_n, chunk_size=chunk_size,
+            seed=getattr(cfg, "eval_random_seed", None) or p.random_seed,
+            stride=probe_image_stride(cfg),
+        )
     if not samples:
         logging.warning("[offline_inference] no samples selected, skipping.")
         return
     logging.info(f"Evaluating {len(samples)} frames …")
 
-    summary_lookup = _summary_lookup(dataset, cfg)
-    if summary_lookup:
-        logging.info("Summaries found: conditioning generation on GT memory (hold/update rule).")
-
     frame_data: dict[int, dict] = {}
-    preds, mse, memory_ablation = _run_checkpoint(
-        adapter, dataset, samples, frame_data, chunk_size, summary_lookup, cfg
-    )
+    preds, mse = _run_checkpoint(adapter, dataset, samples, frame_data, chunk_size, cfg)
     logging.info(f"mse_norm  {path_label} ({path_str}): {sum(mse) / len(mse):.4f}")
-    memory_summary = _write_memory_ablation(memory_ablation, output_dir)
-    _render_memory_ablation(memory_ablation, frame_data, output_dir)
 
     action_dim = frame_data[samples[0][2]]["gt_actions"].shape[-1]
     joint_names = _joint_names_for_dim(action_dim)
@@ -780,13 +588,10 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
 
     for ep_idx, fr_idx, global_idx in samples:
         fd = frame_data[global_idx]
-        pred_unnorm, pred_norm, sub, generation = preds[global_idx]
-        ckpts = [{
-            "label": path_label, "subtask": sub, "color_idx": 0,
-            "summary": generation[3] if generation is not None else None,
-        }]
+        pred_unnorm, pred_norm = preds[global_idx]
+        ckpts = [{"label": path_label, "color_idx": 0}]
         common = dict(
-            obs=fd["obs"], gt_subtask=fd["gt_subtask"], gt_summary=fd["gt_summary"],
+            obs=fd["obs"], gt_subtask=fd["gt_subtask"],
             episode_idx=ep_idx, frame_idx=fr_idx,
             joint_names=joint_names, checkpoint_paths=checkpoint_paths,
             checkpoints_info=ckpts,
@@ -802,7 +607,7 @@ def run(adapter, dataset, cfg, output_dir, *, path_label="A", path_str=None):
             output_dir=dir_norm, state=None,
         )
 
-    _write_manifest(output_dir, action_metrics, memory_summary, samples)
+    _write_manifest(output_dir, action_metrics, samples)
     logging.debug(f"Done. {len(samples)} plots saved to {dir_unnorm}/ and {dir_norm}/")
 
 

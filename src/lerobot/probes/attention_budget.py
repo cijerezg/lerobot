@@ -55,9 +55,10 @@ that produced it — a budget move is only interpretable next to its frame.
 Also note the capture is at a single flow timestep (``probe_parameters.timestep``,
 last denoise step), so this is one point on the flow trajectory.
 
-The summary memory never enters the action prompt by design — it reaches behaviour
-only through the decoded subtask — so its absence from this budget is the invariant,
-not a finding. Judge memory at the subtask decode (``offline_inference``).
+The clause partition here is the same one ``attention`` uses for its
+``action_to_prompt`` figure, and the two are complementary: this probe resolves the
+budget over *frames* and over the action chunk, that one resolves it over *heads*
+and over the individual decoded tokens.
 
 Registered probe: enable with ``probe_parameters.enable_attention_budget``.
 """

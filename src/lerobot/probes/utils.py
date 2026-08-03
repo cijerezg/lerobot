@@ -541,6 +541,52 @@ def sample_episodes_evenly(
     return samples
 
 
+def action_inspector_sample_seed(base_seed: int, global_idx: int, sample_idx: int = 0) -> int:
+    """Stable independent noise seed; sample 0 is shared with Offline Inference."""
+    return int(base_seed) + int(global_idx) + int(sample_idx) * 1_000_003
+
+
+def sample_action_inspector_frames(dataset, probe_cfg, stride: int = 1) -> list[tuple[int, int, int]]:
+    """Frames shared by Offline Inference and the interactive Action Inspector.
+
+    The two views are only meaningfully comparable when they evaluate the same
+    observation. This sampler preserves the action-trace contract (fixed time
+    stride, optional episode allow-list, per-episode cap), but returns the common
+    ``(episode_idx, frame_idx, global_idx)`` shape used by the other probes.
+
+    Every frame is snapped to the stored image/depth grid. ``trace_anchor_stride_s``
+    is converted through the dataset FPS rather than the environment FPS because
+    these are dataset coordinates.
+    """
+    ep_to_indices = build_episode_index(dataset)
+    wanted = {
+        int(episode)
+        for episode in (getattr(probe_cfg, "trace_episodes", None) or "").split(",")
+        if episode.strip()
+    }
+    stride = max(int(stride), 1)
+    frame_stride = max(
+        int(round(float(probe_cfg.trace_anchor_stride_s) * float(dataset.fps))),
+        1,
+    )
+    frame_stride -= frame_stride % stride
+    frame_stride = max(frame_stride, stride)
+
+    samples: list[tuple[int, int, int]] = []
+    for episode_idx in sorted(ep_to_indices):
+        if wanted and episode_idx not in wanted:
+            continue
+        indices = ep_to_indices[episode_idx]
+        for episode_samples, position in enumerate(
+            range(0, len(indices), frame_stride), start=1
+        ):
+            _, frame_idx, global_idx = _snap_position(dataset, indices, position, stride)
+            samples.append((episode_idx, frame_idx, global_idx))
+            if episode_samples >= int(probe_cfg.trace_max_anchors_per_episode):
+                break
+    return samples
+
+
 def build_sample_list(
     dataset,
     episodes_str: Optional[str],
@@ -728,18 +774,6 @@ def plotly_3d_layout(title: str) -> dict:
                     bgcolor="rgba(255,255,255,0.85)", bordercolor="#cccccc", borderwidth=1),
         margin=dict(l=0, r=0, b=0, t=55),
         height=720,
-    )
-
-
-def ref_bg_trace_3d(ref_emb3):
-    """Grey background scatter trace for the reference GT manifold."""
-    import plotly.graph_objects as go
-    return go.Scatter3d(
-        x=ref_emb3[:, 0], y=ref_emb3[:, 1], z=ref_emb3[:, 2],
-        mode="markers", name="ref GT",
-        marker=dict(size=2, color="#cccccc", opacity=0.30, line=dict(width=0)),
-        hoverinfo="skip",
-        showlegend=True,
     )
 
 

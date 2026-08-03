@@ -14,11 +14,17 @@ For each sampled frame and each requested layer, emits:
   overlay_depth_summary.mp4   — the same, over the point-map depth columns of the
                                 joint softmax, drawn on the depth map (named
                                 ``depth_nullbank`` when the frame carried no depth)
-  cross_matrix_mean.mp4       — cross-attn matrix view (rows=actions, cols=encoder),
-                                mean over heads, with segment dividers
-  cross_matrix_heads.mp4      — per-head 2×4 grid of the same matrix
-  self_matrix_mean.mp4        — self-attn matrix view (action ↔ action), mean over heads
+  action_to_prompt.png        — episode-aggregated prompt read: clause x head mass,
+                                and the individual tokens that carry it
   norm_consts.csv             — per-panel vmax for stable colorbars
+
+Every panel is anchored to something the reader can see — a camera frame, a depth
+map, a decoded token. The raw matrix videos (action x 2000 encoder columns, mean
+and per-head, plus action↔action self-attention) were removed 2026-08-01: at that
+column count the picture is texture rather than signal, and the question they were
+meant to answer — how the action queries divide their attention budget over
+segments and over the chunk — is answered quantitatively, with compositional
+statistics and a noise control, by ``attention_budget``.
 
 Usage:
     python -m lerobot.probes.attention config.yaml \\
@@ -41,6 +47,9 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import cv2
 import imageio
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -372,15 +381,19 @@ def _extract_depth_overlay_grid(result: AttentionCaptureResult, attn: torch.Tens
     }
 
 
-def _render_overlays_from_grids(grids, vmax_overrides=None):
+def _render_overlays_from_grids(
+    grids, vmax_overrides=None, *, mean_title_template="mean: action->{camera}"
+):
     """Render image overlays from extracted grids.
 
     ``vmax_overrides`` (optional) carries fixed scales:
       - ``{cam}_mean`` → scalar vmax for the mean-over-heads panel.
       - ``{cam}_heads`` → sequence of length ``n_heads`` with one vmax per head.
     If absent for a key, the renderer falls back to that frame's local max.
-    Returns ``(frames, vmax_by_panel)``; ``vmax_by_panel`` records the scalar that
-    was actually used (for the heads panel, the max across the per-head values).
+    ``mean_title_template`` is formatted with ``camera=...`` and stays ASCII for
+    OpenCV's built-in font. Returns ``(frames, vmax_by_panel)``;
+    ``vmax_by_panel`` records the scalar that was actually used (for the heads
+    panel, the max across the per-head values).
     """
     frames: dict[str, np.ndarray] = {}
     vmax_by_panel: dict[str, float] = {}
@@ -431,8 +444,15 @@ def _render_overlays_from_grids(grids, vmax_overrides=None):
         summary = [img_np.copy()]
         cv2.putText(summary[0], f"{cam_name} (orig)", (5, 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
-        summary.append(cv2_overlay(img_np, mean_map, f"mean: action→{cam_name}",
-                                    vmax=vmean, vmin=vmean_min))
+        summary.append(
+            cv2_overlay(
+                img_np,
+                mean_map,
+                mean_title_template.format(camera=cam_name),
+                vmax=vmean,
+                vmin=vmean_min,
+            )
+        )
         frames[f"overlay_{cam_name}_summary"] = np.hstack(summary)
 
         rows = []
@@ -462,61 +482,6 @@ def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
     """
     grids = _extract_overlay_grids(result, layer_idx)
     return _render_overlays_from_grids(grids, vmax_overrides=None)
-
-
-def _episode_matrix_vmax(
-    cross_buf: list,
-    self_buf: list,
-    action_text_buf: list,
-    percentile: float = 98.0,
-) -> dict:
-    """Aggregate per-panel [p(100-percentile), p(percentile)] across all per-frame
-    matrix extracts. Heads panels get per-head ranges; mean panels get a single
-    range. ``{name}`` carries the upper bound; ``{name}_vmin`` carries the lower.
-    """
-    upper = float(percentile)
-    lower = max(0.0, 100.0 - upper)
-
-    def _flat_p(tensors: list[torch.Tensor], p: float) -> float:
-        if not tensors:
-            return 0.0
-        flat = np.concatenate([t.numpy().reshape(-1) for t in tensors])
-        return float(np.percentile(flat, p))
-
-    def _per_head_p(per_frame_HxN: list[torch.Tensor], p: float) -> list[float]:
-        if not per_frame_HxN:
-            return []
-        n_heads = int(per_frame_HxN[0].shape[0])
-        out = []
-        for h in range(n_heads):
-            flat = np.concatenate([t[h].numpy().reshape(-1) for t in per_frame_HxN])
-            out.append(float(np.percentile(flat, p)))
-        return out
-
-    out: dict[str, Any] = {}
-
-    if cross_buf:
-        mean_parts = [d["attn"].mean(dim=0) for d in cross_buf]
-        attn_parts = [d["attn"] for d in cross_buf]
-        out["cross_matrix_mean"] = max(_flat_p(mean_parts, upper), 1e-8)
-        out["cross_matrix_mean_vmin"] = _flat_p(mean_parts, lower)
-        out["cross_matrix_heads"] = [max(v, 1e-8) for v in _per_head_p(attn_parts, upper)]
-        out["cross_matrix_heads_vmin"] = _per_head_p(attn_parts, lower)
-
-    if self_buf:
-        mean_parts = [d["attn"].mean(dim=0) for d in self_buf]
-        out["self_matrix_mean"] = max(_flat_p(mean_parts, upper), 1e-8)
-        out["self_matrix_mean_vmin"] = _flat_p(mean_parts, lower)
-
-    if action_text_buf:
-        mean_parts = [d["selected"].mean(dim=0) for d in action_text_buf]
-        sel_parts = [d["selected"] for d in action_text_buf]
-        out["action_text_matrix_mean"] = max(_flat_p(mean_parts, upper), 1e-8)
-        out["action_text_matrix_mean_vmin"] = _flat_p(mean_parts, lower)
-        out["action_text_matrix_heads"] = [max(v, 1e-8) for v in _per_head_p(sel_parts, upper)]
-        out["action_text_matrix_heads_vmin"] = _per_head_p(sel_parts, lower)
-
-    return out
 
 
 def _episode_overlay_vmax(buf, percentile: float = 98.0) -> dict:
@@ -554,211 +519,6 @@ def _episode_overlay_vmax(buf, percentile: float = 98.0) -> dict:
     return out
 
 
-def _render_matrix(mat_2d, vmax, title, out_w=1200, out_h=600,
-                   col_segments=None, vmin=0.0):
-    """Render a 2D attention matrix as a heatmap with optional segment dividers.
-
-    Args:
-        mat_2d:        [R, C] tensor or array (mean over heads).
-        col_segments:  optional list of (name, start, end) for column dividers.
-    """
-    arr = mat_2d.numpy() if hasattr(mat_2d, "numpy") else mat_2d
-    span = max(float(vmax) - float(vmin), 1e-8)
-    norm = ((arr - float(vmin)) / span).clip(0, 1)
-    gray = (norm * 255).astype(np.uint8)
-    color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
-
-    margin_top, margin_bottom, margin_left, margin_right = 32, 60, 40, 8
-    hm_w = out_w - margin_left - margin_right
-    hm_h = out_h - margin_top - margin_bottom
-    color = cv2.resize(color, (hm_w, hm_h), interpolation=cv2.INTER_NEAREST)
-
-    canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
-    canvas[margin_top : margin_top + hm_h, margin_left : margin_left + hm_w] = color
-    cv2.putText(canvas, title, (margin_left + 4, margin_top - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-
-    if col_segments:
-        n_cols = arr.shape[1]
-        px = hm_w / max(n_cols, 1)
-        annot_y = margin_top + hm_h + 16
-        for name, s, e in col_segments:
-            mid = int(margin_left + (s + e) / 2 * px)
-            (tw, _), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-            cv2.putText(canvas, name, (mid - tw // 2, annot_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
-            if s > 0:
-                x_div = int(margin_left + s * px)
-                cv2.line(canvas, (x_div, margin_top),
-                         (x_div, margin_top + hm_h), (255, 255, 255), 1)
-    return canvas
-
-
-def _matrix_indices_from_result(result: AttentionCaptureResult, encoder_len: int):
-    explicit = result.extras.get("matrix_col_indices_by_segment")
-    if not explicit:
-        explicit = {}
-        for name, indices in result.extras.get("image_patch_indices_by_segment", {}).items():
-            explicit[str(name)] = indices
-        for name, indices in result.extras.get("text_token_indices_by_segment", {}).items():
-            explicit[str(name)] = indices
-        # The joint depth softmax puts N extra key columns after the prompt. They
-        # carry real mass, so they get their own column block rather than being
-        # dropped by the "only labelled columns are displayed" rule below.
-        depth_segment = result.extras.get("depth_segment")
-        if depth_segment:
-            name = "depth_nullbank" if depth_segment.get("is_null_bank") else "depth"
-            explicit[name] = depth_segment["indices"]
-
-    selected: list[int] = []
-    display_segments: list[tuple[str, int, int]] = []
-    seen: set[int] = set()
-    for name, raw_indices in explicit.items():
-        clean = []
-        for idx in raw_indices:
-            idx = int(idx)
-            if 0 <= idx < encoder_len and idx not in seen:
-                clean.append(idx)
-                seen.add(idx)
-        if not clean:
-            continue
-        start = len(selected)
-        selected.extend(clean)
-        display_segments.append((str(name), start, len(selected)))
-
-    if not selected:
-        return None, result.encoder_segments
-    return torch.as_tensor(selected, dtype=torch.long), display_segments
-
-
-def _cross_matrix_attn_and_segments(result: AttentionCaptureResult, attn: torch.Tensor):
-    idx, segments = _matrix_indices_from_result(result, int(attn.shape[-1]))
-    if idx is None:
-        return attn, segments
-    return attn.index_select(dim=-1, index=idx), segments
-
-
-def _extract_cross_matrix_data(result: AttentionCaptureResult, layer_idx: int):
-    """Pass-1 extract for the cross-attention matrix panels."""
-    cross = result.cross_attn_by_layer.get(layer_idx)
-    if cross is None:
-        return None
-    attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)   # [H, n_act, enc]
-    attn, display_segments = _cross_matrix_attn_and_segments(result, attn)
-    return {"attn": attn, "display_segments": display_segments}
-
-
-def _render_cross_matrix_from_data(data, layer_idx, vmax_overrides=None):
-    frames: dict[str, np.ndarray] = {}
-    vmax_by_panel: dict[str, float] = {}
-    if data is None:
-        return frames, vmax_by_panel
-    overrides = vmax_overrides or {}
-    attn = data["attn"]
-    display_segments = data["display_segments"]
-    n_heads = int(attn.shape[0])
-    mean = attn.mean(dim=0)
-
-    mean_v = overrides.get("cross_matrix_mean")
-    if mean_v is None:
-        mean_v = float(mean.max().item())
-    mean_v = float(mean_v)
-    mean_vmin = float(overrides.get("cross_matrix_mean_vmin", 0.0))
-    vmax_by_panel["cross_matrix_mean"] = mean_v
-    frames["cross_matrix_mean"] = _render_matrix(
-        mean, mean_v,
-        f"L{layer_idx}: cross-attn action→encoder (mean, vmin={mean_vmin:.3f}, vmax={mean_v:.3f})",
-        col_segments=display_segments,
-        vmin=mean_vmin,
-    )
-
-    heads_override = overrides.get("cross_matrix_heads")
-    if heads_override is None:
-        v_all = float(attn.max().item())
-        head_vmax = [v_all] * n_heads
-    elif isinstance(heads_override, (list, tuple)):
-        head_vmax = [float(v) for v in heads_override]
-        if len(head_vmax) < n_heads:
-            head_vmax = head_vmax + [head_vmax[-1]] * (n_heads - len(head_vmax))
-    else:
-        head_vmax = [float(heads_override)] * n_heads
-
-    heads_vmin_override = overrides.get("cross_matrix_heads_vmin")
-    if heads_vmin_override is None:
-        head_vmin = [0.0] * n_heads
-    elif isinstance(heads_vmin_override, (list, tuple)):
-        head_vmin = [float(v) for v in heads_vmin_override]
-        if len(head_vmin) < n_heads:
-            head_vmin = head_vmin + [head_vmin[-1]] * (n_heads - len(head_vmin))
-    else:
-        head_vmin = [float(heads_vmin_override)] * n_heads
-
-    vmax_by_panel["cross_matrix_heads"] = float(max(head_vmax))
-    h_cols, h_rows = 4, (n_heads + 3) // 4
-    panel_w, panel_h = 1200, 600
-    grid_w = panel_w * h_cols // 2
-    grid_h = panel_h * h_rows // 2
-    canvas = np.zeros((grid_h + 36, grid_w, 3), dtype=np.uint8)
-    cv2.putText(canvas, f"L{layer_idx}: cross-attn per head", (12, 26),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
-    sub_w = grid_w // h_cols
-    sub_h = grid_h // h_rows
-    for h in range(n_heads):
-        r, c = divmod(h, h_cols)
-        sub = _render_matrix(attn[h], head_vmax[h],
-                             f"head {h} (vmin={head_vmin[h]:.3f}, vmax={head_vmax[h]:.3f})",
-                             out_w=sub_w, out_h=sub_h,
-                             col_segments=display_segments,
-                             vmin=head_vmin[h])
-        canvas[36 + r * sub_h : 36 + (r + 1) * sub_h,
-               c * sub_w : (c + 1) * sub_w] = sub
-    frames["cross_matrix_heads"] = canvas
-    return frames, vmax_by_panel
-
-
-def render_cross_matrix(result: AttentionCaptureResult, layer_idx: int):
-    """Mean cross-attention heatmap (rows=actions, cols=encoder)."""
-    data = _extract_cross_matrix_data(result, layer_idx)
-    return _render_cross_matrix_from_data(data, layer_idx, vmax_overrides=None)
-
-
-def _extract_self_matrix_data(result: AttentionCaptureResult, layer_idx: int):
-    selfa = result.self_attn_by_layer.get(layer_idx)
-    if selfa is None:
-        return None
-    attn = torch.nan_to_num(selfa[0].float().cpu(), nan=0.0)
-    return {"attn": attn}
-
-
-def _render_self_matrix_from_data(data, layer_idx, vmax_overrides=None):
-    frames: dict[str, np.ndarray] = {}
-    vmax_by_panel: dict[str, float] = {}
-    if data is None:
-        return frames, vmax_by_panel
-    overrides = vmax_overrides or {}
-    attn = data["attn"]
-    mean = attn.mean(dim=0)
-    v = overrides.get("self_matrix_mean")
-    if v is None:
-        v = float(mean.max().item())
-    v = float(v)
-    v_min = float(overrides.get("self_matrix_mean_vmin", 0.0))
-    vmax_by_panel["self_matrix_mean"] = v
-    frames["self_matrix_mean"] = _render_matrix(
-        mean, v,
-        f"L{layer_idx}: self-attn action↔action (mean, vmin={v_min:.3f}, vmax={v:.3f})",
-        out_w=900, out_h=900,
-        vmin=v_min,
-    )
-    return frames, vmax_by_panel
-
-
-def render_self_matrix(result: AttentionCaptureResult, layer_idx: int):
-    """Mean self-attention heatmap (action ↔ action)."""
-    data = _extract_self_matrix_data(result, layer_idx)
-    return _render_self_matrix_from_data(data, layer_idx, vmax_overrides=None)
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Action → [action | decoded text] focused matrix
 # ──────────────────────────────────────────────────────────────────────────────
@@ -772,124 +532,6 @@ def _decode_token_label(tokenizer, tid) -> str:
         return str(int(tid))
     text = str(text).replace("\n", " ").strip()
     return text.encode("ascii", errors="replace").decode("ascii") if text else ""
-
-
-def _draw_rotated_text(canvas, text, x_center, y_top, font_scale, color):
-    if not text:
-        return
-    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
-    pad = 2
-    sub = np.zeros((th + baseline + pad * 2, tw + pad * 2, 3), dtype=np.uint8)
-    cv2.putText(sub, text, (pad, th + pad), cv2.FONT_HERSHEY_SIMPLEX,
-                font_scale, color, 1, cv2.LINE_AA)
-    rotated = cv2.rotate(sub, cv2.ROTATE_90_CLOCKWISE)
-    rh, rw = rotated.shape[:2]
-    x0 = max(0, x_center - rw // 2)
-    y0 = y_top
-    x1 = min(canvas.shape[1], x0 + rw)
-    y1 = min(canvas.shape[0], y0 + rh)
-    if x1 > x0 and y1 > y0:
-        roi = canvas[y0:y1, x0:x1]
-        np.maximum(roi, rotated[: y1 - y0, : x1 - x0], out=roi)
-
-
-def _render_action_text_panel(
-    mat,
-    vmax,
-    col_labels,
-    groups,
-    title,
-    out_w=2400,
-    out_h=900,
-    title_font_scale=0.55,
-    label_font_scale=0.35,
-    group_font_scale=0.5,
-    vmin=0.0,
-):
-    arr = mat.numpy() if hasattr(mat, "numpy") else mat
-    n_rows, n_cols = arr.shape[:2]
-    span = max(float(vmax) - float(vmin), 1e-8)
-    norm = ((arr - float(vmin)) / span).clip(0, 1)
-    gray = (norm * 255).astype(np.uint8)
-    color = cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
-
-    margin_top, margin_bottom, margin_left, margin_right = 32, 140, 42, 8
-    hm_w = out_w - margin_left - margin_right
-    hm_h = out_h - margin_top - margin_bottom
-    color = cv2.resize(color, (hm_w, hm_h), interpolation=cv2.INTER_NEAREST)
-
-    canvas = np.zeros((out_h, out_w, 3), dtype=np.uint8)
-    canvas[margin_top : margin_top + hm_h, margin_left : margin_left + hm_w] = color
-    cv2.putText(canvas, title, (margin_left + 4, margin_top - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, title_font_scale,
-                (255, 255, 255), 1, cv2.LINE_AA)
-
-    px_col = hm_w / max(n_cols, 1)
-    px_row = hm_h / max(n_rows, 1)
-    for row_idx in range(0, n_rows, 5):
-        y = int(margin_top + (row_idx + 0.5) * px_row + 4)
-        cv2.putText(canvas, str(row_idx), (4, y), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4, (200, 200, 200), 1, cv2.LINE_AA)
-
-    annot_y = margin_top + hm_h + 18
-    for group_name, start, end in groups:
-        if end <= start:
-            continue
-        if start > 0:
-            x = int(margin_left + start * px_col)
-            cv2.line(canvas, (x, margin_top), (x, margin_top + hm_h), (255, 255, 255), 1)
-        mid = int(margin_left + ((start + end) / 2) * px_col)
-        (tw, _), _ = cv2.getTextSize(group_name, cv2.FONT_HERSHEY_SIMPLEX, group_font_scale, 1)
-        cv2.putText(canvas, group_name, (mid - tw // 2, annot_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, group_font_scale,
-                    (255, 255, 255), 1, cv2.LINE_AA)
-
-    label_y = margin_top + hm_h + 28
-    for col_idx, label in enumerate(col_labels):
-        if not label:
-            continue
-        x_center = int(margin_left + (col_idx + 0.5) * px_col)
-        _draw_rotated_text(canvas, label, x_center, label_y,
-                           label_font_scale, (220, 220, 220))
-    return canvas
-
-
-def _render_action_text_heads(per_head, head_vmax, col_labels, groups, title, head_vmin=None):
-    """``head_vmax`` and ``head_vmin`` are sequences of length n_heads; each head
-    uses its own [vmin, vmax] range."""
-    n_heads = int(per_head.shape[0])
-
-    def _norm_list(v, default):
-        if v is None:
-            return [float(default)] * n_heads
-        if not isinstance(v, (list, tuple)):
-            return [float(v)] * n_heads
-        v = list(v)
-        if len(v) < n_heads:
-            v = v + [v[-1]] * (n_heads - len(v))
-        return [float(x) for x in v]
-
-    head_vmax = _norm_list(head_vmax, 1.0)
-    head_vmin = _norm_list(head_vmin, 0.0)
-    h_cols = 4
-    h_rows = (n_heads + h_cols - 1) // h_cols
-    panel_w, panel_h = 900, 520
-    title_h = 36
-    canvas = np.zeros((title_h + h_rows * panel_h, h_cols * panel_w, 3), dtype=np.uint8)
-    cv2.putText(canvas, title, (12, 26), cv2.FONT_HERSHEY_SIMPLEX,
-                0.7, (255, 255, 255), 1, cv2.LINE_AA)
-    for head_idx in range(n_heads):
-        r, c = divmod(head_idx, h_cols)
-        sub = _render_action_text_panel(
-            per_head[head_idx], head_vmax[head_idx], col_labels, groups,
-            f"head {head_idx} (vmin={head_vmin[head_idx]:.3f}, vmax={head_vmax[head_idx]:.3f})",
-            out_w=panel_w, out_h=panel_h,
-            title_font_scale=0.45, label_font_scale=0.30, group_font_scale=0.4,
-            vmin=head_vmin[head_idx],
-        )
-        canvas[title_h + r * panel_h : title_h + (r + 1) * panel_h,
-               c * panel_w : (c + 1) * panel_w] = sub
-    return canvas
 
 
 def _token_label_for_position(result: AttentionCaptureResult, segment_name: str, pos: int, seg_start: int | None):
@@ -1039,111 +681,147 @@ def _group_prompt_indices(result: AttentionCaptureResult, text_blocks, encoder_l
     return [(name, buckets[name]) for name in _PROMPT_GROUP_ORDER if buckets[name]]
 
 
-def _extract_action_text_data(result: AttentionCaptureResult, layer_idx: int):
-    """Pass-1 extract: returns the row-normalized ``selected`` tensor + column metadata."""
+def _extract_prompt_mass(result: AttentionCaptureResult, layer_idx: int):
+    """Pass-1 extract for the prompt panel: how much of each action query's softmax
+    row lands on each prompt clause, and on each token inside it.
+
+    Mass is absolute — a share of the whole encoder row, which sums to 1 over
+    images, depth, prompt and chat scaffolding together — so a number here is
+    directly comparable with ``attention_budget``. The deleted matrix renormalized
+    each row within the prompt, which hides the failure that matters: a clause
+    whose share *of the prompt* holds steady while the prompt as a whole stops
+    being read.
+
+    Returns per-head clause mass ``[H]`` averaged over action queries, and per
+    token mass averaged over heads and queries, keyed by ``(clause, label)``.
+    """
     cross = result.cross_attn_by_layer.get(layer_idx)
     if cross is None:
         return None
     text_blocks = _text_blocks_for_action_matrix(result)
     if not text_blocks:
         return None
-    cross_attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)
-    encoder_len = int(cross_attn.shape[-1])
+    cross_attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)   # [H, n_act, enc]
     encoder_valid = None
     if torch.is_tensor(result.encoder_pad_masks) and result.encoder_pad_masks.ndim >= 2:
         encoder_valid = result.encoder_pad_masks[0].detach().cpu().to(torch.bool)
-    prompt_groups = _group_prompt_indices(result, text_blocks, encoder_len, encoder_valid)
+    prompt_groups = _group_prompt_indices(
+        result, text_blocks, int(cross_attn.shape[-1]), encoder_valid
+    )
     if not prompt_groups:
         return None
 
-    all_indices: list[int] = []
-    col_labels: list[str] = []
-    groups: list[tuple[str, int, int]] = []
+    by_head: dict[str, np.ndarray] = {}
+    tokens: dict[tuple[str, str], float] = {}
     for name, entries in prompt_groups:
-        if not entries:
-            continue
-        start = len(all_indices)
-        for idx, label in entries:
-            all_indices.append(idx)
-            col_labels.append(label if label else f"#{idx}")
-        groups.append((name, start, len(all_indices)))
-
-    idx_t = torch.as_tensor(all_indices, dtype=torch.long)
-    selected = cross_attn.index_select(dim=-1, index=idx_t)
-    selected = selected / selected.sum(dim=-1, keepdim=True).clamp_min(1e-8)
-    return {"selected": selected, "col_labels": col_labels, "groups": groups}
+        idx = torch.as_tensor([i for i, _ in entries], dtype=torch.long)
+        block = cross_attn.index_select(2, idx)                     # [H, n_act, n_tok]
+        by_head[name] = block.sum(dim=2).mean(dim=1).numpy()        # [H]
+        per_token = block.mean(dim=1).mean(dim=0).numpy()           # [n_tok]
+        for (_, label), mass in zip(entries, per_token, strict=True):
+            # A repeated word inside one clause ("the") is one entry carrying the
+            # clause's total mass on that word, which is what the reader asks about.
+            key = (name, label.strip() or "·")
+            tokens[key] = tokens.get(key, 0.0) + float(mass)
+    return {"by_head": by_head, "tokens": tokens}
 
 
-def _render_action_text_from_data(data, layer_idx, vmax_overrides=None):
-    """MolmoAct2 receives one packed text stream. This view groups the non-image
-    prompt tokens for readability; it is not a separate model pathway. Rows are
-    normalized across the displayed prompt tokens only, so this panel compares
-    task/state/setup/etc. within the prompt, not prompt vs image vs action
-    self-attention.
+def _aggregate_prompt_mass(buf: list[dict]) -> dict | None:
+    """Mean over frames of the per-frame extracts.
+
+    A token is identified by ``(clause, decoded label)`` rather than by a column
+    index: the subtask and metadata clauses change length frame to frame, so column
+    *k* is a different word in every frame and averaging over it is meaningless. A
+    label missing from a frame contributes zero to its mean — the model cannot read
+    a word that was not in that frame's prompt, and pretending otherwise would
+    reward rare words.
     """
-    frames: dict[str, np.ndarray] = {}
-    vmax_by_panel: dict[str, float] = {}
-    if data is None:
-        return frames, vmax_by_panel
-    overrides = vmax_overrides or {}
-    selected = data["selected"]
-    col_labels = data["col_labels"]
-    groups = data["groups"]
-    n_heads = int(selected.shape[0])
-    mean = selected.mean(dim=0)
+    if not buf:
+        return None
+    n_frames = len(buf)
+    groups = [name for name in _PROMPT_GROUP_ORDER if any(name in d["by_head"] for d in buf)]
+    n_heads = len(next(iter(buf[0]["by_head"].values())))
 
-    mean_v = overrides.get("action_text_matrix_mean")
-    if mean_v is None:
-        mean_v = max(float(mean.max().item()), 1e-3)
-    mean_v = float(mean_v)
-    mean_vmin = float(overrides.get("action_text_matrix_mean_vmin", 0.0))
-    vmax_by_panel["action_text_matrix_mean"] = mean_v
+    by_head = np.zeros((n_heads, len(groups)), dtype=np.float64)
+    for d in buf:
+        for col, name in enumerate(groups):
+            if name in d["by_head"]:
+                by_head[:, col] += d["by_head"][name]
+    by_head /= n_frames
 
-    heads_override = overrides.get("action_text_matrix_heads")
-    if heads_override is None:
-        v_all = max(float(selected.max().item()), 1e-3)
-        head_vmax = [v_all] * n_heads
-    elif isinstance(heads_override, (list, tuple)):
-        head_vmax = [float(v) for v in heads_override]
-        if len(head_vmax) < n_heads:
-            head_vmax = head_vmax + [head_vmax[-1]] * (n_heads - len(head_vmax))
-    else:
-        head_vmax = [float(heads_override)] * n_heads
+    tokens: dict[tuple[str, str], float] = {}
+    for d in buf:
+        for key, mass in d["tokens"].items():
+            tokens[key] = tokens.get(key, 0.0) + mass / n_frames
 
-    heads_vmin_override = overrides.get("action_text_matrix_heads_vmin")
-    if heads_vmin_override is None:
-        head_vmin = [0.0] * n_heads
-    elif isinstance(heads_vmin_override, (list, tuple)):
-        head_vmin = [float(v) for v in heads_vmin_override]
-        if len(head_vmin) < n_heads:
-            head_vmin = head_vmin + [head_vmin[-1]] * (n_heads - len(head_vmin))
-    else:
-        head_vmin = [float(heads_vmin_override)] * n_heads
-    vmax_by_panel["action_text_matrix_heads"] = float(max(head_vmax))
+    return {"groups": groups, "by_head": by_head, "tokens": tokens, "n_frames": n_frames}
 
-    frames["action_text_matrix_mean"] = _render_action_text_panel(
-        mean,
-        mean_v,
-        col_labels,
-        groups,
-        f"L{layer_idx}: action -> prompt tokens (mean, rows sum over tokens, vmin={mean_vmin:.3f}, vmax={mean_v:.3f})",
-        vmin=mean_vmin,
+
+def _render_prompt_panel(
+    agg: dict,
+    layer_idx: int,
+    out_path: str,
+    top_k: int = 24,
+    units: str = "share of the softmax row",
+) -> None:
+    """Two views of the same numbers: which clause each head reads, and which words
+    carry that clause's mass. Both are episode means, which is the point — the
+    per-frame version of this was a video nobody could read.
+
+    ``units`` names what a cell holds. The Jacobian probe passes the same tensors
+    through this renderer, and there a value is a causal magnitude rather than a
+    probability — it does not sum to 1 over the encoder and must not be read as if
+    it did.
+    """
+    groups = agg["groups"]
+    by_head = agg["by_head"]
+    n_heads = by_head.shape[0]
+    color_of = {name: plt.get_cmap("tab10")(i % 10) for i, name in enumerate(_PROMPT_GROUP_ORDER)}
+
+    fig, (ax_heads, ax_tokens) = plt.subplots(
+        1, 2, figsize=(6.2 + 0.42 * len(groups) + 0.10 * top_k, 1.2 + 0.34 * max(n_heads, top_k)),
+        gridspec_kw={"width_ratios": [max(len(groups), 4), 7]},
     )
-    frames["action_text_matrix_heads"] = _render_action_text_heads(
-        selected,
-        head_vmax,
-        col_labels,
-        groups,
-        f"L{layer_idx}: action -> prompt tokens (per-head, rows sum over tokens, per-head vmin/vmax)",
-        head_vmin=head_vmin,
+
+    image = ax_heads.imshow(by_head, aspect="auto", cmap="magma", vmin=0.0)
+    ax_heads.set_xticks(range(len(groups)))
+    ax_heads.set_xticklabels(
+        [f"{name}\n{by_head[:, col].mean():.3f}" for col, name in enumerate(groups)],
+        rotation=45, ha="right", fontsize=8,
     )
-    return frames, vmax_by_panel
+    ax_heads.set_yticks(range(n_heads))
+    ax_heads.set_yticklabels([f"h{h}" for h in range(n_heads)], fontsize=8)
+    ax_heads.set_title(f"L{layer_idx}: clause mass per head\n(x-label = mean over heads)", fontsize=9)
+    for h in range(n_heads):
+        for col in range(len(groups)):
+            value = by_head[h, col]
+            ax_heads.text(
+                col, h, f"{value:.3f}", ha="center", va="center", fontsize=6,
+                color="white" if value < by_head.max() * 0.6 else "black",
+            )
+    fig.colorbar(image, ax=ax_heads, fraction=0.046, label=units)
 
+    top = sorted(agg["tokens"].items(), key=lambda kv: kv[1], reverse=True)[:top_k][::-1]
+    positions = np.arange(len(top))
+    ax_tokens.barh(
+        positions, [mass for _, mass in top],
+        color=[color_of.get(clause, "#808080") for (clause, _), _ in top],
+    )
+    ax_tokens.set_yticks(positions)
+    ax_tokens.set_yticklabels([f"{clause} · {label}" for (clause, label), _ in top], fontsize=7)
+    ax_tokens.set_xlabel(f"{units} (mean over heads, queries, frames)", fontsize=8)
+    ax_tokens.set_title(f"top {len(top)} prompt tokens by mass", fontsize=9)
+    ax_tokens.grid(axis="x", alpha=0.25)
+    ax_tokens.set_axisbelow(True)
 
-def render_action_text_matrix(result: AttentionCaptureResult, layer_idx: int):
-    """Compact action-query attention to prompt tokens (per-frame vmax wrapper)."""
-    data = _extract_action_text_data(result, layer_idx)
-    return _render_action_text_from_data(data, layer_idx, vmax_overrides=None)
+    fig.suptitle(
+        f"action queries → prompt, layer {layer_idx}, mean over {agg['n_frames']} frames",
+        fontsize=10,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1176,18 +854,13 @@ def _attention_metadata_summary(result: AttentionCaptureResult, layer_idx: int) 
         if isinstance(value, dict):
             raw_indices[key] = {str(name): _summarize_indices(indices) for name, indices in value.items()}
 
-    display_segments = None
     if cross is not None:
-        attn = torch.nan_to_num(cross[0].float().cpu(), nan=0.0)
-        idx, segments = _matrix_indices_from_result(result, int(attn.shape[-1]))
-        display_segments = segments
-        if idx is not None:
-            raw_indices["cross_matrix_display_indices"] = _summarize_indices(idx.tolist())
+        encoder_len = int(cross.shape[-1])
         text_blocks = _text_blocks_for_action_matrix(result)
         encoder_valid = None
         if torch.is_tensor(result.encoder_pad_masks) and result.encoder_pad_masks.ndim >= 2:
             encoder_valid = result.encoder_pad_masks[0].detach().cpu().to(torch.bool)
-        prompt_groups = _group_prompt_indices(result, text_blocks, int(attn.shape[-1]), encoder_valid)
+        prompt_groups = _group_prompt_indices(result, text_blocks, encoder_len, encoder_valid)
         raw_indices["action_prompt_groups"] = {
             name: _summarize_indices([idx for idx, _ in entries]) for name, entries in prompt_groups
         }
@@ -1203,7 +876,6 @@ def _attention_metadata_summary(result: AttentionCaptureResult, layer_idx: int) 
         "cross_shape": list(cross.shape) if torch.is_tensor(cross) else None,
         "self_shape": list(selfa.shape) if torch.is_tensor(selfa) else None,
         "encoder_segments": [list(seg) for seg in result.encoder_segments],
-        "cross_matrix_display_segments": [list(seg) for seg in display_segments or []],
         "patches_per_cam": int(result.patches_per_cam),
         "indices": raw_indices,
         "adapter_debug": result.extras.get("image_attention_debug", {}),
@@ -1278,38 +950,29 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
                 layer_buf[layer_idx].append({
                     "fr_idx": fr_idx,
                     "overlay_grids": _extract_overlay_grids(result, layer_idx),
-                    "cross": _extract_cross_matrix_data(result, layer_idx),
-                    "self": _extract_self_matrix_data(result, layer_idx),
-                    "action_text": _extract_action_text_data(result, layer_idx),
+                    "prompt_mass": _extract_prompt_mass(result, layer_idx),
                 })
 
         for layer_idx, frames_buf in layer_buf.items():
             if not frames_buf:
                 continue
             overlay_buf = [(d["fr_idx"], d["overlay_grids"]) for d in frames_buf]
-            ep_overlay_vmax = _episode_overlay_vmax(overlay_buf, percentile=98.0)
-            ep_matrix_vmax = _episode_matrix_vmax(
-                [d["cross"] for d in frames_buf if d["cross"] is not None],
-                [d["self"] for d in frames_buf if d["self"] is not None],
-                [d["action_text"] for d in frames_buf if d["action_text"] is not None],
-                percentile=98.0,
-            )
-            all_vmax = {**ep_overlay_vmax, **ep_matrix_vmax}
+            all_vmax = _episode_overlay_vmax(overlay_buf, percentile=98.0)
 
             csv_f, csv_w = csv_files[layer_idx]
             ep_dir = os.path.join(ds_output_dir, f"ep{ep_idx:04d}_L{layer_idx:02d}")
+
+            prompt_agg = _aggregate_prompt_mass(
+                [d["prompt_mass"] for d in frames_buf if d["prompt_mass"] is not None]
+            )
+            if prompt_agg is not None:
+                _render_prompt_panel(prompt_agg, layer_idx, os.path.join(ep_dir, "action_to_prompt.png"))
+
             for d in frames_buf:
                 fr_idx = d["fr_idx"]
-                panels: dict[str, np.ndarray] = {}
-                vmaxes: dict[str, float] = {}
-                for p_frames, p_vmax in (
-                    _render_overlays_from_grids(d["overlay_grids"], vmax_overrides=all_vmax),
-                    _render_cross_matrix_from_data(d["cross"], layer_idx, vmax_overrides=all_vmax),
-                    _render_self_matrix_from_data(d["self"], layer_idx, vmax_overrides=all_vmax),
-                    _render_action_text_from_data(d["action_text"], layer_idx, vmax_overrides=all_vmax),
-                ):
-                    panels.update(p_frames)
-                    vmaxes.update(p_vmax)
+                panels, vmaxes = _render_overlays_from_grids(
+                    d["overlay_grids"], vmax_overrides=all_vmax
+                )
 
                 for panel, vmax in vmaxes.items():
                     csv_w.writerow([ep_idx, fr_idx, layer_idx, panel, f"{vmax:.6e}"])

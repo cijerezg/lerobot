@@ -18,8 +18,8 @@ travel stop dominating; and late chunk steps stop outweighing early ones.
 **Distances are measured in PCA space, never in the UMAP picture.** UMAP's
 ``transform`` places an out-of-sample point at a weighted mean of its nearest training
 neighbours, so an off-manifold prediction is pulled onto the manifold by construction —
-a distance read there understates deviation by design. The 2D/3D plots are UMAP
-because it draws better; every number comes from the 50-dim PCA space.
+a distance read there understates deviation by design. The plots are UMAP because it
+draws better; every number comes from the 50-dim PCA space.
 
 Three distances per chunk ``x`` (reference set ``{z_i}``, PCA basis ``mu, W``):
 
@@ -56,9 +56,6 @@ Output layout (under ``probe_parameters.output_dir/actions/``):
   2d/by_subtask.png             GT vs pred, coloured by subtask
   2d/episodes/ep{N:04d}.png     per-episode GT vs pred
   2d/overview.png               all eval datasets' GT on the reference manifold
-  3d/by_episode.html            interactive per-episode
-  3d/by_frame.html              interactive by frame index
-  3d/overview.html              interactive overview
 
 Usage:
     python -m lerobot.probes.actions config.yaml
@@ -89,17 +86,14 @@ from lerobot.probes.utils import (
     SEQ_CMAPS,
     ax_style,
     dataset_display_name,
-    frame_colors_rgba,
     get_action_chunk_lowdim,
     get_subtask_idx,
     get_subtask_str,
     load_extra_dataset,
     load_probe_dataset,
     makedirs,
-    plotly_3d_layout,
     probe_frame_inputs,
     probe_image_stride,
-    ref_bg_trace_3d,
     run_pca,
     sample_episodes_evenly,
 )
@@ -220,22 +214,16 @@ def fit_manifold(adapter, datasets, cfg, pca_dir, fingerprint):
     state_mean = states.mean(axis=0)
     state_std = np.maximum(states.std(axis=0), 1e-6)
 
-    def _fit_umap(n_components, label):
-        logging.info(f"  Fitting {label} UMAP on {len(ref_pca)} reference frames …")
-        reducer = umap_lib.UMAP(
-            n_components=n_components,
-            n_neighbors=p.umap_n_neighbors,
-            min_dist=p.umap_min_dist,
-            random_state=p.umap_seed,
-        )
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="n_jobs value.*overridden",
-                                    category=UserWarning)
-            reducer.fit(ref_pca)
-        return reducer
-
-    reducer2d = _fit_umap(2, "2D")
-    reducer3d = _fit_umap(3, "3D")
+    logging.info(f"  Fitting UMAP on {len(ref_pca)} reference frames …")
+    reducer2d = umap_lib.UMAP(
+        n_components=2,
+        n_neighbors=p.umap_n_neighbors,
+        min_dist=p.umap_min_dist,
+        random_state=p.umap_seed,
+    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="n_jobs value.*overridden", category=UserWarning)
+        reducer2d.fit(ref_pca)
 
     return {
         "fingerprint": fingerprint,
@@ -247,9 +235,7 @@ def fit_manifold(adapter, datasets, cfg, pca_dir, fingerprint):
         "state_mean": state_mean,
         "state_std": state_std,
         "reducer2d": reducer2d,
-        "reducer3d": reducer3d,
         "ref_emb2": reducer2d.embedding_,
-        "ref_emb3": reducer3d.embedding_,
     }
 
 
@@ -424,8 +410,6 @@ def collect_eval_dataset(adapter: ProbablePolicy, dataset, samples, manifold, cf
         embeddings = {
             "gt_emb2":   manifold["reducer2d"].transform(gt_dist["coords"]),
             "pred_emb2": manifold["reducer2d"].transform(pred_dist["coords"]),
-            "gt_emb3":   manifold["reducer3d"].transform(gt_dist["coords"]),
-            "pred_emb3": manifold["reducer3d"].transform(pred_dist["coords"]),
         }
 
     return {"metadata": metadata, "gt": gt_dist, "pred": pred_dist, **embeddings}
@@ -806,122 +790,14 @@ def plot_2d_overview(ref_emb2, datasets_cache, output_path):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 3D plots
-# ──────────────────────────────────────────────────────────────────────────────
-
-def plot_3d_by_episode(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_name):
-    import plotly.graph_objects as go
-
-    ep_ids     = [m["episode_idx"] for m in metadata]
-    fr_ids     = [m["frame_idx"]   for m in metadata]
-    unique_eps = sorted(set(ep_ids))
-
-    traces = [ref_bg_trace_3d(ref_emb3)]
-    for i, ep in enumerate(unique_eps):
-        idx    = [j for j, e in enumerate(ep_ids) if e == ep]
-        frames = np.array([fr_ids[j] for j in idx])
-        colors = frame_colors_rgba(frames, SEQ_CMAPS[i % len(SEQ_CMAPS)], alpha=0.85)
-
-        hover_gt   = [f"GT   ep={ep} fr={fr_ids[j]}<br>{metadata[j]['subtask']}" for j in idx]
-        hover_pred = [f"pred ep={ep} fr={fr_ids[j]}<br>{metadata[j]['subtask']}" for j in idx]
-
-        traces.append(go.Scatter3d(
-            x=[gt_emb3[j, 0] for j in idx],
-            y=[gt_emb3[j, 1] for j in idx],
-            z=[gt_emb3[j, 2] for j in idx],
-            mode="markers", name=f"ep {ep} GT",
-            legendgroup=f"ep{ep}", showlegend=False,
-            marker=dict(size=3, symbol="square", color=colors,
-                        opacity=0.85, line=dict(width=0)),
-            text=hover_gt, hovertemplate="%{text}<extra></extra>",
-        ))
-        traces.append(go.Scatter3d(
-            x=[pred_emb3[j, 0] for j in idx],
-            y=[pred_emb3[j, 1] for j in idx],
-            z=[pred_emb3[j, 2] for j in idx],
-            mode="markers", name=f"ep {ep}",
-            legendgroup=f"ep{ep}", showlegend=True,
-            marker=dict(size=6, symbol="circle", color=colors, line=dict(width=0)),
-            text=hover_pred, hovertemplate="%{text}<extra></extra>",
-        ))
-
-    fig = go.Figure(data=traces)
-    fig.update_layout(**plotly_3d_layout(
-        f"{ds_name} — by episode  ●=pred  ■=GT  dark→pale=early→late"
-    ))
-    fig.write_html(output_path)
-
-
-def plot_3d_by_frame(ref_emb3, gt_emb3, pred_emb3, metadata, output_path, ds_name):
-    import plotly.graph_objects as go
-
-    fr_ids     = [m["frame_idx"] for m in metadata]
-    n_eps      = len(set(m["episode_idx"] for m in metadata))
-    hover_gt   = [f"GT   ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}"
-                  for m in metadata]
-    hover_pred = [f"pred ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}"
-                  for m in metadata]
-
-    traces = [
-        ref_bg_trace_3d(ref_emb3),
-        go.Scatter3d(
-            x=gt_emb3[:, 0], y=gt_emb3[:, 1], z=gt_emb3[:, 2],
-            mode="markers", name="GT",
-            marker=dict(size=6, symbol="circle", color=fr_ids, colorscale="Plasma",
-                        showscale=True, opacity=0.85,
-                        colorbar=dict(title="Frame index", thickness=16, len=0.65),
-                        line=dict(width=0)),
-            text=hover_gt, hovertemplate="%{text}<extra></extra>",
-        ),
-        go.Scatter3d(
-            x=pred_emb3[:, 0], y=pred_emb3[:, 1], z=pred_emb3[:, 2],
-            mode="markers", name="Predicted",
-            marker=dict(size=4, symbol="cross", color=fr_ids, colorscale="Plasma",
-                        showscale=False, opacity=0.75, line=dict(width=0)),
-            text=hover_pred, hovertemplate="%{text}<extra></extra>",
-        ),
-    ]
-
-    fig = go.Figure(data=traces)
-    fig.update_layout(**plotly_3d_layout(
-        f"{ds_name} — by frame index  (●=GT  ✕=pred)  {n_eps} eps"
-    ))
-    fig.write_html(output_path)
-
-
-def plot_3d_overview(ref_emb3, datasets_cache, output_path):
-    import plotly.graph_objects as go
-
-    traces = [ref_bg_trace_3d(ref_emb3)]
-    for i, (ds_name, ds_data) in enumerate(datasets_cache.items()):
-        col  = DS_COLORS[i % len(DS_COLORS)]
-        emb3 = ds_data["gt_emb3"]
-        meta = ds_data["metadata"]
-        hover = [f"{ds_name} | ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}"
-                 for m in meta]
-        traces.append(go.Scatter3d(
-            x=emb3[:, 0], y=emb3[:, 1], z=emb3[:, 2],
-            mode="markers", name=ds_name,
-            marker=dict(size=3, color=col, opacity=0.80, line=dict(width=0)),
-            text=hover, hovertemplate="%{text}<extra></extra>",
-        ))
-
-    fig = go.Figure(data=traces)
-    fig.update_layout(**plotly_3d_layout("Overview — all datasets GT on reference manifold"))
-    fig.write_html(output_path)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Plotting pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 
 def run_plotting(cache, output_dir):
     ref_emb2 = cache["ref_emb2"]
-    ref_emb3 = cache["ref_emb3"]
 
     d2 = os.path.join(output_dir, "2d")
-    d3 = os.path.join(output_dir, "3d")
-    makedirs(d2, d3)
+    makedirs(d2)
 
     for ds_name, ds_data in cache["datasets"].items():
         meta      = ds_data["metadata"]
@@ -956,13 +832,7 @@ def run_plotting(cache, output_dir):
                 os.path.join(ep_dir, f"ep{ep:04d}.png"),
             )
 
-        plot_3d_by_episode(ref_emb3, ds_data["gt_emb3"], ds_data["pred_emb3"], meta,
-                           os.path.join(d3, "by_episode.html"), ds_name)
-        plot_3d_by_frame(ref_emb3, ds_data["gt_emb3"], ds_data["pred_emb3"], meta,
-                         os.path.join(d3, "by_frame.html"), ds_name)
-
     plot_2d_overview(ref_emb2, cache["datasets"], os.path.join(d2, "overview.png"))
-    plot_3d_overview(ref_emb3, cache["datasets"], os.path.join(d3, "overview.html"))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1042,8 +912,6 @@ def write_manifest(output_dir, summary):
             Panel("2d/by_subtask.png", "GT vs predicted, coloured by subtask"),
             Panel("2d/by_frame.png", "GT vs predicted, coloured by frame index"),
             Panel("2d/overview.png", "Every evaluated dataset on one manifold"),
-            Panel("3d/by_episode.html", "Interactive 3D, per episode"),
-            Panel("3d/by_frame.html", "Interactive 3D, by frame index"),
             Panel("nn_distances.csv", "Per-episode distance table"),
         ],
         extra={"manifold_id": summary["manifold_id"], "datasets": summary.get("datasets", {})},
@@ -1098,7 +966,6 @@ def run(adapter, root_dataset, cfg, output_dir, *, eval_dataset=None):
         cache = {
             "manifold_id": manifold["id"],
             "ref_emb2": manifold["ref_emb2"],
-            "ref_emb3": manifold["ref_emb3"],
             "datasets": {},
             "summaries": {},
         }

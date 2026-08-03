@@ -1938,6 +1938,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
         hidden_states, causal_mask_mapping, position_ids, cache_position = (
             self._prepare_joint_training_backbone_inputs(model_inputs)
         )
+        sensitivity_capture = bool(
+            _MOLMOACT2_PROBING_CAPTURE.get("capture_action_sensitivity", False)
+        )
+        if sensitivity_capture:
+            # Probe boundary: actual multimodal transformer inputs after image
+            # patching/token embedding. Forward values are unchanged.
+            hidden_states = hidden_states.detach().requires_grad_(True)
+            _MOLMOACT2_PROBING_CAPTURE["conditioning_embeddings"] = hidden_states
         if hidden_states.shape[0] != batch_size:
             raise ValueError(
                 f"Backbone batch size {hidden_states.shape[0]} does not match action batch size {batch_size}."
@@ -2042,7 +2050,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             key_states, value_states = self._decoder_layer_kv_outputs(layer_outputs, output_attentions=False)
             key_states = backbone._cache_to_sequence(key_states)
             value_states = backbone._cache_to_sequence(value_states)
-            if self.config.knowledge_insulation:
+            if self.config.knowledge_insulation and not sensitivity_capture:
                 key_states = key_states.detach()
                 value_states = value_states.detach()
 
@@ -2120,6 +2128,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
         pred_velocity = pred_velocity.reshape(
             batch_size, num_flow_timesteps, actions.shape[1], actions.shape[2]
         )
+        if sensitivity_capture:
+            _MOLMOACT2_PROBING_CAPTURE["pred_velocity"] = pred_velocity
 
         loss = F.mse_loss(pred_velocity, target_velocity, reduction="none")
         loss = self._apply_action_chunk_padding_mask(loss, batch.get("action_horizon_is_pad"))
@@ -2417,10 +2427,21 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 raise RuntimeError(
                     "Model generated no decodable action tokens between <action_start>/<action_end>."
                 )
+            # The FAST tokenizer prints a length mismatch and returns a zero chunk, which
+            # is indistinguishable downstream from a real prediction. Count the DCT
+            # coefficients here so a short action span fails loudly instead.
+            horizon = self._generation_action_horizon()
+            num_coefficients = len(action_tokenizer.bpe_tokenizer.decode(discrete_token_ids))
+            if num_coefficients != horizon * int(action_dim):
+                raise RuntimeError(
+                    f"Model generated {num_coefficients} DCT coefficients, expected "
+                    f"{horizon * int(action_dim)} ({horizon} steps x {action_dim} dims). "
+                    "The discrete head has not learned this chunk format."
+                )
             try:
                 decoded = action_tokenizer.decode(
                     [discrete_token_ids],
-                    time_horizon=self._generation_action_horizon(),
+                    time_horizon=horizon,
                     action_dim=int(action_dim),
                 )
             except TypeError:
