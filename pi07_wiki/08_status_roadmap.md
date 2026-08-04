@@ -33,8 +33,8 @@ reconciled in config.
 
 ## Near-term order
 
-1. Finish/evaluate the current offline run; offline_inference probe: subtask +
-   memory quality per checkpoint.
+1. Finish/evaluate the current offline run; action_trace probe: `skill_vs_hold` /
+   `skill_vs_mean` and clearance per checkpoint.
 2. Build Phase 6: MEM video encoder + continuous state history
    (04_memory §2.4; prompt-image path deleted same day its smoke passed —
    design superseded it). Then train and compare offline eval vs the

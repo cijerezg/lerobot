@@ -43,7 +43,6 @@ from urllib.parse import unquote, urlparse
 
 from lerobot.probes.manifest import (
     GROUPS,
-    PROBE_META,
     SUITE_DOC,
     module_doc_from_source,
     panel_kind,
@@ -163,17 +162,18 @@ def read_probe(probe_dir: Path) -> dict:
         except (OSError, ValueError):
             pass
 
+    # No manifest: the probe crashed before writing one, or skipped itself (a
+    # critic probe under skip_critic leaves nothing but its log). Identity is then
+    # whatever the directory name and a same-named module can supply.
     probe_id = probe_dir.name
-    title, group, source = PROBE_META.get(
-        probe_id, (probe_id.replace("_", " ").title(), "Actions", f"{probe_id}.py")
-    )
+    source = PROBE_SOURCE_DIR / f"{probe_id}.py"
     return {
         "schema": 0,
         "id": probe_id,
-        "title": title,
-        "group": group,
+        "title": probe_id.replace("_", " ").title(),
+        "group": "Other",
         "claim": "",
-        "doc": module_doc_from_source(str(PROBE_SOURCE_DIR / source)),
+        "doc": module_doc_from_source(str(source)) if source.is_file() else "",
         "status": "info",
         "metrics": _fallback_metrics(probe_dir),
         "panels": _fallback_panels(probe_dir),
@@ -183,9 +183,6 @@ def read_probe(probe_dir: Path) -> dict:
     }
 
 
-def _probe_order(probe_id: str) -> int:
-    keys = list(PROBE_META)
-    return keys.index(probe_id) if probe_id in keys else len(keys)
 
 
 def build_index(val_dir: Path) -> dict:
@@ -248,10 +245,14 @@ def build_index(val_dir: Path) -> dict:
                 if metric.get("note"):
                     row["note"] = metric["note"]
 
+    # Sidebar order: by group as GROUPS declares them, then alphabetically inside a
+    # group. A probe with no manifest sorts into "Other", at the end.
     ordered = sorted(
         probes.values(),
-        key=lambda p: (GROUPS.index(p["group"]) if p["group"] in GROUPS else len(GROUPS),
-                       _probe_order(p["id"])),
+        key=lambda p: (
+            GROUPS.index(p["group"]) if p["group"] in GROUPS else len(GROUPS),
+            p["title"],
+        ),
     )
     return {
         "run": {"name": val_dir.parent.name, "dir": str(val_dir.parent), "val_dir": str(val_dir)},
@@ -394,7 +395,8 @@ INDEX_HTML = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
  --line:#dde1e6;--accent:#2563c9;--panel:#f1f3f6;--good:#159169;--warn:#b8791d;--bad:#cd423b;--info:#98a1ac}}
 *,*::before,*::after{box-sizing:border-box}
 body{margin:0;font:13px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);
- color:var(--fg);height:100vh;overflow:hidden;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
+ color:var(--fg);height:100vh;overflow:hidden;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased;
+ scrollbar-width:thin;scrollbar-color:var(--line) transparent}
 a{color:var(--accent)}
 button,select,input[type=search]{font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line);
  border-radius:6px;padding:4px 9px;cursor:pointer}
@@ -446,22 +448,9 @@ kbd{background:var(--panel);border:1px solid var(--line);border-bottom-width:2px
 .probehead{padding:16px 20px 12px;border-bottom:1px solid var(--line);background:var(--card)}
 .probehead h2{margin:0 0 3px;font-size:18px;letter-spacing:-.01em}
 .probehead .claim{color:var(--muted);font-size:13.5px;margin:0}
-/* One scrollable row: with nine metrics, wrapping pushed the figure off screen. */
-.mstrip{display:flex;gap:8px;margin-top:12px;overflow-x:auto;padding-bottom:4px}
-.headlinefoot{margin-top:3px;color:var(--muted);font-size:10.5px}
-.mchip{background:var(--panel);border:1px solid var(--line);border-left-width:3px;border-radius:8px;
- padding:6px 10px;min-width:142px;flex:none}
-.mchip.good{border-left-color:var(--good)}.mchip.warn{border-left-color:var(--warn)}
-.mchip.bad{border-left-color:var(--bad)}.mchip.info{border-left-color:var(--line)}
-.mchip .topline{display:flex;align-items:center;gap:7px}
-.mchip .lbl{flex:1;min-width:0;font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;
- text-overflow:ellipsis;max-width:24ch}
 .statusbadge{border-radius:99px;padding:0 5px;font-size:8px;letter-spacing:.05em;text-transform:uppercase;
  color:var(--muted);border:1px solid var(--line)}
 .statusbadge.good{color:var(--good)}.statusbadge.warn{color:var(--warn)}.statusbadge.bad{color:var(--bad)}
-.mchip .row{display:flex;align-items:baseline;gap:7px;margin-top:2px}
-.mchip .val{font-family:ui-monospace,Menlo,monospace;font-size:17px;font-weight:640}
-.mchip .dir{font-size:10px;color:var(--muted);margin-top:1px}
 .spark{width:44px;height:15px;flex:none}
 .d{font-size:11px;font-weight:600}
 .d.up{color:var(--good)}.d.down{color:var(--bad)}.d.flat{color:var(--muted)}
@@ -472,20 +461,24 @@ kbd{background:var(--panel);border:1px solid var(--line);border-bottom-width:2px
 .figbar label{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)}
 .figbar select{max-width:min(46vw,560px)}
 #figsel{font-weight:600;color:var(--fg)}
-.figtitle{font-weight:600;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.readguide{margin:14px 20px 0;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--accent);
- border-radius:8px;padding:10px 13px}
-.readguide .capline{margin-bottom:3px}
-.readguide .doc{color:var(--muted)}
-.readguide .doc p:last-child{margin-bottom:0}
 .figwrap{margin:14px 20px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:11px}
 .figview{overflow:auto;background:var(--panel);border-radius:6px;max-height:78vh;cursor:grab}
 .figview.dragging{cursor:grabbing}
 .figview img{display:block}
-.figview video{display:block;width:100%;height:auto}
-.figview iframe{display:block;width:100%;height:74vh;border:0}
-.figmeta{display:flex;gap:9px;align-items:baseline;margin-top:9px;flex-wrap:wrap}
+/* Natural size, never upscaled: the attention overlays are 756px wide and stretching
+   them across a wide window is both blurry and enormous. */
+.figview video{display:block;width:auto;max-width:100%;height:auto;margin:0 auto}
+/* The embedded plotly pages are ~860px tall; past that the frame is empty scroll and
+   the figure's caption is pushed off the screen. */
+.figview iframe{display:block;width:100%;height:min(74vh,880px);border:0}
+.figmeta{display:flex;gap:9px;align-items:baseline;margin-top:8px;flex-wrap:wrap}
 .figmeta .fn{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:var(--muted);word-break:break-all}
+/* Every figure carries its own caption and reading note, so a stack of key figures
+   is still readable and nothing has to be matched up by position. */
+.figguide{margin-top:10px;border-top:1px solid var(--line);padding-top:9px}
+.figguide .capline{font-size:14px;font-weight:600;margin:0 0 5px}
+.figguide .doc{color:var(--muted)}
+.figguide .doc p:last-child{margin-bottom:0}
 .badge{background:var(--panel);border-radius:99px;padding:1px 8px;font-size:9.5px;letter-spacing:.06em;
  text-transform:uppercase;color:var(--accent);border:1px solid var(--line)}
 .natsize{font-size:10.5px;color:var(--muted);margin-left:auto}
@@ -495,18 +488,21 @@ kbd{background:var(--panel);border:1px solid var(--line);border-bottom-width:2px
 .box{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:14px 16px}
 .box h4{margin:0 0 8px;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
 .box h4+h4{margin-top:18px}
-.capline{font-size:14px;font-weight:600;margin:0 0 6px}
 .doc{font-size:12.5px;line-height:1.65}
 .doc p{margin:0 0 9px}.doc ul,.doc ol{margin:0 0 9px;padding-left:20px}.doc li{margin-bottom:4px}
 .doc code{background:var(--panel);border-radius:3px;padding:0 4px;font-size:11.5px;
  font-family:ui-monospace,Menlo,monospace}
 .doc h3{font-size:13px;margin:15px 0 6px}
+/* Indented docstring blocks are usually a command line: wrap it rather than hiding
+   half of it behind a horizontal scrollbar. */
 .doc pre.eq{background:var(--panel);border-radius:6px;padding:9px 11px;overflow-x:auto;font-size:11.5px;
- margin:0 0 9px;font-family:ui-monospace,Menlo,monospace}
+ margin:0 0 9px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word}
 math{font-size:1.08em}
 math[display="block"]{display:block;margin:4px 0;overflow-x:auto;text-align:center;font-size:1.2em}
 .eqblock{background:var(--panel);border-radius:6px;padding:10px 12px;margin:0 0 11px;overflow-x:auto}
-.note{color:var(--warn);font-size:11.5px;margin:5px 0}
+/* A metric's note explains the number; it is not a warning, and colouring every one
+   amber made a healthy probe look alarming. */
+.note{color:var(--muted);font-size:11.5px;margin:5px 0}
 .warnbox{background:var(--panel);border-left:2px solid var(--warn);padding:9px 11px;border-radius:5px;
  font-size:12px;color:var(--muted);margin-bottom:12px}
 .refs{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
@@ -545,7 +541,7 @@ pre.log{background:var(--panel);border:1px solid var(--line);border-radius:6px;p
  .main{grid-column:2}
  .top{gap:8px}
  input[type=range]{width:120px}
- .readguide,.figwrap{margin-left:12px;margin-right:12px}
+ .figwrap{margin-left:12px;margin-right:12px}
  .below{margin-left:12px;margin-right:12px}
  .figbar{padding-left:12px;padding-right:12px}
 }
@@ -701,25 +697,39 @@ function md(text){
   if(!text) return "";
   return text.split(/\n\s*\n/).map(block => {
     const raw = block.split("\n").filter(l => l.trim());
-    if(raw.length && raw.every(l => /^\s{3,}/.test(l))){
-      const body = raw.map(l => l.replace(/^\s{3,}/, "")).join("\n");
-      return /\$/.test(body) ? `<div class="eqblock">${inline(body)}</div>`
-                             : `<pre class="eq">${esc(body)}</pre>`;
-    }
     const lines = block.split("\n").map(l => l.trim());
     if(lines[0].startsWith("## ")) return `<h3>${inline(lines[0].slice(3))}</h3>` +
       (lines.length > 1 ? `<p>${inline(lines.slice(1).join(" "))}</p>` : "");
-    if(lines.every(l => l.startsWith("- ") || l.startsWith("* ") || /^\s/.test(l))){
-      const items = []; lines.forEach(l => {
-        if(l.startsWith("- ") || l.startsWith("* ")) items.push(l.slice(2));
-        else if(items.length) items[items.length-1] += " " + l; });
-      if(items.length) return `<ul>${items.map(i => `<li>${inline(i)}</li>`).join("")}</ul>`;
-    }
-    if(lines.filter(l => /^\d+\.\s+/.test(l)).length >= 2){
-      const items = []; lines.forEach(l => {
-        const m = /^\d+\.\s+(.*)/.exec(l);
-        if(m) items.push(m[1]); else if(items.length) items[items.length-1] += " " + l; });
-      return `<ol>${items.map(i => `<li>${inline(i)}</li>`).join("")}</ol>`;
+    // Blocks are already split on blank lines, so a block that opens with a marker is a
+    // list and every later line is either a new item or the wrapped tail of the last one.
+    // Testing the trimmed lines instead lost every list whose items wrap.
+    const list = (marker, tag) => {
+      const start = raw.findIndex(l => marker.test(l));
+      if(start < 0) return "";
+      const items = [];
+      raw.slice(start).forEach(l => {
+        const m = marker.exec(l);
+        if(m) items.push(m[1]); else if(items.length) items[items.length-1] += " " + l.trim();
+      });
+      // A marker part-way down only starts a list if it really is one; a lone dash in
+      // running prose is not.
+      if(start > 0 && items.length < 2) return "";
+      const lead = start ? `<p>${inline(raw.slice(0, start).join(" ").trim())}</p>` : "";
+      return `${lead}<${tag}>${items.map(i => `<li>${inline(i)}</li>`).join("")}</${tag}>`;
+    };
+    const bulleted = list(/^\s*[-*]\s+(.*)/, "ul") || list(/^\s*\d+\.\s+(.*)/, "ol");
+    if(bulleted) return bulleted;
+    // An indented run is a command, an aligned table or an equation — never prose. It
+    // often follows a lead line ("Outputs under <dir>/:"), which stays a paragraph.
+    // Reflowing those into prose is how a file listing became one unreadable sentence.
+    const indent = raw.findIndex(l => /^\s\s/.test(l));
+    if(indent >= 0 && raw.slice(indent).every(l => /^\s\s/.test(l))){
+      const body = raw.slice(indent);
+      const strip = Math.min(...body.map(l => l.match(/^\s*/)[0].length));
+      const text = body.map(l => l.slice(strip)).join("\n");
+      const lead = indent ? `<p>${inline(raw.slice(0, indent).join(" ").trim())}</p>` : "";
+      return lead + (/\$/.test(text) ? `<div class="eqblock">${inline(text)}</div>`
+                                     : `<pre class="eq">${esc(text)}</pre>`);
     }
     // Probe docstrings list emitted files as "name.mp4 — what it is", one per line
     // and without bullets. Joining those into a paragraph is unreadable.
@@ -773,9 +783,9 @@ function dirLabel(m){
          (th.length ? " · " + th.join(", ") : "");
 }
 function statusLabel(s){ return ({good:"pass", warn:"warn", bad:"fail", info:"no threshold"})[s] || "no threshold"; }
-function headlineMetrics(p){
-  const explicit = p.metrics.filter(m => m.primary); return explicit.length ? explicit : p.metrics.slice(0, 4);
-}
+// The metrics the probe calls headline still lead the table; they no longer get a
+// separate strip of their own above the figure.
+function orderedMetrics(p){ return [...p.metrics].sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0)); }
 function refChips(ids){
   if(!ids || !ids.length) return "";
   return `<div class="refs">${ids.map(id => {
@@ -817,6 +827,16 @@ function normalizeFacet(plan){
   plan.axes.forEach((axis, a) => { if(!axis.options.includes(facet[a])) facet[a] = axis.options[0]; });
   facet.length = plan.axes.length;
 }
+// Choosing a figure wins over the selectors: stepping with n/p, or landing on a probe
+// whose key figure lives in another episode, otherwise filtered the chosen figure out
+// and the page claimed the probe had written nothing.
+function snapFacet(pn, plan){
+  if(!pn || !plan.axes.length) return;
+  const dir = dirOf(pn.file);
+  if(plan.whole){ facet[0] = plan.axes[0].options.includes(dir) ? dir : ANY; return; }
+  const parts = components(dir);
+  plan.axes.forEach((axis, a) => { if(parts[axis.index] !== undefined) facet[a] = parts[axis.index]; });
+}
 
 // ── state helpers ────────────────────────────────────────────────────────────
 function probe(){ return DATA.probes.find(x => x.id === cur) || null; }
@@ -839,7 +859,7 @@ function drawList(){
       (!q || (p.title + p.id + p.claim).toLowerCase().includes(q)));
     if(!items.length) return "";
     return `<div class="g">${esc(g)}</div>` + items.map(p => {
-      const m = p.metrics[0], v = m ? m.values[stepKey(si)] : undefined;
+      const m = orderedMetrics(p)[0], v = m ? m.values[stepKey(si)] : undefined;
       const status = p.status[stepKey(si)] || "info";
       const shown = m && v !== undefined && v !== null ? fmt(v, m.fmt) : "";
       const tip = `${p.title} — ${statusLabel(status)}${m && shown ? ` · ${m.label}: ${shown}` : ""}`;
@@ -853,10 +873,8 @@ function drawList(){
 function figureSelect(plan){
   const all = allPanels(), keyed = allPanels().filter(pn => pn.primary);
   if(!all.length) return `<span class="num">No figures</span>`;
-  if(all.length === 1){
-    const pn = all[0], label = pn.caption && pn.caption !== pn.file ? pn.caption : pn.file;
-    return `<div class="figtitle" title="${attr(label)}">${esc(label)}</div>`;
-  }
+  // One figure needs no menu: its caption is printed under it like every other.
+  if(all.length === 1) return `<span class="num">1 figure</span>`;
   const inFacet = pn => matchesFacet(pn, plan);
   const opt = pn => `<option value="${esc(pn.file)}" ${pick===pn.file?"selected":""}>${
     esc(pn.caption && pn.caption !== pn.file ? pn.caption : pn.file)}</option>`;
@@ -909,19 +927,8 @@ function drawMain(){
     pick = keyed.length > 1 && all.filter(pn => pn.primary).length > 1 ? KEYS
          : (keyed[0] ? keyed[0].file : null);
   }
+  snapFacet(all.find(pn => pn.file === pick), plan);
   const shown = shownPanels().filter(pn => matchesFacet(pn, plan));
-
-  const headMetrics = headlineMetrics(p);
-  const chips = headMetrics.map(m => {
-    const v = m.values[stepKey(si)], d = delta(m);
-    const status = m.statuses ? (m.statuses[stepKey(si)] || "info") : "info";
-    return `<div class="mchip ${status}">
-      <div class="topline"><div class="lbl" title="${attr(m.label)}">${esc(m.label)}</div>
-        <span class="statusbadge ${status}">${statusLabel(status)}</span></div>
-      <div class="row"><span class="val">${fmt(v, m.fmt)}</span>${spark(m)}
-        <span class="d ${d?d.dir:"flat"}">${d && d.d ? (d.d>0?"+":"")+fmt(d.d, m.fmt) : ""}</span></div>
-      <div class="dir">${esc(dirLabel(m))}</div></div>`;
-  }).join("");
 
   const facets = plan.axes.map((axis, a) => `<label>${esc(axis.label)}
     <select onchange="setFacet(${a}, this.value)">${axis.options.map(o =>
@@ -930,25 +937,25 @@ function drawMain(){
 
   const figures = shown.length ? shown.map(pn => `<div class="figwrap">
       ${figureHtml(pn)}
+      <div class="figguide">
+        <p class="capline">${inline(pn.caption)}</p>
+        ${pn.how ? `<div class="doc">${md(pn.how)}</div>`
+                 : `<p class="note">No reading note for this figure — what the probe measures
+                    is described below.</p>`}
+        ${refChips(pn.refs)}
+      </div>
       <div class="figmeta">${pn.primary ? `<span class="badge">key</span>` : ""}
+        <span class="num">figure ${all.indexOf(pn) + 1} of ${all.length}</span>
         <span class="fn">${esc(pn.file)}</span><span class="natsize"></span></div>
     </div>`).join("")
-    : `<div class="figwrap"><div class="empty">this probe wrote no figures at this step${
-        p.log[stepKey(si)] ? " — its log is below" : ""}</div></div>`;
-
-  const one = shown.length === 1 ? shown[0] : null;
-  const figureGuide = !shown.length ? "" : `<div class="readguide">
-    ${one ? `<p class="capline">${inline(one.caption)}</p>
-             ${one.how ? `<div class="doc">${md(one.how)}</div>`
-                       : `<p class="note">This figure has no reading note yet.</p>`}
-             ${refChips(one.refs)}`
-          : `<p class="capline">Showing ${shown.length} key figures</p>
-             <div class="doc"><p>Pick one from the Figure menu to see its reading note.</p></div>`}
-  </div>`;
+    : `<div class="figwrap"><div class="empty">${all.length
+        ? "no figure matches the selectors above — widen one of them"
+        : "this probe wrote no figures at this step" + (p.log[stepKey(si)] ? " — its log is below" : "")
+      }</div></div>`;
 
   const metricsBox = p.metrics.length ? `<div class="box">
     <h4>Metrics at step ${DATA.steps[si].step.toLocaleString()}</h4>` +
-      p.metrics.map(m => { const v = m.values[stepKey(si)], d = delta(m);
+      orderedMetrics(p).map(m => { const v = m.values[stepKey(si)], d = delta(m);
         const status = m.statuses ? (m.statuses[stepKey(si)] || "info") : "info";
         return `<div class="mrow"><span class="lbl">${esc(m.label)}
           <span class="dir">${esc(dirLabel(m))}</span></span>${spark(m)}
@@ -973,9 +980,7 @@ function drawMain(){
   const canZoom = shown.some(pn => pn.kind === "image");
   main.innerHTML = `
     <div class="probehead"><h2>${esc(p.title)}</h2>
-      ${p.claim ? `<p class="claim">${inline(p.claim)}</p>` : ""}
-      ${chips ? `<div class="mstrip">${chips}</div>` : ""}
-      ${p.metrics.length > headMetrics.length ? `<div class="headlinefoot">${p.metrics.length - headMetrics.length} supporting metric${p.metrics.length - headMetrics.length === 1 ? "" : "s"} below</div>` : ""}</div>
+      ${p.claim ? `<p class="claim">${inline(p.claim)}</p>` : ""}</div>
     <div class="figbar">${figureSelect(plan)}${facets}
       ${canZoom ? `<label>Zoom<select onchange="setZoom(this.value)">
         <option value="auto" ${zoom==="auto"?"selected":""}>auto</option>
@@ -984,7 +989,7 @@ function drawMain(){
         <option value="1" ${zoom==="1"?"selected":""}>100%</option>
         <option value="2" ${zoom==="2"?"selected":""}>200%</option></select></label>` : ""}
       ${all.length > 1 ? `<span class="num">${all.length} figures in this probe</span>` : ""}</div>
-    ${figureGuide}${figures}
+    ${figures}
     <div class="below">${metricsBox}${docBox}</div>`;
   wirePanning();
 }

@@ -130,8 +130,9 @@ biases, init −2), `depth_grad_norm_preclip` (read before `clip_grad_norm_`).
 Depth telemetry is aggregate-only by design: per-layer series are one panel per
 stream layer and belong in `probes/depth_modality_probe.py`, which prints the
 full profile on demand.
-Validation probes at `val_freq` (offline_inference shows GT + predicted subtask
-and memory per checkpoint; critic probes self-skip under skip_critic). Probes must
+Validation probes at `val_freq` (action_trace carries the fit headline —
+normalized MSE vs the hold-still and dataset-mean baselines; critic probes
+self-skip under skip_critic). Probes must
 thread `cfg.policy.inference_advantage` — not a hardcoded advantage — so eval
 prompts match training.
 

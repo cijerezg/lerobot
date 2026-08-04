@@ -2,9 +2,6 @@
 Pi05 adapter for :class:`lerobot.probes.base.ProbablePolicy`.
 
 Wraps a loaded pi05 policy + processors so probes can call a uniform API.
-Mirrors the inference logic in
-``lerobot.probes.offline_inference_pi05.run_inference`` (kept as a reference
-implementation).
 """
 
 from __future__ import annotations

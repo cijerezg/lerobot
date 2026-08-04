@@ -25,14 +25,17 @@ Registered probe: enable with ``probe_parameters.enable_mem_history_influence``.
 import json
 import logging
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     assemble_frame_history,
     get_frame_data,
+    joint_names_for_dim,
     makedirs,
     probe_frame_inputs,
     probe_image_stride,
@@ -80,6 +83,78 @@ def _as_image(tensor: torch.Tensor) -> np.ndarray:
     if array.max() <= 1.0:
         array = (array * 255).clip(0, 255).astype(np.uint8)
     return array
+
+
+_EXAMPLE_HOW = {
+    "best": "A frame where the full history helped most: the ``full`` trace should sit closer to GT than ``none``.",
+    "worst": "A frame where the full history hurt most. A channel that is used but pointed the wrong way looks like this everywhere, not just here.",
+    "strong": "A frame where history moved the chunk most, regardless of whether the move was useful — the influence side of the measurement in isolation.",
+}
+
+
+def _write_manifest(output_dir: str, summary: dict, examples: list[tuple[str, str]]) -> dict:
+    """Describe the history channels' effect on the action chunk to the viewer."""
+    panels = [
+        Panel(
+            "influence.png",
+            "Influence, usefulness, and the per-frame relationship between them",
+            how="Left: how far each history condition moves the chunk away from the no-history prediction. Middle: how much GT MSE that movement removes — the bar that matters, and the only one that can come out negative. Right: one point per frame, so a positive mean built out of a few large wins is distinguishable from a consistent small gain.",
+            primary=True,
+        )
+    ]
+    panels += [
+        Panel(f"examples/{filename}", f"{label} — history conditions against GT", how=_EXAMPLE_HOW[label])
+        for label, filename in examples
+    ]
+    return write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="MEM History Influence",
+        group="History",
+        claim="Does short-term history move the action chunk, and does the move help?",
+        summary=summary,
+        metrics=[
+            Metric(
+                "full_gt_mse_improvement",
+                "GT MSE removed by full history",
+                good="high",
+                fmt=4,
+                baseline=0.0,
+                warn=0.0,
+                primary=True,
+                note="$\\mathrm{MSE}(\\text{none}) - \\mathrm{MSE}(\\text{full})$ against the demonstrated chunk. Negative means the channel is used in the wrong direction, which is a worse state than an unused channel.",
+            ),
+            Metric(
+                "full_rmse",
+                "Influence of full history",
+                good="none",
+                fmt=4,
+                primary=True,
+                note="$\\|a(\\text{full}) - a(\\text{none})\\|$ in normalized space at fixed flow noise. Near zero means the channel never reaches the output, and the improvement number above is then measuring nothing.",
+            ),
+            Metric(
+                "images_gt_mse_improvement",
+                "GT MSE removed by image history alone",
+                good="high",
+                fmt=4,
+                baseline=0.0,
+            ),
+            Metric(
+                "states_gt_mse_improvement",
+                "GT MSE removed by state history alone",
+                good="high",
+                fmt=4,
+                baseline=0.0,
+                note="The two single-channel conditions rarely sum to the full one; read them for which channel carries the effect, not as an additive decomposition.",
+            ),
+            Metric("none_gt_mse", "No-history GT MSE", good="none", fmt=4),
+            Metric("images_rmse", "Influence of image history alone", good="none", fmt=4),
+            Metric("states_rmse", "Influence of state history alone", good="none", fmt=4),
+            Metric("n_frames", "Frames probed", good="none", fmt=0),
+        ],
+        panels=panels,
+        see_also=["mem_temporal_attention", "attention_budget", "action_trace"],
+    )
 
 
 def _select_examples(rows: list[dict], per_category: int = 2) -> list[tuple[str, int]]:
@@ -137,10 +212,7 @@ def _render_example(dataset, memory_cfg, fps: float, diagnostic: dict, label: st
 
     steps = np.arange(diagnostic["gt"].shape[0])
     action_dim = diagnostic["gt"].shape[-1]
-    if action_dim == len(_REBOT_JOINT_NAMES):
-        joint_names = _REBOT_JOINT_NAMES
-    else:
-        joint_names = [f"joint_{joint}" for joint in range(action_dim)]
+    joint_names = joint_names_for_dim(action_dim)
     for joint in range(action_dim):
         row = n_image_rows + joint // n_cols
         col = joint % n_cols
@@ -296,6 +368,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     examples_dir = os.path.join(output_dir, "examples")
     makedirs(examples_dir)
+    examples: list[tuple[str, str]] = []
     for label, index in _select_examples(rows):
         diagnostic = diagnostics[index]
         row = rows[index]
@@ -308,6 +381,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             label,
             os.path.join(examples_dir, filename),
         )
+        examples.append((label, filename))
+
+    _write_manifest(output_dir, summary, examples)
     logging.info(
         f"[mem_history_influence] n={len(rows)}  full RMSE={summary['full_rmse']:.4f}  "
         f"full GT-MSE improvement={summary['full_gt_mse_improvement']:+.4f}  "

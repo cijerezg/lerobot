@@ -289,7 +289,6 @@ class ProbeConfig:
     enable_actions: bool = True
     enable_representations: bool = True
     enable_attention: bool = True
-    enable_offline_inference: bool = True
     enable_spatial_memorization: bool = True
     enable_action_drift_jacobian: bool = False  # subtask-conditioned action-output/token Jacobians
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
@@ -307,7 +306,6 @@ class ProbeConfig:
     mode: str = "all"  # "collect" | "plot" | "all"
     max_episodes: int | None = 5
     n_frames_per_episode: int = 128
-    offline_inference_n_frames: int = 5
     random_seed: int = 42
     timestep: float = 0.5  # single diffusion timestep used by all probes
     # Action sensitivity: sample real frames within every episode/subtask and

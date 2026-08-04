@@ -518,7 +518,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         group="Attention",
         claim="How is the fixed attention budget split across modalities, and what moves it?",
         summary=summary,
-        see_also=["attention", "depth_modality", "offline_inference"],
+        see_also=["attention", "depth_modality", "action_trace"],
         metrics=[
             Metric(
                 "budget_sums_to.min", "Budget partition completeness", good="high", fmt=4, primary=True,

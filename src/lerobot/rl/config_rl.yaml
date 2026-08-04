@@ -258,7 +258,6 @@ probe_parameters:
   enable_actions: true
   enable_representations: true
   enable_attention: true
-  enable_offline_inference: true
   enable_spatial_memorization: true
   enable_action_drift_jacobian: true
   enable_spatial_memorization_jacobian: true
@@ -281,9 +280,6 @@ probe_parameters:
   # Layers / subsampling (relevant once attention / spatial / jacobian are on)
   spatial_layers: "0,14,28"
   attn_eval_subsample: 3
-
-  # offline_inference selects N random frames (see EvalOfflineConfig)
-  offline_inference_n_frames: 8
 
 
 # =============================================================================

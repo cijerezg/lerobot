@@ -843,6 +843,32 @@ _RATIO_NOTE = ("1.0 = the policy's motion sits as close to the training manifold
                "unseen real demonstration does. Thresholds are provisional.")
 
 
+def episode_panels(output_dir):
+    """The per-episode manifolds and the scree plot, which are written either way.
+
+    Declared from disk rather than from the summary: how many episodes were plotted is
+    a property of the evaluation, and an undeclared file is invisible in the viewer.
+    """
+    ep_dir = os.path.join(output_dir, "2d", "episodes")
+    names = sorted(f for f in os.listdir(ep_dir) if f.endswith(".png")) if os.path.isdir(ep_dir) else []
+    panels = [
+        Panel(f"2d/episodes/{name}", f"Episode {int(name[2:-4])} alone on the manifold",
+              how="One episode's demonstrated and predicted motion in isolation, in "
+                  "frame order. Use it after a whole-eval panel has pointed at an "
+                  "episode; the pooled pictures hide which trajectory is the problem.")
+        for name in names
+    ]
+    return panels + [
+        Panel("pca_variance/gt_reference_pca_scree.png",
+              "PCA spectrum of the reference motion",
+              how="Per-component and cumulative variance of the reference set, with the "
+                  "90% and 95% marks. It says how many components the distances above "
+                  "are really measured in: a spectrum that reaches 95% in a handful of "
+                  "components means the manifold is low-dimensional and the residual "
+                  "ratio is sensitive to how many were kept.")
+    ]
+
+
 def write_manifest(output_dir, summary):
     return write_index(
         output_dir,
@@ -891,6 +917,7 @@ def write_manifest(output_dir, summary):
         panels=[
             Panel("2d/distances.png",
                   "Distance to the training manifold: predictions vs held-out GT",
+                  primary=True,
                   how="Blue is held-out GT, orange is the policy. The blue distribution is "
                       "the null — a real demonstration is also some distance from the "
                       "training set. Orange sitting on top of blue is the good outcome; "
@@ -904,15 +931,33 @@ def write_manifest(output_dir, summary):
                       "flat one means the failure is uniform. Both lines rising together is "
                       "the data getting more varied late, not the policy degrading."),
             Panel("2d/manifold.png", "Predicted vs demonstrated motion, paired per frame",
+                  primary=True,
                   how="Grey is the demonstrated motion. Each dot is a held-out GT chunk, "
                       "each cross the policy's chunk at that same frame, joined by a "
                       "segment whose length is the disagreement. Long segments pointing "
                       "off the grey cloud are the bad case. UMAP is a picture only — judge "
                       "distance from the metrics, not by eye here."),
-            Panel("2d/by_subtask.png", "GT vs predicted, coloured by subtask"),
-            Panel("2d/by_frame.png", "GT vs predicted, coloured by frame index"),
-            Panel("2d/overview.png", "Every evaluated dataset on one manifold"),
-            Panel("nn_distances.csv", "Per-episode distance table"),
+            Panel("2d/by_subtask.png", "GT vs predicted, coloured by subtask",
+                  how="The same two UMAP panels as ``2d/manifold.png`` — demonstrated on "
+                      "the left, predicted on the right, over the grey reference cloud — "
+                      "with each frame coloured by its subtask label instead. Read it for "
+                      "whether one phase of the task lands somewhere the demonstrations of "
+                      "that phase never go; a colour that occupies a different region on "
+                      "the right than on the left is that finding."),
+            Panel("2d/by_frame.png", "GT vs predicted, coloured by frame index",
+                  how="The same two panels coloured by position in the episode, dark early "
+                      "to bright late. It answers when rather than what: if the predicted "
+                      "panel keeps the left panel's colour ordering, the policy is moving "
+                      "through the task in the demonstrated order."),
+            Panel("2d/overview.png", "Every evaluated dataset on one manifold",
+                  how="Demonstrated motion from every evaluated dataset, one colour each, "
+                      "on the shared reference manifold — no predictions here. It shows how "
+                      "much of the reference the evaluation actually covers: a val set "
+                      "sitting in one corner means the metrics above describe that corner."),
+            Panel("nn_distances.csv", "Per-episode distance table",
+                  how="One row per episode with the distances the ratio metrics average "
+                      "over, for finding the episode that carries a bad number."),
+            *episode_panels(output_dir),
         ],
         extra={"manifold_id": summary["manifold_id"], "datasets": summary.get("datasets", {})},
     )

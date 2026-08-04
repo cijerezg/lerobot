@@ -5,7 +5,7 @@ of the predicted action chunk and the ground-truth chunk in Cartesian space, via
 URDF (``robots.rebot_b601_follower.kinematics``), and reports table clearance from the
 full link geometry.
 
-Three questions it answers, in decreasing order of what it can prove:
+Four questions it answers, in decreasing order of what it can prove:
 
   1. **Clearance.** Would any link go through the table during the next chunk? Computed
      from per-link convex hulls, not link origins, so the gripper body and elbow count.
@@ -13,8 +13,15 @@ Three questions it answers, in decreasing order of what it can prove:
   2. **Multimodality.** ``n_samples`` independent flow draws from one observation, drawn
      as a fan. A wide fan at a decision point means the policy is torn (which sock
      first); a tight bundle means it committed. No other probe exposes this.
-  3. **Fit.** Cartesian error against GT, reported both as the mean over samples and the
-     best sample, because they mean different things (see below).
+  3. **Baseline-relative fit.** Is the checkpoint predicting at all? Normalized-space MSE
+     of flow sample 0 against the demonstrated chunk, next to two constant predictors it
+     has to beat — holding the measured pose, and the mean demonstrated chunk. Reported
+     as ``skill_vs_hold`` / ``skill_vs_mean`` with a per-joint split in
+     ``action_metrics.json``. This is the suite's headline "is it any good" number, and
+     it lives here because the anchors and sample-0 seed are this probe's (it absorbed
+     the former ``offline_inference`` probe, deleted 2026-08-02).
+  4. **Cartesian fit.** Task-space error against GT, reported both as the mean over
+     samples and the best sample, because they mean different things (see below).
 
 COMMANDED vs MEASURED. Every action — GT or predicted — is a commanded (leader) pose,
 while the skeleton and the ``measured now`` marker are the measured follower pose. The
@@ -24,9 +31,8 @@ can reflect servo tracking, timestamp alignment, action/state calibration, or a 
 command discontinuity; the inspector reports both distance and an actuator-speed lower
 bound so an operator can judge its physical plausibility.
 
-The same deterministic sample 0 is used by Offline Inference. Wrist roll and gripper
-commands are shown in synchronized plots beside the 3D trace, while the 3D endpoint
-triads expose terminal tool orientation.
+Wrist roll and gripper commands are shown in synchronized plots beside the 3D trace,
+while the 3D endpoint triads expose terminal tool orientation.
 
 OPEN-LOOP. Every anchor restarts the policy from a demo state, so this measures *intended*
 motion, never closed-loop behaviour: compounding error and recovery from drift are
@@ -71,6 +77,7 @@ from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     action_inspector_sample_seed,
+    joint_names_for_dim,
     load_probe_dataset,
     makedirs,
     probe_frame_inputs,
@@ -191,6 +198,69 @@ def _trajectory_geometry(kin: RebotKinematics, chunk: np.ndarray) -> dict:
         "tool_z": heights[:, end_idx],
         "link_origins": frames[:, :, :3, 3],
     }
+
+
+def _normalized_chunks(adapter, pred_norm, gt_actions, state):
+    """Sample 0, the demonstrated chunk, and a hold-still chunk, in normalized model space.
+
+    The hold chunk repeats the measured state for the whole horizon. Under anchor/delta
+    encoding that is the zero vector before normalization, and it is the floor any policy
+    that predicts anything at all has to beat.
+    """
+    hold = state[: gt_actions.shape[-1]].unsqueeze(0).repeat(gt_actions.shape[0], 1)
+    return {
+        "pred": pred_norm.float(),
+        "gt": adapter.normalize_gt_actions(gt_actions, state).float(),
+        "hold": adapter.normalize_gt_actions(hold, state).float(),
+    }
+
+
+def _fit_metrics(records: list[dict]) -> dict:
+    r"""Normalized-space action error against the two constants worth beating.
+
+    Everything is measured in the normalized model space the policy trains in, not in
+    degrees: on the 7-DOF rebot the gripper's spread ($\sigma\approx76^\circ$) is an order
+    of magnitude above wrist_yaw's ($\approx11^\circ$), so a raw $\mathrm{deg}^2$ mean is
+    mostly gripper, in units that move whenever the normalization stats do. Each figure
+    sits next to two constant predictors:
+
+      hold          — repeat the measured state for the whole chunk (the arm holds still)
+      dataset mean  — the mean demonstrated chunk over the sampled anchors
+
+    ``skill_vs_hold`` and ``skill_vs_mean`` are the fraction of each baseline's error the
+    policy removes; a policy that does not beat both is not predicting.
+
+    Only flow sample 0 enters this, never the best of the fan: best-of-$K$ against a
+    multimodal target flatters the model, and the fan already has its own Cartesian
+    read-out in ``ee_err_best``.
+    """
+    pred = torch.stack([record["norm"]["pred"] for record in records])
+    gt = torch.stack([record["norm"]["gt"] for record in records])
+    hold = torch.stack([record["norm"]["hold"] for record in records])
+    dataset_mean = gt.mean(dim=0, keepdim=True).expand_as(gt)
+
+    def mse(a, b):
+        return float((a - b).pow(2).mean())
+
+    by_joint = dict(
+        zip(joint_names_for_dim(gt.shape[-1]), (pred - gt).pow(2).mean(dim=(0, 1)).tolist())
+    )
+    worst_joint, worst_joint_mse = max(by_joint.items(), key=lambda item: item[1])
+    metrics = {
+        "n_frames": len(records),
+        "space": "normalized",
+        "mse_norm": mse(pred, gt),
+        "mse_norm_by_joint": by_joint,
+        "worst_joint": worst_joint,
+        "worst_joint_mse_norm": worst_joint_mse,
+        "baseline_hold": mse(hold, gt),
+        "baseline_dataset_mean": mse(dataset_mean, gt),
+    }
+    metrics["skill_vs_hold"] = 1.0 - metrics["mse_norm"] / max(metrics["baseline_hold"], 1e-12)
+    metrics["skill_vs_mean"] = 1.0 - metrics["mse_norm"] / max(
+        metrics["baseline_dataset_mean"], 1e-12
+    )
+    return metrics
 
 
 def _analyse(
@@ -1031,7 +1101,10 @@ def _dashboard_context(record: dict) -> dict:
                 f"tool {m['clearance_tool_pred'] * 1000:+.0f} mm · "
                 f"whole arm {m['clearance_pred'] * 1000:+.0f} mm"
             ),
-            "fit": f"{m['ee_err_best'] * 1000:.0f} mm · {m['orientation_err_best_deg']:.1f}° best sample",
+            "fit": (
+                f"{m['ee_err_best'] * 1000:.0f} mm · {m['orientation_err_best_deg']:.1f}° best sample · "
+                f"MSE {m['mse_norm']:.3f} sample 0"
+            ),
             "fan": (
                 f"{m['spread_terminal'] * 1000:.0f} mm · {m['orientation_spread_terminal_deg']:.1f}° terminal"
             ),
@@ -1160,7 +1233,7 @@ button:hover { background:#f0f0f1; }
 
 
 def _write_manifest(
-    records: list[dict], output_dir: str, *, has_decoder_comparison: bool = False
+    records: list[dict], output_dir: str, fit: dict, *, has_decoder_comparison: bool = False
 ) -> dict:
     """Expose action-inspector headline metrics to the manifest-driven viewer."""
 
@@ -1168,6 +1241,7 @@ def _write_manifest(
         return np.asarray([record["metrics"][key] for record in records], dtype=np.float64)
 
     summary = {
+        "fit": fit,
         "anchors": len(records),
         "initial_gap_pred_p90_mm": float(np.percentile(values("initial_gap_pred_max"), 90) * 1000),
         "initial_travel_pred_p90_ms": float(np.percentile(values("initial_travel_pred_max_s"), 90) * 1000),
@@ -1193,21 +1267,23 @@ def _write_manifest(
         panels.append(
             Panel(
                 "decoder_comparison.html",
-                "FAST and flow reconstructions side by side",
+                "FAST and flow reconstructions in one scene",
                 how=(
-                    "The same observation and ground truth in two 3-D scenes that share one cubic "
-                    "range and one camera: the greedy FAST reconstruction on the left, "
-                    f"{FLOW_COMPARE_COUNT} fixed-seed flow draws on the right. Drag either scene and "
-                    "both orbit together, so a shape difference between columns is a difference in "
-                    "commanded geometry, not in scale.\n\n"
-                    "Read it as a picture, not a score — nothing here is scalarised, and the two "
-                    "sides are not equivalent. FAST is greedy, so it has no fan and carries the "
-                    "action tokenizer's quantization error; flow does not. The discrete path never "
-                    "runs the action expert, so with point-map depth configured the depth stream "
-                    "reaches the flow draws and structurally cannot reach FAST. A FAST decode that "
-                    "failed at an anchor says so in that scene's legend."
+                    "One 3-D scene per anchor holding both decoders against the same ground "
+                    "truth: the greedy FAST reconstruction in amber, "
+                    f"{FLOW_COMPARE_COUNT} fixed-seed flow draws in blue-green, demonstrated "
+                    "motion in black, and the measured arm in grey. Dotted spokes are each "
+                    "prediction's measured-pose → first-target gap. The slider steps through "
+                    "anchors; the camera holds across anchors, so a shape that moves between "
+                    "two steps really moved.\n\n"
+                    "Read it as a picture, not a score — nothing here is scalarised, and the "
+                    "two decoders are not equivalent. FAST is greedy, so it has no fan and it "
+                    "carries the action tokenizer's quantization error; flow does not. The "
+                    "discrete path never runs the action expert, so with point-map depth "
+                    "configured the depth stream reaches the flow draws and structurally "
+                    "cannot reach FAST. A FAST decode that failed at an anchor says so in the "
+                    "legend instead of drawing a trace."
                 ),
-                refs=["offline_inference"],
             )
         )
     return write_index(
@@ -1218,6 +1294,42 @@ def _write_manifest(
         claim="Where would the policy command the arm, wrist, and gripper from this measured state?",
         summary=summary,
         metrics=[
+            Metric(
+                "fit.skill_vs_hold",
+                "Skill recovered vs hold-still",
+                good="high",
+                fmt=3,
+                baseline=0.0,
+                bad=0.0,
+                primary=True,
+                note="Fraction of the hold-still baseline's error the policy removes, from flow sample 0. At or below zero it is not predicting: repeating the measured pose scores as well.",
+            ),
+            Metric(
+                "fit.skill_vs_mean",
+                "Skill recovered vs dataset mean",
+                good="high",
+                fmt=3,
+                baseline=0.0,
+                bad=0.0,
+                note="Same, against the best constant chunk over these anchors.",
+            ),
+            Metric(
+                "fit.mse_norm",
+                "Normalized action MSE",
+                good="low",
+                fmt=4,
+                primary=True,
+                note="Sample 0 against the demonstrated chunk in normalized model space. Absolute scale is meaningless on its own — read it against the two baseline errors below.",
+            ),
+            Metric("fit.baseline_hold", "Hold-still baseline MSE", good="none", fmt=4),
+            Metric("fit.baseline_dataset_mean", "Dataset-mean baseline MSE", good="none", fmt=4),
+            Metric(
+                "fit.worst_joint_mse_norm",
+                "Worst joint MSE",
+                good="low",
+                fmt=4,
+                note=f"{fit['worst_joint']}. Per-joint breakdown for every joint is in ``action_metrics.json``.",
+            ),
             Metric(
                 "initial_gap_pred_p90_mm",
                 "Initial target gap p90",
@@ -1231,7 +1343,6 @@ def _write_manifest(
                 "Initial travel lower bound p90",
                 good="low",
                 fmt=0,
-                primary=True,
                 note="Optimistic time in ms for all joints to reach the first target at configured motor speeds.",
             ),
             Metric(
@@ -1280,7 +1391,7 @@ def _write_manifest(
             Metric("anchors", "Anchors inspected", good="none", fmt=0),
         ],
         panels=panels,
-        see_also=["offline_inference", "actions"],
+        see_also=["actions", "subtask_sweep"],
     )
 
 
@@ -1312,9 +1423,9 @@ def run(adapter, dataset, cfg, output_dir):
     )
 
     # A replayed CUDA graph can capture one noise tensor and collapse the fan. Every
-    # sample instead receives an independent deterministic seed: sample 0 is exactly
-    # the draw Offline Inference uses for the same global frame, while samples 1..K
-    # make the fan reproducible across checkpoints and validation runs.
+    # sample instead receives an independent deterministic seed: sample 0 is the draw the
+    # normalized fit metrics score, while samples 1..K make the fan reproducible across
+    # checkpoints and validation runs.
     adapter._set_probe_cuda_graph_enabled(False)
     records = []
     try:
@@ -1332,18 +1443,21 @@ def run(adapter, dataset, cfg, output_dir):
             motor_speeds, joint_lower, joint_upper = actuator_config
 
             samples = []
+            pred_norm = None
             for sample_idx in range(flow_sample_count):
                 generator = torch.Generator(device=adapter.device)
                 generator.manual_seed(action_inspector_sample_seed(p.random_seed, global_idx, sample_idx))
-                prediction = adapter.predict_action_chunk(
+                prediction, prediction_norm, _ = adapter.predict_action_chunk(
                     obs,
                     task_str,
                     state=state_tensor,
                     subtask=subtask,
                     metadata=metadata,
                     generator=generator,
-                )[0]
+                )
                 samples.append(prediction.numpy())
+                if sample_idx == 0:
+                    pred_norm = prediction_norm
 
             fast_prediction = None
             fast_error = None
@@ -1384,6 +1498,10 @@ def run(adapter, dataset, cfg, output_dir):
                 global_idx=int(global_idx),
                 subtask=subtask,
                 cameras=_camera_context(obs),
+                norm=_normalized_chunks(adapter, pred_norm, gt_actions, state_tensor),
+            )
+            record["metrics"]["mse_norm"] = float(
+                (record["norm"]["pred"] - record["norm"]["gt"]).pow(2).mean()
             )
             if has_decoder_comparison:
                 record.update(fast_error=fast_error, fast_chunk=None, fast_ee=None)
@@ -1418,8 +1536,17 @@ def run(adapter, dataset, cfg, output_dir):
         for record in records:
             writer.writerow({key: record.get(key, record["metrics"].get(key)) for key in columns})
 
-    _write_manifest(
-        records, output_dir, has_decoder_comparison=has_decoder_comparison
+    fit = _fit_metrics(records)
+    with open(os.path.join(output_dir, "action_metrics.json"), "w") as handle:
+        json.dump(fit, handle, indent=2)
+
+    _write_manifest(records, output_dir, fit, has_decoder_comparison=has_decoder_comparison)
+
+    logging.info(
+        f"[action_trace] mse_norm={fit['mse_norm']:.4f}  hold={fit['baseline_hold']:.4f}  "
+        f"dataset-mean={fit['baseline_dataset_mean']:.4f}  "
+        f"skill_vs_hold={fit['skill_vs_hold']:+.3f}  skill_vs_mean={fit['skill_vs_mean']:+.3f}  "
+        f"worst joint: {fit['worst_joint']} {fit['worst_joint_mse_norm']:.4f}"
     )
 
     logging.info("── largest initial policy target gaps ──")

@@ -60,6 +60,7 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
     set_pointmap_mass_capture,
 )
 from lerobot.probes.base import ProbablePolicy
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     load_probe_dataset,
     makedirs,
@@ -114,6 +115,87 @@ def _read_bias(policy, n_context: int, n_depth: int) -> dict:
         "depth_bias_implied_mass": (weights / (weights + max(n_context, 1))).tolist(),
         "depth_bias_init": -2.0,
     }
+
+
+def _write_manifest(output_dir: str, summary: dict) -> dict:
+    """Describe the depth read to the manifest-driven viewer."""
+    return write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Depth Modality",
+        group="Depth",
+        claim="Does the point-map depth stream reach the actions, and does it improve them?",
+        summary=summary,
+        metrics=[
+            Metric(
+                "depth_benefit",
+                "Depth benefit (MSE removed)",
+                good="high",
+                fmt=5,
+                baseline=0.0,
+                warn=0.0,
+                primary=True,
+                note="$\\mathrm{mse}(\\text{rgb only}) - \\mathrm{mse}(\\text{rgb+depth})$ at identical flow noise. Below zero the depth path is costing accuracy, which is the expected state early in a run while the from-scratch encoder is still noise.",
+            ),
+            Metric(
+                "max_abs_delta.rgb+depth vs rgb_only",
+                "Action shift when depth is removed",
+                good="none",
+                fmt=4,
+                primary=True,
+                note="Mean over frames of $\\max|\\Delta a|$ in normalized space. Near zero means the depth columns are not reaching the action at all — read before the benefit number, which is meaningless if nothing moved.",
+            ),
+            Metric(
+                "fd_sensitivity.ratio",
+                "Depth / wrist-RGB sensitivity",
+                good="none",
+                fmt=3,
+                baseline=1.0,
+                note="Finite-difference $\\|\\Delta a\\|$ for a 1%-of-std perturbation of raw depth over the same for wrist RGB. Separates attended-but-ignored from load-bearing; 1.0 means the two inputs move the action equally.",
+            ),
+            Metric(
+                "depth_attn_mass_mean",
+                "Mean depth attention mass",
+                good="none",
+                fmt=4,
+                note="Averaged over stream layers and frames. Compare against ``depth_bias_implied_mass`` in the JSON: measured ≫ implied means the read is input-driven, measured ≈ implied means the layer attends depth by prior alone.",
+            ),
+            Metric("depth_attn_mass_max", "Peak layer depth mass", good="none", fmt=4),
+            Metric("n_frames", "Frames probed", good="none", fmt=0),
+        ],
+        panels=[
+            Panel(
+                "depth_modality.png",
+                "Condition MSE, depth mass per layer, and the learned read bias",
+                how=(
+                    "**Left** — normalized MSE against the demonstrated chunk under the four "
+                    "modality conditions, all at identical flow noise. ``rgb+depth`` is the "
+                    "deployment condition; ``rgb_only`` blanks the depth map, ``depth_only`` "
+                    "blanks the wrist RGB, ``neither`` blanks both. The benefit is the gap "
+                    "between the first two bars, and ``neither`` is the scale on which to "
+                    "judge it.\n\n"
+                    "**Middle** — softmax mass the action queries put on the depth columns, "
+                    "per action-expert layer: measured (solid) against the mass the learned "
+                    "bias $b_\\ell$ would produce on its own with no input (dashed). Solid "
+                    "above dashed is an input-driven read; the two on top of each other means "
+                    "the layer attends depth by prior alone.\n\n"
+                    "**Right** — $b_\\ell$ itself against its initialisation. A line still flat "
+                    "on the init value is an untrained read gate, which is the expected state "
+                    "early in a run and makes the middle panel uninformative.\n\n"
+                    "The finite-difference sensitivities are in the figure's title bar, not in "
+                    "a panel: they are two numbers, not a series."
+                ),
+                primary=True,
+            ),
+            Panel(
+                "depth_modality.json",
+                "Every number above, plus the per-frame rows behind them",
+                how="The summary dict and one row per probed frame, for checking whether a "
+                    "mean is carried by a few frames.",
+            ),
+        ],
+        see_also=["attention_budget", "action_trace"],
+    )
 
 
 def _render(summary: dict, output_path: str) -> None:
@@ -351,7 +433,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     with open(os.path.join(output_dir, "depth_modality.json"), "w") as f:
         json.dump({"summary": summary, "per_frame": per_frame}, f, indent=2)
+
+    # write_index drops panels whose file is not on disk yet, so render first or the
+    # probe's only figure never reaches the viewer.
     _render(summary, os.path.join(output_dir, "depth_modality.png"))
+    _write_manifest(output_dir, summary)
 
     logging.info("── summary over frames ──")
     for condition in CONDITIONS:

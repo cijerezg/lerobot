@@ -13,6 +13,7 @@ from lerobot.probes.action_decoder_comparison import (
 from lerobot.probes.action_trace_probe import (
     _analyse,
     _figure,
+    _fit_metrics,
     _rotation_distance_deg,
     _write_dashboard_html,
 )
@@ -65,7 +66,14 @@ def make_record():
         joint_upper=np.array([145, 1, 1, 90, 90, 90, 0.0]),
     )
     record.update(episode=2, frame=90, global_idx=190, subtask="close the gripper", cameras=[])
+    record["norm"] = _norm_chunks(torch.zeros(4, 7), torch.zeros(4, 7))
+    record["metrics"]["mse_norm"] = 0.0
     return record
+
+
+def _norm_chunks(pred: torch.Tensor, gt: torch.Tensor) -> dict:
+    """Normalized-space chunks as ``run()`` attaches them; hold-still is the zero chunk."""
+    return {"pred": pred, "gt": gt, "hold": torch.zeros_like(gt)}
 
 
 def test_rotation_distance_is_geodesic_degrees():
@@ -113,6 +121,43 @@ def test_figure_and_dashboard_make_target_gap_conspicuous(tmp_path):
     assert "close the gripper" in document
 
 
+def make_fit_records(pred_a: torch.Tensor, pred_b: torch.Tensor) -> list[dict]:
+    """Two anchors with opposite demonstrated chunks.
+
+    Both constant predictors are then wrong by exactly 1.0 per element — holding still
+    is the zero chunk, and the dataset mean of $+1$ and $-1$ is also zero — so every
+    ``skill_vs_*`` is read directly against a baseline MSE of 1.
+    """
+    gt_a = torch.ones(4, 7)
+    return [
+        {"norm": _norm_chunks(pred_a, gt_a)},
+        {"norm": _norm_chunks(pred_b, -gt_a)},
+    ]
+
+
+def test_fit_metrics_score_sample_zero_against_both_constant_predictors():
+    perfect = _fit_metrics(make_fit_records(torch.ones(4, 7), -torch.ones(4, 7)))
+    assert np.isclose(perfect["mse_norm"], 0.0)
+    assert np.isclose(perfect["baseline_hold"], 1.0)
+    assert np.isclose(perfect["baseline_dataset_mean"], 1.0)
+    assert np.isclose(perfect["skill_vs_hold"], 1.0)
+    assert np.isclose(perfect["skill_vs_mean"], 1.0)
+
+    # A policy that just repeats the measured pose removes none of the hold baseline.
+    inert = _fit_metrics(make_fit_records(torch.zeros(4, 7), torch.zeros(4, 7)))
+    assert np.isclose(inert["mse_norm"], 1.0)
+    assert np.isclose(inert["skill_vs_hold"], 0.0)
+
+
+def test_fit_metrics_name_the_worst_joint():
+    pred = torch.ones(4, 7)
+    pred[:, 6] = -1.0  # gripper misses by 2.0, every other joint is exact
+    metrics = _fit_metrics(make_fit_records(pred, -torch.ones(4, 7)))
+    assert metrics["worst_joint"] == "gripper"
+    assert np.isclose(metrics["worst_joint_mse_norm"], 2.0)  # (2^2 on one of two anchors)
+    assert np.isclose(metrics["mse_norm_by_joint"]["shoulder_pan"], 0.0)
+
+
 def make_comparison_record(*, fast: bool, table_clearance: float = 0.30):
     """An inspector record lifted clear of the table, with or without a FAST decode."""
     record = make_record()
@@ -125,7 +170,7 @@ def make_comparison_record(*, fast: bool, table_clearance: float = 0.30):
     return record
 
 
-def test_comparison_scenes_keep_the_table_visible_and_the_scale_undistorted():
+def test_comparison_scene_keeps_the_table_visible_and_the_scale_undistorted():
     # Commanded poses sit 30 cm above the table, and explicit axis ranges clip: without
     # the plane in the extent the operator loses the one reference the clearance means
     # anything against.
@@ -135,20 +180,22 @@ def test_comparison_scenes_keep_the_table_visible_and_the_scale_undistorted():
     spans = [axis.range[1] - axis.range[0] for axis in (scene.xaxis, scene.yaxis, scene.zaxis)]
     assert scene.aspectmode == "cube"
     assert np.allclose(spans, spans[0])  # a cube aspect on a non-cube range distorts shape
-    assert figure.layout.scene2.xaxis.range == scene.xaxis.range
+    # Both decoders share one scene: a second one would put the comparison back into two
+    # pictures the reader has to hold side by side.
+    assert "scene2" not in figure.layout.to_plotly_json()
 
 
 def test_comparison_survives_a_failed_fast_decode(tmp_path):
     records = [make_comparison_record(fast=True), make_comparison_record(fast=False)]
     figure = build_comparison_figure(records, 0.0, fps=30.0)
 
-    # Two static table planes; every other trace is swapped per anchor, so a frame that
+    # One static table plane; every other trace is swapped per anchor, so a frame that
     # dropped the unavailable FAST path would desynchronise the whole animation.
     assert len(figure.frames) == len(records)
     for frame in figure.frames:
-        assert len(frame.data) == len(figure.data) - 2
-        assert list(frame.traces) == list(range(2, len(figure.data)))
-    assert {trace.scene for trace in figure.frames[0].data} == {"scene", "scene2"}
+        assert len(frame.data) == len(figure.data) - 1
+        assert list(frame.traces) == list(range(1, len(figure.data)))
+    assert {trace.scene for trace in figure.frames[0].data} == {None}
     assert (
         sum(name.startswith("flow · seed") for name in [trace.name or "" for trace in figure.frames[0].data])
         == FLOW_COMPARE_COUNT
@@ -158,7 +205,6 @@ def test_comparison_survives_a_failed_fast_decode(tmp_path):
     write_comparison_html(figure, str(output))
     document = output.read_text()
     assert "FAST unavailable" in document  # the reason reaches the legend
-    assert "scene2.camera" in document  # both scenes orbit together
 
 
 class FakeDataset:

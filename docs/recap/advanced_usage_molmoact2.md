@@ -447,7 +447,6 @@ Probes are diagnostic scripts that run alongside training and report on policy h
 | `probe_parameters.enable_actions` | bool | `true` | Action manifold + PCA/UMAP. |
 | `probe_parameters.enable_representations` | bool | `true` | Representation clustering. |
 | `probe_parameters.enable_attention` | bool | `true` | Attention map visualization. |
-| `probe_parameters.enable_offline_inference` | bool | `true` | Offline inference MSE on validation data. |
 | `probe_parameters.enable_spatial_memorization` | bool | `true` | Spatial memorization probe. |
 | `probe_parameters.enable_action_drift_jacobian` | bool | `false` | Per-frame causal $A^\top J$ maps (needs backward — expensive). |
 | `probe_parameters.enable_spatial_memorization_jacobian` | bool | `false` | Aggregated causal spatial statistics (needs backward). |
@@ -461,7 +460,6 @@ Probes are diagnostic scripts that run alongside training and report on policy h
 | `probe_parameters.mode` | str | `"all"` | `"collect"` (compute + save), `"plot"` (re-render from saved data), or `"all"`. |
 | `probe_parameters.max_episodes` | int\|null | `5` | Episodes per probe run. |
 | `probe_parameters.n_frames_per_episode` | int | `128` | Frames sampled per episode. |
-| `probe_parameters.offline_inference_n_frames` | int | `5` | Frames used by the offline inference MSE probe. |
 | `probe_parameters.random_seed` | int | `42` | Probe RNG seed. |
 | `probe_parameters.timestep` | float | `0.5` | Single flow-matching timestep shared by all probes. |
 

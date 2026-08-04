@@ -11,12 +11,10 @@ python -m lerobot.scripts.rl_offline --config path/to/config.yaml
 Additionally, we provide a tool for visualizing the results across training steps:
 
 ```bash
-python -m lerobot.scripts.view_validation "path/to/output_dir"
+python -m lerobot.scripts.view_probes "path/to/output_dir"
 ```
 
-<p align="center">
-  <em>[PLACEHOLDER: screenshot of the view_validation Gradio interface]</em>
-</p>
+It serves a browser UI on `http://127.0.0.1:7870` and re-scans `<run>/validation/step_*/<probe>/` on every request, so a checkpoint that lands mid-session appears on refresh. Each probe describes itself to the viewer through the `index.json` it writes (`probes/manifest.py`), so its documentation, headline numbers, and per-figure captions live next to the code that produces them.
 
 The following sections detail what each probe computes and the specific questions it addresses.
 
@@ -220,31 +218,31 @@ python -m lerobot.probes.representations --config path/to/config.yaml
 
 ---
 
-## 6. Offline Inference Probe
+## 6. Action Inspector
 
-The most direct measure of action prediction quality: this probe runs inference on sampled validation frames and reports the MSE between predicted and ground-truth action chunks. Flow-matching loss measures the velocity-field error during training, but MSE on the final denoised actions measures the actual output error the robot will experience.
+The most direct measure of action prediction quality, and the probe that answers "is this checkpoint any good". At anchor frames spaced through the validation episodes it draws `trace_n_samples` flow samples of the action chunk and reports two independent readouts.
 
-Per-frame plots show predicted vs. GT action traces for each joint, in both unnormalized and normalized representations, which is the easiest way to spot systematic biases (a gripper that's always slightly closed, a joint that consistently lags, etc.). The `mean_mse` across all sampled frames is logged to WandB.
+**Baseline-relative fit.** MSE between flow sample 0 and the demonstrated chunk, in the normalized model space the policy trains in. Flow-matching loss measures the velocity-field error during training; this measures the output error the robot experiences. The absolute number means nothing on its own, so it sits next to the two constant predictors it has to beat — repeating the measured pose for the whole chunk (`baseline_hold`), and the mean demonstrated chunk over the anchors (`baseline_dataset_mean`). `skill_vs_hold` and `skill_vs_mean` are the fraction of each baseline's error the policy removes; at or below zero the policy is not predicting. The per-joint split in `action_metrics.json` is where systematic bias shows up (a gripper that is always slightly closed, a joint that consistently lags).
 
-<p align="center">
-  <img src="../../media/readme/ep0000_fr0143.png" alt="Predicted vs GT action traces for episode 0000 frame 0143" width="500">
-  <br>
-  <em>Predicted vs GT action traces for episode 0000 frame 0143.</em>
-</p>
+**Task-space geometry.** The chunk is put through the reBot URDF, giving a table-clearance pre-flight check from per-link convex hulls, the multimodality fan across samples, and Cartesian error against GT. All of it is open-loop: every anchor restarts from a demonstrated state, so compounding error and recovery are invisible by construction, and Cartesian divergence from GT is not automatically error on a multimodal task.
+
+Output is one interactive Plotly page (`action_trace.html`) plus `metrics.csv`, `action_metrics.json`, and — on an `action_mode=both` checkpoint — a scale-locked FAST-vs-flow scene in `decoder_comparison.html`.
 
 ### Standalone
 
 ```bash
-python -m lerobot.probes.offline_inference --config path/to/config.yaml
+python -m lerobot.probes.action_trace_probe --config path/to/config.yaml
 ```
 
 ### Config
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `enable_offline_inference` | `true` | Enable this probe |
-| `offline_inference_n_frames` | `5` | Frames per episode |
-| `max_episodes` | `5` | Episodes to evaluate |
+| `enable_action_trace` | `false` | Enable this probe |
+| `trace_anchor_stride_s` | `2.0` | Seconds between anchor frames |
+| `trace_max_anchors_per_episode` | `30` | Per-episode anchor cap |
+| `trace_n_samples` | `5` | Independent flow draws per anchor (the fan) |
+| `trace_clearance_warn_m` | `0.01` | Samples dipping below this are drawn red |
 
 ---
 

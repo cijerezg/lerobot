@@ -40,6 +40,8 @@ import logging
 import math
 import os
 import random
+import re
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,6 +59,7 @@ import torch.nn.functional as F
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import AttentionCaptureResult, ProbablePolicy
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     build_episode_index,
     load_extra_dataset,
@@ -995,6 +998,89 @@ def _probe_dataset(adapter, ds, ds_output_dir, attn_layers, timestep, cfg):
             f.close()
 
 
+_PANEL_HOW = {
+    "summary": "Mean over heads, drawn on the frame the queries were reading. Bright is where the action tokens spent their attention. Colours are comparable across frames of one video (episode-fixed p98 vmax) but not across videos.",
+    "heads": "The same read split per head. Use it when the mean looks uniform: a single head fixating while the rest spread out is invisible in the summary.",
+    "depth": "The point-map depth columns of the joint softmax, drawn on the depth map. Named ``depth_nullbank`` when the frame carried no depth, in which case the mass is on the learned null bank rather than on a scene.",
+    "prompt": "Episode-aggregated prompt read: which clause the action queries take mass from, per head, and the individual tokens carrying it. Quantitative budget accounting lives in ``attention_budget``.",
+    "norm": "Per-panel vmax used for each frame's colorbar, so a claim about a colour change can be checked against the scale it was drawn on.",
+}
+
+
+def _panel_how(filename: str) -> str:
+    if filename.startswith("action_to_prompt"):
+        return _PANEL_HOW["prompt"]
+    if filename.startswith("norm_consts"):
+        return _PANEL_HOW["norm"]
+    if "depth" in filename:
+        return _PANEL_HOW["depth"]
+    return _PANEL_HOW["heads"] if filename.endswith("_heads.mp4") else _PANEL_HOW["summary"]
+
+
+_PANEL_SOURCE = {
+    "img_top": "top camera",
+    "img_wrist": "wrist camera",
+    "depth": "depth map",
+    "depth_nullbank": "depth null bank",
+}
+
+
+def _panel_caption(filename: str) -> str:
+    """What the panel shows, in words — the file name is printed by the viewer anyway."""
+    if filename.startswith("action_to_prompt"):
+        return "prompt read, per head and per token"
+    if filename.startswith("norm_consts"):
+        return "colorbar scale behind every frame"
+    source, _, split = filename.rsplit(".", 1)[0].removeprefix("overlay_").rpartition("_")
+    source = _PANEL_SOURCE.get(source, source.replace("_", " "))
+    return f"{source}, {'per head' if split == 'heads' else 'mean over heads'}"
+
+
+def _write_manifest(output_dir: str, layers: list[int], timestep: float) -> dict:
+    """Describe the rendered overlay set to the manifest-driven viewer.
+
+    The panels are discovered from disk rather than declared: which cameras exist, and
+    whether a depth panel was drawn at all, is a property of the checkpoint and the
+    frames, not of this probe.
+    """
+    panels = []
+    for ep_dir in sorted(os.listdir(output_dir)):
+        match = re.fullmatch(r"ep(\d+)_L(\d+)", ep_dir)
+        if match is None:
+            continue
+        episode, layer = int(match.group(1)), int(match.group(2))
+        for filename in sorted(os.listdir(os.path.join(output_dir, ep_dir))):
+            if filename == "metadata.jsonl":
+                continue
+            panels.append(
+                Panel(
+                    f"{ep_dir}/{filename}",
+                    f"Episode {episode}, layer {layer} — {_panel_caption(filename)}",
+                    how=_panel_how(filename),
+                    # One camera at the shallowest layer of the first episode: enough to
+                    # see whether anything is being read at all. The rest is fan-out.
+                    primary=episode == 0
+                    and layer == min(layers)
+                    and filename.endswith("_summary.mp4")
+                    and "depth" not in filename,
+                )
+            )
+    return write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Attention Maps",
+        group="Attention",
+        claim="Where on the cameras, the depth map, and the prompt do the action queries look?",
+        metrics=[
+            Metric("layers", "Layers captured", good="none", fmt=0, value=float(len(layers))),
+            Metric("timestep", "Flow timestep", good="none", fmt=2, value=timestep),
+        ],
+        panels=panels,
+        status="info",
+        see_also=["attention_budget", "spatial_memorization_attention", "action_drift_jacobian"],
+    )
+
+
 def run(adapter, primary_dataset, cfg, output_dir):
     """Run the attention probe end-to-end on the primary dataset (and any
     ``additional_offline_dataset_paths``). Idempotent re-runs overwrite outputs.
@@ -1009,6 +1095,7 @@ def run(adapter, primary_dataset, cfg, output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
     _probe_dataset(adapter, primary_dataset, output_dir, attn_layers, timestep, cfg)
+    _write_manifest(output_dir, attn_layers, timestep)
 
     for extra_root in getattr(cfg.dataset, "additional_offline_dataset_paths", []) or []:
         logging.info(f"Additional dataset: {extra_root}")

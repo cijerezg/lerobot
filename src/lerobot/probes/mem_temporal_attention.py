@@ -19,6 +19,7 @@ reference for interpreting absolute past-attention mass.
 import json
 import logging
 import os
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,6 +27,7 @@ import torch
 from torch.nn import functional
 
 from lerobot.policies.molmoact2.modeling_molmoact2 import _MEM_TEMPORAL_CAPTURE
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     assemble_frame_history,
     get_frame_data,
@@ -62,6 +64,78 @@ def _age_entropy(head_age: np.ndarray) -> np.ndarray:
     entropy = -(probs * np.log(np.clip(probs, 1e-12, None))).sum(axis=-1) / np.log(n_ages)
     entropy[total.squeeze(-1) <= 1e-12] = np.nan
     return np.nanmean(entropy, axis=(0, 2, 3))
+
+
+def _write_manifest(output_dir: str, summary: dict, examples: list[tuple[int, str]]) -> dict:
+    """Describe the temporal read to the manifest-driven viewer."""
+    panels = [
+        Panel(
+            "temporal_attention.png",
+            "Temporal-read distributions across frames, layers, heads, cameras, and history age",
+            how="Every panel carries the union-softmax uniform-key line $T/(N+T)$: mass at that line is what a model reading nothing in particular would produce, so only the distance from it is evidence. The age panels say which moment is read, the head/camera panels whether the read is specialised or spread.",
+            primary=True,
+        ),
+        Panel(
+            "temporal_attention_data.npz",
+            "Per-frame / layer / camera / head / age / patch arrays for follow-up analysis",
+            how="Saved so a new question about this capture does not need another model run.",
+        ),
+    ]
+    panels += [
+        Panel(
+            f"examples/{filename}",
+            f"p{percentile} temporal-read frame — most-read history image and spatial overlay",
+            how="The overlay is on the current image: it marks which current patches spend their attention on the past. Compare the p10 and p90 frames — if they look alike, the read is not scene-driven.",
+        )
+        for percentile, filename in examples
+    ]
+    return write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="MEM Temporal Attention",
+        group="History",
+        claim="When and where does the video encoder read its history frames?",
+        summary=summary,
+        metrics=[
+            Metric(
+                "mean_enrichment_vs_uniform",
+                "Temporal mass over uniform baseline",
+                good="none",
+                fmt=2,
+                baseline=1.0,
+                primary=True,
+                note="Mean past-attention mass divided by the union-softmax uniform-key mass $T/(N+T)$. At 1.0 the past keys receive exactly what an indifferent allocation gives them, and no claim about selective reading survives.",
+            ),
+            Metric(
+                "mean_temporal_mass",
+                "Mean past-attention mass",
+                good="none",
+                fmt=4,
+                primary=True,
+                note="Absolute share of each patch's attention landing on history keys, averaged over frames and temporal layers.",
+            ),
+            Metric(
+                "max_layer_enrichment_vs_uniform",
+                "Strongest layer's enrichment",
+                good="none",
+                fmt=2,
+                baseline=1.0,
+                note="One layer reading history hard is a different regime from every layer reading it a little; the mean hides that.",
+            ),
+            Metric(
+                "mean_normalized_age_entropy",
+                "Age-selectivity entropy",
+                good="none",
+                fmt=3,
+                baseline=1.0,
+                note="Entropy of the mass distribution over history ages, normalized so 1.0 is a flat read over every age. Lower means the model prefers particular moments.",
+            ),
+            Metric("uniform_key_temporal_mass", "Uniform-key baseline", good="none", fmt=4),
+            Metric("n_frames", "Frames captured", good="none", fmt=0),
+        ],
+        panels=panels,
+        see_also=["mem_history_influence", "attention_budget"],
+    )
 
 
 def _percentile_examples(scores: np.ndarray) -> list[tuple[int, int]]:
@@ -345,11 +419,16 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         for index, layer in enumerate(layers)
     }
     age_mean = head_age.mean(axis=(0, 2, 3))
+    age_entropy = _age_entropy(head_age)
     summary = {
         "layers": layers,
         "cameras": camera_names,
         "history_seconds_oldest_to_newest": history_seconds.tolist(),
         "uniform_key_temporal_mass": float(uniform_mass),
+        "mean_temporal_mass": float(temporal_mass.mean()),
+        "mean_enrichment_vs_uniform": float(temporal_mass.mean() / uniform_mass),
+        "max_layer_enrichment_vs_uniform": float(temporal_mass.mean(axis=0).max() / uniform_mass),
+        "mean_normalized_age_entropy": float(age_entropy.mean()),
         "n_frames": len(frame_meta),
         "n_heads": int(head_age.shape[3]),
         "n_patches": n_patches,
@@ -358,7 +437,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "mean_age_share_by_layer": (
             age_mean / np.clip(age_mean.sum(axis=-1, keepdims=True), 1e-12, None)
         ).tolist(),
-        "mean_normalized_age_entropy_by_layer": _age_entropy(head_age).tolist(),
+        "mean_normalized_age_entropy_by_layer": age_entropy.tolist(),
         "per_frame": [
             meta
             | {
@@ -399,6 +478,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     makedirs(examples_dir)
     scores = temporal_mass.mean(axis=1)
     patch_vmax = max(float(np.percentile(patch_mass, 98)), 1e-8)
+    examples: list[tuple[int, str]] = []
     for percentile, index in _percentile_examples(scores):
         diagnostic = {
             "global_idx": frame_meta[index]["global_idx"],
@@ -409,6 +489,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             "patch_mass": patch_mass[index],
         }
         meta = frame_meta[index]
+        filename = (
+            f"frame_p{percentile:02d}_ep{meta['episode_idx']:04d}_fr{meta['frame_idx']:06d}.png"
+        )
         _render_spatial_example(
             dataset,
             memory_cfg,
@@ -417,11 +500,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             percentile,
             uniform_mass,
             patch_vmax,
-            os.path.join(
-                examples_dir,
-                f"frame_p{percentile:02d}_ep{meta['episode_idx']:04d}_fr{meta['frame_idx']:06d}.png",
-            ),
+            os.path.join(examples_dir, filename),
         )
+        examples.append((percentile, filename))
+
+    _write_manifest(output_dir, summary, examples)
 
     mean_enrichment = temporal_mass.mean(axis=0) / uniform_mass
     logging.info(

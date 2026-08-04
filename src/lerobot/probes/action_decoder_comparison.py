@@ -1,7 +1,8 @@
-"""Side-by-side 3-D visualization of MolmoAct2 FAST and flow action chunks.
+"""One 3-D scene holding both MolmoAct2 decoders' action chunks for the same anchor.
 
-Both scenes share one cubic range and one camera, so a shape difference between the
-two columns is a real difference in commanded geometry and not a difference in scale.
+The FAST reconstruction and the flow draws are drawn against the same ground truth in
+the same axes, so the comparison is a distance the eye can read directly instead of a
+shape that has to be carried between two panels.
 
 Two asymmetries make this a visual comparison rather than a score. FAST is greedy —
 one reconstruction exists, and it carries the action tokenizer's quantization error,
@@ -139,9 +140,10 @@ def _common_traces(go, record, *, showlegend, fps):
 
 
 def _record_traces(record, fps):
+    """Every trace for one anchor, in one scene: ground truth, FAST, and the flow fan."""
     import plotly.graph_objects as go
 
-    traces = [(trace, 1) for trace in _common_traces(go, record, showlegend=True, fps=fps)]
+    traces = list(_common_traces(go, record, showlegend=True, fps=fps))
 
     fast_error = record.get("fast_error")
     fast_label = "FAST · greedy" if not fast_error else "FAST unavailable · " + str(fast_error)
@@ -149,65 +151,52 @@ def _record_traces(record, fps):
     fast_chunk = record.get("fast_chunk")
     traces.extend(
         [
-            (
-                _path_trace(
-                    go,
-                    fast_ee,
-                    fast_chunk,
-                    label=fast_label,
-                    color=FAST_COLOR,
-                    fps=fps,
-                    width=6,
-                    opacity=0.95,
-                ),
-                1,
+            _path_trace(
+                go,
+                fast_ee,
+                fast_chunk,
+                label=fast_label,
+                color=FAST_COLOR,
+                fps=fps,
+                width=6,
+                opacity=0.95,
             ),
-            (
-                _gap_trace(
-                    go,
-                    record["start_ee"],
-                    fast_ee,
-                    label="FAST initial target gap",
-                    color=FAST_COLOR,
-                    width=4,
-                    opacity=0.8,
-                ),
-                1,
+            _gap_trace(
+                go,
+                record["start_ee"],
+                fast_ee,
+                label="FAST initial target gap",
+                color=FAST_COLOR,
+                width=4,
+                opacity=0.8,
             ),
         ]
     )
 
-    traces.extend((trace, 2) for trace in _common_traces(go, record, showlegend=False, fps=fps))
     for sample_idx in range(FLOW_COMPARE_COUNT):
         ee = record["sample_ee"][sample_idx]
         chunk = record["sample_chunks"][sample_idx]
         color = FLOW_COLORS[sample_idx]
         traces.extend(
             [
-                (
-                    _path_trace(
-                        go,
-                        ee,
-                        chunk,
-                        label=f"flow · seed {sample_idx}",
-                        color=color,
-                        fps=fps,
-                        width=5,
-                        opacity=0.82,
-                    ),
-                    2,
+                _path_trace(
+                    go,
+                    ee,
+                    chunk,
+                    label=f"flow · seed {sample_idx}",
+                    color=color,
+                    fps=fps,
+                    width=5,
+                    opacity=0.82,
                 ),
-                (
-                    _gap_trace(
-                        go,
-                        record["start_ee"],
-                        ee,
-                        label=f"flow seed {sample_idx} initial target gap",
-                        color=color,
-                        width=3,
-                        opacity=0.65,
-                    ),
-                    2,
+                _gap_trace(
+                    go,
+                    record["start_ee"],
+                    ee,
+                    label=f"flow seed {sample_idx} initial target gap",
+                    color=color,
+                    width=3,
+                    opacity=0.65,
                 ),
             ]
         )
@@ -223,9 +212,8 @@ def _title(record):
 
 
 def build_figure(records, table_z, fps=30.0):
-    """Build two locked-scale 3-D scenes with no decoder-comparison score."""
+    """Build the single locked-scale 3-D scene, with no decoder-comparison score."""
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     point_sets = []
     for record in records:
@@ -247,62 +235,44 @@ def build_figure(records, table_z, fps=30.0):
     lo[2] = min(lo[2], table_z)
     hi[2] = max(hi[2], table_z)
     # aspectmode="cube" renders each axis at the same screen length, so the range has to
-    # be a cube too — otherwise the short axis is stretched and the two columns are
-    # compared in a distorted space.
+    # be a cube too — otherwise the short axis is stretched and the geometry is read in
+    # a distorted space.
     centre = (lo + hi) / 2.0
     half = max((hi - lo).max() / 2.0, 0.05) * 1.08
     lo = centre - half
     hi = centre + half
 
-    fig = make_subplots(
-        rows=1,
-        cols=2,
-        specs=[[{"type": "scene"}, {"type": "scene"}]],
-        subplot_titles=(
-            "FAST · greedy reconstruction",
-            f"Flow matching · {FLOW_COMPARE_COUNT} fixed noise seeds",
-        ),
-        horizontal_spacing=0.025,
+    fig = go.Figure()
+    fig.add_trace(
+        go.Mesh3d(
+            x=[lo[0], hi[0], hi[0], lo[0]],
+            y=[lo[1], lo[1], hi[1], hi[1]],
+            z=[table_z] * 4,
+            i=[0, 0],
+            j=[1, 2],
+            k=[2, 3],
+            color="#C8B89A",
+            opacity=0.30,
+            name="table plane",
+            showlegend=True,
+            hoverinfo="skip",
+        )
     )
 
-    for col in (1, 2):
-        fig.add_trace(
-            go.Mesh3d(
-                x=[lo[0], hi[0], hi[0], lo[0]],
-                y=[lo[1], lo[1], hi[1], hi[1]],
-                z=[table_z] * 4,
-                i=[0, 0],
-                j=[1, 2],
-                k=[2, 3],
-                color="#C8B89A",
-                opacity=0.30,
-                name="table plane",
-                showlegend=col == 1,
-                hoverinfo="skip",
-            ),
-            row=1,
-            col=col,
-        )
+    for trace in _record_traces(records[0], fps):
+        fig.add_trace(trace)
 
-    for trace, col in _record_traces(records[0], fps):
-        fig.add_trace(trace, row=1, col=col)
-
-    dynamic_indices = list(range(2, len(fig.data)))
-    frames = []
-    for frame_idx, record in enumerate(records):
-        dynamic = []
-        for trace, col in _record_traces(record, fps):
-            trace.scene = "scene" if col == 1 else "scene2"
-            dynamic.append(trace)
-        frames.append(
-            go.Frame(
-                data=dynamic,
-                traces=dynamic_indices,
-                name=str(frame_idx),
-                layout=dict(title=dict(text=_title(record))),
-            )
+    # The table plane is fixed; everything after it is replaced anchor by anchor.
+    dynamic_indices = list(range(1, len(fig.data)))
+    fig.frames = [
+        go.Frame(
+            data=_record_traces(record, fps),
+            traces=dynamic_indices,
+            name=str(frame_idx),
+            layout=dict(title=dict(text=_title(record))),
         )
-    fig.frames = frames
+        for frame_idx, record in enumerate(records)
+    ]
 
     camera = dict(eye=dict(x=1.45, y=1.45, z=1.05), up=dict(x=0, y=0, z=1))
     scene = dict(
@@ -317,7 +287,6 @@ def build_figure(records, table_z, fps=30.0):
     fig.update_layout(
         title=dict(text=_title(records[0]), x=0.01, xanchor="left"),
         scene=scene,
-        scene2=dict(scene),
         paper_bgcolor="#FFFFFF",
         height=760,
         margin=dict(l=8, r=8, b=45, t=105),
@@ -362,28 +331,7 @@ def build_figure(records, table_z, fps=30.0):
 
 
 def write_html(fig, html_path):
-    """Write the comparison and mirror orbit/zoom changes between both 3-D scenes."""
-    sync_script = """
-(function() {
-  var plot = document.getElementById('decoder-comparison-plot');
-  var syncing = false;
-  plot.on('plotly_relayout', function(update) {
-    if (syncing) return;
-    var mirrored = {};
-    Object.keys(update).forEach(function(key) {
-      if (key.indexOf('scene.camera') === 0) {
-        mirrored[key.replace('scene.camera', 'scene2.camera')] = update[key];
-      } else if (key.indexOf('scene2.camera') === 0) {
-        mirrored[key.replace('scene2.camera', 'scene.camera')] = update[key];
-      }
-    });
-    if (Object.keys(mirrored).length) {
-      syncing = true;
-      Plotly.relayout(plot, mirrored).then(function() { syncing = false; });
-    }
-  });
-})();
-"""
+    """Write the comparison to a standalone page."""
     fig.write_html(
         html_path,
         include_plotlyjs="cdn",
@@ -391,5 +339,4 @@ def write_html(fig, html_path):
         auto_play=False,
         div_id="decoder-comparison-plot",
         config={"responsive": True, "displaylogo": False, "scrollZoom": True},
-        post_script=sync_script,
     )

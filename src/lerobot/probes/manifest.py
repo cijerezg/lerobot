@@ -16,8 +16,10 @@
 
 A probe that calls :func:`write_index` at the end of its ``run()`` shows up in
 ``lerobot-view-probes`` with its documentation, its headline numbers, and a
-caption per figure — without the viewer knowing the probe exists. A probe that
-doesn't still shows up, but only as a pile of PNGs (see ``fallback_index``).
+caption per figure — without the viewer knowing the probe exists. Every probe in
+the suite does; one that crashed or skipped itself before writing an index still
+appears, but only as its directory name and whatever media it managed to leave
+behind.
 
 The prose is not duplicated here. ``doc`` comes from the probe module's own
 docstring, so the explanation lives next to the code that produces the numbers
@@ -85,9 +87,9 @@ class Metric:
         value: set directly when the number isn't in the summary dict.
         baseline: the value that means "no effect" (a noise floor, a uniform
             expectation), drawn as a reference on the sparkline.
-        primary: show this metric in the compact headline strip above the figure.
-            Every metric still appears in the detailed table. If a legacy manifest
-            declares no primary metrics, the viewer shows its first four.
+        primary: this is one of the numbers the probe is read for. The viewer lists
+            every metric in one table and sorts these to the top of it; the one shown
+            beside the probe in the sidebar is the first of them.
     """
 
     key: str
@@ -267,38 +269,17 @@ GROUPS = (
     "Other",
 )
 
-# Fallback identity for probes that don't write an index.json yet: output subdir
-# -> (title, group, module filename). Only the module filename is not derivable,
-# and only where it differs from the subdir. This table shrinks to nothing as
-# probes adopt write_index().
-PROBE_META = {
-    "offline_inference":                  ("Offline Inference", "Actions", "offline_inference.py"),
-    "action_trace":                       ("Action Inspector", "Actions", "action_trace_probe.py"),
-    "attention":                          ("Attention Maps", "Attention", "attention.py"),
-    "attention_budget":                   ("Attention Budget", "Attention", "attention_budget.py"),
-    "spatial_memorization_attention":     ("Spatial Memorization (Attention)", "Attention", "spatial_memorization_attention.py"),
-    "action_drift_jacobian":              ("Subtask Action Sensitivity", "Sensitivity", "action_drift_jacobian.py"),
-    "spatial_memorization_action_jacobian": ("Spatial Memorization (Jacobian)", "Sensitivity", "spatial_memorization_action_jacobian.py"),
-    "representations":                    ("Representations", "Representation", "representations.py"),
-    "critic":                             ("Critic Values", "Critic", "critic.py"),
-    "mem_history_influence":              ("MEM History Influence", "History", "mem_history_influence.py"),
-    "mem_temporal_attention":             ("MEM Temporal Attention", "History", "mem_temporal_attention.py"),
-    "metadata_steering":                  ("Metadata Steering", "Steering", "metadata_steering.py"),
-    "subtask_sweep":                      ("Subtask Sweep", "Steering", "subtask_sweep.py"),
-    "depth_modality":                     ("Depth Modality", "Depth", "depth_modality_probe.py"),
-}
-
-
 # The conventions every probe shares and none of them can explain on its own.
 # Rendered as the viewer's "Reading this suite" page.
 SUITE_DOC = """
 ## What this suite is
 
-The configured probes run against a checkpoint on held-out episodes. Offline
-Inference measures whether the policy is any good. The remaining probes exist
-to explain why, by asking whether each thing the model was given (the
-subtask clause, the metadata clause, the history, the depth stream, the language)
-actually reaches the actions.
+The configured probes run against a checkpoint on held-out episodes. The Action
+Inspector measures whether the policy is any good — normalized action error
+against the two constants worth beating, plus a task-space pre-flight check. The
+remaining probes exist to explain why, by asking whether each thing the model was
+given (the subtask clause, the metadata clause, the history, the depth stream, the
+language) actually reaches the actions.
 
 Read them in that order: the headline number first, then the probe that explains
 the part you doubt.
@@ -322,8 +303,8 @@ without, RGB vs RGB+depth) re-runs the same frame with the same seeded
 generator, so the only difference between the two runs is the condition. Without
 this, every delta is confounded by the sampler, and small effects are
 indistinguishable from noise. Where the spread across draws *is* the measurement — the Action Inspector fan —
-each draw gets its own deterministic seed. The fan remains independent while sample 0
-can be matched exactly to Offline Inference and every checkpoint sees the same noise.
+each draw gets its own deterministic seed. The fan remains independent while sample 0,
+the draw the fit metrics score, is the same noise for every checkpoint.
 
 **The noise floor.** A conditioning effect only counts if it exceeds what
 re-running the same condition under different noise would produce anyway.

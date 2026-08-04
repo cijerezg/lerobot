@@ -54,12 +54,15 @@ assembles the same clauses as training, with the steering defaults:
 
 ## 4. Offline eval
 
-`probes/offline_inference.py`: samples held-out frames, runs both the LL (action
-prediction vs GT) and the HL query — per frame conditioned on the **GT** memory
-via `summary_label_spans` (the same hold/update rule as training) — and renders a
-panel with GT subtask + GT memory + per-checkpoint predictions. The molmoact2
-adapter reuses `generate_subtask_text`; it returns None (panel empty) when
-`subtask_max_new_tokens = 0`. `probes/depth_modality_probe.py` runs the 2×2
+`probes/action_trace_probe.py` carries the headline: at anchors spaced through the
+held-out episodes it scores flow sample 0 against the demonstrated chunk in
+normalized space, next to the hold-still and dataset-mean constants
+(`skill_vs_hold` / `skill_vs_mean` in `action_metrics.json`), and FKs the fan for
+table clearance and multimodality. It absorbed `probes/offline_inference.py`,
+deleted 2026-08-02: that probe's remaining job was the HL memory/subtask decode,
+which went away with the summary memory (2026-08-01), and its 2-D per-joint panels
+duplicated the anchors and the sample-0 seed the inspector already owned.
+`probes/depth_modality_probe.py` runs the 2×2
 {RGB±, depth±} matrix + per-layer depth attention mass + input sensitivities
 against the real checkpoint (replaced the gate-0 bit-identity probe 2026-07-26 —
 no gate exists under the joint softmax read;

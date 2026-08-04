@@ -609,8 +609,14 @@ def _run_dataset(adapter, dataset, cfg, output_dir) -> None:
         )
     panels.extend(
         [
-            Panel("frame_metrics.csv", "Per-frame raw segment metrics"),
-            Panel("summary.json", "Probe definition, sampling counts, and scales"),
+            Panel("frame_metrics.csv", "Per-frame raw segment metrics",
+                  how="One row per differentiated frame with its per-segment Jacobian "
+                      "norms — the numbers the aggregate heatmaps average, for checking "
+                      "whether a hot row is one frame or the whole subtask."),
+            Panel("summary.json", "Probe definition, sampling counts, and scales",
+                  how="Which frames were sampled, how many per subtask, and the fixed "
+                      "colour scales the panels were drawn on. Read it before comparing "
+                      "two runs' heatmaps by eye."),
         ]
     )
     write_index(

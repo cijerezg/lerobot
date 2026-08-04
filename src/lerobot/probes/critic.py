@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import random
+import sys
 import textwrap
 import warnings
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import build_episode_index, get_frame_data, load_probe_dataset
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -393,6 +395,101 @@ def _gradient_plots(grad_mags, subtasks, episodes, output_dir):
     logging.info(f"[CRITIC] saved {out}")
 
 
+_PERCENTILE_EXEMPLARS = (1, 10, 25, 50, 75, 90, 99)
+
+
+def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float) -> dict:
+    """Describe the critic's value and TD-error distributions to the viewer."""
+    td = raw["td_errors"].float()
+    squashed = raw["squashed_advantages"].float()
+    summary = {
+        "n_frames": int(td.numel()),
+        "td_error_mean": float(td.mean()),
+        "td_error_abs_mean": float(td.abs().mean()),
+        "td_error_std": float(td.std()),
+        "advantage_scaling": advantage_scaling,
+        "squashed_abs_mean": float(squashed.abs().mean()),
+        "squashed_saturated_fraction": float((squashed.abs() > 0.99).float().mean()),
+    }
+    if "grad_mags" in raw:
+        grads = raw["grad_mags"].float()
+        summary["grad_mag_mean"] = float(grads.mean())
+        summary["grad_mag_max"] = float(grads.max())
+
+    panels = [
+        Panel(
+            "predicted_distributions.png",
+            "Per-frame $P(V)$ curves with $\\mathbb{E}[V]$ overlaid",
+            how="One curve per sampled frame over the value support. Spiky under-fit distributions mean the HL-Gauss $\\sigma$ is too narrow; a flat $\\mathbb{E}[V]$ across frames early in training is by design, not collapse.",
+            primary=True,
+        ),
+        Panel(
+            "advantage_dist.png",
+            "TD-error histogram, CDF, and by-subtask spread",
+            how="The TD error is $r + \\gamma V(s') (1-d) - V(s)$ over the training buffer's own window. A mean far from zero is a systematic value bias, not noise.",
+            primary=True,
+        ),
+        Panel(
+            "advantage_squashed_dist.png",
+            "The same after $\\tanh(\\delta / \\text{advantage\\_scaling})$",
+            how="This is the form the policy is actually conditioned on. Mass piled at $\\pm 1$ means the scaling is too small and the conditioning has collapsed to a sign bit.",
+        ),
+        Panel(
+            "gradient_magnitudes.png",
+            "$\\|\\partial V / \\partial \\text{vision}\\|$ across frames, by subtask and episode",
+            how="Which observations move the value estimate. Near-zero everywhere means the critic is reading the state vector and ignoring the cameras.",
+        ),
+    ]
+    panels += [
+        Panel(
+            f"frame_p{percentile:02d}.png",
+            f"p{percentile} gradient-magnitude exemplar frame",
+            how="The scene at this percentile of value sensitivity. Compare the p01 and p99 frames: if they are indistinguishable, the gradient ranking is noise.",
+        )
+        for percentile in _PERCENTILE_EXEMPLARS
+    ]
+    return write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Critic Values",
+        group="Critic",
+        claim="What values does the critic assign, and is its TD error centred and unsaturated?",
+        summary=summary,
+        metrics=[
+            Metric(
+                "td_error_abs_mean",
+                "Mean |TD error|",
+                good="low",
+                fmt=4,
+                primary=True,
+                note="Averaged over sampled frames. No threshold: the scale depends on the reward normalization constant and the value support, so read it against its own history across checkpoints.",
+            ),
+            Metric(
+                "td_error_mean",
+                "TD error mean (signed)",
+                good="none",
+                fmt=4,
+                baseline=0.0,
+                primary=True,
+                note="Away from zero the critic is systematically optimistic or pessimistic, which the absolute mean above cannot show.",
+            ),
+            Metric(
+                "squashed_saturated_fraction",
+                "Fraction of advantages at $\\pm 1$",
+                good="low",
+                fmt=3,
+                warn=0.1,
+                note="Share of squashed advantages with $|\\tanh| > 0.99$. High means ``advantage_scaling`` is too small for this TD-error scale and the conditioning signal has collapsed to a sign.",
+            ),
+            Metric("td_error_std", "TD error spread", good="none", fmt=4),
+            Metric("grad_mag_mean", "Mean value-gradient magnitude", good="none", fmt=5),
+            Metric("n_frames", "Frames sampled", good="none", fmt=0),
+        ],
+        panels=panels,
+        see_also=["action_trace"],
+    )
+
+
 def run_critic_values_distribution(
     adapter: ProbablePolicy, val_dataset, val_ep_indices,
     cfg, output_dir: str,
@@ -534,6 +631,7 @@ def run_critic_values_distribution(
                 "grad_subtasks": subtasks,
             })
 
+    _write_manifest(output_dir, raw, advantage_scaling)
     return raw
 
 

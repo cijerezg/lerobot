@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import sys
 from dataclasses import dataclass
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -47,6 +48,7 @@ import torch.nn.functional as F
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     _snap_position,
     build_episode_index,
@@ -311,6 +313,75 @@ def _load_cache(pt_path):
     return raw, n_heads, meta_by_key
 
 
+_JACOBIAN_MODULE = "lerobot.probes.spatial_memorization_action_jacobian"
+
+
+def _write_manifest(output_dir, raw_results, n_frames: int, *, requires_grad: bool) -> dict:
+    """Describe the aggregated per-head maps to the manifest-driven viewer."""
+    ratios = {
+        f"L{layer:02d}/{cam}": float(stats["mean_over_std"].max())
+        for (layer, cam), stats in raw_results.items()
+    }
+    summary = {
+        "n_frames": n_frames,
+        "max_mean_over_std": max(ratios.values()),
+        "mean_mean_over_std": float(np.mean(list(ratios.values()))),
+        "max_mean_over_std_by_layer_camera": ratios,
+        "hottest": max(ratios, key=ratios.get),
+    }
+    panels = [
+        Panel(
+            f"L{layer:02d}/{stat}_action_to_{cam}.png",
+            f"Layer {layer}, {cam} — per-head {stat.replace('_', ' ')}",
+            how=(
+                "Mean over frames of each head's attention to each patch. A head with a bright "
+                "spot here attends that region often; on its own that is not memorization."
+                if stat == "mean"
+                else "Mean over standard deviation across frames. Bright means the head puts the "
+                "same mass on the same patch no matter what the scene is — a fixed spatial "
+                "pattern rather than a response to the image. This is the panel the probe exists for."
+            ),
+            primary=stat == "mean_over_std",
+        )
+        for (layer, cam) in sorted(raw_results)
+        for stat in ("mean", "mean_over_std")
+    ]
+    module = sys.modules.get(_JACOBIAN_MODULE) if requires_grad else None
+    return write_index(
+        output_dir,
+        module or sys.modules[__name__],
+        title="Spatial Memorization (Jacobian)" if requires_grad else "Spatial Memorization (Attention)",
+        group="Sensitivity" if requires_grad else "Attention",
+        claim=(
+            "Do any heads drive the action from a fixed image region regardless of the scene?"
+            if requires_grad
+            else "Do any heads attend a fixed image region regardless of the scene?"
+        ),
+        summary=summary,
+        metrics=[
+            Metric(
+                "max_mean_over_std",
+                "Most fixed head/patch (mean / std)",
+                good="low",
+                fmt=2,
+                primary=True,
+                note=f"Across every layer and camera; the hottest is {summary['hottest']}. High means one head puts the same mass on the same patch in every frame. No threshold is declared — what counts as too fixed depends on the layer and has not been calibrated on this embodiment.",
+            ),
+            Metric(
+                "mean_mean_over_std",
+                "Typical layer/camera maximum",
+                good="low",
+                fmt=2,
+                primary=True,
+                note="Mean over layer/camera pairs of their own maximum. One outlier head is a different finding from a stack-wide tendency.",
+            ),
+            Metric("n_frames", "Frames aggregated", good="none", fmt=0),
+        ],
+        panels=panels,
+        see_also=["attention", "attention_budget"],
+    )
+
+
 def render_all(raw_results, n_heads, meta_by_key, output_dir):
     for (layer_idx, cam_name), stats in raw_results.items():
         layer_dir = os.path.join(output_dir, f"L{layer_idx:02d}")
@@ -485,6 +556,7 @@ def _probe_one_dataset(adapter, dataset, ds_dir, cfg, *, requires_grad: bool = F
     _save_cache(pt_path, raw_results, len(samples), layers, meta_by_key)
     logging.debug(f"  Saved cache → {pt_path}")
     render_all(raw_results, n_heads, meta_by_key, ds_dir)
+    _write_manifest(ds_dir, raw_results, len(samples), requires_grad=requires_grad)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

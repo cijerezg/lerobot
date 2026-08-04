@@ -11,7 +11,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import random
 import textwrap
 import warnings
 from typing import Any, Optional
@@ -41,6 +40,18 @@ SEQ_CMAPS = ["Reds",   "Blues",   "Greens",  "Oranges", "Purples",
 
 DS_COLORS = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4",
              "#42d4f4", "#f032e6", "#bfef45", "#469990"]
+
+
+# The target embodiment: rebot B601, 7-DOF. Anything else falls back to indices.
+REBOT_JOINT_NAMES = [
+    "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll", "gripper",
+]
+
+
+def joint_names_for_dim(action_dim: int) -> list[str]:
+    if action_dim == len(REBOT_JOINT_NAMES):
+        return REBOT_JOINT_NAMES
+    return [f"joint_{i}" for i in range(action_dim)]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -373,7 +384,7 @@ def probe_frame_inputs(
     covers ~1.35% of training samples.
 
     ``global_idx`` must sit on the image/depth stride grid whenever ``with_depth``
-    is set; `sample_episodes_evenly` / `build_sample_list` snap for you.
+    is set; `sample_episodes_evenly` and the action-inspector sampler snap for you.
 
     Returns a dict with ``obs``, ``gt_actions``, ``state``, ``subtask``, ``task``,
     ``metadata``, ``episode_idx``, ``frame_idx``, ``global_idx``.
@@ -542,17 +553,15 @@ def sample_episodes_evenly(
 
 
 def action_inspector_sample_seed(base_seed: int, global_idx: int, sample_idx: int = 0) -> int:
-    """Stable independent noise seed; sample 0 is shared with Offline Inference."""
+    """Stable independent noise seed; sample 0 is the Action Inspector's scored draw."""
     return int(base_seed) + int(global_idx) + int(sample_idx) * 1_000_003
 
 
 def sample_action_inspector_frames(dataset, probe_cfg, stride: int = 1) -> list[tuple[int, int, int]]:
-    """Frames shared by Offline Inference and the interactive Action Inspector.
+    """Anchor frames for the Action Inspector.
 
-    The two views are only meaningfully comparable when they evaluate the same
-    observation. This sampler preserves the action-trace contract (fixed time
-    stride, optional episode allow-list, per-episode cap), but returns the common
-    ``(episode_idx, frame_idx, global_idx)`` shape used by the other probes.
+    Fixed time stride, optional episode allow-list, per-episode cap, returned in the
+    common ``(episode_idx, frame_idx, global_idx)`` shape the other probes use.
 
     Every frame is snapped to the stored image/depth grid. ``trace_anchor_stride_s``
     is converted through the dataset FPS rather than the environment FPS because
@@ -584,66 +593,6 @@ def sample_action_inspector_frames(dataset, probe_cfg, stride: int = 1) -> list[
             samples.append((episode_idx, frame_idx, global_idx))
             if episode_samples >= int(probe_cfg.trace_max_anchors_per_episode):
                 break
-    return samples
-
-
-def build_sample_list(
-    dataset,
-    episodes_str: Optional[str],
-    frames_str: Optional[str],
-    random_n: Optional[int],
-    chunk_size: int,
-    seed: Optional[int] = None,
-    stride: int = 1,
-) -> list[tuple[int, int, int]]:
-    """
-    Build a list of ``(episode_idx, frame_idx_in_episode, global_idx)`` from
-    optional explicit pairs and optional random sampling.
-
-    Used by the offline_inference probe for manual / random frame selection.
-    ``stride`` snaps every frame back onto the image/depth grid.
-    """
-    ep_to_indices = build_episode_index(dataset)
-    samples: list[tuple[int, int, int]] = []
-
-    if episodes_str:
-        ep_list = [int(e) for e in episodes_str.split(",")]
-        fr_list = [int(f) for f in frames_str.split(",")] if frames_str else [0] * len(ep_list)
-        if len(fr_list) == 1:
-            fr_list = fr_list * len(ep_list)
-        for ep_idx, fr_idx in zip(ep_list, fr_list):
-            if ep_idx not in ep_to_indices:
-                logging.warning(f"Episode {ep_idx} not found in dataset, skipping.")
-                continue
-            indices = ep_to_indices[ep_idx]
-            if fr_idx >= len(indices):
-                logging.warning(
-                    f"Frame {fr_idx} out of range for episode {ep_idx} "
-                    f"({len(indices)} frames), skipping."
-                )
-                continue
-            _, snapped_fr, global_idx = _snap_position(dataset, indices, fr_idx, stride)
-            samples.append((ep_idx, snapped_fr, global_idx))
-
-    if random_n:
-        rng = random.Random(seed)
-        all_global = list(range(len(dataset)))
-        rng.shuffle(all_global)
-        existing = {g for _, _, g in samples}
-        added = 0
-        for global_idx in all_global:
-            if added >= random_n:
-                break
-            item = dataset.hf_dataset[global_idx]
-            ep_idx = item["episode_index"].item()
-            indices = ep_to_indices[ep_idx]
-            _, fr_idx, global_idx = _snap_position(dataset, indices, indices.index(global_idx), stride)
-            if global_idx in existing:
-                continue
-            samples.append((ep_idx, fr_idx, global_idx))
-            existing.add(global_idx)
-            added += 1
-
     return samples
 
 

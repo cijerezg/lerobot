@@ -20,6 +20,14 @@ Output layout (under ``probe_parameters.output_dir/representations/{dataset}/``)
   3d/<site>/by_subtask.html
   3d/<site>/ep{A}_vs_ep{B}.html
 
+OFF BY DEFAULT (2026-07-31). The pooling is over the whole sequence of one layer,
+so the by-subtask separation it shows is produced by the subtask string sitting in
+the prompt rather than by anything the policy learned about the scene, and no number
+it reports can come out bad. Re-enable it with per-token-group pooling (image
+patches, prompt clauses, and action queries pooled separately) and a decodability
+metric — probe accuracy for episode / phase / subtask against a shuffled-label
+control — so the picture is backed by something falsifiable.
+
 Usage:
     python -m lerobot.probes.representations config.yaml \\
         --probe_parameters.max_episodes 5
@@ -31,6 +39,7 @@ import csv
 import logging
 import math
 import os
+import sys
 from dataclasses import dataclass
 
 import matplotlib
@@ -42,6 +51,7 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     EP_COLORS,
     SEQ_CMAPS,
@@ -376,6 +386,55 @@ def _run_site(tag, X, metadata, cfg, pca_dir, output_dir):
     )
 
 
+def _write_manifest(output_dir: str, sites: list[str], metadata: list[dict]) -> dict:
+    """Describe the embedding plots to the manifest-driven viewer.
+
+    Deliberately declares no metric. Nothing here produces a number that could come
+    out bad — see the module docstring on why the probe is off by default.
+    """
+    panels = [
+        Panel(
+            "episode_thumbnails.png",
+            "First frame of every sampled episode",
+            how="What the scenes actually were. Read the embedding plots against this, or a cluster is just a colour.",
+        )
+    ]
+    for site in sites:
+        panels += [
+            Panel(
+                f"2d/{site}/by_subtask.png",
+                f"{site} — 2-D UMAP coloured by subtask",
+                how="Separation here is weak evidence: the subtask string sits in the prompt, so the encoder can separate these without having learned anything about the scene.",
+                primary=site == sites[0],
+            ),
+            Panel(
+                f"2d/{site}/by_episode.png",
+                f"{site} — 2-D UMAP coloured by episode (dark early, light late)",
+                how="Episodes tracing separate ribbons means the pooled state carries episode identity; a single shared ribbon with the time gradient aligned means it carries task phase.",
+            ),
+            Panel(f"2d/{site}/by_frame.png", f"{site} — 2-D UMAP coloured by frame index"),
+            Panel(f"pca_variance/{site}_pca_scree.png", f"{site} — PCA scree and cumulative variance"),
+            Panel(f"3d/{site}/by_subtask.html", f"{site} — interactive 3-D by subtask"),
+            Panel(f"3d/{site}/by_episode.html", f"{site} — interactive 3-D by episode"),
+            Panel(f"3d/{site}/by_frame.html", f"{site} — interactive 3-D by frame index"),
+        ]
+    return write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Representations",
+        group="Representation",
+        claim="How do the pooled per-layer hidden states arrange themselves by episode, phase, and subtask?",
+        summary={"n_frames": len(metadata), "n_sites": len(sites), "sites": sites},
+        metrics=[
+            Metric("n_frames", "Frames embedded", good="none", fmt=0),
+            Metric("n_sites", "Sites captured", good="none", fmt=0),
+        ],
+        panels=panels,
+        status="info",
+        see_also=["subtask_sweep", "attention_budget"],
+    )
+
+
 def run_plotting(cache, cfg, output_dir):
     metadata = cache["metadata"]
     pca_dir = os.path.join(output_dir, "pca_variance")
@@ -383,10 +442,10 @@ def run_plotting(cache, cfg, output_dir):
 
     # Iterate every site the adapter produced. Order is whatever the adapter
     # returned (Python dict insertion order).
-    for site, X in cache.items():
-        if site == "metadata":
-            continue
-        _run_site(site, X, metadata, cfg, pca_dir, output_dir)
+    sites = [site for site in cache if site != "metadata"]
+    for site in sites:
+        _run_site(site, cache[site], metadata, cfg, pca_dir, output_dir)
+    _write_manifest(output_dir, sites, metadata)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ import torch
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     frame_metadata_lookup,
+    joint_names_for_dim,
     makedirs,
     probe_frame_inputs,
     probe_image_stride,
@@ -62,17 +63,6 @@ _STEERED = {
     "good": {"quality": 5, "mistake": False},
     "bad": {"quality": 1, "mistake": True},
 }
-
-_REBOT_JOINT_NAMES = [
-    "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll", "gripper",
-]
-
-
-def _joint_names(action_dim: int) -> list[str]:
-    if action_dim == len(_REBOT_JOINT_NAMES):
-        return _REBOT_JOINT_NAMES
-    return [f"joint_{i}" for i in range(action_dim)]
-
 
 def _mean(rows: list[dict], metric: str) -> float:
     values = [row[metric] for row in rows if row.get(metric) is not None]
@@ -116,7 +106,7 @@ def _render_example(diagnostic: dict, output_path: str) -> None:
     """Per-joint chunk under each metadata condition, GT overlaid."""
     gt = diagnostic["gt"]
     action_dim = gt.shape[-1]
-    names = _joint_names(action_dim)
+    names = joint_names_for_dim(action_dim)
     steps = np.arange(gt.shape[0])
 
     n_cols = 4
@@ -261,8 +251,12 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 name,
                 f"Largest separation #{len(examples) + 1} — episode {row['episode_idx']}, "
                 f"frame {row['frame_idx']}",
-                "One line per metadata condition against black GT. If the four lines sit on top of "
-                "each other, the clause changed nothing on the frame where it changed the most.",
+                "The predicted chunk per joint under each metadata condition — ``none``, "
+                "``good`` (quality 5, no mistake), ``bad`` (quality 1, mistake) and ``gt`` "
+                "(the frame's own labels) — against the demonstrated chunk in black. This is "
+                "one of the three frames where the clause moved the chunk most, so if the "
+                "four coloured lines still sit on top of each other here, the clause is "
+                "decorative everywhere.",
             )
         )
 
@@ -303,9 +297,23 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             Panel(
                 "metadata_steering.png",
                 "Influence, usefulness, and steering range split by the GT mistake flag",
-                "Left: how far each clause moves the chunk away from no-clause. Middle: whether that "
-                "movement improves the GT fit — bars below zero mean the clause actively hurts. "
-                "Right: the good-vs-bad gap, which is the range the policy actually exposes.",
+                "The bars are named after the metadata clause the prompt carried, not after "
+                "the result: ``good`` = quality 5 and no mistake (what every rollout asks "
+                "for), ``bad`` = quality 1 and mistake True (the opposite pole), ``gt`` = the "
+                "frame's own dataset labels. All three are measured against ``none``, no "
+                "clause at all, at identical flow noise.\n\n"
+                "**Left** — how far each clause moves the chunk away from the no-clause "
+                "prediction, as RMSE and as $\\max|\\Delta a|$ in normalised action space. This "
+                "is influence only: a tall bar says the clause was read, not that reading it "
+                "helped.\n\n"
+                "**Middle** — how much GT MSE that movement removes, again against ``none``. "
+                "Positive is better and a bar below zero means the clause actively hurt. "
+                "``gt`` should be the tallest of the three: conditioning on what actually "
+                "happened is the easiest version of the prediction problem.\n\n"
+                "**Right** — the same steering range $\\|a(good) - a(bad)\\|$ as a box plot, "
+                "split by whether the frame is flagged as a mistake in the dataset. Frames "
+                "with the flag are the only ones where ``good`` and ``gt`` disagree by "
+                "construction, so that is where a working clause has to separate.",
                 primary=True,
                 refs=["subtask_sweep"],
             ),

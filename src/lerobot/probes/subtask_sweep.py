@@ -46,15 +46,12 @@ import torch
 
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
+    REBOT_JOINT_NAMES,
     makedirs,
     probe_frame_inputs,
     probe_image_stride,
     sample_episodes_evenly,
 )
-
-_REBOT_JOINT_NAMES = [
-    "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll", "gripper",
-]
 
 
 def _vocabulary(dataset, limit: int) -> list[str]:
@@ -116,7 +113,7 @@ def _render(rows: list[dict], vocabulary: list[str], example: dict | None, outpu
         axes[2].plot(steps, example["gt"][:, joint], color="black", linewidth=2.2, label="GT")
         axes[2].set_title(
             f"Fan across the vocabulary — ep {example['episode_idx']} fr {example['frame_idx']}\n"
-            f"joint: {_REBOT_JOINT_NAMES[joint] if joint < len(_REBOT_JOINT_NAMES) else joint}"
+            f"joint: {REBOT_JOINT_NAMES[joint] if joint < len(REBOT_JOINT_NAMES) else joint}"
         )
         axes[2].set_xlabel("chunk step")
         axes[2].grid(True, alpha=0.25, linestyle=":")
@@ -241,7 +238,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         group="Steering",
         claim="Does swapping the subtask clause move the chunk more than flow noise does?",
         summary=summary,
-        see_also=["metadata_steering", "mem_history_influence", "offline_inference"],
+        see_also=["metadata_steering", "mem_history_influence", "action_trace"],
         metrics=[
             Metric(
                 "separation_median", "Separation (vocabulary / seed floor)", good="high", fmt=2,

@@ -224,6 +224,34 @@ Not adopted from our own parked list: gates, HAMLET moment tokens,
 DepthStream-style streams — MEM ships none of them. Build checklist: Phase 6 of
 [archive/memory_build_plan.md](archive/memory_build_plan.md).
 
+### 2.5 What probes the memory, and what the 2026-07-26 plan left behind
+
+The criterion the memory probes are judged against has not changed: **the robot must
+not redo what it just did**, and it should continue smoothly what it was doing. Not
+reconstruction fidelity, not attention mass.
+
+Live in the validation loop:
+
+| probe | question | verdict shape |
+|---|---|---|
+| `mem_history_influence` | do the history channels move the chunk, and does the move help? | `full_rmse` (influence, at fixed flow noise) next to `full_gt_mse_improvement` (usefulness). Influence ~0 = the channel never reaches the output; improvement < 0 = used in the wrong direction |
+| `mem_temporal_attention` | when and where is history read? | past-attention mass against the union-softmax uniform-key baseline $T/(N+T)$; enrichment ~1 means no selective read survives |
+| `subtask_sweep` | does the subtask clause move the actions at all? | vocabulary spread over a same-clause seed floor; this was P3 of the plan doc, and it gates every claim that memory reaches behaviour |
+
+The rest of [archive/memory_probes_plan.md](archive/memory_probes_plan.md) (retired
+2026-08-02) was written against the long-term summary memory and its HL decode.
+Repetition-at-boundaries (P1), closed-loop memory drift (P2), matched-state memory
+swap (P4) and memory-span decode attention (P6) all scored a decode; nothing decodes
+any more (§5). The update-vs-hold CE split (P5) was built, then went the same way.
+Its fix-first list is done: joint names and counts are shared
+(`probes/utils.joint_names_for_dim`), pack-step dropouts are held at zero for the
+duration of a capture (`probes/utils.suppress_pack_dropout`), and frame assembly is
+one helper (`probes/utils.probe_frame_inputs`).
+
+Still open from it, deliberately: **nothing trends across checkpoints.** Every probe
+writes PNG/JSON under `validation/step_XXXXXXXX/` and the viewer reads them per step;
+no scalar reaches wandb, so "is this getting better" is answered by eye.
+
 ## 3. Long-term memory: subtask + MEM summary
 
 ### 3.1 The two-prompt design (decided 2026-07-13)
