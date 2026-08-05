@@ -1,36 +1,31 @@
-"""Co-evolving depth stream + action-read bridge (depth_pointmap_design.md Part B).
+"""Depth stream blocks + wrist-cam token helpers.
 
-The point-map encoder (modeling_pointmap.py) tokenizes one depth frame into N tokens
-of width ``d_d`` (the stream width). This module then lets those tokens **co-evolve**
-through M light transformer blocks so the action expert can read depth features *as
-they exist at each of its layers*, rather than one frozen single-shot encoding.
+CRITIC-ONLY as of the prefix migration. The ACTOR no longer co-evolves depth: the
+point-map encoder's tokens go through ``depth_adapter`` into the VLM prefix on
+DEPTH_TOKEN placeholder positions, read by the pretrained trunk's ordinary softmax.
+The joint-softmax read (``join_depth_columns``, ``depth_attention_mass``), the learned
+per-layer bias ``b_l``, ``slice_wrist_cam_kv`` and the ``DepthStream`` aggregate that
+owned them are all deleted — as is the alpha gate they replaced.
 
-Per block ℓ (pre-norm; width d_d, ``stream_num_heads`` heads):
+What remains is used by two callers:
 
-    t ← t + SelfAttn(LN(t))                      # depth tokens mix among themselves
-    t ← t + CrossAttn(LN(t); K=k_wristℓ, V=v_wristℓ)   # attend the wrist-cam KV at layer ℓ
-    t ← t + MLP(LN(t))
+  - ``DepthStreamBlock`` (+ ``StreamAttention``/``StreamMLP``) — the critic
+    (rl_molmoact2.py) still stacks these over its own encoder's tokens, attending its
+    own wrist-cam embeds, and appends the final state for its value queries. Per block
+    (pre-norm; width d_d, ``stream_num_heads`` heads):
 
-The wrist-cam K/V are the VLM's own per-layer cached keys/values, sliced to the
-wrist-camera token span (model-side) and handed in as ``(B, T_w, d_vlm)`` tensors;
-each block projects them d_vlm→d_d internally. The depth stream attends **self +
-wrist-cam only** (design §3.2) and has no action dependence, so it is a pure function
-of the observation — computed once per observation and reused across all flow-matching
-denoising steps.
+        t <- t + SelfAttn(LN(t))
+        t <- t + CrossAttn(LN(t); K=k_wrist, V=v_wrist)
+        t <- t + MLP(LN(t))
 
-Action-read bridge (JOINT softmax, decided 2026-07-26 — depth_redesign_options.md
-§5.2; replaces the α-gated additive read whose scalar gate never trained). For
-action layer ℓ the action expert runs ONE softmax over context and depth columns:
+    ``cross_on=False`` kills the wrist bridge for a row: the K/V arrive by direct
+    gather, which bypasses attention masks, so RGB dropout has to be applied here
+    explicitly or the dropped rows would still see the wrist through this path.
 
-    out = SDPA(q, [K_ctx ; K_dℓ], [V_ctx ; V_dℓ], mask=[ctx mask ; b_ℓ])
+  - ``wrist_cam_token_indices`` / ``gather_kv_at_indices`` / ``mask_camera_patch_span``
+    — the processor's RGB-dropout mask and the depth probe.
 
-where (K_dℓ, V_dℓ) are this module's per-layer depth state projected into the action
-expert's head space (``read_kv``) and ``b_ℓ = depth_bias[ℓ]`` is a learned per-layer
-score bias on the depth columns (init −2: initial depth mass ×e⁻² without zeroing
-content gradients — additive inside the softmax, unlike the retired multiplicative
-gate). Abstention needs no sink column: the context keys are the natural sink. The
-SDPA itself lives in the action expert; this module owns the projections and
-``depth_bias``. Fresh float32.
+Fresh float32.
 """
 
 from __future__ import annotations
@@ -42,50 +37,6 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from .configuration_pointmap import DepthPointmapConfig
-
-
-def join_depth_columns(
-    attn_mask: Tensor | None,
-    *,
-    k: Tensor,
-    v: Tensor,
-    depth_kv: tuple[Tensor, Tensor],
-    depth_bias: Tensor,
-) -> tuple[Tensor, Tensor, Tensor]:
-    """Extend a cross-attention key set with depth columns for the joint softmax
-    (depth_redesign_options.md §5.2).
-
-    k, v:       (B, T_ctx, H, Dh) context keys/values.
-    depth_kv:   (K_d, V_d), each (B, N, H, Dh) — the layer's depth state in action
-                head space (already k-normed by the caller, like the context keys).
-    attn_mask:  (B, 1, 1, T_ctx) additive context mask (0 valid / finfo.min pad),
-                or None.
-    depth_bias: () scalar — this layer's learned score bias b_ℓ on the depth
-                columns; kept in the graph (the returned mask carries its grad).
-
-    Returns (k_joint, v_joint, mask_joint) with T_ctx + N columns, mask
-    (B or 1, 1, 1, T_ctx + N).
-    """
-    k_d, v_d = depth_kv
-    n_d = k_d.shape[1]
-    ctx_cols = k.new_zeros(1, 1, 1, k.shape[1]) if attn_mask is None else attn_mask
-    bias_cols = depth_bias.to(ctx_cols.dtype).reshape(1, 1, 1, 1).expand(*ctx_cols.shape[:-1], n_d)
-    mask_joint = torch.cat([ctx_cols, bias_cols], dim=-1)
-    return torch.cat([k, k_d], dim=1), torch.cat([v, v_d], dim=1), mask_joint
-
-
-def depth_attention_mass(
-    q: Tensor, k_joint: Tensor, mask_joint: Tensor, *, num_depth: int
-) -> Tensor:
-    """Mean softmax mass on the depth columns — the influence telemetry that
-    replaces the retired gate metric. q: (B, Tq, H, Dh) post-q_norm queries,
-    k_joint/mask_joint from join_depth_columns. Detached, eager; call on probe
-    steps only."""
-    with torch.no_grad():
-        scores = torch.einsum("bqhd,bkhd->bhqk", q.float(), k_joint.float())
-        scores = scores / math.sqrt(q.shape[-1]) + mask_joint.float()
-        weights = scores.softmax(dim=-1)
-        return weights[..., -num_depth:].sum(dim=-1).mean()
 
 
 def wrist_cam_token_indices(
@@ -148,30 +99,6 @@ def gather_kv_at_indices(key: Tensor, value: Tensor, sel: Tensor) -> tuple[Tenso
     """Gather one layer's flat ``(B, T, d_vlm)`` K/V at the ``(B, T_cam)`` positions ``sel``."""
     idx = sel.unsqueeze(-1).expand(-1, -1, key.shape[-1])  # (B, T_cam, d_vlm)
     return torch.gather(key, 1, idx), torch.gather(value, 1, idx)
-
-
-def slice_wrist_cam_kv(
-    kv_states: list[tuple[Tensor, Tensor]],
-    *,
-    input_ids: Tensor,
-    image_patch_id: int,
-    num_images: int,
-    cam_index: int,
-) -> tuple[list[Tensor], list[Tensor]]:
-    """Slice the depth camera's image-token K/V out of every layer's prefix KV (design §3.2).
-
-    kv_states: length-L list of (key, value), each ``(B, T, d_vlm)``.
-    Returns (wrist_keys, wrist_values), length-L lists of ``(B, T_cam, d_vlm)``.
-    """
-    sel = wrist_cam_token_indices(
-        input_ids, image_patch_id=image_patch_id, num_images=num_images, cam_index=cam_index
-    )
-    wrist_keys, wrist_values = [], []
-    for key, value in kv_states:
-        wk, wv = gather_kv_at_indices(key, value, sel)
-        wrist_keys.append(wk)
-        wrist_values.append(wv)
-    return wrist_keys, wrist_values
 
 
 class StreamAttention(nn.Module):
@@ -249,89 +176,3 @@ class DepthStreamBlock(nn.Module):
         return t
 
 
-class DepthStream(nn.Module):
-    """M co-evolving depth blocks + the per-layer action-read bridge (depth_bias, K/V proj).
-
-    ``d_act`` is the action expert width (= ``num_action_heads · action_head_dim``);
-    the read projections map the depth state (width d_d) into the action expert's head
-    space so the joint softmax can attend depth columns next to the context columns.
-    """
-
-    def __init__(
-        self,
-        config: DepthPointmapConfig,
-        *,
-        d_vlm: int,
-        num_action_heads: int,
-        action_head_dim: int,
-        num_layers: int,
-    ) -> None:
-        super().__init__()
-        self.config = config
-        self.num_layers = num_layers
-        self.num_action_heads = num_action_heads
-        self.action_head_dim = action_head_dim
-        d_d = config.stream_width
-        d_act = num_action_heads * action_head_dim
-
-        self.blocks = nn.ModuleList(
-            DepthStreamBlock(
-                d_d=d_d,
-                d_vlm=d_vlm,
-                num_heads=config.stream_num_heads,
-                mlp_ratio=config.stream_mlp_ratio,
-            )
-            for _ in range(num_layers)
-        )
-        # Shared d_d → d_act read projections (one set, reused at every layer, mirroring
-        # the action expert's single shared context_k_proj / context_v_proj).
-        self.read_k_proj = nn.Linear(d_d, d_act)
-        self.read_v_proj = nn.Linear(d_d, d_act)
-
-        # Per-layer learned score bias b_ℓ on the depth columns of the joint softmax
-        # (depth_redesign_options.md §5.2). Init −2: initial depth mass ×e⁻² ≈ 0.135 —
-        # a soft start that, being additive INSIDE the softmax, does not zero the
-        # content gradients (the failure mode of the retired multiplicative α gate).
-        self.depth_bias = nn.Parameter(torch.full((num_layers,), -2.0))
-
-    def forward(
-        self,
-        init_tokens: Tensor,
-        wrist_keys: list[Tensor],
-        wrist_values: list[Tensor],
-        cross_on: Tensor | None = None,
-    ) -> list[Tensor]:
-        """Co-evolve the depth tokens through the M blocks.
-
-        init_tokens: (B, N, d_d) from the point-map encoder.
-        wrist_keys / wrist_values: length-M lists, each (B, T_w, d_vlm) — the VLM's
-        per-layer cached K / V sliced to the wrist-camera token span.
-        cross_on: (B,) bool or None — per-row wrist-bridge switch (False for
-        RGB-dropped samples; see DepthStreamBlock).
-
-        Returns a length-M list of depth states (B, N, d_d); state ℓ (the output of
-        block ℓ) is what the action expert's layer ℓ reads.
-        """
-        if len(wrist_keys) != self.num_layers or len(wrist_values) != self.num_layers:
-            raise ValueError(
-                f"Expected {self.num_layers} wrist-cam KV layers, got "
-                f"{len(wrist_keys)} keys / {len(wrist_values)} values."
-            )
-        t = init_tokens
-        states = []
-        for block, wk, wv in zip(self.blocks, wrist_keys, wrist_values, strict=True):
-            t = block(t, wk, wv, cross_on=cross_on)
-            states.append(t)
-        return states
-
-    def read_kv(self, state: Tensor) -> tuple[Tensor, Tensor]:
-        """Project a depth state (B, N, d_d) into action head space for the read.
-
-        Returns (k, v), each (B, N, num_action_heads, action_head_dim) — the same
-        head layout the action expert's context keys/values use. The caller applies
-        the block's cross-attn k_norm to the keys (to match the context keys).
-        """
-        b, n, _ = state.shape
-        k = self.read_k_proj(state).view(b, n, self.num_action_heads, self.action_head_dim)
-        v = self.read_v_proj(state).view(b, n, self.num_action_heads, self.action_head_dim)
-        return k, v

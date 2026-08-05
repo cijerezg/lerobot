@@ -1,23 +1,45 @@
-"""MEM history-influence probe (04_memory.md §2.4).
+r"""MEM history-influence probe (04_memory.md §2.4).
 
-Measures whether short-term memory moves the policy's action chunk and whether that
-movement is useful on the demonstrated action.
-For each sampled frame we assemble the 5-frame lookback window and run
-``predict_action_chunk`` under four history conditions, all with identical fixed-seed
-flow noise so the ONLY difference is what memory the model sees:
+Does short-term memory move the policy's action chunk, and does the move help?
 
-  full   : image temporal attention ON  + continuous state tokens present
-  none   : image history absent         + state tokens absent   (the memoryless baseline)
-  images : image attention ON           + state tokens absent
-  states : image history absent         + state tokens present
+Every sampled frame is predicted four times from the same lookback window with the same
+fixed flow noise, so the only thing that varies is which history channels are packed:
 
-All conditions are packed independently, so ``none`` is the real training-time
-no-history prompt rather than a full prompt with unfilled placeholder tokens.
+  condition   image history   state history
+  full        kept            kept
+  none        dropped         dropped
+  images      kept            dropped
+  states      dropped         kept
 
-The probe reports both influence ``||action(cond) - action(none)||`` and GT MSE
-improvement ``MSE(none, GT) - MSE(cond, GT)`` in normalized action space. Positive
-improvement means memory moved the prediction in the useful direction; influence by
-itself only establishes sensitivity.
+*Image history* is the stack of past frames the MEM video encoder attends over in its
+temporal layers. *State history* is the proprioceptive lookback — one embedded position
+per past timestep. Both are named the same way at every stage; there is no third thing.
+A channel is dropped by removing its ``history.*`` keys from the observation before
+packing, so ``none`` is the real training-time no-history prompt and not a full prompt
+holding empty placeholders. Depth history travels through the point-map encoder and no
+condition here touches it — ``depth_modality_probe`` covers that path.
+
+``none`` has no bar in any figure: it is the origin the other three are measured from.
+Write $a^{(c)}$ for the normalized chunk under condition $c$, $a^{\star}$ for the
+demonstrated chunk, and $T$, $D$ for chunk steps and action dimensions. Influence is
+
+$$\mathrm{RMSE}(c)=\sqrt{\frac{1}{TD}\sum_{t,d}\left(a^{(c)}_{t,d}-a^{(\mathrm{none})}_{t,d}\right)^2}$$
+
+reported next to its worst-case counterpart $\max_{t,d}|a^{(c)}_{t,d}-a^{(\mathrm{none})}_{t,d}|$,
+which separates a channel that shifts the whole chunk slightly from one that moves a
+single timestep hard. Usefulness is the mean squared error the channel removes against
+the demonstration,
+
+$$\Delta\mathrm{MSE}(c)=\frac{1}{TD}\sum_{t,d}\left(a^{(\mathrm{none})}_{t,d}-a^{\star}_{t,d}\right)^2-\frac{1}{TD}\sum_{t,d}\left(a^{(c)}_{t,d}-a^{\star}_{t,d}\right)^2 .$$
+
+Influence says the channel reaches the output; usefulness says it reached it in the
+right direction. Positive $\Delta\mathrm{MSE}$ is memory helping. Negative is worse than
+an unused channel: the model leans on the channel and it points the wrong way. When
+influence is near zero the usefulness number is measuring nothing rather than reporting
+good news — there is nothing to be right or wrong about.
+
+``images`` and ``states`` do not sum to ``full``. Read them for which channel carries
+the effect, never as an additive decomposition.
 
 Registered probe: enable with ``probe_parameters.enable_mem_history_influence``.
 """
@@ -31,7 +53,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from lerobot.probes.manifest import Metric, Panel, write_index
+from lerobot.probes.manifest import Panel, write_index
 from lerobot.probes.utils import (
     assemble_frame_history,
     get_frame_data,
@@ -113,45 +135,10 @@ def _write_manifest(output_dir: str, summary: dict, examples: list[tuple[str, st
         group="History",
         claim="Does short-term history move the action chunk, and does the move help?",
         summary=summary,
-        metrics=[
-            Metric(
-                "full_gt_mse_improvement",
-                "GT MSE removed by full history",
-                good="high",
-                fmt=4,
-                baseline=0.0,
-                warn=0.0,
-                primary=True,
-                note="$\\mathrm{MSE}(\\text{none}) - \\mathrm{MSE}(\\text{full})$ against the demonstrated chunk. Negative means the channel is used in the wrong direction, which is a worse state than an unused channel.",
-            ),
-            Metric(
-                "full_rmse",
-                "Influence of full history",
-                good="none",
-                fmt=4,
-                primary=True,
-                note="$\\|a(\\text{full}) - a(\\text{none})\\|$ in normalized space at fixed flow noise. Near zero means the channel never reaches the output, and the improvement number above is then measuring nothing.",
-            ),
-            Metric(
-                "images_gt_mse_improvement",
-                "GT MSE removed by image history alone",
-                good="high",
-                fmt=4,
-                baseline=0.0,
-            ),
-            Metric(
-                "states_gt_mse_improvement",
-                "GT MSE removed by state history alone",
-                good="high",
-                fmt=4,
-                baseline=0.0,
-                note="The two single-channel conditions rarely sum to the full one; read them for which channel carries the effect, not as an additive decomposition.",
-            ),
-            Metric("none_gt_mse", "No-history GT MSE", good="none", fmt=4),
-            Metric("images_rmse", "Influence of image history alone", good="none", fmt=4),
-            Metric("states_rmse", "Influence of state history alone", good="none", fmt=4),
-            Metric("n_frames", "Frames probed", good="none", fmt=0),
-        ],
+        # Every number the probe computes is already a bar in influence.png, where it
+        # carries its distribution instead of collapsing to one row. The values stay in
+        # influence.json.
+        metrics=[],
         panels=panels,
         see_also=["mem_temporal_attention", "attention_budget", "action_trace"],
     )

@@ -3,7 +3,6 @@
 from types import SimpleNamespace
 
 import numpy as np
-import pytest
 import torch
 
 from lerobot.probes import action_drift_jacobian as probe
@@ -65,7 +64,7 @@ def test_subtask_sampler_keeps_each_episode_subtask(monkeypatch):
 
 
 def _record(episode, subtask, grid_value, prompt_value):
-    grid = np.full(4, grid_value, dtype=np.float32)
+    grid = np.full((2, 2), grid_value, dtype=np.float32)
     group = {
         "grids": {"img_wrist": grid},
         "prompt": [{"clause": "subtask", "label": "grasp", "value": prompt_value}],
@@ -118,24 +117,28 @@ def test_score_view_keeps_raw_token_values():
 
 
 def test_detailed_and_aggregate_artifacts_render(tmp_path):
-    pytest.importorskip("imageio")  # attention renderer's optional video dependency
     image = np.full((24, 24, 3), 96, dtype=np.uint8)
+    # The point-map depth block is a real panel here and is NOT square (12x16 in the
+    # policy): every step from the grids to imshow has to carry its (rows, cols).
+    panels = {"img_wrist": (2, 2), "depth": (2, 3)}
     records = []
     for episode, subtask, scale in [(0, "approach", 1.0), (1, "grasp", 2.0)]:
         groups = {}
         for group in probe.ACTION_GROUPS:
-            grid = np.asarray([0.2, 0.4, 0.6, 0.8], dtype=np.float32) * scale
+            grids, grid_images = {}, {}
+            for panel, (rows, cols) in panels.items():
+                grid = np.linspace(0.2, 0.8, rows * cols, dtype=np.float32).reshape(rows, cols) * scale
+                grids[panel] = grid
+                grid_images[panel] = {
+                    "cam_name": panel,
+                    "img_np": image,
+                    "per_head_grid": torch.from_numpy(grid).reshape(1, -1),
+                    "grid_hw": (rows, cols),
+                }
             groups[group] = {
                 "scores": np.arange(8, dtype=np.float32) * scale,
-                "grids": {"img_wrist": grid},
-                "grid_images": {
-                    "img_wrist": {
-                        "cam_name": "img_wrist",
-                        "img_np": image,
-                        "per_head_grid": torch.from_numpy(grid).reshape(1, -1),
-                        "grid_hw": (2, 2),
-                    }
-                },
+                "grids": grids,
+                "grid_images": grid_images,
                 "prompt": [
                     {"index": 0, "clause": "subtask", "label": subtask, "value": 0.5 * scale}
                 ],
@@ -151,7 +154,7 @@ def test_detailed_and_aggregate_artifacts_render(tmp_path):
         )
 
     camera_scales, prompt_scales = probe._global_scales(records)
-    html_records = probe._write_details(tmp_path, records, camera_scales)
+    html_records = probe._write_details(tmp_path, records)
     aggregate = probe._plot_aggregate_maps(tmp_path, records, camera_scales)
     prompts = probe._plot_prompt_maps(tmp_path, records)
     dashboard = probe._write_html(tmp_path, html_records, camera_scales, prompt_scales)
@@ -163,4 +166,6 @@ def test_detailed_and_aggregate_artifacts_render(tmp_path):
     assert "Subtask-conditioned action sensitivity" in document
     assert "Proximal arm" in document
     assert "img_wrist" in document
-    assert (tmp_path / html_records[0]["raw"]).is_file()
+    assert html_records[0]["cameras"]["depth"]["hw"] == [2, 3]
+    raw = np.load(tmp_path / html_records[0]["raw"])
+    assert raw["gripper__depth_grid"].shape == (2, 3)

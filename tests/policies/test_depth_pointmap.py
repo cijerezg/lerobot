@@ -134,14 +134,15 @@ def test_encoder_is_gate_free():
     assert mem.shape == (2, enc.num_tokens, 16)
 
 
-# --- MoT co-evolving depth stream (depth_pointmap_design.md Part B) ----------------
+# --- Depth stream blocks -----------------------------------------------------------
+# CRITIC-ONLY: the actor's depth now enters the VLM prefix as placeholder tokens, so the
+# co-evolving DepthStream aggregate, its per-layer joint-softmax read (join_depth_columns,
+# depth_attention_mass, depth_bias) and slice_wrist_cam_kv are gone. What survives is the
+# block itself, which rl_molmoact2.py still stacks for the value function.
 
 from lerobot.policies.depth_pointmap.modeling_stream import (  # noqa: E402
-    DepthStream,
-    depth_attention_mass,
-    join_depth_columns,
+    DepthStreamBlock,
     mask_camera_patch_span,
-    slice_wrist_cam_kv,
 )
 
 D_VLM = 24
@@ -149,106 +150,40 @@ N_TOK = 6
 B = 2
 
 
-def _stream(num_layers=4, heads=2, head_dim=8, **cfg_kw):
-    cfg = DepthPointmapConfig(stream_width=16, stream_num_heads=4, **cfg_kw)
-    return DepthStream(
-        cfg, d_vlm=D_VLM, num_action_heads=heads, action_head_dim=head_dim, num_layers=num_layers
-    )
+def _block(heads=4, d_d=16):
+    return DepthStreamBlock(d_d=d_d, d_vlm=D_VLM, num_heads=heads, mlp_ratio=4.0)
 
 
-def _wrist_kv(num_layers, t_w=5):
-    keys = [torch.randn(B, t_w, D_VLM) for _ in range(num_layers)]
-    values = [torch.randn(B, t_w, D_VLM) for _ in range(num_layers)]
-    return keys, values
+def _wrist(t_w=5):
+    return torch.randn(B, t_w, D_VLM), torch.randn(B, t_w, D_VLM)
 
 
-def test_stream_emits_one_state_per_layer():
-    s = _stream(num_layers=4)
-    init = torch.randn(B, N_TOK, 16)
-    states = s(init, *_wrist_kv(4))
-    assert len(states) == 4
-    assert all(state.shape == (B, N_TOK, 16) for state in states)
-
-
-def test_stream_co_evolves():
-    # Successive layer states must differ — that is the whole point of co-evolution.
-    s = _stream(num_layers=3)
-    init = torch.randn(B, N_TOK, 16)
-    states = s(init, *_wrist_kv(3))
-    assert not torch.allclose(states[0], states[1])
-    assert not torch.allclose(states[1], states[2])
-
-
-def test_stream_depth_bias_init():
-    # Joint softmax (depth_redesign_options.md §5.2): the α gate and sink are gone;
-    # the per-layer depth-column bias starts at −2 (soft start, not a hard zero).
-    s = _stream(num_layers=4, heads=2)
-    assert not hasattr(s, "gate") and not hasattr(s, "sink_logit")
-    assert s.depth_bias.shape == (4,)
-    assert torch.equal(s.depth_bias, torch.full((4,), -2.0))
-
-
-def test_stream_read_kv_into_action_head_space():
-    s = _stream(num_layers=2, heads=3, head_dim=8)
-    init = torch.randn(B, N_TOK, 16)
-    state = s(init, *_wrist_kv(2))[0]
-    k, v = s.read_kv(state)
-    assert k.shape == (B, N_TOK, 3, 8)
-    assert v.shape == (B, N_TOK, 3, 8)
-
-
-def test_stream_cross_on_kills_wrist_bridge():
-    """RGB dropout masks the wrist span out of attention, but the stream's K/V
-    gather bypasses attention masks — cross_on=False must make the row's output
-    independent of the wrist content (and gradient-dead to it)."""
+def test_block_cross_on_kills_wrist_bridge():
+    """RGB dropout masks the wrist span out of attention, but the block's K/V gather
+    bypasses attention masks - cross_on=False must make the row's output independent
+    of the wrist content."""
     torch.manual_seed(0)
-    s = _stream(num_layers=2).eval()
+    blk = _block().eval()
     init = torch.randn(B, N_TOK, 16)
-    keys_a, values_a = _wrist_kv(2)
-    # Same wrist content for row 0, garbage for row 1.
-    keys_b = [k.clone() for k in keys_a]
-    values_b = [v.clone() for v in values_a]
-    for k, v in zip(keys_b, values_b, strict=True):
-        k[1] = torch.randn_like(k[1]) * 100
-        v[1] = torch.randn_like(v[1]) * 100
+    k_a, v_a = _wrist()
+    k_b, v_b = k_a.clone(), v_a.clone()
+    k_b[1] = torch.randn_like(k_b[1]) * 100  # garbage wrist content for row 1 only
+    v_b[1] = torch.randn_like(v_b[1]) * 100
     cross_on = torch.tensor([True, False])
-    out_a = s(init, keys_a, values_a, cross_on=cross_on)[-1]
-    out_b = s(init, keys_b, values_b, cross_on=cross_on)[-1]
+    out_a = blk(init, k_a, v_a, cross_on=cross_on)
+    out_b = blk(init, k_b, v_b, cross_on=cross_on)
     assert torch.allclose(out_a[1], out_b[1])  # bridge-killed row ignores wrist content
-    assert torch.allclose(out_a[0], out_b[0])  # row 0 (bridge on, same content) unchanged
-    out_on = s(init, keys_a, values_a, cross_on=torch.tensor([True, True]))[-1]
+    assert torch.allclose(out_a[0], out_b[0])  # row 0 (same content) unchanged
+    out_on = blk(init, k_b, v_b, cross_on=torch.tensor([True, True]))
     assert not torch.allclose(out_on[1], out_a[1])  # bridge actually matters when on
 
 
-def test_stream_rejects_wrong_layer_count():
-    s = _stream(num_layers=4)
-    init = torch.randn(B, N_TOK, 16)
-    try:
-        s(init, *_wrist_kv(3))  # 3 wrist layers for a 4-layer stream
-    except ValueError as e:
-        assert "wrist-cam KV layers" in str(e)
-    else:
-        raise AssertionError("expected a ValueError on layer-count mismatch")
-
-
-def test_slice_wrist_cam_kv_picks_right_camera_span():
-    # Two cameras × 3 patch tokens each (id=99), wrapped in text; cam 1 (the second
-    # run) is the depth camera. Layout differs per row (variable left text) to prove
-    # the per-row gather. d_vlm encodes the token's sequence position so we can check.
-    pid = 99
-    row0 = torch.tensor([5, 99, 99, 99, 7, 99, 99, 99, 8])  # cam0=pos1-3, cam1=pos5-7
-    row1 = torch.tensor([5, 6, 99, 99, 99, 99, 99, 99, 8])  # cam0=pos2-4, cam1=pos5-7
-    input_ids = torch.stack([row0, row1])
-    t = input_ids.shape[1]
-    # one layer; K = V = position index broadcast over d_vlm=2
-    pos = torch.arange(t).float()[None, :, None].expand(2, t, 2).clone()
-    keys, values = slice_wrist_cam_kv(
-        [(pos, pos * 10)], input_ids=input_ids, image_patch_id=pid, num_images=2, cam_index=1
-    )
-    assert keys[0].shape == (2, 3, 2)
-    # cam_index=1 → both rows' second run is positions 5,6,7
-    assert torch.equal(keys[0][:, :, 0], torch.tensor([[5.0, 6, 7], [5, 6, 7]]))
-    assert torch.equal(values[0][:, :, 0], torch.tensor([[50.0, 60, 70], [50, 60, 70]]))
+def test_block_gradient_flows_to_all_params():
+    blk = _block()
+    init = torch.randn(B, N_TOK, 16, requires_grad=True)
+    blk(init, *_wrist()).sum().backward()
+    assert blk.self_attn.q_proj.weight.grad is not None
+    assert blk.cross_attn.k_proj.weight.grad is not None
 
 
 def test_rgb_dropout_masks_only_that_camera_span():
@@ -256,7 +191,7 @@ def test_rgb_dropout_masks_only_that_camera_span():
     columns of attention_mask for dropped rows only, leaving every other token
     (text, the other camera, padding state) untouched."""
     pid = 99
-    # 2 cams × 3 patch tokens, text on both sides; row 1 is the dropped sample.
+    # 2 cams x 3 patch tokens, text on both sides; row 1 is the dropped sample.
     input_ids = torch.tensor(
         [[5, 99, 99, 99, 7, 99, 99, 99, 8], [5, 99, 99, 99, 7, 99, 99, 99, 8]]
     )
@@ -275,97 +210,6 @@ def test_rgb_dropout_masks_only_that_camera_span():
     assert attention_mask[0].tolist() == [1] * 9  # undropped row untouched
     # row 1: cam1 span (positions 5,6,7) masked; text + cam0 span still visible
     assert attention_mask[1].tolist() == [1, 1, 1, 1, 1, 0, 0, 0, 1]
-
-
-def test_slice_wrist_cam_kv_rejects_unequal_counts():
-    input_ids = torch.tensor([[99, 99, 1], [99, 1, 1]])  # 2 vs 1 patch tokens
-    pos = torch.zeros(2, 3, 2)
-    try:
-        slice_wrist_cam_kv([(pos, pos)], input_ids=input_ids, image_patch_id=99, num_images=1, cam_index=0)
-    except ValueError as e:
-        assert "unequal image-patch token counts" in str(e)
-    else:
-        raise AssertionError("expected a ValueError on unequal counts")
-
-
-def _joint_inputs(b=2, tq=4, t_ctx=7, n=6, h=3, dh=8, seed=0):
-    torch.manual_seed(seed)
-    q = torch.randn(b, tq, h, dh)
-    k = torch.randn(b, t_ctx, h, dh)
-    v = torch.randn(b, t_ctx, h, dh)
-    k_d = torch.randn(b, n, h, dh)
-    v_d = torch.randn(b, n, h, dh)
-    ctx_mask = torch.zeros(b, 1, 1, t_ctx)
-    ctx_mask[0, ..., -1] = torch.finfo(torch.float32).min  # one padded context column
-    return q, k, v, k_d, v_d, ctx_mask
-
-
-def test_join_depth_columns_mask_and_shapes():
-    q, k, v, k_d, v_d, ctx_mask = _joint_inputs()
-    bias = torch.tensor(-2.0)
-    k_j, v_j, mask_j = join_depth_columns(ctx_mask, k=k, v=v, depth_kv=(k_d, v_d), depth_bias=bias)
-    assert k_j.shape == (2, 7 + 6, 3, 8) and v_j.shape == k_j.shape
-    assert mask_j.shape == (2, 1, 1, 13)
-    assert torch.equal(mask_j[..., :7], ctx_mask)  # context columns untouched (incl. padding)
-    assert torch.all(mask_j[..., 7:] == -2.0)  # depth columns carry b_ℓ
-    # None context mask ⇒ zeros for context columns.
-    _, _, mask_none = join_depth_columns(None, k=k, v=v, depth_kv=(k_d, v_d), depth_bias=bias)
-    assert torch.all(mask_none[..., :7] == 0) and torch.all(mask_none[..., 7:] == -2.0)
-
-
-def test_joint_softmax_matches_eager_and_bias_gets_gradient():
-    """The b_ℓ gradient flows through SDPA's attn_mask — the one backend-dependent
-    assumption of the joint read. Verified against an eager softmax reference for
-    both the output and the gradients (bias, depth values)."""
-    q, k, v, k_d, v_d, ctx_mask = _joint_inputs()
-    bias_sdpa = torch.nn.Parameter(torch.tensor(-2.0))
-    k_d_sdpa = k_d.clone().requires_grad_(True)
-    v_d_sdpa = v_d.clone().requires_grad_(True)
-    k_j, v_j, mask_j = join_depth_columns(
-        ctx_mask, k=k, v=v, depth_kv=(k_d_sdpa, v_d_sdpa), depth_bias=bias_sdpa
-    )
-    out_sdpa = torch.nn.functional.scaled_dot_product_attention(
-        q.transpose(1, 2), k_j.transpose(1, 2), v_j.transpose(1, 2), attn_mask=mask_j
-    ).transpose(1, 2)
-    out_sdpa.pow(2).sum().backward()
-
-    bias_ref = torch.nn.Parameter(torch.tensor(-2.0))
-    k_d_ref = k_d.clone().requires_grad_(True)
-    v_d_ref = v_d.clone().requires_grad_(True)
-    scores = torch.einsum("bqhd,bkhd->bhqk", q, torch.cat([k, k_d_ref], dim=1)) / (8**0.5)
-    scores = scores + torch.cat(
-        [ctx_mask, bias_ref.reshape(1, 1, 1, 1).expand(2, 1, 1, 6)], dim=-1
-    )
-    weights = scores.softmax(dim=-1)
-    out_ref = torch.einsum("bhqk,bkhd->bqhd", weights, torch.cat([v, v_d_ref], dim=1))
-    out_ref.pow(2).sum().backward()
-
-    assert torch.allclose(out_sdpa, out_ref, atol=1e-5)
-    assert bias_sdpa.grad is not None and bias_sdpa.grad.abs() > 1e-6
-    assert torch.allclose(bias_sdpa.grad, bias_ref.grad, atol=1e-4)
-    assert torch.allclose(k_d_sdpa.grad, k_d_ref.grad, atol=1e-4)
-    assert torch.allclose(v_d_sdpa.grad, v_d_ref.grad, atol=1e-4)
-
-
-def test_depth_attention_mass_extremes():
-    q, k, v, k_d, v_d, ctx_mask = _joint_inputs()
-    k_j, _, mask_open = join_depth_columns(ctx_mask, k=k, v=v, depth_kv=(k_d, v_d), depth_bias=torch.tensor(1e4))
-    assert depth_attention_mass(q, k_j, mask_open, num_depth=6) > 0.999  # bias ≫ ⇒ all mass on depth
-    _, _, mask_shut = join_depth_columns(ctx_mask, k=k, v=v, depth_kv=(k_d, v_d), depth_bias=torch.tensor(-1e4))
-    assert depth_attention_mass(q, k_j, mask_shut, num_depth=6) < 1e-3  # bias ≪ ⇒ depth ignored
-
-
-def test_stream_gradient_flows_to_all_params():
-    s = _stream(num_layers=2)
-    init = torch.randn(B, N_TOK, 16, requires_grad=True)
-    states = s(init, *_wrist_kv(2))
-    k, v = s.read_kv(states[-1])
-    (k.sum() + v.sum()).backward()
-    # Block + read-projection params receive gradient (depth_bias does not on this
-    # path — it enters through the joint-softmax mask, exercised above).
-    assert s.read_k_proj.weight.grad is not None
-    assert s.blocks[0].self_attn.q_proj.weight.grad is not None
-    assert s.blocks[0].cross_attn.k_proj.weight.grad is not None
 
 
 def _history_cfg():

@@ -69,9 +69,10 @@ class StubBlock(nn.Module):
         return x
 
 
-def naive_union_block(block, x, e_t, history_on):
-    """Per-query loops: for patch i of frame t, one softmax over its own frame's n
-    patches + patch i of strictly older frames. The reference for the vectorized op."""
+def naive_separable_block(block, x, e_t, history_on):
+    """Per-query loops for the time-only step (MEM Appendix C): for patch i of frame t,
+    ONE softmax over patch i at timesteps s <= t — its own included, spatial keys not.
+    The spatial half is then the stock block. Reference for the vectorized op."""
     attn = block.attention
     x = x + e_t[None, :, None, :]
     h = block.attention_norm(x)
@@ -85,19 +86,17 @@ def naive_union_block(block, x, e_t, history_on):
         for t in range(t_total):
             for i in range(n):
                 for head in range(HEADS):
-                    keys = [k[b, t, j, head] for j in range(n)]
-                    vals = [v[b, t, j, head] for j in range(n)]
-                    if history_on is None or history_on[b]:
-                        keys += [k[b, s, i, head] for s in range(t)]
-                        vals += [v[b, s, i, head] for s in range(t)]
+                    steps = range(t + 1) if history_on is None or history_on[b] else [t]
                     scores = torch.stack(
-                        [q[b, t, i, head] @ key / math.sqrt(hd) for key in keys]
+                        [q[b, t, i, head] @ k[b, s, i, head] / math.sqrt(hd) for s in steps]
                     )
                     weights = F.softmax(scores, dim=-1, dtype=torch.float32).to(v.dtype)
-                    out[b, t, i, head] = sum(w * val for w, val in zip(weights, vals, strict=True))
+                    out[b, t, i, head] = sum(
+                        w * v[b, s, i, head] for w, s in zip(weights, steps, strict=True)
+                    )
     out = out.reshape(bc, t_total, n, DIM)
     x = x + attn.residual_dropout(attn.wo(out))
-    return x + block.feed_forward(block.ffn_norm(x))
+    return block(x.reshape(bc * t_total, n, DIM)).view(bc, t_total, n, DIM)
 
 
 def test_e_t_boundary_condition_and_extrapolation():
@@ -112,25 +111,51 @@ def test_temporal_block_matches_naive_reference():
     x = torch.randn(2, 3, PATCHES, DIM)
     e_t = _sinusoidal_seconds_embedding(torch.tensor([2.0, 1.0, 0.0]), DIM)
     got = _temporal_vision_block(block, x, e_t, None)
-    want = naive_union_block(block, x, e_t, None)
+    want = naive_separable_block(block, x, e_t, None)
     assert torch.allclose(got, want, atol=1e-5), (got - want).abs().max()
 
 
-def test_temporal_block_masked_sample_is_spatial_only():
-    """history_on=False must reproduce the plain block exactly on the current frame
-    (the K=1 pretrained op): masked temporal keys get exp(-inf)=0 mass."""
+def test_temporal_block_masked_sample_ignores_history():
+    """history_on=False leaves the query's own timestep only, so the past cannot reach
+    the output. It is deliberately NOT bit-identical to the plain block: the temporal
+    sub-step still fires on that self-key (the K=1 identity invariant was dropped
+    2026-08-03 when the union softmax was split)."""
     block = StubBlock().eval()
     x = torch.randn(2, 3, PATCHES, DIM)
     e_t = _sinusoidal_seconds_embedding(torch.tensor([2.0, 1.0, 0.0]), DIM)
     history_on = torch.tensor([False, True])
     got = _temporal_vision_block(block, x, e_t, history_on)
-    # Sample 0's current frame: e(0)=0 and no temporal keys → plain spatial block.
-    want = block(x[0, -1][None])
-    assert torch.allclose(got[0, -1][None], want, atol=1e-6), (got[0, -1] - want).abs().max()
-    # Sample 1 (history on) must differ from its spatial-only counterpart.
-    assert not torch.allclose(got[1, -1][None], block(x[1, -1][None]), atol=1e-4)
-    # And equal the naive reference under the same mask.
-    assert torch.allclose(got, naive_union_block(block, x, e_t, history_on), atol=1e-5)
+
+    scrambled = x.clone()
+    scrambled[:, :-1] = torch.randn_like(scrambled[:, :-1])
+    other = _temporal_vision_block(block, scrambled, e_t, history_on)
+    assert torch.allclose(got[0, -1], other[0, -1], atol=1e-6)  # sample 0 saw no past
+    assert not torch.allclose(got[1, -1], other[1, -1], atol=1e-4)  # sample 1 did
+    assert torch.allclose(got, naive_separable_block(block, x, e_t, history_on), atol=1e-5)
+
+
+def test_temporal_softmax_normalises_over_time_alone():
+    """The fix itself: past mass must not depend on how many spatial patches exist.
+    Under the old union softmax the past competed with all n spatial keys, so widening
+    the frame starved it (n=729 put the null at 0.7%); here the null is (K-1)/K."""
+
+    def past_mass(n_patches):
+        torch.manual_seed(3)  # before the block: both calls must share its weights
+        block = StubBlock().eval()
+        patch = torch.randn(1, 4, 1, DIM)
+        x = patch.expand(1, 4, n_patches, DIM).contiguous()  # identical patches
+        e_t = _sinusoidal_seconds_embedding(torch.tensor([3.0, 2.0, 1.0, 0.0]), DIM)
+        _MEM_TEMPORAL_CAPTURE["records"].clear()
+        _MEM_TEMPORAL_CAPTURE["enabled"] = True
+        try:
+            _temporal_vision_block(block, x, e_t, None)
+        finally:
+            _MEM_TEMPORAL_CAPTURE["enabled"] = False
+        return float(_MEM_TEMPORAL_CAPTURE["records"][0]["mean"])
+
+    narrow, wide = past_mass(1), past_mass(64)
+    assert abs(narrow - wide) < 1e-6, (narrow, wide)
+    assert 0.0 < narrow < 1.0  # the remainder is the query's own timestep
 
 
 def test_temporal_block_causality():
@@ -239,15 +264,20 @@ def test_encode_image_history_keeps_output_shape_and_consumes_stash():
     assert not torch.allclose(out, reference_single_frame(vb, images), atol=1e-4)
 
 
-def test_encode_image_all_masked_equals_no_history():
-    """history_dropout for every sample → exact K=1 features despite the stash."""
+def test_encode_image_all_masked_ignores_the_stashed_past():
+    """history_dropout for every sample → the stashed frames cannot reach the features,
+    and the token-count invariant holds. Not equal to the no-history path: the temporal
+    sub-step still runs on each query's own timestep (K=1 identity dropped 2026-08-03)."""
     backbone = make_backbone()
     vb = backbone.vision_backbone
     images = torch.randn(2, 2, PATCHES, 6)
-    frames = torch.randn(2, 2, 3, PATCHES, 6)
-    vb._lerobot_history = (frames, torch.tensor([3.0, 2.0, 1.0]), torch.tensor([False, False]))
+    off = torch.tensor([False, False])
+    vb._lerobot_history = (torch.randn(2, 2, 3, PATCHES, 6), torch.tensor([3.0, 2.0, 1.0]), off)
     out = vb.encode_image(images)
-    assert torch.allclose(out, reference_single_frame(vb, images), atol=1e-5)
+    vb._lerobot_history = (torch.randn(2, 2, 3, PATCHES, 6), torch.tensor([3.0, 2.0, 1.0]), off)
+    other = vb.encode_image(images)
+    assert torch.allclose(out, other, atol=1e-6)  # different past, same features
+    assert out.shape == reference_single_frame(vb, images).shape
 
 
 def test_encode_image_camera_count_mismatch_raises():
@@ -258,36 +288,9 @@ def test_encode_image_camera_count_mismatch_raises():
         vb.encode_image(torch.randn(2, 2, PATCHES, 6))
 
 
-# ---------------------------------------------------------------------------
-# Per-frame checkpointing (activation memory of the temporal blocks)
-# ---------------------------------------------------------------------------
-
-
-def test_temporal_block_checkpointing_is_arithmetically_invisible():
-    """train() checkpoints each query frame, eval() does not. Both must produce the
-    same output AND the same gradients — the whole point is that only liveness of the
-    (n, n+t) score matrices changes."""
-    block = StubBlock()
-    e_t = _sinusoidal_seconds_embedding(torch.tensor([2.0, 1.0, 0.0]), DIM)
-    history_on = torch.tensor([False, True])
-
-    def run(training):
-        torch.manual_seed(1)
-        x = torch.randn(2, 3, PATCHES, DIM, requires_grad=True)
-        block.train(training)
-        out = _temporal_vision_block(block, x, e_t, history_on)
-        grads = torch.autograd.grad(out.square().sum(), [x, *block.parameters()])
-        return out, grads
-
-    (out_ckpt, grads_ckpt), (out_plain, grads_plain) = run(True), run(False)
-    assert torch.equal(out_ckpt, out_plain)
-    for g_ckpt, g_plain in zip(grads_ckpt, grads_plain, strict=True):
-        assert torch.allclose(g_ckpt, g_plain, atol=1e-6), (g_ckpt - g_plain).abs().max()
-
-
 def test_temporal_block_capture_records_once_under_training():
-    """Capture appends to a module global, so the frame must not be checkpointed while
-    it is enabled — a recompute would double every record."""
+    """Capture appends to a module global, so one block call must append exactly one
+    record even under autograd."""
     block = StubBlock().train()
     x = torch.randn(2, 4, PATCHES, DIM, requires_grad=True)
     e_t = _sinusoidal_seconds_embedding(torch.tensor([3.0, 2.0, 1.0, 0.0]), DIM)
@@ -299,44 +302,3 @@ def test_temporal_block_capture_records_once_under_training():
         _MEM_TEMPORAL_CAPTURE["enabled"] = False
     assert len(_MEM_TEMPORAL_CAPTURE["records"]) == 1
     _MEM_TEMPORAL_CAPTURE["records"].clear()
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="peak-memory probe needs CUDA")
-def test_temporal_block_checkpointing_drops_peak_activation_memory():
-    """The saving this exists for: score matrices stop accumulating over frames.
-    Sized so the (n, n+t) scores dominate everything else in the block."""
-    n, dim, heads, frames = 512, 64, 8, 6
-
-    class WideAttention(StubAttention):
-        def __init__(self):
-            super().__init__()
-            self.num_heads = self.num_key_value_heads = heads
-            self.head_dim = dim // heads
-            self.wq = nn.Linear(dim, dim)
-            self.wk = nn.Linear(dim, dim)
-            self.wv = nn.Linear(dim, dim)
-            self.wo = nn.Linear(dim, dim)
-
-    block = StubBlock()
-    block.attention = WideAttention()
-    block.attention_norm = nn.LayerNorm(dim)
-    block.ffn_norm = nn.LayerNorm(dim)
-    block.feed_forward = nn.Sequential(nn.Linear(dim, dim * 2), nn.GELU(), nn.Linear(dim * 2, dim))
-    block = block.cuda()
-    e_t = _sinusoidal_seconds_embedding(torch.arange(frames, 0, -1, dtype=torch.float32).cuda(), dim)
-
-    def peak(training):
-        block.train(training)
-        x = torch.randn(2, frames, n, dim, device="cuda", requires_grad=True)
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        base = torch.cuda.memory_allocated()
-        _temporal_vision_block(block, x, e_t, None).square().sum()
-        torch.cuda.synchronize()
-        return torch.cuda.max_memory_allocated() - base
-
-    plain, checkpointed = peak(False), peak(True)
-    # frames score matrices live at once vs one: well over 2x even with the rest of
-    # the block counted in.
-    assert checkpointed * 2 < plain, f"checkpointed={checkpointed} plain={plain}"

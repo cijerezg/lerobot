@@ -14,8 +14,9 @@ position). Recentering each patch to its centroid removes position but keeps met
 scale (a near patch has small Δ, a far one large), so f is translation-invariant
 local shape; the absolute centroid goes to the position encoding g instead.
 
-Emits (B, N, d_mem) tokens that feed the co-evolving DepthStream (modeling_stream.py);
-the joint-softmax read projections and per-layer bias live on that stream. Units: millimeters.
+Emits (B, N, d_mem) tokens. The actor lifts them through depth_adapter into the VLM
+prefix on DEPTH_TOKEN placeholders; the critic still runs them through its own
+DepthStreamBlocks (modeling_stream.py). Units: millimeters.
 
 Short-term history (depth_history_design.md): past frames ride the same CNN as extra
 batch rows and are fused into the current frame by same-pixel temporal attention
@@ -231,8 +232,8 @@ class DepthPointmapEncoder(nn.Module):
     """Point map → depth-stream input tokens (design §3–5).
 
     Input : (B, 4, H, W) from build via back_project.
-    Output: (B, N, d_mem) tokens, N = (H/P)(W/P), where d_mem is the depth-stream
-    width. These tokens then co-evolve through the DepthStream (modeling_stream.py),
+    Output: (B, N, d_mem) tokens, N = (H/P)(W/P), where d_mem is config.token_width.
+    The actor adapts these straight into the VLM prefix; the critic co-evolves them,
     which owns the joint-softmax read projections and bias.
 
     null_tokens is the learned per-patch bank substituted for empty patches (all
@@ -435,7 +436,7 @@ class DepthPointmapEncoder(nn.Module):
         the learned null bank under modality dropout at train time and whenever
         depth is missing, keeping shapes static.
 
-        Returns memory (B, N, d_mem) — the DepthStream's initial tokens.
+        Returns memory (B, N, d_mem) — depth_adapter's input on the actor path.
         """
         cfg = self.config
         depth = batch.get(f"observation.depth.{cfg.depth_key}")

@@ -91,7 +91,8 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     value_support_max: float = 0.0
     hl_gauss_sigma_ratio: float = 5.0
     critic_lr: float = 1e-4
-    # From-scratch depth modules (pointmap_encoder + depth_stream, incl. read bias) get
+    # From-scratch depth modules (actor: pointmap_encoder + depth_adapter; critic: its own
+    # depth_encoder/depth_blocks/depth_read_proj, not yet migrated to the prefix seam) get
     # their own optimizer group: pretrained-lr is too slow for fresh params, and a separate
     # group name keeps them out of pretrained_merge_targets (checkpoint has no depth weights).
     depth_lr: float = 5e-4
@@ -240,17 +241,17 @@ class MolmoAct2Critic(nn.Module):
         self.depth_read_proj: nn.Linear | None = None
         if self.pointmap_config is not None:
             pm = self.pointmap_config
-            self.depth_encoder = DepthPointmapEncoder(pm, d_mem=pm.stream_width)
+            self.depth_encoder = DepthPointmapEncoder(pm, d_mem=pm.token_width)
             self.depth_blocks = nn.ModuleList(
                 DepthStreamBlock(
-                    d_d=pm.stream_width,
+                    d_d=pm.token_width,
                     d_vlm=D,  # critic wrist-cam tokens live at the text hidden size
                     num_heads=pm.stream_num_heads,
                     mlp_ratio=pm.stream_mlp_ratio,
                 )
                 for _ in range(self.num_critic_blocks)
             )
-            self.depth_read_proj = nn.Linear(pm.stream_width, D)
+            self.depth_read_proj = nn.Linear(pm.token_width, D)
 
     # ── Weight initialisation ─────────────────────────────────────────────────
 

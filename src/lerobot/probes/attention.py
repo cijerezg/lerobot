@@ -572,7 +572,8 @@ def _text_blocks_for_action_matrix(result: AttentionCaptureResult):
 # Clause markers for the MolmoAct2 action prompt, in the fixed order
 # `_build_robot_text` emits them (processor_molmoact2.py):
 #
-#   "The task is to {task}." " The current step is {subtask}."
+#   "The task is to {task}." " The depth of the scene is {<extra_1> x N}."
+#   " The current step is {subtask}."
 #   " The current state of the robot is {<state_*>}."
 #   " The recent states of the robot, oldest to newest, are {<extra_0> x T}."
 #   " The quality is {n} of 5." " The robot made {a mistake|no mistakes}."
@@ -583,8 +584,12 @@ def _text_blocks_for_action_matrix(result: AttentionCaptureResult):
 # that is what keeps "state" off the `<state_*>` values, and the trailing
 # "...complete the task?" from being mistaken for the opening task clause. A
 # clause that was dropped simply never matches, and the preceding group extends.
+# "depth clause" covers only the words: the point-map placeholders themselves are
+# dropped from the text segment upstream and carried by `depth_segment`, so the
+# name here stays distinct from the "depth" token segment every panel already has.
 _PROMPT_CLAUSE_MARKERS = (
     ("task", ("task",)),
+    ("depth clause", ("depth",)),
     ("subtask", ("step",)),
     ("state", ("state",)),
     ("state history", ("recent",)),
@@ -594,6 +599,7 @@ _PROMPT_CLAUSE_MARKERS = (
 
 _PROMPT_GROUP_ORDER = (
     "task",
+    "depth clause",
     "subtask",
     "state",
     "state history",

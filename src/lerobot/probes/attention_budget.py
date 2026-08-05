@@ -93,6 +93,7 @@ _SEGMENT_COLORS = {
     "depth": "#e6194b",
     "depth_nullbank": "#f58231",
     "task": "#911eb4",
+    "depth clause": "#fabed4",
     "subtask": "#42d4f4",
     "state": "#f032e6",
     "state history": "#bfef45",

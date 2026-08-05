@@ -1,9 +1,50 @@
-"""Distributional probe for the MEM video encoder's temporal attention.
+r"""Distributional probe for the MEM video encoder's temporal attention.
 
-The union softmax gives every current-frame patch all current-frame spatial keys plus
-one same-position key per history age. A single mean cannot reveal whether the model
-selectively reads particular moments, heads, cameras, or image regions. This probe
-retains compact summaries from the same prefix forward and writes:
+When and where does the video encoder read its history frames?
+
+Every ``temporal_layer_stride``-th ViT block applies space-time separable attention: a
+time-only step first, then the ordinary spatial block. This probe measures the time-only
+step. Its query is a single patch $i$ of a single camera at the current frame, and its
+keys are that *same patch position* at each of the $K$ timesteps — the $T$ history ages
+plus the query's own — causally masked. A patch sees its own location at earlier times,
+never the whole past frame.
+
+The quantity everything is built from is the past mass of one patch in one head,
+
+$$m_{i,h}=\sum_{\tau=1}^{T} w_{i,h,\tau} ,$$
+
+the share of that query's temporal attention landing on history rather than on its own
+timestep. Averaging $m$ over patches, heads, cameras and frames gives
+``mean_temporal_mass``.
+
+That number cannot be read on its own, because a softmax over $K = T+1$ keys hands the
+past some mass whether or not the model wants it. An indifferent allocation gives every
+timestep $1/(T+1)$ and therefore
+
+$$m_{\text{uniform}}=\frac{T}{T+1},$$
+
+which is the line drawn on every panel. Only distance from it is evidence, so the
+headline number is the enrichment ratio $m/m_{\text{uniform}}$: at 1.0 the past receives
+exactly what indifference would give it and no claim about reading history survives.
+Above 1.0 the encoder pulls attention onto the past; below 1.0 it pushes attention away —
+and unlike an enrichment measured against a spatial-competition null, values well below
+1.0 are ordinary here, because concentrating on its own timestep is how this step
+expresses "the past is not useful".
+
+Note the null moved on 2026-08-03. Before that the temporal and spatial keys shared one
+softmax, making the null $T/(N+T)$ with $N=729$ patches — about 0.7% rather than 83%.
+Enrichment numbers from runs before that date are not comparable to these.
+
+A mean over everything hides the regimes that matter — one layer reading hard looks the
+same as every layer reading a little, and a read spread evenly over all ages looks the
+same as one aimed at a particular moment. So the probe keeps the distribution and
+reports, per layer, the normalized entropy of the mass over history ages: 1.0 is a flat
+read across every age, lower means particular moments are preferred.
+
+This probe establishes only that history is *read*. Whether reading it helps the action
+is ``mem_history_influence``.
+
+Writes:
 
 * ``temporal_attention.png`` — frame/layer distributions, age preference, head and
   camera specialization, and age selectivity;
@@ -11,9 +52,6 @@ retains compact summaries from the same prefix forward and writes:
   history frame, current image, and spatial temporal-read overlay per camera;
 * ``temporal_attention_data.npz`` — the per-frame/layer/camera/head/age/patch arrays;
 * ``temporal_attention.json`` — human-readable summary and per-frame layer values.
-
-The plots include the union-softmax uniform-key baseline T/(N+T), which is the relevant
-reference for interpreting absolute past-attention mass.
 """
 
 import json
@@ -27,7 +65,7 @@ import torch
 from torch.nn import functional
 
 from lerobot.policies.molmoact2.modeling_molmoact2 import _MEM_TEMPORAL_CAPTURE
-from lerobot.probes.manifest import Metric, Panel, write_index
+from lerobot.probes.manifest import Panel, write_index
 from lerobot.probes.utils import (
     assemble_frame_history,
     get_frame_data,
@@ -72,7 +110,7 @@ def _write_manifest(output_dir: str, summary: dict, examples: list[tuple[int, st
         Panel(
             "temporal_attention.png",
             "Temporal-read distributions across frames, layers, heads, cameras, and history age",
-            how="Every panel carries the union-softmax uniform-key line $T/(N+T)$: mass at that line is what a model reading nothing in particular would produce, so only the distance from it is evidence. The age panels say which moment is read, the head/camera panels whether the read is specialised or spread.",
+            how="Every panel carries the uniform-over-time line $T/(T+1)$ — the temporal softmax normalises over the timesteps alone, so that is what a model reading nothing in particular would produce, and only the distance from it is evidence. The age panels say which moment is read, the head/camera panels whether the read is specialised or spread.",
             primary=True,
         ),
         Panel(
@@ -96,43 +134,10 @@ def _write_manifest(output_dir: str, summary: dict, examples: list[tuple[int, st
         group="History",
         claim="When and where does the video encoder read its history frames?",
         summary=summary,
-        metrics=[
-            Metric(
-                "mean_enrichment_vs_uniform",
-                "Temporal mass over uniform baseline",
-                good="none",
-                fmt=2,
-                baseline=1.0,
-                primary=True,
-                note="Mean past-attention mass divided by the union-softmax uniform-key mass $T/(N+T)$. At 1.0 the past keys receive exactly what an indifferent allocation gives them, and no claim about selective reading survives.",
-            ),
-            Metric(
-                "mean_temporal_mass",
-                "Mean past-attention mass",
-                good="none",
-                fmt=4,
-                primary=True,
-                note="Absolute share of each patch's attention landing on history keys, averaged over frames and temporal layers.",
-            ),
-            Metric(
-                "max_layer_enrichment_vs_uniform",
-                "Strongest layer's enrichment",
-                good="none",
-                fmt=2,
-                baseline=1.0,
-                note="One layer reading history hard is a different regime from every layer reading it a little; the mean hides that.",
-            ),
-            Metric(
-                "mean_normalized_age_entropy",
-                "Age-selectivity entropy",
-                good="none",
-                fmt=3,
-                baseline=1.0,
-                note="Entropy of the mass distribution over history ages, normalized so 1.0 is a flat read over every age. Lower means the model prefers particular moments.",
-            ),
-            Metric("uniform_key_temporal_mass", "Uniform-key baseline", good="none", fmt=4),
-            Metric("n_frames", "Frames captured", good="none", fmt=0),
-        ],
+        # The absolute mass, the per-layer maximum, the entropy and the baseline are all
+        # panels in temporal_attention.png, where they carry their distribution instead
+        # of collapsing to one number. The values stay in temporal_attention.json.
+        metrics=[],
         panels=panels,
         see_also=["mem_history_influence", "attention_budget"],
     )
@@ -175,7 +180,7 @@ def _render_distribution(
     fig, axes = plt.subplots(2, 3, figsize=(19, 10))
 
     axes[0, 0].boxplot([temporal_mass[:, i] for i in range(len(layers))], tick_labels=layer_labels)
-    axes[0, 0].axhline(uniform_mass, color="#E76F51", linestyle="--", label="uniform-key baseline")
+    axes[0, 0].axhline(uniform_mass, color="#E76F51", linestyle="--", label="uniform-over-time baseline")
     axes[0, 0].set_xlabel("ViT temporal layer")
     axes[0, 0].set_ylabel("past attention mass")
     axes[0, 0].set_title("Distribution across sampled frames")
@@ -224,7 +229,7 @@ def _render_distribution(
     axes[1, 2].set_title("Age selectivity: 0=one moment, 1=uniform")
 
     fig.suptitle(
-        f"MEM temporal-attention diagnostics — uniform-key past mass={uniform_mass:.4f}",
+        f"MEM temporal-attention diagnostics — uniform-over-time past mass={uniform_mass:.4f}",
         fontsize=15,
         fontweight="bold",
     )
@@ -401,7 +406,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     patch_mass = np.stack(patch_mass_rows)
     n_patches = int(patch_mass.shape[-1])
     n_ages = int(head_age.shape[-1])
-    uniform_mass = n_ages / (n_patches + n_ages)
+    # The temporal softmax normalises over the K = n_ages + 1 timesteps (the past plus
+    # the query's own), and nothing else: an indifferent read leaves n_ages/(n_ages + 1)
+    # on history. Spatial keys live in their own softmax and do not enter this null.
+    uniform_mass = n_ages / (n_ages + 1)
     camera_names = [key.split(".")[-1] for key in camera_keys]
 
     quantiles = np.percentile(temporal_mass, [10, 25, 50, 75, 90], axis=0)
@@ -424,7 +432,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "layers": layers,
         "cameras": camera_names,
         "history_seconds_oldest_to_newest": history_seconds.tolist(),
-        "uniform_key_temporal_mass": float(uniform_mass),
+        "uniform_temporal_mass": float(uniform_mass),
         "mean_temporal_mass": float(temporal_mass.mean()),
         "mean_enrichment_vs_uniform": float(temporal_mass.mean() / uniform_mass),
         "max_layer_enrichment_vs_uniform": float(temporal_mass.mean(axis=0).max() / uniform_mass),

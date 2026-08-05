@@ -152,6 +152,11 @@ def _override_action_stats(processors: tuple, action_stats: dict[str, Any]) -> t
 class MolmoAct2Trainer(Trainer):
     """Trainer for MolmoAct2RLPolicy. Supports actor-only and critic-trained modes."""
 
+    # Samples used for the depth ablation probe's two extra forwards. Kept small on
+    # purpose: those run the depth encoder's trunk unchunked (see the call site), and
+    # in joint training the optimizer state already owns most of the card.
+    DEPTH_PROBE_SAMPLES = 8
+
     # Value histograms live inside the distributional critic's support; clip to
     # the configured default so a single outlier doesn't flatten the bin range.
     _HISTOGRAM_CLIP_RANGES = {
@@ -298,9 +303,17 @@ class MolmoAct2Trainer(Trainer):
             if name.startswith("critic.") or name.startswith("critic_target."):
                 continue  # critic handled separately
 
+            if tp.depth_warmup:
+                # Stage 1: only the from-scratch depth path moves. Everything else —
+                # trunk, ViT, action expert, lm_head — is frozen, so the adapter is
+                # aligning into a fixed token manifold rather than co-adapting with a
+                # trunk that could otherwise learn to route around it.
+                param.requires_grad = "pointmap_encoder" in name or "depth_adapter" in name
+                continue
+
             if (
                 "pointmap_encoder" in name
-                or "depth_stream" in name
+                or "depth_adapter" in name
                 or "state_history_projector" in name
             ):
                 # Fresh from-scratch modules (point-map depth + MEM state-history
@@ -366,7 +379,7 @@ class MolmoAct2Trainer(Trainer):
     def get_optimizer_groups(self, policy: nn.Module, cfg) -> list[dict]:
         """
         Actor group: all policy params with requires_grad (excludes critic and depth).
-        Depth group: from-scratch pointmap_encoder/depth_stream params at depth_lr.
+        Depth group: from-scratch pointmap_encoder/depth_adapter params at depth_lr.
         Critic group: all critic params (added only when skip_critic=False).
         """
         skip_critic = getattr(cfg, "skip_critic", True)
@@ -391,8 +404,8 @@ class MolmoAct2Trainer(Trainer):
 
     @staticmethod
     def _split_depth_group(policy: nn.Module, cfg, groups: list[dict]) -> list[dict]:
-        """Move from-scratch params (pointmap_encoder/depth_stream incl. read bias,
-        plus the MEM state_history_projector) out of the policy group into their own
+        """Move from-scratch params (pointmap_encoder/depth_adapter, plus the MEM
+        state_history_projector) out of the policy group into their own
         "depth" group at depth_lr: the pretrained-model lr is too slow for fresh
         modules, and the separate group name keeps them out of
         pretrained_merge_targets (the checkpoint has none of these weights, so a
@@ -400,7 +413,7 @@ class MolmoAct2Trainer(Trainer):
         depth_ids = {
             id(p) for name, p in policy.named_parameters()
             if "pointmap_encoder" in name
-            or "depth_stream" in name
+            or "depth_adapter" in name
             or "state_history_projector" in name
         }
         policy_group = next(g for g in groups if g["name"] == "policy")
@@ -408,7 +421,9 @@ class MolmoAct2Trainer(Trainer):
         if depth_params:
             policy_group["params"] = [p for p in policy_group["params"] if id(p) not in depth_ids]
             groups.append({"name": "depth", "params": depth_params, "lr": cfg.policy.depth_lr})
-        return groups
+        # depth_warmup freezes everything outside the depth modules, so the policy group
+        # comes out empty and AdamW rejects an empty parameter list.
+        return [group for group in groups if group["params"]]
 
     # ── Critic ────────────────────────────────────────────────────────────────
 
@@ -649,10 +664,6 @@ class MolmoAct2Trainer(Trainer):
 
         Handles gradient accumulation.  Only the "policy" optimizer is touched here.
         """
-        from lerobot.policies.molmoact2.modeling_molmoact2 import (
-            drain_pointmap_mass_records,
-            set_pointmap_mass_capture,
-        )
         from lerobot.rl.buffer import concatenate_batch_transitions
 
         grad_accum = int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
@@ -662,6 +673,10 @@ class MolmoAct2Trainer(Trainer):
         policy_opt = optimizers.get("policy") or next(iter(optimizers.values()))
         policy_opt.zero_grad()
         depth_opt = optimizers.get("depth")
+        if depth_opt is policy_opt:
+            # depth_warmup: the depth group is the ONLY optimizer, so it already came
+            # back as policy_opt. Stepping it under both names double-applies AdamW.
+            depth_opt = None
         if depth_opt is not None:
             depth_opt.zero_grad()
 
@@ -683,7 +698,7 @@ class MolmoAct2Trainer(Trainer):
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
         summary_split: dict[str, list[float]] = {}
-        depth_on = getattr(policy, "depth_stream", None) is not None
+        depth_on = getattr(policy, "depth_adapter", None) is not None
         optimization_step = kwargs.get("optimization_step")
         log_freq = max(1, int(getattr(cfg, "log_freq", 1)))
         # Callers pass the outer optimization step. Keep the fallback enabled for
@@ -749,26 +764,70 @@ class MolmoAct2Trainer(Trainer):
                 cfg=cfg,
             )
 
-            # Depth attention-mass capture (depth_redesign_options.md §5.1) on the
-            # first micro-batch only: one eager score recompute per layer.
-            capture_mass = depth_on and capture_depth_telemetry and accum_idx == 0
-            mass: list[float] = []
-            if capture_mass:
-                set_pointmap_mass_capture(True)
-            try:
-                loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
-            finally:
-                if capture_mass:
-                    mass = drain_pointmap_mass_records()
-                    set_pointmap_mass_capture(False)
-            if mass:
-                # Aggregates only: the per-layer breakdown was one W&B panel per
-                # stream layer, and the profile is only ever read deliberately —
-                # probes/depth_modality_probe.py prints it per layer on demand.
-                accum["depth_attn_mass_mean"] = sum(mass) / len(mass)
-                accum["depth_attn_mass_max"] = max(mass)
+            loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
+
+            # Read the depth token scale from THIS forward. The ablation block below runs
+            # another forward with depth removed, which makes the encoder emit its null
+            # bank and overwrites the stash — reading after it would report the null
+            # bank's amplitude on exactly the steps that get logged.
+            if depth_on and capture_depth_telemetry and accum_idx == 0:
+                if policy._depth_token_rms is not None:
+                    accum["depth_token_rms_ratio"] = (
+                        policy._depth_token_rms.item() / policy._depth_embed_rms
+                    )
+
+
             loss_for_backward = loss.mean() if isinstance(loss, torch.Tensor) else torch.as_tensor(loss, device=actions.device)
             (loss_for_backward / grad_accum).backward()
+
+            # Run the ablation probe AFTER backward: it needs nothing from the graph,
+            # and before the backward the main forward's activations are all still
+            # live, which is what put this over the edge in joint training.
+            # Depth ablation delta, first micro-batch only: loss with depth removed minus
+            # loss with depth present. THE metric for whether depth is doing anything —
+            # the absolute loss cannot show it, because RGB plus proprio already satisfies
+            # most of the objective and the depth path is a small residual on top.
+            # Positive = removing depth hurts = depth is carrying information.
+            # Both legs run with the encoder in eval mode so modality dropout does not
+            # randomly null the "present" leg and shrink the measured gap.
+            if depth_on and capture_depth_telemetry and accum_idx == 0:
+                was_training = policy.pointmap_encoder.training
+                policy.pointmap_encoder.eval()
+                try:
+                    # Sub-batch the probe. eval() + no_grad below turn OFF the encoder's
+                    # chunked trunk (modeling_pointmap.py::_run_trunk gates on training and
+                    # grad-enabled), so these two forwards allocate the full-resolution
+                    # feature maps for every frame in one shot — the single largest tensor
+                    # in the model. It is a telemetry mean over samples; it does not need
+                    # the whole batch.
+                    n_full = int(fwd_batch["input_ids"].shape[0])
+                    n_probe = min(self.DEPTH_PROBE_SAMPLES, n_full)
+                    probe_batch = {
+                        k: (v[:n_probe] if torch.is_tensor(v) and v.ndim >= 1 and v.shape[0] == n_full else v)
+                        for k, v in fwd_batch.items()
+                    }
+                    with torch.no_grad():
+                        present, _ = policy.forward(
+                            probe_batch, reduction="none", return_diagnostics=True
+                        )
+                        ablated, _ = policy.forward(
+                            {
+                                k: v
+                                for k, v in probe_batch.items()
+                                if not k.startswith("observation.depth.")
+                            },
+                            reduction="none",
+                            return_diagnostics=True,
+                        )
+                    # Log both legs, not only the gap. The ablated leg feeds the encoder's
+                    # null bank, which is itself a trained nn.Parameter — so the baseline
+                    # moves too, and the gap alone cannot tell "real depth got worse" from
+                    # "the null bank got better faster".
+                    accum["depth_loss_present"] = float(present.mean())
+                    accum["depth_loss_ablated"] = float(ablated.mean())
+                    accum["depth_ablation_delta"] = float(ablated.mean() - present.mean())
+                finally:
+                    policy.pointmap_encoder.train(was_training)
 
             # Subtask-generation CE (two-prompt design): separate forward on the
             # generation prompt for annotated samples; grads accumulate alongside.
@@ -777,7 +836,11 @@ class MolmoAct2Trainer(Trainer):
                 generation = self._subtask_generation_loss(policy, raw, observations, preprocessor, cfg)
                 if generation is not None:
                     generation_loss, generation_parts = generation
-                    (subtask_loss_weight * generation_loss / grad_accum).backward()
+                    # The generation prompt carries no depth clause, so under depth_warmup
+                    # this loss touches nothing trainable and backward would raise. Its
+                    # metrics stay worth logging as a frozen-model baseline.
+                    if generation_loss.requires_grad:
+                        (subtask_loss_weight * generation_loss / grad_accum).backward()
                     accum["loss_subtask_ce"] += generation_parts["loss_subtask_ce"] / grad_accum
                     accum["loss_summary_ce"] += generation_parts["loss_summary_ce"] / grad_accum
                     # Averaged over the micro-batches that actually held such pairs,
@@ -822,7 +885,7 @@ class MolmoAct2Trainer(Trainer):
             depth_grads = [
                 p.grad.detach().float()
                 for name, p in policy.named_parameters()
-                if p.grad is not None and ("pointmap_encoder" in name or "depth_stream" in name)
+                if p.grad is not None and ("pointmap_encoder" in name or "depth_adapter" in name)
             ]
             if depth_grads:
                 # Foreach computes all per-tensor norms without 1,000+ Python
@@ -844,12 +907,8 @@ class MolmoAct2Trainer(Trainer):
             depth_opt.step()
 
         accum["actor_grad_norm"] = actor_grad_norm
-        # Joint-softmax depth telemetry (depth_redesign_options.md §5.1): mean over
-        # the learned per-layer depth-column biases b_ℓ (init −2; movement off −2 =
-        # layers changing their default depth admission). Influence itself is
-        # depth_attn_mass_mean/_max above.
-        if depth_on and capture_depth_telemetry:
-            accum["depth_bias_mean"] = policy.depth_stream.depth_bias.detach().mean().item()
+        # depth_token_rms_ratio is captured inside the micro-batch loop, right after the
+        # training forward — see the note there.
 
         for key, values in summary_split.items():
             accum[key] = sum(values) / len(values)
@@ -1194,7 +1253,7 @@ class MolmoAct2Trainer(Trainer):
         wandb_logger,
         _policy: nn.Module,
     ) -> None:
-        console_keys = ("loss_flow", "loss_discrete_ce", "loss_subtask_ce", "loss_summary_ce", "actor_grad_norm", "loss_critic", "depth_attn_mass_mean")
+        console_keys = ("loss_flow", "loss_discrete_ce", "loss_subtask_ce", "loss_summary_ce", "actor_grad_norm", "loss_critic", "depth_ablation_delta")
         console_scalars = {
             k: training_infos[k]
             for k in console_keys

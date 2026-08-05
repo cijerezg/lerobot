@@ -22,11 +22,41 @@ is the honest statistic. A raw spread of $0.05$ means nothing on its own: agains
 seed floor of $0.05$ the clause does nothing, and against a floor of $0.005$ it
 dominates. This is the number to read first.
 
-**2. Is the clause used *correctly*?** For each frame, rank the vocabulary by MSE
-against the demonstrated chunk and record where the ground-truth label lands. If the
-model conditions on the clause meaningfully the GT label should rank near the top;
-a rank distribution indistinguishable from uniform says the clause is read but not
-understood — which looks identical to "not read" in any single-number summary.
+**2. Is the clause used *correctly*?** Moving the chunk is not the same as moving it
+somewhere sensible: a model that reacts to the clause without understanding it scores
+just as high on readout 1. So readout 2 makes the model identify its own situation.
+Hold the frame fixed, put each vocabulary label $\ell$ into the prompt in turn, and
+score the chunk it produces against what the human actually demonstrated,
+
+    $$e(\ell) = \frac{1}{TD} \sum_{t,d} \left( a_{\ell,t,d} - a^{\star}_{t,d} \right)^2$$
+
+with $a^{\star}$ the demonstrated chunk and $T$, $D$ the chunk steps and action
+dimensions. Sort the vocabulary by $e$ and record the position of the true label,
+
+    $$r = |\{ \ell \in V : e(\ell) \le e(\ell^{\star}) \}|$$
+
+so $r = 1$ means that of every label available, the true one drove the policy closest
+to the demonstration. That is the behaviour a model which understands the clause has to
+show: told the truth, it should act most like the demonstration.
+
+The null is the clause changing the chunk while carrying nothing about which chunk is
+right. Then $r$ is uniform over the $|V|$ labels, giving
+
+    $$E[r] = \frac{|V| + 1}{2}$$
+
+and, over $n$ frames, a standard error on the mean rank of $\sqrt{(|V|^2-1)/(12n)}$ —
+compute it before reading anything into a mean that sits a little off uniform. The
+top-1 fraction has its own null at $1/|V|$.
+
+Read the histogram, not just its mean: flat-at-uniform is *read but not understood*,
+and no single number separates that from *not read at all*. Both failure modes matter
+and they are different bugs — the first is a conditioning problem, the second a
+plumbing one.
+
+The two readouts are ordered. If $S \approx 1$ the vocabulary never moved the chunk
+beyond noise, and readout 2 is then ranking noise: the rank histogram of a policy that
+ignores the clause is uniform by construction, so it adds nothing. Read $S$ first, and
+only ask about ranks once it clears the floor.
 
 Cost is ``n_frames x (|vocab| + n_seeds)`` forwards, so both are small knobs.
 
@@ -44,7 +74,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from lerobot.probes.manifest import Metric, Panel, write_index
+from lerobot.probes.manifest import Panel, write_index
 from lerobot.probes.utils import (
     REBOT_JOINT_NAMES,
     makedirs,
@@ -239,31 +269,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         claim="Does swapping the subtask clause move the chunk more than flow noise does?",
         summary=summary,
         see_also=["metadata_steering", "mem_history_influence", "action_trace"],
-        metrics=[
-            Metric(
-                "separation_median", "Separation (vocabulary / seed floor)", good="high", fmt=2,
-                baseline=1.0, bad=1.2, warn=2.0, primary=True,
-                note="At 1.0 the clause does nothing and the subtask annotations buy no control.",
-            ),
-            Metric("separation_mean", "Separation (mean)", good="high", fmt=2, baseline=1.0),
-            Metric("vocab_spread_mean", "Spread across labels", good="none", fmt=4,
-                   note="Meaningless alone — only its ratio to the seed floor is interpretable."),
-            Metric("seed_floor_mean", "Seed floor (same clause, new noise)", good="none", fmt=4),
-            Metric(
-                "gt_rank_mean", "GT label rank", good="low", fmt=1, primary=True,
-                baseline=summary["gt_rank_uniform_expectation"],
-                warn=summary["gt_rank_uniform_expectation"] * 0.8,
-                bad=summary["gt_rank_uniform_expectation"],
-                note=(
-                    f"Uniform expectation is {summary['gt_rank_uniform_expectation']:.1f} of "
-                    f"{len(vocabulary)}. At uniform, the clause is read but not understood."
-                ),
-            ),
-            Metric("gt_rank_top1_fraction", "GT label ranked first", good="high", fmt=2, primary=True,
-                   baseline=1.0 / max(len(vocabulary), 1)),
-            Metric("n_labels", "Vocabulary size", good="none", fmt=0),
-            Metric("n_frames", "Frames measured", good="none", fmt=0),
-        ],
+        # Both readouts are titled onto subtask_sweep.png with their own null lines, and
+        # the docstring says how to read them. The values stay in subtask_sweep.json.
+        metrics=[],
         panels=[
             Panel(
                 "subtask_sweep.png",

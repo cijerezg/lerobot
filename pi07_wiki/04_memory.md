@@ -160,13 +160,21 @@ observation before `build_inference_batch`.
 
 ### 2.4 MEM video encoder + continuous state history (design 2026-07-22)
 
+> **Corrected 2026-08-03.** This section originally specified ONE softmax over spatial
+> and temporal keys together. MEM Appendix C (p. 15) instead defines two separate
+> mechanisms — space-only and time-only — each with its own softmax, and the rebuild
+> follows it. The operator, the papers read line by line, and the measurements that
+> caught it are in
+> [mem_temporal_attention_analysis.md](mem_temporal_attention_analysis.md).
+
 From PI's MEM paper (arXiv 2603.03596). Decisions: encoder path is THE image
 history path (prompt path deleted); continuous proprio-history tokens; 5 past +
-current @ 1 s; **no gate** (the $e(0)=0$ boundary condition is the identity
-story — nothing new is added to the attention path, unlike DepthStream);
-repeat-padding v1 (pad mask not threaded into ViT attention; a repeated first
-frame at episode start is approximately truthful — masking is the contained
-fallback if early-episode telemetry looks off).
+current @ 1 s; **no gate**; repeat-padding v1 (pad mask not threaded into ViT
+attention; a repeated first frame at episode start is approximately truthful —
+masking is the contained fallback if early-episode telemetry looks off). The
+$e(0)=0$ identity story no longer implies a bit-exact single-frame path: the
+temporal sub-step fires on the query's own timestep even with no history
+(decided 2026-08-03, see the analysis doc).
 
 **Video encoder.** $K$ frames per camera (oldest → current, $t$ = seconds before
 now, current $t=0$), $n=729$ patches per frame (crop_mode "resize": one 378×378
@@ -182,14 +190,19 @@ $$z^{p,t}_{l-1} \leftarrow z^{p,t}_{l-1} + e(t), \qquad e(0)=0$$
 with $e$ sinusoidal in real seconds — this is what lets stride/count stretch at
 inference.
 
-2. Extended key set, same $W_q, W_k, W_v, W_o$, one softmax. For the query at
-patch $i$ of frame $t$ (every frame, causal — not just the current one):
+2. Space-time **separable** attention, same $W_q, W_k, W_v, W_o$, two softmaxes.
+A time-only step runs first, over the query patch's own position across time
+(causal, its own timestep included):
 
-$$\mathrm{keys}(t,i) = \{k_{t,j}\}_{j=1..n} \cup \{k_{t',i} : t' \text{ older than } t\}$$
+$$\beta_{t \to t'} = \frac{\exp\big(q_{t,i} \cdot k_{t',i} / \sqrt{d}\big)}
+{\sum_{s \le t} \exp\big(q_{t,i} \cdot k_{s,i} / \sqrt{d}\big)}, \qquad \sum_{t' \le t} \beta_{t \to t'} = 1$$
 
-i.e. own frame spatially + the same patch position in strictly older frames.
-Spatial and temporal context compete in a single normalization; complexity
-$\mathcal{O}(Kn^2 + nK^2)$, not $\mathcal{O}(K^2n^2)$.
+then its output goes through $W_o$ + residual and the block's ordinary spatial
+attention runs per frame, untouched. Because the temporal softmax normalizes over
+the $K$ timesteps alone, an indifferent read leaves $(K-1)/K$ of that step's mass
+on history — not the $T/(n+T) \approx 0.7\%$ the past got when the two key sets
+shared one denominator. Complexity $\mathcal{O}(Kn^2 + nK^2)$, not
+$\mathcal{O}(K^2n^2)$.
 
 After resblock 23 (the last temporal layer) past-frame rows are discarded; only
 current-frame rows reach the feature taps (`vit_layers` [−9, −3] = resblocks 18,
@@ -235,7 +248,7 @@ Live in the validation loop:
 | probe | question | verdict shape |
 |---|---|---|
 | `mem_history_influence` | do the history channels move the chunk, and does the move help? | `full_rmse` (influence, at fixed flow noise) next to `full_gt_mse_improvement` (usefulness). Influence ~0 = the channel never reaches the output; improvement < 0 = used in the wrong direction |
-| `mem_temporal_attention` | when and where is history read? | past-attention mass against the union-softmax uniform-key baseline $T/(N+T)$; enrichment ~1 means no selective read survives |
+| `mem_temporal_attention` | when and where is history read? | past-attention mass against the uniform-over-time baseline $T/(T+1)$ of the temporal softmax; enrichment ~1 means no selective read survives |
 | `subtask_sweep` | does the subtask clause move the actions at all? | vocabulary spread over a same-clause seed floor; this was P3 of the plan doc, and it gates every claim that memory reaches behaviour |
 
 The rest of [archive/memory_probes_plan.md](archive/memory_probes_plan.md) (retired

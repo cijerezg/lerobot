@@ -729,9 +729,17 @@ class MolmoAct2Adapter(ProbablePolicy):
             if torch.is_tensor(labels) and labels.ndim >= 2:
                 valid_mask &= labels[0].detach().cpu().eq(-100)
             valid_positions = valid_mask.nonzero(as_tuple=False).flatten()
+            # Depth placeholders are prompt positions now, but they carry point-map
+            # tokens, not words: they get their own segment and spatial overlay, so
+            # counting them here too would put 192 columns of depth mass inside the
+            # task clause of every prompt panel.
+            depth_token_id = batch.get("depth_token_id")
+            skip_ids = {int(patch_id)}
+            if depth_token_id is not None:
+                skip_ids.add(int(depth_token_id))
             text_positions = [
                 int(pos) for pos in valid_positions.tolist()
-                if int(row[int(pos)]) != int(patch_id)
+                if int(row[int(pos)]) not in skip_ids
             ]
             if text_positions:
                 extras["text_token_indices_by_segment"] = {"language": text_positions}
@@ -740,24 +748,28 @@ class MolmoAct2Adapter(ProbablePolicy):
         return encoder_segments, image_tensors, patches_per_cam, extras
 
     def _depth_attention_extras(self, batch: dict, obs_on_device: dict[str, Tensor], encoder_seq_len: int):
-        """Locate the point-map depth columns of the joint cross-attention softmax.
+        """Locate the point-map depth tokens inside the prefix.
 
-        ``join_depth_columns`` (modeling_stream.py) extends K/V with the per-layer
-        depth state *before* the attention call, so a captured cross-attention row
-        is ``[context columns ; N depth columns]``. The context columns are the
-        prefix K/V, one per ``input_ids`` position, so the depth block is simply the
-        tail — everything past the prompt length. Without this the depth columns are
-        real attention mass that no segment names and every panel silently drops.
+        Depth used to be extra columns appended to the expert's cross-attention K/V, so
+        the block was the tail past the prompt length. It is now ordinary prefix
+        positions: the encoder's tokens are scattered onto DEPTH_TOKEN placeholders in
+        build_input_embeddings, so the block is wherever those placeholder ids sit in
+        ``input_ids``. Without this the depth positions are real attention mass that no
+        segment names and every panel silently folds into "text".
 
         Returns ``{}`` when the policy has no depth path.
         """
         pointmap_config = getattr(self._cfg.policy, "pointmap_config", None)
         input_ids = batch.get("input_ids")
+        depth_token_id = batch.get("depth_token_id")
         if pointmap_config is None or not torch.is_tensor(input_ids) or encoder_seq_len <= 0:
             return {}
-        n_context = int(input_ids.shape[-1])
-        n_depth = encoder_seq_len - n_context
-        if n_depth <= 0:
+        if depth_token_id is None:
+            return {}
+        ids = input_ids.reshape(input_ids.shape[0], -1)[0] if input_ids.ndim > 1 else input_ids
+        indices = (ids == int(depth_token_id)).nonzero(as_tuple=True)[0].tolist()
+        n_depth = len(indices)
+        if n_depth == 0:
             return {}
 
         height, width = pointmap_config.image_size
@@ -765,7 +777,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         grid_hw = (height // patch, width // patch)  # row-major, see pointmap.patchify
         if grid_hw[0] * grid_hw[1] != n_depth:
             logging.warning(
-                f"[probe] {n_depth} depth columns do not match the {grid_hw} point-map grid; "
+                f"[probe] {n_depth} depth positions do not match the {grid_hw} point-map grid; "
                 "labelling the block but skipping its spatial overlay."
             )
             grid_hw = None
@@ -787,7 +799,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         return {
             "depth_segment": {
                 "name": "depth",
-                "indices": list(range(n_context, encoder_seq_len)),
+                "indices": indices,
                 "grid_hw": grid_hw,
                 "image": image,
                 "is_null_bank": not torch.is_tensor(depth),

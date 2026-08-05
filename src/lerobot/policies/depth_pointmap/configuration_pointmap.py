@@ -55,10 +55,12 @@ class DepthPointmapConfig:
     dropout_prob: float = 0.25
     # Anti-laziness RGB dropout (depth_redesign_options.md §4.3): at train time,
     # mask the depth camera's <im_patch> span out of the attention mask with this
-    # probability — nothing attends the span, no gradient flows through its vision
-    # path, and the depth stream's wrist bridge is killed per-row from the same
-    # mask. Those samples are solvable only through depth. Independent of the
-    # depth modality dropout above. 0 disables.
+    # probability — nothing attends the span and no gradient flows through its
+    # vision path, so those samples are solvable only through depth. Independent of
+    # the depth modality dropout above. 0 disables. Raise this hard for the
+    # adapter-only warmup stage: with the trunk frozen, RGB plus proprio already
+    # satisfies most of the loss and the adapter can otherwise settle on emitting
+    # something ignorable.
     rgb_dropout_prob: float = 0.15
 
     # Patch-CNN trunk widths (the two hidden stages; the third stage outputs the
@@ -77,14 +79,16 @@ class DepthPointmapConfig:
     # Only consulted when the policy enables gradient checkpointing.
     encoder_chunk_rows: int = 384
 
-    # --- MoT co-evolving depth stream (depth_pointmap_design.md Part B) ------
-    # The encoder's tokens co-evolve through M light transformer blocks (depth
-    # self-attention + cross-attention to the wrist-cam KV), read per-layer by the
-    # action expert as extra columns in its context softmax with a learned bias.
-    # These settings affect the co-evolving stream only.
-    stream_width: int = 512  # d_d — depth stream width (lean, design D4)
-    stream_num_heads: int = 8  # heads for the depth self/cross-attention
-    stream_layers: int | None = None  # M; None ⇒ one depth block per action-expert layer (M = L)
+    # Width of the tokens the encoder emits. A per-policy adapter lifts these to the
+    # LLM's token-embedding width and they enter the VLM prefix on placeholder
+    # positions; there is no separate depth tower.
+    token_width: int = 512
+
+    # CRITIC-ONLY (rl_molmoact2.py): the critic still runs its own co-evolving
+    # DepthStreamBlocks over its own encoder's tokens. The actor no longer does —
+    # its depth goes through the VLM prefix. These two knobs exist solely for that
+    # remaining critic path and go away when it is migrated to the same seam.
+    stream_num_heads: int = 8
     stream_mlp_ratio: float = 4.0
 
     # Temporal history (depth_history_design.md): past depth frames ride the shared
@@ -126,12 +130,10 @@ class DepthPointmapConfig:
             raise ValueError(f"history_num_samples must be >= 0, got {self.history_num_samples}.")
         if self.history_window_seconds <= 0:
             raise ValueError(f"history_window_seconds must be > 0, got {self.history_window_seconds}.")
-        if self.stream_width <= 0 or self.stream_width % self.stream_num_heads:
+        if self.token_width <= 0 or self.token_width % self.stream_num_heads:
             raise ValueError(
-                f"stream_width {self.stream_width} must be > 0 and divisible by "
-                f"stream_num_heads {self.stream_num_heads}."
+                f"token_width {self.token_width} must be > 0 and divisible by "
+                f"stream_num_heads {self.stream_num_heads} (the critic's stream blocks)."
             )
-        if self.stream_layers is not None and self.stream_layers < 1:
-            raise ValueError(f"stream_layers must be ≥ 1 or None, got {self.stream_layers}.")
         if self.stream_mlp_ratio <= 0:
             raise ValueError(f"stream_mlp_ratio must be > 0, got {self.stream_mlp_ratio}.")

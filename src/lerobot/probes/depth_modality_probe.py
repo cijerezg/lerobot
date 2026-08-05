@@ -8,17 +8,18 @@ fixed-seed flow noise, and reports:
   - normalized-space MSE vs GT per condition (is depth earning its keep:
     mse(RGB) − mse(RGB+depth) is the headline number),
   - pairwise max|Δaction| between conditions (does depth influence output at all),
-  - per-layer attention mass on the depth columns (via the mass-capture hook),
-  - the learned per-layer read bias b_ℓ and the depth mass it implies on its own,
+  - the RMS of the emitted depth tokens over the RMS of the token embeddings they are
+    added onto (has the adapter opted out by going quiet?),
   - finite-difference sensitivity: ‖Δactions‖ for a 1%-of-std perturbation of the
     raw depth input vs of the wrist RGB input (a directional-Jacobian estimate —
     separates "attended but ignored" from load-bearing).
 
-b_ℓ is the parameter that replaced the α gate. The α gate failed by never training
-(a random walk at ~0.007 absmax) and that went unnoticed for weeks because nothing
-reported it, so the raw values and their implied mass are written on every run
-alongside the measured mass. Measured ≫ implied means the read is input-driven;
-measured ≈ implied means the layer attends depth by prior alone.
+Depth now enters the VLM prefix on DEPTH_TOKEN placeholders, so there is no gate and
+no per-layer read bias to report — the α gate and the b_ℓ joint-softmax bias are both
+gone. Nothing is left that can silently sit at its init: the tokens are in the sequence
+unconditionally. What can still fail quietly is the adapter learning to emit something
+ignorable, which is what the token-RMS ratio watches, and depth simply not mattering,
+which is what the MSE conditions and FD sensitivity measure.
 
 Conditions are produced within one policy build: depth− removes the depth key
 (learned null bank), while RGB− applies the exact training-time wrist-patch
@@ -27,7 +28,7 @@ nondeterminism (~1e-1, from-scratch norm buffers) would swamp the comparisons.
 
 Outputs under ``<output_dir>/``:
   depth_modality.json   every number below, plus per-frame rows
-  depth_modality.png    condition MSE, per-layer mass vs b_ℓ, FD sensitivity
+  depth_modality.png    condition MSE and FD sensitivity
 
 Replaces probes/pointmap_bit_identity.py (retired 2026-07-26 with the α gate:
 there is no gate-0 no-op to verify under the joint softmax).
@@ -55,10 +56,6 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.policies.depth_pointmap.modeling_stream import mask_camera_patch_span
-from lerobot.policies.molmoact2.modeling_molmoact2 import (
-    drain_pointmap_mass_records,
-    set_pointmap_mass_capture,
-)
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
@@ -90,31 +87,6 @@ def _condition_obs(obs: dict, condition: str, *, depth_obs_key: str) -> dict:
         for key in [k for k in out if str(k).startswith("history.depth.")]:
             out.pop(key)
     return out
-
-
-def _read_bias(policy, n_context: int, n_depth: int) -> dict:
-    """The learned per-layer depth score bias and the mass it implies alone.
-
-    Under the joint softmax a layer's depth columns carry an extra score b_ℓ. With
-    all content scores equal, that alone puts
-
-        n_d·e^{b} / (n_d·e^{b} + n_ctx)
-
-    of the row's mass on depth. Comparing this prior against the measured
-    ``depth_attn_mass`` says whether a layer's depth read is driven by the input or
-    only by the bias.
-    """
-    stream = getattr(policy, "depth_stream", None)
-    bias = getattr(stream, "depth_bias", None)
-    if bias is None:
-        return {}
-    values = bias.detach().float().cpu().numpy()
-    weights = n_depth * np.exp(values)
-    return {
-        "depth_bias": values.tolist(),
-        "depth_bias_implied_mass": (weights / (weights + max(n_context, 1))).tolist(),
-        "depth_bias_init": -2.0,
-    }
 
 
 def _write_manifest(output_dir: str, summary: dict) -> dict:
@@ -154,19 +126,19 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                 note="Finite-difference $\\|\\Delta a\\|$ for a 1%-of-std perturbation of raw depth over the same for wrist RGB. Separates attended-but-ignored from load-bearing; 1.0 means the two inputs move the action equally.",
             ),
             Metric(
-                "depth_attn_mass_mean",
-                "Mean depth attention mass",
+                "depth_token_rms_ratio",
+                "Depth token scale / embedding scale",
                 good="none",
-                fmt=4,
-                note="Averaged over stream layers and frames. Compare against ``depth_bias_implied_mass`` in the JSON: measured ≫ implied means the read is input-driven, measured ≈ implied means the layer attends depth by prior alone.",
+                fmt=3,
+                baseline=1.0,
+                note="RMS of what ``depth_adapter`` emits over the RMS of the token embeddings it is added onto; 1.0 by construction at init. Decay toward 0 is the adapter opting out — satisfying the loss by emitting tokens the trunk can ignore, which no loss curve reveals. Far above 1 means it is shouting over the pretrained tokens.",
             ),
-            Metric("depth_attn_mass_max", "Peak layer depth mass", good="none", fmt=4),
             Metric("n_frames", "Frames probed", good="none", fmt=0),
         ],
         panels=[
             Panel(
                 "depth_modality.png",
-                "Condition MSE, depth mass per layer, and the learned read bias",
+                "Condition MSE and finite-difference sensitivity",
                 how=(
                     "**Left** — normalized MSE against the demonstrated chunk under the four "
                     "modality conditions, all at identical flow noise. ``rgb+depth`` is the "
@@ -174,16 +146,15 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                     "blanks the wrist RGB, ``neither`` blanks both. The benefit is the gap "
                     "between the first two bars, and ``neither`` is the scale on which to "
                     "judge it.\n\n"
-                    "**Middle** — softmax mass the action queries put on the depth columns, "
-                    "per action-expert layer: measured (solid) against the mass the learned "
-                    "bias $b_\\ell$ would produce on its own with no input (dashed). Solid "
-                    "above dashed is an input-driven read; the two on top of each other means "
-                    "the layer attends depth by prior alone.\n\n"
-                    "**Right** — $b_\\ell$ itself against its initialisation. A line still flat "
-                    "on the init value is an untrained read gate, which is the expected state "
-                    "early in a run and makes the middle panel uninformative.\n\n"
-                    "The finite-difference sensitivities are in the figure's title bar, not in "
-                    "a panel: they are two numbers, not a series."
+                    "**Right** — finite-difference sensitivity per frame: $\\|\\Delta a\\|$ for a "
+                    "1%-of-std perturbation of the raw depth input against the same for wrist "
+                    "RGB. This is the metric that separates 'depth is in the sequence but "
+                    "inert' from 'depth is load-bearing'; the ratio is in the title bar.\n\n"
+                    "There is no attention-mass panel any more. Depth tokens sit in the VLM "
+                    "prefix behind an ordinary softmax over ~1.5k positions across 36 layers, "
+                    "so measuring their mass means materializing full attention maps — and "
+                    "mass was only ever a proxy for the influence the left and right panels "
+                    "measure directly."
                 ),
                 primary=True,
             ),
@@ -199,7 +170,7 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
 
 
 def _render(summary: dict, output_path: str) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(17, 4.2))
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
 
     conditions = summary["conditions"]
     mse = [summary["mse_norm"][c] for c in conditions]
@@ -212,28 +183,18 @@ def _render(summary: dict, output_path: str) -> None:
         fontsize=10,
     )
 
-    mass = summary.get("depth_attn_mass_by_layer")
-    implied = summary.get("depth_bias_implied_mass")
-    if mass:
-        layers = np.arange(len(mass))
-        axes[1].plot(layers, mass, color="#2A9D8F", linewidth=1.6, label="measured mass")
-        if implied:
-            axes[1].plot(layers, implied, color="#E76F51", linestyle="--", linewidth=1.4,
-                         label="implied by b$_\\ell$ alone")
-        axes[1].set_xlabel("action-expert layer")
-        axes[1].set_ylabel("softmax mass on depth columns")
-        axes[1].set_title("Depth read per layer")
+    per_frame = summary.get("per_frame") or []
+    depth_s = [r["fd_sensitivity"]["depth"] for r in per_frame if "fd_sensitivity" in r]
+    rgb_s = [r["fd_sensitivity"]["rgb"] for r in per_frame if "fd_sensitivity" in r]
+    if depth_s:
+        idx = np.arange(len(depth_s))
+        axes[1].plot(idx, depth_s, marker="o", ms=3, color="#2A9D8F", label="depth")
+        axes[1].plot(idx, rgb_s, marker="o", ms=3, color="#E76F51", label="wrist RGB")
+        axes[1].set_yscale("log")
+        axes[1].set_xlabel("probed frame")
+        axes[1].set_ylabel("‖Δactions‖ @ 1% input noise")
+        axes[1].set_title("Finite-difference sensitivity")
         axes[1].legend(fontsize=8)
-
-    bias = summary.get("depth_bias")
-    if bias:
-        axes[2].plot(np.arange(len(bias)), bias, color="#9B5DE5", linewidth=1.6)
-        axes[2].axhline(summary.get("depth_bias_init", -2.0), color="#888888", linestyle="--",
-                        linewidth=1.0, label="init")
-        axes[2].set_xlabel("action-expert layer")
-        axes[2].set_ylabel("b$_\\ell$")
-        axes[2].set_title("Learned depth read bias (flat at init ⇒ untrained)")
-        axes[2].legend(fontsize=8)
 
     fd = summary["fd_sensitivity"]
     fig.suptitle(
@@ -314,7 +275,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     mse_by_condition: dict[str, list[float]] = {c: [] for c in CONDITIONS}
     pairwise_deltas: dict[tuple[str, str], list[float]] = {pair: [] for pair in CONDITION_PAIRS}
-    mass_by_layer: list[np.ndarray] = []
     sens_depth_list: list[float] = []
     sens_rgb_list: list[float] = []
     per_frame: list[dict] = []
@@ -326,21 +286,12 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             obs = frame["obs"]
             gt_norm = adapter.normalize_gt_actions(frame["gt_actions"], frame["state"]).float()
 
-            mass: list[float] = []
             actions: dict[str, torch.Tensor] = {}
             for condition in CONDITIONS:
                 cond_obs = _condition_obs(obs, condition, depth_obs_key=depth_obs_key)
-                capture_mass = condition == "rgb+depth"
-                if capture_mass:
-                    set_pointmap_mass_capture(True)
-                try:
-                    actions[condition] = predict(
-                        cond_obs, frame, rgb_on=condition in ("rgb+depth", "rgb_only")
-                    )
-                finally:
-                    if capture_mass:
-                        mass = drain_pointmap_mass_records()
-                        set_pointmap_mass_capture(False)
+                actions[condition] = predict(
+                    cond_obs, frame, rgb_on=condition in ("rgb+depth", "rgb_only")
+                )
 
             if not n_context:
                 probe_batch = adapter._make_batch(
@@ -363,20 +314,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 pairwise_deltas[(left, right)].append(delta)
                 row["max_abs_delta"][f"{left} vs {right}"] = delta
                 logging.info(f"  max|Δ| {left} vs {right} = {delta:.4e}")
-            if mass:
-                # mass has one record per (denoise step × layer); fold to per-layer means.
-                layers = len(policy.depth_stream.blocks)
-                if len(mass) % layers:
-                    raise RuntimeError(
-                        f"Captured {len(mass)} depth-mass records for {layers} layers."
-                    )
-                per_layer = np.asarray(mass, dtype=np.float64).reshape(-1, layers).mean(axis=0)
-                mass_by_layer.append(per_layer)
-                row["depth_attn_mass_by_layer"] = per_layer.tolist()
-                logging.info(
-                    f"  depth_attn_mass: mean={per_layer.mean():.4f} max={per_layer.max():.4f} "
-                    f"argmax=layer {int(per_layer.argmax())}"
-                )
 
             # Finite-difference sensitivity: same seed, 1%-of-std input perturbation.
             eps = float(getattr(cfg, "fd_epsilon_rel", 0.01))
@@ -401,7 +338,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 f"rgb={sens_rgb:.4e} ratio={sens_depth / max(sens_rgb, 1e-12):.3f}"
             )
     finally:
-        set_pointmap_mass_capture(False)
         adapter._restore_probe_cuda_graph_enabled()
 
     n = len(per_frame)
@@ -422,14 +358,14 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             "ratio": mean_depth / max(mean_rgb, 1e-12),
         },
     }
-    if mass_by_layer:
-        mean_mass = np.stack(mass_by_layer).mean(axis=0)
-        summary["depth_attn_mass_by_layer"] = mean_mass.tolist()
-        summary["depth_attn_mass_mean"] = float(mean_mass.mean())
-        summary["depth_attn_mass_max"] = float(mean_mass.max())
-        summary["n_depth_tokens"] = int(policy.pointmap_encoder.num_tokens)
-        summary["n_context_tokens"] = n_context
-        summary.update(_read_bias(policy, n_context, int(policy.pointmap_encoder.num_tokens)))
+    summary["n_depth_tokens"] = int(policy.pointmap_encoder.num_tokens)
+    summary["n_context_tokens"] = n_context
+    # Scale of what the adapter emits vs the embeddings it is added onto (1.0 at init).
+    # A collapse toward 0 is the adapter opting out — invisible in every loss curve.
+    if getattr(policy, "_depth_token_rms", None) is not None:
+        summary["depth_token_rms_ratio"] = float(
+            policy._depth_token_rms.item() / policy._depth_embed_rms
+        )
 
     with open(os.path.join(output_dir, "depth_modality.json"), "w") as f:
         json.dump({"summary": summary, "per_frame": per_frame}, f, indent=2)
@@ -444,18 +380,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         logging.info(f"mse_norm[{condition:>9s}] mean = {summary['mse_norm'][condition]:.5f}")
     for name, value in summary["max_abs_delta"].items():
         logging.info(f"max|Δ| {name} mean = {value:.4e}")
-    if "depth_attn_mass_by_layer" in summary:
+    if "depth_token_rms_ratio" in summary:
         logging.info(
-            f"depth_attn_mass mean={summary['depth_attn_mass_mean']:.4f} "
-            f"max={summary['depth_attn_mass_max']:.4f}"
+            f"depth_token_rms_ratio = {summary['depth_token_rms_ratio']:.3f} "
+            f"(1.0 at init; toward 0 ⇒ the adapter is emitting ignorable tokens)"
         )
-        bias = summary.get("depth_bias")
-        if bias:
-            logging.info(
-                f"depth_bias b_l: min={min(bias):+.3f} max={max(bias):+.3f} "
-                f"mean={sum(bias) / len(bias):+.3f} (init -2.0); implied mass mean="
-                f"{sum(summary['depth_bias_implied_mass']) / len(bias):.4f}"
-            )
     logging.info(
         f"depth benefit  mse(rgb_only) − mse(rgb+depth) = {summary['depth_benefit']:+.5f} "
         f"(positive ⇒ depth helps)"

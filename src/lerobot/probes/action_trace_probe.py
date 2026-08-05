@@ -505,36 +505,6 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
                 1,
             )
         )
-        traces.extend(
-            [
-                (
-                    endpoint_trace(
-                        gt_ee[0],
-                        color="#111111",
-                        symbol="circle",
-                        size=8,
-                        label="GT chunk start",
-                        hover="<b>GT first target</b>",
-                    ),
-                    1,
-                    1,
-                ),
-                (
-                    endpoint_trace(
-                        gt_ee[-1],
-                        color="#111111",
-                        symbol="square",
-                        size=9,
-                        label="GT chunk end",
-                        hover="<b>GT terminal target</b>",
-                        showlegend=True,
-                    ),
-                    1,
-                    1,
-                ),
-            ]
-        )
-
         skeleton = record["anchor_skeleton"]
         traces.append(
             (
@@ -573,15 +543,11 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
                     x=[record["start_ee"][0], gt_ee[0, 0]],
                     y=[record["start_ee"][1], gt_ee[0, 1]],
                     z=[record["start_ee"][2], gt_ee[0, 2]],
-                    mode="lines+markers",
+                    mode="lines",
                     line=dict(color="#D81B60", width=9, dash="dash"),
-                    marker=dict(size=[7, 7], color="#D81B60"),
-                    name=(
-                        f"GT INITIAL TARGET GAP / POSSIBLE FOLLOWER LAG — "
-                        f"{metrics['initial_gap_gt'] * 1000:.0f} mm · "
-                        f"{metrics['initial_orientation_gap_gt_deg']:.1f}° · "
-                        f"≥{metrics['initial_travel_gt_s'] * 1000:.0f} ms"
-                    ),
+                    # The numbers behind this segment live in the hover, metrics.csv and
+                    # the run log; the legend only has to name it.
+                    name="GT initial target gap / possible follower lag",
                     hovertemplate=(
                         "<b>Measured pose → first GT command</b>"
                         f"<br>{metrics['initial_gap_gt'] * 1000:.1f} mm translation"
@@ -656,30 +622,6 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
             )
             traces.extend(
                 [
-                    (
-                        endpoint_trace(
-                            ee[0],
-                            color=color,
-                            symbol="circle",
-                            size=7,
-                            label=f"sample {sample_idx} start",
-                            hover=f"<b>sample {sample_idx} first target</b>",
-                        ),
-                        1,
-                        1,
-                    ),
-                    (
-                        endpoint_trace(
-                            ee[-1],
-                            color=color,
-                            symbol="square",
-                            size=7,
-                            label=f"sample {sample_idx} end",
-                            hover=f"<b>sample {sample_idx} terminal target</b>",
-                        ),
-                        1,
-                        1,
-                    ),
                     (
                         go.Scatter3d(
                             x=[record["start_ee"][0], ee[0, 0]],
@@ -1001,10 +943,14 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
 
 
 def _title(record: dict) -> str:
+    return f"<b>episode {record['episode']} · frame {record['frame']}</b>"
+
+
+def _log_line(record: dict) -> str:
+    """The per-anchor numbers, kept in the run log instead of on the figure."""
     m = record["metrics"]
     return (
-        f"<b>episode {record['episode']} · frame {record['frame']}</b>  |  "
-        f"<b>INITIAL TARGET GAP / POSSIBLE FOLLOWER LAG</b> — GT "
+        f"episode {record['episode']} · frame {record['frame']}  |  initial gap GT "
         f"{m['initial_gap_gt'] * 1000:.0f} mm / {m['initial_orientation_gap_gt_deg']:.1f}° / "
         f"≥{m['initial_travel_gt_s'] * 1000:.0f} ms, pred "
         f"{m['initial_gap_pred_mean'] * 1000:.0f} mean / {m['initial_gap_pred_max'] * 1000:.0f} max mm  |  "
@@ -1081,38 +1027,11 @@ def _camera_context(obs: dict) -> list[dict[str, str]]:
 
 
 def _dashboard_context(record: dict) -> dict:
-    m = record["metrics"]
     return {
         "episode": int(record["episode"]),
         "frame": int(record["frame"]),
         "subtask": record.get("subtask") or "(no subtask clause)",
         "cameras": record.get("cameras", []),
-        "metrics": {
-            "gt_gap": (
-                f"{m['initial_gap_gt'] * 1000:.0f} mm · "
-                f"{m['initial_orientation_gap_gt_deg']:.1f}° · "
-                f"≥{m['initial_travel_gt_s'] * 1000:.0f} ms"
-            ),
-            "pred_gap": (
-                f"{m['initial_gap_pred_mean'] * 1000:.0f}/{m['initial_gap_pred_max'] * 1000:.0f} mm mean/max · "
-                f"{m['initial_orientation_gap_pred_max_deg']:.1f}° max"
-            ),
-            "clearance": (
-                f"tool {m['clearance_tool_pred'] * 1000:+.0f} mm · "
-                f"whole arm {m['clearance_pred'] * 1000:+.0f} mm"
-            ),
-            "fit": (
-                f"{m['ee_err_best'] * 1000:.0f} mm · {m['orientation_err_best_deg']:.1f}° best sample · "
-                f"MSE {m['mse_norm']:.3f} sample 0"
-            ),
-            "fan": (
-                f"{m['spread_terminal'] * 1000:.0f} mm · {m['orientation_spread_terminal_deg']:.1f}° terminal"
-            ),
-            "gripper": (
-                f"{m.get('gripper_err_best_deg', float('nan')):.1f}° best MAE · "
-                f"{m.get('gripper_spread_terminal_deg', float('nan')):.1f}° spread"
-            ),
-        },
     }
 
 
@@ -1145,20 +1064,14 @@ h1 { margin:0; font-size:22px; letter-spacing:-.02em; }
 .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
 .plot-card { overflow:hidden; min-width:0; }
 .context { padding:14px; position:sticky; top:12px; }
-.warning { border:2px solid rgba(216,27,96,.42); background:#fff5f8; border-radius:12px; padding:12px; margin-bottom:12px; }
-.warning strong { color:var(--accent); display:block; font-size:13px; letter-spacing:.04em; }
-.warning p { margin:4px 0 0; font-size:12px; color:#6f1d3d; }
+.warning { border:1px solid rgba(216,27,96,.32); background:#fff5f8; border-radius:9px; padding:8px 9px; margin-bottom:12px; }
+.warning strong { color:var(--accent); display:block; font-size:11px; letter-spacing:.04em; }
+.warning p { margin:3px 0 0; font-size:11px; line-height:1.35; color:#6f1d3d; }
 .controls { display:flex; gap:8px; margin-bottom:12px; }
 button { flex:1; border:1px solid var(--line); background:#fafafa; border-radius:9px; padding:8px; font-weight:700; cursor:pointer; }
 button:hover { background:#f0f0f1; }
 .section-label { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:800; margin:14px 0 7px; }
 .subtask { border-left:3px solid #111; padding:4px 0 4px 10px; font-weight:650; }
-.metrics { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.metric { background:#fafafa; border:1px solid #ececef; border-radius:10px; padding:9px; min-height:66px; }
-.metric .label { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.055em; font-weight:800; }
-.metric .value { margin-top:4px; font-weight:750; font-size:12px; }
-.metric.gap { background:#fff5f8; border-color:#f4bfd2; }
-.metric.gap .value { color:#9d174d; }
 .cameras { display:grid; gap:9px; }
 .camera { margin:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#111; }
 .camera img { width:100%; display:block; aspect-ratio:4/3; object-fit:cover; }
@@ -1176,12 +1089,11 @@ button:hover { background:#f0f0f1; }
   <div class="layout">
     <main class="card plot-card">__PLOT__</main>
     <aside class="card context">
-      <div class="warning"><strong>POSSIBLE FOLLOWER LAG / INITIAL TARGET GAP</strong><p>The thick magenta segment is measured follower pose → first demonstrated target. Colored dotted spokes are the equivalent policy gaps. This may be tracking lag, timestamp alignment, calibration, or a real discontinuity; it is not an interpolated trajectory timestep.</p></div>
+      <div class="warning"><strong>POSSIBLE FOLLOWER LAG</strong><p>Magenta: measured pose → first demonstrated target. Dotted spokes: the same gap per sample. Not an interpolated timestep.</p></div>
       <div class="controls"><button id="prev">← Previous</button><button id="next">Next →</button></div>
       <div class="section-label">Conditioning</div><div class="subtask" id="subtask"></div>
-      <div class="section-label">Physical readout</div><div class="metrics" id="metrics"></div>
       <div class="section-label">Observation</div><div class="cameras" id="cameras"></div>
-      <div class="legend-note">Circle = first target · square = terminal target · solid RGB axes = GT terminal tool orientation · dotted RGB axes = sample 0.</div>
+      <div class="legend-note">Solid RGB axes = GT terminal tool orientation · dotted RGB axes = sample 0.</div>
     </aside>
   </div>
 </div>
@@ -1191,19 +1103,11 @@ button:hover { background:#f0f0f1; }
   const contexts = JSON.parse(document.getElementById('action-context').textContent);
   const plot = document.getElementById('action-inspector-plot');
   let active = 0;
-  const labels = {gt_gap:'GT initial target', pred_gap:'Pred initial targets', clearance:'Clearance', fit:'Task-space fit', fan:'Fan spread', gripper:'Gripper'};
   function render(index) {
     active = Math.max(0, Math.min(contexts.length - 1, Number(index)));
     const context = contexts[active];
     document.getElementById('anchor-pill').textContent = `episode ${context.episode} · frame ${context.frame}`;
     document.getElementById('subtask').textContent = context.subtask;
-    const metricRoot = document.getElementById('metrics'); metricRoot.replaceChildren();
-    Object.entries(context.metrics).forEach(([key, value]) => {
-      const node = document.createElement('div'); node.className = 'metric' + (key.includes('gap') ? ' gap' : '');
-      const label = document.createElement('div'); label.className='label'; label.textContent=labels[key];
-      const number = document.createElement('div'); number.className='value'; number.textContent=value;
-      node.append(label, number); metricRoot.append(node);
-    });
     const cameras = document.getElementById('cameras'); cameras.replaceChildren();
     context.cameras.forEach(camera => {
       const figure=document.createElement('figure'); figure.className='camera';
@@ -1514,7 +1418,7 @@ def run(adapter, dataset, cfg, output_dir):
                     fast_geometry = _trajectory_geometry(kin, fast_chunk)
                     record.update(fast_chunk=fast_chunk, fast_ee=fast_geometry["ee"])
             records.append(record)
-            logging.info(f"[{anchor_idx + 1}/{len(anchors)}] {_title(record)}")
+            logging.info(f"[{anchor_idx + 1}/{len(anchors)}] {_log_line(record)}")
     finally:
         adapter._restore_probe_cuda_graph_enabled()
 

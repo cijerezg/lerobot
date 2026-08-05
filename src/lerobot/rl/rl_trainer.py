@@ -33,6 +33,13 @@ class TrainableParamsConfig:
     critic_vision_from_layer: int | None = None
     critic_language_from_layer: int | None = None
 
+    # Stage-1 depth warmup: freeze the WHOLE actor except the from-scratch depth
+    # modules, so the adapter learns to emit tokens the pretrained trunk can already
+    # read before anything else moves. Overrides the layer knobs above while set —
+    # they resume on the joint stage. The trunk cannot learn to suppress a noisy new
+    # modality while it is frozen, which is the point of running this first.
+    depth_warmup: bool = False
+
 
 class Trainer(ABC):
     """

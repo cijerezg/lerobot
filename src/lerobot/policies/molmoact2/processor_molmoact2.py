@@ -57,6 +57,10 @@ STATE_TOKEN_PREFIX = "<state_"  # nosec B105
 # token whose input embedding gets the linearly projected state ADDED on top,
 # mirroring the <im_patch> + image-features scatter.
 STATE_HISTORY_TOKEN = "<extra_0>"  # nosec B105
+# Point-map depth placeholders: one position per depth token, scattered by the model
+# inside build_input_embeddings exactly like STATE_HISTORY_TOKEN. Depth enters the VLM
+# prefix here — there is no separate depth tower.
+DEPTH_TOKEN = "<extra_1>"  # nosec B105
 
 _QUESTION_TRAILING_SENTENCE_PUNCTUATION = ".,!?;:,\u2026"
 _QUESTION_TRAILING_CLOSERS = "\"'\u201d\u2019)]}"
@@ -223,17 +227,26 @@ def _build_robot_text(
     current_subtask: str | None = None,
     metadata: dict[str, Any] | None = None,
     num_history_states: int = 0,
+    num_depth_tokens: int = 0,
 ) -> str:
     """Memory clauses: None/0 disables a clause entirely (byte-identical legacy prompt).
 
     num_history_states: past proprio states rendered as continuous placeholder
     positions (one STATE_HISTORY_TOKEN per timestep, oldest to newest; the model
     scatters projected states onto them — 04_memory.md §2.4). Image history is
-    NOT in the prompt: it enters through the MEM video encoder."""
+    NOT in the prompt: it enters through the MEM video encoder.
+
+    num_depth_tokens: point-map depth tokens rendered as DEPTH_TOKEN placeholders,
+    row-major like the encoder's patch grid. The clause sits immediately after the
+    task so the depth span is as close as the prompt layout allows to the image
+    patches it describes."""
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
     subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
+    depth_clause = (
+        f" The depth of the scene is {DEPTH_TOKEN * num_depth_tokens}." if num_depth_tokens > 0 else ""
+    )
     history_clause = (
         f" The recent states of the robot, oldest to newest, are "
         f"{STATE_HISTORY_TOKEN * num_history_states}."
@@ -251,7 +264,7 @@ def _build_robot_text(
         if "speed" in metadata:
             metadata_clause += f" The speed is {metadata['speed']}."
     prompt = (
-        f"The task is to {task}.{subtask_clause}{state_clause}{history_clause}"
+        f"The task is to {task}.{depth_clause}{subtask_clause}{state_clause}{history_clause}"
         f"{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
@@ -640,6 +653,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     # rgb_dropout_key is the bare camera name; empty or rgb_dropout 0 disables.
     rgb_dropout: float = 0.0
     rgb_dropout_key: str = ""
+    # Point-map depth token count (patch grid of the depth image). 0 = depth-free:
+    # no DEPTH_TOKEN placeholders, byte-identical legacy prompt. The count is fixed
+    # per config — the encoder emits N tokens whether or not depth is present or
+    # dropped out (it swaps in its learned null bank), so the prompt never varies.
+    num_depth_tokens: int = 0
     # Runtime toggle (not persisted): "action" builds the action prompt;
     # "subtask_generation" builds the generation prompt/labels instead. Callers
     # flip it around a pipeline call so generation gets the SAME normalization.
@@ -670,6 +688,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         self._action_start_id = _single_token_id(self.processor.tokenizer, ACTION_START_TOKEN)
         self._action_end_id = _single_token_id(self.processor.tokenizer, ACTION_END_TOKEN)
         self._state_history_id = _single_token_id(self.processor.tokenizer, STATE_HISTORY_TOKEN)
+        self._depth_token_id = _single_token_id(self.processor.tokenizer, DEPTH_TOKEN)
         self._image_patch_id = _single_token_id(self.processor.tokenizer, "<im_patch>")
         self._eos_token = self.processor.tokenizer.eos_token or ""
         self._eos_token_id = self.processor.tokenizer.eos_token_id
@@ -698,6 +717,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "history_stride_seconds": self.history_stride_seconds,
             "rgb_dropout": self.rgb_dropout,
             "rgb_dropout_key": self.rgb_dropout_key,
+            "num_depth_tokens": self.num_depth_tokens,
         }
 
     def _resolve_max_sequence_length(
@@ -719,6 +739,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_horizon=action_horizon,
             include_discrete_action=include_discrete_action,
             history_num_samples=history_num_samples,
+            num_depth_tokens=self.num_depth_tokens,
         )
 
     def _fix_attention_mask(self, inputs) -> None:
@@ -892,7 +913,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 prev_summary = None
                 target_summary = None
             if name is not None and random.random() < self.history_dropout:
-                history_on[batch_idx] = False  # training text only; the encoder sees K=1
+                history_on[batch_idx] = False  # training text only; the encoder sees no history
             prompt = _build_subtask_generation_text(
                 task=tasks[batch_idx],
                 discrete_state_string=_build_discrete_state_string(
@@ -1147,8 +1168,11 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                     metadata = None
                 if random.random() < self.history_dropout:
                     # One flip drops the whole short-term block: state placeholders
-                    # AND the sample's temporal keys in the video encoder — the
-                    # sample degenerates to the exact K=1 pretrained path.
+                    # AND the sample's history keys in the video encoder, whose
+                    # temporal step is then left with the query's own timestep only.
+                    # No history is visible; this is NOT bit-identical to the
+                    # pretrained single-frame op (that invariant was dropped with the
+                    # separable rebuild, 2026-08-03).
                     history_on[batch_idx] = False
                 if rgb_drop_cam is not None and random.random() < self.rgb_dropout:
                     # Anti-laziness RGB dropout: the camera's <im_patch> span is
@@ -1166,6 +1190,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                     if history_states is not None and history_on[batch_idx]
                     else 0
                 ),
+                num_depth_tokens=self.num_depth_tokens,
                 current_subtask=current_subtask,
                 metadata=metadata,
             )
@@ -1231,6 +1256,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if history_states is not None:
             complementary["history_state_values"] = history_states
             complementary["state_history_token_id"] = torch.tensor(self._state_history_id)
+        if self.num_depth_tokens > 0:
+            complementary["depth_token_id"] = torch.tensor(self._depth_token_id)
         if history_stack is not None:
             frames, times = history_stack
             complementary["history_images"] = frames
@@ -1336,6 +1363,11 @@ def make_molmoact2_pre_post_processors(
     pointmap_cfg = getattr(config, "pointmap_config", None)
     rgb_dropout = pointmap_cfg.rgb_dropout_prob if pointmap_cfg is not None else 0.0
     rgb_dropout_key = pointmap_cfg.depth_key if pointmap_cfg is not None else ""
+    # DEPTH_TOKEN placeholder count = the encoder's patch grid (image_size / patch_size).
+    num_depth_tokens = 0
+    if pointmap_cfg is not None:
+        h, w = pointmap_cfg.image_size
+        num_depth_tokens = (h // pointmap_cfg.patch_size) * (w // pointmap_cfg.patch_size)
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
@@ -1365,6 +1397,7 @@ def make_molmoact2_pre_post_processors(
             history_stride_seconds=config.history_stride_seconds,
             rgb_dropout=rgb_dropout,
             rgb_dropout_key=rgb_dropout_key,
+            num_depth_tokens=num_depth_tokens,
         ),
         DeviceProcessorStep(device=config.device),
     ]

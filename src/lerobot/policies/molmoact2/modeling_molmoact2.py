@@ -23,13 +23,6 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
 from ..depth_pointmap.modeling_pointmap import DepthPointmapEncoder
-from ..depth_pointmap.modeling_stream import (
-    DepthStream,
-    depth_attention_mass,
-    gather_kv_at_indices,
-    join_depth_columns,
-    wrist_cam_token_indices,
-)
 from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
 
@@ -235,7 +228,9 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
         image_features = None
         state_history = getattr(self, "_lerobot_state_history", None)
         self._lerobot_state_history = None  # consume-once, like the vision stash
-        if images is not None or state_history is not None:
+        depth = getattr(self, "_lerobot_depth", None)
+        self._lerobot_depth = None  # consume-once, like the vision stash
+        if images is not None or state_history is not None or depth is not None:
             flat_x = x.reshape(-1, x.shape[-1]).clone()
             if images is not None:
                 image_features = self.vision_backbone(images, token_pooling).to(x.device)
@@ -259,6 +254,20 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
                         f"State-history placeholders per sample must be 0 or {t_h}, got {counts.tolist()}."
                     )
                 flat_x[is_state.reshape(-1)] += embeds.to(flat_x.dtype)[counts > 0].reshape(-1, embeds.shape[-1])
+            if depth is not None:
+                # Point-map depth tokens ADDED onto the DEPTH_TOKEN placeholders, mirroring
+                # the image-patch scatter. Unlike state history the clause is never dropped
+                # (modality dropout swaps the encoder's null bank instead), so every sample
+                # carries exactly N placeholders.
+                embeds, token_id = depth  # (B, N, D), int
+                is_depth = input_ids == token_id
+                counts = is_depth.sum(dim=1)
+                n_depth = int(embeds.shape[1])
+                if not bool((counts == n_depth).all()):
+                    raise RuntimeError(
+                        f"Expected {n_depth} depth placeholders per sample, got {counts.tolist()}."
+                    )
+                flat_x[is_depth.reshape(-1)] += embeds.to(flat_x.dtype).reshape(-1, embeds.shape[-1])
             x = flat_x.reshape_as(x)
 
         x = self.transformer.emb_drop(x)
@@ -266,6 +275,15 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
 
     backbone.build_input_embeddings = types.MethodType(_build_input_embeddings, backbone)
     backbone._lerobot_leaf_safe_input_embedding_update_patched = True
+
+
+def _token_embedding_rms(backbone: Any) -> float:
+    """RMS of the LLM's token-embedding table — the scale non-text tokens are matched to
+    before being added onto placeholder positions. Read the Parameter directly:
+    MolmoAct2Embedding splits the table into embedding/new_embedding and exposes no
+    .weight."""
+    table = backbone.transformer.wte.embedding
+    return float(table.detach().float().pow(2).mean().sqrt())
 
 
 def _sinusoidal_seconds_embedding(times: Tensor, dim: int) -> Tensor:
@@ -316,21 +334,28 @@ def drain_pointmap_mass_records() -> list[float]:
 
 
 def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tensor | None) -> Tensor:
-    """One MEM temporal resblock (04_memory.md §2.4): same weights as the spatial
-    block, extended key set in ONE softmax. For the query at patch i of frame t:
-    keys = all patches of frame t (spatial) + patch i of strictly older frames
-    (causal). e(t) is added at the layer input (paper eq.; accumulates in the
-    residual stream). history_on masks a sample's temporal keys entirely
-    (history dropout → the sample computes the exact K=1 pretrained op).
+    """One MEM temporal resblock: space-time SEPARABLE attention.
+
+    MEM Appendix C (arXiv 2603.03596 p. 15) names two attention mechanisms — space-only
+    and time-only — and every 4th layer applies both, each with its own softmax. The
+    time-only step runs first, over the query patch's own position across timesteps, as
+    in the TimeSformer "T+S" block this design descends from (arXiv 2102.05095). The
+    layer's ordinary spatial block then runs untouched, so the spatial half stays exactly
+    the pretrained op.
+
+    The temporal softmax normalises over the K timesteps alone. That is the whole point:
+    when temporal and spatial keys shared one denominator (our implementation until
+    2026-08-03) the past held T/(n+T) = 0.7% of the attention budget instead of
+    (K-1)/K = 83%, which starved the forward contribution *and* the gradient reaching
+    the temporal logits — see pi07_wiki/mem_temporal_attention_analysis.md.
+
+    e(t) is added at the layer input (paper eq.; accumulates in the residual stream).
+    The step reuses the block's own norm and projections, so it adds no parameters.
+    history_on=False keeps only the query's own timestep — "no history visible", and
+    deliberately NOT bit-identical to the pretrained K=1 op (decided 2026-08-03).
 
     x: (BC, T, n, D) frames oldest → newest (current last); e_t: (T, D);
-    history_on: (BC,) bool or None. Queries loop over frames (peak memory
-    ~n*(n+T) scores per frame instead of a (Tn)^2 union), and each frame's
-    attention is checkpointed on its own: this block already runs inside the
-    per-resblock checkpoint, so during that recompute every frame's (n, n+t) scores
-    would otherwise be live at once — ~584 MiB per sample per temporal layer at 729
-    patches. Holding one frame instead of T costs a second recompute of the six
-    temporal layers and changes no arithmetic.
+    history_on: (BC,) bool or None.
     """
     attn = block.attention
     x = x + e_t.to(x.dtype)[None, :, None, :]
@@ -348,56 +373,47 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
     og_dtype = q.dtype
     if attn.float32_attention:
         q, k = q.to(torch.float32), k.to(torch.float32)
-    dropout_p = attn.attention_dropout if block.training else 0.0
 
-    def frame_out(q_t: Tensor, k: Tensor, v: Tensor, t: int) -> Tensor:
-        scores = torch.einsum("bqhd,bkhd->bhqk", q_t, k[:, t])  # (BC, H, n, n)
-        if t > 0:
-            temporal = torch.einsum("bnhd,bsnhd->bhns", q_t, k[:, :t])  # (BC, H, n, t)
-            if history_on is not None:
-                temporal = temporal.masked_fill(
-                    ~history_on.view(bc, 1, 1, 1), torch.finfo(temporal.dtype).min
-                )
-            scores = torch.cat([scores, temporal], dim=-1)
-        weights = F.softmax(scores, dim=-1, dtype=torch.float32)
-        if _MEM_TEMPORAL_CAPTURE["enabled"] and t == num_frames - 1 and t > 0:
-            # past: (batch*cameras, heads, query patches, history ages), oldest→newest.
-            # These reductions retain the dimensions needed to answer whether the
-            # model reads particular moments/heads/regions rather than merely proving
-            # that a nonzero mean exists.
-            past = weights[..., n:]
-            _MEM_TEMPORAL_CAPTURE["records"].append(
-                {
-                    "mean": past.sum(dim=-1).mean().detach(),
-                    "by_bc_head_age": past.mean(dim=2).detach(),
-                    "by_bc_patch": past.sum(dim=-1).mean(dim=1).detach(),
-                }
-            )
-        weights = F.dropout(weights, p=dropout_p, training=block.training).to(v.dtype)
-        out_t = torch.einsum("bhqk,bkhd->bqhd", weights[..., :n], v[:, t])
-        if t > 0:
-            out_t = out_t + torch.einsum("bhns,bsnhd->bnhd", weights[..., n:], v[:, :t])
-        return out_t
+    # (BC, H, n, query frame, key frame) — the patch against ITSELF at other times. The
+    # score tensor is K^2 per patch, so unlike the old union form it needs no per-frame
+    # loop or inner checkpoint to stay within memory.
+    scores = torch.einsum("bqnhd,bknhd->bhnqk", q / math.sqrt(head_dim), k)
+    causal = torch.ones(num_frames, num_frames, dtype=torch.bool, device=x.device).tril()
+    if history_on is None:
+        keep = causal.expand(bc, num_frames, num_frames)
+    else:
+        # Self-only rather than nothing: masking every temporal key would leave an
+        # all -inf row and a NaN, where the old union form fell back to spatial keys.
+        keep = torch.where(
+            history_on.view(bc, 1, 1),
+            causal,
+            torch.eye(num_frames, dtype=torch.bool, device=x.device),
+        )
+    scores = scores.masked_fill(~keep[:, None, None], torch.finfo(scores.dtype).min)
+    weights = F.softmax(scores, dim=-1, dtype=torch.float32)
 
-    # Capture appends to a module-global list, so it must not run twice per frame.
-    use_checkpoint = (
-        block.training and torch.is_grad_enabled() and not _MEM_TEMPORAL_CAPTURE["enabled"]
-    )
+    if _MEM_TEMPORAL_CAPTURE["enabled"]:
+        # past: (batch*cameras, heads, query patches, history ages), oldest→newest, for
+        # the current frame's queries — the self column is dropped, so this stays the
+        # mass spent on history and the probe's reductions are unchanged.
+        past = weights[:, :, :, -1, :-1]
+        _MEM_TEMPORAL_CAPTURE["records"].append(
+            {
+                "mean": past.sum(dim=-1).mean().detach(),
+                "by_bc_head_age": past.mean(dim=2).detach(),
+                "by_bc_patch": past.sum(dim=-1).mean(dim=1).detach(),
+            }
+        )
 
-    outs = []
-    for t in range(num_frames):
-        q_t = q[:, t] / math.sqrt(head_dim)  # divide, matching the module's eager path
-        if use_checkpoint:
-            outs.append(
-                torch.utils.checkpoint.checkpoint(frame_out, q_t, k, v, t, use_reentrant=False)
-            )
-        else:
-            outs.append(frame_out(q_t, k, v, t))
-
-    out = torch.stack(outs, dim=1).to(og_dtype).reshape(bc, num_frames, n, heads * head_dim)
+    weights = F.dropout(
+        weights, p=attn.attention_dropout if block.training else 0.0, training=block.training
+    ).to(v.dtype)
+    out = torch.einsum("bhnqk,bknhd->bqnhd", weights, v)
+    out = out.to(og_dtype).reshape(bc, num_frames, n, heads * head_dim)
     x = x + attn.residual_dropout(attn.wo(out))
-    x = x + block.feed_forward(block.ffn_norm(x))
-    return x
+
+    # Spatial half: the stock resblock, per frame, byte-identical to the pretrained op.
+    return block(x.reshape(bc * num_frames, n, -1)).view(bc, num_frames, n, -1)
 
 
 def _patch_memory_efficient_vision_backbone(
@@ -421,7 +437,7 @@ def _patch_memory_efficient_vision_backbone(
         """Single-frame path is byte-identical to the pre-MEM encoder. With a stashed
         history (MEM video encoder, 04_memory.md §2.4): past frames ride as extra
         time slices through the shared ViT, every temporal_layer_stride-th resblock
-        runs the union-key temporal attention, and past rows are dropped after the
+        runs the separable temporal attention, and past rows are dropped after the
         last temporal layer — the returned features (and the LLM sequence) keep the
         single-frame shape exactly."""
         history = getattr(self, "_lerobot_history", None)
@@ -866,195 +882,6 @@ def _patch_numpy_dtype_cast(backbone: Any) -> None:
     backbone_module._to_numpy = _to_numpy_patched
 
 
-def _patch_action_expert_pointmap_read(action_expert: Any, depth_stream: Any) -> None:
-    """Teach the action expert the point-map depth read (depth_redesign_options.md §5.2).
-
-    Every block's cross-attention runs ONE joint softmax over context and depth columns:
-
-        out = sdpa(q, [K_ctx ; K_dℓ], [V_ctx ; V_dℓ], mask=[ctx mask ; b_ℓ])
-
-    where (K_dℓ, V_dℓ) are the per-layer co-evolved depth state projected into the action
-    expert's head space and b_ℓ = depth_stream.depth_bias[ℓ] is a learned score bias on
-    the depth columns (init −2: soft start — small initial depth mass without the old
-    extra α multiplier; the α-gated additive read this replaces never trained, see
-    depth_redesign_options.md §2). Abstention needs no sink: context keys are the sink.
-    Single static-shape SDPA ⇒ CUDA-graph friendly.
-
-    The co-evolving ``depth_stream`` is captured by closure (not attached to the expert, so
-    it is registered once on the policy). Inference handoff: the policy sets
-    ``action_expert._lerobot_pointmap = (init_tokens_f32, wrist_sel)`` once per control step;
-    the patched prepare_context slices the wrist-cam KV from the prefix, runs the stream, and
-    attaches the per-layer depth K/V + depth_bias to the context. The training loop runs the
-    stream block-by-block itself and passes ``depth_kv`` / ``depth_bias`` directly. All
-    patched methods keep their original behaviour when no depth context exists.
-    """
-    if getattr(action_expert, "_lerobot_pointmap_read_patched", False):
-        return
-    import sys
-
-    modulate = sys.modules[type(action_expert).__module__]._modulate
-
-    def cross_attn_forward(self, x, *, kv_k, kv_v, attn_mask=None, depth_kv=None, depth_bias=None):
-        bsz, tgt_len, _ = x.shape
-        q = self.q_proj(x).view(bsz, tgt_len, self.num_heads, self.head_dim)
-        k = self._as_heads(kv_k)
-        v = self._as_heads(kv_v)
-        q = q.transpose(1, 2)
-        if self.q_norm is not None:
-            q = self.q_norm(q)
-        q = q.transpose(1, 2)  # (B, Tq, H, Dh)
-        if depth_kv is not None:
-            # Joint softmax (depth_redesign_options.md §5.2): the depth tokens are extra
-            # columns of the SAME softmax, with the learned per-layer bias b_ℓ on their
-            # scores. Replaces the retired α-gated additive read.
-            k, v, attn_mask = join_depth_columns(
-                attn_mask, k=k, v=v, depth_kv=depth_kv, depth_bias=depth_bias
-            )
-            if _POINTMAP_MASS_CAPTURE["enabled"]:
-                _POINTMAP_MASS_CAPTURE["records"].append(
-                    depth_attention_mass(q, k, attn_mask, num_depth=depth_kv[0].shape[1])
-                )
-        out = self._attention(q, k, v, attn_mask=attn_mask)
-        out = out.reshape(bsz, tgt_len, self.hidden_size)
-        return self.out_drop(self.out_proj(out))
-
-    def block_forward(
-        self,
-        x,
-        conditioning,
-        *,
-        cross_kv,
-        self_attn_mask=None,
-        attn_mask=None,
-        is_causal=False,
-        modulation=None,
-        rope_cache=None,
-        depth_kv=None,
-        depth_bias=None,
-    ):
-        if modulation is None:
-            modulation = self.modulation(conditioning).chunk(9, dim=1)
-        (
-            shift_msa,
-            scale_msa,
-            gate_msa,
-            shift_mca,
-            scale_mca,
-            gate_mca,
-            shift_mlp,
-            scale_mlp,
-            gate_mlp,
-        ) = modulation
-        x = x + gate_msa.unsqueeze(1) * self.self_attn(
-            modulate(self.self_norm(x), shift_msa, scale_msa),
-            attn_mask=self_attn_mask,
-            is_causal=is_causal,
-            rope_cache=rope_cache,
-        )
-        x = x + gate_mca.unsqueeze(1) * self.cross_attn(
-            modulate(self.cross_norm(x), shift_mca, scale_mca),
-            kv_k=cross_kv[0],
-            kv_v=cross_kv[1],
-            attn_mask=attn_mask,
-            depth_kv=depth_kv,
-            depth_bias=depth_bias,
-        )
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.ff_norm(x), shift_mlp, scale_mlp))
-        return x
-
-    original_prepare_context = action_expert.prepare_context
-
-    def prepare_context(self, **kwargs):
-        context = original_prepare_context(**kwargs)
-        handoff = getattr(self, "_lerobot_pointmap", None)
-        if handoff is not None:
-            init_tokens, wrist_sel = handoff
-            dtype = kwargs["dtype"]
-            encoder_kv_states = kwargs["encoder_kv_states"]
-            # Wrist-bridge switch from the attention mask (RGB dropout masks the wrist
-            # span; this direct gather bypasses attention masks). All-on at inference.
-            encoder_attention_mask = kwargs.get("encoder_attention_mask")
-            bridge_on = None
-            if encoder_attention_mask is not None:
-                bridge_on = torch.gather(
-                    encoder_attention_mask.to(torch.bool), 1, wrist_sel
-                ).any(dim=1)
-            device_type = init_tokens.device.type
-            with torch.autocast(device_type=device_type, enabled=False):
-                wrist_keys, wrist_values = [], []
-                for k_in, v_in in encoder_kv_states:
-                    wk, wv = gather_kv_at_indices(k_in.float(), v_in.float(), wrist_sel)
-                    wrist_keys.append(wk)
-                    wrist_values.append(wv)
-                states = depth_stream(
-                    init_tokens.float(), wrist_keys, wrist_values, cross_on=bridge_on
-                )
-                read_kv = [depth_stream.read_kv(state) for state in states]
-            depth_keys, depth_values = [], []
-            for block, (k_d, v_d) in zip(self.blocks, read_kv, strict=True):
-                k_d = k_d.to(dtype=dtype)
-                v_d = v_d.to(dtype=dtype)
-                if block.cross_attn.k_norm is not None:
-                    k_d = block.cross_attn.k_norm(k_d.transpose(1, 2)).transpose(1, 2)
-                depth_keys.append(k_d)
-                depth_values.append(v_d)
-            context.depth_keys = depth_keys
-            context.depth_values = depth_values
-            context.depth_bias = depth_stream.depth_bias.to(dtype=dtype)  # (L,)
-        return context
-
-    def forward_with_context(self, actions, timesteps, *, context, modulation=None):
-        bsz, seq_len, _ = actions.shape
-        if seq_len > self.config.max_action_horizon:
-            raise ValueError(
-                f"Action sequence length {seq_len} exceeds configured "
-                f"max_action_horizon={self.config.max_action_horizon}"
-            )
-        if modulation is None:
-            conditioning = self._time_conditioning(timesteps)
-            block_modulations = [None] * len(self.blocks)
-            final_modulation = None
-        else:
-            conditioning = modulation.conditioning
-            block_modulations = modulation.block_modulations
-            final_modulation = modulation.final_modulation
-        depth_keys = getattr(context, "depth_keys", None)
-        depth_values = getattr(context, "depth_values", None)
-        depth_bias = getattr(context, "depth_bias", None)  # (L,)
-        x = self.action_embed(actions)
-        if context.valid_action is not None:
-            x = x * context.valid_action
-        for idx, (block, kv_context, block_modulation) in enumerate(
-            zip(self.blocks, context.kv_contexts, block_modulations, strict=True)
-        ):
-            x = block(
-                x,
-                conditioning,
-                cross_kv=kv_context,
-                self_attn_mask=context.self_mask,
-                attn_mask=context.cross_mask,
-                is_causal=self.config.causal_attn,
-                modulation=block_modulation,
-                rope_cache=context.rope_cache,
-                depth_kv=None if depth_keys is None else (depth_keys[idx], depth_values[idx]),
-                depth_bias=None if depth_bias is None else depth_bias[idx],
-            )
-            if context.valid_action is not None:
-                x = x * context.valid_action
-        out = self.final_layer(x, conditioning, modulation=final_modulation)
-        if context.valid_action is not None:
-            out = out * context.valid_action
-        return out
-
-    for block in action_expert.blocks:
-        block.forward = types.MethodType(block_forward, block)
-        block.cross_attn.forward = types.MethodType(cross_attn_forward, block.cross_attn)
-    action_expert.prepare_context = types.MethodType(prepare_context, action_expert)
-    action_expert.forward_with_context = types.MethodType(forward_with_context, action_expert)
-    action_expert._lerobot_pointmap = None
-    action_expert._lerobot_pointmap_read_patched = True
-
-
 class MolmoAct2Policy(PreTrainedPolicy):
     config_class = MolmoAct2Config
     name = "molmoact2"
@@ -1203,38 +1030,37 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
 
-        # Point-map depth read (fresh float32 modules; memory cast to the model dtype at
-        # the read boundary). When pointmap_config is set, point-map tokens co-evolve
-        # through a DepthStream and enter the action expert as extra columns in its
-        # context softmax with a learned per-layer bias (depth_pointmap_design.md §B.3).
-        # Patching is a no-op until a depth context is actually passed.
+        # Point-map depth (fresh float32 modules; tokens cast to the model dtype at the
+        # scatter). Depth enters the VLM PREFIX: the encoder emits N tokens, depth_adapter
+        # lifts them to the text-embedding width, and build_input_embeddings adds them onto
+        # the DEPTH_TOKEN placeholders — the same seam as state history, and the same seam
+        # the pretrained trunk already uses for image patches. No separate depth tower.
         self.pointmap_encoder: DepthPointmapEncoder | None = None
-        self.depth_stream: DepthStream | None = None
+        self.depth_adapter: nn.Sequential | None = None
         if self.config.pointmap_config is not None:
             pm_config = self.config.pointmap_config
-            action_expert = self._action_expert()
             device = next(self.model.parameters()).device
-            num_layers = len(action_expert.blocks)
-            stream_layers = pm_config.stream_layers or num_layers
-            if stream_layers != num_layers:
-                raise ValueError(
-                    f"pointmap stream_layers={stream_layers} must equal the action expert layer "
-                    f"count {num_layers} (the action expert reads one depth state per layer)."
-                )
-            cross_attn = action_expert.blocks[0].cross_attn
+            d_text = int(self._hf_model().config.text_config.hidden_size)
             self.pointmap_encoder = DepthPointmapEncoder(
                 pm_config,
-                d_mem=pm_config.stream_width,
+                d_mem=pm_config.token_width,
                 gradient_checkpointing=bool(self.config.gradient_checkpointing),
             ).to(device=device, dtype=torch.float32)
-            self.depth_stream = DepthStream(
-                pm_config,
-                d_vlm=int(action_expert.llm_kv_dim),
-                num_action_heads=cross_attn.num_heads,
-                action_head_dim=cross_attn.head_dim,
-                num_layers=num_layers,
+            self.depth_adapter = nn.Sequential(
+                nn.LayerNorm(pm_config.token_width),
+                nn.Linear(pm_config.token_width, d_text),
+                nn.LayerNorm(d_text),
             ).to(device=device, dtype=torch.float32)
-            _patch_action_expert_pointmap_read(action_expert, self.depth_stream)
+            # Emit at the scale of the token-embedding table these tokens are added onto.
+            # Too loud perturbs the pretrained trunk; too quiet and the trunk ignores the
+            # span and the adapter has no reason to leave that basin. Learnable per-dim.
+            self._depth_embed_rms = _token_embedding_rms(self._backbone())
+            with torch.no_grad():
+                self.depth_adapter[-1].weight.fill_(self._depth_embed_rms)
+            # Telemetry handle: 0-dim tensor written by _stash_depth_inputs, read (and
+            # host-synced) by the trainer only on capture steps. Ratio against
+            # _depth_embed_rms is the "is the adapter opting out?" signal.
+            self._depth_token_rms: Tensor | None = None
 
         # Continuous state-history tokens (04_memory.md §2.4): one shared linear
         # projecting a past proprio state into the text embedding space, scattered
@@ -1341,7 +1167,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         for name, param in self.named_parameters():
             param.requires_grad = any(
                 key in name
-                for key in ("action_expert", "pointmap_encoder", "depth_stream")
+                for key in ("action_expert", "pointmap_encoder", "depth_adapter")
             )
             if param.requires_grad:
                 trainable_params += param.numel()
@@ -1402,7 +1228,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
-            if any(key in name for key in ("pointmap_encoder", "depth_stream")):
+            if any(key in name for key in ("pointmap_encoder", "depth_adapter")):
                 depth_params.append(param)
             elif "action_expert" in name:
                 action_expert_params.append(param)
@@ -1435,6 +1261,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def _model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         self._stash_history_inputs(batch)
+        self._stash_depth_inputs(batch)
         compute_dtype = _torch_dtype(self.config.dtype)
         return {
             key: value.to(dtype=compute_dtype) if value.is_floating_point() else value
@@ -1477,6 +1304,34 @@ class MolmoAct2Policy(PreTrainedPolicy):
             )
             backbone._lerobot_state_history = (embeds, int(batch["state_history_token_id"]))
 
+    def _stash_depth_inputs(self, batch: dict[str, Tensor]) -> None:
+        """Point-map depth transport. The encoder + adapter run HERE, once per forward, and
+        the tokens are stashed on the backbone for build_input_embeddings to add onto the
+        DEPTH_TOKEN placeholders. Consume-once, like the vision and state stashes; every
+        forward path funnels through _model_inputs, so a stash never crosses forwards.
+
+        Runs on every path including discrete: depth is in the prefix, so it reaches the
+        FAST-token logits and the flow expert alike (the expert reads the LLM's KV)."""
+        backbone = self._backbone()
+        if self.pointmap_encoder is None:
+            backbone._lerobot_depth = None
+            return
+
+        token_id = batch.get("depth_token_id")
+        if token_id is None:
+            # The subtask-generation prompt (_pack_subtask_generation) carries no depth
+            # clause and so no placeholders — that forward is legitimately depth-free.
+            # Scattering here would fail the placeholder count check instead.
+            backbone._lerobot_depth = None
+            return
+        device = next(self.model.parameters()).device
+        tokens = self.pointmap_encoder.memory_from_batch(
+            batch, batch_size=int(batch["input_ids"].shape[0]), device=device
+        )
+        adapted = self.depth_adapter(tokens)
+        # Kept on-device (no .item(), no sync); the trainer converts on capture steps.
+        self._depth_token_rms = adapted.detach().float().pow(2).mean().sqrt()
+        backbone._lerobot_depth = (adapted, int(token_id))
 
     def _run_prefix_backbone(self, model_inputs: dict[str, Tensor]) -> Any:
         """Run the prefix backbone forward (``use_cache``); ``outputs`` carries past_key_values."""
@@ -1904,36 +1759,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
         xt_flat = xt.reshape(batch_size * num_flow_timesteps, actions.shape[1], actions.shape[2])
         timesteps_flat = timesteps.reshape(batch_size * num_flow_timesteps)
 
-        # Point-map MoT depth stream: encode initial tokens (B, N, d_d) once, then evolve
-        # one DepthStream block per layer inside run_layer (slicing that layer's wrist-cam
-        # KV). depth_state threads through the layer loop at batch B (observation-only);
-        # per-layer read K/V are expanded to the flow-timestep batch at the read site.
-        depth_state = depth_wrist_sel = None
-        if self.pointmap_encoder is not None:
-            init_tokens = self.pointmap_encoder.memory_from_batch(
-                batch, batch_size=batch_size, device=device
-            )
-            depth_state = init_tokens.to(dtype=torch.float32)  # stream runs in float32
-            image_patch_id, num_images, cam_index = self._pointmap_wrist_meta()
-            depth_wrist_sel = wrist_cam_token_indices(
-                model_inputs["input_ids"],
-                image_patch_id=image_patch_id,
-                num_images=num_images,
-                cam_index=cam_index,
-            )
-            # Wrist-bridge switch (B,): False where RGB dropout masked the wrist span —
-            # the stream's direct K/V gather bypasses attention masks, so it must be
-            # killed here from the same mask (single source of truth).
-            depth_bridge_on = None
-            train_attention_mask = model_inputs.get("attention_mask")
-            if train_attention_mask is not None:
-                depth_bridge_on = torch.gather(
-                    train_attention_mask.to(torch.bool), 1, depth_wrist_sel
-                ).any(dim=1)
-            # NOTE: the per-layer depth_bias b_ℓ is read INSIDE run_layer (below) straight
-            # off the parameter, not precomputed here — under gradient checkpointing a
-            # non-leaf intermediate captured by closure can lose its gradient path (see
-            # depth_pointmap_gate_gradient.md for the α-era incident).
+        # Depth needs nothing here: the encoder + adapter already ran in _model_inputs and
+        # the tokens are in the VLM prefix, so the expert reads them through the ordinary
+        # context K/V like any other prompt token.
 
         hidden_states, causal_mask_mapping, position_ids, cache_position = (
             self._prepare_joint_training_backbone_inputs(model_inputs)
@@ -2009,8 +1837,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             layer_idx: int,
             layer_hidden: Tensor,
             layer_action_hidden: Tensor,
-            layer_depth_state: Tensor | None,
-        ) -> tuple[Tensor, Tensor, Tensor | None]:
+        ) -> tuple[Tensor, Tensor]:
             decoder_block = transformer.blocks[layer_idx]
             action_block = action_expert.blocks[layer_idx]
             if transformer.config.rope_scaling_layers is not None:
@@ -2063,30 +1890,6 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 k_ctx = self._expand_mask(k_ctx, num_flow_timesteps)
                 v_ctx = self._expand_mask(v_ctx, num_flow_timesteps)
 
-            # Depth read kwargs exist only on the patched block forward (pointmap_config set).
-            depth_kwargs: dict[str, Any] = {}
-            next_depth_state = layer_depth_state
-            if self.pointmap_encoder is not None:
-                # Evolve one DepthStream block (float32) using this layer's wrist-cam KV,
-                # then project the new state into the action expert's head space.
-                wk, wv = gather_kv_at_indices(key_states, value_states, depth_wrist_sel)
-                with torch.autocast(device_type=device.type, enabled=False):
-                    next_depth_state = self.depth_stream.blocks[layer_idx](
-                        layer_depth_state, wk.float(), wv.float(), cross_on=depth_bridge_on
-                    )
-                    k_d, v_d = self.depth_stream.read_kv(next_depth_state)
-                k_d = k_d.to(dtype=layer_action_hidden.dtype)
-                v_d = v_d.to(dtype=layer_action_hidden.dtype)
-                dk_norm = action_block.cross_attn.k_norm
-                if dk_norm is not None:
-                    k_d = dk_norm(k_d.transpose(1, 2)).transpose(1, 2)
-                if num_flow_timesteps != 1:
-                    k_d = self._expand_mask(k_d, num_flow_timesteps)
-                    v_d = self._expand_mask(v_d, num_flow_timesteps)
-                depth_kwargs = {
-                    "depth_kv": (k_d, v_d),
-                    "depth_bias": self.depth_stream.depth_bias[layer_idx],
-                }
             next_action_hidden = action_block(
                 layer_action_hidden,
                 conditioning,
@@ -2096,29 +1899,26 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 is_causal=action_expert.config.causal_attn,
                 modulation=None,
                 rope_cache=rope_cache,
-                **depth_kwargs,
             )
             if valid_action is not None:
                 next_action_hidden = next_action_hidden * valid_action
-            return next_hidden, next_action_hidden, next_depth_state
+            return next_hidden, next_action_hidden
 
         for layer_idx in range(int(transformer.config.num_hidden_layers)):
             if use_gradient_checkpointing:
-                hidden_states, action_hidden, depth_state = torch.utils.checkpoint.checkpoint(
-                    lambda layer_hidden, layer_action_hidden, layer_depth_state, idx=layer_idx: run_layer(
+                hidden_states, action_hidden = torch.utils.checkpoint.checkpoint(
+                    lambda layer_hidden, layer_action_hidden, idx=layer_idx: run_layer(
                         idx,
                         layer_hidden,
                         layer_action_hidden,
-                        layer_depth_state,
                     ),
                     hidden_states,
                     action_hidden,
-                    depth_state,
                     use_reentrant=False,
                 )
             else:
-                hidden_states, action_hidden, depth_state = run_layer(
-                    layer_idx, hidden_states, action_hidden, depth_state
+                hidden_states, action_hidden = run_layer(
+                    layer_idx, hidden_states, action_hidden
                 )
 
         hidden_states = transformer.ln_f(hidden_states)
@@ -2747,23 +2547,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             else nullcontext()
         )
         with autocast_context:
-            # Depth handoff: encode once per control step (§6.2) and hand off to the patched
-            # action expert; both continuous paths reach it through prepare_context. The
-            # discrete path never runs the expert, so depth structurally cannot enter it.
-            if self.pointmap_encoder is not None and inference_action_mode != "discrete":
-                # Hand off the encoder's initial tokens + the wrist-cam token positions; the
-                # patched prepare_context slices that camera's per-layer KV and runs the stream.
-                init_tokens = self.pointmap_encoder.memory_from_batch(
-                    batch, batch_size=batch_size, device=device
-                )
-                image_patch_id, num_images, cam_index = self._pointmap_wrist_meta()
-                wrist_sel = wrist_cam_token_indices(
-                    model_inputs["input_ids"],
-                    image_patch_id=image_patch_id,
-                    num_images=num_images,
-                    cam_index=cam_index,
-                )
-                self._action_expert()._lerobot_pointmap = (init_tokens.to(dtype=torch.float32), wrist_sel)
+            # Depth needs no handoff here: _model_inputs already ran the encoder + adapter
+            # and the tokens are in the prefix, so BOTH the discrete and continuous paths
+            # see them (the old stream could only ever reach the expert).
             if inference_action_mode == "discrete":
                 if self._rtc_enabled():
                     raise ValueError("RTC is only supported for continuous MolmoAct2 inference.")

@@ -23,6 +23,7 @@ MOLMOACT2_FIXED_PROMPT_TOKEN_BUDGET = 80
 MOLMOACT2_TASK_TOKEN_BUDGET = 32
 MOLMOACT2_SEQUENCE_LENGTH_MARGIN = 32
 MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET = 16
+MOLMOACT2_DEPTH_CLAUSE_TOKEN_BUDGET = 16
 MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE = 64
 MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS = 4
 MOLMOACT2_MIN_DISCRETE_ACTION_TOKENS_PER_STEP = 6
@@ -62,6 +63,7 @@ def infer_molmoact2_max_sequence_length(
     action_horizon: int,
     include_discrete_action: bool,
     history_num_samples: int = 0,
+    num_depth_tokens: int = 0,
 ) -> int:
     """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout."""
     if num_images < 1:
@@ -84,6 +86,11 @@ def infer_molmoact2_max_sequence_length(
         # Short-term memory clause: a fixed text lead-in plus one continuous
         # placeholder position per past state (pi07_wiki/04_memory.md §2.4).
         prompt_tokens += history_num_samples + MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET
+    if num_depth_tokens > 0:
+        # Point-map depth clause: a fixed text lead-in plus one DEPTH_TOKEN placeholder
+        # per depth token. Unlike the history clause this is never dropped — the encoder
+        # emits its null bank instead — so the budget always carries it.
+        prompt_tokens += num_depth_tokens + MOLMOACT2_DEPTH_CLAUSE_TOKEN_BUDGET
     action_tokens = 0
     if include_discrete_action:
         action_tokens_per_step = max(
@@ -138,11 +145,13 @@ class MolmoAct2Config(PreTrainedConfig):
     history_stride_seconds: float = 1.0
 
     # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
-    # None => depth-free: no encoder built, no depth key shipped, forward cost
-    # unchanged. When set, the DepthPointmapEncoder tokenizes the wrist depth and a
-    # co-evolving DepthStream adds depth columns to the action expert's context
-    # softmax with a learned per-layer bias (depth_pointmap_design.md §B.3); the VLM
-    # prefix is untouched.
+    # None => depth-free: no encoder built, no depth key shipped, prompt is
+    # byte-identical to the legacy one, forward cost unchanged. When set, the
+    # DepthPointmapEncoder tokenizes the wrist depth, depth_adapter lifts the tokens to
+    # the text-embedding width, and they enter the VLM PREFIX on DEPTH_TOKEN
+    # placeholders — so they reach the FAST-token head and the flow expert alike. Costs
+    # num_depth_tokens extra sequence positions on every sample; the budget in
+    # infer_molmoact2_max_sequence_length accounts for them.
     pointmap_config: DepthPointmapConfig | None = None
     normalize_language: bool = True
     normalize_gripper: bool = False
@@ -307,12 +316,20 @@ class MolmoAct2Config(PreTrainedConfig):
         if include_discrete_action is None:
             include_discrete_action = self.action_mode in {"discrete", "both"}
 
+        num_depth_tokens = 0
+        if self.pointmap_config is not None:
+            h, w = self.pointmap_config.image_size
+            num_depth_tokens = (h // self.pointmap_config.patch_size) * (
+                w // self.pointmap_config.patch_size
+            )
+
         return infer_molmoact2_max_sequence_length(
             num_images=int(num_images),
             state_dim=int(state_dim),
             action_dim=int(action_dim),
             action_horizon=int(action_horizon),
             include_discrete_action=bool(include_discrete_action),
+            num_depth_tokens=num_depth_tokens,
         )
 
     @property

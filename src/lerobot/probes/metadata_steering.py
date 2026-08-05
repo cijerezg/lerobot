@@ -41,7 +41,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from lerobot.probes.manifest import Metric, Panel, write_index
+from lerobot.probes.manifest import Panel, write_index
 from lerobot.probes.utils import (
     frame_metadata_lookup,
     joint_names_for_dim,
@@ -268,31 +268,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         claim="Does the quality / mistake clause reach the actions, or is it decorative?",
         summary=summary,
         see_also=["subtask_sweep", "mem_history_influence"],
-        metrics=[
-            Metric(
-                "good_vs_bad_rmse", "Steering range (good vs bad)", good="high", fmt=4, primary=True,
-                note=(
-                    "Compare against the flow-noise floor from Subtask Sweep before believing a "
-                    "small non-zero value."
-                ),
-                refs=["subtask_sweep"],
-            ),
-            Metric("good_vs_bad_maxabs", "Steering range, max |Δ|", good="high", fmt=4),
-            Metric(
-                "gt_gt_mse_improvement", "Usefulness of GT labels", good="high", fmt=4, baseline=0.0, primary=True,
-                note="Negative means conditioning on what actually happened made the prediction worse.",
-            ),
-            Metric("good_gt_mse_improvement", "Usefulness of quality-5 / no-mistake",
-                   good="high", fmt=4, baseline=0.0, primary=True),
-            Metric(
-                "n_frames_gt_mistake", "Frames flagged as mistakes", good="none", fmt=0, primary=True,
-                note=(
-                    "Zero here empties the only split where 'good' and 'gt' disagree by "
-                    "construction, so the mistake-split numbers below it mean nothing."
-                ),
-            ),
-            Metric("n_frames", "Frames measured", good="none", fmt=0),
-        ],
+        # Every one of these was a bar in metadata_steering.png restated as a number,
+        # and the panel captions already say how to read them. The values stay in
+        # metadata_steering.json.
+        metrics=[],
         panels=[
             Panel(
                 "metadata_steering.png",

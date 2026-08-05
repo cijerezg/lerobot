@@ -222,6 +222,10 @@ def build_figure(records, table_z, fps=30.0):
                 record["gt_ee"],
                 record["sample_ee"][:FLOW_COMPARE_COUNT].reshape(-1, 3),
                 record["start_ee"][None],
+                # The measured arm is drawn but was not part of the extent, so links
+                # reaching behind the commanded poses fell outside the range and were
+                # clipped — the body of the robot went missing.
+                record["anchor_skeleton"],
             ]
         )
         if record.get("fast_ee") is not None:
@@ -295,9 +299,9 @@ def build_figure(records, table_z, fps=30.0):
             bordercolor="#D4D4D8",
             borderwidth=1,
             font=dict(size=10),
-            orientation="h",
+            orientation="v",
             x=0.01,
-            y=0.01,
+            y=0.99,
         ),
         hoverlabel=dict(bgcolor="white", font_size=12),
         sliders=[
