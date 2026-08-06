@@ -173,8 +173,6 @@ def test_clause_order_task_then_memory_then_state():
 
 from lerobot.policies.molmoact2.processor_molmoact2 import (  # noqa: E402
     _build_subtask_generation_text,
-    build_generation_answer,
-    parse_generation_answer,
     snap_to_subtask_vocab,
 )
 
@@ -200,32 +198,12 @@ def test_snap_to_subtask_vocab():
     assert snap_to_subtask_vocab("do a backflip", VOCAB) == -1     # no match
 
 
-# ── MEM summary memory: generation-prompt clause + answer format ─────────────
-
-
-def gen_prompt(**overrides):
-    kwargs = {
-        "task": "fold",
-        "discrete_state_string": "",
-        "num_images": 0,
-    }
-    kwargs.update(overrides)
-    return _build_subtask_generation_text(**kwargs)
-
-
-def test_generation_prompt_memory_clause():
-    assert " Memory: I picked up the truck." in gen_prompt(summary="I picked up the truck.")
-    assert " Memory: none yet." in gen_prompt(summary="")  # empty memory, clause on
-    assert "Memory:" not in gen_prompt()  # feature off / dropout
-
-
-def test_generation_answer_roundtrip():
-    answer = build_generation_answer("grasp the cup", "I picked up the truck.")
-    assert answer == "Memory: I picked up the truck. Subtask: grasp the cup"
-    assert parse_generation_answer(answer) == ("grasp the cup", "I picked up the truck.")
-
-    assert parse_generation_answer(build_generation_answer("grasp the cup", "")) == ("grasp the cup", "")
-
-    # Subtask-only training/decodes carry no memory span.
-    assert build_generation_answer("grasp the cup", None) == "grasp the cup"
-    assert parse_generation_answer("grasp the cup") == ("grasp the cup", None)
+def test_generation_prompt_carries_no_memory_clause():
+    """The summary-memory seam was removed 2026-08-04: the generation prompt
+    conditions on task + state only, and the answer is the bare subtask."""
+    prompt = _build_subtask_generation_text(
+        task="fold",
+        discrete_state_string="joint tokens here",
+        num_images=0,
+    )
+    assert "Memory:" not in prompt

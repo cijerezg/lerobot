@@ -364,8 +364,8 @@ class MolmoAct2Adapter(ProbablePolicy):
         """Pack the batch + timesteps for a flow-loss capture.
 
         The batch carries an ACTION (the flow target), which is what flips
-        ``build_action_labels`` in the pack step and arms subtask/metadata/summary/
-        history/RGB dropout. `suppress_pack_dropout` holds them at zero so the
+        ``build_action_labels`` in the pack step and arms subtask/metadata/history/
+        RGB dropout. `suppress_pack_dropout` holds them at zero so the
         capture sees exactly the prompt and the cameras the caller asked for.
         """
         device = self._device

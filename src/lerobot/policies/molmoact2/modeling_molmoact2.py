@@ -1124,25 +1124,32 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _action_expert(self) -> torch.nn.Module:
         return self._backbone()._require_action_expert()
 
+    def _camera_token_meta(self) -> tuple[int, list[str]]:
+        """(image_patch_id, bare camera names) in the processor's image-token order.
+
+        That order must match the processor's: it uses ``image_keys`` when set, else
+        the cameras ``sorted`` by full key (processor_molmoact2.py `_resolve_image_keys`).
+        We mirror that here — ``image_keys`` is empty when the policy is built from
+        scratch (no dataset metadata), in which case the names come from
+        ``image_features``. Both branches are reduced to bare names: ``image_keys``
+        carries full keys when it comes from dataset metadata, and every caller
+        (pointmap ``depth_key``, ablation labels) names cameras bare.
+        """
+        image_keys = list(self.config.image_keys) or sorted(self.config.image_features)
+        return int(self.model.config.image_patch_id), [key.split(".")[-1] for key in image_keys]
+
     def _pointmap_wrist_meta(self) -> tuple[int, int, int]:
         """(image_patch_id, num_images, cam_index) for slicing the depth camera's tokens.
 
         cam_index is the position of the point-map depth camera in the image-token order.
-        That order must match the processor's: it uses ``image_keys`` when set, else
-        ``sorted`` bare camera names (processor_molmoact2.py `_resolve_image_keys`). We
-        mirror that here — ``image_keys`` is empty when the policy is built from scratch
-        (no dataset metadata), in which case the bare names come from ``image_features``.
         """
         pm_config = self.config.pointmap_config
-        image_keys = list(self.config.image_keys)
-        if not image_keys:
-            image_keys = sorted(key.split(".")[-1] for key in self.config.image_features)
+        image_patch_id, image_keys = self._camera_token_meta()
         if pm_config.depth_key not in image_keys:
             raise ValueError(
                 f"pointmap depth_key={pm_config.depth_key!r} not in image cameras {image_keys}; the "
                 "depth stream attends that camera's RGB tokens, so it must be one of the images."
             )
-        image_patch_id = int(self.model.config.image_patch_id)
         return image_patch_id, len(image_keys), image_keys.index(pm_config.depth_key)
 
     def _enable_gradient_checkpointing(self) -> None:

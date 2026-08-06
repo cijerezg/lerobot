@@ -308,6 +308,39 @@ micro-batch of logged actor updates — the per-layer breakdown is probe-only),
 pairwise action deltas, per-layer mass, and finite-difference input
 sensitivities (depth vs RGB).
 
+### B.3.2 In-training ablation deltas (per modality)
+
+On the first micro-batch of every logged actor update, the trainer runs extra
+no-grad forwards on `PROBE_SAMPLES` (8) rows and reports each modality's
+$\Delta = \mathcal{L}_{\text{ablated}} - \mathcal{L}_{\text{present}}$ against
+one shared present leg: `depth_ablation_delta` (depth observation keys dropped →
+encoder emits its null bank, so `depth_loss_ablated` is logged too — that
+baseline is a trained parameter and moves on its own) and
+`rgb_ablation_delta/<cam>` per camera (that camera's `<im_patch>` span leaves the
+attention mask, via the same `mask_camera_patch_span` train-time RGB dropout
+uses — no re-tokenization, identical token layout across legs). Positive =
+removing it hurts.
+
+Two invariants make the numbers readable:
+
+- **Legs are seeded identically** (`torch.manual_seed` per leg, inside
+  `fork_rng` so the training RNG stream is untouched). Unpaired, each leg draws
+  its own flow noise and timesteps, and that draw dominates the effect being
+  measured — the unpaired depth delta read −0.4992 at step 0.
+- **The present leg restores every `<im_patch>` column** before any ablation
+  (`present_mask[input_ids == image_patch_id] = 1`). Train-time `rgb_dropout` has
+  already masked the depth camera on 75% of rows; under paired seeds those rows
+  are bit-identical across legs and contribute 0, so without the restore the wrist
+  gap rests on the ~2 of 8 rows the draw spared (and on none at all for
+  $0.75^8 \approx 10\%$ of logged steps, which is why step 0 of the first run
+  reported `top` and no `wrist`) while `top` always gets all 8 — exactly the
+  camera-vs-camera bias this metric exists to compare. It also makes the baseline
+  the deployment condition, every camera present, rather than a dropout draw.
+
+Still not comparable across cameras in one respect: the wrist RGB− condition is
+in-distribution (trained by `rgb_dropout`), while a masked top camera is OOD, so
+the top delta carries a shock term.
+
 ### B.4 HISTORICAL — the α-gate soft deadlock (retired 2026-07-26)
 
 The 2026-06→07 read was $o = \mathrm{SDPA}(q, K_{ctx}, V_{ctx}) +

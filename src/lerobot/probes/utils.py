@@ -77,7 +77,6 @@ DEPLOYMENT_METADATA = {"quality": 5, "mistake": False}
 _PACK_DROPOUT_FIELDS = (
     "subtask_dropout",
     "metadata_dropout",
-    "summary_dropout",
     "history_dropout",
     "rgb_dropout",
 )
@@ -87,7 +86,7 @@ _PACK_DROPOUT_FIELDS = (
 def suppress_pack_dropout(preprocessor):
     """Zero the pack step's training-time dropouts for the duration of a probe forward.
 
-    The MolmoAct2 pack step fires subtask/metadata/summary/history/RGB dropout
+    The MolmoAct2 pack step fires subtask/metadata/history/RGB dropout
     whenever the transition carries an ACTION (`build_action_labels`,
     processor_molmoact2.py), which every attention/Jacobian capture does because it
     drives the flow loss. Left on, each probe frame independently loses the wrist

@@ -212,6 +212,61 @@ def test_rgb_dropout_masks_only_that_camera_span():
     assert attention_mask[1].tolist() == [1, 1, 1, 1, 1, 0, 0, 0, 1]
 
 
+def test_probe_present_leg_restores_dropped_camera_spans():
+    """Premise of the trainer's RGB-ablation baseline: re-enabling every <im_patch>
+    column undoes train-time rgb_dropout (those columns are real tokens), so every
+    probe row contributes to every camera's gap. Without it a row the dropout already
+    masked is bit-identical across legs and silently drops out of the wrist mean."""
+    pid = 99
+    input_ids = torch.tensor([[5, 99, 99, 99, 7, 99, 99, 99, 8]] * 3)
+    attention_mask = torch.ones(3, 9, dtype=torch.long)
+    attention_mask[2, 5:8] = 0  # train-time dropout already killed cam1 here
+    attention_mask[:, 8] = 0  # padding stays padding
+
+    present = attention_mask.clone()
+    present[input_ids == pid] = 1
+
+    assert present[2].tolist() == [1, 1, 1, 1, 1, 1, 1, 1, 0]
+    for cam_index in (0, 1):
+        ablated = mask_camera_patch_span(
+            present, input_ids, image_patch_id=pid, num_images=2, cam_index=cam_index
+        )
+        # every row now carries the ablation, including the pre-dropped one
+        assert (ablated != present).any(dim=1).tolist() == [True] * 3
+
+
+def test_camera_token_meta_order_matches_the_processor():
+    """cam_index is positional, so a mismatch silently ablates the wrong camera.
+    Both branches of the resolution (dataset image_keys, or image_features when the
+    policy is built from scratch) must yield the same bare names in the same order,
+    and _pointmap_wrist_meta must agree with them."""
+    import types
+
+    from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+    class Stub:
+        _camera_token_meta = MolmoAct2Policy._camera_token_meta
+        _pointmap_wrist_meta = MolmoAct2Policy._pointmap_wrist_meta
+
+        def __init__(self, image_keys):
+            self.config = types.SimpleNamespace(
+                image_keys=image_keys,
+                # deliberately unsorted: the processor sorts, so we must too
+                image_features={"observation.images.wrist": 1, "observation.images.top": 1},
+                pointmap_config=types.SimpleNamespace(depth_key="wrist"),
+            )
+            self.model = types.SimpleNamespace(config=types.SimpleNamespace(image_patch_id=7))
+
+    from_features = Stub([])
+    from_keys = Stub(["observation.images.top", "observation.images.wrist"])
+
+    assert from_features._camera_token_meta() == (7, ["top", "wrist"])
+    assert from_keys._camera_token_meta() == (7, ["top", "wrist"])
+    # (image_patch_id, num_images, cam_index) — wrist is camera 1 either way
+    assert from_features._pointmap_wrist_meta() == (7, 2, 1)
+    assert from_keys._pointmap_wrist_meta() == (7, 2, 1)
+
+
 def _history_cfg():
     return DepthPointmapConfig(
         image_size=(80, 80), patch_size=40, depth_units_mm=1.0, history_num_samples=2

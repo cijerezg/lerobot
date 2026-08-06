@@ -282,20 +282,16 @@ def _build_subtask_generation_text(
     task: str,
     discrete_state_string: str,
     num_images: int,
-    summary: str | None = None,
 ) -> str:
     """Generation prompt (two-prompt design): same visual/state context as the action
-    prompt, but the question asks for the next step. `summary` is the MEM language
-    memory m_t conditioning the decision (None = clause off, "" = empty memory).
-    The assistant's answer is memory-first: the updated memory, then the subtask
-    (see `parse_generation_answer`); at training time the caller appends it (+eos)
-    and puts CE labels on it."""
+    prompt, but the question asks for the next step. The assistant's answer is the
+    subtask alone; at training time the caller appends it (+eos) and puts CE labels
+    on it."""
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
-    memory_clause = "" if summary is None else f" Memory: {summary or EMPTY_MEMORY_TEXT}"
     prompt = (
-        f"The task is to {task}.{memory_clause}{state_clause} "
+        f"The task is to {task}.{state_clause} "
         f"Given these, what step should the robot perform next?"
     )
     if num_images <= 0:
@@ -305,38 +301,6 @@ def _build_subtask_generation_text(
     else:
         image_prefix = "".join(f"Image {idx + 1}<|image|>" for idx in range(num_images))
     return f"{image_prefix}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-
-
-EMPTY_MEMORY_TEXT = "none yet."
-
-
-def build_generation_answer(subtask: str, summary: str | None) -> str:
-    """Assistant answer for the generation prompt, memory-first: the updated memory is
-    decoded before the subtask so subtask selection conditions on the fresh summary
-    (None = subtask-only training)."""
-    if summary is None:
-        return subtask
-    return f"{generation_answer_memory_prefix(summary)} Subtask: {subtask}"
-
-
-def generation_answer_memory_prefix(summary: str | None) -> str | None:
-    """The "Memory: …" prefix of build_generation_answer; None for subtask-only answers.
-    Used to split the answer-span labels into memory vs subtask tokens."""
-    if summary is None:
-        return None
-    return f"Memory: {summary or EMPTY_MEMORY_TEXT}"
-
-
-def parse_generation_answer(text: str) -> tuple[str, str | None]:
-    """Inverse of build_generation_answer for rollout decodes: returns
-    (subtask_text, summary), summary None when the decode carried no memory span
-    and "" for an empty memory."""
-    if "Subtask:" not in text:
-        return text.strip(), None
-    memory, _, subtask = text.partition("Subtask:")
-    memory = memory.strip()
-    memory = memory.removeprefix("Memory:").strip()
-    return subtask.strip().rstrip("."), "" if memory == EMPTY_MEMORY_TEXT else memory
 
 
 def snap_to_subtask_vocab(text: str, names: list[str]) -> int:
@@ -633,11 +597,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     subtask_names: list[str] = field(default_factory=list)
     subtask_dropout: float = 0.3
     metadata_dropout: float = 0.15
-    # MEM summary memory: text table indexed by the buffer's summary_*_index
-    # columns (synced from summaries.parquet); dropout removes BOTH the prompt's
-    # memory clause and the answer's memory span (subtask-only sample).
-    summary_texts: list[str] = field(default_factory=list)
-    summary_dropout: float = 0.3
     # Short-term memory (04_memory.md §2.4): state history becomes continuous
     # placeholder tokens, image history rides to the MEM video encoder as tensors
     # (complementary keys "history.{OBS_STATE}" / "history.{OBS_IMAGES}.{cam}").
@@ -711,8 +670,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "subtask_names": list(self.subtask_names),
             "subtask_dropout": self.subtask_dropout,
             "metadata_dropout": self.metadata_dropout,
-            "summary_texts": list(self.summary_texts),
-            "summary_dropout": self.summary_dropout,
             "history_dropout": self.history_dropout,
             "history_stride_seconds": self.history_stride_seconds,
             "rgb_dropout": self.rgb_dropout,
@@ -892,7 +849,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         images_by_example = self._extract_images(observation, batch_size)
         tasks = self._extract_tasks(observation, complementary, batch_size)
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
-        prev_summaries, target_summaries = self._extract_summaries(complementary, batch_size)
         history_stack = self._extract_history_image_stack(
             complementary, self._resolve_image_keys(observation), batch_size
         )
@@ -900,18 +856,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         state_np = state.detach().cpu().numpy()
         prompts: list[str] = []
         fulls: list[str] = []
-        mids: list[str] = []  # prompt + memory prefix; splits the answer span into memory/subtask
         flat_images: list[np.ndarray] = []
         history_on = torch.ones(batch_size, dtype=torch.bool)
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
             flat_images.extend(images)
             name = subtask_texts[batch_idx]
-            prev_summary = prev_summaries[batch_idx]
-            target_summary = target_summaries[batch_idx]
-            if name is not None and random.random() < self.summary_dropout:
-                prev_summary = None
-                target_summary = None
             if name is not None and random.random() < self.history_dropout:
                 history_on[batch_idx] = False  # training text only; the encoder sees no history
             prompt = _build_subtask_generation_text(
@@ -920,17 +870,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                     state_np[batch_idx], self.num_state_tokens
                 ),
                 num_images=len(images),
-                summary=prev_summary,
             )
             prompts.append(prompt)
-            if name:
-                answer = build_generation_answer(name, target_summary)
-                fulls.append(f"{prompt}{answer}{self._eos_token}")
-                memory_prefix = generation_answer_memory_prefix(target_summary)
-                mids.append(prompt if memory_prefix is None else f"{prompt}{memory_prefix}")
-            else:
-                fulls.append(prompt)
-                mids.append(prompt)
+            fulls.append(f"{prompt}{name}{self._eos_token}" if name else prompt)
 
         valid = torch.tensor([name is not None for name in subtask_texts])
         build_labels = bool(valid.any())
@@ -948,18 +890,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             )
             full_lengths = inputs["attention_mask"].sum(dim=1)
             prompt_lengths = (prompt_inputs["input_ids"] != pad_id).sum(dim=1)
-            mid_lengths = (
-                prompt_lengths
-                if mids == prompts
-                else (
-                    self.processor(text=mids, images=flat_images, return_tensors="pt", padding=True)[
-                        "input_ids"
-                    ]
-                    != pad_id
-                ).sum(dim=1)
-            )
             labels = torch.full_like(inputs["input_ids"], -100)
-            summary_mask = torch.zeros_like(labels, dtype=torch.bool)
             for batch_idx in range(batch_size):
                 answer_len = int(full_lengths[batch_idx] - prompt_lengths[batch_idx])
                 if not valid[batch_idx] or answer_len <= 0:
@@ -967,11 +898,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 nonpad = inputs["attention_mask"][batch_idx].nonzero().reshape(-1)
                 answer_span = nonpad[-answer_len:]
                 labels[batch_idx, answer_span] = inputs["input_ids"][batch_idx, answer_span]
-                memory_len = int(mid_lengths[batch_idx] - prompt_lengths[batch_idx])
-                if memory_len > 0:
-                    summary_mask[batch_idx, answer_span[:memory_len]] = True
             inputs["labels"] = labels
-            inputs["summary_label_mask"] = summary_mask
         complementary.update(dict(inputs))
         if history_stack is not None:
             frames, times = history_stack
@@ -995,26 +922,6 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if len(flat) == 1:
             flat = flat * batch_size
         return [self.subtask_names[i] if 0 <= i < len(self.subtask_names) else None for i in flat]
-
-    def _extract_summaries(
-        self, complementary: dict, batch_size: int
-    ) -> tuple[list[str | None], list[str | None]]:
-        """(conditioning, target) summary text per sample. Rollout path: "summary"
-        strings (conditioning only, no target). Offline path: summary_prev_index /
-        summary_target_index rendered through summary_texts; -1 = empty memory ("").
-        All-None when summaries aren't wired (subtask-only training)."""
-        texts = complementary.get("summary")
-        if texts is not None:
-            return list(texts), [None] * batch_size
-        prev = complementary.get("summary_prev_index")
-        if prev is None or not self.summary_texts:
-            return [None] * batch_size, [None] * batch_size
-
-        def render(indices) -> list[str]:
-            flat = torch.as_tensor(indices).detach().cpu().reshape(-1).long().tolist()
-            return ["" if i < 0 else self.summary_texts[i] for i in flat]
-
-        return render(prev), render(complementary["summary_target_index"])
 
     def _extract_history_states(self, complementary: dict, batch_size: int) -> Tensor | None:
         """Normalized past states for the short-term history window, read from

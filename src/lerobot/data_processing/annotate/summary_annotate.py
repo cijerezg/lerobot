@@ -12,9 +12,12 @@ strictly what HAS happened plus visible scene facts; never plans or future steps
 Output: meta/summaries.parquet with columns
     episode_index, segment_index, from_index, to_index, summary
 where segment_index is the window index and [from_index, to_index) its global dataset
-index range. At train time a frame inside window k conditions on summaries[k-1] ("" for
-the first window); the hold/update pairing (summary_label_spans) and the memory-first
-decode seam consume these rows unchanged.
+index range.
+
+NOTE: nothing consumes these rows any more. The training-side memory seam (prompt clause,
+memory-first answer span, hold/update pairing, buffer index columns) was removed on
+2026-08-04 — the generation answer is now the subtask alone. This script and any existing
+meta/summaries.parquet are retained so the annotations aren't lost if memory is revisited.
 
 Usage:
     python summary_annotate.py --data-dir /path/to/dataset \

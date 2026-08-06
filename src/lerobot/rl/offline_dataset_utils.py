@@ -180,21 +180,6 @@ def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
         stats[key] = pooled
 
 
-def load_summary_segments(root) -> tuple[list[dict], list[str]]:
-    """Read meta/summaries.parquet (written by summary_annotate.py) into the inputs
-    ReplayBuffer.materialize_summaries expects: segment rows sorted by
-    (episode_index, segment_index) and the summary texts in the same order.
-    Returns ([], []) when the dataset has no summaries."""
-    path = Path(root) / "meta" / "summaries.parquet"
-    if not path.exists():
-        return [], []
-    import pandas as pd
-
-    df = pd.read_parquet(path).sort_values(["episode_index", "segment_index"])
-    segments = df[["episode_index", "segment_index", "from_index", "to_index"]].to_dict("records")
-    return segments, [str(s) for s in df["summary"]]
-
-
 def load_metadata_rows(root) -> tuple[list[dict], list[dict]]:
     """Read meta/episode_metadata.parquet + meta/mistakes.parquet (written by
     metadata_annotate.py) into the inputs ReplayBuffer.materialize_metadata

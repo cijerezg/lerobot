@@ -149,13 +149,43 @@ def _override_action_stats(processors: tuple, action_stats: dict[str, Any]) -> t
     return processors
 
 
+def _sub_batch(batch: dict[str, Any], n: int) -> dict[str, Any]:
+    """First n samples of a packed MolmoAct2 batch.
+
+    Rows keyed by sample slice on n, but the visual tensors are flat over a
+    different axis each: image_grids/image_num_crops over IMAGES, pixel_values over
+    CROPS, image_token_pooling over POOLED PATCHES. Leave those at full batch and
+    build_batched_images counts fewer image-end tokens than image grids and raises.
+    """
+    n_full = int(batch["input_ids"].shape[0])
+    n = min(n, n_full)
+    sliced = {
+        k: (v[:n] if torch.is_tensor(v) and v.ndim >= 1 and v.shape[0] == n_full else v)
+        for k, v in batch.items()
+    }
+    grids = batch.get("image_grids")
+    if not torch.is_tensor(grids):
+        return sliced
+    # Every sample carries the same camera set, so images divide evenly over samples.
+    n_images = int(grids.shape[0]) // n_full * n
+    crops = batch["image_num_crops"][:n_images]
+    sliced["image_grids"] = grids[:n_images]
+    sliced["image_num_crops"] = crops
+    sliced["pixel_values"] = batch["pixel_values"][: int(crops.sum())]
+    # Pooled patches per image = global grid + per-crop grid (build_batched_images §1-1).
+    pooled = grids[:n_images, :2].prod(dim=1).sum() + grids[:n_images, 2:].prod(dim=1).sum()
+    sliced["image_token_pooling"] = batch["image_token_pooling"][: int(pooled)]
+    return sliced
+
+
 class MolmoAct2Trainer(Trainer):
     """Trainer for MolmoAct2RLPolicy. Supports actor-only and critic-trained modes."""
 
-    # Samples used for the depth ablation probe's two extra forwards. Kept small on
-    # purpose: those run the depth encoder's trunk unchunked (see the call site), and
-    # in joint training the optimizer state already owns most of the card.
-    DEPTH_PROBE_SAMPLES = 8
+    # Samples used by the modality ablation probes' extra forwards (one present leg,
+    # one depth-ablated, one per RGB camera). Kept small on purpose: those run the
+    # depth encoder's trunk unchunked (see the call site), and in joint training the
+    # optimizer state already owns most of the card.
+    PROBE_SAMPLES = 8
 
     # Value histograms live inside the distributional critic's support; clip to
     # the configured default so a single outlier doesn't flatten the bin range.
@@ -686,7 +716,6 @@ class MolmoAct2Trainer(Trainer):
             "loss_discrete_ce": 0.0,
             "loss_discrete_z": 0.0,
             "loss_subtask_ce": 0.0,
-            "loss_summary_ce": 0.0,
         }
         actor_loss_list: list[torch.Tensor] = []
         flow_loss_per_sample_list: list[torch.Tensor] = []
@@ -697,14 +726,13 @@ class MolmoAct2Trainer(Trainer):
         discrete_z_loss_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
-        summary_split: dict[str, list[float]] = {}
         depth_on = getattr(policy, "depth_adapter", None) is not None
         optimization_step = kwargs.get("optimization_step")
         log_freq = max(1, int(getattr(cfg, "log_freq", 1)))
         # Callers pass the outer optimization step. Keep the fallback enabled for
         # direct/unit callers that do not, but production training only pays for
-        # depth telemetry on steps whose returned metrics are actually logged.
-        capture_depth_telemetry = (
+        # modality telemetry on steps whose returned metrics are actually logged.
+        capture_modality_telemetry = (
             optimization_step is None or int(optimization_step) % log_freq == 0
         )
 
@@ -770,7 +798,7 @@ class MolmoAct2Trainer(Trainer):
             # another forward with depth removed, which makes the encoder emit its null
             # bank and overwrites the stash — reading after it would report the null
             # bank's amplitude on exactly the steps that get logged.
-            if depth_on and capture_depth_telemetry and accum_idx == 0:
+            if depth_on and capture_modality_telemetry and accum_idx == 0:
                 if policy._depth_token_rms is not None:
                     accum["depth_token_rms_ratio"] = (
                         policy._depth_token_rms.item() / policy._depth_embed_rms
@@ -780,54 +808,99 @@ class MolmoAct2Trainer(Trainer):
             loss_for_backward = loss.mean() if isinstance(loss, torch.Tensor) else torch.as_tensor(loss, device=actions.device)
             (loss_for_backward / grad_accum).backward()
 
-            # Run the ablation probe AFTER backward: it needs nothing from the graph,
+            # Run the ablation probes AFTER backward: they need nothing from the graph,
             # and before the backward the main forward's activations are all still
             # live, which is what put this over the edge in joint training.
-            # Depth ablation delta, first micro-batch only: loss with depth removed minus
-            # loss with depth present. THE metric for whether depth is doing anything —
-            # the absolute loss cannot show it, because RGB plus proprio already satisfies
-            # most of the objective and the depth path is a small residual on top.
-            # Positive = removing depth hurts = depth is carrying information.
-            # Both legs run with the encoder in eval mode so modality dropout does not
+            # Ablation delta, first micro-batch only: loss with one modality removed minus
+            # loss with everything present. THE metric for whether a modality is doing
+            # anything — the absolute loss cannot show it, because the remaining inputs
+            # already satisfy most of the objective and each modality is a small residual
+            # on top. Positive = removing it hurts = it is carrying information.
+            # Depth is removed by dropping its observation keys (the encoder then emits its
+            # null bank); an RGB camera is removed by dropping its <im_patch> span from the
+            # attention mask — the same operation train-time rgb_dropout performs, so no
+            # re-tokenization and the token layout is identical across legs.
+            # The depth legs run with the encoder in eval mode so modality dropout does not
             # randomly null the "present" leg and shrink the measured gap.
-            if depth_on and capture_depth_telemetry and accum_idx == 0:
-                was_training = policy.pointmap_encoder.training
-                policy.pointmap_encoder.eval()
+            if capture_modality_telemetry and accum_idx == 0:
+                from lerobot.policies.depth_pointmap.modeling_stream import mask_camera_patch_span
+
+                was_training = policy.pointmap_encoder.training if depth_on else None
+                if depth_on:
+                    policy.pointmap_encoder.eval()
                 try:
                     # Sub-batch the probe. eval() + no_grad below turn OFF the encoder's
                     # chunked trunk (modeling_pointmap.py::_run_trunk gates on training and
-                    # grad-enabled), so these two forwards allocate the full-resolution
-                    # feature maps for every frame in one shot — the single largest tensor
-                    # in the model. It is a telemetry mean over samples; it does not need
-                    # the whole batch.
-                    n_full = int(fwd_batch["input_ids"].shape[0])
-                    n_probe = min(self.DEPTH_PROBE_SAMPLES, n_full)
-                    probe_batch = {
-                        k: (v[:n_probe] if torch.is_tensor(v) and v.ndim >= 1 and v.shape[0] == n_full else v)
-                        for k, v in fwd_batch.items()
-                    }
-                    with torch.no_grad():
-                        present, _ = policy.forward(
-                            probe_batch, reduction="none", return_diagnostics=True
+                    # grad-enabled), so these forwards allocate the full-resolution feature
+                    # maps for every frame in one shot — the single largest tensor in the
+                    # model. It is a telemetry mean over samples; it does not need the whole
+                    # batch. The legs run sequentially, so peak memory is one leg's, not the
+                    # sum, and every leg is the shape of the "present" one.
+                    probe_batch = _sub_batch(fwd_batch, self.PROBE_SAMPLES)
+                    image_patch_id, cameras = policy._camera_token_meta()
+                    # Canonical present leg: restore every camera's <im_patch> span, which
+                    # train-time rgb_dropout has already masked on some rows (p=0.75 for the
+                    # depth camera in the live config). Those columns are real tokens, so 1
+                    # is exactly their undropped state. Without this the wrist gap rests on
+                    # whichever rows the dropout draw happened to spare — 2 of 8 on average,
+                    # and none at all on ~10% of logged steps — while the top gap always
+                    # gets all 8, which is precisely the camera-vs-camera bias this metric
+                    # exists to compare. It also makes the baseline the deployment
+                    # condition (every camera present) rather than a random dropout draw.
+                    probe_batch = dict(probe_batch)
+                    present_mask = probe_batch["attention_mask"].clone()
+                    present_mask[probe_batch["input_ids"] == image_patch_id] = 1
+                    probe_batch["attention_mask"] = present_mask
+
+                    # Pair the legs: each forward otherwise draws its own flow noise,
+                    # timesteps and dropout masks, and that draw moves the loss by far more
+                    # than the modality being measured. Seeding per leg makes every row's
+                    # loss identical across legs except where the ablation bites. fork_rng
+                    # keeps the reseeding out of the training RNG stream.
+                    def probe_leg(leg_batch: dict[str, Any]) -> float:
+                        torch.manual_seed(int(optimization_step or 0) + 1)
+                        leg_loss, _ = policy.forward(
+                            leg_batch, reduction="none", return_diagnostics=True
                         )
-                        ablated, _ = policy.forward(
-                            {
-                                k: v
-                                for k, v in probe_batch.items()
-                                if not k.startswith("observation.depth.")
-                            },
-                            reduction="none",
-                            return_diagnostics=True,
-                        )
-                    # Log both legs, not only the gap. The ablated leg feeds the encoder's
-                    # null bank, which is itself a trained nn.Parameter — so the baseline
-                    # moves too, and the gap alone cannot tell "real depth got worse" from
-                    # "the null bank got better faster".
-                    accum["depth_loss_present"] = float(present.mean())
-                    accum["depth_loss_ablated"] = float(ablated.mean())
-                    accum["depth_ablation_delta"] = float(ablated.mean() - present.mean())
+                        return float(leg_loss.mean())
+
+                    fork_devices = [actions.device] if actions.device.type == "cuda" else []
+                    with torch.no_grad(), torch.random.fork_rng(devices=fork_devices):
+                        present = probe_leg(probe_batch)
+                        if depth_on:
+                            ablated = probe_leg(
+                                {
+                                    k: v
+                                    for k, v in probe_batch.items()
+                                    if not k.startswith("observation.depth.")
+                                }
+                            )
+                        rgb_delta: dict[str, float] = {}
+                        for cam_index, cam in enumerate(cameras):
+                            rgb_off = dict(probe_batch)
+                            rgb_off["attention_mask"] = mask_camera_patch_span(
+                                present_mask,
+                                probe_batch["input_ids"],
+                                image_patch_id=image_patch_id,
+                                num_images=len(cameras),
+                                cam_index=cam_index,
+                            )
+                            rgb_delta[cam] = probe_leg(rgb_off) - present
+                    # Log both depth legs, not only the gap: the depth-ablated leg feeds the
+                    # encoder's null bank, which is itself a trained nn.Parameter — so that
+                    # baseline moves too, and the gap alone cannot tell "real depth got
+                    # worse" from "the null bank got better faster". An RGB camera has no
+                    # learned stand-in (its tokens simply leave the attention mask), so the
+                    # shared present leg plus the gap says everything.
+                    accum["probe_loss_present"] = present
+                    if depth_on:
+                        accum["depth_loss_ablated"] = ablated
+                        accum["depth_ablation_delta"] = ablated - present
+                    for cam, delta in rgb_delta.items():
+                        accum[f"rgb_ablation_delta/{cam}"] = delta
                 finally:
-                    policy.pointmap_encoder.train(was_training)
+                    if depth_on:
+                        policy.pointmap_encoder.train(was_training)
 
             # Subtask-generation CE (two-prompt design): separate forward on the
             # generation prompt for annotated samples; grads accumulate alongside.
@@ -842,14 +915,6 @@ class MolmoAct2Trainer(Trainer):
                     if generation_loss.requires_grad:
                         (subtask_loss_weight * generation_loss / grad_accum).backward()
                     accum["loss_subtask_ce"] += generation_parts["loss_subtask_ce"] / grad_accum
-                    accum["loss_summary_ce"] += generation_parts["loss_summary_ce"] / grad_accum
-                    # Averaged over the micro-batches that actually held such pairs,
-                    # not over grad_accum: update pairs are rare, and crediting a
-                    # micro-batch without them as 0.0 would sink the update curve
-                    # and mimic the learning this metric exists to disprove.
-                    for key in ("loss_summary_ce/hold", "loss_summary_ce/update"):
-                        if key in generation_parts:
-                            summary_split.setdefault(key, []).append(generation_parts[key])
 
             accum["loss_actor"] += float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
@@ -881,7 +946,7 @@ class MolmoAct2Trainer(Trainer):
         # Pre-clip depth-path gradient norm (depth_redesign_options.md §5.1) — read
         # BEFORE clip_grad_norm_ rescales grads in place (the α-era metric read after
         # the clip and understated the gradient ~4× at the observed norms).
-        if depth_on and capture_depth_telemetry:
+        if depth_on and capture_modality_telemetry:
             depth_grads = [
                 p.grad.detach().float()
                 for name, p in policy.named_parameters()
@@ -909,9 +974,6 @@ class MolmoAct2Trainer(Trainer):
         accum["actor_grad_norm"] = actor_grad_norm
         # depth_token_rms_ratio is captured inside the micro-batch loop, right after the
         # training forward — see the note there.
-
-        for key, values in summary_split.items():
-            accum[key] = sum(values) / len(values)
 
         if actor_loss_list:
             all_actor_loss = torch.cat(actor_loss_list)
@@ -1036,30 +1098,21 @@ class MolmoAct2Trainer(Trainer):
         task_str: str,
         cfg,
         preprocessor,
-        summary: str | None = None,
-    ) -> tuple[str, str, int, str | None]:
-        """Rollout-side subtask + summary generation (MEM high-level query).
+    ) -> tuple[str, str, int]:
+        """Rollout-side subtask generation (high-level query).
 
         Builds the generation prompt for the current observation (unbatched, as
-        handed to build_inference_batch) conditioned on the language memory
-        `summary`, greedy-decodes the answer, splits it into subtask + updated
-        memory, and snaps the subtask to the pack step's vocabulary.
+        handed to build_inference_batch), greedy-decodes the answer, and snaps it
+        to the pack step's vocabulary.
 
-        Returns (raw_text, name, index, new_summary): name is the snapped
-        vocabulary entry when the snap succeeds, else the decoded subtask text
-        with index -1; new_summary is None when the decode carried no memory span.
+        Returns (raw_text, name, index): name is the snapped vocabulary entry when
+        the snap succeeds, else the decoded subtask text with index -1.
         """
-        from lerobot.policies.molmoact2.processor_molmoact2 import (
-            parse_generation_answer,
-            snap_to_subtask_vocab,
-        )
-        from lerobot.types import TransitionKey
+        from lerobot.policies.molmoact2.processor_molmoact2 import snap_to_subtask_vocab
 
         step = self._pack_step(preprocessor)
         device = getattr(cfg.policy, "device", "cpu")
         pre_input: dict[str, Any] = {**observation, "task": task_str}
-        if summary is not None:
-            pre_input[TransitionKey.COMPLEMENTARY_DATA] = {"summary": [summary]}
         step.prompt_mode = "subtask_generation"
         try:
             with torch.no_grad():
@@ -1071,10 +1124,9 @@ class MolmoAct2Trainer(Trainer):
             batch, max_new_tokens=int(cfg.policy.subtask_max_new_tokens)
         )
         raw_text = step.processor.tokenizer.decode(token_ids[0], skip_special_tokens=True).strip()
-        subtask_text, new_summary = parse_generation_answer(raw_text)
-        index = snap_to_subtask_vocab(subtask_text, step.subtask_names) if step.subtask_names else -1
-        name = step.subtask_names[index] if index >= 0 else subtask_text
-        return raw_text, name, index, new_summary
+        index = snap_to_subtask_vocab(raw_text, step.subtask_names) if step.subtask_names else -1
+        name = step.subtask_names[index] if index >= 0 else raw_text
+        return raw_text, name, index
 
     @staticmethod
     def _pack_step(preprocessor):
@@ -1110,13 +1162,6 @@ class MolmoAct2Trainer(Trainer):
         if is_main_process:
             logging.info(f"MolmoAct2 subtask vocabulary: {len(names)} entries")
 
-    def sync_summaries(self, preprocessor, texts: list[str], is_main_process: bool = True) -> None:
-        if not texts:
-            return
-        self._pack_step(preprocessor).summary_texts = list(texts)
-        if is_main_process:
-            logging.info(f"MolmoAct2 summary table: {len(texts)} entries")
-
     def _subtask_generation_loss(
         self, policy: nn.Module, raw_batch: dict, observations: dict, preprocessor, cfg
     ) -> tuple[torch.Tensor, dict[str, float]] | None:
@@ -1126,9 +1171,8 @@ class MolmoAct2Trainer(Trainer):
         generation batch rides the full pipeline (prompt_mode toggle) so states
         are normalized exactly like the action batch. Returns None when the
         vocabulary isn't wired or the batch carries no annotated samples, else
-        (loss, parts): loss is the mean CE over the whole answer span (what
-        gets backwarded); parts splits it into the memory span ("loss_summary_ce")
-        and the subtask span ("loss_subtask_ce") for logging.
+        (loss, parts): loss is the mean CE over the answer span (what gets
+        backwarded), parts reports it as "loss_subtask_ce" for logging.
         """
         from lerobot.types import TransitionKey
 
@@ -1153,9 +1197,6 @@ class MolmoAct2Trainer(Trainer):
 
         obs_valid = {k: _gather(v) for k, v in observations.items() if isinstance(v, torch.Tensor)}
         comp_valid: dict[str, Any] = {"subtask_index": flat_index[idx]}
-        for key in ("summary_prev_index", "summary_target_index"):
-            if key in comp:
-                comp_valid[key] = torch.as_tensor(comp[key]).reshape(-1)[idx]
         tasks = self._resolve_batch_tasks(raw_batch, cfg.policy.task, flat_index.numel())
         valid_tasks = [tasks[int(i)] for i in idx.detach().cpu().tolist()]
         pre_input: dict[str, Any] = {
@@ -1178,31 +1219,7 @@ class MolmoAct2Trainer(Trainer):
         target_mask = labels[:, 1:] != -100  # position t predicts labels[t+1]
         logits = policy.model.lm_head(hidden[:, :-1][target_mask])  # (N_answer_tokens, vocab)
         per_token = F.cross_entropy(logits.float(), labels[:, 1:][target_mask], reduction="none")
-        summary_tokens = batch["summary_label_mask"][:, 1:][target_mask]
-
-        parts = {
-            "loss_subtask_ce": per_token[~summary_tokens].mean().item() if (~summary_tokens).any() else 0.0,
-            "loss_summary_ce": per_token[summary_tokens].mean().item() if summary_tokens.any() else 0.0,
-        }
-        # Hold/update split of the summary CE. A hold pair conditions on the same
-        # summary it must emit (prev_row == target_row, summary_label_spans); an
-        # update pair conditions one summary older and is the only place appending
-        # is learned. Holds outnumber updates, so the pooled mean above falls even
-        # when the model has merely learned to copy its conditioning — this split
-        # is what distinguishes that from real summarization.
-        prev_index = comp_valid.get("summary_prev_index")
-        target_index = comp_valid.get("summary_target_index")
-        if prev_index is not None and target_index is not None and summary_tokens.any():
-            # target_mask.nonzero() is row-major, matching how per_token was flattened.
-            token_rows = target_mask.nonzero(as_tuple=True)[0]
-            is_hold = (prev_index == target_index).to(token_rows.device)[token_rows]
-            hold_tokens = summary_tokens & is_hold
-            update_tokens = summary_tokens & ~is_hold
-            if hold_tokens.any():
-                parts["loss_summary_ce/hold"] = per_token[hold_tokens].mean().item()
-            if update_tokens.any():
-                parts["loss_summary_ce/update"] = per_token[update_tokens].mean().item()
-        return per_token.mean(), parts
+        return per_token.mean(), {"loss_subtask_ce": per_token.mean().item()}
 
     # ── Online loop ───────────────────────────────────────────────────────────
 
@@ -1253,12 +1270,18 @@ class MolmoAct2Trainer(Trainer):
         wandb_logger,
         _policy: nn.Module,
     ) -> None:
-        console_keys = ("loss_flow", "loss_discrete_ce", "loss_subtask_ce", "loss_summary_ce", "actor_grad_norm", "loss_critic", "depth_ablation_delta")
+        console_keys = ("loss_flow", "loss_discrete_ce", "loss_subtask_ce", "actor_grad_norm", "loss_critic", "depth_ablation_delta")
         console_scalars = {
             k: training_infos[k]
             for k in console_keys
             if isinstance(training_infos.get(k), (int, float))
         }
+        # Camera names come from the dataset, so the RGB deltas cannot be listed above.
+        console_scalars.update(
+            (k, v)
+            for k, v in sorted(training_infos.items())
+            if k.startswith("rgb_ablation_delta/") and isinstance(v, (int, float))
+        )
         if console_scalars:
             logging.info(
                 f"[MolmoAct2Trainer] step={step}  "
