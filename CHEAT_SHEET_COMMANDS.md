@@ -78,7 +78,7 @@ uv run python -m lerobot.scripts.rl_offline \
 
 Browser UI over a run's validation probes (serves on http://127.0.0.1:7870):
 
-uv run python -m lerobot.scripts.view_probes outputs/molmoact2_offline_rebot_all-v2
+uv run python -m lerobot.scripts.view_probes outputs/molmoact2_offline_rebot_all-v5
 
 Takes a run directory, its `validation/`, or a single `step_*` dir. It re-scans
 `<run>/validation/step_*/<probe>/` on every request, so a checkpoint that lands

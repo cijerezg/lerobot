@@ -169,7 +169,7 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
     )
 
 
-def _render(summary: dict, output_path: str) -> None:
+def _render(summary: dict, per_frame: list[dict], output_path: str) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
 
     conditions = summary["conditions"]
@@ -183,18 +183,16 @@ def _render(summary: dict, output_path: str) -> None:
         fontsize=10,
     )
 
-    per_frame = summary.get("per_frame") or []
-    depth_s = [r["fd_sensitivity"]["depth"] for r in per_frame if "fd_sensitivity" in r]
-    rgb_s = [r["fd_sensitivity"]["rgb"] for r in per_frame if "fd_sensitivity" in r]
-    if depth_s:
-        idx = np.arange(len(depth_s))
-        axes[1].plot(idx, depth_s, marker="o", ms=3, color="#2A9D8F", label="depth")
-        axes[1].plot(idx, rgb_s, marker="o", ms=3, color="#E76F51", label="wrist RGB")
-        axes[1].set_yscale("log")
-        axes[1].set_xlabel("probed frame")
-        axes[1].set_ylabel("‖Δactions‖ @ 1% input noise")
-        axes[1].set_title("Finite-difference sensitivity")
-        axes[1].legend(fontsize=8)
+    depth_s = [r["fd_sensitivity"]["depth"] for r in per_frame]
+    rgb_s = [r["fd_sensitivity"]["rgb"] for r in per_frame]
+    idx = np.arange(len(depth_s))
+    axes[1].plot(idx, depth_s, marker="o", ms=3, color="#2A9D8F", label="depth")
+    axes[1].plot(idx, rgb_s, marker="o", ms=3, color="#E76F51", label="wrist RGB")
+    axes[1].set_yscale("log")
+    axes[1].set_xlabel("probed frame")
+    axes[1].set_ylabel("‖Δactions‖ @ 1% input noise")
+    axes[1].set_title("Finite-difference sensitivity")
+    axes[1].legend(fontsize=8)
 
     fd = summary["fd_sensitivity"]
     fig.suptitle(
@@ -372,7 +370,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     # write_index drops panels whose file is not on disk yet, so render first or the
     # probe's only figure never reaches the viewer.
-    _render(summary, os.path.join(output_dir, "depth_modality.png"))
+    _render(summary, per_frame, os.path.join(output_dir, "depth_modality.png"))
     _write_manifest(output_dir, summary)
 
     logging.info("── summary over frames ──")
