@@ -308,38 +308,50 @@ micro-batch of logged actor updates — the per-layer breakdown is probe-only),
 pairwise action deltas, per-layer mass, and finite-difference input
 sensitivities (depth vs RGB).
 
-### B.3.2 In-training ablation deltas (per modality)
+### B.3.2 Held-out loss (replaced the ablation deltas, 2026-08-08)
 
-On the first micro-batch of every logged actor update, the trainer runs extra
-no-grad forwards on `PROBE_SAMPLES` (8) rows and reports each modality's
-$\Delta = \mathcal{L}_{\text{ablated}} - \mathcal{L}_{\text{present}}$ against
-one shared present leg: `depth_ablation_delta` (depth observation keys dropped →
-encoder emits its null bank, so `depth_loss_ablated` is logged too — that
-baseline is a trained parameter and moves on its own) and
-`rgb_ablation_delta/<cam>` per camera (that camera's `<im_patch>` span leaves the
-attention mask, via the same `mask_camera_patch_span` train-time RGB dropout
-uses — no re-tokenization, identical token layout across legs). Positive =
-removing it hurts.
+`val_loss_flow` and `val_loss_discrete_ce` (`rl/molmoact2/val_loss.py`), logged
+every `log_freq` next to the train losses. `val_loss_frames` (128 = one effective
+batch) frames are sampled stride-snapped and evenly across the val episodes and
+**packed once at startup**, so a call is `ceil(n / batch_size)` no-grad forwards
+and nothing else. Timesteps sit on the stratified quantile grid of the training
+Beta and the noise is drawn once from a seeded generator, so the flow number is a
+deterministic function of the weights. Pack dropout is suppressed and the policy
+runs in `eval()`, which means this is the deployment regime and reads *lower*
+than `train/loss_flow`; compare val to train with that offset in mind.
 
-Two invariants make the numbers readable:
+#### Why the ablation deltas were deleted
 
-- **Legs are seeded identically** (`torch.manual_seed` per leg, inside
-  `fork_rng` so the training RNG stream is untouched). Unpaired, each leg draws
-  its own flow noise and timesteps, and that draw dominates the effect being
-  measured — the unpaired depth delta read −0.4992 at step 0.
-- **The present leg restores every `<im_patch>` column** before any ablation
-  (`present_mask[input_ids == image_patch_id] = 1`). Train-time `rgb_dropout` has
-  already masked the depth camera on 75% of rows; under paired seeds those rows
-  are bit-identical across legs and contribute 0, so without the restore the wrist
-  gap rests on the ~2 of 8 rows the draw spared (and on none at all for
-  $0.75^8 \approx 10\%$ of logged steps, which is why step 0 of the first run
-  reported `top` and no `wrist`) while `top` always gets all 8 — exactly the
-  camera-vs-camera bias this metric exists to compare. It also makes the baseline
-  the deployment condition, every camera present, rather than a dropout draw.
+The retired metric ran extra no-grad legs per modality on the training
+micro-batch and reported
+$\Delta = \mathcal{L}_{\text{ablated}} - \mathcal{L}_{\text{present}}$
+(`depth_ablation_delta`, `rgb_ablation_delta/<cam>`). It was not broken as an
+estimator — measured over v6, the paired legs correlated at $0.99969$ and the
+difference carried $2.5\%$ of the raw loss spread, so the seeding did its job.
+It was the wrong estimand. At the optimum for the CE head,
 
-Still not comparable across cameras in one respect: the wrist RGB− condition is
-in-distribution (trained by `rgb_dropout`), while a masked top camera is OOD, so
-the top delta carries a shock term.
+$$\Delta_m^\star = H(a \mid x_{\setminus m}) - H(a \mid x) = I(a; x_m \mid x_{\setminus m})$$
+
+and the conditioning set includes the parameters, which have memorised the
+training episodes. On a training frame $(\text{episode}, \text{phase})$ is
+recoverable from proprio plus the task string, $a$ is then a lookup, and the CMI
+is zero **whether or not the visual pathway works**.
+
+The logs show exactly that. All three deltas started positive and decayed
+monotonically as memorisation completed (v6 `top`: $+0.00081 \to -0.00109$,
+slope $p = 0.015$; v5 `depth`: $+0.00414 \to +0.00112$, $p = 0.019$), ending at
+$0.12\%$ of the CE they sat on and $0.06\%$ of the val/train CE gap. Nor was
+power the fix: at a per-measurement SNR of $0.09$, $|t| = 3$ needs ~1,100 logged
+steps to confirm an effect worth $0.0004$ nats. Note also that the loss it
+differenced was $97.4\%$ FAST CE and only $2.6\%$ flow, so the long-standing
+"make it CE-only" note was worth nothing.
+
+Held-out frames are the only place $H(a \mid x_{\setminus m})$ is off the
+memorisation floor, which is why the replacement measures there. What survives
+from the depth telemetry is `depth_token_rms_ratio` and
+`depth_grad_norm_preclip`: over v6 they read $2.52 \to 3.16$ (rising) and
+$2.8\times10^{-2}$, i.e. the adapter is emitting *louder* tokens that change the
+answer *less* — the path is alive and the model is routing around it.
 
 ### B.4 HISTORICAL — the α-gate soft deadlock (retired 2026-07-26)
 

@@ -41,6 +41,12 @@ good news — there is nothing to be right or wrong about.
 ``images`` and ``states`` do not sum to ``full``. Read them for which channel carries
 the effect, never as an additive decomposition.
 
+Every number here is a mean over frames, and on a checkpoint where memory helps half the
+frames and hurts the other half that mean is near zero whatever the effect size. This
+probe answers *which channel*; `mem_history_regime` answers *which frames*, with the
+per-frame distribution and the nulls that say whether either sign is real. Read this one
+first only to find out where to look.
+
 Registered probe: enable with ``probe_parameters.enable_mem_history_influence``.
 """
 
@@ -55,28 +61,13 @@ import torch
 
 from lerobot.probes.manifest import Panel, write_index
 from lerobot.probes.utils import (
-    as_image,
-    assemble_frame_history,
-    get_frame_data,
-    joint_names_for_dim,
+    history_offsets,
     makedirs,
     probe_frame_inputs,
     probe_image_stride,
     sample_episodes_evenly,
 )
 from lerobot.utils.constants import OBS_STATE
-
-
-_CONDITION_STYLE = {
-    "full": ("#2A9D8F", "-"),
-    "none": ("#E63946", "--"),
-    "images": ("#277DA1", "-."),
-    "states": ("#9B5DE5", ":"),
-}
-
-_REBOT_JOINT_NAMES = [
-    "shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll", "gripper",
-]
 
 
 def _variant_observation(obs: dict, images_on: bool, states_on: bool) -> dict:
@@ -98,27 +89,121 @@ def _variant_observation(obs: dict, images_on: bool, states_on: bool) -> dict:
     return out
 
 
-_EXAMPLE_HOW = {
-    "best": "A frame where the full history helped most: the ``full`` trace should sit closer to GT than ``none``.",
-    "worst": "A frame where the full history hurt most. A channel that is used but pointed the wrong way looks like this everywhere, not just here.",
-    "strong": "A frame where history moved the chunk most, regardless of whether the move was useful — the influence side of the measurement in isolation.",
-}
+def _provenance(rows: list[dict], dataset, cfg, memory_cfg, conditions: dict) -> dict:
+    """Which frames of which dataset the bars average, and what one forward was.
+
+    Derived from the measured rows rather than from config, so it describes the frames
+    that actually produced numbers after stride snapping and the episode budget dropped
+    whatever they dropped.
+    """
+    p = cfg.probe_parameters
+    fps = float(cfg.env.fps)
+    chunk = int(cfg.policy.chunk_size)
+    offsets = history_offsets(memory_cfg, fps)
+    keys = [f"``history.{k}``" for k in memory_cfg.history_keys]
+    channels = (
+        "``images`` = " + ", ".join(k for k in keys if "images" in k)
+        + "; ``states`` = " + ", ".join(k for k in keys if k.endswith(f"{OBS_STATE}``"))
+    )
+    depth_keys = ", ".join(k for k in keys if "``history.depth." in k)
+    if depth_keys:
+        channels += f"; kept in every condition = {depth_keys}"
+    episodes = sorted({r["episode_idx"] for r in rows})
+    return {
+        "val": {
+            "n_frames": len(rows),
+            "n_episodes": len(episodes),
+            "sources": [
+                {
+                    "name": str(getattr(dataset, "repo_id", "val")),
+                    "root": str(getattr(dataset, "root", "")),
+                    "episodes": episodes,
+                    "n_episodes": len(episodes),
+                    "n_frames": len(rows),
+                }
+            ],
+        },
+        "frames_per_episode": int(p.n_frames_per_episode),
+        "episode_budget": p.max_episodes,
+        "image_stride": probe_image_stride(cfg),
+        "chunk_size": chunk,
+        "batch_size": 1,
+        "forwards": len(conditions) * len(rows),
+        "details": [
+            [
+                "Per frame",
+                f"{len(conditions)} forwards — " + ", ".join(f"``{name}``" for name in conditions),
+            ],
+            [
+                "History window",
+                f"{memory_cfg.history_num_samples} past frames over "
+                f"{memory_cfg.history_window_seconds:g} s at {fps:g} fps — offsets "
+                + ", ".join(str(o) for o in offsets)
+                + " frames back, oldest first, repeat-padded before the episode start",
+            ],
+            ["Channels toggled", channels],
+            [
+                "Demonstration",
+                r"$a^{\star}$ is the recorded action at the sampled frame and the "
+                f"{chunk - 1} that follow it, normalized the same way as the prediction",
+            ],
+        ],
+        "sampling": (
+            "Frames evenly spaced across each episode, snapped onto the image/depth stride "
+            "grid; episodes drawn by a seeded subset when the budget is smaller than the "
+            f"split (seed {int(p.random_seed)}). Every number is a within-frame difference "
+            "between two conditions run on the same observation — nothing is compared across "
+            "frames, so uneven sampling cannot produce an effect. A chunk that would run past "
+            "the end of its episode is repeat-padded with the last recorded action, which "
+            f"makes the demonstration partly constant for frames within {chunk} of the end and "
+            "shrinks what any channel can improve there."
+        ),
+        "regime": (
+            "one frame per forward, batch size 1; "
+            f"{int(getattr(cfg.policy, 'num_inference_steps', 0))} flow denoising steps with the "
+            "same seeded noise in all conditions; the batch carries no action target, so "
+            "training-time prompt dropout is not armed"
+        ),
+    }
 
 
-def _write_manifest(output_dir: str, summary: dict, examples: list[tuple[str, str]]) -> dict:
+# Panel captions carry the algebra because the bars are differences of differences: a
+# reader who guesses at what is subtracted from what reads the middle panel backwards.
+_INFLUENCE_HOW = r"""Every bar is a mean over the sampled held-out frames listed in
+*Data behind these numbers*. Write
+$a^{(c)}$ for the normalized chunk predicted under condition $c$, $a^{(\mathrm{none})}$ for
+the same frame with both history channels dropped, and $a^{\star}$ for the demonstrated
+chunk over the same $T$ steps and $D$ joints.
+
+**Left — influence.** How far the channel moves the chunk away from the no-history
+prediction, in normalized action units:
+
+  $$\mathrm{RMSE}(c)=\sqrt{\frac{1}{TD}\sum_{t,d}\left(a^{(c)}_{t,d}-a^{(\mathrm{none})}_{t,d}\right)^{2}}
+  \qquad \max_{t,d}\left|a^{(c)}_{t,d}-a^{(\mathrm{none})}_{t,d}\right|$$
+
+The two bars separate a channel that shifts the whole chunk slightly (RMSE and max close)
+from one that moves a single timestep hard (max far above RMSE). Nothing here involves the
+demonstration, so neither bar can say whether the movement was an improvement.
+
+**Middle — usefulness.** The squared error against the demonstration that the channel
+removes, written as the difference of two MSEs with the no-history one first:
+
+  $$\Delta\mathrm{MSE}(c)=\frac{1}{TD}\sum_{t,d}\left(a^{(\mathrm{none})}_{t,d}-a^{\star}_{t,d}\right)^{2}
+  -\frac{1}{TD}\sum_{t,d}\left(a^{(c)}_{t,d}-a^{\star}_{t,d}\right)^{2}$$
+
+Positive means the chunk moved toward the demonstration and the channel helped; negative
+means the model leaned on the channel and it pointed away. The plotted bar is the mean of
+$\Delta\mathrm{MSE}(c)$ over the frames, so it is in squared normalized action units and is
+not comparable to the RMSE bars on the left.
+
+Neither bar says whether the mean it plots describes any frame. A channel that helps half
+the frames and hurts the other half lands on the same bar as a channel nothing happens
+under — ``mem_history_regime`` is where that distribution, its nulls and its per-frame
+examples live."""
+
+
+def _write_manifest(output_dir: str, summary: dict) -> dict:
     """Describe the history channels' effect on the action chunk to the viewer."""
-    panels = [
-        Panel(
-            "influence.png",
-            "Influence, usefulness, and the per-frame relationship between them",
-            how="Left: how far each history condition moves the chunk away from the no-history prediction. Middle: how much GT MSE that movement removes — the bar that matters, and the only one that can come out negative. Right: one point per frame, so a positive mean built out of a few large wins is distinguishable from a consistent small gain.",
-            primary=True,
-        )
-    ]
-    panels += [
-        Panel(f"examples/{filename}", f"{label} — history conditions against GT", how=_EXAMPLE_HOW[label])
-        for label, filename in examples
-    ]
     return write_index(
         output_dir,
         sys.modules[__name__],
@@ -130,99 +215,18 @@ def _write_manifest(output_dir: str, summary: dict, examples: list[tuple[str, st
         # carries its distribution instead of collapsing to one row. The values stay in
         # influence.json.
         metrics=[],
-        panels=panels,
-        see_also=["mem_temporal_attention", "attention_budget", "action_trace"],
-    )
-
-
-def _select_examples(rows: list[dict], per_category: int = 2) -> list[tuple[str, int]]:
-    """Pick unique frames where full history helped, hurt, or changed actions most."""
-    selected: list[tuple[str, int]] = []
-    used: set[int] = set()
-    rankings = (
-        ("best", "full_gt_mse_improvement", True),
-        ("worst", "full_gt_mse_improvement", False),
-        ("strong", "full_rmse", True),
-    )
-    for label, metric, descending in rankings:
-        ranked = sorted(range(len(rows)), key=lambda i: rows[i][metric], reverse=descending)
-        count = 0
-        for index in ranked:
-            if index in used:
-                continue
-            selected.append((label, index))
-            used.add(index)
-            count += 1
-            if count >= per_category:
-                break
-    return selected
-
-
-def _render_example(dataset, memory_cfg, fps: float, diagnostic: dict, label: str, output_path: str) -> None:
-    """Show what memory saw and how each condition changed every predicted joint."""
-    global_idx = diagnostic["global_idx"]
-    obs, _gt, _state, _subtask, _task, ep_idx, frame_idx = get_frame_data(
-        dataset, global_idx, diagnostic["gt"].shape[0]
-    )
-    image_keys = sorted(k for k in obs if k.startswith("observation.images."))
-    history = assemble_frame_history(dataset, global_idx, memory_cfg, fps, image_keys)
-
-    n_cols = 4
-    n_image_rows = max(1, len(image_keys))
-    n_action_rows = (diagnostic["gt"].shape[-1] + n_cols - 1) // n_cols
-    fig = plt.figure(figsize=(18, 3.0 * n_image_rows + 2.7 * n_action_rows))
-    grid = fig.add_gridspec(n_image_rows + n_action_rows, n_cols, hspace=0.45, wspace=0.28)
-
-    for row_idx, key in enumerate(image_keys):
-        history_tensor = history.get(f"history.{key}")
-        if history_tensor is not None:
-            history_tensor = history_tensor.squeeze(0)
-            slots = [0, len(history_tensor) // 2, len(history_tensor) - 1]
-            for col_idx, slot in enumerate(slots):
-                ax = fig.add_subplot(grid[row_idx, col_idx])
-                ax.imshow(as_image(history_tensor[slot]))
-                ax.set_title(f"{key.split('.')[-1]} history: {('oldest', 'middle', 'newest')[col_idx]}")
-                ax.axis("off")
-        ax = fig.add_subplot(grid[row_idx, 3])
-        ax.imshow(as_image(obs[key]))
-        ax.set_title(f"{key.split('.')[-1]} current")
-        ax.axis("off")
-
-    steps = np.arange(diagnostic["gt"].shape[0])
-    action_dim = diagnostic["gt"].shape[-1]
-    joint_names = joint_names_for_dim(action_dim)
-    for joint in range(action_dim):
-        row = n_image_rows + joint // n_cols
-        col = joint % n_cols
-        ax = fig.add_subplot(grid[row, col])
-        ax.plot(steps, diagnostic["gt"][:, joint], color="black", linewidth=2.0, label="GT")
-        for condition, actions in diagnostic["acts"].items():
-            color, linestyle = _CONDITION_STYLE[condition]
-            ax.plot(
-                steps,
-                actions[:, joint],
-                color=color,
-                linestyle=linestyle,
-                linewidth=1.25,
-                label=condition,
+        panels=[
+            Panel(
+                "influence.png",
+                "Influence and usefulness, per history channel",
+                how=_INFLUENCE_HOW,
+                primary=True,
+                refs=["mem_history_regime"],
             )
-        ax.set_title(f"{joint_names[joint]} (normalized)")
-        ax.grid(True, alpha=0.25, linestyle=":")
-        if joint == 0:
-            ax.legend(fontsize=8, ncol=3)
-    for unused in range(action_dim, n_action_rows * n_cols):
-        fig.add_subplot(grid[n_image_rows + unused // n_cols, unused % n_cols]).axis("off")
-
-    row = diagnostic["row"]
-    fig.suptitle(
-        f"{label.upper()} memory example — episode {ep_idx}, frame {frame_idx}  |  "
-        f"full influence RMSE={row['full_rmse']:.4f}  |  "
-        f"GT-MSE improvement={row['full_gt_mse_improvement']:+.4f}",
-        fontsize=13,
-        fontweight="bold",
+        ],
+        see_also=["mem_history_regime", "mem_temporal_attention", "attention_budget", "action_trace"],
+        extra={"provenance": summary.get("data", {})},
     )
-    fig.savefig(output_path, bbox_inches="tight", dpi=130)
-    plt.close(fig)
 
 
 def run(adapter, dataset, cfg, output_dir: str) -> None:
@@ -237,7 +241,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     makedirs(output_dir)
     p = cfg.probe_parameters
     device = adapter.device
-    fps = cfg.env.fps
 
     adapter._set_probe_cuda_graph_enabled(False)  # varying mask per condition; keep eager
     samples = sample_episodes_evenly(
@@ -246,7 +249,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     conditions = {"full": (True, True), "none": (False, False), "images": (True, False), "states": (False, True)}
     rows: list[dict] = []
-    diagnostics: list[dict] = []
     for _ep, _fr, global_idx in samples:
         frame = probe_frame_inputs(dataset, cfg, global_idx, int(cfg.policy.chunk_size))
         obs, gt_actions, state = frame["obs"], frame["gt_actions"], frame["state"]
@@ -287,14 +289,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             if name != "none":
                 row[f"{name}_gt_mse_improvement"] = gt_mse["none"] - gt_mse[name]
         rows.append(row)
-        diagnostics.append(
-            {
-                "global_idx": int(global_idx),
-                "gt": gt_norm,
-                "acts": acts,
-                "row": row,
-            }
-        )
 
     adapter._restore_probe_cuda_graph_enabled()
     if not rows:
@@ -308,60 +302,36 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     ]
     summary = {metric: float(np.mean([r[metric] for r in rows])) for metric in metrics}
     summary["n_frames"] = len(rows)
+    summary["data"] = _provenance(rows, dataset, cfg, memory_cfg, conditions)
     with open(os.path.join(output_dir, "influence.json"), "w") as f:
         json.dump({"summary": summary, "per_frame": rows}, f, indent=2)
 
     channels = ["full", "images", "states"]
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
     x = np.arange(len(channels))
     axes[0].bar(x - 0.2, [summary[f"{c}_rmse"] for c in channels], width=0.4, label="RMSE")
     axes[0].bar(x + 0.2, [summary[f"{c}_maxabs"] for c in channels], width=0.4, label="max|Δ|")
     axes[0].set_xticks(x)
     axes[0].set_xticklabels(channels)
     axes[0].set_ylabel("normalized action Δ vs no-history")
-    axes[0].set_title("Influence")
+    axes[0].set_title(r"Influence: mean $\mathrm{RMSE}(c)$ and mean $\max_{t,d}|\Delta|$")
     axes[0].legend()
     axes[1].bar(x, [summary[f"{c}_gt_mse_improvement"] for c in channels])
     axes[1].axhline(0.0, color="black", linewidth=0.8)
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(channels)
-    axes[1].set_ylabel("GT MSE improvement vs no-history")
-    axes[1].set_title("Usefulness (positive is better)")
-    for condition in channels:
-        axes[2].scatter(
-            [row[f"{condition}_rmse"] for row in rows],
-            [row[f"{condition}_gt_mse_improvement"] for row in rows],
-            s=18,
-            alpha=0.55,
-            label=condition,
-        )
-    axes[2].axhline(0.0, color="black", linewidth=0.8)
-    axes[2].set_xlabel("influence RMSE vs no-history")
-    axes[2].set_ylabel("GT MSE improvement")
-    axes[2].set_title("Per-frame effect")
-    axes[2].legend()
-    fig.suptitle(f"MEM history effect on the action chunk (n={len(rows)})")
+    axes[1].set_ylabel(r"$\mathrm{MSE}(\mathrm{none}) - \mathrm{MSE}(c)$ vs GT (normalized$^2$)")
+    axes[1].set_title(r"Usefulness: mean $\Delta\mathrm{MSE}(c)$ (positive is better)")
+    provenance = summary["data"]
+    fig.suptitle(
+        f"MEM history effect on the action chunk — {len(rows)} frames from "
+        f"{provenance['val']['n_episodes']} held-out episodes, "
+        f"{int(cfg.policy.chunk_size)}-step chunks"
+    )
     fig.savefig(os.path.join(output_dir, "influence.png"), bbox_inches="tight", dpi=100)
     plt.close(fig)
 
-    examples_dir = os.path.join(output_dir, "examples")
-    makedirs(examples_dir)
-    examples: list[tuple[str, str]] = []
-    for label, index in _select_examples(rows):
-        diagnostic = diagnostics[index]
-        row = rows[index]
-        filename = f"{label}_ep{row['episode_idx']:04d}_fr{row['frame_idx']:06d}.png"
-        _render_example(
-            dataset,
-            memory_cfg,
-            fps,
-            diagnostic,
-            label,
-            os.path.join(examples_dir, filename),
-        )
-        examples.append((label, filename))
-
-    _write_manifest(output_dir, summary, examples)
+    _write_manifest(output_dir, summary)
     logging.info(
         f"[mem_history_influence] n={len(rows)}  full RMSE={summary['full_rmse']:.4f}  "
         f"full GT-MSE improvement={summary['full_gt_mse_improvement']:+.4f}  "

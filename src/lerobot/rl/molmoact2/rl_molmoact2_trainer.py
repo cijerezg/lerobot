@@ -149,43 +149,10 @@ def _override_action_stats(processors: tuple, action_stats: dict[str, Any]) -> t
     return processors
 
 
-def _sub_batch(batch: dict[str, Any], n: int) -> dict[str, Any]:
-    """First n samples of a packed MolmoAct2 batch.
-
-    Rows keyed by sample slice on n, but the visual tensors are flat over a
-    different axis each: image_grids/image_num_crops over IMAGES, pixel_values over
-    CROPS, image_token_pooling over POOLED PATCHES. Leave those at full batch and
-    build_batched_images counts fewer image-end tokens than image grids and raises.
-    """
-    n_full = int(batch["input_ids"].shape[0])
-    n = min(n, n_full)
-    sliced = {
-        k: (v[:n] if torch.is_tensor(v) and v.ndim >= 1 and v.shape[0] == n_full else v)
-        for k, v in batch.items()
-    }
-    grids = batch.get("image_grids")
-    if not torch.is_tensor(grids):
-        return sliced
-    # Every sample carries the same camera set, so images divide evenly over samples.
-    n_images = int(grids.shape[0]) // n_full * n
-    crops = batch["image_num_crops"][:n_images]
-    sliced["image_grids"] = grids[:n_images]
-    sliced["image_num_crops"] = crops
-    sliced["pixel_values"] = batch["pixel_values"][: int(crops.sum())]
-    # Pooled patches per image = global grid + per-crop grid (build_batched_images §1-1).
-    pooled = grids[:n_images, :2].prod(dim=1).sum() + grids[:n_images, 2:].prod(dim=1).sum()
-    sliced["image_token_pooling"] = batch["image_token_pooling"][: int(pooled)]
-    return sliced
 
 
 class MolmoAct2Trainer(Trainer):
     """Trainer for MolmoAct2RLPolicy. Supports actor-only and critic-trained modes."""
-
-    # Samples used by the modality ablation probes' extra forwards (one present leg,
-    # one depth-ablated, one per RGB camera). Kept small on purpose: those run the
-    # depth encoder's trunk unchunked (see the call site), and in joint training the
-    # optimizer state already owns most of the card.
-    PROBE_SAMPLES = 8
 
     # Value histograms live inside the distributional critic's support; clip to
     # the configured default so a single outlier doesn't flatten the bin range.
@@ -713,6 +680,7 @@ class MolmoAct2Trainer(Trainer):
         accum: dict[str, float] = {
             "loss_actor": 0.0,
             "loss_flow": 0.0,
+            "loss_action_aux": 0.0,
             "loss_discrete_ce": 0.0,
             "loss_discrete_z": 0.0,
             "loss_subtask_ce": 0.0,
@@ -722,6 +690,8 @@ class MolmoAct2Trainer(Trainer):
         flow_loss_per_timestep_list: list[torch.Tensor] = []
         flow_timesteps_list: list[torch.Tensor] = []
         flow_loss_per_action_step_list: list[torch.Tensor] = []
+        action_auxiliary_component_lists: dict[str, list[torch.Tensor]] = {}
+        action_auxiliary_active_lists: dict[str, list[torch.Tensor]] = {}
         discrete_ce_loss_list: list[torch.Tensor] = []
         discrete_z_loss_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
@@ -794,10 +764,8 @@ class MolmoAct2Trainer(Trainer):
 
             loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
 
-            # Read the depth token scale from THIS forward. The ablation block below runs
-            # another forward with depth removed, which makes the encoder emit its null
-            # bank and overwrites the stash — reading after it would report the null
-            # bank's amplitude on exactly the steps that get logged.
+            # Read the depth token scale from THIS forward: the stash is consume-once,
+            # so any later forward (the val-loss pass below) overwrites it.
             if depth_on and capture_modality_telemetry and accum_idx == 0:
                 if policy._depth_token_rms is not None:
                     accum["depth_token_rms_ratio"] = (
@@ -807,100 +775,6 @@ class MolmoAct2Trainer(Trainer):
 
             loss_for_backward = loss.mean() if isinstance(loss, torch.Tensor) else torch.as_tensor(loss, device=actions.device)
             (loss_for_backward / grad_accum).backward()
-
-            # Run the ablation probes AFTER backward: they need nothing from the graph,
-            # and before the backward the main forward's activations are all still
-            # live, which is what put this over the edge in joint training.
-            # Ablation delta, first micro-batch only: loss with one modality removed minus
-            # loss with everything present. THE metric for whether a modality is doing
-            # anything — the absolute loss cannot show it, because the remaining inputs
-            # already satisfy most of the objective and each modality is a small residual
-            # on top. Positive = removing it hurts = it is carrying information.
-            # Depth is removed by dropping its observation keys (the encoder then emits its
-            # null bank); an RGB camera is removed by dropping its <im_patch> span from the
-            # attention mask — the same operation train-time rgb_dropout performs, so no
-            # re-tokenization and the token layout is identical across legs.
-            # The depth legs run with the encoder in eval mode so modality dropout does not
-            # randomly null the "present" leg and shrink the measured gap.
-            if capture_modality_telemetry and accum_idx == 0:
-                from lerobot.policies.depth_pointmap.modeling_stream import mask_camera_patch_span
-
-                was_training = policy.pointmap_encoder.training if depth_on else None
-                if depth_on:
-                    policy.pointmap_encoder.eval()
-                try:
-                    # Sub-batch the probe. eval() + no_grad below turn OFF the encoder's
-                    # chunked trunk (modeling_pointmap.py::_run_trunk gates on training and
-                    # grad-enabled), so these forwards allocate the full-resolution feature
-                    # maps for every frame in one shot — the single largest tensor in the
-                    # model. It is a telemetry mean over samples; it does not need the whole
-                    # batch. The legs run sequentially, so peak memory is one leg's, not the
-                    # sum, and every leg is the shape of the "present" one.
-                    probe_batch = _sub_batch(fwd_batch, self.PROBE_SAMPLES)
-                    image_patch_id, cameras = policy._camera_token_meta()
-                    # Canonical present leg: restore every camera's <im_patch> span, which
-                    # train-time rgb_dropout has already masked on some rows (p=0.75 for the
-                    # depth camera in the live config). Those columns are real tokens, so 1
-                    # is exactly their undropped state. Without this the wrist gap rests on
-                    # whichever rows the dropout draw happened to spare — 2 of 8 on average,
-                    # and none at all on ~10% of logged steps — while the top gap always
-                    # gets all 8, which is precisely the camera-vs-camera bias this metric
-                    # exists to compare. It also makes the baseline the deployment
-                    # condition (every camera present) rather than a random dropout draw.
-                    probe_batch = dict(probe_batch)
-                    present_mask = probe_batch["attention_mask"].clone()
-                    present_mask[probe_batch["input_ids"] == image_patch_id] = 1
-                    probe_batch["attention_mask"] = present_mask
-
-                    # Pair the legs: each forward otherwise draws its own flow noise,
-                    # timesteps and dropout masks, and that draw moves the loss by far more
-                    # than the modality being measured. Seeding per leg makes every row's
-                    # loss identical across legs except where the ablation bites. fork_rng
-                    # keeps the reseeding out of the training RNG stream.
-                    def probe_leg(leg_batch: dict[str, Any]) -> float:
-                        torch.manual_seed(int(optimization_step or 0) + 1)
-                        leg_loss, _ = policy.forward(
-                            leg_batch, reduction="none", return_diagnostics=True
-                        )
-                        return float(leg_loss.mean())
-
-                    fork_devices = [actions.device] if actions.device.type == "cuda" else []
-                    with torch.no_grad(), torch.random.fork_rng(devices=fork_devices):
-                        present = probe_leg(probe_batch)
-                        if depth_on:
-                            ablated = probe_leg(
-                                {
-                                    k: v
-                                    for k, v in probe_batch.items()
-                                    if not k.startswith("observation.depth.")
-                                }
-                            )
-                        rgb_delta: dict[str, float] = {}
-                        for cam_index, cam in enumerate(cameras):
-                            rgb_off = dict(probe_batch)
-                            rgb_off["attention_mask"] = mask_camera_patch_span(
-                                present_mask,
-                                probe_batch["input_ids"],
-                                image_patch_id=image_patch_id,
-                                num_images=len(cameras),
-                                cam_index=cam_index,
-                            )
-                            rgb_delta[cam] = probe_leg(rgb_off) - present
-                    # Log both depth legs, not only the gap: the depth-ablated leg feeds the
-                    # encoder's null bank, which is itself a trained nn.Parameter — so that
-                    # baseline moves too, and the gap alone cannot tell "real depth got
-                    # worse" from "the null bank got better faster". An RGB camera has no
-                    # learned stand-in (its tokens simply leave the attention mask), so the
-                    # shared present leg plus the gap says everything.
-                    accum["probe_loss_present"] = present
-                    if depth_on:
-                        accum["depth_loss_ablated"] = ablated
-                        accum["depth_ablation_delta"] = ablated - present
-                    for cam, delta in rgb_delta.items():
-                        accum[f"rgb_ablation_delta/{cam}"] = delta
-                finally:
-                    if depth_on:
-                        policy.pointmap_encoder.train(was_training)
 
             # Subtask-generation CE (two-prompt design): separate forward on the
             # generation prompt for annotated samples; grads accumulate alongside.
@@ -918,6 +792,9 @@ class MolmoAct2Trainer(Trainer):
 
             accum["loss_actor"] += float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
+            accum["loss_action_aux"] += float(
+                metrics.get("action_auxiliary_loss", 0.0)
+            ) / grad_accum
             accum["loss_discrete_ce"] += float(metrics.get("discrete_ce_loss", 0.0)) / grad_accum
             if "discrete_z_loss" in metrics:
                 accum["loss_discrete_z"] += float(metrics["discrete_z_loss"]) / grad_accum
@@ -936,6 +813,20 @@ class MolmoAct2Trainer(Trainer):
             flow_loss_per_action_step = metrics.get("flow_loss_per_action_step")
             if isinstance(flow_loss_per_action_step, torch.Tensor):
                 flow_loss_per_action_step_list.append(flow_loss_per_action_step.detach().float())
+            auxiliary_components = metrics.get("action_auxiliary_components")
+            if isinstance(auxiliary_components, dict):
+                for key, values in auxiliary_components.items():
+                    if isinstance(values, torch.Tensor):
+                        action_auxiliary_component_lists.setdefault(key, []).append(
+                            values.detach().float().view(-1)
+                        )
+            auxiliary_active = metrics.get("action_auxiliary_active")
+            if isinstance(auxiliary_active, dict):
+                for key, values in auxiliary_active.items():
+                    if isinstance(values, torch.Tensor):
+                        action_auxiliary_active_lists.setdefault(key, []).append(
+                            values.detach().float().view(-1)
+                        )
             discrete_ce_loss_raw = metrics.get("discrete_ce_loss_raw")
             if isinstance(discrete_ce_loss_raw, torch.Tensor):
                 discrete_ce_loss_list.append(discrete_ce_loss_raw.detach().float().view(-1))
@@ -999,6 +890,20 @@ class MolmoAct2Trainer(Trainer):
             edge = min(10, horizon)
             accum["flow_loss_time/mean_first_10"] = all_flow_by_action_step[:, :edge].mean().item()
             accum["flow_loss_time/mean_last_10"] = all_flow_by_action_step[:, -edge:].mean().item()
+        for key, chunks in action_auxiliary_component_lists.items():
+            values = torch.cat(chunks)
+            values = values[torch.isfinite(values)]
+            if values.numel():
+                prefix = f"action_aux/{key}"
+                accum[f"{prefix}_mean"] = values.mean().item()
+                quantiles = torch.quantile(
+                    values, torch.tensor([0.50, 0.75, 0.90], device=values.device)
+                )
+                accum[f"{prefix}_p50"] = quantiles[0].item()
+                accum[f"{prefix}_p75"] = quantiles[1].item()
+                accum[f"{prefix}_p90"] = quantiles[2].item()
+        for key, chunks in action_auxiliary_active_lists.items():
+            accum[f"action_aux/{key}_fraction"] = torch.cat(chunks).mean().item()
         if discrete_ce_loss_list:
             all_discrete_ce = torch.cat(discrete_ce_loss_list)
             accum["discrete_ce_loss_histogram_flat"] = all_discrete_ce.cpu().numpy()
@@ -1016,6 +921,8 @@ class MolmoAct2Trainer(Trainer):
 
         if accum["loss_discrete_z"] == 0.0:
             accum.pop("loss_discrete_z", None)
+        if not getattr(cfg.policy.action_auxiliary_loss, "enabled", False):
+            accum.pop("loss_action_aux", None)
 
         return accum
 
@@ -1270,18 +1177,16 @@ class MolmoAct2Trainer(Trainer):
         wandb_logger,
         _policy: nn.Module,
     ) -> None:
-        console_keys = ("loss_flow", "loss_discrete_ce", "loss_subtask_ce", "actor_grad_norm", "loss_critic", "depth_ablation_delta")
+        console_keys = (
+            "loss_flow", "val_loss_flow",
+            "loss_discrete_ce", "val_loss_discrete_ce",
+            "loss_subtask_ce", "actor_grad_norm", "loss_critic",
+        )
         console_scalars = {
             k: training_infos[k]
             for k in console_keys
             if isinstance(training_infos.get(k), (int, float))
         }
-        # Camera names come from the dataset, so the RGB deltas cannot be listed above.
-        console_scalars.update(
-            (k, v)
-            for k, v in sorted(training_infos.items())
-            if k.startswith("rgb_ablation_delta/") and isinstance(v, (int, float))
-        )
         if console_scalars:
             logging.info(
                 f"[MolmoAct2Trainer] step={step}  "

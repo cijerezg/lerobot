@@ -45,7 +45,7 @@ from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
-    as_image,
+    action_inspector_sample_seed,
     build_episode_index,
     joint_names_for_dim,
     load_probe_dataset,
@@ -551,61 +551,108 @@ def exemplar_bands(val_rows: list[dict], n_per_band: int) -> list[dict]:
     return bands
 
 
-def render_exemplars(bands: list[dict], dataset, cfg, output_dir: str) -> bool:
-    """One row per percentile band, one cell per frame, cameras side by side.
+def render_action_exemplars(bands, adapter, dataset, cfg, output_dir: str) -> bool:
+    """Generate one deterministic action per selected frame and reuse the 3-D inspector.
 
-    Re-reads the observation for the chosen frames only — dataset reads, no model
-    forwards, so the cost is independent of how many frames were measured.
+    Only the p5/p50/p95 exemplars get an inference forward. The much larger loss sample
+    remains unchanged, while each visual exemplar now pairs the demonstrated command
+    with what the checkpoint would actually generate from that observation.
     """
-    if not bands:
+    if not bands or not any(band["frames"] for band in bands):
         return False
+
+    from lerobot.probes.action_trace_probe import (
+        _analyse,
+        _camera_context,
+        _figure,
+        _resolve_actuator_config,
+        _write_dashboard_html,
+    )
+    from lerobot.robots.rebot_b601_follower.kinematics import RebotKinematics
+    from lerobot.utils.constants import OBS_STATE
+
     chunk_size = int(cfg.policy.chunk_size)
-    n_cols = max(len(band["frames"]) for band in bands)
-    fig, axes = plt.subplots(
-        len(bands), n_cols, figsize=(5.6 * n_cols, 2.9 * len(bands)), squeeze=False
-    )
-    for row, band in enumerate(bands):
-        for col in range(n_cols):
-            ax = axes[row][col]
-            ax.set_xticks([])
-            ax.set_yticks([])
-            if col >= len(band["frames"]):
-                ax.axis("off")
-                continue
-            record = band["frames"][col]
-            frame = probe_frame_inputs(dataset, cfg, record["global_idx"], chunk_size)
-            images = [
-                as_image(frame["obs"][key])
-                for key in sorted(k for k in frame["obs"] if k.startswith("observation.images."))
-            ]
-            if images:
-                height = min(image.shape[0] for image in images)
-                ax.imshow(np.concatenate([image[:height] for image in images], axis=1))
-            ax.set_title(
-                f"$\\mathcal{{L}}$ = {record['loss_flow']:.4f}   "
-                f"ep {record['episode_idx']} · frame {record['frame_idx']}",
-                fontsize=9,
-            )
-            ax.set_xlabel(
-                textwrap.shorten(str(record.get("subtask") or "—"), width=58, placeholder=" …"),
-                fontsize=8,
-                color="#555",
-            )
-            if col == 0:
-                ax.set_ylabel(
-                    f"$p_{{{band['percentile']}}}$ — {band['label']}\n"
-                    f"$\\mathcal{{L}} \\approx$ {band['target']:.4f}",
-                    fontsize=10,
-                    fontweight="bold",
+    fps = float(dataset.fps)
+    kin = RebotKinematics()
+    records = []
+    actuator_config = None
+
+    adapter._set_probe_cuda_graph_enabled(False)
+    try:
+        for band in bands:
+            for source in band["frames"]:
+                frame = probe_frame_inputs(dataset, cfg, source["global_idx"], chunk_size)
+                state = frame["obs"][OBS_STATE].reshape(-1).float().cpu()
+                if state.numel() == 0:
+                    raise ValueError("A 3-D action exemplar requires observation.state.")
+
+                generator = torch.Generator(device=adapter.device)
+                generator.manual_seed(
+                    action_inspector_sample_seed(cfg.probe_parameters.random_seed, source["global_idx"])
                 )
-    fig.suptitle(
-        "Held-out frames at the 5th, 50th and 95th percentiles of the flow loss",
-        fontsize=13,
-        fontweight="bold",
+                prediction, _, _ = adapter.predict_action_chunk(
+                    frame["obs"],
+                    frame["task"],
+                    state=state,
+                    subtask=frame["subtask"],
+                    metadata=frame["metadata"],
+                    generator=generator,
+                )
+
+                if actuator_config is None:
+                    actuator_config = _resolve_actuator_config(
+                        cfg, int(frame["gt_actions"].shape[-1])
+                    )
+                motor_speeds, joint_lower, joint_upper = actuator_config
+
+                record = _analyse(
+                    kin,
+                    state.numpy(),
+                    frame["gt_actions"].numpy(),
+                    [prediction.numpy()],
+                    cfg.probe_parameters.trace_table_z,
+                    fps=fps,
+                    motor_speeds_deg_s=motor_speeds,
+                    joint_lower=joint_lower,
+                    joint_upper=joint_upper,
+                )
+                record.update(
+                    episode=int(source["episode_idx"]),
+                    frame=int(source["frame_idx"]),
+                    global_idx=int(source["global_idx"]),
+                    subtask=frame["subtask"],
+                    cameras=_camera_context(frame["obs"]),
+                    state=state.numpy(),
+                    trace_label=(
+                        f"p{band['percentile']} {band['label']} · "
+                        f"flow loss {source['loss_flow']:.4f} · "
+                        f"ep {source['episode_idx']} frame {source['frame_idx']}"
+                    ),
+                    sample_names=["generated action"],
+                )
+                records.append(record)
+    finally:
+        adapter._restore_probe_cuda_graph_enabled()
+
+    if not records:
+        return False
+    fig = _figure(records, cfg.probe_parameters, fps=fps)
+    html_path = os.path.join(output_dir, "action_exemplars.html")
+    _write_dashboard_html(
+        fig,
+        records,
+        html_path,
+        page_title="Flow-loss action exemplars",
+        subtitle=(
+            "Generated action versus the demonstrated command for held-out frames near "
+            "p5, p50, and p95 of flow loss. Orbit the 3-D traces or step through frames."
+        ),
+        legend_note=(
+            "Black = demonstrated action · blue = generated action. Solid RGB axes are "
+            "the GT terminal orientation; dotted RGB axes are the generated orientation."
+        ),
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
-    fig.savefig(os.path.join(output_dir, "exemplars.png"), bbox_inches="tight", dpi=110)
-    plt.close(fig)
+    logging.info(f"[objective] wrote {len(records)} generated-action exemplars → {html_path}")
     return True
 
 
@@ -727,7 +774,7 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
     render_flow(summary, output_dir)
     render_discrete(summary, val_rows, train_rows, output_dir)
     render_breakdown(summary, val_rows, output_dir)
-    render_exemplars(bands, dataset, cfg, output_dir)
+    render_action_exemplars(bands, adapter, dataset, cfg, output_dir)
     _write_index(summary, output_dir)
 
     parts = []
@@ -802,7 +849,13 @@ def _write_index(summary: dict, output_dir: str) -> None:
                         "choosing between at each position."),
             Metric("n_val_frames", "Val frames measured", good="none", fmt=0),
         ],
-        extra={"provenance": summary.get("data", {})},
+        extra={
+            "provenance": summary.get("data", {}),
+            "viewer": {
+                "show_supporting_metrics": False,
+                "show_documentation": False,
+            },
+        },
         panels=[
             Panel(
                 "objective.png",
@@ -815,11 +868,13 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 refs=["action_trace"],
             ),
             Panel(
-                "exemplars.png",
-                "What each loss level looks like",
-                "Held-out frames whose $\\mathcal{L}_{flow}$ lands nearest $p_5$, $p_{50}$ "
-                "and $p_{95}$ of the val distribution — one row per percentile, both "
-                "cameras side by side, with that frame's $\\mathcal{L}_{flow}$ and subtask.",
+                "action_exemplars.html",
+                "GT and generated actions at low, typical, and high flow loss",
+                "Held-out frames nearest $p_5$, $p_{50}$, and $p_{95}$ of the val flow-loss "
+                "distribution. Black is the demonstrated action chunk; blue is one "
+                "deterministic generated chunk from the same observation. Orbit the 3-D "
+                "trace, hover a target, and use the slider or arrow keys to move between "
+                "the sampled frames; the camera views and subtask update with it.",
                 primary=True,
             ),
             Panel(

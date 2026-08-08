@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.action_metrics import TRAJECTORY_ERROR_KEYS, trajectory_error_components
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -256,6 +257,15 @@ def get_subtask_str(dataset, subtask_idx: int) -> str:
     except Exception:
         return ""
     return ""
+
+
+def subtask_group(subtask: str) -> str:
+    """Collapse an object-specific subtask to its verb.
+
+    "release the red shirt in the bin" → "release", so the by-subtask plots show a
+    handful of phases instead of one colour per object.
+    """
+    return subtask.split()[0] if subtask else "?"
 
 
 def frame_metadata_lookup(dataset) -> dict[int, dict]:
@@ -703,6 +713,16 @@ def run_umap(X_pca: torch.Tensor, n_components: int, n_neighbors: int,
 # ──────────────────────────────────────────────────────────────────────────────
 # 2D matplotlib helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+def panel_caption(ax, lines: list[str], y: float = -0.185) -> None:
+    """The computation behind the panel, printed under the panel.
+
+    Pre-wrapped rather than filled, because the lines carry mathtext spans that a
+    wrapper would break mid-formula.
+    """
+    ax.text(0.0, y, "\n".join(lines), transform=ax.transAxes, fontsize=7.4,
+            va="top", ha="left", color="#333333", linespacing=1.55)
+
 
 def ax_style(ax, title: str, width: int = 60) -> None:
     """Consistent axis styling for 2D UMAP scatter / trajectory plots."""

@@ -105,6 +105,42 @@ def infer_molmoact2_max_sequence_length(
     )
 
 
+@dataclass
+class ActionAuxiliaryLossConfig:
+    """Independent, optionally threshold-gated action-trajectory losses."""
+
+    enabled: bool = False
+    path_weight: float = 0.0
+    path_threshold: float | None = None
+    shape_weight: float = 0.0
+    shape_threshold: float | None = None
+    terminal_weight: float = 0.0
+    terminal_threshold: float | None = None
+    direction_weight: float = 0.0
+    direction_threshold: float | None = None
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        for name in ("path", "shape", "terminal", "direction"):
+            weight = getattr(self, f"{name}_weight")
+            threshold = getattr(self, f"{name}_threshold")
+            if weight < 0:
+                raise ValueError(f"{name}_weight must be non-negative, got {weight}.")
+            if threshold is not None and threshold <= 0:
+                raise ValueError(f"{name}_threshold must be positive or null, got {threshold}.")
+        if self.direction_threshold is not None and self.direction_threshold > 2:
+            raise ValueError(
+                "direction_threshold cannot exceed 2 because direction loss is 1 - cosine similarity."
+            )
+        if self.eps <= 0:
+            raise ValueError(f"eps must be positive, got {self.eps}.")
+        if self.enabled and not any(
+            getattr(self, f"{name}_weight") > 0
+            for name in ("path", "shape", "terminal", "direction")
+        ):
+            raise ValueError("enabled action auxiliary loss requires at least one positive weight.")
+
+
 @PreTrainedConfig.register_subclass("molmoact2")
 @dataclass
 class MolmoAct2Config(PreTrainedConfig):
@@ -170,6 +206,9 @@ class MolmoAct2Config(PreTrainedConfig):
     flow_matching_time_scale: float = 0.999
     flow_matching_beta_alpha: float = 1.0
     flow_matching_beta_beta: float = 1.5
+    action_auxiliary_loss: ActionAuxiliaryLossConfig = field(
+        default_factory=ActionAuxiliaryLossConfig
+    )
     num_inference_steps: int | None = None
     mask_action_dim_padding: bool = True
     enable_inference_cuda_graph: bool = True
@@ -288,6 +327,13 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
         if self.pointmap_config is not None and self.action_mode == "discrete":
             raise ValueError("pointmap_config feeds the action expert; action_mode='discrete' never uses it.")
+        if self.action_auxiliary_loss.enabled and self.action_mode == "discrete":
+            raise ValueError("action_auxiliary_loss requires a continuous action expert.")
+        if self.action_auxiliary_loss.enabled and getattr(self, "action_encoding", "absolute") == "delta":
+            raise ValueError(
+                "action_auxiliary_loss does not support delta action encoding: final position and "
+                "trajectory shape are not represented directly in delta space."
+            )
 
     def inferred_max_sequence_length(
         self,

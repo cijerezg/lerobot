@@ -472,6 +472,17 @@ kbd{background:var(--panel);border:1px solid var(--line);border-bottom-width:2px
    table below, so the tile is the only place the reader can learn what they are. */
 .tile .tilenote{font-size:11px;line-height:1.5;color:var(--muted);margin-top:7px;
  border-top:1px solid var(--line);padding-top:7px}
+.metricgroups{display:grid;gap:8px;padding:10px 20px 0}
+.metricgroup{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+.metricgrouphead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px}
+.metricgrouphead strong{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.metricgrouphead span{font-size:10px;color:var(--muted)}
+.metriccells{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:6px}
+.metriccell{min-width:0;background:var(--panel);border-radius:6px;padding:7px 8px}
+.metriccell .lbl{display:block;font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.metriccell .reading{display:flex;align-items:center;gap:7px;margin-top:3px}
+.metriccell .val{font:650 15px ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.metriccell .spark{margin-left:auto}
 
 /* ── data provenance ────────────────────────────────────────────────────── */
 .prov{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;font-size:12px}
@@ -849,6 +860,35 @@ function headlineTiles(p){
   }).join("")}</div>`;
 }
 
+// Related diagnostics belong in one strip, not four headline tiles or four rows
+// below the figure. Probes opt into this through extra.viewer.metric_groups.
+function compactMetricGroups(p){
+  const groups = viewerOptions(p).metric_groups || [];
+  if(!groups.length) return "";
+  const byKey = new Map(p.metrics.map(m => [m.key, m]));
+  const rendered = groups.map(group => {
+    const metrics = (group.keys || []).map(key => byKey.get(key)).filter(Boolean);
+    if(!metrics.length) return "";
+    const cells = metrics.map(m => {
+      const value = m.values[stepKey(si)];
+      const status = m.statuses ? (m.statuses[stepKey(si)] || "info") : "info";
+      return `<div class="metriccell" title="${attr(m.note || dirLabel(m))}">
+        <span class="lbl">${esc(m.label)}</span>
+        <div class="reading"><span class="dot ${status}"></span>
+          <span class="val">${fmt(value, m.fmt)}</span>${spark(m)}</div></div>`;
+    }).join("");
+    return `<div class="metricgroup"><div class="metricgrouphead"><strong>${esc(group.title || "Related metrics")}</strong>
+      ${group.note ? `<span>${inline(group.note)}</span>` : ""}</div>
+      <div class="metriccells">${cells}</div></div>`;
+  }).join("");
+  return rendered ? `<div class="metricgroups">${rendered}</div>` : "";
+}
+
+function groupedMetricKeys(p){
+  const groups = viewerOptions(p).metric_groups || [];
+  return new Set(groups.flatMap(group => group.keys || []));
+}
+
 // Where the numbers came from. Rendered from index.json `extra.provenance`, so any
 // probe gains this section by declaring one — nothing here is objective-specific.
 function splitLine(s){
@@ -861,16 +901,27 @@ function splitLine(s){
 function provenanceBox(p){
   const prov = (p.extra && p.extra[stepKey(si)] || {}).provenance;
   if(!prov) return "";
+  // Every row is built only from the fields the probe declared and dropped when they
+  // are absent: a probe with no training split, or one that sweeps no flow timesteps,
+  // shows fewer rows rather than "undefined". `details` is the probe's own list of
+  // [label, text] rows for whatever else defines one of its measurements.
+  const forward = [
+    prov.batch_size === undefined ? "" : `batch ${prov.batch_size}`,
+    prov.timesteps_per_forward === undefined ? "" : `${prov.timesteps_per_forward} flow timesteps`,
+    prov.chunk_size === undefined ? "" : `chunk ${prov.chunk_size}`,
+  ].filter(Boolean).join(", ");
   const rows = [
     ["Held out", splitLine(prov.val)],
     ["Training", splitLine(prov.train)],
-    ["Per episode", `${prov.frames_per_episode} frames, evenly spaced` +
-      (prov.image_stride ? `, snapped onto the stride-${prov.image_stride} grid` : "")],
+    ["Per episode", prov.frames_per_episode === undefined ? ""
+      : `${prov.frames_per_episode} frames, evenly spaced` +
+        (prov.image_stride ? `, snapped onto the stride-${prov.image_stride} grid` : "")],
     ["Episode budget", prov.episode_budget === null || prov.episode_budget === undefined
-      ? "every episode" : `${prov.episode_budget}, divided across the training sources`],
-    ["Per forward", `batch ${prov.batch_size}, ${prov.timesteps_per_forward} flow timesteps,` +
-      ` chunk ${prov.chunk_size}`],
-    ["Total", `${prov.forwards} forwards`],
+      ? "every episode" : `${prov.episode_budget} episodes`],
+    ["Per forward", forward],
+    ...(prov.details || []).map(([k, v]) => [k, inline(v)]),
+    ["Total", prov.forwards === undefined ? "" : `${prov.forwards} forwards`],
+    ["Regime", prov.regime ? inline(prov.regime) : ""],
   ].filter(r => r[1]);
   return `<div class="box"><h4>Data behind these numbers</h4>
     <dl class="prov">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>
@@ -892,6 +943,10 @@ function natcmp(a, b){ return String(a).localeCompare(String(b), undefined, {num
 function dirOf(file){ const i = file.lastIndexOf("/"); return i < 0 ? "" : file.slice(0, i); }
 function components(dir){ return dir.split("/").flatMap(seg => seg.split("_")); }
 function alphaPrefix(part){ const m = String(part).match(/^[a-zA-Z]+/); return m ? m[0] : ""; }
+function currentPlan(){
+  const all = allPanels();
+  return all.length > FACET_THRESHOLD ? facetPlan(all) : {axes: []};
+}
 function facetPlan(panels){
   const dirs = [...new Set(panels.map(pn => dirOf(pn.file)))];
   if(dirs.length < 2) return {axes: [], dirs};
@@ -928,17 +983,48 @@ function snapFacet(pn, plan){
   const parts = components(dir);
   plan.axes.forEach((axis, a) => { if(parts[axis.index] !== undefined) facet[a] = parts[axis.index]; });
 }
+// Moving a selector must not undo the figure choice: since the drawn figure snaps the
+// facets back to its own directory, a picked figure that the new facet excludes is
+// re-aimed at the same-named figure inside it rather than dropped.
+function retarget(file, plan){
+  if(file === null || file === KEYS || !plan.axes.length) return file;
+  const all = allPanels();
+  if(all.some(pn => pn.file === file && matchesFacet(pn, plan))) return file;
+  const twin = all.find(pn => baseOf(pn.file) === baseOf(file) && matchesFacet(pn, plan));
+  return twin ? twin.file : KEYS;
+}
 
 // ── state helpers ────────────────────────────────────────────────────────────
 function probe(){ return DATA.probes.find(x => x.id === cur) || null; }
 function probesAt(){ return DATA.probes.filter(p => p.panels[stepKey(si)] !== undefined); }
 function allPanels(){ const p = probe(); return p ? (p.panels[stepKey(si)] || []) : []; }
-function keyPanels(){ const k = allPanels().filter(pn => pn.primary); return k.length ? k : allPanels(); }
-function shownPanels(){
+function viewerOptions(p){
+  const extra = p && p.extra ? (p.extra[stepKey(si)] || {}) : {};
+  return extra.viewer || {};
+}
+function baseOf(file){ const i = file.lastIndexOf("/"); return i < 0 ? file : file.slice(i + 1); }
+// The declared primaries, resolved into the selected facet. Probes mark their key
+// figures in a single episode/layer directory ("the shallowest layer of the first
+// episode"), so "key figure" names a figure, not that one copy of it: on any other
+// episode or layer, show the same-named figures there instead of nothing.
+function facetKeys(plan){
+  const all = allPanels(), keyed = all.filter(pn => pn.primary);
+  if(!keyed.length) return [];
+  const here = keyed.filter(pn => matchesFacet(pn, plan));
+  if(here.length) return here;
+  const names = new Set(keyed.map(pn => baseOf(pn.file)));
+  const twins = all.filter(pn => names.has(baseOf(pn.file)) && matchesFacet(pn, plan));
+  return twins.length ? twins : keyed;
+}
+function keyPanels(plan){
+  const keyed = facetKeys(plan);
+  return keyed.length ? keyed : allPanels().filter(pn => matchesFacet(pn, plan));
+}
+function shownPanels(plan){
   const all = allPanels();
-  if(pick === KEYS) return keyPanels();
+  if(pick === KEYS) return keyPanels(plan);
   const hit = all.find(pn => pn.file === pick);
-  return hit ? [hit] : keyPanels().slice(0, 1);
+  return hit ? [hit] : keyPanels(plan).slice(0, 1);
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────
@@ -962,16 +1048,16 @@ function drawList(){
 }
 
 function figureSelect(plan){
-  const all = allPanels(), keyed = allPanels().filter(pn => pn.primary);
+  const all = allPanels();
   if(!all.length) return `<span class="num">No figures</span>`;
   // One figure needs no menu: its caption is printed under it like every other.
   if(all.length === 1) return `<span class="num">1 figure</span>`;
-  const inFacet = pn => matchesFacet(pn, plan);
   const opt = pn => `<option value="${esc(pn.file)}" ${pick===pn.file?"selected":""}>${
     esc(pn.caption && pn.caption !== pn.file ? pn.caption : pn.file)}</option>`;
-  const keyOpts = keyed.filter(inFacet), restOpts = all.filter(pn => !pn.primary && inFacet(pn));
+  const keyOpts = facetKeys(plan), keySet = new Set(keyOpts.map(pn => pn.file));
+  const restOpts = all.filter(pn => !keySet.has(pn.file) && matchesFacet(pn, plan));
   return `<label>Figure<select id="figsel" onchange="setPick(this.value)">
-    ${keyed.length > 1 ? `<option value="${KEYS}" ${pick===KEYS?"selected":""}>All key figures (${keyed.length})</option>` : ""}
+    ${keyOpts.length > 1 ? `<option value="${KEYS}" ${pick===KEYS?"selected":""}>All key figures (${keyOpts.length})</option>` : ""}
     ${keyOpts.length ? `<optgroup label="Key figures">${keyOpts.map(opt).join("")}</optgroup>` : ""}
     ${restOpts.length ? `<optgroup label="Everything else (${restOpts.length})">${restOpts.map(opt).join("")}</optgroup>` : ""}
   </select></label>`;
@@ -1009,17 +1095,18 @@ function fitImage(img){
 function drawMain(){
   const main = document.getElementById("main"), p = probe();
   if(!p){ main.innerHTML = `<div class="empty">select a probe</div>`; return; }
+  const view = viewerOptions(p);
 
   const all = allPanels();
-  const plan = all.length > FACET_THRESHOLD ? facetPlan(all) : {axes: []};
+  const plan = currentPlan();
   normalizeFacet(plan);
   if(pick !== KEYS && !all.some(pn => pn.file === pick)){
-    const keyed = keyPanels();
+    const keyed = keyPanels(plan);
     pick = keyed.length > 1 && all.filter(pn => pn.primary).length > 1 ? KEYS
          : (keyed[0] ? keyed[0].file : null);
   }
   snapFacet(all.find(pn => pn.file === pick), plan);
-  const shown = shownPanels().filter(pn => matchesFacet(pn, plan));
+  const shown = shownPanels(plan);
 
   const facets = plan.axes.map((axis, a) => `<label>${esc(axis.label)}
     <select onchange="setFacet(${a}, this.value)">${axis.options.map(o =>
@@ -1046,8 +1133,9 @@ function drawMain(){
 
   // Only what the tiles above don't already carry — a metric shown twice on one page
   // reads as two different numbers.
-  const tabled = orderedMetrics(p).filter(m => !m.primary);
-  const metricsBox = tabled.length ? `<div class="box">
+  const grouped = groupedMetricKeys(p);
+  const tabled = orderedMetrics(p).filter(m => !m.primary && !grouped.has(m.key));
+  const metricsBox = view.show_supporting_metrics !== false && tabled.length ? `<div class="box">
     <h4>${p.metrics.some(m => m.primary) ? "Supporting metrics" : "Metrics"} at step
       ${DATA.steps[si].step.toLocaleString()}</h4>` +
       tabled.map(m => { const v = m.values[stepKey(si)], d = delta(m);
@@ -1060,7 +1148,7 @@ function drawMain(){
           ${m.note ? `<div class="note">${inline(m.note)}</div>` : ""}${refChips(m.refs)}`;
       }).join("") + `</div>` : "";
 
-  const docBox = `<div class="box">
+  const docBox = view.show_documentation === false ? "" : `<div class="box">
     ${p.has_manifest ? "" : `<div class="warnbox">No <code>index.json</code> — every file in the
       directory is listed, documentation is the module docstring read off disk, and the numbers are
       raw summary keys with no labels, direction or thresholds.</div>`}
@@ -1085,6 +1173,7 @@ function drawMain(){
         <option value="2" ${zoom==="2"?"selected":""}>200%</option></select></label>` : ""}
       ${all.length > 1 ? `<span class="num">${all.length} figures in this probe</span>` : ""}</div>
     ${headlineTiles(p)}
+    ${compactMetricGroups(p)}
     ${figures}
     <div class="below">${provenanceBox(p)}${metricsBox}${docBox}</div>`;
   wirePanning();
@@ -1121,7 +1210,12 @@ function draw(){ drawList(); drawMain();
   document.getElementById("steplab").textContent = "step " + DATA.steps[si].step.toLocaleString(); }
 function sel(id){ cur = id; pick = null; facet = []; draw(); document.getElementById("main").scrollTop = 0; }
 function setPick(v){ pick = v; drawMain(); }
-function setFacet(a, v){ facet[a] = v; facet.length = a + 1; pick = null; drawMain(); }
+function setFacet(a, v){
+  facet[a] = v; facet.length = a + 1;
+  const plan = currentPlan(); normalizeFacet(plan);
+  pick = retarget(pick, plan);
+  drawMain();
+}
 function setZoom(v){ zoom = v; document.querySelectorAll(".figview img").forEach(fitImage); }
 function stepFigure(delta){
   const all = allPanels(); if(!all.length) return;

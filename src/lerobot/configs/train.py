@@ -294,6 +294,7 @@ class ProbeConfig:
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
     enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
     enable_mem_history_influence: bool = False  # MEM: how much history (full/image/state) shifts the action chunk
+    enable_mem_history_regime: bool = False  # MEM: which frames history helps on, against a wrong-window null
     enable_mem_temporal_attention: bool = False  # MEM: temporal-read distributions + spatial examples
     enable_action_trace: bool = False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
     enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
@@ -343,9 +344,14 @@ class ProbeConfig:
     # Depth modality (2x2 conditions x FD sensitivity per frame, so keep it small)
     depth_modality_n_frames: int = 6
 
-    # Attention budget. Reuses spatial_layers and n_frames_per_episode (one capture
-    # per frame covers every layer). budget_fd_sensitivity adds a causal series at
-    # two extra forwards per frame — mass says "read", FD says "load-bearing".
+    # Attention budget. Reuses spatial_layers, and n_frames_per_episode unless
+    # budget_n_frames_per_episode overrides it (one capture per frame covers every
+    # layer). The frame axis is a plotted series, so its length is a legibility choice
+    # as much as a cost one: past ~50 frames the compositional-shift panel is a hairball
+    # and the per-frame estimates it draws are not what the summary statistics rest on.
+    # budget_fd_sensitivity adds a causal series at two extra forwards per frame —
+    # mass says "read", FD says "load-bearing".
+    budget_n_frames_per_episode: int | None = None
     budget_fd_sensitivity: bool = False
 
     # Objective. One forward per frame per split, so the cost is
@@ -353,12 +359,19 @@ class ProbeConfig:
     # training sources, so it is the total train-side episode budget, not per source.
     objective_n_frames_per_episode: int = 24
     objective_max_episodes: int | None = 8
-    objective_exemplars_per_band: int = 3  # frames shown at each of p5 / p50 / p95
+    # Deterministic generated-vs-GT 3-D action traces at each of p5 / p50 / p95.
+    objective_exemplars_per_band: int = 3
 
     # Subtask sweep: n_frames x (max_labels + n_seeds) forwards, so keep all three small.
     subtask_sweep_n_frames: int = 8
     subtask_sweep_max_labels: int = 16
     subtask_sweep_n_seeds: int = 3
+
+    # Metadata steering: n_frames x (8 clauses + gt + n_seeds - 1) forwards. n_frames is
+    # per episode and falls back to n_frames_per_episode; the obedience matrix splits
+    # those frames by their true quality, so cutting it thins the columns, not the rows.
+    metadata_steering_n_frames: int | None = None
+    metadata_steering_n_seeds: int = 3
 
     # Critic values distribution
     critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution
@@ -368,7 +381,7 @@ class ProbeConfig:
     trace_episodes: str | None = None  # comma-separated episode indices; None = all
     trace_anchor_stride_s: float = 2.0  # seconds between anchor frames
     trace_max_anchors_per_episode: int = 30
-    trace_n_samples: int = 5  # independent flow draws per anchor — the fan
+    trace_n_samples: int = 4  # independent flow draws per anchor — the fan
     trace_table_z: float = 0.0  # table plane height (m). 0 = the arm's own mounting plane.
     trace_clearance_warn_m: float = 0.01  # samples dipping below this are drawn red
 
@@ -396,6 +409,10 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     val_split: float = 0.0
     val_freq: int = 1000
     val_on_start: bool = False
+    # Held-out flow + FAST CE logged every log_freq alongside the train losses.
+    # Frames are packed once at startup, so the per-call cost is ceil(n / batch_size)
+    # forwards. 0 disables.
+    val_loss_frames: int = 0
     skip_critic: bool = False             # skip all critic training (forward+backward)
 
     def validate(self) -> None:

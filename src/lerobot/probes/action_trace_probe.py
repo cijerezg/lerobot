@@ -1,61 +1,40 @@
 """Interactive Action Inspector: where the policy would send the arm from demo states.
 
-At anchor frames spaced through the validation episodes, draws ``n_samples`` flow samples
-of the predicted action chunk and the ground-truth chunk in Cartesian space, via the reBot
-URDF (``robots.rebot_b601_follower.kinematics``), and reports table clearance from the
-full link geometry.
+At anchor frames through the validation episodes it draws ``trace_n_samples`` flow samples
+of the action chunk, puts them and the demonstrated chunk through the reBot URDF, and
+answers four questions:
 
-Four questions it answers, in decreasing order of what it can prove:
+  1. **Fit.** ``skill_vs_hold`` / ``skill_vs_mean``: the fraction of a constant
+     predictor's error the policy removes, from flow sample 0 in normalized space. Four
+     separate diagnostics keep the failure mode visible: path MSE, temporal-shape MSE,
+     final-position MSE, and pure final-direction alignment. The last is a cosine from the
+     hold position, so it ignores how long the final displacement is. At or below zero
+     skill, repeating the measured pose scores as well.
+  2. **Clearance.** Would any link go through the table during the next chunk? From
+     per-link convex hulls, not link origins, so the gripper body and elbow count. A
+     genuine pre-flight check: it runs before the arm ever moves.
+  3. **Multimodality.** Independent flow draws from one observation, drawn as a fan. Wide
+     at a decision point means the policy is torn (which sock first); tight means it
+     committed. No other probe exposes this.
+  4. **Discontinuity.** ``initial target gap``: how far the first commanded target sits
+     from the measured pose. This is a controller target displacement, not an interpolated
+     trace step, and its cause is left open — servo tracking, timestamp alignment,
+     calibration, or a genuinely discontinuous prediction all produce it.
 
-  1. **Clearance.** Would any link go through the table during the next chunk? Computed
-     from per-link convex hulls, not link origins, so the gripper body and elbow count.
-     This is a genuine pre-flight check: it runs before the arm ever moves.
-  2. **Multimodality.** ``n_samples`` independent flow draws from one observation, drawn
-     as a fan. A wide fan at a decision point means the policy is torn (which sock
-     first); a tight bundle means it committed. No other probe exposes this.
-  3. **Baseline-relative fit.** Is the checkpoint predicting at all? Normalized-space MSE
-     of flow sample 0 against the demonstrated chunk, next to two constant predictors it
-     has to beat — holding the measured pose, and the mean demonstrated chunk. Reported
-     as ``skill_vs_hold`` / ``skill_vs_mean`` with a per-joint split in
-     ``action_metrics.json``. This is the suite's headline "is it any good" number, and
-     it lives here because the anchors and sample-0 seed are this probe's (it absorbed
-     the former ``offline_inference`` probe, deleted 2026-08-02).
-  4. **Cartesian fit.** Task-space error against GT, reported both as the mean over
-     samples and the best sample, because they mean different things (see below).
+Two things change how every number here reads. Every action, GT or predicted, is a
+**commanded** leader pose, while the arm and the ``measured now`` marker are the
+**measured** follower pose. And it is **open-loop**: each anchor restarts the policy from
+a demo state, so compounding error and recovery are invisible by construction, and
+divergence from GT is not automatically error on a multimodal task — read the fan, and
+prefer ``ee_err_best`` over ``ee_err_mean``.
 
-COMMANDED vs MEASURED. Every action — GT or predicted — is a commanded (leader) pose,
-while the skeleton and the ``measured now`` marker are the measured follower pose. The
-segment between them is labelled ``initial target gap``: it is a controller target
-displacement, not an interpolated trace step. Its cause is intentionally left open. It
-can reflect servo tracking, timestamp alignment, action/state calibration, or a genuine
-command discontinuity; the inspector reports both distance and an actuator-speed lower
-bound so an operator can judge its physical plausibility.
-
-Wrist roll and gripper commands are shown in synchronized plots beside the 3D trace,
-while the 3D endpoint triads expose terminal tool orientation.
-
-OPEN-LOOP. Every anchor restarts the policy from a demo state, so this measures *intended*
-motion, never closed-loop behaviour: compounding error and recovery from drift are
-invisible by construction. Divergence from GT is also not automatically error — the task
-is multimodal, and taking the other sock is a valid rollout that scores as a large
-Cartesian distance. Read the fan, and prefer ``ee_err_best`` over ``ee_err_mean`` when
-judging fit; use real rollouts for the closed-loop question.
-
-TWO DECODERS. On an ``action_mode=both`` checkpoint run with
-``inference_action_mode=continuous``, a second panel puts the greedy FAST reconstruction
-beside the flow fan in two scale-locked scenes. It stays a picture: FAST is greedy and
-quantized, and depth reaches only the flow path, so the two sides are not comparable
-enough to scalarise into a decoder score.
-
-Runs inside rl_offline's validation loop when ``probe_parameters.enable_action_trace`` is
-set, or standalone:
-
-    python -m lerobot.probes.action_trace_probe --config config_rl.yaml \
-        --probe_parameters.trace_anchor_stride_s 2.0 --probe_parameters.trace_n_samples 5
+Per-anchor numbers are in ``metrics.csv``; the per-joint split, baseline MSEs, and
+across-anchor trajectory-metric distributions are in ``action_metrics.json``.
 """
 
 import base64
 import csv
+import html
 import io
 import json
 import logging
@@ -68,20 +47,17 @@ import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.probes.action_decoder_comparison import (
-    FLOW_COMPARE_COUNT,
-    build_figure as build_decoder_comparison_figure,
-    write_html as write_decoder_comparison_html,
-)
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
+    TRAJECTORY_ERROR_KEYS,
     action_inspector_sample_seed,
     joint_names_for_dim,
     load_probe_dataset,
     makedirs,
     probe_frame_inputs,
     sample_action_inspector_frames,
+    trajectory_error_components,
 )
 from lerobot.robots.rebot_b601_follower.kinematics import LINK_NAMES, RebotKinematics
 from lerobot.utils.constants import OBS_STATE
@@ -95,22 +71,24 @@ class ActionTraceProbeConfig(TrainRLServerPipelineConfig):
 
 
 # One colour per flow draw, so a sample can be followed through the fan and matched to
-# its clearance in the legend. Red is deliberately absent: it stays the table-breach
-# signal, and reds/greens are kept apart for colour-blind readers.
+# its clearance in the legend. Two colours are deliberately absent: red stays the
+# table-breach signal, and amber belongs to the FAST reconstruction sharing the scene.
+# Reds and greens are kept apart for colour-blind readers.
 SAMPLE_COLORS = (
     "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
     "#9467bd",
+    "#2ca02c",
     "#17becf",
-    "#8c564b",
     "#e377c2",
+    "#8c564b",
     "#7f7f7f",
     "#bcbd22",
     "#393b79",
     "#637939",
-    "#8c6d31",
 )
+
+# The greedy FAST reconstruction, drawn in the same axes as the flow fan.
+FAST_COLOR = "#D97706"
 
 
 def _observation(dataset, cfg, global_idx: int):
@@ -215,6 +193,15 @@ def _normalized_chunks(adapter, pred_norm, gt_actions, state):
     }
 
 
+def _trajectory_metrics(norm: dict[str, torch.Tensor]) -> dict[str, float | None]:
+    """JSON-safe trajectory metrics for one anchor and flow sample 0."""
+    components = trajectory_error_components(norm["pred"], norm["gt"], norm["hold"])
+    return {
+        key: float(value) if bool(torch.isfinite(value)) else None
+        for key, value in components.items()
+    }
+
+
 def _fit_metrics(records: list[dict]) -> dict:
     r"""Normalized-space action error against the two constants worth beating.
 
@@ -238,9 +225,25 @@ def _fit_metrics(records: list[dict]) -> dict:
     gt = torch.stack([record["norm"]["gt"] for record in records])
     hold = torch.stack([record["norm"]["hold"] for record in records])
     dataset_mean = gt.mean(dim=0, keepdim=True).expand_as(gt)
+    trajectory_components = trajectory_error_components(pred, gt, hold)
 
     def mse(a, b):
         return float((a - b).pow(2).mean())
+
+    trajectory = {}
+    trajectory_means = {}
+    for key, values in trajectory_components.items():
+        finite = values[torch.isfinite(values)]
+        trajectory_means[key] = float(finite.mean()) if finite.numel() else None
+        trajectory[key] = {
+            "mean": trajectory_means[key],
+            "median": float(finite.median()) if finite.numel() else None,
+            "p10": float(torch.quantile(finite, 0.10)) if finite.numel() else None,
+            "p75": float(torch.quantile(finite, 0.75)) if finite.numel() else None,
+            "p90": float(torch.quantile(finite, 0.90)) if finite.numel() else None,
+            "valid": int(finite.numel()),
+            "values": [float(value) if bool(torch.isfinite(value)) else None for value in values],
+        }
 
     by_joint = dict(
         zip(joint_names_for_dim(gt.shape[-1]), (pred - gt).pow(2).mean(dim=(0, 1)).tolist())
@@ -249,7 +252,12 @@ def _fit_metrics(records: list[dict]) -> dict:
     metrics = {
         "n_frames": len(records),
         "space": "normalized",
-        "mse_norm": mse(pred, gt),
+        "mse_norm": trajectory_means["path_mse"],
+        **trajectory_means,
+        "trajectory": trajectory,
+        "terminal_direction_valid_fraction": (
+            trajectory["terminal_direction_loss"]["valid"] / len(records)
+        ),
         "mse_norm_by_joint": by_joint,
         "worst_joint": worst_joint,
         "worst_joint_mse_norm": worst_joint_mse,
@@ -425,26 +433,123 @@ def _analyse(
 
 
 def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: F821
-    """Interactive 3-D action inspector plus wrist-roll and gripper timelines."""
+    """Interactive action inspector: trace scene, arm-pose panel, wrist roll, gripper.
+
+    The trace scene holds commanded paths only. The arm itself is drawn once, small, in
+    its own panel on the right: the link chain reaches back to the base, and carrying it
+    in the main scene stretched the extent far past the centimetre-scale motion the
+    scene exists to show.
+
+    On an ``action_mode=both`` checkpoint the greedy FAST reconstruction shares these
+    axes with the flow fan rather than taking a page of its own — the comparison is a
+    distance the eye can read directly, and it only reads as a distance in one scene.
+    """
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
-    all_points = np.concatenate(
+    has_fast = any("fast_chunk" in record for record in records)
+
+    trace_points = np.concatenate(
         [record["gt_ee"] for record in records]
         + [record["sample_ee"].reshape(-1, 3) for record in records]
         + [record["start_ee"][None] for record in records]
     )
-    lo, hi = all_points.min(axis=0), all_points.max(axis=0)
-    pad = 0.05
-    table_x = [lo[0] - pad, hi[0] + pad]
-    table_y = [lo[1] - pad, hi[1] + pad]
+    pose_points = np.concatenate(
+        [trace_points]
+        + [record["anchor_skeleton"] for record in records]
+        + [record["fast_ee"] for record in records if record.get("fast_ee") is not None]
+    )
+    pose_lo, pose_hi = pose_points.min(axis=0), pose_points.max(axis=0)
+    # Explicit ranges clip: the table plane has to sit inside the extent or the one
+    # reference the clearance means anything against silently disappears.
+    pose_lo[2] = min(pose_lo[2], p.trace_table_z)
+    pose_hi[2] = max(pose_hi[2], p.trace_table_z)
+    # aspectmode="cube" gives every axis the same screen length, so the range has to be a
+    # cube too or the arm is read in a stretched space. Fixing it also holds the panel
+    # still while the slider steps through anchors, so a link that moves really moved.
+    pose_centre = (pose_lo + pose_hi) / 2.0
+    pose_half = max((pose_hi - pose_lo).max() / 2.0, 0.05) * 1.05
+    pose_lo, pose_hi = pose_centre - pose_half, pose_centre + pose_half
 
-    def path_hover(label: str, chunk: np.ndarray) -> np.ndarray:
+    def path_hover(chunk: np.ndarray) -> np.ndarray:
         step = np.arange(len(chunk))
         time_ms = step / float(fps) * 1000.0
         roll = chunk[:, 5] if chunk.shape[1] > 5 else np.full(len(chunk), np.nan)
         grip = chunk[:, 6] if chunk.shape[1] > 6 else np.full(len(chunk), np.nan)
         return np.column_stack([step, time_ms, roll, grip])
+
+    def path_trace(
+        ee,
+        chunk,
+        *,
+        color,
+        name,
+        width,
+        opacity=1.0,
+        dash="solid",
+        marker_size=2.5,
+        showlegend=True,
+        title=None,
+        detail="",
+    ):
+        """One commanded path in a 3-D scene; ``ee=None`` leaves a legend-only stub.
+
+        The stub keeps the trace count identical across anchors, which the animation
+        needs: frames address traces by index, so an anchor whose FAST decode failed
+        would otherwise shift every trace after it onto the wrong data.
+        """
+        if ee is None:
+            return go.Scatter3d(
+                x=[None],
+                y=[None],
+                z=[None],
+                mode="lines",
+                line=dict(color=color, width=width),
+                name=name,
+                showlegend=showlegend,
+                hoverinfo="skip",
+            )
+        return go.Scatter3d(
+            x=ee[:, 0],
+            y=ee[:, 1],
+            z=ee[:, 2],
+            mode="lines+markers",
+            line=dict(color=color, width=width, dash=dash),
+            marker=dict(size=marker_size, color=color),
+            opacity=opacity,
+            customdata=path_hover(chunk),
+            name=name,
+            showlegend=showlegend,
+            hovertemplate=(
+                f"<b>{title or name}</b>"
+                "<br>step %{customdata[0]:.0f} · %{customdata[1]:.0f} ms"
+                "<br>x %{x:.3f} m · y %{y:.3f} m · z %{z:.3f} m"
+                "<br>wrist roll %{customdata[2]:.1f}° · gripper %{customdata[3]:.1f}°"
+                f"{detail}<extra></extra>"
+            ),
+        )
+
+    def gap_trace(start, ee, *, color, name, width, dash="dot", opacity=0.75, hover=""):
+        """Measured pose → first commanded target. A displacement, not a rendered step."""
+        if ee is None:
+            return go.Scatter3d(
+                x=[None], y=[None], z=[None], mode="lines", line=dict(color=color, width=width, dash=dash),
+                name=name, showlegend=False, hoverinfo="skip",
+            )
+        return go.Scatter3d(
+            x=[start[0], ee[0, 0]],
+            y=[start[1], ee[0, 1]],
+            z=[start[2], ee[0, 2]],
+            mode="lines",
+            line=dict(color=color, width=width, dash=dash),
+            opacity=opacity,
+            name=name,
+            showlegend=False,
+            hovertemplate=(
+                f"<b>{name}</b>{hover}"
+                "<br><i>Target displacement, not an interpolated timestep.</i><extra></extra>"
+            ),
+        )
 
     def endpoint_trace(point, *, color, symbol, size, label, hover, showlegend=False):
         return go.Scatter3d(
@@ -477,55 +582,180 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
             )
         return traces
 
+    def context_path(ee, *, color, name, width=3, opacity=0.75):
+        """A path in the pose panel: shape only, no hover, no second legend entry."""
+        if ee is None:
+            return go.Scatter3d(x=[None], y=[None], z=[None], mode="lines", name=name, showlegend=False)
+        return go.Scatter3d(
+            x=ee[:, 0],
+            y=ee[:, 1],
+            z=ee[:, 2],
+            mode="lines",
+            line=dict(color=color, width=width),
+            opacity=opacity,
+            name=name,
+            showlegend=False,
+            hoverinfo="skip",
+        )
+
+    def sample_label(record, sample_idx: int) -> str:
+        names = record.get("sample_names") or []
+        if sample_idx < len(names):
+            return str(names[sample_idx])
+        return f"sample {sample_idx}"
+
+    def timeline_traces(record, joint_idx: int, *, label: str, slug: str, row: int):
+        """Measured value, GT, FAST, and the fan for one joint, on a shared step axis.
+
+        Step −1 is the measured value now and step 0 the first commanded target, so the
+        dashed leader between them is the same initial gap the 3-D scene draws.
+        """
+        gt_chunk = record["gt_chunk"]
+        steps = np.arange(len(gt_chunk))
+        traces = [
+            (
+                go.Scatter(
+                    x=[-1],
+                    y=[record["state"][joint_idx]],
+                    mode="markers",
+                    marker=dict(color="#D81B60", size=9, symbol="diamond"),
+                    name=f"measured {label} now",
+                    showlegend=False,
+                    hovertemplate=f"measured {label} now: %{{y:.1f}}°<extra></extra>",
+                ),
+                row,
+                2,
+            ),
+            (
+                go.Scatter(
+                    x=steps,
+                    y=gt_chunk[:, joint_idx],
+                    mode="lines+markers",
+                    line=dict(color="#111111", width=4),
+                    marker=dict(size=4),
+                    name=f"GT {label}",
+                    showlegend=False,
+                    hovertemplate=f"GT {label}<br>step %{{x}}: %{{y:.1f}}°<extra></extra>",
+                ),
+                row,
+                2,
+            ),
+            (
+                go.Scatter(
+                    x=[-1, 0],
+                    y=[record["state"][joint_idx], gt_chunk[0, joint_idx]],
+                    mode="lines",
+                    line=dict(color="#D81B60", width=5, dash="dash"),
+                    name=f"GT initial {slug} gap",
+                    showlegend=False,
+                    hovertemplate=f"GT initial {slug} gap: %{{y:.1f}}°<extra></extra>",
+                ),
+                row,
+                2,
+            ),
+        ]
+        if has_fast:
+            fast_chunk = record.get("fast_chunk")
+            fast_y = fast_chunk[:, joint_idx] if fast_chunk is not None else None
+            traces.extend(
+                [
+                    (
+                        go.Scatter(
+                            x=steps if fast_y is not None else [],
+                            y=fast_y if fast_y is not None else [],
+                            mode="lines",
+                            line=dict(color=FAST_COLOR, width=3),
+                            opacity=0.9,
+                            name=f"FAST {label}",
+                            showlegend=False,
+                            hovertemplate=f"FAST {label}<br>step %{{x}}: %{{y:.1f}}°<extra></extra>",
+                        ),
+                        row,
+                        2,
+                    ),
+                    (
+                        go.Scatter(
+                            x=[-1, 0] if fast_y is not None else [],
+                            y=[record["state"][joint_idx], fast_chunk[0, joint_idx]] if fast_y is not None else [],
+                            mode="lines",
+                            line=dict(color=FAST_COLOR, width=2, dash="dot"),
+                            opacity=0.75,
+                            name=f"FAST initial {slug} gap",
+                            showlegend=False,
+                            hovertemplate=f"FAST initial {slug} gap: %{{y:.1f}}°<extra></extra>",
+                        ),
+                        row,
+                        2,
+                    ),
+                ]
+            )
+        for sample_idx, chunk in enumerate(record["sample_chunks"]):
+            color = SAMPLE_COLORS[sample_idx % len(SAMPLE_COLORS)]
+            sample_name = sample_label(record, sample_idx)
+            traces.extend(
+                [
+                    (
+                        go.Scatter(
+                            x=[-1, 0],
+                            y=[record["state"][joint_idx], chunk[0, joint_idx]],
+                            mode="lines",
+                            line=dict(color=color, width=2, dash="dot"),
+                            opacity=0.7,
+                            name=f"{sample_name} initial {slug} gap",
+                            showlegend=False,
+                            hovertemplate=(
+                                f"{sample_name} initial {slug} gap: %{{y:.1f}}°<extra></extra>"
+                            ),
+                        ),
+                        row,
+                        2,
+                    ),
+                    (
+                        go.Scatter(
+                            x=steps,
+                            y=chunk[:, joint_idx],
+                            mode="lines",
+                            line=dict(color=color, width=2),
+                            opacity=0.8,
+                            name=f"{sample_name} {label}",
+                            showlegend=False,
+                            hovertemplate=(
+                                f"{sample_name} {label}<br>step %{{x}}: %{{y:.1f}}°<extra></extra>"
+                            ),
+                        ),
+                        row,
+                        2,
+                    ),
+                ]
+            )
+        return traces
+
     def record_traces(record):
         metrics = record["metrics"]
-        traces: list[tuple[object, int, int]] = []
         gt_ee = record["gt_ee"]
         gt_chunk = record["gt_chunk"]
-        gt_custom = path_hover("GT", gt_chunk)
-        traces.append(
+        start_ee = record["start_ee"]
+        fast_ee = record.get("fast_ee")
+        fast_chunk = record.get("fast_chunk")
+
+        # ---- Trace scene ------------------------------------------------------
+        traces: list[tuple[object, int, int]] = [
             (
-                go.Scatter3d(
-                    x=gt_ee[:, 0],
-                    y=gt_ee[:, 1],
-                    z=gt_ee[:, 2],
-                    mode="lines+markers",
-                    line=dict(color="#111111", width=9),
-                    marker=dict(size=3, color="#111111"),
-                    customdata=gt_custom,
+                path_trace(
+                    gt_ee,
+                    gt_chunk,
+                    color="#111111",
                     name="ground truth targets",
-                    hovertemplate=(
-                        "<b>GT command</b><br>step %{customdata[0]:.0f} · %{customdata[1]:.0f} ms"
-                        "<br>x %{x:.3f} m · y %{y:.3f} m · z %{z:.3f} m"
-                        "<br>wrist roll %{customdata[2]:.1f}° · gripper %{customdata[3]:.1f}°"
-                        "<extra></extra>"
-                    ),
+                    title="GT command",
+                    width=9,
+                    marker_size=3,
                 ),
                 1,
                 1,
-            )
-        )
-        skeleton = record["anchor_skeleton"]
-        traces.append(
-            (
-                go.Scatter3d(
-                    x=skeleton[:, 0],
-                    y=skeleton[:, 1],
-                    z=skeleton[:, 2],
-                    mode="lines+markers",
-                    line=dict(color="#9A9A9A", width=8),
-                    marker=dict(size=4, color="#666666"),
-                    name="arm now — measured follower",
-                    hovertemplate="measured arm link<extra></extra>",
-                ),
-                1,
-                1,
-            )
-        )
-        traces.append(
+            ),
             (
                 endpoint_trace(
-                    record["start_ee"],
+                    start_ee,
                     color="#D81B60",
                     symbol="diamond",
                     size=9,
@@ -535,37 +765,70 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
                 ),
                 1,
                 1,
-            )
-        )
-        traces.append(
+            ),
             (
-                go.Scatter3d(
-                    x=[record["start_ee"][0], gt_ee[0, 0]],
-                    y=[record["start_ee"][1], gt_ee[0, 1]],
-                    z=[record["start_ee"][2], gt_ee[0, 2]],
-                    mode="lines",
-                    line=dict(color="#D81B60", width=9, dash="dash"),
+                gap_trace(
+                    start_ee,
+                    gt_ee,
+                    color="#D81B60",
                     # The numbers behind this segment live in the hover, metrics.csv and
                     # the run log; the legend only has to name it.
                     name="GT initial target gap / possible follower lag",
-                    hovertemplate=(
-                        "<b>Measured pose → first GT command</b>"
+                    width=9,
+                    dash="dash",
+                    opacity=1.0,
+                    hover=(
                         f"<br>{metrics['initial_gap_gt'] * 1000:.1f} mm translation"
                         f"<br>{metrics['initial_orientation_gap_gt_deg']:.1f}° tool orientation"
                         f"<br>{metrics['initial_joint_gap_gt_max_deg']:.1f}° largest joint gap"
                         f"<br>≥{metrics['initial_travel_gt_s'] * 1000:.0f} ms at configured motor speeds"
-                        "<br><i>Target displacement, not an interpolated timestep.</i><extra></extra>"
                     ),
                 ),
                 1,
                 1,
-            )
-        )
-
+            ),
+        ]
         for axis_trace in orientation_traces(
             gt_ee[-1], record["gt_rotation"][-1], prefix="GT", opacity=1.0, dash="solid"
         ):
             traces.append((axis_trace, 1, 1))
+
+        if has_fast:
+            fast_error = record.get("fast_error")
+            traces.extend(
+                [
+                    (
+                        path_trace(
+                            fast_ee,
+                            fast_chunk,
+                            color=FAST_COLOR,
+                            name=(
+                                "FAST · greedy discrete decode"
+                                if not fast_error
+                                else f"FAST unavailable · {fast_error}"
+                            ),
+                            title="FAST command",
+                            width=6,
+                            opacity=0.95,
+                            marker_size=3,
+                        ),
+                        1,
+                        1,
+                    ),
+                    (
+                        gap_trace(
+                            start_ee,
+                            fast_ee,
+                            color=FAST_COLOR,
+                            name="FAST initial target gap",
+                            width=4,
+                            opacity=0.8,
+                        ),
+                        1,
+                        1,
+                    ),
+                ]
+            )
 
         for sample_idx, (
             ee,
@@ -590,53 +853,42 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
             )
         ):
             color = SAMPLE_COLORS[sample_idx % len(SAMPLE_COLORS)]
+            sample_name = sample_label(record, sample_idx)
             unsafe = clearance < p.trace_clearance_warn_m
-            custom = path_hover(f"sample {sample_idx}", chunk)
-            traces.append(
-                (
-                    go.Scatter3d(
-                        x=ee[:, 0],
-                        y=ee[:, 1],
-                        z=ee[:, 2],
-                        mode="lines+markers",
-                        line=dict(color=color, width=6 if unsafe else 3, dash="dash" if unsafe else "solid"),
-                        marker=dict(size=2.5, color=color),
-                        opacity=1.0 if unsafe else 0.72,
-                        customdata=custom,
-                        name=(
-                            f"sample {sample_idx} · gap {gap * 1000:.0f} mm · "
-                            f"tool {tool_clearance * 1000:+.0f} mm" + (" · ⚠ TABLE" if unsafe else "")
-                        ),
-                        hovertemplate=(
-                            f"<b>sample {sample_idx}</b><br>step %{{customdata[0]:.0f}} · "
-                            "%{customdata[1]:.0f} ms"
-                            "<br>x %{x:.3f} m · y %{y:.3f} m · z %{z:.3f} m"
-                            "<br>wrist roll %{customdata[2]:.1f}° · gripper %{customdata[3]:.1f}°"
-                            f"<br>whole-arm clearance {clearance * 1000:+.1f} mm ({link})"
-                            f"<br>tool clearance {tool_clearance * 1000:+.1f} mm<extra></extra>"
-                        ),
-                    ),
-                    1,
-                    1,
-                )
-            )
             traces.extend(
                 [
                     (
-                        go.Scatter3d(
-                            x=[record["start_ee"][0], ee[0, 0]],
-                            y=[record["start_ee"][1], ee[0, 1]],
-                            z=[record["start_ee"][2], ee[0, 2]],
-                            mode="lines",
-                            line=dict(color=color, width=4, dash="dot"),
-                            opacity=0.75,
-                            showlegend=False,
-                            name=f"sample {sample_idx} initial target gap",
-                            hovertemplate=(
-                                f"<b>sample {sample_idx} initial target gap</b>"
+                        path_trace(
+                            ee,
+                            chunk,
+                            color=color,
+                            name=(
+                                f"{sample_name} · gap {gap * 1000:.0f} mm · "
+                                f"tool {tool_clearance * 1000:+.0f} mm"
+                                + (" · ⚠ TABLE" if unsafe else "")
+                            ),
+                            title=sample_name,
+                            width=6 if unsafe else 3,
+                            dash="dash" if unsafe else "solid",
+                            opacity=1.0 if unsafe else 0.72,
+                            detail=(
+                                f"<br>whole-arm clearance {clearance * 1000:+.1f} mm ({link})"
+                                f"<br>tool clearance {tool_clearance * 1000:+.1f} mm"
+                            ),
+                        ),
+                        1,
+                        1,
+                    ),
+                    (
+                        gap_trace(
+                            start_ee,
+                            ee,
+                            color=color,
+                            name=f"{sample_name} initial target gap",
+                            width=4,
+                            hover=(
                                 f"<br>{gap * 1000:.1f} mm translation · {orientation_gap:.1f}° orientation"
                                 f"<br>≥{travel * 1000:.0f} ms all-actuator lower bound"
-                                "<br><i>Target displacement, not an interpolated timestep.</i><extra></extra>"
                             ),
                         ),
                         1,
@@ -648,223 +900,131 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
         for axis_trace in orientation_traces(
             record["sample_ee"][0, -1],
             record["sample_rotation"][0, -1],
-            prefix="sample 0",
+            prefix=sample_label(record, 0),
             opacity=0.65,
             dash="dot",
         ):
             traces.append((axis_trace, 1, 1))
 
-        steps = np.arange(len(gt_chunk))
-        if gt_chunk.shape[1] > 5:
-            traces.append(
+        # ---- Arm-pose panel ---------------------------------------------------
+        skeleton = record["anchor_skeleton"]
+        traces.extend(
+            [
                 (
-                    go.Scatter(
-                        x=[-1],
-                        y=[record["state"][5]],
-                        mode="markers",
-                        marker=dict(color="#D81B60", size=9, symbol="diamond"),
-                        name="measured wrist roll now",
-                        showlegend=False,
-                        hovertemplate="measured wrist roll now: %{y:.1f}°<extra></extra>",
-                    ),
-                    1,
-                    2,
-                )
-            )
-            traces.append(
-                (
-                    go.Scatter(
-                        x=steps,
-                        y=gt_chunk[:, 5],
+                    go.Scatter3d(
+                        x=skeleton[:, 0],
+                        y=skeleton[:, 1],
+                        z=skeleton[:, 2],
                         mode="lines+markers",
-                        line=dict(color="#111111", width=4),
-                        marker=dict(size=4),
-                        name="GT wrist roll",
+                        line=dict(color="#9A9A9A", width=8),
+                        marker=dict(size=4, color="#666666"),
+                        name="arm now — measured follower",
                         showlegend=False,
-                        hovertemplate="GT wrist roll<br>step %{x}: %{y:.1f}°<extra></extra>",
+                        hovertemplate="measured arm link<extra></extra>",
                     ),
                     1,
                     2,
-                )
+                ),
+                (
+                    endpoint_trace(
+                        start_ee,
+                        color="#D81B60",
+                        symbol="diamond",
+                        size=7,
+                        label="gripper now — measured",
+                        hover="<b>Measured gripper pose now</b>",
+                    ),
+                    1,
+                    2,
+                ),
+                (context_path(gt_ee, color="#111111", name="GT path (pose panel)", width=5), 1, 2),
+            ]
+        )
+        if has_fast:
+            traces.append(
+                (context_path(fast_ee, color=FAST_COLOR, name="FAST path (pose panel)", width=4), 1, 2)
             )
+        for sample_idx, ee in enumerate(record["sample_ee"]):
             traces.append(
                 (
-                    go.Scatter(
-                        x=[-1, 0],
-                        y=[record["state"][5], gt_chunk[0, 5]],
-                        mode="lines",
-                        line=dict(color="#D81B60", width=5, dash="dash"),
-                        name="GT initial wrist-roll gap",
-                        showlegend=False,
-                        hovertemplate="GT initial wrist-roll gap: %{y:.1f}°<extra></extra>",
+                    context_path(
+                        ee,
+                        color=SAMPLE_COLORS[sample_idx % len(SAMPLE_COLORS)],
+                        name=f"{sample_label(record, sample_idx)} path (pose panel)",
+                        opacity=0.6,
                     ),
                     1,
                     2,
                 )
             )
-            for sample_idx, chunk in enumerate(record["sample_chunks"]):
-                color = SAMPLE_COLORS[sample_idx % len(SAMPLE_COLORS)]
-                traces.append(
-                    (
-                        go.Scatter(
-                            x=[-1, 0],
-                            y=[record["state"][5], chunk[0, 5]],
-                            mode="lines",
-                            line=dict(color=color, width=2, dash="dot"),
-                            opacity=0.7,
-                            name=f"sample {sample_idx} initial wrist-roll gap",
-                            showlegend=False,
-                            hovertemplate=f"sample {sample_idx} initial wrist-roll gap: %{{y:.1f}}°<extra></extra>",
-                        ),
-                        1,
-                        2,
-                    )
-                )
-                traces.append(
-                    (
-                        go.Scatter(
-                            x=steps,
-                            y=chunk[:, 5],
-                            mode="lines",
-                            line=dict(color=color, width=2),
-                            opacity=0.8,
-                            name=f"sample {sample_idx} wrist roll",
-                            showlegend=False,
-                            hovertemplate=f"sample {sample_idx} wrist roll<br>step %{{x}}: %{{y:.1f}}°<extra></extra>",
-                        ),
-                        1,
-                        2,
-                    )
-                )
 
+        # ---- Joint timelines --------------------------------------------------
+        if gt_chunk.shape[1] > 5:
+            traces.extend(timeline_traces(record, 5, label="wrist roll", slug="wrist-roll", row=2))
         if gt_chunk.shape[1] > 6:
-            traces.append(
-                (
-                    go.Scatter(
-                        x=[-1],
-                        y=[record["state"][6]],
-                        mode="markers",
-                        marker=dict(color="#D81B60", size=9, symbol="diamond"),
-                        name="measured gripper now",
-                        showlegend=False,
-                        hovertemplate="measured gripper now: %{y:.1f}°<extra></extra>",
-                    ),
-                    2,
-                    2,
-                )
-            )
-            traces.append(
-                (
-                    go.Scatter(
-                        x=steps,
-                        y=gt_chunk[:, 6],
-                        mode="lines+markers",
-                        line=dict(color="#111111", width=4),
-                        marker=dict(size=4),
-                        name="GT gripper",
-                        showlegend=False,
-                        hovertemplate="GT gripper<br>step %{x}: %{y:.1f}°<extra></extra>",
-                    ),
-                    2,
-                    2,
-                )
-            )
-            traces.append(
-                (
-                    go.Scatter(
-                        x=[-1, 0],
-                        y=[record["state"][6], gt_chunk[0, 6]],
-                        mode="lines",
-                        line=dict(color="#D81B60", width=5, dash="dash"),
-                        name="GT initial gripper gap",
-                        showlegend=False,
-                        hovertemplate="GT initial gripper gap: %{y:.1f}°<extra></extra>",
-                    ),
-                    2,
-                    2,
-                )
-            )
-            for sample_idx, chunk in enumerate(record["sample_chunks"]):
-                color = SAMPLE_COLORS[sample_idx % len(SAMPLE_COLORS)]
-                traces.append(
-                    (
-                        go.Scatter(
-                            x=[-1, 0],
-                            y=[record["state"][6], chunk[0, 6]],
-                            mode="lines",
-                            line=dict(color=color, width=2, dash="dot"),
-                            opacity=0.7,
-                            name=f"sample {sample_idx} initial gripper gap",
-                            showlegend=False,
-                            hovertemplate=f"sample {sample_idx} initial gripper gap: %{{y:.1f}}°<extra></extra>",
-                        ),
-                        2,
-                        2,
-                    )
-                )
-                traces.append(
-                    (
-                        go.Scatter(
-                            x=steps,
-                            y=chunk[:, 6],
-                            mode="lines",
-                            line=dict(color=color, width=2),
-                            opacity=0.8,
-                            name=f"sample {sample_idx} gripper",
-                            showlegend=False,
-                            hovertemplate=f"sample {sample_idx} gripper<br>step %{{x}}: %{{y:.1f}}°<extra></extra>",
-                        ),
-                        2,
-                        2,
-                    )
-                )
+            traces.extend(timeline_traces(record, 6, label="gripper", slug="gripper", row=3))
         return traces
 
     fig = make_subplots(
-        rows=2,
+        rows=3,
         cols=2,
-        specs=[[{"type": "scene", "rowspan": 2}, {"type": "xy"}], [None, {"type": "xy"}]],
+        specs=[
+            [{"type": "scene", "rowspan": 3}, {"type": "scene"}],
+            [None, {"type": "xy"}],
+            [None, {"type": "xy"}],
+        ],
         column_widths=[0.72, 0.28],
-        row_heights=[0.5, 0.5],
+        row_heights=[0.40, 0.30, 0.30],
         horizontal_spacing=0.04,
-        vertical_spacing=0.14,
-        subplot_titles=("Commanded trajectory", "Wrist roll", "Gripper command"),
+        vertical_spacing=0.11,
+        subplot_titles=("Commanded trajectory", "Arm pose now", "Wrist roll", "Gripper command"),
     )
-    table = go.Mesh3d(
-        x=[table_x[0], table_x[1], table_x[1], table_x[0]],
-        y=[table_y[0], table_y[0], table_y[1], table_y[1]],
-        z=[p.trace_table_z] * 4,
-        i=[0, 0],
-        j=[1, 2],
-        k=[2, 3],
-        color="#C8B89A",
-        opacity=0.35,
-        name="table plane",
-        showlegend=True,
-        hoverinfo="skip",
+
+    # The table plane belongs to the pose panel alone. In the trace scene it sat a whole
+    # arm-length below a chunk that moves a couple of centimetres, and aspectmode="data"
+    # sizes the box to the widest thing in it — so the plane, not the motion, set the
+    # zoom. Nothing is lost by dropping it: the pose panel draws it against the arm, every
+    # sample's clearance is in its own legend entry and hover, and a sample that breaches
+    # is still redrawn thick and dashed.
+    fig.add_trace(
+        go.Mesh3d(
+            x=[pose_lo[0], pose_hi[0], pose_hi[0], pose_lo[0]],
+            y=[pose_lo[1], pose_lo[1], pose_hi[1], pose_hi[1]],
+            z=[p.trace_table_z] * 4,
+            i=[0, 0],
+            j=[1, 2],
+            k=[2, 3],
+            color="#C8B89A",
+            opacity=0.30,
+            name="table plane",
+            showlegend=True,
+            hoverinfo="skip",
+        ),
+        row=1,
+        col=2,
     )
-    fig.add_trace(table, row=1, col=1)
-    first_traces = record_traces(records[0])
-    for trace, row, col in first_traces:
+    # The plane is static; every trace after it is swapped anchor by anchor.
+    static_count = len(fig.data)
+    for trace, row, col in record_traces(records[0]):
         fig.add_trace(trace, row=row, col=col)
 
-    updated = list(range(1, len(fig.data)))
+    # add_trace(row=, col=) binds a trace to its subplot; frame traces bypass add_trace and
+    # would fall back onto the first scene and the first pair of axes. Read the bindings
+    # back off the initial traces rather than deriving them, so the two scenes and two
+    # timelines cannot drift apart from the grid.
+    bindings = [
+        (getattr(trace, "scene", None), getattr(trace, "xaxis", None), getattr(trace, "yaxis", None))
+        for trace in fig.data[static_count:]
+    ]
+    updated = list(range(static_count, len(fig.data)))
     frames = []
     for frame_idx, record in enumerate(records):
         dynamic = []
-        for trace, row, col in record_traces(record):
-            # add_trace(row=..., col=...) binds the initial traces to their
-            # subplot, but frame traces bypass add_trace. Bind them explicitly
-            # so gripper data cannot fall back onto the wrist axes during
-            # animation in Plotly versions that replace rather than merge.
-            if col == 1:
-                trace.scene = "scene"
-            elif row == 1:
-                trace.xaxis = "x"
-                trace.yaxis = "y"
+        for (trace, _, _), (scene, xaxis, yaxis) in zip(record_traces(record), bindings, strict=True):
+            if scene is not None:
+                trace.scene = scene
             else:
-                trace.xaxis = "x2"
-                trace.yaxis = "y2"
+                trace.xaxis, trace.yaxis = xaxis, yaxis
             dynamic.append(trace)
         frames.append(
             go.Frame(
@@ -876,6 +1036,7 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
         )
     fig.frames = frames
 
+    horizon = len(records[0]["gt_chunk"])
     fig.update_layout(
         title=dict(text=_title(records[0]), font=dict(size=15), x=0.01, xanchor="left"),
         scene=dict(
@@ -886,19 +1047,18 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
             bgcolor="#FBFBFC",
             uirevision="action-inspector-camera",
         ),
-        xaxis=dict(
-            title="measured now (−1) → chunk step",
-            range=[-1, len(records[0]["gt_chunk"]) - 1],
+        scene2=dict(
+            xaxis=dict(title="", range=[float(pose_lo[0]), float(pose_hi[0])], showticklabels=False),
+            yaxis=dict(title="", range=[float(pose_lo[1]), float(pose_hi[1])], showticklabels=False),
+            zaxis=dict(title="", range=[float(pose_lo[2]), float(pose_hi[2])], showticklabels=False),
+            aspectmode="cube",
+            bgcolor="#FBFBFC",
+            camera=dict(eye=dict(x=1.45, y=1.45, z=1.05), up=dict(x=0, y=0, z=1)),
+            uirevision="action-inspector-pose-camera",
         ),
-        yaxis=dict(title="degrees", zeroline=False),
-        xaxis2=dict(
-            title="measured now (−1) → chunk step",
-            range=[-1, len(records[0]["gt_chunk"]) - 1],
-        ),
-        yaxis2=dict(title="degrees", zeroline=False),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FAFAFB",
-        height=860,
+        height=880,
         margin=dict(l=10, r=10, b=35, t=115),
         legend=dict(
             bgcolor="rgba(255,255,255,0.88)",
@@ -937,13 +1097,17 @@ def _figure(records: list[dict], p, fps: float = 30.0) -> "go.Figure":  # noqa: 
             )
         ],
     )
+    for row in (2, 3):
+        fig.update_xaxes(title="measured now (−1) → chunk step", range=[-1, horizon - 1], row=row, col=2)
+        fig.update_yaxes(title="degrees", zeroline=False, row=row, col=2)
     for annotation in fig.layout.annotations:
         annotation.font = dict(size=12, color="#333333")
     return fig
 
 
 def _title(record: dict) -> str:
-    return f"<b>episode {record['episode']} · frame {record['frame']}</b>"
+    label = record.get("trace_label") or f"episode {record['episode']} · frame {record['frame']}"
+    return f"<b>{html.escape(str(label))}</b>"
 
 
 def _log_line(record: dict) -> str:
@@ -1030,12 +1194,34 @@ def _dashboard_context(record: dict) -> dict:
     return {
         "episode": int(record["episode"]),
         "frame": int(record["frame"]),
+        "label": record.get("trace_label")
+        or f"episode {record['episode']} · frame {record['frame']}",
         "subtask": record.get("subtask") or "(no subtask clause)",
         "cameras": record.get("cameras", []),
+        "trajectory": {
+            key: record.get("metrics", {}).get(key)
+            for key in TRAJECTORY_ERROR_KEYS
+        },
     }
 
 
-def _write_dashboard_html(fig, records: list[dict], html_path: str) -> None:
+def _write_dashboard_html(
+    fig,
+    records: list[dict],
+    html_path: str,
+    *,
+    page_title: str = "Action Inspector",
+    subtitle: str = (
+        "One observation, one set of deterministic policy draws, viewed in task space "
+        "and joint space. Orbit the commanded paths, check where the arm actually is "
+        "in the pose panel, then follow the same colors through wrist roll and gripper."
+    ),
+    legend_note: str = (
+        "Solid RGB axes = GT terminal tool orientation · dotted RGB axes = sample 0. "
+        "Amber, when present, is the greedy FAST decode. "
+        "The pose panel holds fixed axes across anchors."
+    ),
+) -> None:
     """Write a responsive action-inspector shell around the Plotly figure."""
     plot_html = fig.to_html(
         full_html=False,
@@ -1050,7 +1236,7 @@ def _write_dashboard_html(fig, records: list[dict], html_path: str) -> None:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Action Inspector</title>
+<title>__PAGE_TITLE__</title>
 <style>
 :root { color-scheme: light; --ink:#18181b; --muted:#6b7280; --line:#e4e4e7; --panel:#fff; --bg:#f4f4f5; --accent:#d81b60; }
 * { box-sizing:border-box; }
@@ -1076,6 +1262,15 @@ button:hover { background:#f0f0f1; }
 .camera { margin:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#111; }
 .camera img { width:100%; display:block; aspect-ratio:4/3; object-fit:cover; }
 .camera figcaption { background:white; padding:6px 8px; color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+.metric-list { display:grid; gap:9px; }
+.metric-head { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+.metric-name { font-size:12px; font-weight:700; }
+.metric-value { font:700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.metric-track { height:8px; border-radius:99px; background:#e4e4e7; position:relative; margin:5px 4px 3px; }
+.metric-dot { width:5px; height:5px; border-radius:99px; background:#71717a; position:absolute; top:1.5px; transform:translateX(-50%); opacity:.5; }
+.metric-dot.active { width:9px; height:9px; top:-.5px; background:var(--accent); opacity:1; border:2px solid white; box-shadow:0 0 0 1px var(--accent); z-index:2; }
+.metric-range { display:flex; justify-content:space-between; color:var(--muted); font:9px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.metric-help { color:var(--muted); font-size:10px; line-height:1.35; margin-top:7px; }
 .legend-note { color:var(--muted); font-size:11px; margin-top:10px; }
 @media (max-width:1100px) { .layout { grid-template-columns:1fr; } .context { position:static; } .cameras { grid-template-columns:1fr 1fr; } }
 </style>
@@ -1083,7 +1278,7 @@ button:hover { background:#f0f0f1; }
 <body>
 <div class="shell">
   <div class="topbar">
-    <div><h1>Action Inspector</h1><div class="subtitle">One observation, one set of deterministic policy draws, viewed in task space and joint space. Orbit the arm, hover any command, then use the same colors in wrist roll and gripper.</div></div>
+    <div><h1>__PAGE_TITLE__</h1><div class="subtitle">__SUBTITLE__</div></div>
     <div class="anchor-pill" id="anchor-pill"></div>
   </div>
   <div class="layout">
@@ -1092,8 +1287,10 @@ button:hover { background:#f0f0f1; }
       <div class="warning"><strong>POSSIBLE FOLLOWER LAG</strong><p>Magenta: measured pose → first demonstrated target. Dotted spokes: the same gap per sample. Not an interpolated timestep.</p></div>
       <div class="controls"><button id="prev">← Previous</button><button id="next">Next →</button></div>
       <div class="section-label">Conditioning</div><div class="subtask" id="subtask"></div>
+      <div class="section-label">Trajectory fit · sample 0</div><div class="metric-list" id="trajectory-metrics"></div>
+      <div class="metric-help">Dots are the distribution across anchors; magenta is the action currently drawn. The p75 shown under each row can be copied directly into its YAML threshold. All values are the exact lower-is-better quantities available to the auxiliary loss. Final direction loss is 0 aligned, 1 perpendicular or no predicted displacement, and 2 opposite; displacement length is ignored.</div>
       <div class="section-label">Observation</div><div class="cameras" id="cameras"></div>
-      <div class="legend-note">Solid RGB axes = GT terminal tool orientation · dotted RGB axes = sample 0.</div>
+      <div class="legend-note">__LEGEND_NOTE__</div>
     </aside>
   </div>
 </div>
@@ -1102,12 +1299,51 @@ button:hover { background:#f0f0f1; }
 (() => {
   const contexts = JSON.parse(document.getElementById('action-context').textContent);
   const plot = document.getElementById('action-inspector-plot');
+  const metricSpecs = [
+    {key:'path_mse', label:'Path MSE', fixed:null},
+    {key:'shape_mse', label:'Temporal shape MSE', fixed:null},
+    {key:'terminal_mse', label:'Final-position MSE', fixed:null},
+    {key:'terminal_direction_loss', label:'Final direction loss', fixed:[0,2]}
+  ];
   let active = 0;
+  function metricText(value) {
+    if(!Number.isFinite(value)) return 'undefined';
+    return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(3);
+  }
+  function renderMetrics(index) {
+    const host = document.getElementById('trajectory-metrics');
+    host.replaceChildren();
+    metricSpecs.forEach(spec => {
+      const values = contexts.map(c => c.trajectory && c.trajectory[spec.key]);
+      const finite = values.filter(Number.isFinite);
+      const row = document.createElement('div');
+      const current = values[index];
+      if(!finite.length) {
+        row.innerHTML = `<div class="metric-head"><span class="metric-name">${spec.label}</span><span class="metric-value">undefined</span></div>`;
+        host.append(row); return;
+      }
+      const lo = spec.fixed ? spec.fixed[0] : Math.min(...finite);
+      const hi = spec.fixed ? spec.fixed[1] : Math.max(...finite);
+      const span = hi - lo || 1;
+      const position = value => Math.max(0, Math.min(100, 100 * (value - lo) / span));
+      const sorted = [...finite].sort((a,b) => a-b);
+      const q = .75 * (sorted.length - 1);
+      const q0 = Math.floor(q), q1 = Math.ceil(q);
+      const p75 = sorted[q0] + (sorted[q1] - sorted[q0]) * (q - q0);
+      const dots = values.map((value, dotIndex) => Number.isFinite(value)
+        ? `<span class="metric-dot ${dotIndex===index?'active':''}" style="left:${position(value)}%"></span>`
+        : '').join('');
+      row.innerHTML = `<div class="metric-head"><span class="metric-name">${spec.label}</span><span class="metric-value">${metricText(current)}</span></div>
+        <div class="metric-track">${dots}</div><div class="metric-range"><span>${metricText(lo)}</span><span>p75 ${metricText(p75)}</span><span>${metricText(hi)}</span></div>`;
+      host.append(row);
+    });
+  }
   function render(index) {
     active = Math.max(0, Math.min(contexts.length - 1, Number(index)));
     const context = contexts[active];
-    document.getElementById('anchor-pill').textContent = `episode ${context.episode} · frame ${context.frame}`;
+    document.getElementById('anchor-pill').textContent = context.label;
     document.getElementById('subtask').textContent = context.subtask;
+    renderMetrics(active);
     const cameras = document.getElementById('cameras'); cameras.replaceChildren();
     context.cameras.forEach(camera => {
       const figure=document.createElement('figure'); figure.className='camera';
@@ -1131,7 +1367,13 @@ button:hover { background:#f0f0f1; }
 </script>
 </body>
 </html>"""
-    document = template.replace("__PLOT__", plot_html).replace("__CONTEXTS__", payload)
+    document = (
+        template.replace("__PAGE_TITLE__", html.escape(page_title))
+        .replace("__SUBTITLE__", html.escape(subtitle))
+        .replace("__PLOT__", plot_html)
+        .replace("__LEGEND_NOTE__", html.escape(legend_note))
+        .replace("__CONTEXTS__", payload)
+    )
     with open(html_path, "w", encoding="utf-8") as handle:
         handle.write(document)
 
@@ -1159,37 +1401,38 @@ def _write_manifest(
         "gripper_error_best_mean_deg": float(values("gripper_err_best_deg").mean()),
         "command_slew_max_ratio": float(values("command_slew_pred_max_ratio").max()),
     }
+    how = (
+        "Four panels, one anchor at a time. The large scene holds commanded paths only: "
+        "demonstrated motion in black, the flow fan in colour, magenta for the "
+        "measured-state → first demonstrated target gap (possible follower lag) and "
+        "colour-matched dotted spokes for the policy's own. It frames the chunk and only "
+        "the chunk, so the motion fills the box — the table plane and the arm live in the "
+        "small scene beside it, on fixed cube axes, where a link that moves between two "
+        "slider steps really moved. Clearance is still per-sample in the trace legend, and "
+        "a sample that breaches is redrawn thick and dashed. Below the pose panel wrist "
+        "roll and gripper share the same colours, with step −1 the measured value now and "
+        "step 0 the first target. The sidebar's compact trajectory-fit tracks show the "
+        "distribution over anchors, with the currently drawn action highlighted."
+    )
+    if has_decoder_comparison:
+        how += (
+            "\n\nOn this ``action_mode=both`` checkpoint the greedy FAST reconstruction is "
+            "drawn in amber in the same axes as the flow fan, so the gap between decoders "
+            "is a distance the eye reads directly. It stays a picture, not a score: FAST is "
+            "greedy, so it has no fan and it carries the action tokenizer's quantization "
+            "error, which flow does not; and the discrete path never runs the action expert, "
+            "so with point-map depth configured the depth stream reaches the flow draws and "
+            "structurally cannot reach FAST. A FAST decode that failed at an anchor says so "
+            "in the legend instead of drawing a trace."
+        )
     panels = [
         Panel(
             "action_trace.html",
             "Interactive task-space and joint-space action inspector",
-            how="Magenta marks the measured-state → first demonstrated target gap (possible follower lag); colored dotted spokes are policy gaps. Step −1 is measured now, step 0 is the first target. Colors stay matched across 3-D, wrist roll, and gripper.",
+            how=how,
             primary=True,
         )
     ]
-    if has_decoder_comparison:
-        panels.append(
-            Panel(
-                "decoder_comparison.html",
-                "FAST and flow reconstructions in one scene",
-                how=(
-                    "One 3-D scene per anchor holding both decoders against the same ground "
-                    "truth: the greedy FAST reconstruction in amber, "
-                    f"{FLOW_COMPARE_COUNT} fixed-seed flow draws in blue-green, demonstrated "
-                    "motion in black, and the measured arm in grey. Dotted spokes are each "
-                    "prediction's measured-pose → first-target gap. The slider steps through "
-                    "anchors; the camera holds across anchors, so a shape that moves between "
-                    "two steps really moved.\n\n"
-                    "Read it as a picture, not a score — nothing here is scalarised, and the "
-                    "two decoders are not equivalent. FAST is greedy, so it has no fan and it "
-                    "carries the action tokenizer's quantization error; flow does not. The "
-                    "discrete path never runs the action expert, so with point-map depth "
-                    "configured the depth stream reaches the flow draws and structurally "
-                    "cannot reach FAST. A FAST decode that failed at an anchor says so in the "
-                    "legend instead of drawing a trace."
-                ),
-            )
-        )
     return write_index(
         output_dir,
         sys.modules[__name__],
@@ -1215,46 +1458,7 @@ def _write_manifest(
                 fmt=3,
                 baseline=0.0,
                 bad=0.0,
-                note="Same, against the best constant chunk over these anchors.",
-            ),
-            Metric(
-                "fit.mse_norm",
-                "Normalized action MSE",
-                good="low",
-                fmt=4,
-                primary=True,
-                note="Sample 0 against the demonstrated chunk in normalized model space. Absolute scale is meaningless on its own — read it against the two baseline errors below.",
-            ),
-            Metric("fit.baseline_hold", "Hold-still baseline MSE", good="none", fmt=4),
-            Metric("fit.baseline_dataset_mean", "Dataset-mean baseline MSE", good="none", fmt=4),
-            Metric(
-                "fit.worst_joint_mse_norm",
-                "Worst joint MSE",
-                good="low",
-                fmt=4,
-                note=f"{fit['worst_joint']}. Per-joint breakdown for every joint is in ``action_metrics.json``.",
-            ),
-            Metric(
-                "initial_gap_pred_p90_mm",
-                "Initial target gap p90",
-                good="low",
-                fmt=0,
-                primary=True,
-                note="P90 across anchors of the largest policy sample gap, in mm. Read with actuator travel time; this is a controller target displacement, not one rendered timestep.",
-            ),
-            Metric(
-                "initial_travel_pred_p90_ms",
-                "Initial travel lower bound p90",
-                good="low",
-                fmt=0,
-                note="Optimistic time in ms for all joints to reach the first target at configured motor speeds.",
-            ),
-            Metric(
-                "initial_orientation_gap_pred_p90_deg",
-                "Initial orientation gap p90",
-                good="low",
-                fmt=1,
-                note="P90 across anchors of the largest sample's measured-to-first-target tool rotation.",
+                note=f"Same, against the best constant chunk over these anchors. Worst joint is {fit['worst_joint']}.",
             ),
             Metric(
                 "tool_clearance_min_mm",
@@ -1264,7 +1468,7 @@ def _write_manifest(
                 warn=10.0,
                 bad=0.0,
                 primary=True,
-                note="Minimum end-link hull clearance, separated from the proximal link that often owns whole-arm minimum.",
+                note="Minimum end-link hull clearance, separated from the proximal link that often owns the whole-arm minimum.",
             ),
             Metric(
                 "whole_clearance_min_mm",
@@ -1273,28 +1477,69 @@ def _write_manifest(
                 fmt=0,
                 warn=10.0,
                 bad=0.0,
-                primary=True,
             ),
             Metric(
-                "position_error_best_mean_mm",
-                "Best-of-fan position error",
+                "initial_gap_pred_p90_mm",
+                "Initial target gap p90",
                 good="low",
                 fmt=0,
-                note="Mean across anchors of the best sample's path-mean end-effector position error.",
+                primary=True,
+                note="P90 across anchors of the largest policy sample gap, in mm. A controller target displacement, not one rendered timestep — no threshold, because where the line sits depends on the controller.",
             ),
-            Metric("orientation_error_best_mean_deg", "Best-of-fan orientation error", good="low", fmt=1),
-            Metric("gripper_error_best_mean_deg", "Best-of-fan gripper error", good="low", fmt=1),
             Metric(
                 "command_slew_max_ratio",
                 "Largest command slew / motor speed",
                 good="low",
                 fmt=2,
                 baseline=1.0,
+                warn=1.0,
                 note="Above 1 means adjacent targets change faster than the configured motor speed can physically track.",
             ),
-            Metric("anchors", "Anchors inspected", good="none", fmt=0),
+            Metric(
+                "fit.path_mse",
+                "Path MSE",
+                good="low",
+                fmt=3,
+                note="Mean normalized action error over all 30 targets and joints, using flow sample 0.",
+            ),
+            Metric(
+                "fit.shape_mse",
+                "Temporal shape MSE",
+                good="low",
+                fmt=3,
+                note="MSE between adjacent-target changes; oscillation is penalized even when path MSE matches a constant offset.",
+            ),
+            Metric(
+                "fit.terminal_mse",
+                "Final-position MSE",
+                good="low",
+                fmt=3,
+                note="Normalized error at target 30 only.",
+            ),
+            Metric(
+                "fit.terminal_direction_loss",
+                "Final direction loss",
+                good="low",
+                fmt=3,
+                note=f"1 − cosine similarity of final displacement from hold, independent of length. Undefined hold targets are excluded ({fit['trajectory']['terminal_direction_loss']['valid']}/{fit['n_frames']} valid).",
+            ),
         ],
         panels=panels,
+        extra={
+            "viewer": {
+                "metric_groups": [
+                    {
+                        "title": "Trajectory fit · flow sample 0",
+                        "keys": [
+                            "fit.path_mse",
+                            "fit.shape_mse",
+                            "fit.terminal_mse",
+                            "fit.terminal_direction_loss",
+                        ],
+                    }
+                ]
+            }
+        },
         see_also=["actions", "subtask_sweep"],
     )
 
@@ -1310,13 +1555,13 @@ def run(adapter, dataset, cfg, output_dir):
     # Only a "both" checkpoint holds two decoders, and the comparison is only a
     # comparison when the fan itself is the flow one: under
     # inference_action_mode=discrete every draw is the same greedy FAST decode, and the
-    # right-hand scene would claim to show flow while showing FAST three times.
+    # scene would claim to show flow while showing FAST once per sample.
     has_decoder_comparison = bool(
         callable(decoder_predict)
         and getattr(cfg.policy, "action_mode", None) == "both"
         and getattr(cfg.policy, "inference_action_mode", None) == "continuous"
     )
-    flow_sample_count = max(int(p.trace_n_samples), FLOW_COMPARE_COUNT if has_decoder_comparison else 1)
+    flow_sample_count = max(int(p.trace_n_samples), 1)
 
     anchors = sample_action_inspector_frames(dataset, p, stride=int(getattr(cfg.policy, "image_stride", 1)))
     if not anchors:
@@ -1404,9 +1649,8 @@ def run(adapter, dataset, cfg, output_dir):
                 cameras=_camera_context(obs),
                 norm=_normalized_chunks(adapter, pred_norm, gt_actions, state_tensor),
             )
-            record["metrics"]["mse_norm"] = float(
-                (record["norm"]["pred"] - record["norm"]["gt"]).pow(2).mean()
-            )
+            record["metrics"].update(_trajectory_metrics(record["norm"]))
+            record["metrics"]["mse_norm"] = record["metrics"]["path_mse"]
             if has_decoder_comparison:
                 record.update(fast_error=fast_error, fast_chunk=None, fast_ee=None)
                 if fast_prediction is not None:
@@ -1425,12 +1669,6 @@ def run(adapter, dataset, cfg, output_dir):
     fig = _figure(records, p, fps=fps)
     html_path = os.path.join(output_dir, "action_trace.html")
     _write_dashboard_html(fig, records, html_path)
-
-    comparison_html_path = None
-    if has_decoder_comparison:
-        comparison_fig = build_decoder_comparison_figure(records, p.trace_table_z, fps=fps)
-        comparison_html_path = os.path.join(output_dir, "decoder_comparison.html")
-        write_decoder_comparison_html(comparison_fig, comparison_html_path)
 
     csv_path = os.path.join(output_dir, "metrics.csv")
     with open(csv_path, "w", newline="") as handle:
@@ -1491,6 +1729,14 @@ def run(adapter, dataset, cfg, output_dir):
     logging.info(f"wrote {html_path}, {csv_path}, and {os.path.join(output_dir, 'index.json')}")
 
 
+# Runs inside rl_offline's validation loop when probe_parameters.enable_action_trace is
+# set, or standalone:
+#
+#     python -m lerobot.probes.action_trace_probe --config config_rl.yaml \
+#         --probe_parameters.trace_anchor_stride_s 30 --probe_parameters.trace_n_samples 4
+#
+# Standalone has no val set to fall back on and loads dataset.sources[0], so pin
+# trace_episodes unless you want every episode of it.
 @parser.wrap()
 def cli(cfg: ActionTraceProbeConfig):
     init_logging()

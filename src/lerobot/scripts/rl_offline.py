@@ -236,6 +236,7 @@ _VALIDATION_PROBES = (
         "spatial_memorization_action_jacobian",
     ),
     _ValidationProbeSpec("enable_mem_history_influence", "lerobot.probes.mem_history_influence", "mem_history_influence"),
+    _ValidationProbeSpec("enable_mem_history_regime", "lerobot.probes.mem_history_regime", "mem_history_regime"),
     _ValidationProbeSpec("enable_mem_temporal_attention", "lerobot.probes.mem_temporal_attention", "mem_temporal_attention"),
     _ValidationProbeSpec("enable_metadata_steering", "lerobot.probes.metadata_steering", "metadata_steering"),
     _ValidationProbeSpec("enable_depth_modality", "lerobot.probes.depth_modality_probe", "depth_modality"),
@@ -700,6 +701,15 @@ def run_offline_training(
     val_freq = int(getattr(cfg, "val_freq", 0) or 0)
     val_on_start = bool(getattr(cfg, "val_on_start", False))
 
+    # Held-out flow + FAST CE at log_freq. Built here because the val dataset lives
+    # here; the sample is packed once, so the loop only pays the forwards.
+    val_loss_frames = int(getattr(cfg, "val_loss_frames", 0) or 0)
+    val_loss = None
+    if val_loss_frames > 0:
+        from lerobot.rl.molmoact2.val_loss import ValLoss
+
+        val_loss = ValLoss(val_dataset, preprocessor, cfg, device, n_frames=val_loss_frames)
+
     if val_on_start:
         _run_validation_probes(
             policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
@@ -806,6 +816,8 @@ def run_offline_training(
 
         # ── Logging ───────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:
+            if val_loss is not None:
+                training_infos.update(val_loss(policy))
             training_infos["offline_buffer_size"] = sum(len(b) for b in offline_buffers)
             training_infos["Optimization step"] = optimization_step
             trainer.log_metrics(

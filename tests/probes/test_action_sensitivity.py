@@ -82,11 +82,6 @@ def test_aggregate_is_episode_balanced_not_frame_pooled():
         _record(0, "grasp", 0.0, 0.0),
         _record(1, "grasp", 10.0, 10.0),
     ]
-    mean_grid, n_episodes, n_frames = probe._episode_balanced_grid(
-        records, "grasp", "gripper", "img_wrist"
-    )
-    assert np.allclose(mean_grid, 5.0)
-    assert (n_episodes, n_frames) == (2, 3)
     prompt = probe._aggregate_prompt(records, "grasp", "gripper")
     assert np.isclose(prompt[("subtask", "grasp")], 5.0)
 
@@ -116,10 +111,11 @@ def test_score_view_keeps_raw_token_values():
     assert torch.equal(view.cross_attn_by_layer[0].flatten(), torch.tensor([1.0, 2.0, 3.0]))
 
 
-def test_detailed_and_aggregate_artifacts_render(tmp_path):
+def test_detailed_and_prompt_artifacts_render(tmp_path):
     image = np.full((24, 24, 3), 96, dtype=np.uint8)
     # The point-map depth block is a real panel here and is NOT square (12x16 in the
-    # policy): every step from the grids to imshow has to carry its (rows, cols).
+    # policy): every step from the grids to the browser overlay has to carry its
+    # (rows, cols).
     panels = {"img_wrist": (2, 2), "depth": (2, 3)}
     records = []
     for episode, subtask, scale in [(0, "approach", 1.0), (1, "grasp", 2.0)]:
@@ -155,13 +151,11 @@ def test_detailed_and_aggregate_artifacts_render(tmp_path):
 
     camera_scales, prompt_scales = probe._global_scales(records)
     html_records = probe._write_details(tmp_path, records)
-    aggregate = probe._plot_aggregate_maps(tmp_path, records, camera_scales)
     prompts = probe._plot_prompt_maps(tmp_path, records)
     dashboard = probe._write_html(tmp_path, html_records, camera_scales, prompt_scales)
 
-    assert len(aggregate) == 3
     assert len(prompts) == 3
-    assert all((tmp_path / filename).is_file() for filename in aggregate + prompts + [dashboard])
+    assert all((tmp_path / filename).is_file() for filename in prompts + [dashboard])
     document = (tmp_path / dashboard).read_text()
     assert "Subtask-conditioned action sensitivity" in document
     assert "Proximal arm" in document

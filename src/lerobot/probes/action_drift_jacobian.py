@@ -40,10 +40,13 @@ the difference between a picture and a wash:
   two-frame comparison both frames still share one ramp, so A really is brighter than B
   when it is larger. Values are not comparable to a frame that is not on screen.
 
-The contrast control applies $x^{\gamma}$ to the normalised value before colouring
-($\gamma=0.5$ by default); these scores span decades, so a linear ramp hides structure
-that is really there. Every mode names its scale under the controls, and the raw value
-of any patch or token is in its tooltip.
+The contrast control applies $x^{\gamma}$ to the normalised value before colouring;
+these scores span decades, so a linear ramp hides structure that is really there. The
+default picks $\gamma$ from the data rather than guessing it: with $m$ the median of the
+normalised values actually on screen, $\gamma=\ln(1/2)/\ln m$ puts that median at
+mid-ramp, so an already-spread panel gets $\gamma\approx1$ and a spiky one gets the
+compression it needs. Fixed sqrt/linear/cube-root remain selectable. Every panel carries
+its own colourbar with raw tick values, and hovering a patch reads out its raw value.
 
 Comparisons that are valid: same action group and same input segment, across subtasks
 or across frames. Comparisons that are not: one camera against another, camera against
@@ -54,8 +57,8 @@ Outputs under ``action_drift_jacobian/``:
 
 * ``sensitivity.html`` — frame browser; overlays are drawn in the browser from the
   patch grids, so scale, contrast, and two-frame comparison need no re-run.
-* ``aggregate_<group>.png`` — episode-balanced spatial maps, one row per subtask.
-* ``prompt_<group>.png`` — episode-balanced prompt-token sensitivity per subtask.
+* ``prompt_<group>.png`` — episode-balanced prompt-token sensitivity per subtask, with a
+  caption stating the quantity, the averaging, and which direction is comparable.
 * ``frame_metrics.csv`` / ``summary.json`` — raw aggregate values and provenance.
 * ``raw/*.npz`` — per frame, the flat token score vector per action group plus each
   camera's patch grid as ``<group>__<camera>_grid``, already shaped rows x cols.
@@ -68,6 +71,7 @@ import os
 import random
 import re
 import sys
+import textwrap
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from typing import Any
@@ -117,6 +121,11 @@ GROUP_LABELS = {
 @dataclass
 class ProbeJacobianConfig(TrainRLServerPipelineConfig):
     """Tunables live under ``cfg.probe_parameters``."""
+
+
+def _caption(text: str, fig_width: float) -> str:
+    """Hard-wrap a caption to the figure: ~16 characters per inch at 8pt."""
+    return textwrap.fill(" ".join(text.split()), width=max(60, int(fig_width * 16)))
 
 
 def _slug(value: str, limit: int = 72) -> str:
@@ -355,20 +364,6 @@ def _write_details(output_dir, records) -> list[dict[str, Any]]:
     return html_records
 
 
-def _episode_balanced_grid(records, subtask: str, group: str, camera: str):
-    by_episode: dict[int, list[np.ndarray]] = defaultdict(list)
-    for record in records:
-        if record["subtask"] != subtask:
-            continue
-        grid = record["groups"][group]["grids"].get(camera)
-        if grid is not None:
-            by_episode[int(record["episode"])].append(np.asarray(grid, dtype=np.float64))
-    episode_maps = [np.mean(parts, axis=0) for parts in by_episode.values() if parts]
-    if not episode_maps:
-        return None, 0, 0
-    return np.mean(episode_maps, axis=0), len(episode_maps), sum(len(v) for v in by_episode.values())
-
-
 def _aggregate_prompt(records, subtask: str, group: str) -> dict[tuple[str, str], float]:
     by_episode: dict[int, list[dict[tuple[str, str], float]]] = defaultdict(list)
     for record in records:
@@ -392,87 +387,15 @@ def _aggregate_prompt(records, subtask: str, group: str) -> dict[tuple[str, str]
     }
 
 
-def _plot_aggregate_maps(output_dir, records, camera_scales) -> list[str]:
-    subtasks = sorted({record["subtask"] for record in records})
-    cameras = sorted(
-        {camera for record in records for data in record["groups"].values() for camera in data["grids"]},
-        key=lambda name: ("top" not in name, "wrist" not in name, name),
-    )
-    written = []
-    for group in ACTION_GROUPS:
-        if not cameras or not subtasks:
-            continue
-        # Averaging within a subtask pulls every cell well below any single frame's
-        # peak, so the run-wide token scale would render the whole panel near-black.
-        # The rows still share one scale — that is what makes subtasks comparable —
-        # but it is the largest cell actually drawn here.
-        aggregates = {
-            (subtask, camera): _episode_balanced_grid(records, subtask, group, camera)
-            for subtask in subtasks
-            for camera in cameras
-        }
-        panel_scale = {
-            camera: max(
-                [
-                    float(np.max(grid))
-                    for (_, cam), (grid, _, _) in aggregates.items()
-                    if cam == camera and grid is not None
-                ]
-                or [1e-12]
-            )
-            for camera in cameras
-        }
-        fig, axes = plt.subplots(
-            len(subtasks), len(cameras),
-            figsize=(3.2 * len(cameras), 2.6 * len(subtasks)),
-            squeeze=False,
-        )
-        for row, subtask in enumerate(subtasks):
-            for col, camera in enumerate(cameras):
-                ax = axes[row, col]
-                mean_grid, n_episodes, n_frames = aggregates[(subtask, camera)]
-                if mean_grid is None:
-                    ax.axis("off")
-                    continue
-                image = ax.imshow(
-                    mean_grid,
-                    cmap="magma",
-                    vmin=0.0,
-                    vmax=panel_scale[camera],
-                    interpolation="nearest",
-                )
-                ax.set_xticks([])
-                ax.set_yticks([])
-                ax.set_title(
-                    f"{camera} · {n_episodes} eps / {n_frames} frames\n"
-                    f"shared scale {panel_scale[camera]:.2e} · run p99 "
-                    f"{camera_scales[(group, camera)]['p99']:.2e}",
-                    fontsize=8,
-                )
-                if col == 0:
-                    ax.set_ylabel(subtask, fontsize=8)
-                fig.colorbar(image, ax=ax, fraction=0.045, pad=0.02)
-        fig.suptitle(
-            f"{GROUP_LABELS[group]} sensitivity by subtask\n"
-            "episode-balanced means; each camera has one fixed raw scale across all subtasks",
-            fontsize=11,
-        )
-        fig.tight_layout()
-        filename = f"aggregate_{group}.png"
-        fig.savefig(os.path.join(output_dir, filename), dpi=145, bbox_inches="tight")
-        plt.close(fig)
-        written.append(filename)
-    return written
-
-
 def _plot_prompt_maps(output_dir, records) -> list[str]:
     subtasks = sorted({record["subtask"] for record in records})
     written = []
     for group in ACTION_GROUPS:
         fig, axes = plt.subplots(
             len(subtasks), 1,
-            figsize=(9.0, max(2.5, 2.6 * len(subtasks))),
+            figsize=(9.0, max(2.5, 2.6 * len(subtasks)) + 1.2),
             squeeze=False,
+            layout="constrained",
         )
         for row, subtask in enumerate(subtasks):
             ax = axes[row, 0]
@@ -491,10 +414,23 @@ def _plot_prompt_maps(output_dir, records) -> list[str]:
             ax.set_title(subtask, fontsize=9, loc="left")
             ax.set_xlabel("raw token Jacobian norm (episode-balanced mean)", fontsize=8)
             ax.grid(axis="x", alpha=0.2)
-        fig.suptitle(f"{GROUP_LABELS[group]} sensitivity to prompt tokens", fontsize=11)
-        fig.tight_layout()
+        label = GROUP_LABELS[group].lower()
+        fig.suptitle(f"{GROUP_LABELS[group]}: which prompt words move this joint group", fontsize=12)
+        fig.supxlabel(
+            _caption(
+                f"""A bar is the Frobenius norm of d(flow velocity of the {label} joints) /
+                d(prompt token embedding), summed over repeats of the same word inside a clause,
+                averaged within an episode and then across episodes. Top 12 tokens per subtask, so
+                a token missing from one row is only outside its top 12. Raw units on a linear
+                axis: compare bars inside this figure, never against a camera panel or another
+                action group.""",
+                9.0,
+            ),
+            fontsize=7.5,
+            color="#3f3f46",
+        )
         filename = f"prompt_{group}.png"
-        fig.savefig(os.path.join(output_dir, filename), dpi=145, bbox_inches="tight")
+        fig.savefig(os.path.join(output_dir, filename), dpi=145)
         plt.close(fig)
         written.append(filename)
     return written
@@ -540,9 +476,12 @@ input[type=range]{padding:0}
 .switch{display:flex;align-items:center;gap:7px;margin-top:20px;font-size:13px;text-transform:none;letter-spacing:0;color:var(--ink)}
 .switch input{width:auto;margin:0}
 main{padding:20px 28px 40px;max-width:1750px;margin:auto}
-.meta{display:flex;gap:18px;align-items:baseline;margin-bottom:6px;flex-wrap:wrap} .subtask{font-size:18px;font-weight:700}
-.scalebar{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin-bottom:14px}
-.ramp{height:9px;width:190px;border-radius:5px;border:1px solid var(--line)}
+.meta{display:flex;gap:18px;align-items:baseline;margin-bottom:14px;flex-wrap:wrap} .subtask{font-size:18px;font-weight:700}
+.cbar{margin-top:9px}
+.cbar .ramp{height:9px;border-radius:5px;border:1px solid var(--line)}
+.cbar .ticks{position:relative;height:15px;font-size:10px;color:var(--muted)}
+.cbar .ticks span{position:absolute;top:2px;white-space:nowrap}
+.cbar .cnote{font-size:11px;color:var(--muted)}
 .camera-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:14px}
 .camera-grid.wide{grid-template-columns:1fr}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;box-shadow:0 1px 2px #00000008}
@@ -560,7 +499,7 @@ main{padding:20px 28px 40px;max-width:1750px;margin:auto}
 @media(max-width:850px){.camera-grid{grid-template-columns:1fr}.cells.two{grid-template-columns:1fr}}
 </style></head><body>
 <header><h1>Subtask-conditioned action sensitivity</h1>
-<div class="dek">Raw local Jacobian norms at real validation frames — how much one conditioning token moves one action group. Brightness is always relative to the scale named under the controls, never absolute: a dark patch is small <i>compared to that scale</i>, not unimportant. Compare the same action group and the same input panel; camera, prompt and action-group scales are deliberately never unified.</div></header>
+<div class="dek">One patch is one input token. Its value is the Frobenius norm of d(flow velocity of the selected joint group) / d(that token's embedding) at this real validation frame — how far the predicted motion moves when that patch's embedding is nudged. It is not attention and it is not correctness. Brightness is always relative to the scale under each panel, never absolute: a dark patch is small <i>compared to that scale</i>, not unimportant. Hover a patch for its raw value. Compare the same action group and the same input panel across frames or subtasks; camera, prompt and action-group scales are deliberately never unified.</div></header>
 <div class="controls">
   <div><label>Subtask<select id="subtask"></select></label></div>
   <div><label>Action group<select id="group"></select></label></div>
@@ -574,15 +513,15 @@ main{padding:20px 28px 40px;max-width:1750px;margin:auto}
     <option value="auto">auto · shown frames</option>
   </select></label></div>
   <div><label>Contrast<select id="gamma">
-    <option value="0.5">sqrt</option>
-    <option value="1">linear</option>
-    <option value="0.33">cube root</option>
+    <option value="auto">auto · median mid-ramp</option>
+    <option value="0.5">fixed sqrt</option>
+    <option value="1">fixed linear</option>
+    <option value="0.33">fixed cube root</option>
   </select></label></div>
 </div>
 <main><div class="meta"><span class="subtask" id="title"></span><span id="where"></span><a class="raw" id="raw">raw NPZ</a></div>
-<div class="scalebar"><span>0</span><span class="ramp" id="ramp"></span><span id="scaleNote"></span></div>
 <div class="camera-grid" id="cameras"></div>
-<section class="prompt"><strong>Prompt-token sensitivity</strong><div id="promptRows"></div></section></main>
+<section class="prompt"><strong>Prompt-token sensitivity</strong><div id="promptRows"></div><div id="promptBar"></div></section></main>
 <script>const DATA=__DATA__;
 const $=id=>document.getElementById(id);
 const sub=$('subtask'), group=$('group'), episode=$('episode'), slider=$('frame'), sliderB=$('frameB'),
@@ -610,6 +549,29 @@ function scaleFor(store, key, frames, pick){
   if(mode.value!=='auto') return store[key][mode.value];
   return Math.max(1e-12, ...frames.map(pick));
 }
+
+// Colour is (v/vmax)^gamma. These norms span decades, so one hardcoded exponent is a
+// guess that fits some panels and washes out others. "auto" solves m^gamma = 0.5 for the
+// median m of the values actually drawn: an already-spread panel gets gamma ~ 1, a panel
+// carried by a few loud cells gets the compression it needs, and the numbers don't move.
+function gammaFor(values){
+  if(gammaSel.value!=='auto') return +gammaSel.value;
+  const x=values.filter(v=>v>0&&v<1).sort((a,b)=>a-b);
+  if(!x.length) return 1;
+  const median=x[x.length>>1];
+  return Math.min(4,Math.max(0.15,Math.log(0.5)/Math.log(median)));
+}
+// Ticks sit evenly along the colour ramp and are labelled with the raw value that colour
+// stands for, so the gamma shows up as their uneven spacing in value.
+function colourbar(vmax, gamma, what){
+  const exp=Math.floor(Math.log10(vmax)), unit=Math.pow(10,exp);
+  const ticks=[0,.25,.5,.75,1].map(t=>{
+    const shift=t===0?'0':t===1?'-100%':'-50%';
+    return `<span style="left:${t*100}%;transform:translateX(${shift})">${(vmax*Math.pow(t,1/gamma)/unit).toFixed(2)}</span>`;
+  }).join('');
+  return `<div class="cbar"><div class="ramp" style="background:${rampCSS()}"></div><div class="ticks">${ticks}</div>
+    <div class="cnote">${what} &times; 1e${exp} &middot; full scale ${vmax.toExponential(2)} &middot; ${mode.options[mode.selectedIndex].text} &middot; &gamma; ${gamma.toFixed(2)}</div></div>`;
+}
 function drawCell(canvas, img, grid, hw, vmax, gamma){
   const w=canvas.width=img.naturalWidth||448, h=canvas.height=img.naturalHeight||448, ctx=canvas.getContext('2d');
   ctx.clearRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
@@ -625,44 +587,56 @@ function drawCell(canvas, img, grid, hw, vmax, gamma){
 }
 function cellHTML(rec, tag, camera){
   const cam=rec.cameras[camera];
-  return `<div class="cell"><div class="who"><b>${tag} · ep${rec.episode} fr${rec.frame}</b><span>${rec.subtask}</span></div>
+  return `<div class="cell"><div class="who"><b>${tag} · ep${rec.episode} fr${rec.frame}</b><span class="val">${rec.subtask}</span></div>
     <div class="pair"><img src="${cam.file}" alt="${camera}"><canvas data-frame="${rec.global_idx}" data-cam="${camera}"></canvas></div></div>`;
 }
 function render(){
-  const rows=filtered(), g=group.value, gamma=+gammaSel.value;
+  const rows=filtered(), g=group.value;
   slider.max=sliderB.max=Math.max(0,rows.length-1);
   slider.value=Math.min(+slider.value,+slider.max); sliderB.value=Math.min(+sliderB.value,+sliderB.max);
   sliderB.disabled=!compare.checked;
   $('frameCount').textContent=`${rows.length} sampled`;
-  if(!rows.length){$('cameras').innerHTML='<div class="empty">No sampled frames.</div>';$('promptRows').innerHTML='';return;}
+  if(!rows.length){$('cameras').innerHTML='<div class="empty">No sampled frames.</div>';$('promptRows').innerHTML='';$('promptBar').innerHTML='';return;}
   const frames=shown(rows), r=frames[0];
   $('title').textContent=r.subtask;
   $('where').textContent=frames.map(f=>`ep ${f.episode} · frame ${f.frame}`).join('   vs   ');
   $('raw').href=r.raw;
-  $('ramp').style.background=rampCSS();
 
   const cameras=Object.keys(r.cameras);
   $('cameras').className='camera-grid'+(compare.checked?' wide':'');
-  const vmaxByCam={};
+  const vmaxByCam={}, gammaByCam={};
   cameras.forEach(camera=>{
     vmaxByCam[camera]=scaleFor(DATA.cameraScales, `${g}|${camera}`, frames,
       f=>Math.max(...f.groups[g].grids[camera]));
+    gammaByCam[camera]=gammaFor([].concat(...frames.map(f=>f.groups[g].grids[camera])).map(v=>v/vmaxByCam[camera]));
   });
   $('cameras').innerHTML=cameras.map(camera=>
     `<article class="panel"><div class="cells ${compare.checked?'two':''}">${frames.map((f,i)=>cellHTML(f,i?'B':'A',camera)).join('')}</div>
-     <div class="caption"><b>${camera}</b><span>scale ${vmaxByCam[camera].toExponential(2)} · ${mode.options[mode.selectedIndex].text}</span></div></article>`
+     <div class="caption"><b>${camera}</b></div>${colourbar(vmaxByCam[camera],gammaByCam[camera],'raw Jacobian norm')}</article>`
   ).join('')||'<div class="empty">No camera patches mapped.</div>';
   $('cameras').querySelectorAll('canvas').forEach(canvas=>{
     const camera=canvas.dataset.cam, frame=frames.find(f=>String(f.global_idx)===canvas.dataset.frame);
-    const img=canvas.previousElementSibling, paint=()=>drawCell(canvas,img,frame.groups[g].grids[camera],frame.cameras[camera].hw,vmaxByCam[camera],gamma);
+    const grid=frame.groups[g].grids[camera], hw=frame.cameras[camera].hw;
+    const img=canvas.previousElementSibling;
+    const paint=()=>drawCell(canvas,img,grid,hw,vmaxByCam[camera],gammaByCam[camera]);
     if(img.complete&&img.naturalWidth) paint(); else img.onload=paint;
+    // Colour answers "how does this patch compare"; the readout answers "how much".
+    const readout=canvas.closest('.cell').querySelector('.val'), subtask=frame.subtask;
+    canvas.onmousemove=event=>{
+      const box=canvas.getBoundingClientRect(), [gridRows,gridCols]=hw;
+      const col=Math.min(gridCols-1,Math.max(0,Math.floor((event.clientX-box.left)/box.width*gridCols)));
+      const row=Math.min(gridRows-1,Math.max(0,Math.floor((event.clientY-box.top)/box.height*gridRows)));
+      readout.textContent=`patch r${row} c${col} · ${grid[row*gridCols+col].toExponential(3)}`;
+    };
+    canvas.onmouseleave=()=>{readout.textContent=subtask};
   });
 
   const pmax=scaleFor(DATA.promptScales, g, frames, f=>Math.max(...f.groups[g].prompt.map(t=>t.value)));
-  $('scaleNote').textContent=`prompt scale ${pmax.toExponential(2)} · ${gammaSel.options[gammaSel.selectedIndex].text} contrast`;
+  const pgamma=gammaFor([].concat(...frames.map(f=>f.groups[g].prompt.map(t=>t.value/pmax))));
+  $('promptBar').innerHTML=colourbar(pmax,pgamma,'raw Jacobian norm');
   $('promptRows').innerHTML=frames.map((f,i)=>{
     const tokens=f.groups[g].prompt.map(t=>{
-      const x=Math.pow(Math.max(0,Math.min(1,t.value/pmax)),gamma), [r0,g0,b0]=ramp(x);
+      const x=Math.pow(Math.max(0,Math.min(1,t.value/pmax)),pgamma), [r0,g0,b0]=ramp(x);
       return `<span class="token" style="background:rgba(${r0},${g0},${b0},${(0.10+0.75*x).toFixed(3)})" title="raw ${t.value.toExponential(4)}"><small>${t.clause}</small>${t.label}</span>`;
     }).join('')||'<span class="empty">No prompt tokens mapped.</span>';
     return `${compare.checked?`<div class="rowlabel">${i?'B':'A'} · ep${f.episode} fr${f.frame}</div>`:''}<div class="tokens">${tokens}</div>`;
@@ -732,7 +706,6 @@ def _run_dataset(adapter, dataset, cfg, output_dir) -> None:
     records = _capture_records(adapter, dataset, cfg, samples)
     camera_scales, prompt_scales = _global_scales(records)
     html_records = _write_details(output_dir, records)
-    aggregate_panels = _plot_aggregate_maps(output_dir, records, camera_scales)
     prompt_panels = _plot_prompt_maps(output_dir, records)
     _write_frame_metrics(output_dir, records)
     html_panel = _write_html(output_dir, html_records, camera_scales, prompt_scales)
@@ -751,27 +724,20 @@ def _run_dataset(adapter, dataset, cfg, output_dir) -> None:
         Panel(
             html_panel,
             "Detailed validation-frame sensitivity browser",
-            how="Pick a subtask and an action group; tick *Compare two frames* to put two "
-                "anchors side by side on one shared ramp. Brightness is relative to the "
-                "scale named under the controls — a dark patch is small compared to that "
-                "scale, not unimportant. Default is the run's p99 so a typical frame uses "
-                "most of the ramp; switch to *auto* for maximum contrast between the "
-                "frames on screen, or *run max* for the unclipped scale. Compare the same "
-                "group and the same panel only; camera, prompt, and group scales are never "
-                "unified.",
+            how="A patch is one input token; its value is the Frobenius norm of d(flow "
+                "velocity of the selected joint group)/d(that token). Pick a subtask and an "
+                "action group; tick *Compare two frames* to put two anchors side by side on "
+                "one shared ramp. Brightness is relative to the scale on each panel's "
+                "colourbar — a dark patch is small compared to that scale, not unimportant — "
+                "and hovering a patch reads out its raw value. Colour scale defaults to the "
+                "run's p99 so a typical frame uses most of the ramp; *auto* spans only the "
+                "frames on screen, *run max* is the unclipped scale. Contrast defaults to a "
+                "gamma solved from the drawn values (median at mid-ramp) rather than a fixed "
+                "exponent. Compare the same group and the same panel only; camera, prompt, "
+                "and group scales are never unified.",
             primary=True,
         )
     ]
-    for filename in aggregate_panels:
-        group = filename.removeprefix("aggregate_").removesuffix(".png")
-        panels.append(
-            Panel(
-                filename,
-                f"{GROUP_LABELS.get(group, group)} spatial sensitivity by subtask",
-                how="Rows are subtasks. A cell is the episode-balanced mean of raw patch Jacobian norms; compare vertically within one camera column.",
-                primary=True,
-            )
-        )
     for filename in prompt_panels:
         group = filename.removeprefix("prompt_").removesuffix(".png")
         panels.append(

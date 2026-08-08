@@ -37,6 +37,14 @@ failure the distances structurally cannot catch: a policy collapsing to near-zer
 motion lands at the origin of anchor space, which is densely populated because the arm
 pauses constantly, and would otherwise score a perfect ratio.
 
+Every number above is a distance between 210-dimensional vectors and every picture of
+it is a UMAP scatter, so nothing in either can be checked against the robot.
+``2d/grounded.png`` closes that: eight chosen coordinates — four regions of the
+reference cloud and four held-out frames spanning the range of policy/demonstrator
+disagreement — drawn as the camera frame they came from plus the end-effector path FK
+gives for the chunk. It is the panel that turns "ratio 0.83" into a motion you can look
+at. It needs pinocchio for FK and is simply absent without it.
+
 The reference manifold is cached (``manifold.pt``) and keyed by a fingerprint of the
 reference data and the fitting parameters. Refitting moves the coordinate system, so
 distances either side of a refit are not comparable — the manifold id is recorded in
@@ -49,6 +57,7 @@ Output layout (under ``probe_parameters.output_dir/actions/``):
   nn_distances.csv              per-episode distance summary, GT vs pred
   pca_variance/                 PCA scree plot
   2d/manifold.png               GT paths + pred dots on the grey reference manifold
+  2d/grounded.png               the same map with camera frames + EE traces attached
   2d/distances.png              the metric panel: distance distributions + per-episode
   2d/per_subtask.png            which phase of the task drifts off-manifold
   2d/drift_over_time.png        does deviation grow across the episode
@@ -84,18 +93,22 @@ from lerobot.probes.utils import (
     DS_COLORS,
     EP_COLORS,
     SEQ_CMAPS,
+    as_image,
     ax_style,
     dataset_display_name,
     get_action_chunk_lowdim,
+    get_frame_data,
     get_subtask_idx,
     get_subtask_str,
     load_extra_dataset,
     load_probe_dataset,
     makedirs,
+    panel_caption,
     probe_frame_inputs,
     probe_image_stride,
     run_pca,
     sample_episodes_evenly,
+    subtask_group,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -170,27 +183,41 @@ def fingerprint_id(fingerprint: dict) -> str:
     return hashlib.sha1(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest()[:8]
 
 
-def collect_reference(adapter, datasets, cfg):
-    """Normalised GT chunks, states and subtask labels across every reference source.
+def reference_samples(datasets, p) -> list[tuple[int, int]]:
+    """``(source index, global_idx)`` per reference row, in reference-set order.
 
-    No model forward and no video decode: the manifold is a property of the data.
+    Split out of :func:`collect_reference` so a row of ``ref_pca`` can be traced back to
+    the frame it came from without refitting — what the grounded figure needs to put a
+    camera image next to a region of the manifold. The sampler is seeded, so replaying
+    it reproduces the order exactly.
     """
-    p = cfg.probe_parameters
-    vectors, states, subtasks = [], [], []
-
-    for name, dataset in datasets:
-        samples = sample_episodes_evenly(
+    return [
+        (source, global_idx)
+        for source, (_, dataset) in enumerate(datasets)
+        for _, _, global_idx in sample_episodes_evenly(
             dataset,
             n_per_episode=p.ref_n_frames_per_episode,
             max_episodes=p.ref_max_episodes,
             seed=p.random_seed,
         )
-        logging.info(f"  {name}: {len(samples)} reference frames")
-        for _, _, global_idx in samples:
-            actions, state, _, _ = get_action_chunk_lowdim(dataset, global_idx, adapter.chunk_size)
-            vectors.append(chunk_vector(adapter, actions, state))
-            states.append(state.numpy())
-            subtasks.append(get_subtask_str(dataset, get_subtask_idx(dataset, global_idx)))
+    ]
+
+
+def collect_reference(adapter, datasets, cfg):
+    """Normalised GT chunks, states and subtask labels across every reference source.
+
+    No model forward and no video decode: the manifold is a property of the data.
+    """
+    rows = reference_samples(datasets, cfg.probe_parameters)
+    logging.info(f"  {len(rows)} reference frames over {len(datasets)} source(s)")
+
+    vectors, states, subtasks = [], [], []
+    for source, global_idx in rows:
+        dataset = datasets[source][1]
+        actions, state, _, _ = get_action_chunk_lowdim(dataset, global_idx, adapter.chunk_size)
+        vectors.append(chunk_vector(adapter, actions, state))
+        states.append(state.numpy())
+        subtasks.append(get_subtask_str(dataset, get_subtask_idx(dataset, global_idx)))
 
     return np.stack(vectors), np.stack(states), subtasks
 
@@ -254,7 +281,11 @@ def default_manifold_cache(output_dir: str) -> str:
 
 
 def load_or_build_manifold(adapter, root_dataset, cfg, output_dir, pca_dir):
-    """Reuse the cached manifold when its fingerprint matches, else refit and say so."""
+    """Reuse the cached manifold when its fingerprint matches, else refit and say so.
+
+    Returns ``(manifold, datasets)``; the reference datasets come back with it because
+    the grounded figure reads camera frames out of them after the fit.
+    """
     p = cfg.probe_parameters
     cache_path = p.action_manifold_cache or default_manifold_cache(output_dir)
     datasets = reference_datasets(cfg, root_dataset)
@@ -264,7 +295,7 @@ def load_or_build_manifold(adapter, root_dataset, cfg, output_dir, pca_dir):
         cached = torch.load(cache_path, map_location="cpu", weights_only=False)
         if cached.get("fingerprint") == fingerprint:
             logging.info(f"Reusing reference manifold {cached['id']} from {cache_path}")
-            return cached
+            return cached, datasets
         logging.warning(
             "Reference manifold refit: the cached fingerprint no longer matches "
             f"({cached.get('fingerprint')} -> {fingerprint}). Distances from this run "
@@ -276,7 +307,7 @@ def load_or_build_manifold(adapter, root_dataset, cfg, output_dir, pca_dir):
     makedirs(os.path.dirname(cache_path) or ".")
     torch.save(manifold, cache_path)
     logging.info(f"Reference manifold {manifold['id']} saved → {cache_path}")
-    return manifold
+    return manifold, datasets
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -364,6 +395,10 @@ def collect_eval_dataset(adapter: ProbablePolicy, dataset, samples, manifold, cf
     chunk_size = adapter.chunk_size
     seed = int(cfg.probe_parameters.random_seed)
     gt_vecs, pred_vecs, states, subtasks, metadata = [], [], [], [], []
+    # Raw (dataset-unit) chunks alongside the normalised ones: the metrics only need
+    # normalised space, but the grounded figure runs FK on these, and re-deriving them
+    # would mean a second inference pass.
+    gt_raw, pred_raw = [], []
 
     adapter.suppress_logs(True)
     try:
@@ -376,13 +411,15 @@ def collect_eval_dataset(adapter: ProbablePolicy, dataset, samples, manifold, cf
             # Seeded per frame so the projected point moves only when the policy does.
             generator = torch.Generator(device=adapter.device)
             generator.manual_seed(seed + int(global_idx))
-            _, pred_norm, _ = adapter.predict_action_chunk(
+            pred_unnorm, pred_norm, _ = adapter.predict_action_chunk(
                 frame["obs"], task_str, state=state,
                 subtask=gt_subtask, metadata=frame["metadata"], generator=generator,
             )
 
             gt_vecs.append(chunk_vector(adapter, frame["gt_actions"], state))
             pred_vecs.append(pred_norm.flatten().float().numpy())
+            gt_raw.append(frame["gt_actions"].float().numpy())
+            pred_raw.append(pred_unnorm.float().numpy())
             states.append(state.numpy())
             subtasks.append(gt_subtask)
             metadata.append({
@@ -412,7 +449,196 @@ def collect_eval_dataset(adapter: ProbablePolicy, dataset, samples, manifold, cf
             "pred_emb2": manifold["reducer2d"].transform(pred_dist["coords"]),
         }
 
-    return {"metadata": metadata, "gt": gt_dist, "pred": pred_dist, **embeddings}
+    return {
+        "metadata": metadata,
+        "gt": gt_dist,
+        "pred": pred_dist,
+        "states": states,
+        "gt_actions": np.stack(gt_raw),
+        "pred_actions": np.stack(pred_raw),
+        **embeddings,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Grounding — from a coordinate back to a frame and a motion
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Everything above is a distance between 210-dimensional vectors, and every picture of
+# it is a UMAP scatter where a point carries no meaning you can check against the robot.
+# These build the missing half: for a handful of chosen coordinates, the camera frame
+# the chunk was recorded at and the end-effector path the chunk commands.
+
+N_REGIONS = 4          # anchor regions clustered out of the reference cloud
+N_REGION_NEIGHBOURS = 3  # reference chunks drawn next to each region's medoid
+PAIR_QUANTILES = ((0.05, "close"), (0.15, "close"), (0.85, "far"), (0.95, "far"))
+
+
+def _card_image(obs, max_px: int = 340):
+    """One camera view per card, downsized — the scene camera when there is one.
+
+    Kept in the cache rather than re-read at plot time so ``mode=plot`` still needs no
+    dataset and no second video decode.
+    """
+    from PIL import Image
+
+    keys = sorted(k for k in obs if k.startswith("observation.images."))
+    if not keys:
+        return None, ""
+    key = next((k for k in keys if k.rsplit(".", 1)[-1] in ("top", "front", "scene")), keys[0])
+    # as_image only casts when the tensor is [0,1]; a [0,255] float comes back float.
+    image = Image.fromarray(np.clip(as_image(obs[key]), 0, 255).astype(np.uint8))
+    image.thumbnail((max_px, max_px), Image.Resampling.LANCZOS)
+    return np.asarray(image), key.rsplit(".", 1)[-1]
+
+
+def _ee_trace(kin, state, chunk):
+    """End-effector path of one chunk, in cm, measured from the pose it starts at.
+
+    The state is prepended and then subtracted off, so the trace is the *motion* the
+    chunk commands rather than where in the workspace it happens — the same quantity
+    anchor encoding puts on the manifold, and what makes two traces recorded in
+    different corners of the table comparable side by side.
+    """
+    q = np.concatenate([np.asarray(state, dtype=float)[None, :], np.asarray(chunk, dtype=float)])
+    path = kin.ee_path(q)
+    return (path - path[0]) * 100.0
+
+
+def _grip_delta(state, chunk) -> float:
+    """Commanded gripper travel over the chunk — the one axis FK cannot draw."""
+    return float(np.asarray(chunk)[-1, -1] - np.asarray(state)[-1])
+
+
+def _region_cards(kin, adapter, manifold, datasets, cfg):
+    """Four places in the reference cloud, each with a frame and the motion there.
+
+    The regions come from k-means on the *drawn* coordinates rather than the metric
+    ones: their job is to be spread across the picture the reader is looking at. What
+    goes in the card is then chosen in PCA space — the medoid of the region and its
+    nearest reference chunks — so the card's claim ("this is what motion here looks
+    like") is made in the space the distances are measured in.
+    """
+    from scipy.spatial import cKDTree
+    from sklearn.cluster import KMeans
+
+    p = cfg.probe_parameters
+    rows = reference_samples(datasets, p)
+    if len(rows) != len(manifold["ref_pca"]):
+        logging.warning(
+            f"Reference row replay gave {len(rows)} frames against {len(manifold['ref_pca'])} "
+            "manifold rows — the cached manifold predates the current sampling. Skipping "
+            "the region cards; they return on the next refit."
+        )
+        return []
+
+    emb, ref_pca = manifold["ref_emb2"], manifold["ref_pca"]
+    kmeans = KMeans(n_clusters=N_REGIONS, random_state=p.random_seed, n_init=10).fit(emb)
+    centers = kmeans.cluster_centers_
+    tree = cKDTree(ref_pca)
+
+    cards = []
+    for tag, cluster in zip("ABCD", np.lexsort((centers[:, 1], centers[:, 0]))):
+        members = np.where(kmeans.labels_ == cluster)[0]
+        medoid = int(members[np.argmin(np.linalg.norm(emb[members] - centers[cluster], axis=1))])
+        _, near = tree.query(ref_pca[medoid], k=N_REGION_NEIGHBOURS + 1)
+        neighbours = [int(i) for i in np.atleast_1d(near) if int(i) != medoid]
+
+        source, global_idx = rows[medoid]
+        name, dataset = datasets[source]
+        obs, gt_actions, state, subtask, task, ep_idx, fr_idx = get_frame_data(
+            dataset, global_idx, adapter.chunk_size
+        )
+        image, camera = _card_image(obs)
+        traces = [{"xyz": _ee_trace(kin, state.numpy(), gt_actions.numpy()), "role": "main"}]
+        for j in neighbours:
+            j_source, j_idx = rows[j]
+            j_actions, j_state, _, _ = get_action_chunk_lowdim(
+                datasets[j_source][1], j_idx, adapter.chunk_size
+            )
+            traces.append({"xyz": _ee_trace(kin, j_state.numpy(), j_actions.numpy()),
+                           "role": "context"})
+
+        reach = float(np.linalg.norm(traces[0]["xyz"][-1]))
+        cards.append({
+            "tag": tag,
+            "kind": "anchor",
+            "image": image,
+            "camera": camera,
+            "title": f"{tag} — {name}  ep{ep_idx} fr{fr_idx}",
+            "lines": [
+                (subtask or task)[:52],
+                f"net reach {reach:.1f} cm · gripper {_grip_delta(state.numpy(), gt_actions.numpy()):+.0f}°",
+            ],
+            "traces": traces,
+            "emb2": emb[medoid].tolist(),
+            "emb2_context": emb[neighbours].tolist(),
+        })
+    return cards
+
+
+def _pair_cards(kin, adapter, dataset, ds_data):
+    """Held-out frames where the policy agreed with the demonstrator, and where it did not.
+
+    Ranked by the length of the pairing segment in ``2d/manifold.png``, which is the one
+    quantity that figure draws and never quantifies:
+
+        ``d_pair(i) = || W(x_pred,i - mu) - W(x_gt,i - mu) ||``
+
+    Quantiles rather than the extremes: rank 0 and rank N-1 are single frames and read
+    as anecdotes, and the very worst pair is usually a chunk clipped by an episode
+    boundary rather than a disagreement.
+    """
+    gt, pred = ds_data["gt"], ds_data["pred"]
+    pair = np.linalg.norm(pred["coords"] - gt["coords"], axis=1)
+    order = np.argsort(pair)
+
+    cards = []
+    for tag, (quantile, kind) in zip("1234", PAIR_QUANTILES):
+        i = int(order[int(round(quantile * (len(order) - 1)))])
+        meta = ds_data["metadata"][i]
+        state = ds_data["states"][i]
+        obs, *_ = get_frame_data(dataset, meta["global_idx"], adapter.chunk_size)
+        image, camera = _card_image(obs)
+        cards.append({
+            "tag": tag,
+            "kind": kind,
+            "image": image,
+            "camera": camera,
+            "title": f"{tag} — pair distance {pair[i]:.2f}  (p{quantile * 100:.0f})",
+            "lines": [
+                f"ep{meta['episode_idx']} fr{meta['frame_idx']} · {meta['subtask'][:46]}",
+                f"d|s  GT {gt['nn_state'][i]:.2f} → pred {pred['nn_state'][i]:.2f} · "
+                f"gripper {_grip_delta(state, ds_data['gt_actions'][i]):+.0f}° → "
+                f"{_grip_delta(state, ds_data['pred_actions'][i]):+.0f}°",
+            ],
+            "traces": [
+                {"xyz": _ee_trace(kin, state, ds_data["gt_actions"][i]), "role": "gt"},
+                {"xyz": _ee_trace(kin, state, ds_data["pred_actions"][i]), "role": "pred"},
+            ],
+            "emb2": ds_data["gt_emb2"][i].tolist(),
+            "emb2_pred": ds_data["pred_emb2"][i].tolist(),
+        })
+    return cards
+
+
+def collect_cards(adapter, manifold, datasets, eval_dataset, ds_data, cfg):
+    """Region and pair cards, or ``[]`` if the arm's FK is unavailable.
+
+    ``RebotKinematics`` needs pinocchio (the ``placo-dep`` extra). Without it every
+    other panel is still correct, so this degrades to no grounded figure rather than
+    failing the probe.
+    """
+    try:
+        from lerobot.robots.rebot_b601_follower.kinematics import RebotKinematics
+
+        kin = RebotKinematics()
+    except Exception as error:
+        logging.warning(f"No forward kinematics ({error}); skipping the grounded figure.")
+        return []
+
+    return (_region_cards(kin, adapter, manifold, datasets, cfg)
+            + _pair_cards(kin, adapter, eval_dataset, ds_data))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -685,7 +911,193 @@ def plot_2d_manifold(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds_nam
         ax.legend(handles=legend_handles + enc, fontsize=7, ncol=2)
     ax.autoscale_view()
     ax_style(ax, f"{ds_name} — predicted vs demonstrated motion, paired per frame")
+    panel_caption(ax, [
+        r"A point is a $motion$, not a pose: $x=\mathrm{vec}(\mathrm{norm}(a_{t:t+H}-s_t))$, the "
+        r"chunk in normalised anchor space, carried",
+        r"through the reference PCA and drawn by UMAP. Grey = the reference chunks the manifold "
+        r"was fit on (training",
+        r"sources only). Dot = a held-out GT chunk; cross = the policy's chunk at that same frame; "
+        r"the segment joins the pair.",
+        r"",
+        r"Two things this picture cannot be used for. Consecutive dots are seconds apart and their "
+        r"chunks are unrelated, so",
+        r"the dots are not a trajectory — nothing travels along the cloud. And UMAP places an "
+        r"out-of-sample point at a weighted",
+        r"mean of its nearest training neighbours, which pulls a novel prediction back onto the "
+        r"cloud: segment length here",
+        r"understates disagreement by construction. Read magnitudes off 2d/distances.png, which "
+        r"is PCA space; use this panel",
+        r"to see $where$ a disagreement sits, and 2d/grounded.png to see the frames and the "
+        r"end-effector paths behind both.",
+    ], y=-0.075)
     fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# The grounded figure — the same map, with frames and motion attached
+# ──────────────────────────────────────────────────────────────────────────────
+
+CARD_COLORS = {"anchor": "#6A51A3", "close": "#2E8B57", "far": "#C1272D"}
+TRACE_STYLE = {
+    "main":    {"color": "#6A51A3", "lw": 2.0, "alpha": 0.95, "z": 4},
+    "context": {"color": "#9e9e9e", "lw": 1.3, "alpha": 0.80, "z": 2},
+    "gt":      {"color": "#4477aa", "lw": 2.0, "alpha": 0.95, "z": 4},
+    "pred":    {"color": "#dd7733", "lw": 2.0, "alpha": 0.95, "z": 3},
+}
+
+
+def _card_image_ax(ax, card, color):
+    """The camera frame, badged with the card's tag."""
+    if card["image"] is None:
+        ax.text(0.5, 0.5, "no camera view", ha="center", va="center", fontsize=7, color="#888")
+    else:
+        ax.imshow(card["image"])
+    ax.set_xticks([])
+    ax.set_yticks([])
+    # imshow keeps the camera's aspect, so the axes never fills its cell; anchoring the
+    # frame and its trace towards each other closes the gap without stretching the image.
+    ax.set_anchor("E")
+    for spine in ax.spines.values():
+        spine.set_color(color)
+        spine.set_linewidth(1.8)
+    ax.set_title(card["title"], fontsize=7.6, color=color, pad=3.5, loc="left")
+    ax.text(0.0, -0.045, "\n".join(card["lines"]), transform=ax.transAxes,
+            fontsize=6.3, va="top", ha="left", color="#333333", linespacing=1.5)
+
+
+def _card_trace_ax(ax, card):
+    """End-effector motion of the card's chunk(s), all starting from the origin."""
+    points = [np.zeros((1, 3))]
+    for trace in card["traces"]:
+        style = TRACE_STYLE[trace["role"]]
+        xyz = np.asarray(trace["xyz"])
+        ax.plot(xyz[:, 0], xyz[:, 1], xyz[:, 2], color=style["color"], linewidth=style["lw"],
+                alpha=style["alpha"], zorder=style["z"], solid_capstyle="round")
+        ax.scatter(*xyz[-1], color=style["color"], s=16 if style["lw"] > 1 else 6,
+                   alpha=style["alpha"], zorder=style["z"], linewidths=0)
+        points.append(xyz)
+
+    ax.scatter(0, 0, 0, color="#222222", s=13, zorder=5, linewidths=0)
+    # Centred on the motion rather than on the origin, with one shared half-range: a
+    # 1 cm wiggle and a 15 cm reach then fill their boxes equally, and the box is still
+    # isometric, so the shape of a path is not distorted by the axis it happens to use.
+    span = np.concatenate(points)
+    lo, hi = span.min(axis=0), span.max(axis=0)
+    half = max(float((hi - lo).max()) / 2, 0.5) * 1.12
+    for setter, mid in zip((ax.set_xlim, ax.set_ylim, ax.set_zlim), (lo + hi) / 2):
+        setter(mid - half, mid + half)
+    ax.set_box_aspect((1, 1, 1))
+    ax.set_anchor("W")
+    ax.tick_params(labelsize=5.2, pad=-2)
+    ax.set_xlabel("x cm", fontsize=6, labelpad=-8)
+    ax.set_ylabel("y cm", fontsize=6, labelpad=-8)
+    ax.set_zlabel("z cm", fontsize=6, labelpad=-8)
+    ax.grid(True, alpha=0.25)
+
+
+def _grounded_map(ax, ref_emb2, ds_data, cards, ds_name):
+    """The locator: the usual cloud, with the eight carded frames called out."""
+    _draw_ref_bg(ax, ref_emb2)
+    ax.scatter(ds_data["gt_emb2"][:, 0], ds_data["gt_emb2"][:, 1], s=9, color="#4477aa",
+               alpha=0.30, linewidths=0, zorder=2)
+    ax.scatter(ds_data["pred_emb2"][:, 0], ds_data["pred_emb2"][:, 1], s=11, color="#dd7733",
+               alpha=0.30, marker="x", linewidths=0.7, zorder=2)
+
+    for card in cards:
+        color = CARD_COLORS[card["kind"]]
+        x, y = card["emb2"]
+        if card["kind"] == "anchor":
+            context = np.asarray(card["emb2_context"])
+            ax.scatter(context[:, 0], context[:, 1], s=22, color=color, alpha=0.55,
+                       linewidths=0, zorder=4)
+            ax.scatter([x], [y], s=110, facecolor="white", edgecolor=color, linewidths=2.0, zorder=5)
+        else:
+            # GT stays blue and the prediction stays orange, as everywhere else; the
+            # card's colour is carried by the segment and the halo, not by the markers.
+            xp, yp = card["emb2_pred"]
+            ax.plot([x, xp], [y, yp], color=color, linewidth=1.8, alpha=0.9, zorder=4)
+            ax.scatter([x, xp], [y, yp], s=150, facecolor="none", edgecolor=color,
+                       linewidths=1.4, zorder=5)
+            ax.scatter([x], [y], s=45, color="#4477aa", linewidths=0, zorder=6)
+            ax.scatter([xp], [yp], s=70, color="#dd7733", marker="x", linewidths=2.0, zorder=6)
+        ax.annotate(card["tag"], (x, y), textcoords="offset points", xytext=(9, 7),
+                    fontsize=9, fontweight="bold", color=color,
+                    bbox=dict(boxstyle="round,pad=0.18", facecolor="white",
+                              edgecolor=color, linewidth=0.8, alpha=0.9), zorder=6)
+
+    ax.autoscale_view()
+    ax_style(ax, f"{ds_name} — where each card sits on the manifold")
+
+
+def plot_grounded(ref_emb2, ds_data, output_path, ds_name):
+    """The manifold with its coordinates cashed out as frames and end-effector paths.
+
+    Eight frames only, chosen rather than sampled: four regions of the demonstrated
+    cloud (A-D, what motion *is* over there) and four held-out pairs spanning the range
+    of policy/demonstrator disagreement (1-4, what a short and a long pairing segment
+    actually look like).
+    """
+    from matplotlib.lines import Line2D
+
+    cards = ds_data["cards"]
+    anchors = [c for c in cards if c["kind"] == "anchor"]
+    pairs = [c for c in cards if c["kind"] != "anchor"]
+
+    fig = plt.figure(figsize=(19.0, 12.2))
+    top_fig, pair_fig, caption_fig = fig.subfigures(3, 1, height_ratios=[2.05, 1.0, 0.21])
+    map_fig, anchor_fig = top_fig.subfigures(1, 2, width_ratios=[1.0, 1.0])
+
+    map_ax = map_fig.subplots()
+    map_fig.subplots_adjust(left=0.08, right=0.99, top=0.94, bottom=0.06)
+    _grounded_map(map_ax, ref_emb2, ds_data, cards, ds_name)
+    map_ax.legend(loc="lower left", fontsize=7, framealpha=0.92, handles=[
+        Line2D([0], [0], color="#cccccc", marker="o", linestyle="None", markersize=5,
+               label="reference (training) chunks"),
+        Line2D([0], [0], color="#4477aa", marker="o", linestyle="None", markersize=5,
+               label="held-out GT"),
+        Line2D([0], [0], color="#dd7733", marker="x", linestyle="None", markersize=6,
+               label="prediction"),
+        Line2D([0], [0], color=CARD_COLORS["anchor"], marker="o", linestyle="None",
+               markerfacecolor="white", markersize=7, label="A-D  region medoid + neighbours"),
+        Line2D([0], [0], color=CARD_COLORS["close"], linewidth=2, label="1-2  closest pairs (p5, p15)"),
+        Line2D([0], [0], color=CARD_COLORS["far"], linewidth=2, label="3-4  farthest pairs (p85, p95)"),
+    ])
+
+    anchor_gs = anchor_fig.add_gridspec(len(anchors), 2, width_ratios=[1.0, 1.0],
+                                        hspace=0.50, wspace=0.02, left=0.03, right=0.99,
+                                        top=0.94, bottom=0.05)
+    anchor_fig.suptitle("What the motion is, four places in the demonstrated cloud",
+                        fontsize=9.5, y=0.995)
+    for row, card in enumerate(anchors):
+        _card_image_ax(anchor_fig.add_subplot(anchor_gs[row, 0]), card, CARD_COLORS["anchor"])
+        _card_trace_ax(anchor_fig.add_subplot(anchor_gs[row, 1], projection="3d"), card)
+
+    pair_gs = pair_fig.add_gridspec(1, 3 * len(pairs), width_ratios=[1.0, 1.0, 0.20] * len(pairs),
+                                    wspace=0.05, left=0.02, right=0.97, top=0.86, bottom=0.22)
+    pair_fig.suptitle("Held-out frames where the policy agreed with the demonstrator, and where "
+                      "it did not  —  blue = demonstrated, orange = predicted", fontsize=9.5, y=0.99)
+    for col, card in enumerate(pairs):
+        _card_image_ax(pair_fig.add_subplot(pair_gs[0, 3 * col]), card, CARD_COLORS[card["kind"]])
+        _card_trace_ax(pair_fig.add_subplot(pair_gs[0, 3 * col + 1], projection="3d"), card)
+
+    caption_fig.text(0.02, 1.0, "\n".join([
+        r"Each card is one action chunk: the camera frame it was produced at, and the "
+        r"end-effector path $p_t-p_0$ (cm, base frame) that FK gives for the commanded joint "
+        r"targets. Traces start at the origin because a point on the",
+        r"manifold is a motion, not a pose — the current pose is what anchor encoding subtracts "
+        r"out. A-D: the medoid of each k-means region of the reference cloud, in purple, over its "
+        r"3 nearest reference chunks in PCA space (grey) —",
+        r"if the grey traces echo the purple one, that region of the picture really is one kind of "
+        r"motion. 1-4: held-out frames ranked by pairing length "
+        r"$d_{pair}=\|W(x_{pred}-\mu)-W(x_{gt}-\mu)\|$, taken at the 5th, 15th, 85th and 95th "
+        r"percentile,",
+        r"so the two extremes of the eval set are represented without letting a single boundary-"
+        r"clipped chunk stand for the policy. The gripper is the one axis FK cannot draw; its "
+        r"commanded travel is printed under each frame.",
+    ]), fontsize=7.4, va="top", ha="left", color="#333333", linespacing=1.6)
+
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -707,23 +1119,19 @@ def plot_2d_by_frame(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds_nam
 
 
 def plot_2d_by_subtask(ref_emb2, gt_emb2, pred_emb2, metadata, output_path, ds_name):
-    sub_ids     = np.array([m["subtask_idx"] for m in metadata])
-    unique_subs = np.unique(sub_ids)
-    sub_text    = {m["subtask_idx"]: m["subtask"] for m in metadata}
-    cmap        = matplotlib.colormaps.get_cmap("tab20")
-    n_eps       = len(np.unique([m["episode_idx"] for m in metadata]))
+    groups        = np.array([subtask_group(m["subtask"]) for m in metadata])
+    unique_groups = sorted(set(groups.tolist()))
+    cmap          = matplotlib.colormaps.get_cmap("tab10")
+    n_eps         = len(np.unique([m["episode_idx"] for m in metadata]))
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     for ax, emb, label in [(axes[0], gt_emb2, "GT"), (axes[1], pred_emb2, "Predicted")]:
         _draw_ref_bg(ax, ref_emb2)
-        for i, s in enumerate(unique_subs):
-            mask = sub_ids == s
-            lbl  = sub_text.get(s, str(s))
-            if len(lbl) > 32:
-                lbl = lbl[:30] + "…"
+        for i, g in enumerate(unique_groups):
+            mask = groups == g
             ax.scatter(emb[mask, 0], emb[mask, 1], s=18, alpha=0.85, linewidths=0,
-                       color=cmap(i % 20), label=f"[{s}] {lbl}", zorder=2)
-        ax.legend(fontsize=6, markerscale=2, bbox_to_anchor=(1.01, 1), loc="upper left")
+                       color=cmap(i % 10), label=f"{g}  (n={int(mask.sum())})", zorder=2)
+        ax.legend(fontsize=8, markerscale=2, bbox_to_anchor=(1.01, 1), loc="upper left")
         ax_style(ax, f"{ds_name} — {label} by subtask  ({n_eps} eps)")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -811,6 +1219,8 @@ def run_plotting(cache, output_dir):
 
         plot_2d_manifold(ref_emb2, gt_emb2, pred_emb2, meta,
                          os.path.join(d2, "manifold.png"), ds_name)
+        if ds_data.get("cards"):
+            plot_grounded(ref_emb2, ds_data, os.path.join(d2, "grounded.png"), ds_name)
         plot_2d_by_frame(ref_emb2, gt_emb2, pred_emb2, meta,
                          os.path.join(d2, "by_frame.png"), ds_name)
         plot_2d_by_subtask(ref_emb2, gt_emb2, pred_emb2, meta,
@@ -867,6 +1277,23 @@ def episode_panels(output_dir):
                   "components means the manifold is low-dimensional and the residual "
                   "ratio is sensitive to how many were kept.")
     ]
+
+
+def grounded_panel(output_dir):
+    """Declared only when it was drawn: without pinocchio there is no FK and no figure."""
+    if not os.path.exists(os.path.join(output_dir, "2d", "grounded.png")):
+        return []
+    return [Panel("2d/grounded.png", "The manifold, cashed out as frames and motion",
+                  primary=True,
+                  how="What a coordinate on the manifold actually is. Left: the usual map, "
+                      "with eight frames called out. Right: four regions of the demonstrated "
+                      "cloud (A-D) — the region medoid's camera frame and end-effector path "
+                      "over its nearest reference chunks, so you can see whether a region is "
+                      "one coherent kind of motion. Bottom: four held-out frames at the 5th, "
+                      "15th, 85th and 95th percentile of pairing length, GT and prediction "
+                      "drawn together, which is where a number like ratio 0.83 turns into "
+                      "'it reached slightly shorter and did not close the gripper'. Traces "
+                      "start at a common origin because the manifold holds motion, not pose.")]
 
 
 def write_manifest(output_dir, summary):
@@ -937,6 +1364,7 @@ def write_manifest(output_dir, summary):
                       "segment whose length is the disagreement. Long segments pointing "
                       "off the grey cloud are the bad case. UMAP is a picture only — judge "
                       "distance from the metrics, not by eye here."),
+            *grounded_panel(output_dir),
             Panel("2d/by_subtask.png", "GT vs predicted, coloured by subtask",
                   how="The same two UMAP panels as ``2d/manifold.png`` — demonstrated on "
                       "the left, predicted on the right, over the grey reference cloud — "
@@ -990,7 +1418,8 @@ def run(adapter, root_dataset, cfg, output_dir, *, eval_dataset=None):
         pca_dir = os.path.join(output_dir, "pca_variance")
         makedirs(pca_dir)
 
-        manifold = load_or_build_manifold(adapter, root_dataset, cfg, output_dir, pca_dir)
+        manifold, ref_datasets = load_or_build_manifold(adapter, root_dataset, cfg,
+                                                        output_dir, pca_dir)
 
         if eval_dataset is None:
             logging.warning(
@@ -1025,6 +1454,8 @@ def run(adapter, root_dataset, cfg, output_dir, *, eval_dataset=None):
             )
             logging.info(f"  {len(eval_samples)} frames")
             ds_data = collect_eval_dataset(adapter, dataset, eval_samples, manifold, cfg)
+            ds_data["cards"] = collect_cards(adapter, manifold, ref_datasets, dataset,
+                                             ds_data, cfg)
             cache["datasets"][ds_name] = ds_data
             cache["summaries"][ds_name] = summarize(ds_name, ds_data, manifold)
 

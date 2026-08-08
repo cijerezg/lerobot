@@ -105,8 +105,20 @@ def _pairwise_rmse(chunks: list[torch.Tensor]) -> tuple[float, float]:
     return float(np.mean(values)), float(np.max(values))
 
 
+def _caption(ax, lines: list[str]) -> None:
+    """The computation behind the panel, printed under the panel.
+
+    Pre-wrapped rather than filled, because the lines carry mathtext spans that a
+    wrapper would break mid-formula.
+    """
+    ax.text(0.0, -0.20, "\n".join(lines), transform=ax.transAxes, fontsize=7.4,
+            va="top", ha="left", color="#333333", linespacing=1.55)
+
+
 def _render(rows: list[dict], vocabulary: list[str], example: dict | None, output_dir: str) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(17, 4.4))
+    fig = plt.figure(figsize=(17, 6.2))
+    grid = fig.add_gridspec(1, 3, wspace=0.26, left=0.045, right=0.985, top=0.80, bottom=0.30)
+    axes = [fig.add_subplot(grid[0, col]) for col in range(3)]
 
     spread = [row["vocab_spread_mean"] for row in rows]
     floor = [row["seed_floor_mean"] for row in rows]
@@ -116,10 +128,19 @@ def _render(rows: list[dict], vocabulary: list[str], example: dict | None, outpu
         "Does the clause move the chunk\nmore than noise does?\n"
         f"median separation = {np.median([r['separation'] for r in rows]):.2f}x"
     )
+    _caption(axes[0], [
+        r"One frame gives one point to each box: mean RMSE over all pairs of the " + str(len(vocabulary)) + r" chunks",
+        r"the vocabulary produced (left), and over all pairs of chunks the same clause produced",
+        r"under different flow seeds (right). Normalized action space, whole chunk, same frame.",
+        r"The left box has no scale of its own — the title reads the per-frame ratio $S$ of the two,",
+        r"and $S \approx 1$ means the clause did nothing the noise was not already doing.",
+    ])
 
     ranks = [row["gt_rank"] for row in rows if row["gt_rank"] is not None]
     if ranks:
         n_labels = len(vocabulary)
+        uniform_mean = (n_labels + 1) / 2
+        uniform_se = np.sqrt((n_labels**2 - 1) / (12 * len(ranks)))
         axes[1].hist(ranks, bins=np.arange(0.5, n_labels + 1.5, 1.0), color="#457B9D",
                      edgecolor="white")
         axes[1].axhline(len(ranks) / max(n_labels, 1), color="#E63946", linestyle="--",
@@ -128,9 +149,19 @@ def _render(rows: list[dict], vocabulary: list[str], example: dict | None, outpu
         axes[1].set_ylabel("frames")
         axes[1].set_title(
             f"Is it used correctly?\nmean rank {np.mean(ranks):.1f} vs "
-            f"{(n_labels + 1) / 2:.1f} if uniform"
+            f"{uniform_mean:.1f} ± {uniform_se:.1f} if uniform  ·  "
+            f"top-1 {np.mean([r == 1 for r in ranks]):.0%} vs {1 / n_labels:.0%}"
         )
         axes[1].legend(fontsize=8)
+        _caption(axes[1], [
+            r"Not an error axis — a position axis. Per frame: hold the observation fixed, put each of",
+            r"the " + str(n_labels) + r" labels into the prompt in turn, score its chunk against the demonstrated one by",
+            r"MSE, sort ascending, and record where the label the human actually wrote landed.",
+            r"A bar is a count of frames, so height 4 at rank 12 = 4 frames where 11 wrong labels beat",
+            r"the truth. Piled at rank 1 = understood; flat on the dashed line ($n/|V|$ per bin) = the",
+            r"clause moved the chunk but carried nothing about which chunk was right. Only read this",
+            r"panel once the left one clears its floor: ranks off an ignored clause are uniform anyway.",
+        ])
     else:
         axes[1].text(0.5, 0.5, "no GT subtask on the sampled frames", ha="center", va="center")
         axes[1].axis("off")
@@ -141,20 +172,27 @@ def _render(rows: list[dict], vocabulary: list[str], example: dict | None, outpu
         for label, chunk in example["acts"].items():
             axes[2].plot(steps, chunk[:, joint], linewidth=1.0, alpha=0.75, label=label)
         axes[2].plot(steps, example["gt"][:, joint], color="black", linewidth=2.2, label="GT")
+        joint_name = REBOT_JOINT_NAMES[joint] if joint < len(REBOT_JOINT_NAMES) else joint
         axes[2].set_title(
             f"Fan across the vocabulary — ep {example['episode_idx']} fr {example['frame_idx']}\n"
-            f"joint: {REBOT_JOINT_NAMES[joint] if joint < len(REBOT_JOINT_NAMES) else joint}"
+            f"joint: {joint_name}"
         )
         axes[2].set_xlabel("chunk step")
         axes[2].grid(True, alpha=0.25, linestyle=":")
         axes[2].legend(fontsize=5, ncol=2)
+        _caption(axes[2], [
+            r"One frame, one flow seed, one joint (" + str(joint_name) + r"): every coloured line is the chunk under a",
+            r"different label, black is what the human demonstrated. $y$ is normalized action units.",
+            r"The vertical spread between coloured lines is the left panel's numerator, drawn — this is",
+            r"what a separation of " + f"{np.median([r['separation'] for r in rows]):.2f}" + r"x looks like. Distance from black is the middle panel's",
+            r"score. Illustration of one frame, not evidence: the statistics are the other two panels.",
+        ])
 
     fig.suptitle(
         f"Subtask clause → action transfer (n={len(rows)} frames, {len(vocabulary)} labels)",
         fontsize=13,
         fontweight="bold",
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
     fig.savefig(os.path.join(output_dir, "subtask_sweep.png"), bbox_inches="tight", dpi=125)
     plt.close(fig)
 
@@ -275,10 +313,13 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         panels=[
             Panel(
                 "subtask_sweep.png",
-                "Chunk distance per vocabulary label, with the seed floor marked",
-                "Bars are how far each label moves the chunk; the dashed line is what re-running one "
-                "label under different noise produces. Bars buried under the dashed line mean the "
-                "clause is doing nothing — read the ratio $S$, never the bar heights.",
+                "Vocabulary spread against the seed floor, then where the true label ranks",
+                "Left: how far the vocabulary moves the chunk versus how far flow noise alone moves "
+                "it — the two boxes only mean something as the ratio $S$, never separately. Middle: "
+                "per frame, all labels are scored against the demonstrated chunk and sorted, and the "
+                "histogram counts where the true label landed; piled at rank 1 is understood, flat on "
+                "the dashed line is read-but-not-understood. Right: one frame's fan, to see what those "
+                "numbers look like. Read left to right — the ranks are noise until $S$ clears the floor.",
                 primary=True,
                 refs=["metadata_steering"],
             ),

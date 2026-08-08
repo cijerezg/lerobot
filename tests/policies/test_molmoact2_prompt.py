@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature  # noqa: E402
+from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY  # noqa: E402
 from lerobot.policies.molmoact2.configuration_molmoact2 import (  # noqa: E402
     infer_molmoact2_max_sequence_length,
 )
@@ -17,7 +18,8 @@ from lerobot.policies.molmoact2.processor_molmoact2 import (  # noqa: E402
 )
 from lerobot.processor.converters import create_transition  # noqa: E402
 from lerobot.types import TransitionKey  # noqa: E402
-from lerobot.utils.constants import OBS_STATE  # noqa: E402
+from lerobot.utils.action_metrics import ACTION_HOLD_KEY  # noqa: E402
+from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 
 
 def build(**overrides):
@@ -144,6 +146,52 @@ def test_history_state_normalized_same_as_current_state():
     # Same stats, same math: the history's first (oldest) frame equals the current state's result.
     assert torch.allclose(normalized_history[0, 0], normalized_current[0], atol=1e-6)
     assert torch.allclose(normalized_history[0, 1], torch.tensor([1.0, 1.0]), atol=1e-6)
+
+
+@pytest.mark.parametrize("anchor_encoded", [False, True])
+def test_hold_trajectory_uses_the_action_normalizer(anchor_encoded):
+    features = {
+        OBS_STATE: PolicyFeature(FeatureType.STATE, (2,)),
+        ACTION: PolicyFeature(FeatureType.ACTION, (2,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.MIN_MAX,
+        FeatureType.ACTION: NormalizationMode.MIN_MAX,
+    }
+    stats = {
+        OBS_STATE: {"min": torch.tensor([0.0, 0.0]), "max": torch.tensor([10.0, 20.0])},
+        ACTION: {
+            "min": torch.tensor([-1.0, -2.0]) if anchor_encoded else torch.tensor([0.0, 0.0]),
+            "max": torch.tensor([3.0, 6.0]) if anchor_encoded else torch.tensor([10.0, 20.0]),
+        },
+    }
+    normalizer = MolmoAct2MaskedNormalizerProcessorStep(
+        features=features, norm_map=norm_map, stats=stats
+    )
+    state = torch.tensor([[5.0, 10.0]])
+    action = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
+    complementary = {ANCHOR_KEY: state} if anchor_encoded else {}
+
+    normalized = normalizer(
+        create_transition(
+            observation={OBS_STATE: state},
+            action=action,
+            complementary_data=complementary,
+        )
+    )
+    hold = normalized[TransitionKey.COMPLEMENTARY_DATA][ACTION_HOLD_KEY]
+
+    if anchor_encoded:
+        expected_raw_hold = torch.zeros_like(action)
+    else:
+        expected_raw_hold = state.unsqueeze(1).expand_as(action)
+    expected = normalizer._apply_transform(
+        expected_raw_hold,
+        ACTION,
+        features[ACTION].type,
+        inverse=False,
+    )
+    torch.testing.assert_close(hold, expected)
 
 
 def test_max_sequence_length_budgets_history_clause():

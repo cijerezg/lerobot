@@ -19,6 +19,7 @@ from torch import Tensor, nn
 from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.utils.action_metrics import ACTION_HOLD_KEY, terminal_direction_loss
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
@@ -27,6 +28,125 @@ from ..rtc.modeling_rtc import RTCProcessor
 from .configuration_molmoact2 import MolmoAct2Config
 
 logger = logging.getLogger(__name__)
+
+
+def _finite_mean(values: Tensor, dim: int) -> Tensor:
+    finite = torch.isfinite(values)
+    count = finite.sum(dim=dim)
+    mean = torch.where(finite, values, torch.zeros_like(values)).sum(dim=dim) / count.clamp_min(1)
+    return torch.where(count > 0, mean, torch.full_like(mean, torch.nan))
+
+
+def _action_trajectory_components_with_padding(
+    prediction: Tensor,
+    target: Tensor,
+    hold: Tensor,
+    *,
+    action_horizon_is_pad: Tensor | None = None,
+    action_dim_is_pad: Tensor | None = None,
+    eps: float = 1e-6,
+) -> dict[str, Tensor]:
+    """Per-sample trajectory metrics, averaged over flow times and excluding padding."""
+    if prediction.ndim != 4:
+        raise ValueError(f"prediction must have shape [B, F, T, D], got {tuple(prediction.shape)}.")
+    batch_size, _, horizon, action_dim = prediction.shape
+    expected = (batch_size, horizon, action_dim)
+    if tuple(target.shape) != expected or tuple(hold.shape) != expected:
+        raise ValueError(
+            f"target and hold must have shape {expected}, got {tuple(target.shape)} and "
+            f"{tuple(hold.shape)}."
+        )
+
+    prediction = prediction.float()
+    target = target.float().unsqueeze(1)
+    hold = hold.float().unsqueeze(1)
+    valid_horizon = torch.ones(
+        (batch_size, horizon), device=prediction.device, dtype=torch.bool
+    )
+    if action_horizon_is_pad is not None:
+        valid_horizon = ~action_horizon_is_pad.to(device=prediction.device, dtype=torch.bool)
+    valid_dim = torch.ones((batch_size, action_dim), device=prediction.device, dtype=torch.bool)
+    if action_dim_is_pad is not None:
+        valid_dim = ~action_dim_is_pad.to(device=prediction.device, dtype=torch.bool)
+
+    valid_path = valid_horizon[:, None, :, None] & valid_dim[:, None, None, :]
+    path_count = valid_path.sum(dim=(-2, -1)).clamp_min(1)
+    squared_error = (prediction - target).square()
+    path_by_flow = (squared_error * valid_path).sum(dim=(-2, -1)) / path_count
+
+    if horizon > 1:
+        valid_pair = (
+            (valid_horizon[:, 1:] & valid_horizon[:, :-1])[:, None, :, None]
+            & valid_dim[:, None, None, :]
+        )
+        shape_count = valid_pair.sum(dim=(-2, -1)).clamp_min(1)
+        shape_error = (
+            torch.diff(prediction, dim=-2) - torch.diff(target, dim=-2)
+        ).square()
+        shape_by_flow = (shape_error * valid_pair).sum(dim=(-2, -1)) / shape_count
+    else:
+        shape_by_flow = torch.zeros_like(path_by_flow)
+
+    valid_terminal = valid_horizon[:, -1]
+    terminal_dim_mask = valid_dim[:, None, :]
+    terminal_count = terminal_dim_mask.sum(dim=-1).clamp_min(1)
+    terminal_by_flow = (
+        squared_error[..., -1, :] * terminal_dim_mask
+    ).sum(dim=-1) / terminal_count
+    terminal_by_flow = torch.where(
+        valid_terminal[:, None],
+        terminal_by_flow,
+        torch.full_like(terminal_by_flow, torch.nan),
+    )
+
+    prediction_final = prediction[..., -1, :].masked_fill(~terminal_dim_mask, 0)
+    target_final = target[..., -1, :].masked_fill(~terminal_dim_mask, 0)
+    hold_final = hold[..., -1, :].masked_fill(~terminal_dim_mask, 0)
+    direction_by_flow = terminal_direction_loss(
+        prediction_final,
+        target_final,
+        hold_final,
+        eps=eps,
+    )
+    direction_by_flow = torch.where(
+        valid_terminal[:, None],
+        direction_by_flow,
+        torch.full_like(direction_by_flow, torch.nan),
+    )
+
+    return {
+        "path_mse": _finite_mean(path_by_flow, dim=1),
+        "shape_mse": _finite_mean(shape_by_flow, dim=1),
+        "terminal_mse": _finite_mean(terminal_by_flow, dim=1),
+        "terminal_direction_loss": _finite_mean(direction_by_flow, dim=1),
+    }
+
+
+def _thresholded_action_auxiliary_loss(
+    components: dict[str, Tensor],
+    config: Any,
+) -> tuple[Tensor, dict[str, Tensor]]:
+    """Sum independently weighted metrics after their own optional hard gates."""
+    key_to_config = {
+        "path_mse": "path",
+        "shape_mse": "shape",
+        "terminal_mse": "terminal",
+        "terminal_direction_loss": "direction",
+    }
+    first = next(iter(components.values()))
+    total = torch.zeros_like(first)
+    diagnostics: dict[str, Tensor] = {}
+    for key, config_name in key_to_config.items():
+        values = components[key]
+        finite = torch.isfinite(values)
+        threshold = getattr(config, f"{config_name}_threshold")
+        active = finite if threshold is None else finite & (values > float(threshold))
+        weight = float(getattr(config, f"{config_name}_weight"))
+        if weight > 0:
+            total = total + weight * torch.where(active, values, torch.zeros_like(values))
+        diagnostics[f"{key}_active"] = active.detach()
+    return total, diagnostics
+
 
 _MODEL_INPUT_KEYS = {
     "input_ids",
@@ -1741,6 +1861,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         noise: Tensor | None = None,
         reduction: str = "mean",
         return_diagnostics: bool = False,
+        apply_action_auxiliary: bool = False,
     ) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, dict[str, Tensor]]:
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
@@ -1955,14 +2076,41 @@ class MolmoAct2Policy(PreTrainedPolicy):
         )
         if self.config.mask_action_dim_padding:
             loss = self._apply_action_dim_padding_mask(loss, batch.get("action_dim_is_pad"))
-        loss_by_example = loss.reshape(batch_size, -1).mean(dim=1)
+        flow_loss_by_example = loss.reshape(batch_size, -1).mean(dim=1)
+        loss_by_example = flow_loss_by_example
+        auxiliary_components: dict[str, Tensor] = {}
+        auxiliary_diagnostics: dict[str, Tensor] = {}
+        auxiliary_loss_by_example = torch.zeros_like(flow_loss_by_example)
+        if apply_action_auxiliary:
+            hold = batch.get(ACTION_HOLD_KEY)
+            if hold is None:
+                raise ValueError(
+                    f"Enabled action auxiliary loss requires batch[{ACTION_HOLD_KEY!r}]."
+                )
+            hold = hold.to(device=actions.device, dtype=actions.dtype)
+            clean_prediction = xt + (1.0 - t_broadcast) * pred_velocity
+            auxiliary_components = _action_trajectory_components_with_padding(
+                clean_prediction,
+                actions,
+                hold,
+                action_horizon_is_pad=batch.get("action_horizon_is_pad"),
+                action_dim_is_pad=batch.get("action_dim_is_pad"),
+                eps=self.config.action_auxiliary_loss.eps,
+            )
+            auxiliary_loss_by_example, auxiliary_diagnostics = (
+                _thresholded_action_auxiliary_loss(
+                    auxiliary_components,
+                    self.config.action_auxiliary_loss,
+                )
+            )
+            loss_by_example = flow_loss_by_example + auxiliary_loss_by_example
         diagnostics: dict[str, Tensor] = {}
         if return_diagnostics:
             loss_diag = loss.detach().float()
             diagnostics = {
                 "flow_loss_raw": loss_diag,
                 "flow_loss_per_dim": flow_loss_per_dim,
-                "flow_loss_per_sample": loss_by_example.detach().float(),
+                "flow_loss_per_sample": flow_loss_by_example.detach().float(),
                 "flow_loss_per_timestep": loss_diag.reshape(batch_size, num_flow_timesteps, -1).mean(dim=-1),
                 "flow_timesteps": timesteps.detach().float(),
                 "flow_loss_per_action_step": loss_diag.reshape(
@@ -1972,6 +2120,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     -1,
                 ).mean(dim=(1, 3)),
             }
+            if apply_action_auxiliary:
+                diagnostics["action_auxiliary_loss_per_sample"] = (
+                    auxiliary_loss_by_example.detach().float()
+                )
+                diagnostics["action_auxiliary_components"] = {
+                    key: value.detach().float() for key, value in auxiliary_components.items()
+                }
+                diagnostics["action_auxiliary_active"] = auxiliary_diagnostics
         loss = loss_by_example
         if reduction == "mean":
             loss = loss.mean()
@@ -2509,6 +2665,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
         model_inputs = self._model_inputs(batch)
         losses: list[Tensor] = []
         metrics: dict[str, Any] = {}
+        auxiliary_enabled = bool(self.config.action_auxiliary_loss.enabled)
+        flow_diagnostics_requested = return_diagnostics or auxiliary_enabled
 
         if self.config.action_mode == "discrete":
             outputs = self._backbone()(
@@ -2538,16 +2696,26 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 timesteps=flow_timesteps,
                 noise=flow_noise,
                 reduction=reduction,
-                return_diagnostics=return_diagnostics,
+                return_diagnostics=flow_diagnostics_requested,
+                apply_action_auxiliary=auxiliary_enabled,
             )
-            if return_diagnostics:
+            if flow_diagnostics_requested:
                 flow_loss, _, flow_diagnostics = flow_result
             else:
                 flow_loss, _ = flow_result
                 flow_diagnostics = {}
             losses.append(flow_loss)
-            metrics["action_flow_loss"] = flow_loss.detach().float().mean().item()
-            metrics.update(flow_diagnostics)
+            metrics["action_flow_loss"] = (
+                flow_diagnostics["flow_loss_per_sample"].mean().item()
+                if auxiliary_enabled
+                else flow_loss.detach().float().mean().item()
+            )
+            if auxiliary_enabled:
+                metrics["action_auxiliary_loss"] = (
+                    flow_diagnostics["action_auxiliary_loss_per_sample"].mean().item()
+                )
+            if flow_diagnostics_requested:
+                metrics.update(flow_diagnostics)
 
         else:
             flow_result = self._compute_flow_matching_loss_joint_per_layer(
@@ -2556,9 +2724,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 timesteps=flow_timesteps,
                 noise=flow_noise,
                 reduction=reduction,
-                return_diagnostics=return_diagnostics,
+                return_diagnostics=flow_diagnostics_requested,
+                apply_action_auxiliary=auxiliary_enabled,
             )
-            if return_diagnostics:
+            if flow_diagnostics_requested:
                 flow_loss, hidden_states, flow_diagnostics = flow_result
             else:
                 flow_loss, hidden_states = flow_result
@@ -2580,8 +2749,17 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 metrics["discrete_z_loss"] = discrete_z_loss.detach().float().mean().item()
             metrics.update(discrete_diagnostics)
             losses.append(flow_loss)
-            metrics["action_flow_loss"] = flow_loss.detach().float().mean().item()
-            metrics.update(flow_diagnostics)
+            metrics["action_flow_loss"] = (
+                flow_diagnostics["flow_loss_per_sample"].mean().item()
+                if auxiliary_enabled
+                else flow_loss.detach().float().mean().item()
+            )
+            if auxiliary_enabled:
+                metrics["action_auxiliary_loss"] = (
+                    flow_diagnostics["action_auxiliary_loss_per_sample"].mean().item()
+                )
+            if flow_diagnostics_requested:
+                metrics.update(flow_diagnostics)
 
         loss = torch.stack(losses).sum(dim=0)
         metrics["loss"] = loss.detach().float().mean().item()

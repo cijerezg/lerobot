@@ -5,11 +5,6 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from lerobot.probes.action_decoder_comparison import (
-    FLOW_COMPARE_COUNT,
-    build_figure as build_comparison_figure,
-    write_html as write_comparison_html,
-)
 from lerobot.probes.action_trace_probe import (
     _analyse,
     _figure,
@@ -17,7 +12,11 @@ from lerobot.probes.action_trace_probe import (
     _rotation_distance_deg,
     _write_dashboard_html,
 )
-from lerobot.probes.utils import action_inspector_sample_seed, sample_action_inspector_frames
+from lerobot.probes.utils import (
+    action_inspector_sample_seed,
+    sample_action_inspector_frames,
+    trajectory_error_components,
+)
 from lerobot.robots.rebot_b601_follower.kinematics import LINK_NAMES
 
 
@@ -97,28 +96,83 @@ def test_analysis_separates_initial_target_fit_and_tool_clearance():
     assert np.isclose(metrics["clearance_tool_pred"], 0.15)
 
 
+PROBE_CFG = SimpleNamespace(trace_clearance_warn_m=0.01, trace_table_z=0.0)
+
+
 def test_figure_and_dashboard_make_target_gap_conspicuous(tmp_path):
     record = make_record()
-    probe_cfg = SimpleNamespace(trace_clearance_warn_m=0.01, trace_table_z=0.0)
-    figure = _figure([record], probe_cfg, fps=30.0)
+    figure = _figure([record], PROBE_CFG, fps=30.0)
     names = [trace.name for trace in figure.data]
-    assert any(name.startswith("GT INITIAL TARGET GAP") for name in names)
+    assert any(name.startswith("GT initial target gap") for name in names)
     assert "GT wrist roll" in names
     assert "GT initial wrist-roll gap" in names
     assert "GT gripper" in names
     assert "GT initial gripper gap" in names
     assert len(figure.frames) == 1
-    assert len(figure.frames[0].data) == len(figure.data) - 1  # table is static
-    assert any(getattr(trace, "xaxis", None) == "x2" for trace in figure.frames[0].data)
+    assert len(figure.frames[0].data) == len(figure.data) - 1  # only the table plane is static
 
     output = tmp_path / "action_trace.html"
     _write_dashboard_html(figure, [record], str(output))
     document = output.read_text()
     assert "Action Inspector" in document
-    assert "INITIAL TARGET GAP" in document
     assert "POSSIBLE FOLLOWER LAG" in document
-    assert "not an interpolated trajectory timestep" in document
+    assert "not an interpolated timestep" in document
     assert "close the gripper" in document
+    assert "Trajectory fit · sample 0" in document
+    assert "Final direction loss" in document
+
+def test_renderer_accepts_objective_exemplar_labels(tmp_path):
+    record = make_record()
+    record.update(
+        trace_label="p95 worst fit · flow loss 0.1234 · ep 2 frame 90",
+        sample_names=["generated action"],
+    )
+    figure = _figure([record], PROBE_CFG, fps=30.0)
+    assert figure.layout.title.text == "<b>p95 worst fit · flow loss 0.1234 · ep 2 frame 90</b>"
+    assert any((trace.name or "").startswith("generated action ·") for trace in figure.data)
+
+    output = tmp_path / "action_exemplars.html"
+    _write_dashboard_html(
+        figure,
+        [record],
+        str(output),
+        page_title="Flow-loss action exemplars",
+        subtitle="Generated action versus the demonstrated command.",
+        legend_note="Black = demonstrated action · blue = generated action.",
+    )
+    document = output.read_text()
+    assert "Flow-loss action exemplars" in document
+    assert "Generated action versus the demonstrated command." in document
+    assert "Black = demonstrated action · blue = generated action." in document
+    assert record["trace_label"] in document
+
+
+def test_arm_pose_moves_out_of_the_trace_scene_onto_fixed_cube_axes():
+    # The link chain reaches back to the base: left in the trace scene its extent buries
+    # the centimetre-scale motion the scene exists to show.
+    figure = _figure([make_record()], PROBE_CFG, fps=30.0)
+    scenes = {trace.name: trace.scene for trace in figure.data if getattr(trace, "scene", None)}
+    assert scenes["ground truth targets"] == "scene"
+    assert scenes["arm now — measured follower"] == "scene2"
+
+    # The table plane goes with it: a plane an arm-length below a two-centimetre chunk
+    # sets the extent under aspectmode="data", and the motion becomes a dot.
+    assert [trace.scene for trace in figure.data if trace.type == "mesh3d"] == ["scene2"]
+
+    pose = figure.layout.scene2
+    assert pose.aspectmode == "cube"
+    spans = [axis.range[1] - axis.range[0] for axis in (pose.xaxis, pose.yaxis, pose.zaxis)]
+    assert np.allclose(spans, spans[0])  # a cube aspect on a non-cube range distorts shape
+    assert pose.zaxis.range[0] <= 0.0 <= pose.zaxis.range[1]  # the table plane must not clip
+
+
+def test_frame_traces_stay_bound_to_their_own_subplot():
+    # Frame traces bypass add_trace, so an unbound one silently falls back onto the first
+    # scene and the first pair of axes — the gripper timeline landing on the wrist axes.
+    figure = _figure([make_record(), make_record()], PROBE_CFG, fps=30.0)
+    frame = figure.frames[0]
+    assert {trace.scene for trace in frame.data if getattr(trace, "scene", None)} == {"scene", "scene2"}
+    assert {trace.xaxis for trace in frame.data if getattr(trace, "xaxis", None)} == {"x", "x2"}
 
 
 def make_fit_records(pred_a: torch.Tensor, pred_b: torch.Tensor) -> list[dict]:
@@ -138,6 +192,11 @@ def make_fit_records(pred_a: torch.Tensor, pred_b: torch.Tensor) -> list[dict]:
 def test_fit_metrics_score_sample_zero_against_both_constant_predictors():
     perfect = _fit_metrics(make_fit_records(torch.ones(4, 7), -torch.ones(4, 7)))
     assert np.isclose(perfect["mse_norm"], 0.0)
+    assert np.isclose(perfect["path_mse"], 0.0)
+    assert np.isclose(perfect["shape_mse"], 0.0)
+    assert np.isclose(perfect["terminal_mse"], 0.0)
+    assert np.isclose(perfect["terminal_direction_loss"], 0.0)
+    assert np.isclose(perfect["trajectory"]["terminal_direction_loss"]["p75"], 0.0)
     assert np.isclose(perfect["baseline_hold"], 1.0)
     assert np.isclose(perfect["baseline_dataset_mean"], 1.0)
     assert np.isclose(perfect["skill_vs_hold"], 1.0)
@@ -147,6 +206,57 @@ def test_fit_metrics_score_sample_zero_against_both_constant_predictors():
     inert = _fit_metrics(make_fit_records(torch.zeros(4, 7), torch.zeros(4, 7)))
     assert np.isclose(inert["mse_norm"], 1.0)
     assert np.isclose(inert["skill_vs_hold"], 0.0)
+    assert np.isclose(inert["terminal_direction_loss"], 1.0)
+
+
+def test_shape_error_distinguishes_oscillation_from_constant_offset():
+    target = torch.zeros(4, 1)
+    hold = torch.zeros_like(target)
+    oscillating = torch.tensor([[-1.0], [1.0], [-1.0], [1.0]])
+    offset = torch.ones_like(target)
+
+    oscillating_metrics = trajectory_error_components(oscillating, target, hold)
+    offset_metrics = trajectory_error_components(offset, target, hold)
+
+    assert np.isclose(oscillating_metrics["path_mse"], 1.0)
+    assert np.isclose(offset_metrics["path_mse"], 1.0)
+    assert np.isclose(oscillating_metrics["terminal_mse"], 1.0)
+    assert np.isclose(offset_metrics["terminal_mse"], 1.0)
+    assert np.isclose(oscillating_metrics["shape_mse"], 4.0)
+    assert np.isclose(offset_metrics["shape_mse"], 0.0)
+
+
+def test_terminal_direction_loss_ignores_length_and_normalizer_offset():
+    # The hold vector removes affine normalizer offsets before taking the cosine.
+    hold = torch.full((3, 2), 5.0)
+    target = hold.clone()
+    target[-1] = torch.tensor([6.0, 5.0])
+
+    aligned = hold.clone()
+    aligned[-1] = torch.tensor([15.0, 5.0])
+    opposite = hold.clone()
+    opposite[-1] = torch.tensor([3.0, 5.0])
+    orthogonal = hold.clone()
+    orthogonal[-1] = torch.tensor([5.0, 9.0])
+    stationary = hold.clone()
+
+    assert np.isclose(
+        trajectory_error_components(aligned, target, hold)["terminal_direction_loss"], 0.0
+    )
+    assert np.isclose(
+        trajectory_error_components(opposite, target, hold)["terminal_direction_loss"], 2.0
+    )
+    assert np.isclose(
+        trajectory_error_components(orthogonal, target, hold)["terminal_direction_loss"], 1.0
+    )
+    assert np.isclose(
+        trajectory_error_components(stationary, target, hold)["terminal_direction_loss"], 1.0
+    )
+
+    stationary_target = hold.clone()
+    assert torch.isnan(
+        trajectory_error_components(aligned, stationary_target, hold)["terminal_direction_loss"]
+    )
 
 
 def test_fit_metrics_name_the_worst_joint():
@@ -170,41 +280,37 @@ def make_comparison_record(*, fast: bool, table_clearance: float = 0.30):
     return record
 
 
-def test_comparison_scene_keeps_the_table_visible_and_the_scale_undistorted():
-    # Commanded poses sit 30 cm above the table, and explicit axis ranges clip: without
-    # the plane in the extent the operator loses the one reference the clearance means
-    # anything against.
-    figure = build_comparison_figure([make_comparison_record(fast=True)], 0.0, fps=30.0)
-    scene = figure.layout.scene
-    assert scene.zaxis.range[0] <= 0.0 <= scene.zaxis.range[1]
-    spans = [axis.range[1] - axis.range[0] for axis in (scene.xaxis, scene.yaxis, scene.zaxis)]
-    assert scene.aspectmode == "cube"
-    assert np.allclose(spans, spans[0])  # a cube aspect on a non-cube range distorts shape
-    # Both decoders share one scene: a second one would put the comparison back into two
-    # pictures the reader has to hold side by side.
-    assert "scene2" not in figure.layout.to_plotly_json()
+def test_fast_decode_shares_the_flow_scene(tmp_path):
+    # Both decoders in one set of axes: the difference between them only reads as a
+    # distance when it is drawn as one, and amber is reserved so it cannot be read as a
+    # flow draw.
+    figure = _figure([make_comparison_record(fast=True)], PROBE_CFG, fps=30.0)
+    fast = next(trace for trace in figure.data if (trace.name or "").startswith("FAST · greedy"))
+    assert fast.scene == "scene"
+    assert fast.line.color == "#D97706"
+    assert "#D97706" not in [trace.line.color for trace in figure.data if "sample" in (trace.name or "")]
+
+    output = tmp_path / "action_trace.html"
+    _write_dashboard_html(figure, [make_comparison_record(fast=True)], str(output))
+    assert "FAST · greedy" in output.read_text()
 
 
-def test_comparison_survives_a_failed_fast_decode(tmp_path):
+def test_a_failed_fast_decode_leaves_the_animation_aligned(tmp_path):
+    # Frames address traces by index, so an anchor that dropped its unavailable FAST path
+    # would shift every trace after it onto the wrong data.
     records = [make_comparison_record(fast=True), make_comparison_record(fast=False)]
-    figure = build_comparison_figure(records, 0.0, fps=30.0)
+    figure = _figure(records, PROBE_CFG, fps=30.0)
 
-    # One static table plane; every other trace is swapped per anchor, so a frame that
-    # dropped the unavailable FAST path would desynchronise the whole animation.
     assert len(figure.frames) == len(records)
     for frame in figure.frames:
-        assert len(frame.data) == len(figure.data) - 1
+        assert len(frame.data) == len(figure.data) - 1  # only the table plane is static
         assert list(frame.traces) == list(range(1, len(figure.data)))
-    assert {trace.scene for trace in figure.frames[0].data} == {None}
-    assert (
-        sum(name.startswith("flow · seed") for name in [trace.name or "" for trace in figure.frames[0].data])
-        == FLOW_COMPARE_COUNT
-    )
+    names = [trace.name or "" for trace in figure.frames[1].data]
+    assert any(name.startswith("FAST unavailable") for name in names)  # the reason reaches the legend
 
-    output = tmp_path / "decoder_comparison.html"
-    write_comparison_html(figure, str(output))
-    document = output.read_text()
-    assert "FAST unavailable" in document  # the reason reaches the legend
+    output = tmp_path / "action_trace.html"
+    _write_dashboard_html(figure, records, str(output))
+    assert "FAST unavailable" in output.read_text()
 
 
 class FakeDataset:

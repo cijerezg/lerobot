@@ -5,8 +5,9 @@ Runs predict_action_chunk on the same frame(s) under the four modality
 conditions — {RGB+depth, RGB-only, depth-only, neither} — with IDENTICAL
 fixed-seed flow noise, and reports:
 
-  - normalized-space MSE vs GT per condition (is depth earning its keep:
-    mse(RGB) − mse(RGB+depth) is the headline number),
+  - four normalized-space trajectory criteria vs GT per condition — path MSE,
+    temporal-shape MSE, final-position MSE, and pure final-direction alignment
+    (is depth earning its keep under more than one definition of action quality?),
   - pairwise max|Δaction| between conditions (does depth influence output at all),
   - the RMS of the emitted depth tokens over the RMS of the token embeddings they are
     added onto (has the adapter opted out by going quiet?),
@@ -64,6 +65,7 @@ from lerobot.probes.utils import (
     probe_frame_inputs,
     probe_image_stride,
     sample_episodes_evenly,
+    trajectory_error_components,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -134,6 +136,38 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                 note="RMS of what ``depth_adapter`` emits over the RMS of the token embeddings it is added onto; 1.0 by construction at init. Decay toward 0 is the adapter opting out — satisfying the loss by emitting tokens the trunk can ignore, which no loss curve reveals. Far above 1 means it is shouting over the pretrained tokens.",
             ),
             Metric("n_frames", "Frames probed", good="none", fmt=0),
+            Metric(
+                "trajectory_depth_gain.path_mse",
+                "Depth gain · path MSE",
+                good="high",
+                fmt=5,
+                baseline=0.0,
+                note="Path MSE(rgb only) − path MSE(rgb+depth); positive means depth improves the full 30-target chunk.",
+            ),
+            Metric(
+                "trajectory_depth_gain.shape_mse",
+                "Depth gain · temporal shape",
+                good="high",
+                fmt=5,
+                baseline=0.0,
+                note="Shape MSE(rgb only) − shape MSE(rgb+depth); positive means depth better matches adjacent-target changes.",
+            ),
+            Metric(
+                "trajectory_depth_gain.terminal_mse",
+                "Depth gain · final-position MSE",
+                good="high",
+                fmt=5,
+                baseline=0.0,
+                note="Final-position MSE(rgb only) − final-position MSE(rgb+depth), at target 30.",
+            ),
+            Metric(
+                "trajectory_depth_gain.terminal_direction_loss",
+                "Depth gain · final direction",
+                good="high",
+                fmt=5,
+                baseline=0.0,
+                note="Final-direction loss(rgb only) − loss(rgb+depth). Length is ignored; stationary GT endpoints are excluded.",
+            ),
         ],
         panels=[
             Panel(
@@ -166,6 +200,21 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
             ),
         ],
         see_also=["attention_budget", "action_trace"],
+        extra={
+            "viewer": {
+                "metric_groups": [
+                    {
+                        "title": "Depth gain by trajectory criterion",
+                        "keys": [
+                            "trajectory_depth_gain.path_mse",
+                            "trajectory_depth_gain.shape_mse",
+                            "trajectory_depth_gain.terminal_mse",
+                            "trajectory_depth_gain.terminal_direction_loss",
+                        ],
+                    }
+                ]
+            }
+        },
     )
 
 
@@ -272,6 +321,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         )
 
     mse_by_condition: dict[str, list[float]] = {c: [] for c in CONDITIONS}
+    trajectory_by_condition = {
+        key: {condition: [] for condition in CONDITIONS}
+        for key in ("path_mse", "shape_mse", "terminal_mse", "terminal_direction_loss")
+    }
     pairwise_deltas: dict[tuple[str, str], list[float]] = {pair: [] for pair in CONDITION_PAIRS}
     sens_depth_list: list[float] = []
     sens_rgb_list: list[float] = []
@@ -283,6 +336,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
             obs = frame["obs"]
             gt_norm = adapter.normalize_gt_actions(frame["gt_actions"], frame["state"]).float()
+            hold_raw = frame["state"][: frame["gt_actions"].shape[-1]].unsqueeze(0).repeat(
+                frame["gt_actions"].shape[0], 1
+            )
+            hold_norm = adapter.normalize_gt_actions(hold_raw, frame["state"]).float()
 
             actions: dict[str, torch.Tensor] = {}
             for condition in CONDITIONS:
@@ -298,7 +355,12 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 n_context = int(probe_batch["input_ids"].shape[-1])
 
             horizon = min(actions["rgb+depth"].shape[0], gt_norm.shape[0])
-            row = {"global_idx": int(global_idx), "mse_norm": {}, "max_abs_delta": {}}
+            row = {
+                "global_idx": int(global_idx),
+                "mse_norm": {},
+                "trajectory": {},
+                "max_abs_delta": {},
+            }
             logging.info(f"frame {global_idx}:")
             for condition in CONDITIONS:
                 mse = torch.nn.functional.mse_loss(
@@ -306,6 +368,17 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 ).item()
                 mse_by_condition[condition].append(mse)
                 row["mse_norm"][condition] = mse
+                components = trajectory_error_components(
+                    actions[condition][:horizon],
+                    gt_norm[:horizon],
+                    hold_norm[:horizon],
+                )
+                row["trajectory"][condition] = {}
+                for key, tensor in components.items():
+                    value = float(tensor) if bool(torch.isfinite(tensor)) else None
+                    row["trajectory"][condition][key] = value
+                    if value is not None:
+                        trajectory_by_condition[key][condition].append(value)
                 logging.info(f"  mse_norm[{condition:>9s}] = {mse:.5f}")
             for left, right in CONDITION_PAIRS:
                 delta = (actions[left] - actions[right]).abs().max().item()
@@ -339,17 +412,35 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         adapter._restore_probe_cuda_graph_enabled()
 
     n = len(per_frame)
-    both = sum(mse_by_condition["rgb+depth"]) / n
-    rgb = sum(mse_by_condition["rgb_only"]) / n
     mean_depth = sum(sens_depth_list) / n
     mean_rgb = sum(sens_rgb_list) / n
+    trajectory = {
+        key: {
+            condition: (
+                float(np.mean(values)) if values else None
+            )
+            for condition, values in by_condition.items()
+        }
+        for key, by_condition in trajectory_by_condition.items()
+    }
+    trajectory_depth_gain = {}
+    for key, by_condition in trajectory.items():
+        both_value = by_condition["rgb+depth"]
+        rgb_value = by_condition["rgb_only"]
+        trajectory_depth_gain[key] = (
+            None
+            if both_value is None or rgb_value is None
+            else rgb_value - both_value
+        )
     summary = {
         "n_frames": n,
         "frame_indices": [int(i) for i in frame_indices],
         "conditions": list(CONDITIONS),
         "mse_norm": {c: sum(v) / n for c, v in mse_by_condition.items()},
         "max_abs_delta": {f"{a} vs {b}": sum(v) / n for (a, b), v in pairwise_deltas.items()},
-        "depth_benefit": rgb - both,
+        "depth_benefit": trajectory_depth_gain["path_mse"],
+        "trajectory": trajectory,
+        "trajectory_depth_gain": trajectory_depth_gain,
         "fd_sensitivity": {
             "depth": mean_depth,
             "rgb": mean_rgb,

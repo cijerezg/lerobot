@@ -30,6 +30,7 @@ from lerobot.processor import (
     transition_to_policy_action,
 )
 from lerobot.types import EnvTransition, TransitionKey
+from lerobot.utils.action_metrics import ACTION_HOLD_KEY
 from lerobot.utils.constants import (
     ACTION,
     OBS_IMAGES,
@@ -41,6 +42,7 @@ from lerobot.utils.import_utils import require_package
 
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
 from .anchor_encoding import (
+    ANCHOR_KEY,
     AnchorDecodeStep,
     AnchorEncodeStep,
     policy_action_with_anchor_to_transition,
@@ -509,16 +511,45 @@ class MolmoAct2MaskedNormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin,
         "history.*" key there), so without this it would reach the prompt as raw
         (un-normalized) joint values instead of the [-1, 1] range _build_discrete_state_string
         expects — normalize it here with the exact same OBS_STATE stats/mask."""
+        action = transition.get(TransitionKey.ACTION)
+        complementary_before = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        hold = None
+        if action is not None and ACTION in self.features:
+            action_tensor = torch.as_tensor(action)
+            if isinstance(complementary_before, dict) and ANCHOR_KEY in complementary_before:
+                # A physical hold is zero at every target in anchor-encoded space.
+                hold = torch.zeros_like(action_tensor)
+            else:
+                observation = transition.get(TransitionKey.OBSERVATION)
+                if isinstance(observation, dict) and OBS_STATE in observation:
+                    state = torch.as_tensor(observation[OBS_STATE]).to(action_tensor)
+                    action_dim = int(action_tensor.shape[-1])
+                    state = state[..., :action_dim]
+                    if action_tensor.ndim == state.ndim + 1:
+                        hold = state.unsqueeze(-2).expand_as(action_tensor)
+                    elif action_tensor.ndim == state.ndim:
+                        hold = state
+
         transition = super().__call__(transition)
         history_key = f"history.{OBS_STATE}"
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA)
-        if isinstance(complementary, dict) and history_key in complementary and OBS_STATE in self.features:
+        has_history = (
+            isinstance(complementary, dict)
+            and history_key in complementary
+            and OBS_STATE in self.features
+        )
+        if has_history or hold is not None:
             transition = transition.copy()
-            complementary = dict(complementary)
-            tensor = torch.as_tensor(complementary[history_key])
-            complementary[history_key] = self._apply_transform(
-                tensor, OBS_STATE, self.features[OBS_STATE].type, inverse=False
-            )
+            complementary = dict(complementary or {})
+            if has_history:
+                tensor = torch.as_tensor(complementary[history_key])
+                complementary[history_key] = self._apply_transform(
+                    tensor, OBS_STATE, self.features[OBS_STATE].type, inverse=False
+                )
+            if hold is not None:
+                complementary[ACTION_HOLD_KEY] = self._apply_transform(
+                    hold, ACTION, self.features[ACTION].type, inverse=False
+                )
             transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
 
@@ -561,6 +592,13 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
         action = transition.get(TransitionKey.ACTION)
         if action is not None:
             transition[TransitionKey.ACTION] = _masked_clamp(action, self.action_mask)
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        if isinstance(complementary, dict) and ACTION_HOLD_KEY in complementary:
+            complementary = dict(complementary)
+            complementary[ACTION_HOLD_KEY] = _masked_clamp(
+                complementary[ACTION_HOLD_KEY], self.action_mask
+            )
+            transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
 
     def transform_features(
@@ -1039,6 +1077,14 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             if action_is_pad is None:
                 action_is_pad = complementary.get("action_horizon_is_pad")
             action_padded, action_horizon_is_pad, action_dim_is_pad = self._pad_action(action, action_is_pad)
+            if ACTION_HOLD_KEY in complementary:
+                hold = torch.as_tensor(complementary[ACTION_HOLD_KEY], dtype=torch.float32)
+                if tuple(hold.shape) != tuple(action.shape):
+                    raise ValueError(
+                        f"{ACTION_HOLD_KEY} must match action before padding: "
+                        f"got {tuple(hold.shape)} and {tuple(action.shape)}."
+                    )
+                complementary[ACTION_HOLD_KEY] = self._pad_action(hold, action_is_pad)[0]
             real_action_dim = int(action.shape[-1])
         elif real_action_dim > 0:
             action_dim_is_pad[:, :real_action_dim] = False

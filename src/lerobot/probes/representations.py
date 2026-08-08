@@ -68,6 +68,7 @@ from lerobot.probes.utils import (
     run_pca,
     run_umap,
     sample_episodes_evenly,
+    subtask_group,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -174,21 +175,17 @@ def plot_2d_by_frame(emb, metadata, output_path):
 
 
 def plot_2d_by_subtask(emb, metadata, output_path):
-    sub_ids     = np.array([m["subtask_idx"] for m in metadata])
-    unique_subs = np.unique(sub_ids)
-    sub_text    = {m["subtask_idx"]: m["subtask"] for m in metadata}
-    cmap        = matplotlib.colormaps.get_cmap("tab20")
-    n_eps       = len(np.unique([m["episode_idx"] for m in metadata]))
+    groups        = np.array([subtask_group(m["subtask"]) for m in metadata])
+    unique_groups = sorted(set(groups.tolist()))
+    cmap          = matplotlib.colormaps.get_cmap("tab10")
+    n_eps         = len(np.unique([m["episode_idx"] for m in metadata]))
 
     fig, ax = plt.subplots(figsize=(9, 6))
-    for i, s in enumerate(unique_subs):
-        mask = sub_ids == s
-        lbl = sub_text.get(s, str(s))
-        if len(lbl) > 32:
-            lbl = lbl[:30] + "…"
+    for i, g in enumerate(unique_groups):
+        mask = groups == g
         ax.scatter(emb[mask, 0], emb[mask, 1], s=22, alpha=0.80, linewidths=0,
-                   color=cmap(i), label=f"[{s}] {lbl}")
-    ax.legend(fontsize=6, markerscale=2, bbox_to_anchor=(1.01, 1), loc="upper left")
+                   color=cmap(i % 10), label=f"{g}  (n={int(mask.sum())})")
+    ax.legend(fontsize=8, markerscale=2, bbox_to_anchor=(1.01, 1), loc="upper left")
     ax_style(ax, f"By subtask — {n_eps} episodes pooled", width=55)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
@@ -256,18 +253,23 @@ def plot_3d_by_frame(emb, metadata, output_path):
 def plot_3d_by_subtask(emb, metadata, output_path):
     import plotly.graph_objects as go
 
-    sub_ids = [m["subtask_idx"] for m in metadata]
+    groups = [subtask_group(m["subtask"]) for m in metadata]
     n_eps = len(set(m["episode_idx"] for m in metadata))
-    hover = [f"ep={m['episode_idx']} fr={m['frame_idx']}<br>{m['subtask']}"
-             for m in metadata]
-    traces = [go.Scatter3d(
-        x=emb[:, 0], y=emb[:, 1], z=emb[:, 2],
-        mode="markers",
-        marker=dict(size=6, color=sub_ids, colorscale="Rainbow",
-                    showscale=True, opacity=0.85, line=dict(width=0),
-                    colorbar=dict(title="Subtask ID")),
-        text=hover, hovertemplate="%{text}<extra></extra>",
-    )]
+
+    traces = []
+    for i, g in enumerate(sorted(set(groups))):
+        idx = [j for j, gr in enumerate(groups) if gr == g]
+        hover = [f"ep={metadata[j]['episode_idx']} fr={metadata[j]['frame_idx']}"
+                 f"<br>{metadata[j]['subtask']}" for j in idx]
+        traces.append(go.Scatter3d(
+            x=[emb[j, 0] for j in idx],
+            y=[emb[j, 1] for j in idx],
+            z=[emb[j, 2] for j in idx],
+            mode="markers", name=f"{g} (n={len(idx)})",
+            marker=dict(size=6, color=EP_COLORS[i % len(EP_COLORS)],
+                        opacity=0.85, line=dict(width=0)),
+            text=hover, hovertemplate="%{text}<extra></extra>",
+        ))
     _plotly_3d(emb, traces, f"3D — by subtask ({n_eps} eps)", output_path)
 
 
