@@ -18,6 +18,7 @@ action encoding needs no ``state``.
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 
 import numpy as np
 import torch
@@ -190,6 +191,108 @@ class MolmoAct2Adapter(ProbablePolicy):
             unnorm = self._postprocessor(norm_actions)
         pred_unnorm = unnorm.squeeze(0).float().cpu()
         return pred_unnorm, pred_norm, None
+
+    @property
+    def action_token_vocab_size(self) -> int | None:
+        return int(getattr(self._policy.model.config, "num_action_tokens", 0)) or None
+
+    @torch.no_grad()
+    def training_losses(
+        self,
+        frame: dict,
+        *,
+        flow_timesteps: Tensor | None = None,
+        flow_noise_seed: int | None = None,
+        dropout: bool = False,
+    ) -> dict:
+        """Run MolmoAct2's own training forward on one probe frame.
+
+        The batch is built exactly as ``MolmoAct2Trainer.build_training_batch`` builds
+        it — GT actions present, so the pack step renders the discrete answer span and
+        writes the FAST labels — and the forward runs without autocast, matching
+        ``update_actor``. What differs from a training step is only what the caller
+        asks for: dropout suppressed by default, and the flow timesteps/noise pinned.
+        """
+        action_dim = self.action_dim
+        gt_actions = (
+            frame["gt_actions"][: self.chunk_size, :action_dim].unsqueeze(0).to(self._device)
+        )
+        pack = nullcontext() if dropout else suppress_pack_dropout(self._preprocessor)
+        with pack:
+            batch = self._make_batch(
+                frame["obs"],
+                frame["task"],
+                gt_actions=gt_actions,
+                subtask=frame["subtask"],
+                metadata=frame["metadata"],
+            )
+
+        # Shapes come from the packed batch, not from the raw chunk: the pack step pads
+        # the horizon and the action dim out to the checkpoint's 32, and the noise
+        # tensor has to match what _prepare_flow_matching_tensors expects.
+        padded = batch[ACTION]
+        n_timesteps = max(1, int(self._policy.config.num_flow_timesteps))
+        timesteps = noise = None
+        if flow_timesteps is not None:
+            timesteps = flow_timesteps.to(self._device).reshape(1, n_timesteps)
+        if flow_noise_seed is not None:
+            generator = torch.Generator(device=self._device)
+            generator.manual_seed(int(flow_noise_seed))
+            noise = torch.randn(
+                (1, n_timesteps, padded.shape[1], padded.shape[2]),
+                generator=generator,
+                device=self._device,
+                dtype=torch.float32,
+            )
+
+        _, metrics = self._policy.forward(
+            batch,
+            reduction="none",
+            return_diagnostics=True,
+            flow_timesteps=timesteps,
+            flow_noise=noise,
+        )
+
+        def array(key: str, drop_batch_dim: bool = False):
+            value = metrics.get(key)
+            if value is None:
+                return None
+            value = value.detach().float().cpu()
+            return (value[0] if drop_batch_dim else value).numpy()
+
+        # The per-dim curve comes from the model, not from flow_loss_raw: with
+        # mask_action_dim_padding on (the default) the forward averages the dim axis
+        # away, so flow_loss_raw arrives as [B, K, T] and there is nothing left to
+        # slice. flow_loss_per_dim is [D_padded] with the padded dims zeroed.
+        per_dim = metrics.get("flow_loss_per_dim")
+        out: dict = {
+            "loss_total": float(metrics["loss"]),
+            # None, not 0.0: action_mode "discrete" runs no flow at all, and a zero
+            # would be read as a perfect fit rather than as an absent measurement.
+            "loss_flow": (
+                float(metrics["action_flow_loss"]) if "action_flow_loss" in metrics else None
+            ),
+            "loss_flow_by_timestep": array("flow_loss_per_timestep", drop_batch_dim=True),
+            "loss_flow_by_action_step": array("flow_loss_per_action_step", drop_batch_dim=True),
+            "loss_flow_by_dim": (
+                None if per_dim is None
+                else per_dim[:action_dim].detach().float().cpu().numpy()
+            ),
+            "flow_timesteps": array("flow_timesteps", drop_batch_dim=True),
+            "loss_discrete_ce": (
+                float(metrics["discrete_ce_loss"]) if "discrete_ce_loss" in metrics else None
+            ),
+            "loss_discrete_z": (
+                float(metrics["discrete_z_loss"]) if "discrete_z_loss" in metrics else None
+            ),
+            "discrete_token_ce": array("discrete_token_ce"),
+            "discrete_token_top1": array("discrete_token_top1"),
+            "discrete_token_top5": array("discrete_token_top5"),
+        }
+        out["n_action_tokens"] = (
+            None if out["discrete_token_ce"] is None else int(out["discrete_token_ce"].size)
+        )
+        return out
 
     def capture_attention(
         self,

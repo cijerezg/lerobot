@@ -67,6 +67,7 @@ from torch.nn import functional
 from lerobot.policies.molmoact2.modeling_molmoact2 import _MEM_TEMPORAL_CAPTURE
 from lerobot.probes.manifest import Panel, write_index
 from lerobot.probes.utils import (
+    as_image,
     assemble_frame_history,
     get_frame_data,
     makedirs,
@@ -80,16 +81,6 @@ def _temporal_layer_indices(policy) -> list[int]:
     resblocks = policy._backbone().vision_backbone.image_vit.transformer.resblocks
     stride = max(int(policy.config.temporal_layer_stride), 1)
     return [i for i in range(len(resblocks)) if (i + 1) % stride == 0]
-
-
-def _as_image(tensor: torch.Tensor) -> np.ndarray:
-    image = tensor.detach().float().cpu().squeeze()
-    if image.ndim == 3 and image.shape[0] in (1, 3):
-        image = image.permute(1, 2, 0)
-    array = image.numpy()
-    if array.max() <= 1.0:
-        array = (array * 255).clip(0, 255).astype(np.uint8)
-    return array
 
 
 def _age_entropy(head_age: np.ndarray) -> np.ndarray:
@@ -263,13 +254,13 @@ def _render_spatial_example(
     for camera_idx, key in enumerate(camera_keys):
         history_tensor = history[f"history.{key}"].squeeze(0)
         age_index = int(np.argmax(age_by_camera[camera_idx]))
-        axes[camera_idx, 0].imshow(_as_image(history_tensor[age_index]))
+        axes[camera_idx, 0].imshow(as_image(history_tensor[age_index]))
         axes[camera_idx, 0].set_title(
             f"{key.split('.')[-1]} most-read history (-{diagnostic['history_seconds'][age_index]:g}s)"
         )
         axes[camera_idx, 0].axis("off")
 
-        current = _as_image(obs[key])
+        current = as_image(obs[key])
         axes[camera_idx, 1].imshow(current)
         axes[camera_idx, 1].set_title(f"{key.split('.')[-1]} current")
         axes[camera_idx, 1].axis("off")

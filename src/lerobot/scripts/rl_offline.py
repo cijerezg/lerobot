@@ -222,6 +222,7 @@ def _quiet_probe_logging(probe_output_dir: str):
 
 
 _VALIDATION_PROBES = (
+    _ValidationProbeSpec("enable_objective", "lerobot.probes.objective", "objective"),
     _ValidationProbeSpec("enable_actions", "lerobot.probes.actions", "actions"),
     _ValidationProbeSpec("enable_action_trace", "lerobot.probes.action_trace_probe", "action_trace"),
     _ValidationProbeSpec("enable_attention", "lerobot.probes.attention", "attention"),
@@ -270,11 +271,16 @@ def _run_validation_probes(
     device,
     cfg: TrainRLServerPipelineConfig,
     step: int,
+    wandb_logger=None,
 ) -> None:
     """Dispatch every probe whose ``cfg.probe_parameters.enable_*`` flag is set.
 
     Each probe is wrapped in try/except so one failure doesn't kill training.
     The policy is put into eval mode for the duration and restored at the end.
+
+    The objective probe's headline scalars are pushed to W&B under the training run's
+    own step key, so held-out loss lands on the same axes as the curve it should be
+    read against. It is the only probe that produces a number belonging on that chart.
     """
     p = cfg.probe_parameters
     output_root = os.path.join(cfg.output_dir, "validation", f"step_{step:08d}")
@@ -303,6 +309,17 @@ def _run_validation_probes(
                             probe_output_dir,
                             eval_dataset=val_dataset,
                         )
+                    elif spec.output_subdir == "objective":
+                        summary = run_probe(
+                            adapter, val_dataset, cfg, probe_output_dir,
+                            train_dataset=reference_dataset,
+                        )
+                        if summary is not None and wandb_logger is not None:
+                            scalars = module.wandb_scalars(summary)
+                            scalars["Optimization step"] = step
+                            wandb_logger.log_dict(
+                                d=scalars, mode="train", custom_step_key="Optimization step"
+                            )
                     else:
                         run_probe(adapter, val_dataset, cfg, probe_output_dir)
             except Exception as exc:
@@ -687,7 +704,7 @@ def run_offline_training(
         _run_validation_probes(
             policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
             val_dataset=val_dataset, reference_dataset=offline_dataset,
-            device=device, cfg=cfg, step=0,
+            device=device, cfg=cfg, step=0, wandb_logger=wandb_logger,
         )
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -832,7 +849,7 @@ def run_offline_training(
             _run_validation_probes(
                 policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
                 val_dataset=val_dataset, reference_dataset=offline_dataset,
-                device=device, cfg=cfg, step=optimization_step,
+                device=device, cfg=cfg, step=optimization_step, wandb_logger=wandb_logger,
             )
 
     logging.info(f"[RL_OFFLINE] Training complete after {optimization_step} steps.")

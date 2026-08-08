@@ -54,6 +54,17 @@ def joint_names_for_dim(action_dim: int) -> list[str]:
     return [f"joint_{i}" for i in range(action_dim)]
 
 
+def as_image(tensor) -> "np.ndarray":
+    """A camera observation as an ``imshow``-able HWC uint8 array."""
+    image = tensor.detach().float().cpu().squeeze()
+    if image.ndim == 3 and image.shape[0] in (1, 3):
+        image = image.permute(1, 2, 0)
+    array = image.numpy()
+    if array.max() <= 1.0:
+        array = (array * 255).clip(0, 255).astype(np.uint8)
+    return array
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Filesystem
 # ──────────────────────────────────────────────────────────────────────────────

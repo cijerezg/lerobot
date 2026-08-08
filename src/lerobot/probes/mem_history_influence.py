@@ -55,6 +55,7 @@ import torch
 
 from lerobot.probes.manifest import Panel, write_index
 from lerobot.probes.utils import (
+    as_image,
     assemble_frame_history,
     get_frame_data,
     joint_names_for_dim,
@@ -95,16 +96,6 @@ def _variant_observation(obs: dict, images_on: bool, states_on: bool) -> dict:
         if remove_state or remove_images:
             out.pop(key)
     return out
-
-
-def _as_image(tensor: torch.Tensor) -> np.ndarray:
-    image = tensor.detach().float().cpu().squeeze()
-    if image.ndim == 3 and image.shape[0] in (1, 3):
-        image = image.permute(1, 2, 0)
-    array = image.numpy()
-    if array.max() <= 1.0:
-        array = (array * 255).clip(0, 255).astype(np.uint8)
-    return array
 
 
 _EXAMPLE_HOW = {
@@ -189,11 +180,11 @@ def _render_example(dataset, memory_cfg, fps: float, diagnostic: dict, label: st
             slots = [0, len(history_tensor) // 2, len(history_tensor) - 1]
             for col_idx, slot in enumerate(slots):
                 ax = fig.add_subplot(grid[row_idx, col_idx])
-                ax.imshow(_as_image(history_tensor[slot]))
+                ax.imshow(as_image(history_tensor[slot]))
                 ax.set_title(f"{key.split('.')[-1]} history: {('oldest', 'middle', 'newest')[col_idx]}")
                 ax.axis("off")
         ax = fig.add_subplot(grid[row_idx, 3])
-        ax.imshow(_as_image(obs[key]))
+        ax.imshow(as_image(obs[key]))
         ax.set_title(f"{key.split('.')[-1]} current")
         ax.axis("off")
 

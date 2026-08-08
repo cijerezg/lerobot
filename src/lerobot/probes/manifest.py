@@ -258,6 +258,7 @@ def write_index(
 
 
 GROUPS = (
+    "Objective",
     "Actions",
     "Attention",
     "Sensitivity",
@@ -274,15 +275,19 @@ GROUPS = (
 SUITE_DOC = """
 ## What this suite is
 
-The configured probes run against a checkpoint on held-out episodes. The Action
-Inspector measures whether the policy is any good — normalized action error
-against the two constants worth beating, plus a task-space pre-flight check. The
-remaining probes exist to explain why, by asking whether each thing the model was
-given (the subtask clause, the metadata clause, the history, the depth stream, the
-language) actually reaches the actions.
+The configured probes run against a checkpoint on held-out episodes. Objective
+reports the loss the trainer minimises — flow matching and FAST cross-entropy —
+on held-out data next to a matched sample of training data, which is the only
+generalisation signal here. The Action Inspector measures whether the resulting
+behaviour is any good — normalized action error against the two constants worth
+beating, plus a task-space pre-flight check. The remaining probes exist to explain
+why, by asking whether each thing the model was given (the subtask clause, the
+metadata clause, the history, the depth stream, the language) actually reaches the
+actions.
 
-Read them in that order: the headline number first, then the probe that explains
-the part you doubt.
+Read them in that order: is it fitting, is the behaviour good, then the probe that
+explains the part you doubt. Objective is also the only probe that touches training
+data at all; everywhere else "train" means the reference manifold, not a measurement.
 
 **Everything the model produces is an action.** The policy generates no text: the
 subtask is a clause the prompt carries in, and the long-term summary memory was

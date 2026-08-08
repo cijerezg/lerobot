@@ -1940,6 +1940,19 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
         loss = F.mse_loss(pred_velocity, target_velocity, reduction="none")
         loss = self._apply_action_chunk_padding_mask(loss, batch.get("action_horizon_is_pad"))
+        # Per-dim breakdown must be taken here: mask_action_dim_padding averages the dim
+        # axis away below, and no consumer of flow_loss_raw can recover it afterwards.
+        # Padded dims are zeroed rather than left as the unconstrained MSE they carry
+        # pre-mask, so slicing to the real dims gives values that average back to
+        # action_flow_loss.
+        flow_loss_per_dim = (
+            self._mask_action_dim_tensor(loss, batch.get("action_dim_is_pad"))
+            .detach()
+            .float()
+            .mean(dim=(0, 1, 2))
+            if return_diagnostics
+            else None
+        )
         if self.config.mask_action_dim_padding:
             loss = self._apply_action_dim_padding_mask(loss, batch.get("action_dim_is_pad"))
         loss_by_example = loss.reshape(batch_size, -1).mean(dim=1)
@@ -1948,6 +1961,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             loss_diag = loss.detach().float()
             diagnostics = {
                 "flow_loss_raw": loss_diag,
+                "flow_loss_per_dim": flow_loss_per_dim,
                 "flow_loss_per_sample": loss_by_example.detach().float(),
                 "flow_loss_per_timestep": loss_diag.reshape(batch_size, num_flow_timesteps, -1).mean(dim=-1),
                 "flow_timesteps": timesteps.detach().float(),
@@ -2009,7 +2023,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
         batch: dict[str, Tensor],
         outputs: Any,
         reduction: str = "mean",
-    ) -> tuple[Tensor, Tensor | None]:
+        return_diagnostics: bool = False,
+    ) -> tuple[Tensor, Tensor | None, dict[str, Tensor]]:
+        """FAST-token cross-entropy, optionally with the per-token readouts the
+        objective probe scores: unweighted CE, top-1/top-5 hits, and each token's
+        rank inside its example's action span (the FAST span runs coarse → fine, so
+        the by-position curve says which resolution the head has actually learned).
+        """
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
         labels = batch.get("labels")
@@ -2045,8 +2065,34 @@ class MolmoAct2Policy(PreTrainedPolicy):
             )
         else:
             ce_loss = self._weighted_mean(token_ce_loss, token_weights)
+
+        diagnostics: dict[str, Tensor] = {}
+        if return_diagnostics:
+            # nonzero() returns (example, position) pairs in row-major order, so the
+            # rows of one example are already in sequence order and its token's rank
+            # in the span is its offset from that example's first row.
+            token_example = valid_positions.nonzero(as_tuple=False)[:, 0].to(device=hidden_states.device)
+            counts = valid_positions.sum(dim=1)
+            starts = counts.cumsum(0) - counts
+            top5 = logits.topk(5, dim=-1).indices
+            diagnostics = {
+                "discrete_token_ce": token_ce_loss.detach().float(),
+                "discrete_token_top1": (
+                    logits.argmax(dim=-1) == selected_labels
+                ).detach().float(),
+                "discrete_token_top5": (
+                    top5 == selected_labels[:, None]
+                ).any(dim=-1).detach().float(),
+                "discrete_token_example": token_example,
+                "discrete_token_position": (
+                    torch.arange(token_example.numel(), device=token_example.device)
+                    - starts.to(device=token_example.device)[token_example]
+                ),
+                "discrete_tokens_per_example": counts.detach().long(),
+            }
+
         if not self.config.softmax_auxiliary_loss:
-            return ce_loss, None
+            return ce_loss, None, diagnostics
 
         if reduction == "none":
             z_loss = self.config.softmax_auxiliary_loss_scale * self._weighted_per_example(
@@ -2059,7 +2105,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             z_loss = self.config.softmax_auxiliary_loss_scale * self._weighted_mean(
                 log_z.pow(2), token_weights
             )
-        return ce_loss, z_loss
+        return ce_loss, z_loss, diagnostics
 
     @staticmethod
     def _extract_discrete_token_bins(
@@ -2447,7 +2493,17 @@ class MolmoAct2Policy(PreTrainedPolicy):
         batch: dict[str, Tensor],
         reduction: str = "mean",
         return_diagnostics: bool = False,
+        flow_timesteps: Tensor | None = None,
+        flow_noise: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Any]]:
+        """Training loss.
+
+        ``flow_timesteps`` ``(B, num_flow_timesteps)`` and ``flow_noise``
+        ``(B, num_flow_timesteps, T, D)`` replace the Beta draw and the Gaussian
+        draw the training path makes. Passing them makes the flow loss a
+        deterministic function of the batch, which is what lets the objective probe
+        difference two checkpoints without the sampler swamping the difference.
+        """
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
         model_inputs = self._model_inputs(batch)
@@ -2461,8 +2517,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 output_attentions=False,
                 output_hidden_states=False,
             )
-            discrete_ce_loss, discrete_z_loss = self._discrete_loss_from_backbone_outputs(
-                batch, outputs, reduction=reduction
+            discrete_ce_loss, discrete_z_loss, discrete_diagnostics = (
+                self._discrete_loss_from_backbone_outputs(
+                    batch, outputs, reduction=reduction, return_diagnostics=return_diagnostics
+                )
             )
             discrete_loss = (
                 discrete_ce_loss if discrete_z_loss is None else discrete_ce_loss + discrete_z_loss
@@ -2471,11 +2529,14 @@ class MolmoAct2Policy(PreTrainedPolicy):
             metrics["discrete_ce_loss"] = discrete_ce_loss.detach().float().mean().item()
             if discrete_z_loss is not None:
                 metrics["discrete_z_loss"] = discrete_z_loss.detach().float().mean().item()
+            metrics.update(discrete_diagnostics)
 
         elif self.config.action_mode == "continuous":
             flow_result = self._compute_flow_matching_loss_joint_per_layer(
                 batch=batch,
                 model_inputs=model_inputs,
+                timesteps=flow_timesteps,
+                noise=flow_noise,
                 reduction=reduction,
                 return_diagnostics=return_diagnostics,
             )
@@ -2492,6 +2553,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
             flow_result = self._compute_flow_matching_loss_joint_per_layer(
                 batch=batch,
                 model_inputs=model_inputs,
+                timesteps=flow_timesteps,
+                noise=flow_noise,
                 reduction=reduction,
                 return_diagnostics=return_diagnostics,
             )
@@ -2503,8 +2566,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # Adapter: the joint flow loop returns a plain tensor, but the shared discrete-loss
             # helper reads .last_hidden_state (the backbone output interface).
             outputs = types.SimpleNamespace(last_hidden_state=hidden_states)
-            discrete_ce_loss, discrete_z_loss = self._discrete_loss_from_backbone_outputs(
-                batch, outputs, reduction=reduction
+            discrete_ce_loss, discrete_z_loss, discrete_diagnostics = (
+                self._discrete_loss_from_backbone_outputs(
+                    batch, outputs, reduction=reduction, return_diagnostics=return_diagnostics
+                )
             )
             discrete_loss = (
                 discrete_ce_loss if discrete_z_loss is None else discrete_ce_loss + discrete_z_loss
@@ -2513,6 +2578,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             metrics["discrete_ce_loss"] = discrete_ce_loss.detach().float().mean().item()
             if discrete_z_loss is not None:
                 metrics["discrete_z_loss"] = discrete_z_loss.detach().float().mean().item()
+            metrics.update(discrete_diagnostics)
             losses.append(flow_loss)
             metrics["action_flow_loss"] = flow_loss.detach().float().mean().item()
             metrics.update(flow_diagnostics)

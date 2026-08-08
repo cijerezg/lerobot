@@ -202,7 +202,7 @@ def build_index(val_dir: Path) -> dict:
                     "claim": index.get("claim", ""), "doc": index.get("doc", ""),
                     "has_manifest": index["has_manifest"],
                     "metrics": [], "panels": {}, "status": {}, "steps": [], "log": {},
-                    "see_also": [],
+                    "see_also": [], "extra": {},
                 },
             )
             if index.get("has_log"):
@@ -223,6 +223,8 @@ def build_index(val_dir: Path) -> dict:
                 for panel in index["panels"]
             ]
             probe["see_also"] = index.get("see_also", probe.get("see_also", []))
+            # Per step: a probe's provenance changes when the sampled episodes do.
+            probe["extra"][str(step_num)] = index.get("extra", {})
             by_key = {metric["key"]: metric for metric in probe["metrics"]}
             for metric in index["metrics"]:
                 row = by_key.get(metric["key"])
@@ -451,6 +453,31 @@ kbd{background:var(--panel);border:1px solid var(--line);border-bottom-width:2px
 .statusbadge{border-radius:99px;padding:0 5px;font-size:8px;letter-spacing:.05em;text-transform:uppercase;
  color:var(--muted);border:1px solid var(--line)}
 .statusbadge.good{color:var(--good)}.statusbadge.warn{color:var(--warn)}.statusbadge.bad{color:var(--bad)}
+
+/* ── headline tiles: the numbers a metrics-led probe is read for ─────────── */
+/* Above the figures, because on a probe whose output IS the numbers, scrolling past
+   four plots to reach them buries the result. The full table still sits below with
+   the notes and thresholds; this is the primary metrics only. */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;
+ padding:14px 20px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+.tile .lbl{font-size:11px;color:var(--muted);display:block;margin-bottom:5px;
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .figure{display:flex;align-items:baseline;gap:7px}
+.tile .v{font-size:25px;font-weight:640;letter-spacing:-.02em;
+ font-variant-numeric:tabular-nums;line-height:1.1}
+.tile .foot{display:flex;align-items:center;gap:7px;margin-top:6px}
+.tile .dir{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The definition travels with the number: these metrics are no longer repeated in the
+   table below, so the tile is the only place the reader can learn what they are. */
+.tile .tilenote{font-size:11px;line-height:1.5;color:var(--muted);margin-top:7px;
+ border-top:1px solid var(--line);padding-top:7px}
+
+/* ── data provenance ────────────────────────────────────────────────────── */
+.prov{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;font-size:12px}
+.prov dt{color:var(--muted)}
+.prov dd{margin:0}
+.prov .src{font-family:ui-monospace,Menlo,monospace;font-size:11px;word-break:break-all}
 .spark{width:44px;height:15px;flex:none}
 .d{font-size:11px;font-weight:600}
 .d.up{color:var(--good)}.d.down{color:var(--bad)}.d.flat{color:var(--muted)}
@@ -600,6 +627,12 @@ const TEX_OP = {cdot:"⋅",times:"×",div:"÷",pm:"±",mp:"∓",approx:"≈",neq
  cdots:"⋯",leftarrow:"←",Rightarrow:"⇒",implies:"⇒"};
 const TEX_FUN = ["log","exp","sin","cos","tan","min","max","argmin","argmax","mean","std","var",
  "det","dim","ker","deg","lim","sup","inf","MSE","RMSE"];
+// Alphabet-switching commands. Without these the fallback at the end of texAtom prints
+// the command name itself, so `\mathcal{L}` reads "mathcalL" on the page.
+const TEX_VARIANT = {mathcal:"script", mathbb:"double-struck", mathbf:"bold", mathsf:"sans-serif",
+ boldsymbol:"bold", mathfrak:"fraktur"};
+const TEX_ACCENT = {bar:"‾", overline:"‾", hat:"^", tilde:"~", vec:"→", dot:"˙", ddot:"¨"};
+const TEX_SPACE = {quad:"1em", qquad:"2em", ",":"0.17em", ";":"0.28em", ":":"0.22em", "!":"-0.17em"};
 
 function texTokens(src){
   const out = []; let i = 0;
@@ -636,15 +669,26 @@ function texAtom(tk, tokens){
   if(tk.t === "op") return `<mo>${esc(tk.v)}</mo>`;
   if(tk.t === "cmd"){
     const c = tk.v;
-    if(c === "frac") return `<mfrac>${texArg(tokens)}${texArg(tokens)}</mfrac>`;
+    if(c === "frac" || c === "tfrac" || c === "dfrac")
+      return `<mfrac>${texArg(tokens)}${texArg(tokens)}</mfrac>`;
     if(c === "sqrt") return `<msqrt>${texArg(tokens)}</msqrt>`;
+    if(TEX_VARIANT[c]){
+      const arg = texArg(tokens), v = TEX_VARIANT[c];
+      // MathML Core wants the variant on the <mi> itself; <mstyle mathvariant> is
+      // deprecated. Single letters are the whole use case, so rewrite those directly.
+      // texArg wraps a braced argument in <mrow>, so `\mathcal{L}` arrives wrapped.
+      const one = /^(?:<mrow>)?<mi>(.)<\/mi>(?:<\/mrow>)?$/.exec(arg);
+      return one ? `<mi mathvariant="${v}">${one[1]}</mi>` : `<mstyle mathvariant="${v}">${arg}</mstyle>`;
+    }
+    if(TEX_ACCENT[c])
+      return `<mover accent="true">${texArg(tokens)}<mo>${TEX_ACCENT[c]}</mo></mover>`;
+    if(TEX_SPACE[c]) return `<mspace width="${TEX_SPACE[c]}"/>`;
     if(c === "left" || c === "right" || c === "big" || c === "Big"){
       const n = tokens.shift(); if(!n) return "";
       const glyph = n.t === "cmd" ? (TEX_OP[n.v] || n.v) : n.v;
       return glyph === "." ? "" : `<mo stretchy="true">${esc(glyph)}</mo>`;
     }
     if(c === "|") return `<mo stretchy="true">‖</mo>`;
-    if(c === ",") return `<mspace width="0.17em"/>`;
     if(TEX_ID[c]) return `<mi>${TEX_ID[c]}</mi>`;
     if(TEX_OP[c]) return `<mo>${TEX_OP[c]}</mo>`;
     if(TEX_FUN.includes(c)) return `<mi mathvariant="normal">${c}</mi>`;
@@ -783,9 +827,56 @@ function dirLabel(m){
          (th.length ? " · " + th.join(", ") : "");
 }
 function statusLabel(s){ return ({good:"pass", warn:"warn", bad:"fail", info:"no threshold"})[s] || "no threshold"; }
-// The metrics the probe calls headline still lead the table; they no longer get a
-// separate strip of their own above the figure.
 function orderedMetrics(p){ return [...p.metrics].sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0)); }
+
+// Primary metrics as stat tiles above the figures. Label, value, delta against the
+// previous step that has one, sparkline across steps, threshold status.
+function headlineTiles(p){
+  const primary = p.metrics.filter(m => m.primary);
+  if(!primary.length) return "";
+  return `<div class="tiles">${primary.map(m => {
+    const v = m.values[stepKey(si)], d = delta(m);
+    const status = m.statuses ? (m.statuses[stepKey(si)] || "info") : "info";
+    return `<div class="tile">
+      <span class="lbl" title="${esc(m.label)}">${esc(m.label)}</span>
+      <div class="figure"><span class="v">${fmt(v, m.fmt)}</span>
+        <span class="d ${d?d.dir:"flat"}">${d && d.d ? (d.d>0?"+":"")+fmt(d.d, m.fmt) : ""}</span></div>
+      <div class="foot">${spark(m)}
+        <span class="statusbadge ${status}">${statusLabel(status)}</span>
+        <span class="dir" title="${esc(dirLabel(m))}">${esc(dirLabel(m))}</span></div>
+      ${m.note ? `<div class="tilenote">${inline(m.note)}</div>` : ""}
+    </div>`;
+  }).join("")}</div>`;
+}
+
+// Where the numbers came from. Rendered from index.json `extra.provenance`, so any
+// probe gains this section by declaring one — nothing here is objective-specific.
+function splitLine(s){
+  if(!s) return "";
+  const src = (s.sources || []).map(x =>
+    `<div class="src">${esc(x.name)} · ${x.n_episodes} ep ${JSON.stringify(x.episodes||[])}
+     · ${x.n_frames} frames<br>${esc(x.root || "")}</div>`).join("");
+  return `<b>${s.n_frames} frames</b> over ${s.n_episodes} episodes${src}`;
+}
+function provenanceBox(p){
+  const prov = (p.extra && p.extra[stepKey(si)] || {}).provenance;
+  if(!prov) return "";
+  const rows = [
+    ["Held out", splitLine(prov.val)],
+    ["Training", splitLine(prov.train)],
+    ["Per episode", `${prov.frames_per_episode} frames, evenly spaced` +
+      (prov.image_stride ? `, snapped onto the stride-${prov.image_stride} grid` : "")],
+    ["Episode budget", prov.episode_budget === null || prov.episode_budget === undefined
+      ? "every episode" : `${prov.episode_budget}, divided across the training sources`],
+    ["Per forward", `batch ${prov.batch_size}, ${prov.timesteps_per_forward} flow timesteps,` +
+      ` chunk ${prov.chunk_size}`],
+    ["Total", `${prov.forwards} forwards`],
+  ].filter(r => r[1]);
+  return `<div class="box"><h4>Data behind these numbers</h4>
+    <dl class="prov">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>
+    ${prov.sampling ? `<div class="note" style="margin-top:9px">${inline(prov.sampling)}</div>` : ""}
+  </div>`;
+}
 function refChips(ids){
   if(!ids || !ids.length) return "";
   return `<div class="refs">${ids.map(id => {
@@ -953,9 +1044,13 @@ function drawMain(){
         : "this probe wrote no figures at this step" + (p.log[stepKey(si)] ? " — its log is below" : "")
       }</div></div>`;
 
-  const metricsBox = p.metrics.length ? `<div class="box">
-    <h4>Metrics at step ${DATA.steps[si].step.toLocaleString()}</h4>` +
-      orderedMetrics(p).map(m => { const v = m.values[stepKey(si)], d = delta(m);
+  // Only what the tiles above don't already carry — a metric shown twice on one page
+  // reads as two different numbers.
+  const tabled = orderedMetrics(p).filter(m => !m.primary);
+  const metricsBox = tabled.length ? `<div class="box">
+    <h4>${p.metrics.some(m => m.primary) ? "Supporting metrics" : "Metrics"} at step
+      ${DATA.steps[si].step.toLocaleString()}</h4>` +
+      tabled.map(m => { const v = m.values[stepKey(si)], d = delta(m);
         const status = m.statuses ? (m.statuses[stepKey(si)] || "info") : "info";
         return `<div class="mrow"><span class="lbl">${esc(m.label)}
           <span class="dir">${esc(dirLabel(m))}</span></span>${spark(m)}
@@ -989,8 +1084,9 @@ function drawMain(){
         <option value="1" ${zoom==="1"?"selected":""}>100%</option>
         <option value="2" ${zoom==="2"?"selected":""}>200%</option></select></label>` : ""}
       ${all.length > 1 ? `<span class="num">${all.length} figures in this probe</span>` : ""}</div>
+    ${headlineTiles(p)}
     ${figures}
-    <div class="below">${metricsBox}${docBox}</div>`;
+    <div class="below">${provenanceBox(p)}${metricsBox}${docBox}</div>`;
   wirePanning();
 }
 

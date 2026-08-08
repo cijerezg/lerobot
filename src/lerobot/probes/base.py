@@ -162,6 +162,61 @@ class ProbablePolicy(ABC):
                   policies that don't generate subtasks.
         """
 
+    # ── Training objective ───────────────────────────────────────────────────
+
+    def training_losses(
+        self,
+        frame: dict,
+        *,
+        flow_timesteps: "Tensor | None" = None,
+        flow_noise_seed: int | None = None,
+        dropout: bool = False,
+    ) -> dict[str, Any]:
+        """The loss the trainer backwards, evaluated on one probe frame.
+
+        This is the only method in the interface that reports the *training
+        objective* rather than a behaviour: every other measurement here scores what
+        the policy does, and none of them can say whether it is fitting or
+        memorising. Adapters build the same forward batch their trainer's
+        ``build_training_batch`` builds, so the number is comparable to the training
+        curve rather than merely analogous to it.
+
+        Args:
+            frame: one ``probes.utils.probe_frame_inputs`` dict.
+            flow_timesteps: ``[K]`` timesteps to evaluate the flow loss at, shared
+                across the batch, replacing the sampler's draw. ``None`` draws as
+                training does — which makes the result an unpaired Monte-Carlo
+                estimate, and two checkpoints then differ by sampler noise before
+                they differ by anything else.
+            flow_noise_seed: seed for the flow noise $\\varepsilon$. ``None`` draws
+                from the global RNG, with the same consequence.
+            dropout: leave the trainer's prompt/modality dropout armed. ``False``
+                suppresses it, which is the regime every other probe measures in and
+                the one that makes a val/train difference attributable to fit rather
+                than to which clauses each side happened to lose.
+
+        Returns a dict of canonical keys; policies without a discrete head return
+        ``None`` for the discrete entries:
+
+            loss_flow, loss_discrete_ce, loss_discrete_z, loss_total   floats
+            loss_flow_by_timestep [K], loss_flow_by_action_step [T],
+            loss_flow_by_dim [D], flow_timesteps [K]                   arrays
+            discrete_token_ce / _top1 / _top5 [n_tokens]               arrays
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement training_losses. "
+            f"The objective probe cannot run against this policy."
+        )
+
+    @property
+    def action_token_vocab_size(self) -> int | None:
+        """How many action tokens a discrete head chooses between, or ``None``.
+
+        The chance line for a token-accuracy readout; without it an accuracy is
+        uninterpretable.
+        """
+        return None
+
     # ── Representations ──────────────────────────────────────────────────────
 
     @abstractmethod

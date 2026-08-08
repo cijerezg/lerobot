@@ -300,6 +300,7 @@ class ProbeConfig:
     enable_depth_modality: bool = False  # point-map depth: 2x2 modality grid, per-layer mass, b_l
     enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
+    enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
 
     # Common
     output_dir: str = "outputs/probe"
@@ -346,6 +347,13 @@ class ProbeConfig:
     # per frame covers every layer). budget_fd_sensitivity adds a causal series at
     # two extra forwards per frame — mass says "read", FD says "load-bearing".
     budget_fd_sensitivity: bool = False
+
+    # Objective. One forward per frame per split, so the cost is
+    # n_frames_per_episode x episodes x 2. objective_max_episodes is split across the
+    # training sources, so it is the total train-side episode budget, not per source.
+    objective_n_frames_per_episode: int = 24
+    objective_max_episodes: int | None = 8
+    objective_exemplars_per_band: int = 3  # frames shown at each of p5 / p50 / p95
 
     # Subtask sweep: n_frames x (max_labels + n_seeds) forwards, so keep all three small.
     subtask_sweep_n_frames: int = 8
