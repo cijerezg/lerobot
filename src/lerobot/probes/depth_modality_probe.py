@@ -9,18 +9,18 @@ fixed-seed flow noise, and reports:
     temporal-shape MSE, final-position MSE, and pure final-direction alignment
     (is depth earning its keep under more than one definition of action quality?),
   - pairwise max|Δaction| between conditions (does depth influence output at all),
-  - the RMS of the emitted depth tokens over the RMS of the token embeddings they are
-    added onto (has the adapter opted out by going quiet?),
+  - the RMS of the complete injected depth tokens over the pretrained embedding-table
+    RMS (is the depth prefix becoming abnormally quiet or loud?),
   - finite-difference sensitivity: ‖Δactions‖ for a 1%-of-std perturbation of the
     raw depth input vs of the wrist RGB input (a directional-Jacobian estimate —
     separates "attended but ignored" from load-bearing).
 
 Depth now enters the VLM prefix on DEPTH_TOKEN placeholders, so there is no gate and
 no per-layer read bias to report — the α gate and the b_ℓ joint-softmax bias are both
-gone. Nothing is left that can silently sit at its init: the tokens are in the sequence
-unconditionally. What can still fail quietly is the adapter learning to emit something
-ignorable, which is what the token-RMS ratio watches, and depth simply not mattering,
-which is what the MSE conditions and FD sensitivity measure.
+gone. The tokens are in the sequence unconditionally. The copied visual path can still
+learn features the trunk ignores or drift to an abnormal scale; the token-RMS ratio watches
+scale, while the MSE conditions and finite-difference sensitivity measure whether depth
+actually affects and improves the action.
 
 Conditions are produced within one policy build: depth− removes the depth key
 (learned null bank), while RGB− applies the exact training-time wrist-patch
@@ -128,12 +128,29 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                 note="Finite-difference $\\|\\Delta a\\|$ for a 1%-of-std perturbation of raw depth over the same for wrist RGB. Separates attended-but-ignored from load-bearing; 1.0 means the two inputs move the action equally.",
             ),
             Metric(
-                "depth_token_rms_ratio",
-                "Depth token scale / embedding scale",
+                "depth_rgb_rms_ratio",
+                "Depth / RGB token RMS",
                 good="none",
                 fmt=3,
                 baseline=1.0,
-                note="RMS of what ``depth_adapter`` emits over the RMS of the token embeddings it is added onto; 1.0 by construction at init. Decay toward 0 is the adapter opting out — satisfying the loss by emitting tokens the trunk can ignore, which no loss curve reveals. Far above 1 means it is shouting over the pretrained tokens.",
+                primary=True,
+                note="RMS of final depth prefix tokens divided by final RGB prefix-token RMS at the exact text-embedding seam. This is the direct scale-matching measurement; sustained drift above 1 means depth is becoming louder than the tested RGB path.",
+            ),
+            Metric(
+                "depth_token_rms_ratio",
+                "Depth projector / embedding RMS",
+                good="none",
+                fmt=3,
+                baseline=1.0,
+                note="RMS of the copied depth visual projector output over the pretrained text-token table RMS. This preserves the old chart's path-output/table interpretation; use depth_rgb_rms_ratio for direct modality matching.",
+            ),
+            Metric(
+                "depth_late_early_rms_ratio",
+                "H7 / H3 RMS",
+                good="none",
+                fmt=3,
+                baseline=1.0,
+                note="Residual-stream scale after depth block 7 divided by its scale after block 3. Persistent growth localizes scale drift inside the copied ViT blocks rather than the final projector.",
             ),
             Metric("n_frames", "Frames probed", good="none", fmt=0),
             Metric(
@@ -329,7 +346,46 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     sens_depth_list: list[float] = []
     sens_rgb_list: list[float] = []
     per_frame: list[dict] = []
+    scale_samples: dict[str, list[float]] = {}
     n_context = 0
+
+    def record_scale(name: str, value: float) -> None:
+        scale_samples.setdefault(name, []).append(float(value))
+
+    def capture_rgb_depth_scale() -> None:
+        embed_rms = float(policy._depth_embed_rms)
+        if policy._depth_token_rms is not None:
+            projected = policy._depth_token_rms.item()
+            record_scale("depth_projected_token_rms", projected)
+            record_scale("depth_token_rms_ratio", projected / embed_rms)
+        for stage, value in policy._depth_stage_rms.items():
+            record_scale(f"depth_{stage}_token_rms", value.item())
+        early_tap, late_tap = policy.config.pointmap_config.visual_feature_taps
+        early = policy._depth_stage_rms.get(f"block{early_tap}")
+        late = policy._depth_stage_rms.get(f"block{late_tap}")
+        if early is not None and late is not None:
+            record_scale(
+                "depth_late_early_rms_ratio", late.item() / max(early.item(), 1e-12)
+            )
+        if late is not None and policy._depth_token_rms is not None:
+            record_scale(
+                "depth_projected_late_rms_ratio",
+                policy._depth_token_rms.item() / max(late.item(), 1e-12),
+            )
+        backbone = policy._backbone()
+        depth_rms = getattr(backbone, "_lerobot_depth_input_rms", None)
+        rgb_rms = getattr(backbone, "_lerobot_rgb_input_rms", None)
+        if depth_rms is not None:
+            depth_value = depth_rms.item()
+            record_scale("depth_injected_token_rms", depth_value)
+            record_scale("depth_injected_rms_ratio", depth_value / embed_rms)
+        if rgb_rms is not None:
+            rgb_value = rgb_rms.item()
+            record_scale("rgb_injected_token_rms", rgb_value)
+            if depth_rms is not None:
+                record_scale(
+                    "depth_rgb_rms_ratio", depth_rms.item() / max(rgb_value, 1e-12)
+                )
 
     try:
         for global_idx in frame_indices:
@@ -347,6 +403,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 actions[condition] = predict(
                     cond_obs, frame, rgb_on=condition in ("rgb+depth", "rgb_only")
                 )
+                # Capture only the real RGB+depth condition. Reading after the final
+                # "neither" condition would report the learned null bank instead.
+                if condition == "rgb+depth":
+                    capture_rgb_depth_scale()
 
             if not n_context:
                 probe_batch = adapter._make_batch(
@@ -447,14 +507,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             "ratio": mean_depth / max(mean_rgb, 1e-12),
         },
     }
-    summary["n_depth_tokens"] = int(policy.pointmap_encoder.num_tokens)
+    summary["n_depth_tokens"] = int(policy.config.pointmap_config.num_pooled_tokens)
     summary["n_context_tokens"] = n_context
-    # Scale of what the adapter emits vs the embeddings it is added onto (1.0 at init).
-    # A collapse toward 0 is the adapter opting out — invisible in every loss curve.
-    if getattr(policy, "_depth_token_rms", None) is not None:
-        summary["depth_token_rms_ratio"] = float(
-            policy._depth_token_rms.item() / policy._depth_embed_rms
-        )
+    summary.update(
+        {name: sum(values) / len(values) for name, values in scale_samples.items() if values}
+    )
 
     with open(os.path.join(output_dir, "depth_modality.json"), "w") as f:
         json.dump({"summary": summary, "per_frame": per_frame}, f, indent=2)
@@ -469,10 +526,15 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         logging.info(f"mse_norm[{condition:>9s}] mean = {summary['mse_norm'][condition]:.5f}")
     for name, value in summary["max_abs_delta"].items():
         logging.info(f"max|Δ| {name} mean = {value:.4e}")
+    if "depth_rgb_rms_ratio" in summary:
+        logging.info(
+            f"depth_rgb_rms_ratio = {summary['depth_rgb_rms_ratio']:.3f} "
+            f"(final depth prefix RMS / final RGB prefix RMS)"
+        )
     if "depth_token_rms_ratio" in summary:
         logging.info(
             f"depth_token_rms_ratio = {summary['depth_token_rms_ratio']:.3f} "
-            f"(1.0 at init; toward 0 ⇒ the adapter is emitting ignorable tokens)"
+            f"(depth projector output / pretrained token-table RMS)"
         )
     logging.info(
         f"depth benefit  mse(rgb_only) − mse(rgb+depth) = {summary['depth_benefit']:+.5f} "

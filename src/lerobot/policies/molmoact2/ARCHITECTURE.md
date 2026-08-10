@@ -606,6 +606,20 @@ Wraps the HF model with:
   - `_patch_numpy_dtype_cast` — fixes bf16-to-numpy conversion inside
     the HF module's normalization helpers.
 
+- Separate depth visual path (enabled by `pointmap_config`):
+  1. The point-map CNN/Fourier encoder emits a row-major `24×32 = 768`
+     fine grid at the RGB ViT width, 1152.
+  2. Seven independent blocks are initialized by deep-copying RGB ViT
+     blocks `[0, 4, 8, 12, 16, 20, 24]`; the parameters are not shared.
+  3. Depth-block outputs `H3` and `H7` are concatenated as `[H7; H3]`,
+     exactly the late/earlier ordering used by the RGB adapter.
+  4. A deep copy of `image_pooling_2d` attention-pools spatial `2×2`
+     groups, producing `12×16 = 192` tokens; a deep copy of
+     `image_projector` maps 1152 to the text width.
+  5. At each depth placeholder the arbitrary `<extra_1>` embedding is
+     replaced by `depth_marker + projected_depth`, where `depth_marker`
+     is independent but initialized from `<im_patch>`.
+
 - Frame conversion (SO-101): `SO101V3ToV21Step` /
   `SO101V21ToV3Step` in [`frame_so101.py`](frame_so101.py) translate
   joints 1 (`shoulder_lift`) and 2 (`elbow_flex`) between LeRobot v3.0
@@ -630,6 +644,10 @@ Approximate (ignoring biases and norms):
   - MLP per block: `3584 × 37888 + 18944 × 3584 ≈ 203 M`
   - Body total: `48 × 232 M ≈ 11.1 G`
   - `lm_head`: another `545 M`
+- Actor depth path with five-frame CNN history: **197,136,176** parameters
+  (`33,845,760` point-map encoder + `106,676,528` seven ViT blocks +
+  `9,294,336` pooler + `47,316,992` projector + `2,560` marker).
+  Without temporal CNN fusion it is `180,207,920` parameters.
 - Action expert (36 blocks):
   - Per block: self-attn `4 × 768² ≈ 2.4 M`, cross-attn `2 × 768² ≈ 1.2 M`,
     MLP `3 × 768 × 3072 ≈ 7.1 M`, modulation `768 × 9 × 768 ≈ 5.3 M`

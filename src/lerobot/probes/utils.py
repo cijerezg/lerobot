@@ -22,7 +22,11 @@ import numpy as np
 import torch
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.utils.action_metrics import TRAJECTORY_ERROR_KEYS, trajectory_error_components
+from lerobot.utils.action_metrics import (
+    TRAJECTORY_ERROR_KEYS,
+    TRAJECTORY_RELATIVE_KEYS,
+    trajectory_error_components,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

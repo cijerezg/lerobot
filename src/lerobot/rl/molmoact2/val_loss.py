@@ -159,10 +159,11 @@ class ValLoss:
 
     @torch.no_grad()
     def __call__(self, policy) -> dict[str, float]:
-        """Mean flow and FAST CE over the fixed sample, weighted by frames per forward."""
+        """Mean base and enabled auxiliary losses over the fixed held-out sample."""
         was_training = policy.training
         policy.eval()
         totals = {"val_loss_flow": 0.0, "val_loss_discrete_ce": 0.0}
+        counts = {key: 0 for key in totals}
         try:
             for batch, count in zip(self._batches, self._counts):
                 on_device = {
@@ -175,10 +176,24 @@ class ValLoss:
                     flow_timesteps=batch["_flow_timesteps"].to(self._device),
                     flow_noise=batch["_flow_noise"].to(self._device),
                 )
-                totals["val_loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) * count
-                totals["val_loss_discrete_ce"] += float(metrics.get("discrete_ce_loss", 0.0)) * count
+                metric_keys = {
+                    "action_flow_loss": "val_loss_flow",
+                    "action_auxiliary_loss": "val_loss_action_aux",
+                    "discrete_ce_loss": "val_loss_discrete_ce",
+                    "discrete_auxiliary_loss": "val_loss_discrete_aux",
+                }
+                for source, destination in metric_keys.items():
+                    if source not in metrics:
+                        continue
+                    totals.setdefault(destination, 0.0)
+                    counts.setdefault(destination, 0)
+                    totals[destination] += float(metrics[source]) * count
+                    counts[destination] += count
         finally:
             policy.train(was_training)
 
-        n = max(sum(self._counts), 1)
-        return {k: v / n for k, v in totals.items()}
+        return {
+            key: value / max(counts[key], 1)
+            for key, value in totals.items()
+            if counts.get(key, 0) > 0
+        }

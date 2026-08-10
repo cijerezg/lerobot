@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
@@ -53,16 +54,13 @@ def _action_trajectory_components_with_padding(
     expected = (batch_size, horizon, action_dim)
     if tuple(target.shape) != expected or tuple(hold.shape) != expected:
         raise ValueError(
-            f"target and hold must have shape {expected}, got {tuple(target.shape)} and "
-            f"{tuple(hold.shape)}."
+            f"target and hold must have shape {expected}, got {tuple(target.shape)} and {tuple(hold.shape)}."
         )
 
     prediction = prediction.float()
     target = target.float().unsqueeze(1)
     hold = hold.float().unsqueeze(1)
-    valid_horizon = torch.ones(
-        (batch_size, horizon), device=prediction.device, dtype=torch.bool
-    )
+    valid_horizon = torch.ones((batch_size, horizon), device=prediction.device, dtype=torch.bool)
     if action_horizon_is_pad is not None:
         valid_horizon = ~action_horizon_is_pad.to(device=prediction.device, dtype=torch.bool)
     valid_dim = torch.ones((batch_size, action_dim), device=prediction.device, dtype=torch.bool)
@@ -75,14 +73,11 @@ def _action_trajectory_components_with_padding(
     path_by_flow = (squared_error * valid_path).sum(dim=(-2, -1)) / path_count
 
     if horizon > 1:
-        valid_pair = (
-            (valid_horizon[:, 1:] & valid_horizon[:, :-1])[:, None, :, None]
-            & valid_dim[:, None, None, :]
-        )
+        valid_pair = (valid_horizon[:, 1:] & valid_horizon[:, :-1])[:, None, :, None] & valid_dim[
+            :, None, None, :
+        ]
         shape_count = valid_pair.sum(dim=(-2, -1)).clamp_min(1)
-        shape_error = (
-            torch.diff(prediction, dim=-2) - torch.diff(target, dim=-2)
-        ).square()
+        shape_error = (torch.diff(prediction, dim=-2) - torch.diff(target, dim=-2)).square()
         shape_by_flow = (shape_error * valid_pair).sum(dim=(-2, -1)) / shape_count
     else:
         shape_by_flow = torch.zeros_like(path_by_flow)
@@ -90,9 +85,7 @@ def _action_trajectory_components_with_padding(
     valid_terminal = valid_horizon[:, -1]
     terminal_dim_mask = valid_dim[:, None, :]
     terminal_count = terminal_dim_mask.sum(dim=-1).clamp_min(1)
-    terminal_by_flow = (
-        squared_error[..., -1, :] * terminal_dim_mask
-    ).sum(dim=-1) / terminal_count
+    terminal_by_flow = (squared_error[..., -1, :] * terminal_dim_mask).sum(dim=-1) / terminal_count
     terminal_by_flow = torch.where(
         valid_terminal[:, None],
         terminal_by_flow,
@@ -146,6 +139,232 @@ def _thresholded_action_auxiliary_loss(
             total = total + weight * torch.where(active, values, torch.zeros_like(values))
         diagnostics[f"{key}_active"] = active.detach()
     return total, diagnostics
+
+
+def _grouped_logsumexp(
+    logits: Tensor,
+    group_ids: Tensor,
+    num_groups: int,
+) -> Tensor:
+    """Stable row-wise logsumexp into integer groups; ``num_groups`` is a drop bin."""
+    if logits.ndim != 2 or tuple(group_ids.shape) != tuple(logits.shape):
+        raise ValueError(
+            "logits and group_ids must have the same [rows, tokens] shape, got "
+            f"{tuple(logits.shape)} and {tuple(group_ids.shape)}."
+        )
+    if num_groups < 1:
+        raise ValueError(f"num_groups must be positive, got {num_groups}.")
+    if bool(((group_ids < 0) | (group_ids > num_groups)).any()):
+        raise ValueError("group_ids must lie in [0, num_groups], with num_groups as the drop bin.")
+
+    rows = logits.shape[0]
+    maxima = torch.full(
+        (rows, num_groups + 1),
+        -torch.inf,
+        device=logits.device,
+        dtype=logits.dtype,
+    )
+    maxima.scatter_reduce_(1, group_ids, logits, reduce="amax", include_self=True)
+    # The maximum is only a numerical shift. Detaching it gives the exact logsumexp
+    # gradient without asking scatter_reduce's max backward to resolve ties.
+    shifts = maxima.detach()
+    gathered_shifts = shifts.gather(1, group_ids)
+    exponentials = torch.exp(logits - gathered_shifts)
+    sums = torch.zeros_like(maxima)
+    sums.scatter_add_(1, group_ids, exponentials)
+    return (shifts + torch.log(sums))[:, :num_groups]
+
+
+def _cumulative_ordinal_ce_from_log_masses(
+    log_bin_masses: Tensor,
+    target_bins: Tensor,
+) -> Tensor:
+    """Per-slot cumulative binary CE, evaluated as stable log-mass differences."""
+    if log_bin_masses.ndim != 2:
+        raise ValueError(f"log_bin_masses must have shape [slots, bins], got {tuple(log_bin_masses.shape)}.")
+    slots, num_bins = log_bin_masses.shape
+    if num_bins < 2:
+        raise ValueError(f"Cumulative ordinal CE requires at least two bins, got {num_bins}.")
+    if tuple(target_bins.shape) != (slots,):
+        raise ValueError(f"target_bins must have shape {(slots,)}, got {tuple(target_bins.shape)}.")
+    if bool(((target_bins < 0) | (target_bins >= num_bins)).any()):
+        raise ValueError("target_bins contain a value outside the coefficient support.")
+
+    log_total = torch.logsumexp(log_bin_masses, dim=-1)
+    log_le = torch.logcumsumexp(log_bin_masses, dim=-1)[:, :-1]
+    log_gt = torch.flip(
+        torch.logcumsumexp(torch.flip(log_bin_masses, dims=(-1,)), dim=-1),
+        dims=(-1,),
+    )[:, 1:]
+    thresholds = torch.arange(num_bins - 1, device=target_bins.device)
+    target_is_le = target_bins[:, None] <= thresholds[None, :]
+    correct_log_mass = torch.where(target_is_le, log_le, log_gt)
+    losses = log_total[:, None] - correct_log_mass
+    if not bool(torch.isfinite(losses).all()):
+        raise RuntimeError(
+            "FAST cumulative ordinal CE found an empty correct threshold set or non-finite logits."
+        )
+    return losses.mean(dim=-1)
+
+
+def _fast_action_auxiliary_components(
+    action_logits: Tensor,
+    target_bpe_ids: Tensor,
+    token_examples: Tensor,
+    *,
+    token_lengths: Tensor,
+    value_bins_by_offset: Tensor,
+    coefficient_values: Tensor,
+    coefficient_min: int,
+    horizon: int,
+    scale: float,
+    batch_size: int,
+) -> dict[str, Tensor]:
+    """Per-example ordinal/path/shape losses from teacher-forced FAST token logits."""
+    if action_logits.ndim != 2:
+        raise ValueError(f"action_logits must be [tokens, vocab], got {tuple(action_logits.shape)}.")
+    if target_bpe_ids.shape != token_examples.shape or target_bpe_ids.ndim != 1:
+        raise ValueError("target_bpe_ids and token_examples must be matching rank-one tensors.")
+    if horizon < 1 or scale <= 0:
+        raise ValueError(f"horizon and scale must be positive, got {horizon} and {scale}.")
+    if action_logits.shape[1] != token_lengths.numel():
+        raise ValueError(
+            f"FAST action vocab mismatch: logits have {action_logits.shape[1]} columns but "
+            f"the tokenizer has {token_lengths.numel()} tokens."
+        )
+
+    device = action_logits.device
+    token_lengths = token_lengths.to(device=device, dtype=torch.long)
+    value_bins_by_offset = value_bins_by_offset.to(device=device, dtype=torch.long)
+    coefficient_values = coefficient_values.to(device=device, dtype=action_logits.dtype)
+    num_bins = int(coefficient_values.numel())
+    components: dict[str, list[Tensor]] = {"ordinal_ce": [], "path_mse": [], "shape_mse": []}
+
+    for example_idx in range(batch_size):
+        rows = (token_examples == example_idx).nonzero(as_tuple=False).flatten()
+        if rows.numel() == 0:
+            raise RuntimeError(f"FAST auxiliary found no action BPE tokens for example {example_idx}.")
+        targets = target_bpe_ids[rows]
+        lengths = token_lengths[targets]
+        if bool((lengths <= 0).any()):
+            raise RuntimeError("FAST action BPE tokens must each decode to at least one coefficient.")
+        num_slots = int(lengths.sum().item())
+        if num_slots % horizon != 0:
+            raise RuntimeError(
+                f"FAST tokens decode to {num_slots} coefficients, which does not tile horizon {horizon}."
+            )
+        if num_slots > value_bins_by_offset.shape[0]:
+            raise RuntimeError(
+                f"FAST auxiliary tables cover {value_bins_by_offset.shape[0]} offsets, "
+                f"but this example needs {num_slots}."
+            )
+        action_dim = num_slots // horizon
+        token_starts = lengths.cumsum(0) - lengths
+        slot_token = torch.repeat_interleave(torch.arange(rows.numel(), device=device), lengths)
+        slot_offsets = torch.arange(num_slots, device=device) - torch.repeat_interleave(token_starts, lengths)
+        slot_rows = rows[slot_token]
+        slot_targets = targets[slot_token]
+        group_ids = value_bins_by_offset[slot_offsets]
+        target_bins = group_ids[
+            torch.arange(num_slots, device=device),
+            slot_targets,
+        ]
+        if bool(target_bins.eq(num_bins).any()):
+            raise RuntimeError(
+                "A ground-truth FAST token did not reach one of the coefficient slots it must tile."
+            )
+
+        slot_logits = action_logits[slot_rows].float()
+        log_bin_masses = _grouped_logsumexp(slot_logits, group_ids, num_bins)
+        ordinal_by_slot = _cumulative_ordinal_ce_from_log_masses(log_bin_masses, target_bins)
+        log_total = torch.logsumexp(log_bin_masses, dim=-1, keepdim=True)
+        bin_probabilities = torch.exp(log_bin_masses - log_total)
+        coefficient_mean = (bin_probabilities * coefficient_values[None, :]).sum(dim=-1)
+        target_values = target_bins.to(dtype=coefficient_mean.dtype) + float(coefficient_min)
+        squared_error = (coefficient_mean - target_values).square()
+
+        path_mse = squared_error.mean() / float(scale) ** 2
+        if horizon == 1:
+            shape_mse = torch.zeros_like(path_mse)
+        else:
+            frequency = torch.arange(num_slots, device=device) // action_dim
+            eigenvalue = (
+                4.0 * torch.sin(math.pi * frequency.to(dtype=torch.float32) / (2.0 * float(horizon))).square()
+            )
+            shape_mse = (eigenvalue * squared_error).sum() / ((horizon - 1) * action_dim * float(scale) ** 2)
+
+        components["ordinal_ce"].append(ordinal_by_slot.mean())
+        components["path_mse"].append(path_mse)
+        components["shape_mse"].append(shape_mse)
+
+    return {name: torch.stack(values) for name, values in components.items()}
+
+
+def _build_fast_auxiliary_token_tables(
+    action_tokenizer: Any,
+    token_id_to_bpe_id: dict[int, int],
+    *,
+    max_slots: int,
+) -> dict[str, Any]:
+    """Decode the static FAST BPE vocabulary and align it with the LM token IDs."""
+    bpe = action_tokenizer.bpe_tokenizer
+    vocab_size = int(bpe.vocab_size)
+    if max_slots < 1:
+        raise ValueError(f"max_slots must be positive, got {max_slots}.")
+
+    bpe_id_to_lm_id: list[int | None] = [None] * vocab_size
+    for lm_token_id, bpe_id in token_id_to_bpe_id.items():
+        if not 0 <= int(bpe_id) < vocab_size:
+            continue
+        if bpe_id_to_lm_id[int(bpe_id)] is not None:
+            raise RuntimeError(f"Multiple LM tokens map to FAST BPE id {bpe_id}.")
+        bpe_id_to_lm_id[int(bpe_id)] = int(lm_token_id)
+    missing = [idx for idx, lm_id in enumerate(bpe_id_to_lm_id) if lm_id is None]
+    if missing:
+        raise RuntimeError(
+            f"The checkpoint is missing LM tokens for {len(missing)} FAST BPE ids; "
+            f"first missing ids: {missing[:8]}."
+        )
+
+    decoded_values: list[list[int]] = []
+    token_lengths: list[int] = []
+    coefficient_min: int | None = None
+    coefficient_max: int | None = None
+    min_token = int(action_tokenizer.min_token)
+    for bpe_id in range(vocab_size):
+        decoded = bpe.decode([bpe_id])
+        values = [ord(char) + min_token for char in decoded]
+        if not values:
+            raise RuntimeError(f"FAST BPE token {bpe_id} decodes to no coefficients.")
+        decoded_values.append(values)
+        token_lengths.append(len(values))
+        visible = values[:max_slots]
+        if visible:
+            local_min, local_max = min(visible), max(visible)
+            coefficient_min = local_min if coefficient_min is None else min(coefficient_min, local_min)
+            coefficient_max = local_max if coefficient_max is None else max(coefficient_max, local_max)
+    if coefficient_min is None or coefficient_max is None or coefficient_min == coefficient_max:
+        raise RuntimeError("FAST coefficient support must contain at least two ordered values.")
+
+    num_bins = coefficient_max - coefficient_min + 1
+    # ``num_bins`` is the sentinel/drop group used when a candidate token does not
+    # reach an offset. Real coefficient bins occupy [0, num_bins).
+    value_bins_by_offset = torch.full((max_slots, vocab_size), num_bins, dtype=torch.long)
+    for bpe_id, values in enumerate(decoded_values):
+        visible = values[:max_slots]
+        if visible:
+            value_bins_by_offset[: len(visible), bpe_id] = torch.tensor(
+                [value - coefficient_min for value in visible], dtype=torch.long
+            )
+
+    return {
+        "action_lm_ids": torch.tensor(bpe_id_to_lm_id, dtype=torch.long),
+        "token_lengths": torch.tensor(token_lengths, dtype=torch.long),
+        "value_bins_by_offset": value_bins_by_offset,
+        "coefficient_values": torch.arange(coefficient_min, coefficient_max + 1, dtype=torch.float32),
+        "coefficient_min": coefficient_min,
+        "scale": float(action_tokenizer.scale),
+    }
 
 
 _MODEL_INPUT_KEYS = {
@@ -350,6 +569,10 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
         self._lerobot_state_history = None  # consume-once, like the vision stash
         depth = getattr(self, "_lerobot_depth", None)
         self._lerobot_depth = None  # consume-once, like the vision stash
+        # Per-forward seam telemetry. Reset before handling optional modalities so
+        # depth-free/subtask forwards cannot leave stale values for the trainer.
+        self._lerobot_rgb_input_rms = None
+        self._lerobot_depth_input_rms = None
         if images is not None or state_history is not None or depth is not None:
             flat_x = x.reshape(-1, x.shape[-1]).clone()
             if images is not None:
@@ -360,6 +583,9 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
                         f"Expected {int(is_image_patch.sum())} image patch embeddings, got {len(image_features)}."
                     )
                 flat_x[is_image_patch] = flat_x[is_image_patch] + image_features
+                self._lerobot_rgb_input_rms = (
+                    flat_x[is_image_patch].detach().float().square().mean().sqrt()
+                )
             if state_history is not None:
                 # Continuous state-history tokens (04_memory.md §2.4): projected past
                 # states ADDED onto the STATE_HISTORY_TOKEN placeholder embeddings,
@@ -373,13 +599,16 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
                     raise RuntimeError(
                         f"State-history placeholders per sample must be 0 or {t_h}, got {counts.tolist()}."
                     )
-                flat_x[is_state.reshape(-1)] += embeds.to(flat_x.dtype)[counts > 0].reshape(-1, embeds.shape[-1])
+                flat_x[is_state.reshape(-1)] += embeds.to(flat_x.dtype)[counts > 0].reshape(
+                    -1, embeds.shape[-1]
+                )
             if depth is not None:
-                # Point-map depth tokens ADDED onto the DEPTH_TOKEN placeholders, mirroring
-                # the image-patch scatter. Unlike state history the clause is never dropped
+                # Point-map depth tokens replace the arbitrary DEPTH_TOKEN base embedding
+                # with depth_marker + projected features, mirroring the image-patch value.
+                # Unlike state history the clause is never dropped
                 # (modality dropout swaps the encoder's null bank instead), so every sample
                 # carries exactly N placeholders.
-                embeds, token_id = depth  # (B, N, D), int
+                embeds, token_id, marker = depth  # (B, N, D), int, (D,)
                 is_depth = input_ids == token_id
                 counts = is_depth.sum(dim=1)
                 n_depth = int(embeds.shape[1])
@@ -387,7 +616,15 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
                     raise RuntimeError(
                         f"Expected {n_depth} depth placeholders per sample, got {counts.tolist()}."
                     )
-                flat_x[is_depth.reshape(-1)] += embeds.to(flat_x.dtype).reshape(-1, embeds.shape[-1])
+                # Match RGB exactly: modality marker plus projected visual feature.
+                # Assignment intentionally removes the unrelated <extra_1> embedding.
+                depth_values = marker.to(flat_x.dtype) + embeds.to(flat_x.dtype).reshape(
+                    -1, embeds.shape[-1]
+                )
+                flat_x[is_depth.reshape(-1)] = depth_values
+                self._lerobot_depth_input_rms = (
+                    depth_values.detach().float().square().mean().sqrt()
+                )
             x = flat_x.reshape_as(x)
 
         x = self.transformer.emb_drop(x)
@@ -638,7 +875,6 @@ def _patch_memory_efficient_vision_backbone(
         if self.num_prefix_tokens > 0:
             image_features = image_features[:, 1:]
         image_features = image_features.view(batch_size, num_crops, num_patches, -1)
-
 
         return image_features
 
@@ -1002,6 +1238,118 @@ def _patch_numpy_dtype_cast(backbone: Any) -> None:
     backbone_module._to_numpy = _to_numpy_patched
 
 
+_DEPTH_PARAMETER_NAMES = ("pointmap_encoder", "depth_visual", "depth_marker")
+
+
+class DepthVisualBackbone(nn.Module):
+    """Separate depth copy of Molmo's tested image-token integration path.
+
+    The point-map CNN already supplies fine-grid tokens and metric position features,
+    so this wrapper starts at the RGB ViT-block seam. It deep-copies selected RGB
+    blocks, the 2D attention pooler, feature dropout, and gated projector; no weights
+    are shared with RGB after construction.
+    """
+
+    def __init__(
+        self,
+        config: Any,
+        source_vision_backbone: nn.Module,
+        *,
+        gradient_checkpointing: bool = False,
+    ) -> None:
+        super().__init__()
+        self.config = config
+        self.gradient_checkpointing = gradient_checkpointing
+
+        source_vit = source_vision_backbone.image_vit
+        source_blocks = source_vit.transformer.resblocks
+        source_indices = tuple(int(index) for index in config.visual_source_indices)
+        if max(source_indices) >= len(source_blocks) or min(source_indices) < 0:
+            raise ValueError(
+                f"depth visual source indices {source_indices} do not fit the "
+                f"{len(source_blocks)} available RGB ViT blocks."
+            )
+        source_width = int(source_vision_backbone.vit_config.hidden_size)
+        if int(config.token_width) != source_width:
+            raise ValueError(
+                f"depth token_width={config.token_width} must match RGB ViT width={source_width}."
+            )
+
+        # Initialization comes from proportionally spaced RGB stages, but deepcopy
+        # makes this an entirely independent seven-block depth path.
+        self.blocks = nn.ModuleList(copy.deepcopy(source_blocks[index]) for index in source_indices)
+        self.feature_dropout = copy.deepcopy(source_vision_backbone.image_feature_dropout)
+        self.pooler = copy.deepcopy(source_vision_backbone.image_pooling_2d)
+        self.projector = copy.deepcopy(source_vision_backbone.image_projector)
+
+        expected_pool_width = source_width * 2
+        if int(self.pooler.wq.in_features) != expected_pool_width:
+            raise ValueError(
+                f"copied image pooler expects {self.pooler.wq.in_features} input features; "
+                f"the two depth taps produce {expected_pool_width}."
+            )
+        if int(self.projector.w1.in_features) != int(self.pooler.wo.out_features):
+            raise ValueError("copied image pooler/projector dimensions do not match.")
+        self.last_rms: dict[str, Tensor] = {}
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return next(self.blocks.parameters()).dtype
+
+    def _run_block(self, block: nn.Module, x: Tensor) -> Tensor:
+        if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
+            return torch.utils.checkpoint.checkpoint(block, x, use_reentrant=False)
+        return block(x)
+
+    def forward(self, fine_tokens: Tensor) -> Tensor:
+        """(B, 768, 1152) -> (B, 192, text_width) for the production config."""
+        fine_h, fine_w = self.config.fine_grid_size
+        expected_tokens = fine_h * fine_w
+        if (
+            fine_tokens.ndim != 3
+            or int(fine_tokens.shape[1]) != expected_tokens
+            or int(fine_tokens.shape[2]) != int(self.config.token_width)
+        ):
+            raise ValueError(
+                f"depth visual path expects (B, {expected_tokens}, {self.config.token_width}), "
+                f"got {tuple(fine_tokens.shape)}."
+            )
+
+        x = fine_tokens.to(dtype=self.dtype)
+        fine_rms = x.detach().float().square().mean().sqrt()
+        tap_states: dict[int, Tensor] = {}
+        taps = tuple(int(tap) for tap in self.config.visual_feature_taps)
+        for block_number, block in enumerate(self.blocks, start=1):
+            x = self._run_block(block, x)
+            if block_number in taps:
+                tap_states[block_number] = x
+
+        early_tap, late_tap = taps
+        features = torch.cat([tap_states[late_tap], tap_states[early_tap]], dim=-1)
+        features = self.feature_dropout(features)
+
+        pool_h, pool_w = self.config.pooling_size
+        out_h, out_w = self.config.pooled_grid_size
+        batch_size, _, feature_dim = features.shape
+        groups = (
+            features.reshape(batch_size, out_h, pool_h, out_w, pool_w, feature_dim)
+            .permute(0, 1, 3, 2, 4, 5)
+            .reshape(batch_size * out_h * out_w, pool_h * pool_w, feature_dim)
+        )
+        query = groups.mean(dim=1, keepdim=True)
+        pooled = self.pooler(query, groups, attn_mask=None)
+        pooled = pooled.reshape(batch_size, out_h * out_w, pooled.shape[-1])
+        projected = self.projector(pooled)
+        # Detached scalars locate any scale drift without retaining the activation graph.
+        self.last_rms = {
+            "fine": fine_rms,
+            f"block{early_tap}": tap_states[early_tap].detach().float().square().mean().sqrt(),
+            f"block{late_tap}": tap_states[late_tap].detach().float().square().mean().sqrt(),
+            "projected": projected.detach().float().square().mean().sqrt(),
+        }
+        return projected
+
+
 class MolmoAct2Policy(PreTrainedPolicy):
     config_class = MolmoAct2Config
     name = "molmoact2"
@@ -1025,7 +1373,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self._rollout_index_for_task = -1
         self.rtc_processor: RTCProcessor | None = None
         self.action_tokenizer: Any | None = None
+        self.register_buffer("_fast_aux_action_lm_ids", None, persistent=False)
+        self.register_buffer("_fast_aux_token_lengths", None, persistent=False)
+        self.register_buffer("_fast_aux_value_bins_by_offset", None, persistent=False)
+        self.register_buffer("_fast_aux_coefficient_values", None, persistent=False)
+        self._fast_aux_coefficient_min: int | None = None
+        self._fast_aux_scale: float | None = None
         self._load_hf_model()
+        if self.config.discrete_action_auxiliary_loss.enabled:
+            self._initialize_fast_auxiliary_tables()
         self._validate_inference_action_mode()
         if self.config.enable_lora_vlm:
             self._apply_lora_adapters()
@@ -1150,37 +1506,41 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
 
-        # Point-map depth (fresh float32 modules; tokens cast to the model dtype at the
-        # scatter). Depth enters the VLM PREFIX: the encoder emits N tokens, depth_adapter
-        # lifts them to the text-embedding width, and build_input_embeddings adds them onto
-        # the DEPTH_TOKEN placeholders — the same seam as state history, and the same seam
-        # the pretrained trunk already uses for image patches. No separate depth tower.
+        # Point-map depth mirrors Molmo's image path after patch extraction. The CNN
+        # emits a 24x32 fine grid; independent copies of seven pretrained RGB ViT
+        # blocks produce H3/H7, then copied RGB pooling/projector modules produce the
+        # 12x16 prefix grid. Only initialization is shared: RGB/depth parameters are
+        # separate and can co-adapt without either modality overwriting the other.
         self.pointmap_encoder: DepthPointmapEncoder | None = None
-        self.depth_adapter: nn.Sequential | None = None
+        self.depth_visual: DepthVisualBackbone | None = None
+        self.depth_marker: nn.Parameter | None = None
+        # Legacy key remains the visual projector output / embedding-table RMS.
+        # Separate seam metrics below report marker+feature and depth/RGB directly.
+        self._depth_token_rms: Tensor | None = None
+        self._depth_injected_rms: Tensor | None = None
+        self._depth_stage_rms: dict[str, Tensor] = {}
         if self.config.pointmap_config is not None:
             pm_config = self.config.pointmap_config
+            backbone = self._backbone()
             device = next(self.model.parameters()).device
-            d_text = int(self._hf_model().config.text_config.hidden_size)
             self.pointmap_encoder = DepthPointmapEncoder(
                 pm_config,
                 d_mem=pm_config.token_width,
                 gradient_checkpointing=bool(self.config.gradient_checkpointing),
             ).to(device=device, dtype=torch.float32)
-            self.depth_adapter = nn.Sequential(
-                nn.LayerNorm(pm_config.token_width),
-                nn.Linear(pm_config.token_width, d_text),
-                nn.LayerNorm(d_text),
-            ).to(device=device, dtype=torch.float32)
-            # Emit at the scale of the token-embedding table these tokens are added onto.
-            # Too loud perturbs the pretrained trunk; too quiet and the trunk ignores the
-            # span and the adapter has no reason to leave that basin. Learnable per-dim.
-            self._depth_embed_rms = _token_embedding_rms(self._backbone())
+            self.depth_visual = DepthVisualBackbone(
+                pm_config,
+                backbone.vision_backbone,
+                gradient_checkpointing=bool(self.config.gradient_checkpointing),
+            )
+            # A distinct marker, initialized from the exact marker used by RGB. At
+            # scatter time it replaces the arbitrary <extra_1> placeholder embedding.
             with torch.no_grad():
-                self.depth_adapter[-1].weight.fill_(self._depth_embed_rms)
-            # Telemetry handle: 0-dim tensor written by _stash_depth_inputs, read (and
-            # host-synced) by the trainer only on capture steps. Ratio against
-            # _depth_embed_rms is the "is the adapter opting out?" signal.
-            self._depth_token_rms: Tensor | None = None
+                image_patch_id = torch.tensor([backbone.config.image_patch_id], device=device)
+                marker = backbone.transformer.wte(image_patch_id)[0].detach().clone()
+            self.depth_marker = nn.Parameter(marker)
+            # Keep the existing telemetry denominator for continuity with old runs.
+            self._depth_embed_rms = _token_embedding_rms(backbone)
 
         # Continuous state-history tokens (04_memory.md §2.4): one shared linear
         # projecting a past proprio state into the text embedding space, scattered
@@ -1195,9 +1555,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # Parameters and exposes no .weight.
             d_text = int(self._hf_model().config.text_config.hidden_size)
             device = next(self.model.parameters()).device
-            self.state_history_projector = nn.Linear(
-                int(state_feature.shape[0]), d_text
-            ).to(device=device, dtype=torch.float32)
+            self.state_history_projector = nn.Linear(int(state_feature.shape[0]), d_text).to(
+                device=device, dtype=torch.float32
+            )
 
         self.train(self.training)
 
@@ -1293,8 +1653,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         trainable_params = 0
         for name, param in self.named_parameters():
             param.requires_grad = any(
-                key in name
-                for key in ("action_expert", "pointmap_encoder", "depth_adapter")
+                key in name for key in ("action_expert", *_DEPTH_PARAMETER_NAMES)
             )
             if param.requires_grad:
                 trainable_params += param.numel()
@@ -1355,7 +1714,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         for name, param in self.named_parameters():
             if not param.requires_grad:
                 continue
-            if any(key in name for key in ("pointmap_encoder", "depth_adapter")):
+            if any(key in name for key in _DEPTH_PARAMETER_NAMES):
                 depth_params.append(param)
             elif "action_expert" in name:
                 action_expert_params.append(param)
@@ -1382,8 +1741,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if action_expert_params:
             groups.append({"params": action_expert_params, "lr": self.config.optimizer_action_expert_lr})
         if depth_params:
-            # Fresh module trained from scratch: use the action-expert LR, not the slow VLM rate.
-            groups.append({"params": depth_params, "lr": self.config.optimizer_action_expert_lr})
+            # Separate group for visibility; numerically identical to joint VLM training.
+            groups.append({"params": depth_params, "lr": self.config.optimizer_lr})
         return groups
 
     def _model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -1432,8 +1791,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
             backbone._lerobot_state_history = (embeds, int(batch["state_history_token_id"]))
 
     def _stash_depth_inputs(self, batch: dict[str, Tensor]) -> None:
-        """Point-map depth transport. The encoder + adapter run HERE, once per forward, and
-        the tokens are stashed on the backbone for build_input_embeddings to add onto the
+        """Point-map depth transport. The CNN + copied visual path run HERE once per
+        forward, and projected tokens are stashed for build_input_embeddings to place on
         DEPTH_TOKEN placeholders. Consume-once, like the vision and state stashes; every
         forward path funnels through _model_inputs, so a stash never crosses forwards.
 
@@ -1455,10 +1814,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
         tokens = self.pointmap_encoder.memory_from_batch(
             batch, batch_size=int(batch["input_ids"].shape[0]), device=device
         )
-        adapted = self.depth_adapter(tokens)
+        if self.depth_visual is None or self.depth_marker is None:
+            raise RuntimeError("pointmap_encoder exists without its depth visual path.")
+        projected = self.depth_visual(tokens)
+        injected = projected + self.depth_marker.to(projected.dtype)
         # Kept on-device (no .item(), no sync); the trainer converts on capture steps.
-        self._depth_token_rms = adapted.detach().float().pow(2).mean().sqrt()
-        backbone._lerobot_depth = (adapted, int(token_id))
+        self._depth_token_rms = projected.detach().float().square().mean().sqrt()
+        self._depth_injected_rms = injected.detach().float().square().mean().sqrt()
+        self._depth_stage_rms = dict(self.depth_visual.last_rms)
+        backbone._lerobot_depth = (projected, int(token_id), self.depth_marker)
 
     def _run_prefix_backbone(self, model_inputs: dict[str, Tensor]) -> Any:
         """Run the prefix backbone forward (``use_cache``); ``outputs`` carries past_key_values."""
@@ -1595,6 +1959,37 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 token=_hf_token(),
             )
         return self.action_tokenizer
+
+    def _initialize_fast_auxiliary_tables(self) -> None:
+        token_id_to_bpe_id = self._action_token_id_to_bin()
+        if not token_id_to_bpe_id:
+            raise RuntimeError(
+                "FAST discrete auxiliary loss requires indexed action tokens in the checkpoint."
+            )
+        action_feature = self.config.action_feature
+        action_dim = (
+            int(action_feature.shape[0])
+            if action_feature is not None and action_feature.shape
+            else int(self.config.expected_max_action_dim)
+        )
+        tables = _build_fast_auxiliary_token_tables(
+            self._load_discrete_action_tokenizer(),
+            token_id_to_bpe_id,
+            max_slots=int(self.config.chunk_size) * action_dim,
+        )
+        lm_vocab_size = int(self.model.lm_head.weight.shape[0])
+        action_lm_ids = tables["action_lm_ids"]
+        if bool(((action_lm_ids < 0) | (action_lm_ids >= lm_vocab_size)).any()):
+            raise RuntimeError(
+                "The checkpoint FAST action-token mapping contains an ID outside the LM vocabulary."
+            )
+        device = self.model.lm_head.weight.device
+        self._fast_aux_action_lm_ids = action_lm_ids.to(device=device)
+        self._fast_aux_token_lengths = tables["token_lengths"].to(device=device)
+        self._fast_aux_value_bins_by_offset = tables["value_bins_by_offset"].to(device=device)
+        self._fast_aux_coefficient_values = tables["coefficient_values"].to(device=device)
+        self._fast_aux_coefficient_min = int(tables["coefficient_min"])
+        self._fast_aux_scale = float(tables["scale"])
 
     def _resolve_inference_action_mode(self, requested_mode: str | None) -> str:
         training_mode = self._training_action_mode()
@@ -1894,9 +2289,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         hidden_states, causal_mask_mapping, position_ids, cache_position = (
             self._prepare_joint_training_backbone_inputs(model_inputs)
         )
-        sensitivity_capture = bool(
-            _MOLMOACT2_PROBING_CAPTURE.get("capture_action_sensitivity", False)
-        )
+        sensitivity_capture = bool(_MOLMOACT2_PROBING_CAPTURE.get("capture_action_sensitivity", False))
         if sensitivity_capture:
             # Probe boundary: actual multimodal transformer inputs after image
             # patching/token embedding. Forward values are unchanged.
@@ -2045,9 +2438,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     use_reentrant=False,
                 )
             else:
-                hidden_states, action_hidden = run_layer(
-                    layer_idx, hidden_states, action_hidden
-                )
+                hidden_states, action_hidden = run_layer(layer_idx, hidden_states, action_hidden)
 
         hidden_states = transformer.ln_f(hidden_states)
         pred_velocity = action_expert.final_layer(action_hidden, conditioning)
@@ -2084,9 +2475,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         if apply_action_auxiliary:
             hold = batch.get(ACTION_HOLD_KEY)
             if hold is None:
-                raise ValueError(
-                    f"Enabled action auxiliary loss requires batch[{ACTION_HOLD_KEY!r}]."
-                )
+                raise ValueError(f"Enabled action auxiliary loss requires batch[{ACTION_HOLD_KEY!r}].")
             hold = hold.to(device=actions.device, dtype=actions.dtype)
             clean_prediction = xt + (1.0 - t_broadcast) * pred_velocity
             auxiliary_components = _action_trajectory_components_with_padding(
@@ -2097,11 +2486,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 action_dim_is_pad=batch.get("action_dim_is_pad"),
                 eps=self.config.action_auxiliary_loss.eps,
             )
-            auxiliary_loss_by_example, auxiliary_diagnostics = (
-                _thresholded_action_auxiliary_loss(
-                    auxiliary_components,
-                    self.config.action_auxiliary_loss,
-                )
+            auxiliary_loss_by_example, auxiliary_diagnostics = _thresholded_action_auxiliary_loss(
+                auxiliary_components,
+                self.config.action_auxiliary_loss,
             )
             loss_by_example = flow_loss_by_example + auxiliary_loss_by_example
         diagnostics: dict[str, Tensor] = {}
@@ -2121,9 +2508,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 ).mean(dim=(1, 3)),
             }
             if apply_action_auxiliary:
-                diagnostics["action_auxiliary_loss_per_sample"] = (
-                    auxiliary_loss_by_example.detach().float()
-                )
+                diagnostics["action_auxiliary_loss_per_sample"] = auxiliary_loss_by_example.detach().float()
                 diagnostics["action_auxiliary_components"] = {
                     key: value.detach().float() for key, value in auxiliary_components.items()
                 }
@@ -2180,7 +2565,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         outputs: Any,
         reduction: str = "mean",
         return_diagnostics: bool = False,
-    ) -> tuple[Tensor, Tensor | None, dict[str, Tensor]]:
+    ) -> tuple[Tensor, Tensor | None, Tensor | None, dict[str, Any]]:
         """FAST-token cross-entropy, optionally with the per-token readouts the
         objective probe scores: unweighted CE, top-1/top-5 hits, and each token's
         rank inside its example's action span (the FAST span runs coarse → fine, so
@@ -2206,39 +2591,34 @@ class MolmoAct2Policy(PreTrainedPolicy):
         selected_labels = shift_labels.reshape(-1)[valid_positions.reshape(-1)].to(
             device=hidden_states.device
         )
+        token_example = valid_positions.nonzero(as_tuple=False)[:, 0].to(device=hidden_states.device)
         logits = F.linear(selected_hidden, self.model.lm_head.weight).float()
         log_z = logits.logsumexp(dim=-1)
         target_logits = logits.gather(dim=-1, index=selected_labels[:, None]).squeeze(-1)
         token_ce_loss = log_z - target_logits
         token_weights = self._discrete_token_weights(valid_positions)
         if reduction == "none":
-            example_indices = valid_positions.nonzero(as_tuple=False)[:, 0].to(device=hidden_states.device)
             ce_loss = self._weighted_per_example(
                 token_ce_loss,
                 token_weights,
-                example_indices,
+                token_example,
                 int(labels.shape[0]),
             )
         else:
             ce_loss = self._weighted_mean(token_ce_loss, token_weights)
 
-        diagnostics: dict[str, Tensor] = {}
+        diagnostics: dict[str, Any] = {}
         if return_diagnostics:
             # nonzero() returns (example, position) pairs in row-major order, so the
             # rows of one example are already in sequence order and its token's rank
             # in the span is its offset from that example's first row.
-            token_example = valid_positions.nonzero(as_tuple=False)[:, 0].to(device=hidden_states.device)
             counts = valid_positions.sum(dim=1)
             starts = counts.cumsum(0) - counts
             top5 = logits.topk(5, dim=-1).indices
             diagnostics = {
                 "discrete_token_ce": token_ce_loss.detach().float(),
-                "discrete_token_top1": (
-                    logits.argmax(dim=-1) == selected_labels
-                ).detach().float(),
-                "discrete_token_top5": (
-                    top5 == selected_labels[:, None]
-                ).any(dim=-1).detach().float(),
+                "discrete_token_top1": (logits.argmax(dim=-1) == selected_labels).detach().float(),
+                "discrete_token_top5": (top5 == selected_labels[:, None]).any(dim=-1).detach().float(),
                 "discrete_token_example": token_example,
                 "discrete_token_position": (
                     torch.arange(token_example.numel(), device=token_example.device)
@@ -2247,21 +2627,86 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 "discrete_tokens_per_example": counts.detach().long(),
             }
 
+        discrete_auxiliary_loss: Tensor | None = None
+        discrete_auxiliary_config = self.config.discrete_action_auxiliary_loss
+        if discrete_auxiliary_config.enabled:
+            tables = (
+                self._fast_aux_action_lm_ids,
+                self._fast_aux_token_lengths,
+                self._fast_aux_value_bins_by_offset,
+                self._fast_aux_coefficient_values,
+            )
+            if any(table is None for table in tables):
+                raise RuntimeError("FAST auxiliary tables were not initialized.")
+            if self._fast_aux_coefficient_min is None or self._fast_aux_scale is None:
+                raise RuntimeError("FAST auxiliary coefficient metadata was not initialized.")
+            action_lm_ids = self._fast_aux_action_lm_ids.to(device=selected_labels.device, dtype=torch.long)
+            label_matches = selected_labels[:, None] == action_lm_ids[None, :]
+            if bool((label_matches.sum(dim=-1) > 1).any()):
+                raise RuntimeError("One LM label maps to multiple FAST BPE ids.")
+            is_action_token = label_matches.any(dim=-1)
+            target_bpe_ids = label_matches[is_action_token].to(dtype=torch.long).argmax(dim=-1)
+            action_logits = logits[is_action_token][:, action_lm_ids]
+            auxiliary_components = _fast_action_auxiliary_components(
+                action_logits,
+                target_bpe_ids,
+                token_example[is_action_token],
+                token_lengths=self._fast_aux_token_lengths,
+                value_bins_by_offset=self._fast_aux_value_bins_by_offset,
+                coefficient_values=self._fast_aux_coefficient_values,
+                coefficient_min=self._fast_aux_coefficient_min,
+                horizon=int(self.config.chunk_size),
+                scale=self._fast_aux_scale,
+                batch_size=int(labels.shape[0]),
+            )
+            auxiliary_by_example = (
+                float(discrete_auxiliary_config.ordinal_weight) * auxiliary_components["ordinal_ce"]
+                + float(discrete_auxiliary_config.path_weight) * auxiliary_components["path_mse"]
+                + float(discrete_auxiliary_config.shape_weight) * auxiliary_components["shape_mse"]
+            )
+            discrete_auxiliary_loss = (
+                auxiliary_by_example if reduction == "none" else auxiliary_by_example.mean()
+            )
+            diagnostics.update(
+                {
+                    "discrete_ordinal_auxiliary_loss": auxiliary_components["ordinal_ce"]
+                    .detach()
+                    .float()
+                    .mean()
+                    .item(),
+                    "discrete_path_auxiliary_mse": auxiliary_components["path_mse"]
+                    .detach()
+                    .float()
+                    .mean()
+                    .item(),
+                    "discrete_shape_auxiliary_mse": auxiliary_components["shape_mse"]
+                    .detach()
+                    .float()
+                    .mean()
+                    .item(),
+                }
+            )
+            if return_diagnostics:
+                diagnostics["discrete_auxiliary_loss_per_sample"] = auxiliary_by_example.detach().float()
+                diagnostics["discrete_auxiliary_components"] = {
+                    name: value.detach().float() for name, value in auxiliary_components.items()
+                }
+
         if not self.config.softmax_auxiliary_loss:
-            return ce_loss, None, diagnostics
+            return ce_loss, None, discrete_auxiliary_loss, diagnostics
 
         if reduction == "none":
             z_loss = self.config.softmax_auxiliary_loss_scale * self._weighted_per_example(
                 log_z.pow(2),
                 token_weights,
-                example_indices,
+                token_example,
                 int(labels.shape[0]),
             )
         else:
             z_loss = self.config.softmax_auxiliary_loss_scale * self._weighted_mean(
                 log_z.pow(2), token_weights
             )
-        return ce_loss, z_loss, diagnostics
+        return ce_loss, z_loss, discrete_auxiliary_loss, diagnostics
 
     @staticmethod
     def _extract_discrete_token_bins(
@@ -2667,6 +3112,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         metrics: dict[str, Any] = {}
         auxiliary_enabled = bool(self.config.action_auxiliary_loss.enabled)
         flow_diagnostics_requested = return_diagnostics or auxiliary_enabled
+        discrete_auxiliary_loss: Tensor | None = None
 
         if self.config.action_mode == "discrete":
             outputs = self._backbone()(
@@ -2675,18 +3121,22 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 output_attentions=False,
                 output_hidden_states=False,
             )
-            discrete_ce_loss, discrete_z_loss, discrete_diagnostics = (
+            discrete_ce_loss, discrete_z_loss, discrete_auxiliary_loss, discrete_diagnostics = (
                 self._discrete_loss_from_backbone_outputs(
                     batch, outputs, reduction=reduction, return_diagnostics=return_diagnostics
                 )
             )
-            discrete_loss = (
-                discrete_ce_loss if discrete_z_loss is None else discrete_ce_loss + discrete_z_loss
-            )
+            discrete_loss = discrete_ce_loss
+            if discrete_z_loss is not None:
+                discrete_loss = discrete_loss + discrete_z_loss
+            if discrete_auxiliary_loss is not None:
+                discrete_loss = discrete_loss + discrete_auxiliary_loss
             losses.append(discrete_loss)
             metrics["discrete_ce_loss"] = discrete_ce_loss.detach().float().mean().item()
             if discrete_z_loss is not None:
                 metrics["discrete_z_loss"] = discrete_z_loss.detach().float().mean().item()
+            if discrete_auxiliary_loss is not None:
+                metrics["discrete_auxiliary_loss"] = discrete_auxiliary_loss.detach().float().mean().item()
             metrics.update(discrete_diagnostics)
 
         elif self.config.action_mode == "continuous":
@@ -2735,18 +3185,22 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # Adapter: the joint flow loop returns a plain tensor, but the shared discrete-loss
             # helper reads .last_hidden_state (the backbone output interface).
             outputs = types.SimpleNamespace(last_hidden_state=hidden_states)
-            discrete_ce_loss, discrete_z_loss, discrete_diagnostics = (
+            discrete_ce_loss, discrete_z_loss, discrete_auxiliary_loss, discrete_diagnostics = (
                 self._discrete_loss_from_backbone_outputs(
                     batch, outputs, reduction=reduction, return_diagnostics=return_diagnostics
                 )
             )
-            discrete_loss = (
-                discrete_ce_loss if discrete_z_loss is None else discrete_ce_loss + discrete_z_loss
-            )
+            discrete_loss = discrete_ce_loss
+            if discrete_z_loss is not None:
+                discrete_loss = discrete_loss + discrete_z_loss
+            if discrete_auxiliary_loss is not None:
+                discrete_loss = discrete_loss + discrete_auxiliary_loss
             losses.append(discrete_loss)
             metrics["discrete_ce_loss"] = discrete_ce_loss.detach().float().mean().item()
             if discrete_z_loss is not None:
                 metrics["discrete_z_loss"] = discrete_z_loss.detach().float().mean().item()
+            if discrete_auxiliary_loss is not None:
+                metrics["discrete_auxiliary_loss"] = discrete_auxiliary_loss.detach().float().mean().item()
             metrics.update(discrete_diagnostics)
             losses.append(flow_loss)
             metrics["action_flow_loss"] = (
@@ -2769,6 +3223,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 metrics["discrete_ce_loss_raw"] = discrete_ce_loss.detach().float()
             if "discrete_z_loss" in metrics and discrete_z_loss is not None:
                 metrics["discrete_z_loss_raw"] = discrete_z_loss.detach().float()
+            if "discrete_auxiliary_loss" in metrics and discrete_auxiliary_loss is not None:
+                metrics["discrete_auxiliary_loss_raw"] = discrete_auxiliary_loss.detach().float()
         return loss, metrics
 
     @torch.no_grad()
@@ -2992,7 +3448,7 @@ def _patched_action_attention(self, q, k, v, *, attn_mask=None, is_causal=False)
         weights = torch.softmax(scores, dim=-1)
         weights.retain_grad()
         bucket[layer_idx] = weights
-        out = torch.matmul(weights, v_h)               # [B, H, S_q, D]
+        out = torch.matmul(weights, v_h)  # [B, H, S_q, D]
         return out.transpose(1, 2).to(q.dtype).contiguous()
 
     # Standard mode: detach + CPU for visualization; output from SDPA fast path.

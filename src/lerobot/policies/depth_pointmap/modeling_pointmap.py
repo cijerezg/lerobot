@@ -14,7 +14,7 @@ position). Recentering each patch to its centroid removes position but keeps met
 scale (a near patch has small Δ, a far one large), so f is translation-invariant
 local shape; the absolute centroid goes to the position encoding g instead.
 
-Emits (B, N, d_mem) tokens. The actor lifts them through depth_adapter into the VLM
+Emits (B, N, d_mem) fine-grid tokens. The actor sends them through its copied visual path into the VLM
 prefix on DEPTH_TOKEN placeholders; the critic still runs them through its own
 DepthStreamBlocks (modeling_stream.py). Units: millimeters.
 
@@ -207,8 +207,8 @@ class PatchShapeCNN(nn.Module):
     """Per-patch 2D CNN over the recentered point map → one feature vector.
 
     Shared across all patches (a conv shares its filters by construction). Applied
-    to (M, C_in, P, P) and global-average-pooled to (M, d_out). For P=40 the three
-    stride-2 blocks downsample 40→20→10→5 before pooling. `blocks` is a ModuleList
+    to (M, C_in, P, P) and global-average-pooled to (M, d_out). For the actor's
+    P=20, the three stride-2 blocks downsample 20→10→5→3 before pooling. `blocks` is a ModuleList
     (same state-dict keys as the former Sequential) so the encoder's history path
     can interleave a TemporalFusion after each block; `out_channels` tells it the
     per-block widths.
@@ -247,7 +247,7 @@ class DepthPointmapEncoder(nn.Module):
         self.config = config
         self.gradient_checkpointing = gradient_checkpointing
         height, width = config.image_size
-        self.num_tokens = (height // config.patch_size) * (width // config.patch_size)
+        self.num_tokens = config.num_fine_tokens
 
         in_channels = 4 + (1 if config.include_centroid_depth else 0)
         self.cnn = PatchShapeCNN(in_channels, config.cnn_hidden_channels, d_mem)
@@ -436,7 +436,7 @@ class DepthPointmapEncoder(nn.Module):
         the learned null bank under modality dropout at train time and whenever
         depth is missing, keeping shapes static.
 
-        Returns memory (B, N, d_mem) — depth_adapter's input on the actor path.
+        Returns fine-grid memory (B, N, d_mem) — the actor visual path's input.
         """
         cfg = self.config
         depth = batch.get(f"observation.depth.{cfg.depth_key}")

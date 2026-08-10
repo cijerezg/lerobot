@@ -48,6 +48,8 @@ from .anchor_encoding import (
     policy_action_with_anchor_to_transition,
 )
 
+_FAST_BIN_PROBE_LIMIT = 2048  # FAST bin values are c - min_token; nothing legitimate exceeds this
+
 ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
 ACTION_START_TOKEN = "<action_start>"  # nosec B105
 ACTION_END_TOKEN = "<action_end>"  # nosec B105
@@ -59,9 +61,9 @@ STATE_TOKEN_PREFIX = "<state_"  # nosec B105
 # token whose input embedding gets the linearly projected state ADDED on top,
 # mirroring the <im_patch> + image-features scatter.
 STATE_HISTORY_TOKEN = "<extra_0>"  # nosec B105
-# Point-map depth placeholders: one position per depth token, scattered by the model
-# inside build_input_embeddings exactly like STATE_HISTORY_TOKEN. Depth enters the VLM
-# prefix here — there is no separate depth tower.
+# Point-map depth placeholders: one position per pooled depth token. The model replaces
+# this reserved token's arbitrary embedding with depth_marker + projected depth features,
+# matching <im_patch> + projected RGB features at the VLM-prefix seam.
 DEPTH_TOKEN = "<extra_1>"  # nosec B105
 
 _QUESTION_TRAILING_SENTENCE_PUNCTUATION = ".,!?;:,\u2026"
@@ -346,24 +348,66 @@ def _as_text_list(value: Any, batch_size: int) -> list[str]:
     raise ValueError(f"Expected {batch_size} task strings, got {len(texts)}.")
 
 
+def _encodable_bin_map(processor: Any) -> np.ndarray:
+    """Nearest encodable bin for every bin value, probed once and cached on the processor.
+
+    The FAST BPE has no UNK token, so a bin whose byte-level form is missing from the
+    vocabulary encodes to *nothing*: the coefficient is deleted, every later value slides
+    down one slot, and because the layout is frequency-major the decoder then reads each
+    joint's coefficients out of its neighbour's cell. One deleted DC value corrupts the
+    whole chunk. The shipped MolmoAct2 tokenizer is missing seven bins below 33 (its
+    initial_alphabet passed raw codepoints where the model consumes byte-level ones) and
+    everything past its fitted range.
+
+    Snapping moves a coefficient by one step at most, i.e. 1 / (scale * sqrt(horizon))
+    in normalized action units, well under the quantization error already present.
+    """
+    cached = getattr(processor, "_encodable_bin_map", None)
+    if cached is not None:
+        return cached
+    bpe = processor.bpe_tokenizer
+    bins = np.arange(_FAST_BIN_PROBE_LIMIT)
+    encodable = np.array([bpe.decode(bpe(chr(b))["input_ids"]) == chr(b) for b in bins])
+    if not encodable.any():
+        raise RuntimeError("FAST action tokenizer cannot encode any bin value.")
+    good = np.flatnonzero(encodable)
+    nearest = good[np.abs(bins[:, None] - good[None, :]).argmin(axis=1)]
+    processor._encodable_bin_map = nearest
+    return nearest
+
+
 def _tokenize_discrete_action(action: np.ndarray, processor: Any) -> list[int]:
+    """FAST encode: DCT over time, quantize, snap to the alphabet, BPE.
+
+    Mirrors UniversalActionProcessor.__call__ but snaps unencodable bins first — see
+    _encodable_bin_map. The coefficient count is asserted because a short span is
+    otherwise silent here and only surfaces as a scrambled training target.
+    """
+    from scipy.fft import dct
+
     arr = np.asarray(action, dtype=np.float32)
-    if arr.ndim == 2:
-        arr = arr[None, :, :]
-    elif arr.ndim == 1:
-        arr = arr[None, None, :]
-    tokens_out = processor(arr)
-    if isinstance(tokens_out, dict):
-        tokens_out = tokens_out.get("input_ids", next(iter(tokens_out.values())))
-    if isinstance(tokens_out, np.ndarray):
-        tokens_out = tokens_out.tolist()
-    if torch.is_tensor(tokens_out):
-        tokens_out = tokens_out.detach().cpu().tolist()
-    if not isinstance(tokens_out, list):
-        raise TypeError(f"Unexpected discrete action tokenizer output type: {type(tokens_out)}")
-    if tokens_out and isinstance(tokens_out[0], (list, tuple, np.ndarray)):
-        tokens_out = tokens_out[0]
-    return [int(token_id) for token_id in tokens_out]
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    elif arr.ndim == 3:
+        if arr.shape[0] != 1:
+            raise ValueError(f"Expected one action chunk, got a batch of {arr.shape[0]}.")
+        arr = arr[0]
+    if arr.ndim != 2:
+        raise ValueError(f"Action must be (horizon, dim), got {arr.shape}.")
+
+    horizon, dim = arr.shape
+    coefficients = np.around(dct(arr, axis=0, norm="ortho") * processor.scale)
+    bins = np.maximum(coefficients.reshape(-1) - processor.min_token, 0).astype(np.int64)
+    bins = _encodable_bin_map(processor)[np.clip(bins, 0, _FAST_BIN_PROBE_LIMIT - 1)]
+    token_ids = processor.bpe_tokenizer("".join(map(chr, bins)))["input_ids"]
+
+    decoded = len(processor.bpe_tokenizer.decode(token_ids))
+    if decoded != horizon * dim:
+        raise RuntimeError(
+            f"FAST encode produced {decoded} coefficients for a {horizon}x{dim} chunk. "
+            "The tokenizer alphabet is dropping values the snap did not cover."
+        )
+    return [int(token_id) for token_id in token_ids]
 
 
 def _build_discrete_action_string(action: np.ndarray, processor: Any) -> str:
@@ -1316,11 +1360,8 @@ def make_molmoact2_pre_post_processors(
     pointmap_cfg = getattr(config, "pointmap_config", None)
     rgb_dropout = pointmap_cfg.rgb_dropout_prob if pointmap_cfg is not None else 0.0
     rgb_dropout_key = pointmap_cfg.depth_key if pointmap_cfg is not None else ""
-    # DEPTH_TOKEN placeholder count = the encoder's patch grid (image_size / patch_size).
-    num_depth_tokens = 0
-    if pointmap_cfg is not None:
-        h, w = pointmap_cfg.image_size
-        num_depth_tokens = (h // pointmap_cfg.patch_size) * (w // pointmap_cfg.patch_size)
+    # DEPTH_TOKEN placeholder count = the 2D attention-pooler's output grid.
+    num_depth_tokens = pointmap_cfg.num_pooled_tokens if pointmap_cfg is not None else 0
 
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),

@@ -438,6 +438,6 @@ Flamingo (per-layer tanh gate precedent); also PointACT 2605.21414, GST-VLA
       top mount)
 - [x] Raw depth end-to-end: uint16 Z16, PNG16 sidecars, no hole-fill in recordings
       (masking lives in the encoder), `depth_units_mm = 0.1`
-- [ ] First joint-softmax training run: watch `depth_attn_mass_mean`/`_max`,
-      `depth_grad_norm_preclip`, and the 2×2 probe's mse(rgb_only) −
-      mse(rgb+depth)
+- [ ] First copied-visual-path training run: watch `depth_rgb_rms_ratio`,
+      `depth_late_early_rms_ratio`, the component pre-clip gradient norms, and the
+      2×2 probe's mse(rgb_only) − mse(rgb+depth)

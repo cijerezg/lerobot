@@ -60,6 +60,18 @@ from lerobot.utils.utils import init_logging
 VAL_COLOR = "#E63946"
 TRAIN_COLOR = "#457B9D"
 
+AUXILIARY_LOSS_KEYS = (
+    "loss_action_aux",
+    "loss_discrete_aux",
+    "action_aux_path_mse",
+    "action_aux_shape_mse",
+    "action_aux_terminal_mse",
+    "action_aux_terminal_direction_loss",
+    "discrete_aux_ordinal_ce",
+    "discrete_aux_path_mse",
+    "discrete_aux_shape_mse",
+)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Measurement setup
@@ -297,6 +309,7 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
         "loss_discrete_z": compare(val_rows, train_rows, "loss_discrete_z"),
         "loss_total": compare(val_rows, train_rows, "loss_total"),
     }
+    summary.update({key: compare(val_rows, train_rows, key) for key in AUXILIARY_LOSS_KEYS})
 
     splits = (("val", val_rows), ("train", train_rows))
 
@@ -778,7 +791,13 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
     _write_index(summary, output_dir)
 
     parts = []
-    for label, entry in (("flow", summary["loss_flow"]), ("FAST CE", summary["loss_discrete_ce"])):
+    for label, key in (
+        ("flow", "loss_flow"),
+        ("flow aux", "loss_action_aux"),
+        ("FAST CE", "loss_discrete_ce"),
+        ("FAST aux", "loss_discrete_aux"),
+    ):
+        entry = summary[key]
         if not entry:
             continue
         parts.append(
@@ -797,7 +816,14 @@ def wandb_scalars(summary: dict) -> dict:
     prefixed pair is what to difference, not val against the live training curve.
     """
     scalars: dict[str, float] = {}
-    for name, key in (("flow", "loss_flow"), ("discrete_ce", "loss_discrete_ce")):
+    headline_keys = (
+        ("flow", "loss_flow"),
+        ("action_aux", "loss_action_aux"),
+        ("discrete_ce", "loss_discrete_ce"),
+        ("discrete_aux", "loss_discrete_aux"),
+    )
+    component_keys = tuple((key, key) for key in AUXILIARY_LOSS_KEYS[2:])
+    for name, key in headline_keys + component_keys:
         entry = summary.get(key) or {}
         for column_name in ("val", "train", "gap", "z"):
             if entry.get(column_name) is not None:
@@ -831,6 +857,19 @@ def _write_index(summary: dict, output_dir: str) -> None:
                    baseline=1.0, primary=True,
                    note="$\\bar{\\mathcal{L}}_{val} / \\bar{\\mathcal{L}}_{train}$. The floor "
                         "compresses this toward 1, so a small excess is a large effect."),
+            Metric("loss_action_aux.val", "Flow auxiliary loss (val)", good="low", fmt=5,
+                   primary=True,
+                   note="Weighted, threshold-gated trajectory auxiliary loss on held-out frames. "
+                        "Absent when the continuous auxiliary family is disabled."),
+            Metric("loss_action_aux.z", "Flow auxiliary gap (standard errors)", good="low", fmt=1,
+                   baseline=0.0, warn=2.0, bad=5.0,
+                   note="Held-out minus training auxiliary loss in pooled SEM units." + provisional),
+            Metric("loss_discrete_aux.val", "FAST auxiliary loss (val)", good="low", fmt=5,
+                   primary=True,
+                   note="Weighted ordinal/path/shape auxiliary loss on held-out FAST logits."),
+            Metric("loss_discrete_aux.z", "FAST auxiliary gap (standard errors)", good="low", fmt=1,
+                   baseline=0.0, warn=2.0, bad=5.0,
+                   note="Held-out minus training FAST auxiliary loss in pooled SEM units." + provisional),
             Metric("loss_discrete_ce.val", "FAST cross-entropy (val)", good="low", fmt=4,
                    primary=True,
                    note="$-\\frac{1}{N}\\sum_j \\log p(y_j \\mid y_{<j}, c)$ over the action-token "

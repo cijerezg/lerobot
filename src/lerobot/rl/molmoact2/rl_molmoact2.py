@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import copy
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import torch
@@ -91,11 +91,9 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     value_support_max: float = 0.0
     hl_gauss_sigma_ratio: float = 5.0
     critic_lr: float = 1e-4
-    # From-scratch depth modules (actor: pointmap_encoder + depth_adapter; critic: its own
-    # depth_encoder/depth_blocks/depth_read_proj, not yet migrated to the prefix seam) get
-    # their own optimizer group: pretrained-lr is too slow for fresh params, and a separate
-    # group name keeps them out of pretrained_merge_targets (checkpoint has no depth weights).
-    depth_lr: float = 5e-4
+    # Actor depth keeps a separate optimizer object only so pretrained merging cannot
+    # touch parameters absent from the base checkpoint. None means exactly optimizer_lr.
+    depth_lr: float | None = None
     critic_target_update_weight: float = 0.005
     critic_target_update_every: int = 4
     discount: float = 0.97
@@ -241,17 +239,24 @@ class MolmoAct2Critic(nn.Module):
         self.depth_read_proj: nn.Linear | None = None
         if self.pointmap_config is not None:
             pm = self.pointmap_config
-            self.depth_encoder = DepthPointmapEncoder(pm, d_mem=pm.token_width)
+            # The actor's 20px/1152-wide fine grid should not silently multiply the
+            # legacy critic's sequence length and block size. Keep its old 40px/512 path.
+            critic_pm = replace(
+                pm,
+                patch_size=pm.critic_patch_size,
+                token_width=pm.critic_token_width,
+            )
+            self.depth_encoder = DepthPointmapEncoder(critic_pm, d_mem=critic_pm.token_width)
             self.depth_blocks = nn.ModuleList(
                 DepthStreamBlock(
-                    d_d=pm.token_width,
+                    d_d=critic_pm.token_width,
                     d_vlm=D,  # critic wrist-cam tokens live at the text hidden size
-                    num_heads=pm.stream_num_heads,
-                    mlp_ratio=pm.stream_mlp_ratio,
+                    num_heads=critic_pm.stream_num_heads,
+                    mlp_ratio=critic_pm.stream_mlp_ratio,
                 )
                 for _ in range(self.num_critic_blocks)
             )
-            self.depth_read_proj = nn.Linear(pm.token_width, D)
+            self.depth_read_proj = nn.Linear(critic_pm.token_width, D)
 
     # ── Weight initialisation ─────────────────────────────────────────────────
 

@@ -260,6 +260,12 @@ class MolmoAct2Adapter(ProbablePolicy):
             value = value.detach().float().cpu()
             return (value[0] if drop_batch_dim else value).numpy()
 
+        def component(group: str, key: str) -> float | None:
+            values = metrics.get(group)
+            if not isinstance(values, dict) or not isinstance(values.get(key), torch.Tensor):
+                return None
+            return float(values[key].detach().float().mean().item())
+
         # The per-dim curve comes from the model, not from flow_loss_raw: with
         # mask_action_dim_padding on (the default) the forward averages the dim axis
         # away, so flow_loss_raw arrives as [B, K, T] and there is nothing left to
@@ -284,6 +290,29 @@ class MolmoAct2Adapter(ProbablePolicy):
             ),
             "loss_discrete_z": (
                 float(metrics["discrete_z_loss"]) if "discrete_z_loss" in metrics else None
+            ),
+            "loss_action_aux": (
+                float(metrics["action_auxiliary_loss"])
+                if "action_auxiliary_loss" in metrics else None
+            ),
+            "loss_discrete_aux": (
+                float(metrics["discrete_auxiliary_loss"])
+                if "discrete_auxiliary_loss" in metrics else None
+            ),
+            "action_aux_path_mse": component("action_auxiliary_components", "path_mse"),
+            "action_aux_shape_mse": component("action_auxiliary_components", "shape_mse"),
+            "action_aux_terminal_mse": component("action_auxiliary_components", "terminal_mse"),
+            "action_aux_terminal_direction_loss": component(
+                "action_auxiliary_components", "terminal_direction_loss"
+            ),
+            "discrete_aux_ordinal_ce": component(
+                "discrete_auxiliary_components", "ordinal_ce"
+            ),
+            "discrete_aux_path_mse": component(
+                "discrete_auxiliary_components", "path_mse"
+            ),
+            "discrete_aux_shape_mse": component(
+                "discrete_auxiliary_components", "shape_mse"
             ),
             "discrete_token_ce": array("discrete_token_ce"),
             "discrete_token_top1": array("discrete_token_top1"),
@@ -875,12 +904,12 @@ class MolmoAct2Adapter(ProbablePolicy):
         if n_depth == 0:
             return {}
 
-        height, width = pointmap_config.image_size
-        patch = int(pointmap_config.patch_size)
-        grid_hw = (height // patch, width // patch)  # row-major, see pointmap.patchify
+        # Attention sees the pooler's output positions, not the CNN's 24×32 fine
+        # grid. Both are row-major, so the 12×16 grid overlays directly on the frame.
+        grid_hw = tuple(int(size) for size in pointmap_config.pooled_grid_size)
         if grid_hw[0] * grid_hw[1] != n_depth:
             logging.warning(
-                f"[probe] {n_depth} depth positions do not match the {grid_hw} point-map grid; "
+                f"[probe] {n_depth} depth positions do not match the pooled {grid_hw} grid; "
                 "labelling the block but skipping its spatial overlay."
             )
             grid_hw = None

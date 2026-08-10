@@ -1,9 +1,9 @@
 # 04 — Memory & prompts
 
 The π0.7 half of pi07: everything that conditions the model beyond the current
-observation. Three channels — short-term history, long-term language memory
-(subtask + MEM summary), metadata steering — all rendered as **prompt clauses** in
-the policy's processor. Design rule: *transport structure, render late* — the
+observation. Three channels — short-term history, language conditioning (subtask
+generation; the MEM summary half was **removed**, §3), metadata steering — all
+rendered as **prompt clauses** in the policy's processor. Design rule: *transport structure, render late* — the
 generic layers (buffer, gRPC, caches) carry tensors/strings/indices; prompt text is
 rendered only inside `processor_molmoact2.py`. A clause whose data is `None` is
 absent, and with everything off the prompt is byte-identical to the legacy model.
@@ -266,7 +266,15 @@ Still open from it, deliberately: **nothing trends across checkpoints.** Every p
 writes PNG/JSON under `validation/step_XXXXXXXX/` and the viewer reads them per step;
 no scalar reaches wandb, so "is this getting better" is answered by eye.
 
-## 3. Long-term memory: subtask + MEM summary
+## 3. Long-term memory: subtask generation
+
+> **The MEM summary memory was removed** (commit `f5f3b327`, "remove summary memory
+> seam"). There is no summary in the prompt, no `materialize_summaries` on the
+> buffer, no `loss_summary_ce`, and no `current_summary` on the RTC shared state —
+> `grep -rn summary src/lerobot/policies/molmoact2/` returns nothing. §3.2 below is
+> kept as the design record only; **§3.1 and §3.3 describe the live path, which is
+> subtask generation alone.** Long-term memory is currently an open slot — see the
+> ledger-memory idea in [08 §parked](08_status_roadmap.md).
 
 ### 3.1 The two-prompt design (decided 2026-07-13)
 
@@ -274,14 +282,13 @@ The **same network** is both policies. Every `subtask_regeneration_interval = 4 
 the inference thread runs an HL decode: build the generation prompt from the live
 observation (through the full pipeline — a `prompt_mode` toggle on the pack step
 guarantees identical state normalization to the action path), greedy-decode up to
-`subtask_max_new_tokens = 128` tokens, parse `Memory: … Subtask: …`, snap the
-subtask to the vocab. Only **strings/indices** travel actor↔learner (no token
-passthrough — kills the pi05 BOS-mismatch bug class). The subtask string enters
-the next action prompts as "The current step is …"; the summary replaces
-`RTCSharedState.current_summary` and conditions the *next* HL decode. Both are
-cleared on episode restart, kept across interventions. The env worker stamps
-`subtask_index` per transition, so online frames look exactly like annotated
-offline frames to the learner.
+`subtask_max_new_tokens` tokens (**now 64**, was 128 when the answer also had to
+carry a summary), parse the answer, snap the subtask to the vocab. Only
+**strings/indices** travel actor↔learner (no token passthrough — kills the pi05
+BOS-mismatch bug class). The subtask string enters the next action prompts as
+"The current step is …", and is cleared on episode restart, kept across
+interventions. The env worker stamps `subtask_index` per transition, so online
+frames look exactly like annotated offline frames to the learner.
 
 Trainer entry points: `MolmoAct2Trainer.generate_subtask_text`
 ([rl_molmoact2_trainer.py:908](../src/lerobot/rl/molmoact2/rl_molmoact2_trainer.py#L908)),
@@ -292,7 +299,12 @@ gated on `subtask_max_new_tokens > 0`. Generation MUST run in the inference thre
 (the attention-capture concurrency lesson: the action-expert patches are not
 thread-safe against a concurrent worker).
 
-### 3.2 The MEM summary m_t
+### 3.2 The MEM summary m_t — REMOVED, design record only
+
+> Nothing in this subsection is live. It describes the summary-memory seam that was
+> built 2026-07-17, verified on real training 2026-07-19, and **deleted**. Kept
+> because the copy-collapse failure mode and the hold/update supervision split are
+> the things to get right if long-term memory is attempted again.
 
 Long-term memory is a **recurrent text state, rewritten wholesale each tick** —
 not a growing document whose segments partition time. At HL tick $t$ the model
@@ -338,7 +350,7 @@ answer span contains $m_{t+1}$ — is what makes the decode an *update*, not a c
 ### 3.3 Generation CE loss
 
 `_subtask_generation_loss`
-([rl_molmoact2_trainer.py:981](../src/lerobot/rl/molmoact2/rl_molmoact2_trainer.py#L981)):
+([rl_molmoact2_trainer.py:1113](../src/lerobot/rl/molmoact2/rl_molmoact2_trainer.py#L1113)):
 slice the annotated samples (`subtask_index ≥ 0`), build the generation batch
 through the full pipeline, and compute LM cross-entropy with labels on the answer
 span only (last `answer_len` non-pad positions — padding-side agnostic;
@@ -346,23 +358,22 @@ unannotated samples fully masked):
 
 $$\mathcal L_{gen} = -\sum_{j \in \text{answer span}} \log p_\theta\big(y_j \mid y_{<j},\ \text{generation prompt}\big)$$
 
-backpropagated separately, weighted by `subtask_loss_weight` (config: 1.0), logged
-as `loss_subtask_ce` / `loss_summary_ce` (the memory-prefix split of the span).
+backpropagated separately, weighted by `subtask_loss_weight`, logged as
+`loss_subtask_ce`. With the summary gone the answer span is the subtask alone, so
+there is no memory-prefix split and no `loss_summary_ce`.
 
-The summary CE is additionally split into `loss_summary_ce/hold` and
-`loss_summary_ce/update` by whether the sample's pair has
-`summary_prev_index == summary_target_index` (§2.3, `summary_label_spans`). This
-guards the failure mode the recurrent summary is most prone to: hold pairs
-condition on the summary they must emit, so copying the conditioning solves them,
-and they outnumber update pairs by roughly
-`(segment_len − update_window_frames) / update_window_frames`. The pooled
-`loss_summary_ce` therefore falls steadily for a model that has only learned to
-copy. **Only `/update` measures whether appending is being learned** — if it
-plateaus while `/hold` keeps dropping, the memory has collapsed to an echo, and
-the pooled curve will not show it. Each is averaged over the micro-batches that
-contained such pairs, so a rare-update batch does not contribute a spurious zero.
+**`subtask_loss_weight` is currently 0.0 — this loss is off.** The forward still
+runs whenever the weight is > 0; note that under `depth_warmup` the generation
+prompt carries no depth clause, so the loss touches nothing trainable and the
+backward is skipped (`requires_grad` check) while the metric is still logged as a
+frozen-model baseline.
+
 The vocab is wired from `meta/subtasks.parquet` by `sync_subtask_vocabulary` and
 re-synced after additional datasets extend it via the remap.
+
+The `/hold` vs `/update` split described in §3.2 went away with the summary; if
+long-term memory returns, that split is the part worth rebuilding first, because
+the pooled curve hides copy-collapse.
 
 ## 4. Metadata steering
 

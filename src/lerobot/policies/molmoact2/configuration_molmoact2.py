@@ -135,10 +135,29 @@ class ActionAuxiliaryLossConfig:
         if self.eps <= 0:
             raise ValueError(f"eps must be positive, got {self.eps}.")
         if self.enabled and not any(
-            getattr(self, f"{name}_weight") > 0
-            for name in ("path", "shape", "terminal", "direction")
+            getattr(self, f"{name}_weight") > 0 for name in ("path", "shape", "terminal", "direction")
         ):
             raise ValueError("enabled action auxiliary loss requires at least one positive weight.")
+
+
+@dataclass
+class DiscreteActionAuxiliaryLossConfig:
+    """Zero-parameter trajectory-aware losses derived from FAST-token logits."""
+
+    enabled: bool = False
+    ordinal_weight: float = 0.0
+    path_weight: float = 0.0
+    shape_weight: float = 0.0
+
+    def __post_init__(self) -> None:
+        for name in ("ordinal", "path", "shape"):
+            weight = float(getattr(self, f"{name}_weight"))
+            if weight < 0:
+                raise ValueError(f"{name}_weight must be non-negative, got {weight}.")
+        if self.enabled and not any(
+            float(getattr(self, f"{name}_weight")) > 0 for name in ("ordinal", "path", "shape")
+        ):
+            raise ValueError("enabled discrete action auxiliary loss requires at least one positive weight.")
 
 
 @PreTrainedConfig.register_subclass("molmoact2")
@@ -157,7 +176,9 @@ class MolmoAct2Config(PreTrainedConfig):
 
     action_mode: str = "both"
     inference_action_mode: str | None = None
-    discrete_action_tokenizer: str = "/home/user/Documents/Research/RL/LeRobot/outputs/MolmoAct-FAST-tokenizer"
+    discrete_action_tokenizer: str = (
+        "/home/user/Documents/Research/RL/LeRobot/outputs/MolmoAct-FAST-tokenizer"
+    )
     discrete_generation_max_steps: int | None = None
     norm_tag: str | None = "so100_so101_molmoact2"
 
@@ -183,8 +204,8 @@ class MolmoAct2Config(PreTrainedConfig):
     # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
     # None => depth-free: no encoder built, no depth key shipped, prompt is
     # byte-identical to the legacy one, forward cost unchanged. When set, the
-    # DepthPointmapEncoder tokenizes the wrist depth, depth_adapter lifts the tokens to
-    # the text-embedding width, and they enter the VLM PREFIX on DEPTH_TOKEN
+    # DepthPointmapEncoder tokenizes the wrist depth; a separate copy of Molmo's
+    # ViT-block/pooler/projector path maps it into the VLM PREFIX on DEPTH_TOKEN
     # placeholders — so they reach the FAST-token head and the flow expert alike. Costs
     # num_depth_tokens extra sequence positions on every sample; the budget in
     # infer_molmoact2_max_sequence_length accounts for them.
@@ -206,8 +227,9 @@ class MolmoAct2Config(PreTrainedConfig):
     flow_matching_time_scale: float = 0.999
     flow_matching_beta_alpha: float = 1.0
     flow_matching_beta_beta: float = 1.5
-    action_auxiliary_loss: ActionAuxiliaryLossConfig = field(
-        default_factory=ActionAuxiliaryLossConfig
+    action_auxiliary_loss: ActionAuxiliaryLossConfig = field(default_factory=ActionAuxiliaryLossConfig)
+    discrete_action_auxiliary_loss: DiscreteActionAuxiliaryLossConfig = field(
+        default_factory=DiscreteActionAuxiliaryLossConfig
     )
     num_inference_steps: int | None = None
     mask_action_dim_padding: bool = True
@@ -325,8 +347,6 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.max_sequence_length is not None and self.max_sequence_length < 1:
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
-        if self.pointmap_config is not None and self.action_mode == "discrete":
-            raise ValueError("pointmap_config feeds the action expert; action_mode='discrete' never uses it.")
         if self.action_auxiliary_loss.enabled and self.action_mode == "discrete":
             raise ValueError("action_auxiliary_loss requires a continuous action expert.")
         if self.action_auxiliary_loss.enabled and getattr(self, "action_encoding", "absolute") == "delta":
@@ -334,6 +354,8 @@ class MolmoAct2Config(PreTrainedConfig):
                 "action_auxiliary_loss does not support delta action encoding: final position and "
                 "trajectory shape are not represented directly in delta space."
             )
+        if self.discrete_action_auxiliary_loss.enabled and self.action_mode == "continuous":
+            raise ValueError("discrete_action_auxiliary_loss requires action_mode='discrete' or 'both'.")
 
     def inferred_max_sequence_length(
         self,
@@ -364,10 +386,7 @@ class MolmoAct2Config(PreTrainedConfig):
 
         num_depth_tokens = 0
         if self.pointmap_config is not None:
-            h, w = self.pointmap_config.image_size
-            num_depth_tokens = (h // self.pointmap_config.patch_size) * (
-                w // self.pointmap_config.patch_size
-            )
+            num_depth_tokens = self.pointmap_config.num_pooled_tokens
 
         return infer_molmoact2_max_sequence_length(
             num_images=int(num_images),

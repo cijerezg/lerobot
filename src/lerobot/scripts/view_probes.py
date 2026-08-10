@@ -801,7 +801,13 @@ function md(text){
 
 // ── metrics ──────────────────────────────────────────────────────────────────
 function stepKey(i){ return String(DATA.steps[i].step); }
-function fmt(v, d){ return v === null || v === undefined ? "—" : (d === 0 ? String(Math.round(v)) : v.toFixed(d)); }
+// Below the last decimal place a fixed format shows only zeros, so a metric whose whole
+// range sits there reads as 0.000 at every step. Those fall back to scientific notation.
+function fmt(v, d){
+  if(v === null || v === undefined) return "—";
+  if(d === 0) return String(Math.round(v));
+  return v !== 0 && Math.abs(v) < Math.pow(10, -d) ? v.toExponential(2) : v.toFixed(d);
+}
 function presentSteps(m){ return DATA.steps.map((s, i) => i)
   .filter(i => m.values[stepKey(i)] !== undefined && m.values[stepKey(i)] !== null); }
 function delta(m){

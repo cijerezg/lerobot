@@ -226,6 +226,44 @@ def test_shape_error_distinguishes_oscillation_from_constant_offset():
     assert np.isclose(offset_metrics["shape_mse"], 0.0)
 
 
+def test_relative_errors_are_invariant_to_the_scale_of_the_motion():
+    # The same trajectory, the same relative error, at two very different amplitudes.
+    # The raw MSEs move by the square of the amplitude ratio; the relative ones do not.
+    hold = torch.zeros(4, 2)
+    small_target = torch.tensor([[0.0, 0.0], [0.01, 0.0], [0.02, 0.0], [0.03, 0.0]])
+    large_target = small_target * 100.0
+
+    small = trajectory_error_components(small_target * 1.5, small_target, hold)
+    large = trajectory_error_components(large_target * 1.5, large_target, hold)
+
+    assert large["path_mse"] > 100.0 * small["path_mse"]
+    for key in ("path_relative", "shape_relative", "terminal_relative"):
+        assert np.isclose(small[key], large[key], rtol=1e-4)
+
+    # A half-amplitude prediction commits a quarter of the hold predictor's error.
+    half = trajectory_error_components(large_target * 0.5, large_target, hold)
+    assert np.isclose(half["path_relative"], 0.25, rtol=1e-3)
+    assert np.isclose(half["terminal_relative"], 0.25, rtol=1e-3)
+
+
+def test_relative_errors_read_against_the_hold_baseline():
+    hold = torch.zeros(4, 2)
+    target = torch.tensor([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
+
+    exact = trajectory_error_components(target, target, hold)
+    inert = trajectory_error_components(hold, target, hold)
+    for key in ("path_relative", "shape_relative", "terminal_relative"):
+        assert np.isclose(exact[key], 0.0)
+        assert np.isclose(inert[key], 1.0, rtol=1e-6)
+
+    # Moving when the demonstration does not is finite, and worse than freezing.
+    stationary_target = hold.clone()
+    moving = trajectory_error_components(target, stationary_target, hold)
+    for key in ("path_relative", "shape_relative", "terminal_relative"):
+        assert torch.isfinite(moving[key])
+        assert moving[key] > 1.0
+
+
 def test_terminal_direction_loss_ignores_length_and_normalizer_offset():
     # The hold vector removes affine normalizer offsets before taking the cosine.
     hold = torch.full((3, 2), 5.0)

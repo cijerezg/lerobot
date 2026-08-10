@@ -87,12 +87,15 @@ def test_patchify_order_and_shape():
 
 
 def test_token_count_and_shape():
-    cfg = DepthPointmapConfig()  # 480×640, P=40 → 192 tokens
+    cfg = DepthPointmapConfig()  # 480×640, P=20 → 768 fine; 2×2 pool → 192 prefix
     enc = DepthPointmapEncoder(cfg, d_mem=16)
-    assert enc.num_tokens == 192
+    assert enc.num_tokens == cfg.num_fine_tokens == 768
+    assert cfg.fine_grid_size == (24, 32)
+    assert cfg.pooled_grid_size == (12, 16)
+    assert cfg.num_pooled_tokens == 192
     depth = torch.full((2, 480, 640), 300.0)
     tokens = enc(_bp(depth))
-    assert tokens.shape == (2, 192, 16)
+    assert tokens.shape == (2, 768, 16)
 
 
 def test_empty_patch_becomes_null_token():
@@ -109,7 +112,10 @@ def test_shape_feature_is_translation_invariant():
     # Recentering removes position: a patch and the same shape shifted by a constant
     # 3D vector must yield the same shape feature f. (Disable the absolute-depth
     # channel, which is deliberately depth-dependent, and zero the position branch.)
-    cfg = DepthPointmapConfig(image_size=(40, 40), patch_size=40, include_centroid_depth=False)
+    cfg = DepthPointmapConfig(
+        image_size=(40, 40), patch_size=40, pooling_size=(1, 1),
+        include_centroid_depth=False,
+    )
     enc = DepthPointmapEncoder(cfg, d_mem=16).eval()
     nn.init.zeros_(enc.pos_proj.weight)
     nn.init.zeros_(enc.pos_proj.bias)
@@ -389,3 +395,174 @@ def test_config_rejects_negative_history_samples():
         MemoryConfig(history_num_samples=-1)
     with pytest.raises(ValueError, match="history_num_samples"):
         MemoryConfig(history_keys=["depth.wrist.depth"], history_num_samples=0)
+
+
+# --- Actor visual bridge ------------------------------------------------------------
+
+class _AddBlock(nn.Module):
+    def __init__(self, amount: float) -> None:
+        super().__init__()
+        self.amount = nn.Parameter(torch.tensor(amount))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.amount
+
+
+class _Pooler(nn.Module):
+    def __init__(self, input_dim: int, output_dim: int) -> None:
+        super().__init__()
+        self.wq = nn.Linear(input_dim, output_dim)
+        self.wo = nn.Linear(input_dim, output_dim, bias=False)
+        self.last_groups = None
+
+    def forward(self, query, inputs_kv, attn_mask=None):
+        del query, attn_mask
+        self.last_groups = inputs_kv.detach().clone()
+        return self.wo(inputs_kv.mean(dim=1, keepdim=True))
+
+
+class _Projector(nn.Module):
+    def __init__(self, input_dim: int, output_dim: int) -> None:
+        super().__init__()
+        self.w1 = nn.Linear(input_dim, input_dim)
+        self.out = nn.Linear(input_dim, output_dim)
+
+    def forward(self, x):
+        return self.out(torch.nn.functional.silu(self.w1(x)))
+
+
+def test_depth_visual_backbone_uses_h3_h7_and_spatial_2x2_groups():
+    from types import SimpleNamespace
+
+    from lerobot.policies.molmoact2.modeling_molmoact2 import DepthVisualBackbone
+
+    width = 8
+    source_blocks = nn.ModuleList(_AddBlock(float(i)) for i in range(1, 8))
+    source = SimpleNamespace(
+        vit_config=SimpleNamespace(hidden_size=width),
+        image_vit=SimpleNamespace(transformer=SimpleNamespace(resblocks=source_blocks)),
+        image_feature_dropout=nn.Identity(),
+        image_pooling_2d=_Pooler(width * 2, width),
+        image_projector=_Projector(width, 12),
+    )
+    cfg = DepthPointmapConfig(
+        image_size=(8, 8),
+        patch_size=2,
+        pooling_size=(2, 2),
+        token_width=width,
+        critic_patch_size=2,
+        visual_num_blocks=7,
+        visual_feature_taps=(3, 7),
+        visual_source_indices=(0, 1, 2, 3, 4, 5, 6),
+    )
+    bridge = DepthVisualBackbone(cfg, source).eval()
+    output = bridge(torch.zeros(2, cfg.num_fine_tokens, width))
+
+    assert output.shape == (2, cfg.num_pooled_tokens, 12)
+    # Zero input plus blocks 1..3 gives H3=6; blocks 1..7 gives H7=28.
+    # Pooler input order must mirror Molmo: [late; earlier] = [H7; H3].
+    groups = bridge.pooler.last_groups
+    assert groups.shape == (2 * cfg.num_pooled_tokens, 4, width * 2)
+    torch.testing.assert_close(groups[..., :width], torch.full_like(groups[..., :width], 28.0))
+    torch.testing.assert_close(groups[..., width:], torch.full_like(groups[..., width:], 6.0))
+    assert set(bridge.last_rms) == {"fine", "block3", "block7", "projected"}
+    torch.testing.assert_close(bridge.last_rms["fine"], torch.tensor(0.0))
+    torch.testing.assert_close(bridge.last_rms["block3"], torch.tensor(6.0))
+    torch.testing.assert_close(bridge.last_rms["block7"], torch.tensor(28.0))
+    # Deepcopy means initialization comes from RGB, while every trainable tensor is separate.
+    source_ids = {id(parameter) for parameter in source_blocks.parameters()}
+    assert source_ids.isdisjoint(id(parameter) for parameter in bridge.blocks.parameters())
+
+
+def test_depth_visual_backbone_backpropagates_through_every_copied_block():
+    from types import SimpleNamespace
+
+    from lerobot.policies.molmoact2.modeling_molmoact2 import DepthVisualBackbone
+
+    width = 8
+    source = SimpleNamespace(
+        vit_config=SimpleNamespace(hidden_size=width),
+        image_vit=SimpleNamespace(
+            transformer=SimpleNamespace(
+                resblocks=nn.ModuleList(_AddBlock(float(i)) for i in range(1, 8))
+            )
+        ),
+        image_feature_dropout=nn.Identity(),
+        image_pooling_2d=_Pooler(width * 2, width),
+        image_projector=_Projector(width, 12),
+    )
+    cfg = DepthPointmapConfig(
+        image_size=(8, 8), patch_size=2, pooling_size=(2, 2), token_width=width,
+        critic_patch_size=2, visual_num_blocks=7, visual_feature_taps=(3, 7),
+        visual_source_indices=(0, 1, 2, 3, 4, 5, 6),
+    )
+    bridge = DepthVisualBackbone(cfg, source).train()
+    bridge(torch.randn(2, cfg.num_fine_tokens, width)).square().mean().backward()
+    assert all(block.amount.grad is not None for block in bridge.blocks)
+
+
+
+def test_depth_scatter_replaces_extra_token_and_measures_rgb_depth_seam():
+    from types import SimpleNamespace
+
+    from lerobot.policies.molmoact2.modeling_molmoact2 import (
+        _patch_leaf_safe_input_embedding_update,
+    )
+
+    class _Vision(nn.Module):
+        def forward(self, images, token_pooling):
+            del images, token_pooling
+            return torch.full((1, 4), 2.0)
+
+    class _Backbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.transformer = SimpleNamespace(
+                wte=nn.Embedding(16, 4),
+                emb_drop=nn.Identity(),
+            )
+            self.vision_backbone = _Vision()
+            self.config = SimpleNamespace(image_patch_id=7)
+
+        def build_input_embeddings(self, input_ids, images=None, token_pooling=None):
+            raise AssertionError("must be replaced")
+
+    backbone = _Backbone()
+    with torch.no_grad():
+        backbone.transformer.wte.weight[7].fill_(1.0)
+        backbone.transformer.wte.weight[9].fill_(100.0)  # arbitrary <extra_1> base
+    _patch_leaf_safe_input_embedding_update(backbone)
+    features = torch.tensor([[[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]]])
+    marker = nn.Parameter(torch.tensor([0.5, 0.5, 0.5, 0.5]))
+    backbone._lerobot_depth = (features, 9, marker)
+
+    embeds, _ = backbone.build_input_embeddings(
+        torch.tensor([[7, 9, 9]]), images=torch.zeros(1), token_pooling=torch.zeros(1)
+    )
+    torch.testing.assert_close(embeds[:, 0], torch.full((1, 4), 3.0))
+    torch.testing.assert_close(embeds[:, 1:], features + marker)
+    assert not torch.any(embeds[:, 1:] == 100.0)
+    torch.testing.assert_close(backbone._lerobot_rgb_input_rms, torch.tensor(3.0))
+    expected_depth_rms = (features + marker).square().mean().sqrt()
+    torch.testing.assert_close(backbone._lerobot_depth_input_rms, expected_depth_rms)
+
+
+
+def test_attention_probe_uses_pooled_depth_grid():
+    from types import SimpleNamespace
+
+    from lerobot.probes.adapters.molmoact2 import MolmoAct2Adapter
+
+    cfg = DepthPointmapConfig()
+    adapter = MolmoAct2Adapter.__new__(MolmoAct2Adapter)
+    adapter._cfg = SimpleNamespace(policy=SimpleNamespace(pointmap_config=cfg))
+    depth_token_id = 9
+    batch = {
+        "input_ids": torch.full((1, cfg.num_pooled_tokens), depth_token_id),
+        "depth_token_id": depth_token_id,
+    }
+    extras = adapter._depth_attention_extras(batch, {}, encoder_seq_len=cfg.num_pooled_tokens)
+
+    segment = extras["depth_segment"]
+    assert segment["grid_hw"] == cfg.pooled_grid_size == (12, 16)
+    assert len(segment["indices"]) == cfg.num_pooled_tokens == 192

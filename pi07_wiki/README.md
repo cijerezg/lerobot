@@ -17,11 +17,23 @@ Target robot: **rebot B601** (7-DOF). Base checkpoint: `allenai/MolmoAct2`
 | [01 — Overview](01_overview.md) | What pi07 is, the four subsystems, system diagram, repo map, glossary |
 | [02 — Base model: MolmoAct2](02_base_model.md) | VLM + action expert architecture, flow-matching math, token/prompt layout, anchor action encoding |
 | [03 — Depth: point-map + co-evolving stream](03_depth.md) | Back-projection math, patch tokens, DepthStream, the gated additive read, bit-identity guarantee, critic depth read |
-| [04 — Memory & prompts](04_memory.md) | Full prompt anatomy; short-term history; two-prompt subtask generation; MEM summary memory; metadata steering |
+| [04 — Memory & prompts](04_memory.md) | Full prompt anatomy; short-term history; two-prompt subtask generation; metadata steering. (MEM summary memory was removed — §3.2 is a design record) |
 | [05 — Training](05_training.md) | `rl_offline.py` pipeline, all losses with formulas, freeze/optimizer rules, distributional critic (HL-Gauss), buffer + memmap cache |
 | [06 — Inference runtime](06_inference.md) | RTC actor runtime, HL decode cadence, actor-side history deque, depth at inference, prompt defaults |
 | [07 — Data & annotation](07_data_annotation.md) | rebot datasets, the annotation chain (summaries, subtasks, metadata), tooling |
 | [08 — Status & roadmap](08_status_roadmap.md) | What is on/off in the current run, open items, parked ideas |
+
+## Design notes
+
+Standalone documents that sit alongside the numbered pages.
+
+| Note | Status |
+|---|---|
+| [FAST tokenizer deletes DCT coefficients](fast_tokenizer_alphabet_bug.md) | **FIXED 2026-08-08** — silent coefficient deletion had scrambled 4.2% of training chunks; `_tokenize_discrete_action` now snaps to the nearest encodable bin and asserts the decoded coefficient count. Kept for the mechanism, the forensics, and the prevalence numbers |
+| [Trajectory-aware auxiliary loss for the FAST head](archive/fast_soft_decode_auxiliary.md) | **ARCHIVED — UNCONFIRMED 2026-08-09.** Its numbers were imprecise and overstated; do not cite them, and do not read it as a spec for the code that shipped. The as-built loss is [05 §2.2](05_training.md) |
+| [Depth short-term history](depth_history_design.md) | Built 2026-07-25 — temporal attention inside the patch CNN |
+| [Depth read redesign](depth_redesign_options.md) | Decided + built 2026-07-26 — decision record; `03_depth.md` §B.3 is the as-built reference |
+| [MEM temporal attention](mem_temporal_attention_analysis.md) | Built 2026-08-03 — spec, our deviation, measurements |
 
 ## Where the code lives
 

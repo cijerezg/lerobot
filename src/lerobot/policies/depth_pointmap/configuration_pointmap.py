@@ -34,7 +34,10 @@ class DepthPointmapConfig:
 
     # Depth image size (H, W). Both must be divisible by patch_size.
     image_size: tuple[int, int] = (480, 640)
-    patch_size: int = 40  # 480/40=12, 640/40=16 → 192 tokens
+    patch_size: int = 20  # 24×32 = 768 fine tokens
+    # Mirror Molmo's image adapter: attention-pool non-overlapping 2×2 groups,
+    # yielding the same 12×16 = 192 prefix-token layout as RGB.
+    pooling_size: tuple[int, int] = (2, 2)
 
     # Valid-depth band. z_min ≈ D405 near limit; z_max is a soft far-plane (the
     # only "extent" parameter, tuned in practice). Pixels outside → mask 0.
@@ -58,9 +61,8 @@ class DepthPointmapConfig:
     # probability — nothing attends the span and no gradient flows through its
     # vision path, so those samples are solvable only through depth. Independent of
     # the depth modality dropout above. 0 disables. Raise this hard for the
-    # adapter-only warmup stage: with the trunk frozen, RGB plus proprio already
-    # satisfies most of the loss and the adapter can otherwise settle on emitting
-    # something ignorable.
+    # optional depth-only diagnostic stage: with the trunk frozen, RGB plus proprio
+    # already satisfies most of the loss and depth can otherwise remain unused.
     rgb_dropout_prob: float = 0.15
 
     # Patch-CNN trunk widths (the two hidden stages; the third stage outputs the
@@ -79,10 +81,15 @@ class DepthPointmapConfig:
     # Only consulted when the policy enables gradient checkpointing.
     encoder_chunk_rows: int = 384
 
-    # Width of the tokens the encoder emits. A per-policy adapter lifts these to the
-    # LLM's token-embedding width and they enter the VLM prefix on placeholder
-    # positions; there is no separate depth tower.
-    token_width: int = 512
+    # Match Molmo's ViT hidden size. The actor sends these through a separate,
+    # seven-block depth copy of Molmo's visual path before pooling/projecting them.
+    token_width: int = 1152
+    visual_num_blocks: int = 7
+    # One-based outputs to concatenate. The pooler consumes [block7; block3],
+    # matching Molmo's [late; earlier] concatenation order.
+    visual_feature_taps: tuple[int, int] = (3, 7)
+    # RGB block indices used only to initialize the independent depth blocks.
+    visual_source_indices: tuple[int, ...] = (0, 4, 8, 12, 16, 20, 24)
 
     # CRITIC-ONLY (rl_molmoact2.py): the critic still runs its own co-evolving
     # DepthStreamBlocks over its own encoder's tokens. The actor no longer does —
@@ -90,6 +97,10 @@ class DepthPointmapConfig:
     # remaining critic path and go away when it is migrated to the same seam.
     stream_num_heads: int = 8
     stream_mlp_ratio: float = 4.0
+    # Preserve the critic's existing, cheaper point-map stream while the actor uses
+    # the new fine visual grid. These knobs do not affect the actor path.
+    critic_patch_size: int = 40
+    critic_token_width: int = 512
 
     # Temporal history (depth_history_design.md): past depth frames ride the shared
     # patch CNN and are fused into the current frame by same-pixel temporal attention
@@ -111,6 +122,27 @@ class DepthPointmapConfig:
         if self.patch_size <= 0 or h % self.patch_size or w % self.patch_size:
             raise ValueError(
                 f"image_size {self.image_size} must be divisible by patch_size {self.patch_size}."
+            )
+        fine_h, fine_w = self.fine_grid_size
+        pool_h, pool_w = self.pooling_size
+        if pool_h <= 0 or pool_w <= 0 or fine_h % pool_h or fine_w % pool_w:
+            raise ValueError(
+                f"fine depth grid {self.fine_grid_size} must be divisible by "
+                f"pooling_size {self.pooling_size}."
+            )
+        if self.visual_num_blocks <= 0:
+            raise ValueError(f"visual_num_blocks must be > 0, got {self.visual_num_blocks}.")
+        if len(self.visual_source_indices) != self.visual_num_blocks:
+            raise ValueError("visual_source_indices must contain one source per depth block.")
+        if len(set(self.visual_source_indices)) != len(self.visual_source_indices):
+            raise ValueError("visual_source_indices must be unique.")
+        if (
+            len(self.visual_feature_taps) != 2
+            or self.visual_feature_taps[0] >= self.visual_feature_taps[1]
+            or not all(1 <= tap <= self.visual_num_blocks for tap in self.visual_feature_taps)
+        ):
+            raise ValueError(
+                "visual_feature_taps must contain two increasing, valid one-based block numbers."
             )
         if not 0 < self.z_min_mm < self.z_max_mm:
             raise ValueError(f"need 0 < z_min < z_max, got ({self.z_min_mm}, {self.z_max_mm}).")
@@ -137,3 +169,34 @@ class DepthPointmapConfig:
             )
         if self.stream_mlp_ratio <= 0:
             raise ValueError(f"stream_mlp_ratio must be > 0, got {self.stream_mlp_ratio}.")
+        if self.critic_patch_size <= 0 or h % self.critic_patch_size or w % self.critic_patch_size:
+            raise ValueError(
+                f"image_size {self.image_size} must be divisible by critic_patch_size "
+                f"{self.critic_patch_size}."
+            )
+        if self.critic_token_width <= 0 or self.critic_token_width % self.stream_num_heads:
+            raise ValueError(
+                f"critic_token_width {self.critic_token_width} must be > 0 and divisible by "
+                f"stream_num_heads {self.stream_num_heads}."
+            )
+
+    @property
+    def fine_grid_size(self) -> tuple[int, int]:
+        h, w = self.image_size
+        return h // self.patch_size, w // self.patch_size
+
+    @property
+    def pooled_grid_size(self) -> tuple[int, int]:
+        fine_h, fine_w = self.fine_grid_size
+        pool_h, pool_w = self.pooling_size
+        return fine_h // pool_h, fine_w // pool_w
+
+    @property
+    def num_fine_tokens(self) -> int:
+        h, w = self.fine_grid_size
+        return h * w
+
+    @property
+    def num_pooled_tokens(self) -> int:
+        h, w = self.pooled_grid_size
+        return h * w

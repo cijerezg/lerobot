@@ -1,8 +1,8 @@
 """Depth stream blocks + wrist-cam token helpers.
 
 CRITIC-ONLY as of the prefix migration. The ACTOR no longer co-evolves depth: the
-point-map encoder's tokens go through ``depth_adapter`` into the VLM prefix on
-DEPTH_TOKEN placeholder positions, read by the pretrained trunk's ordinary softmax.
+point-map encoder's tokens go through a separate copy of Molmo's visual blocks,
+pooler, and projector into DEPTH_TOKEN positions in the VLM prefix.
 The joint-softmax read (``join_depth_columns``, ``depth_attention_mass``), the learned
 per-layer bias ``b_l``, ``slice_wrist_cam_kv`` and the ``DepthStream`` aggregate that
 owned them are all deleted — as is the alpha gate they replaced.

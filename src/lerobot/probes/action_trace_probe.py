@@ -51,6 +51,7 @@ from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     TRAJECTORY_ERROR_KEYS,
+    TRAJECTORY_RELATIVE_KEYS,
     action_inspector_sample_seed,
     joint_names_for_dim,
     load_probe_dataset,
@@ -1200,7 +1201,7 @@ def _dashboard_context(record: dict) -> dict:
         "cameras": record.get("cameras", []),
         "trajectory": {
             key: record.get("metrics", {}).get(key)
-            for key in TRAJECTORY_ERROR_KEYS
+            for key in TRAJECTORY_ERROR_KEYS + TRAJECTORY_RELATIVE_KEYS
         },
     }
 
@@ -1288,7 +1289,7 @@ button:hover { background:#f0f0f1; }
       <div class="controls"><button id="prev">← Previous</button><button id="next">Next →</button></div>
       <div class="section-label">Conditioning</div><div class="subtask" id="subtask"></div>
       <div class="section-label">Trajectory fit · sample 0</div><div class="metric-list" id="trajectory-metrics"></div>
-      <div class="metric-help">Dots are the distribution across anchors; magenta is the action currently drawn. The p75 shown under each row can be copied directly into its YAML threshold. All values are the exact lower-is-better quantities available to the auxiliary loss. Final direction loss is 0 aligned, 1 perpendicular or no predicted displacement, and 2 opposite; displacement length is ignored.</div>
+      <div class="metric-help">Dots are the distribution across anchors; magenta is the action currently drawn. Every value is lower-is-better and scale-free, so anchors are comparable to each other however far the demonstration travels. The first three divide by the error of holding the arm still: 1 means the prediction is worth no more than freezing, above 1 means worth less. Final direction loss is 0 aligned, 1 perpendicular or no predicted displacement, and 2 opposite; displacement length is ignored. The auxiliary loss still gates on the raw MSEs, whose p75s are in action_metrics.json.</div>
       <div class="section-label">Observation</div><div class="cameras" id="cameras"></div>
       <div class="legend-note">__LEGEND_NOTE__</div>
     </aside>
@@ -1299,16 +1300,25 @@ button:hover { background:#f0f0f1; }
 (() => {
   const contexts = JSON.parse(document.getElementById('action-context').textContent);
   const plot = document.getElementById('action-inspector-plot');
+  // Every row is relative to the hold predictor, so one scale reads for every anchor:
+  // 1 is the freeze-the-arm baseline, and a small careful motion is not flattered by
+  // having had little distance to travel. The raw MSEs stay in action_metrics.json and
+  // metrics.csv for threshold-setting.
   const metricSpecs = [
-    {key:'path_mse', label:'Path MSE', fixed:null},
-    {key:'shape_mse', label:'Temporal shape MSE', fixed:null},
-    {key:'terminal_mse', label:'Final-position MSE', fixed:null},
+    {key:'path_relative', label:'Path error / hold', fixed:null},
+    {key:'shape_relative', label:'Temporal shape error / hold', fixed:null},
+    {key:'terminal_relative', label:'Final-position error / hold', fixed:null},
     {key:'terminal_direction_loss', label:'Final direction loss', fixed:[0,2]}
   ];
   let active = 0;
+  // Temporal shape MSE lives two to three decades below the other three: it is measured
+  // on adjacent-target differences, which are ~1/T of the excursion the other metrics
+  // see. Three decimals would print its value, its p75 and both ends of its range as
+  // 0.000, so anything under the last decimal place switches to scientific notation.
   function metricText(value) {
     if(!Number.isFinite(value)) return 'undefined';
-    return Math.abs(value) >= 100 ? value.toFixed(1) : value.toFixed(3);
+    if(Math.abs(value) >= 100) return value.toFixed(1);
+    return value !== 0 && Math.abs(value) < 1e-3 ? value.toExponential(2) : value.toFixed(3);
   }
   function renderMetrics(index) {
     const host = document.getElementById('trajectory-metrics');
@@ -1496,22 +1506,49 @@ def _write_manifest(
                 note="Above 1 means adjacent targets change faster than the configured motor speed can physically track.",
             ),
             Metric(
-                "fit.path_mse",
-                "Path MSE",
+                "fit.path_relative",
+                "Path error / hold",
                 good="low",
                 fmt=3,
-                note="Mean normalized action error over all 30 targets and joints, using flow sample 0.",
+                baseline=1.0,
+                warn=1.0,
+                note="Path MSE over the MSE of holding the arm still, per anchor, then averaged. Scale-free, so a short careful motion is not flattered by having little distance to travel. Above 1 means the prediction is worth less than freezing the arm.",
+            ),
+            Metric(
+                "fit.shape_relative",
+                "Temporal shape error / hold",
+                good="low",
+                fmt=3,
+                baseline=1.0,
+                warn=1.0,
+                note="Adjacent-target-change MSE over the demonstration's own per-step motion, per anchor. Penalizes oscillation and mistimed motion even where a constant offset leaves path error intact.",
+            ),
+            Metric(
+                "fit.terminal_relative",
+                "Final-position error / hold",
+                good="low",
+                fmt=3,
+                baseline=1.0,
+                warn=1.0,
+                note="Error at target 30 over the final displacement the demonstration actually asked for.",
+            ),
+            Metric(
+                "fit.path_mse",
+                "Path MSE (raw)",
+                good="low",
+                fmt=3,
+                note="Mean normalized action error over all 30 targets and joints, using flow sample 0. Scale-dependent — it rises with how far the chunk travels, so read fit.path_relative to compare anchors. Kept because the auxiliary loss gates on this quantity.",
             ),
             Metric(
                 "fit.shape_mse",
-                "Temporal shape MSE",
+                "Temporal shape MSE (raw)",
                 good="low",
                 fmt=3,
-                note="MSE between adjacent-target changes; oscillation is penalized even when path MSE matches a constant offset.",
+                note="MSE between adjacent-target changes. Two to three decades below the other raw terms because increments are ~1/T of the excursion.",
             ),
             Metric(
                 "fit.terminal_mse",
-                "Final-position MSE",
+                "Final-position MSE (raw)",
                 good="low",
                 fmt=3,
                 note="Normalized error at target 30 only.",
@@ -1531,9 +1568,9 @@ def _write_manifest(
                     {
                         "title": "Trajectory fit · flow sample 0",
                         "keys": [
-                            "fit.path_mse",
-                            "fit.shape_mse",
-                            "fit.terminal_mse",
+                            "fit.path_relative",
+                            "fit.shape_relative",
+                            "fit.terminal_relative",
                             "fit.terminal_direction_loss",
                         ],
                     }
