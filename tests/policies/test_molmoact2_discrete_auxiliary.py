@@ -110,10 +110,14 @@ def test_fast_auxiliary_path_and_shape_use_conditional_coefficient_means() -> No
         horizon=2,
         scale=1.0,
         batch_size=1,
+        target_actions=torch.zeros(1, 2, 1),
+        hold_actions=torch.tensor([[[1.0], [-1.0]]]),
     )
 
     torch.testing.assert_close(components["path_mse"], torch.tensor([1.0 / 18.0]))
     torch.testing.assert_close(components["shape_mse"], torch.tensor([2.0 / 9.0]))
+    torch.testing.assert_close(components["path_relative"], torch.tensor([1.0 / 18.0]))
+    torch.testing.assert_close(components["shape_relative"], torch.tensor([1.0 / 18.0]))
     assert torch.isfinite(components["ordinal_ce"]).all()
 
     sum(value.sum() for value in components.values()).backward()

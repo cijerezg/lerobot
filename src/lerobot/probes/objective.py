@@ -66,10 +66,15 @@ AUXILIARY_LOSS_KEYS = (
     "action_aux_path_mse",
     "action_aux_shape_mse",
     "action_aux_terminal_mse",
+    "action_aux_path_relative",
+    "action_aux_shape_relative",
+    "action_aux_terminal_relative",
     "action_aux_terminal_direction_loss",
     "discrete_aux_ordinal_ce",
     "discrete_aux_path_mse",
     "discrete_aux_shape_mse",
+    "discrete_aux_path_relative",
+    "discrete_aux_shape_relative",
 )
 
 
@@ -811,9 +816,8 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
 def wandb_scalars(summary: dict) -> dict:
     """Headline numbers for the training run's own wandb panel.
 
-    Keyed to sit beside ``loss_flow`` / ``loss_discrete_ce`` on the same axes. They are
-    not the same measurement — these have dropout suppressed — so the ``val_``/``train_``
-    prefixed pair is what to difference, not val against the live training curve.
+    Detailed val/train pairs stay in the probe artifact; W&B gets only generalization
+    z-scores and held-out FAST top-1.
     """
     scalars: dict[str, float] = {}
     headline_keys = (
@@ -822,14 +826,13 @@ def wandb_scalars(summary: dict) -> dict:
         ("discrete_ce", "loss_discrete_ce"),
         ("discrete_aux", "loss_discrete_aux"),
     )
-    component_keys = tuple((key, key) for key in AUXILIARY_LOSS_KEYS[2:])
-    for name, key in headline_keys + component_keys:
+    for name, key in headline_keys:
         entry = summary.get(key) or {}
-        for column_name in ("val", "train", "gap", "z"):
-            if entry.get(column_name) is not None:
-                scalars[f"objective_{column_name}_{name}"] = float(entry[column_name])
+        if entry.get("z") is not None:
+            scalars[f"objective_z_{name}"] = float(entry["z"])
     for split, entry in (summary.get("discrete") or {}).items():
-        scalars[f"objective_{split}_fast_top1"] = entry["top1"]
+        if split == "val":
+            scalars["objective_val_fast_top1"] = entry["top1"]
     return scalars
 
 

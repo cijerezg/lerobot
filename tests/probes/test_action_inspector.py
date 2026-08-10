@@ -226,6 +226,12 @@ def test_shape_error_distinguishes_oscillation_from_constant_offset():
     assert np.isclose(offset_metrics["shape_mse"], 0.0)
 
 
+RELATIVE_KEYS = ("path_relative", "shape_relative", "terminal_relative")
+# Tests state their own floors so they never move when the corpus constants are
+# regenerated; unfloored isolates the ratio itself.
+UNFLOORED = {"path": 1e-12, "shape": 1e-12, "terminal": 1e-12}
+
+
 def test_relative_errors_are_invariant_to_the_scale_of_the_motion():
     # The same trajectory, the same relative error, at two very different amplitudes.
     # The raw MSEs move by the square of the amplitude ratio; the relative ones do not.
@@ -233,17 +239,17 @@ def test_relative_errors_are_invariant_to_the_scale_of_the_motion():
     small_target = torch.tensor([[0.0, 0.0], [0.01, 0.0], [0.02, 0.0], [0.03, 0.0]])
     large_target = small_target * 100.0
 
-    small = trajectory_error_components(small_target * 1.5, small_target, hold)
-    large = trajectory_error_components(large_target * 1.5, large_target, hold)
+    small = trajectory_error_components(small_target * 1.5, small_target, hold, scale_floors=UNFLOORED)
+    large = trajectory_error_components(large_target * 1.5, large_target, hold, scale_floors=UNFLOORED)
 
     assert large["path_mse"] > 100.0 * small["path_mse"]
-    for key in ("path_relative", "shape_relative", "terminal_relative"):
-        assert np.isclose(small[key], large[key], rtol=1e-4)
+    for key in RELATIVE_KEYS:
+        assert np.isclose(small[key], large[key], rtol=1e-6)
 
     # A half-amplitude prediction commits a quarter of the hold predictor's error.
-    half = trajectory_error_components(large_target * 0.5, large_target, hold)
-    assert np.isclose(half["path_relative"], 0.25, rtol=1e-3)
-    assert np.isclose(half["terminal_relative"], 0.25, rtol=1e-3)
+    half = trajectory_error_components(large_target * 0.5, large_target, hold, scale_floors=UNFLOORED)
+    assert np.isclose(half["path_relative"], 0.25, rtol=1e-6)
+    assert np.isclose(half["terminal_relative"], 0.25, rtol=1e-6)
 
 
 def test_relative_errors_read_against_the_hold_baseline():
@@ -252,16 +258,38 @@ def test_relative_errors_read_against_the_hold_baseline():
 
     exact = trajectory_error_components(target, target, hold)
     inert = trajectory_error_components(hold, target, hold)
-    for key in ("path_relative", "shape_relative", "terminal_relative"):
+    for key in RELATIVE_KEYS:
         assert np.isclose(exact[key], 0.0)
         assert np.isclose(inert[key], 1.0, rtol=1e-6)
 
-    # Moving when the demonstration does not is finite, and worse than freezing.
+    # Moving when the demonstration does not stays finite, and reads worse than freezing.
     stationary_target = hold.clone()
     moving = trajectory_error_components(target, stationary_target, hold)
-    for key in ("path_relative", "shape_relative", "terminal_relative"):
+    for key in RELATIVE_KEYS:
         assert torch.isfinite(moving[key])
         assert moving[key] > 1.0
+
+
+def test_scale_floor_caps_the_weight_of_a_barely_moving_chunk():
+    # A floor, unlike an added epsilon, is exactly neutral above itself: the chunk whose
+    # denominator clears the floor reports the same ratio floored or not.
+    hold = torch.zeros(4, 2)
+    floors = {"path": 1e-2, "shape": 1e-2, "terminal": 1e-2}
+
+    above = torch.tensor([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
+    floored = trajectory_error_components(above * 1.5, above, hold, scale_floors=floors)
+    unfloored = trajectory_error_components(above * 1.5, above, hold, scale_floors=UNFLOORED)
+    for key in RELATIVE_KEYS:
+        assert np.isclose(floored[key], unfloored[key], rtol=1e-6)
+
+    # Below the floor the ratio is capped, so a near-stationary chunk cannot dominate a
+    # batch: its relative error can no longer exceed numerator / floor.
+    below = above * 1e-3
+    capped = trajectory_error_components(below * 1.5, below, hold, scale_floors=floors)
+    uncapped = trajectory_error_components(below * 1.5, below, hold, scale_floors=UNFLOORED)
+    for key, raw_key in zip(RELATIVE_KEYS, ("path_mse", "shape_mse", "terminal_mse"), strict=True):
+        assert capped[key] < uncapped[key]
+        assert np.isclose(capped[key], capped[raw_key] / 1e-2, rtol=1e-6)
 
 
 def test_terminal_direction_loss_ignores_length_and_normalizer_offset():

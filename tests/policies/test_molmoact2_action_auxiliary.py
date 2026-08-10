@@ -46,14 +46,20 @@ def test_training_components_ignore_padded_action_dimensions():
     torch.testing.assert_close(components["path_mse"], torch.zeros(1))
     torch.testing.assert_close(components["shape_mse"], torch.zeros(1))
     torch.testing.assert_close(components["terminal_mse"], torch.zeros(1))
+    torch.testing.assert_close(components["path_relative"], torch.zeros(1))
+    torch.testing.assert_close(components["shape_relative"], torch.zeros(1))
+    torch.testing.assert_close(components["terminal_relative"], torch.zeros(1))
     torch.testing.assert_close(components["terminal_direction_loss"], torch.zeros(1))
 
 
 def test_each_auxiliary_threshold_gates_only_its_own_metric():
     components = {
-        "path_mse": torch.tensor([0.4, 0.6]),
-        "shape_mse": torch.tensor([3.0, 3.0]),
-        "terminal_mse": torch.tensor([4.0, 4.0]),
+        "path_mse": torch.tensor([40.0, 60.0]),
+        "shape_mse": torch.tensor([30.0, 30.0]),
+        "terminal_mse": torch.tensor([40.0, 40.0]),
+        "path_relative": torch.tensor([0.4, 0.6]),
+        "shape_relative": torch.tensor([3.0, 3.0]),
+        "terminal_relative": torch.tensor([4.0, 4.0]),
         "terminal_direction_loss": torch.tensor([0.2, 0.8]),
     }
     config = SimpleNamespace(
@@ -70,8 +76,26 @@ def test_each_auxiliary_threshold_gates_only_its_own_metric():
     loss, active = _thresholded_action_auxiliary_loss(components, config)
 
     torch.testing.assert_close(loss, torch.tensor([0.0, 3.6]))
-    assert active["path_mse_active"].tolist() == [False, True]
+    assert active["path_relative_active"].tolist() == [False, True]
     assert active["terminal_direction_loss_active"].tolist() == [False, True]
+
+
+def test_relative_components_are_invariant_to_joint_motion_scale():
+    target = torch.tensor([[[0.0], [1.0], [3.0]]])
+    hold = torch.zeros_like(target)
+    prediction = (0.5 * target).unsqueeze(1)
+
+    base = _action_trajectory_components_with_padding(prediction, target, hold)
+    scaled = _action_trajectory_components_with_padding(
+        4.0 * prediction,
+        4.0 * target,
+        4.0 * hold,
+    )
+
+    for key in ("path_relative", "shape_relative", "terminal_relative"):
+        torch.testing.assert_close(base[key], scaled[key])
+    for key in ("path_mse", "shape_mse", "terminal_mse"):
+        torch.testing.assert_close(scaled[key], 16.0 * base[key])
 
 
 def test_direction_loss_at_zero_prediction_has_a_gradient():

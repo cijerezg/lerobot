@@ -14,6 +14,16 @@ the Damiao-motor B601-DM, which is our arm — selects `reBot-DevArm_fixend.urdf
 and `elbow_flex ∈ [-196°, 1°]` fall entirely outside that range, so the RS URDF is the
 wrong one and would silently produce mirrored traces.
 
+## The `_nomesh` variant
+
+`reBot-DevArm_fixend_nomesh.urdf` is the same kinematic chain with all 16 `<mesh>`
+references replaced by a 1 cm box. The upstream `meshes/*.STL` were never vendored here,
+which pinocchio tolerates (it builds a kinematics-only model, so `RebotKinematics` and the
+trace probe work on the original) but placo does not — `RobotWrapper` refuses to load a
+URDF whose geometry is missing. Anything going through `lerobot.model.kinematics.RobotKinematics`
+(i.e. the IK in the rollout pipeline) must point at the `_nomesh` file. Geometry is
+irrelevant to IK; collision checking uses `link_hulls.npz`, not the meshes.
+
 ## Joint mapping (verified, not assumed)
 
 Identity, in degrees, no sign flips or offsets:

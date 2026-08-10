@@ -75,7 +75,7 @@ def hold_denominators(
                     hold = np.zeros_like(target)
                 difference = (target - hold) * gain
 
-                collected["path"].append((difference ** 2).mean(axis=(1, 2)))
+                collected["path"].append((difference**2).mean(axis=(1, 2)))
                 collected["terminal"].append((difference[:, -1, :] ** 2).mean(axis=1))
                 collected["shape"].append((np.diff(difference, axis=1) ** 2).mean(axis=(1, 2)))
 
@@ -86,7 +86,9 @@ def hold_denominators(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=str, required=True, nargs="+", help="Dataset root(s)")
-    parser.add_argument("--stats", type=str, required=True, help="Action stats .pt from compute_delta_stats.py")
+    parser.add_argument(
+        "--stats", type=str, required=True, help="Action stats .pt from compute_delta_stats.py"
+    )
     parser.add_argument("--chunk-size", type=int, default=30, help="Action horizon")
     parser.add_argument("--encoding", type=str, required=True, choices=["absolute", "anchor", "delta"])
     parser.add_argument("--normalization", type=str, default="quantiles", choices=["quantiles", "mean_std"])

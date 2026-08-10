@@ -20,7 +20,11 @@ from torch import Tensor, nn
 from torch.distributions import Beta
 
 from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.utils.action_metrics import ACTION_HOLD_KEY, terminal_direction_loss
+from lerobot.utils.action_metrics import (
+    ACTION_HOLD_KEY,
+    DEFAULT_SCALE_FLOORS,
+    terminal_direction_loss,
+)
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.import_utils import require_package
 
@@ -47,7 +51,7 @@ def _action_trajectory_components_with_padding(
     action_dim_is_pad: Tensor | None = None,
     eps: float = 1e-6,
 ) -> dict[str, Tensor]:
-    """Per-sample trajectory metrics, averaged over flow times and excluding padding."""
+    """Per-sample raw and hold-relative metrics, averaged over flow times."""
     if prediction.ndim != 4:
         raise ValueError(f"prediction must have shape [B, F, T, D], got {tuple(prediction.shape)}.")
     batch_size, _, horizon, action_dim = prediction.shape
@@ -107,10 +111,36 @@ def _action_trajectory_components_with_padding(
         torch.full_like(direction_by_flow, torch.nan),
     )
 
+    squared_signal = (hold - target).square()
+    path_power = (squared_signal * valid_path).sum(dim=(-2, -1)) / path_count
+    if horizon > 1:
+        shape_signal = torch.diff(hold, dim=-2) - torch.diff(target, dim=-2)
+        shape_power = (shape_signal.square() * valid_pair).sum(dim=(-2, -1)) / shape_count
+    else:
+        shape_power = torch.zeros_like(path_power)
+    terminal_power = (squared_signal[..., -1, :] * terminal_dim_mask).sum(dim=-1) / terminal_count
+    terminal_power = torch.where(
+        valid_terminal[:, None],
+        terminal_power,
+        torch.full_like(terminal_power, torch.nan),
+    )
+
     return {
         "path_mse": _finite_mean(path_by_flow, dim=1),
         "shape_mse": _finite_mean(shape_by_flow, dim=1),
         "terminal_mse": _finite_mean(terminal_by_flow, dim=1),
+        "path_relative": _finite_mean(
+            path_by_flow / path_power.clamp_min(DEFAULT_SCALE_FLOORS["path"]),
+            dim=1,
+        ),
+        "shape_relative": _finite_mean(
+            shape_by_flow / shape_power.clamp_min(DEFAULT_SCALE_FLOORS["shape"]),
+            dim=1,
+        ),
+        "terminal_relative": _finite_mean(
+            terminal_by_flow / terminal_power.clamp_min(DEFAULT_SCALE_FLOORS["terminal"]),
+            dim=1,
+        ),
         "terminal_direction_loss": _finite_mean(direction_by_flow, dim=1),
     }
 
@@ -121,9 +151,9 @@ def _thresholded_action_auxiliary_loss(
 ) -> tuple[Tensor, dict[str, Tensor]]:
     """Sum independently weighted metrics after their own optional hard gates."""
     key_to_config = {
-        "path_mse": "path",
-        "shape_mse": "shape",
-        "terminal_mse": "terminal",
+        "path_relative": "path",
+        "shape_relative": "shape",
+        "terminal_relative": "terminal",
         "terminal_direction_loss": "direction",
     }
     first = next(iter(components.values()))
@@ -219,8 +249,10 @@ def _fast_action_auxiliary_components(
     horizon: int,
     scale: float,
     batch_size: int,
+    target_actions: Tensor,
+    hold_actions: Tensor,
 ) -> dict[str, Tensor]:
-    """Per-example ordinal/path/shape losses from teacher-forced FAST token logits."""
+    """Per-example ordinal and raw/relative trajectory losses from FAST logits."""
     if action_logits.ndim != 2:
         raise ValueError(f"action_logits must be [tokens, vocab], got {tuple(action_logits.shape)}.")
     if target_bpe_ids.shape != token_examples.shape or target_bpe_ids.ndim != 1:
@@ -232,13 +264,29 @@ def _fast_action_auxiliary_components(
             f"FAST action vocab mismatch: logits have {action_logits.shape[1]} columns but "
             f"the tokenizer has {token_lengths.numel()} tokens."
         )
+    if target_actions.ndim != 3 or tuple(hold_actions.shape) != tuple(target_actions.shape):
+        raise ValueError(
+            "target_actions and hold_actions must have identical [B, T, D] shapes, got "
+            f"{tuple(target_actions.shape)} and {tuple(hold_actions.shape)}."
+        )
+    if target_actions.shape[0] != batch_size or target_actions.shape[1] < horizon:
+        raise ValueError(
+            f"FAST auxiliary expected at least [{batch_size}, {horizon}, D] target actions, "
+            f"got {tuple(target_actions.shape)}."
+        )
 
     device = action_logits.device
     token_lengths = token_lengths.to(device=device, dtype=torch.long)
     value_bins_by_offset = value_bins_by_offset.to(device=device, dtype=torch.long)
     coefficient_values = coefficient_values.to(device=device, dtype=action_logits.dtype)
     num_bins = int(coefficient_values.numel())
-    components: dict[str, list[Tensor]] = {"ordinal_ce": [], "path_mse": [], "shape_mse": []}
+    components: dict[str, list[Tensor]] = {
+        "ordinal_ce": [],
+        "path_mse": [],
+        "shape_mse": [],
+        "path_relative": [],
+        "shape_relative": [],
+    }
 
     for example_idx in range(batch_size):
         rows = (token_examples == example_idx).nonzero(as_tuple=False).flatten()
@@ -259,6 +307,11 @@ def _fast_action_auxiliary_components(
                 f"but this example needs {num_slots}."
             )
         action_dim = num_slots // horizon
+        if target_actions.shape[-1] < action_dim:
+            raise ValueError(
+                f"FAST auxiliary needs {action_dim} action dimensions, "
+                f"but target_actions has {target_actions.shape[-1]}."
+            )
         token_starts = lengths.cumsum(0) - lengths
         slot_token = torch.repeat_interleave(torch.arange(rows.numel(), device=device), lengths)
         slot_offsets = torch.arange(num_slots, device=device) - torch.repeat_interleave(token_starts, lengths)
@@ -293,9 +346,23 @@ def _fast_action_auxiliary_components(
             )
             shape_mse = (eigenvalue * squared_error).sum() / ((horizon - 1) * action_dim * float(scale) ** 2)
 
+        target_trajectory = target_actions[example_idx, :horizon, :action_dim].float()
+        hold_trajectory = hold_actions[example_idx, :horizon, :action_dim].float()
+        path_power = (hold_trajectory - target_trajectory).square().mean()
+        if horizon == 1:
+            shape_power = torch.zeros_like(path_power)
+        else:
+            shape_power = (
+                torch.diff(hold_trajectory, dim=0) - torch.diff(target_trajectory, dim=0)
+            ).square().mean()
+        path_relative = path_mse / path_power.clamp_min(DEFAULT_SCALE_FLOORS["path"])
+        shape_relative = shape_mse / shape_power.clamp_min(DEFAULT_SCALE_FLOORS["shape"])
+
         components["ordinal_ce"].append(ordinal_by_slot.mean())
         components["path_mse"].append(path_mse)
         components["shape_mse"].append(shape_mse)
+        components["path_relative"].append(path_relative)
+        components["shape_relative"].append(shape_relative)
 
     return {name: torch.stack(values) for name, values in components.items()}
 
@@ -2477,6 +2544,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if hold is None:
                 raise ValueError(f"Enabled action auxiliary loss requires batch[{ACTION_HOLD_KEY!r}].")
             hold = hold.to(device=actions.device, dtype=actions.dtype)
+            t_broadcast = timesteps.view(batch_size, num_flow_timesteps, 1, 1)
             clean_prediction = xt + (1.0 - t_broadcast) * pred_velocity
             auxiliary_components = _action_trajectory_components_with_padding(
                 clean_prediction,
@@ -2647,6 +2715,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
             is_action_token = label_matches.any(dim=-1)
             target_bpe_ids = label_matches[is_action_token].to(dtype=torch.long).argmax(dim=-1)
             action_logits = logits[is_action_token][:, action_lm_ids]
+            target_actions = batch.get(ACTION)
+            hold_actions = batch.get(ACTION_HOLD_KEY)
+            if target_actions is None or hold_actions is None:
+                raise ValueError(
+                    "Enabled FAST trajectory auxiliary loss requires normalized action and "
+                    f"batch[{ACTION_HOLD_KEY!r}]."
+                )
             auxiliary_components = _fast_action_auxiliary_components(
                 action_logits,
                 target_bpe_ids,
@@ -2658,11 +2733,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 horizon=int(self.config.chunk_size),
                 scale=self._fast_aux_scale,
                 batch_size=int(labels.shape[0]),
+                target_actions=target_actions.to(device=action_logits.device),
+                hold_actions=hold_actions.to(device=action_logits.device),
             )
             auxiliary_by_example = (
                 float(discrete_auxiliary_config.ordinal_weight) * auxiliary_components["ordinal_ce"]
-                + float(discrete_auxiliary_config.path_weight) * auxiliary_components["path_mse"]
-                + float(discrete_auxiliary_config.shape_weight) * auxiliary_components["shape_mse"]
+                + float(discrete_auxiliary_config.path_weight) * auxiliary_components["path_relative"]
+                + float(discrete_auxiliary_config.shape_weight) * auxiliary_components["shape_relative"]
             )
             discrete_auxiliary_loss = (
                 auxiliary_by_example if reduction == "none" else auxiliary_by_example.mean()
@@ -2680,6 +2757,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     .mean()
                     .item(),
                     "discrete_shape_auxiliary_mse": auxiliary_components["shape_mse"]
+                    .detach()
+                    .float()
+                    .mean()
+                    .item(),
+                    "discrete_path_auxiliary_relative": auxiliary_components["path_relative"]
+                    .detach()
+                    .float()
+                    .mean()
+                    .item(),
+                    "discrete_shape_auxiliary_relative": auxiliary_components["shape_relative"]
                     .detach()
                     .float()
                     .mean()

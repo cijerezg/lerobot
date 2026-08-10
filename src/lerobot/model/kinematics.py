@@ -87,6 +87,7 @@ class RobotKinematics:
         desired_ee_pose: np.ndarray,
         position_weight: float = 1.0,
         orientation_weight: float = 0.01,
+        iters: int = 1,
     ) -> np.ndarray:
         """
         Compute inverse kinematics using placo solver.
@@ -96,6 +97,8 @@ class RobotKinematics:
             desired_ee_pose: Target end-effector pose as a 4x4 transformation matrix
             position_weight: Weight for position constraint in IK
             orientation_weight: Weight for orientation constraint in IK, set to 0.0 to only constrain position
+            iters: Number of solver iterations per call. More iterations reduce the typical residual but
+                do not fix configurations where the solver diverges; validate the returned pose with FK.
 
         Returns:
             Joint positions in degrees that achieve the desired end-effector pose
@@ -114,9 +117,12 @@ class RobotKinematics:
         # Configure the task based on position_only flag
         self.tip_frame.configure(self.target_frame_name, "soft", position_weight, orientation_weight)
 
-        # Solve IK
-        self.solver.solve(True)
-        self.robot.update_kinematics()
+        # Solve IK. A single solve leaves a residual of ~1e-4 m on the reBot B601; three
+        # iterations bring the median to machine precision. Defaults to 1 so existing
+        # callers are unaffected.
+        for _ in range(iters):
+            self.solver.solve(True)
+            self.robot.update_kinematics()
 
         # Extract joint positions
         joint_pos_rad = []

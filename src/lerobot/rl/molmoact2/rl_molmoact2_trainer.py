@@ -177,9 +177,48 @@ class MolmoAct2Trainer(Trainer):
     _HISTOGRAM_CLIP_RANGES = {
         "critic_value_histogram_from_critic": (-2.0, 0.1),
         "target_value_histogram": (-2.0, 0.1),
-        "flow_loss_per_sample_histogram": (0.0, 0.01),
         "loss_critic_histogram_flat": (0.0, 0.005),
     }
+
+    # Compact, decision-oriented live dashboard. Rich distributions stay in probes.
+    _WANDB_METRIC_KEYS = frozenset(
+        {
+            "Optimization step",
+            "loss_actor",
+            "loss_flow",
+            "val_loss_flow",
+            "loss_action_aux",
+            "val_loss_action_aux",
+            "loss_discrete_ce",
+            "val_loss_discrete_ce",
+            "loss_discrete_aux",
+            "val_loss_discrete_aux",
+            "loss_subtask_ce",
+            "actor_grad_norm",
+            "flow_loss_per_sample_histogram",
+            "discrete_ce_loss_per_sample_histogram",
+            "auxiliary_loss_per_sample_histogram",
+            "depth_rgb_rms_ratio",
+            "depth_grad_norm_preclip",
+            "action_aux/path_relative_mean",
+            "action_aux/shape_relative_mean",
+            "action_aux/terminal_relative_mean",
+            "action_aux/terminal_direction_loss_mean",
+            "action_aux/path_relative_active_fraction",
+            "action_aux/shape_relative_active_fraction",
+            "action_aux/terminal_relative_active_fraction",
+            "action_aux/terminal_direction_loss_active_fraction",
+            "discrete_aux/ordinal_ce_mean",
+            "discrete_aux/path_relative_mean",
+            "discrete_aux/shape_relative_mean",
+            "loss_critic",
+            "loss_critic_mse",
+            "critic_grad_norm",
+            "critic_value_mean",
+            "target_value_mean",
+            "td_error_mean",
+        }
+    )
 
     # ── Setup ─────────────────────────────────────────────────────────────────
 
@@ -714,7 +753,6 @@ class MolmoAct2Trainer(Trainer):
             "loss_action_aux": 0.0,
             "loss_discrete_ce": 0.0,
             "loss_discrete_aux": 0.0,
-            "loss_discrete_z": 0.0,
             "loss_subtask_ce": 0.0,
         }
         actor_loss_list: list[torch.Tensor] = []
@@ -725,9 +763,8 @@ class MolmoAct2Trainer(Trainer):
         action_auxiliary_component_lists: dict[str, list[torch.Tensor]] = {}
         action_auxiliary_active_lists: dict[str, list[torch.Tensor]] = {}
         discrete_auxiliary_component_lists: dict[str, list[torch.Tensor]] = {}
-        discrete_auxiliary_loss_list: list[torch.Tensor] = []
+        auxiliary_loss_list: list[torch.Tensor] = []
         discrete_ce_loss_list: list[torch.Tensor] = []
-        discrete_z_loss_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
         depth_on = getattr(policy, "depth_visual", None) is not None
@@ -864,8 +901,6 @@ class MolmoAct2Trainer(Trainer):
             accum["loss_discrete_aux"] += float(
                 metrics.get("discrete_auxiliary_loss", 0.0)
             ) / grad_accum
-            if "discrete_z_loss" in metrics:
-                accum["loss_discrete_z"] += float(metrics["discrete_z_loss"]) / grad_accum
 
             actor_loss_raw = metrics.get("loss_raw", loss.detach().float() if isinstance(loss, torch.Tensor) else None)
             if isinstance(actor_loss_raw, torch.Tensor):
@@ -902,17 +937,19 @@ class MolmoAct2Trainer(Trainer):
                         discrete_auxiliary_component_lists.setdefault(key, []).append(
                             values.detach().float().view(-1)
                         )
-            discrete_auxiliary_loss_raw = metrics.get("discrete_auxiliary_loss_raw")
-            if isinstance(discrete_auxiliary_loss_raw, torch.Tensor):
-                discrete_auxiliary_loss_list.append(
-                    discrete_auxiliary_loss_raw.detach().float().view(-1)
+            auxiliary_loss_parts = [
+                values.detach().float().view(-1)
+                for values in (
+                    metrics.get("action_auxiliary_loss_per_sample"),
+                    metrics.get("discrete_auxiliary_loss_raw"),
                 )
+                if isinstance(values, torch.Tensor)
+            ]
+            if auxiliary_loss_parts:
+                auxiliary_loss_list.append(torch.stack(auxiliary_loss_parts).sum(dim=0))
             discrete_ce_loss_raw = metrics.get("discrete_ce_loss_raw")
             if isinstance(discrete_ce_loss_raw, torch.Tensor):
                 discrete_ce_loss_list.append(discrete_ce_loss_raw.detach().float().view(-1))
-            discrete_z_loss_raw = metrics.get("discrete_z_loss_raw")
-            if isinstance(discrete_z_loss_raw, torch.Tensor):
-                discrete_z_loss_list.append(discrete_z_loss_raw.detach().float().view(-1))
 
         # Pre-clip depth-path gradient norm (depth_redesign_options.md §5.1) — read
         # BEFORE clip_grad_norm_ rescales grads in place (the α-era metric read after
@@ -983,12 +1020,6 @@ class MolmoAct2Trainer(Trainer):
             if values.numel():
                 prefix = f"action_aux/{key}"
                 accum[f"{prefix}_mean"] = values.mean().item()
-                quantiles = torch.quantile(
-                    values, torch.tensor([0.50, 0.75, 0.90], device=values.device)
-                )
-                accum[f"{prefix}_p50"] = quantiles[0].item()
-                accum[f"{prefix}_p75"] = quantiles[1].item()
-                accum[f"{prefix}_p90"] = quantiles[2].item()
         for key, chunks in action_auxiliary_active_lists.items():
             accum[f"action_aux/{key}_fraction"] = torch.cat(chunks).mean().item()
         for key, chunks in discrete_auxiliary_component_lists.items():
@@ -997,22 +1028,13 @@ class MolmoAct2Trainer(Trainer):
             if values.numel():
                 prefix = f"discrete_aux/{key}"
                 accum[f"{prefix}_mean"] = values.mean().item()
-                quantiles = torch.quantile(
-                    values, torch.tensor([0.50, 0.75, 0.90], device=values.device)
-                )
-                accum[f"{prefix}_p50"] = quantiles[0].item()
-                accum[f"{prefix}_p75"] = quantiles[1].item()
-                accum[f"{prefix}_p90"] = quantiles[2].item()
-        if discrete_auxiliary_loss_list:
-            accum["discrete_aux_loss_histogram"] = torch.cat(
-                discrete_auxiliary_loss_list
+        if auxiliary_loss_list:
+            accum["auxiliary_loss_per_sample_histogram"] = torch.cat(
+                auxiliary_loss_list
             ).cpu().numpy()
         if discrete_ce_loss_list:
             all_discrete_ce = torch.cat(discrete_ce_loss_list)
-            accum["discrete_ce_loss_histogram_flat"] = all_discrete_ce.cpu().numpy()
-        if discrete_z_loss_list:
-            all_discrete_z = torch.cat(discrete_z_loss_list)
-            accum["discrete_z_loss_histogram_flat"] = all_discrete_z.cpu().numpy()
+            accum["discrete_ce_loss_per_sample_histogram"] = all_discrete_ce.cpu().numpy()
         if reward_list:
             all_rewards = torch.cat(reward_list)
             accum["reward_mean"] = all_rewards.mean().item()
@@ -1022,12 +1044,12 @@ class MolmoAct2Trainer(Trainer):
             all_done = torch.cat(done_list)
             accum["done_fraction"] = all_done.float().mean().item()
 
-        if accum["loss_discrete_z"] == 0.0:
-            accum.pop("loss_discrete_z", None)
         if not getattr(cfg.policy.action_auxiliary_loss, "enabled", False):
             accum.pop("loss_action_aux", None)
         if not getattr(cfg.policy.discrete_action_auxiliary_loss, "enabled", False):
             accum.pop("loss_discrete_aux", None)
+        if float(getattr(cfg.policy, "subtask_loss_weight", 0.0)) <= 0:
+            accum.pop("loss_subtask_ce", None)
 
         return accum
 
@@ -1275,6 +1297,14 @@ class MolmoAct2Trainer(Trainer):
 
     # ── Logging ───────────────────────────────────────────────────────────────
 
+    @classmethod
+    def _wandb_metrics(cls, training_infos: dict) -> dict:
+        return {
+            key: value
+            for key, value in training_infos.items()
+            if key in cls._WANDB_METRIC_KEYS
+        }
+
     def log_metrics(
         self,
         training_infos: dict,
@@ -1300,7 +1330,8 @@ class MolmoAct2Trainer(Trainer):
                 f"[MolmoAct2Trainer] step={step}  "
                 + "  ".join(f"{k}={v:.4f}" for k, v in console_scalars.items())
             )
-        super().log_metrics(training_infos, step, wandb_logger, _policy)
+        wandb_infos = self._wandb_metrics(training_infos)
+        super().log_metrics(wandb_infos, step, wandb_logger, _policy)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

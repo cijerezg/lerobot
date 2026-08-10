@@ -107,7 +107,7 @@ def infer_molmoact2_max_sequence_length(
 
 @dataclass
 class ActionAuxiliaryLossConfig:
-    """Independent, optionally threshold-gated action-trajectory losses."""
+    """Independent, optionally threshold-gated hold-relative trajectory losses."""
 
     enabled: bool = False
     path_weight: float = 0.0
@@ -142,7 +142,7 @@ class ActionAuxiliaryLossConfig:
 
 @dataclass
 class DiscreteActionAuxiliaryLossConfig:
-    """Zero-parameter trajectory-aware losses derived from FAST-token logits."""
+    """Zero-parameter ordinal and hold-relative losses derived from FAST-token logits."""
 
     enabled: bool = False
     ordinal_weight: float = 0.0

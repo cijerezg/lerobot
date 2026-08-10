@@ -302,6 +302,15 @@ class MolmoAct2Adapter(ProbablePolicy):
             "action_aux_path_mse": component("action_auxiliary_components", "path_mse"),
             "action_aux_shape_mse": component("action_auxiliary_components", "shape_mse"),
             "action_aux_terminal_mse": component("action_auxiliary_components", "terminal_mse"),
+            "action_aux_path_relative": component(
+                "action_auxiliary_components", "path_relative"
+            ),
+            "action_aux_shape_relative": component(
+                "action_auxiliary_components", "shape_relative"
+            ),
+            "action_aux_terminal_relative": component(
+                "action_auxiliary_components", "terminal_relative"
+            ),
             "action_aux_terminal_direction_loss": component(
                 "action_auxiliary_components", "terminal_direction_loss"
             ),
@@ -313,6 +322,12 @@ class MolmoAct2Adapter(ProbablePolicy):
             ),
             "discrete_aux_shape_mse": component(
                 "discrete_auxiliary_components", "shape_mse"
+            ),
+            "discrete_aux_path_relative": component(
+                "discrete_auxiliary_components", "path_relative"
+            ),
+            "discrete_aux_shape_relative": component(
+                "discrete_auxiliary_components", "shape_relative"
             ),
             "discrete_token_ce": array("discrete_token_ce"),
             "discrete_token_top1": array("discrete_token_top1"),

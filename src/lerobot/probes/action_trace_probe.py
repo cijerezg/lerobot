@@ -1537,7 +1537,7 @@ def _write_manifest(
                 "Path MSE (raw)",
                 good="low",
                 fmt=3,
-                note="Mean normalized action error over all 30 targets and joints, using flow sample 0. Scale-dependent — it rises with how far the chunk travels, so read fit.path_relative to compare anchors. Kept because the auxiliary loss gates on this quantity.",
+                note="Mean normalized action error over all 30 targets and joints, using flow sample 0. Scale-dependent — it rises with how far the chunk travels, so read fit.path_relative to compare anchors. Kept as a raw diagnostic; the auxiliary loss gates on fit.path_relative.",
             ),
             Metric(
                 "fit.shape_mse",

@@ -44,7 +44,8 @@ $$\mathcal L = \underbrace{\mathcal L_{flow} + \mathcal L_{aux}}_{\text{action e
   collected in the same pass), depth state threaded per layer, gradient
   checkpointing on, action-dim/chunk padding masked.
 - **Discrete CE** — FAST action tokens with `action_mode: both` and knowledge
-  insulation; logged as `loss_discrete_ce` / `loss_discrete_z`.
+  insulation; logged as `loss_discrete_ce`. The z-loss remains active as a
+  logit-scale regularizer but is not a separate dashboard series.
 - **Generation CE** — separate forward on the generation prompt for annotated
   samples, separate backward accumulating into the same grads, weight
   `subtask_loss_weight`. **Currently 0.0, i.e. off**; the forward still runs and
@@ -80,6 +81,12 @@ value per example:
 | `terminal` | MSE at the final target only | NaN when the last step is padding |
 | `direction` | $1 - \cos$ between predicted and true **final displacement from the hold pose**, clamped to $[0,2]$ | NaN when the target does not move from hold; 0 aligned, 1 perpendicular, 2 opposite |
 
+Path, shape, and terminal are optimized as relative errors: each raw error is
+divided by the matching hold-still error for that chunk, clamped by the shared
+corpus-derived scale floor. Thus 0 is exact, 1 is no better than hold, and values
+above 1 are worse than hold. The raw MSEs remain available as diagnostics.
+Direction is already dimensionless.
+
 Each term is independently gated and weighted:
 `total += weight × value` where `value` is finite **and** (`threshold is None` or
 `value > threshold`). A threshold is a hard gate on the flow-time-averaged metric,
@@ -90,12 +97,14 @@ Requirements: `action_encoding` must not be `delta` (config rejects it — final
 position and shape are not represented in delta space), and the batch must carry
 `action_hold`.
 
-**Picking thresholds.** The same four quantities are what `action_trace` writes to
+**Picking thresholds.** The optimized quantities are `path_relative`,
+`shape_relative`, `terminal_relative`, and `terminal_direction_loss`; these
+same four quantities are what `action_trace` writes to
 `validation/step_*/action_trace/action_metrics.json` under `trajectory`
 (`trajectory_error_components` in
 [action_metrics.py](../src/lerobot/utils/action_metrics.py) — shared by the probe
 and the loss, so the units match exactly). Each carries `mean`/`median`/`p10`/`p75`/
-`p90`; the p75 is meant to be copied straight into its YAML threshold.
+`p90` for offline inspection.
 
 The probe reads **nothing** from `action_auxiliary_loss` — it computes all four
 components unconditionally, gated only on `enable_action_trace`. So there is no
@@ -108,8 +117,8 @@ a later run.
 Two caveats. `action_metrics.json` files written before 2026-08-08 have the old key
 set (`mse_norm`, `skill_vs_hold`) and no `trajectory` block. And the probe's sample
 is small — `trace_max_anchors_per_episode` 6 × 3 val episodes ≈ 17–18 anchors — so
-its p75 is coarse. Once a run is going, the `action_aux/<term>_p75` keys are
-computed over full batches and are the better source.
+its tail quantiles are coarse. Live training therefore reports only the full-batch
+mean, median, and gate fraction for each component.
 
 ### 2.2 Discrete auxiliary — `discrete_action_auxiliary_loss` (three FAST-logit terms)
 
@@ -136,10 +145,12 @@ marginal $q_n$ over coefficient bins.
 | `path` | $\frac{1}{N\gamma^2}\sum_n (\mathbb E_{q_n}[c] - c^*_n)^2$ — by Parseval ($a = C^\top c/\gamma$, $C$ orthonormal) this *is* the per-element trajectory MSE, computed without an IDCT |
 | `shape` | $\frac{1}{(T-1)D\gamma^2}\sum_n \lambda_k (\mathbb E_{q_n}[c] - c^*_n)^2$ with $\lambda_k = 4\sin^2\!\big(\tfrac{\pi k}{2T}\big)$, $k = \lfloor n/D \rfloor$ — the exact adjacent-difference MSE as a per-frequency reweighting |
 
-`path` and `shape` are literal MSEs of the **mean** coefficient, so they are
-regression terms living beside a CE; `ordinal` is the only one that stays inside the
-CE family. All three are summed with their own weights and added to the discrete CE
-per example.
+`path` and `shape` first produce the literal raw MSEs above, then divide them
+by the matching hold-baseline power computed from the normalized target and
+`action_hold`. The shared path/shape floors cap the weight of nearly static
+chunks. Their configured weights apply to these relative values; the raw MSEs
+remain diagnostics. `ordinal` stays inside the CE family and is not
+power-normalized. The base FAST token CE is also unchanged.
 
 Verified independently by
 [`fast_soft_decode_probe.py`](../../fast_soft_decode_probe.py) (repo root): exact
@@ -147,8 +158,8 @@ one-hot identity (max $|\Delta a| = 0$), exact tiling of the 210 slots on real
 chunks, monotone degradation as the head softens.
 
 Telemetry is symmetric with the flow branch (§5): `loss_discrete_aux`,
-`discrete_aux/{ordinal_ce,path_mse,shape_mse}` mean + p50/p75/p90,
-`discrete_aux_loss_histogram`, and `val_loss_discrete_aux` on the held-out sample.
+`discrete_aux/{ordinal_ce,path_relative,shape_relative}_mean`, and
+`val_loss_discrete_aux` on the held-out sample.
 Both `loss_*_aux` keys are popped when their block is disabled, so an off term
 leaves no zero-valued panel behind.
 
@@ -239,10 +250,11 @@ Fully bypassed in the current offline run.
 Console + wandb via the `accum` dict → `log_metrics`. The console line is a fixed
 train/val-interleaved subset: `loss_flow`, `loss_action_aux`, `loss_discrete_ce`,
 `loss_discrete_aux`, each next to its `val_*` twin, then `loss_subtask_ce`,
-`actor_grad_norm`, `loss_critic`. Everything else goes to wandb only.
+`actor_grad_norm`, `loss_critic`. W&B uses a compact allowlist rather than every
+diagnostic returned by the update.
 
-**Losses.** `loss_actor`, `loss_flow`, `loss_discrete_ce`; `loss_discrete_z`,
-`loss_action_aux` and `loss_discrete_aux` are popped when their term is off, so a
+**Losses.** `loss_actor`, `loss_flow`, `loss_discrete_ce`, `loss_action_aux`,
+and `loss_discrete_aux`; optional losses are popped when their term is off, so a
 disabled term leaves no flat-zero panel. `loss_subtask_ce` appears only when
 `subtask_loss_weight > 0`. **There is no `loss_summary_ce`** — the summary-memory
 seam was removed, along with `materialize_summaries` and the hold/update split.
@@ -254,39 +266,29 @@ steps): `val_loss_flow`, `val_loss_discrete_ce`, plus `val_loss_action_aux` /
 ablation deltas (removed 2026-08-08: they estimated conditional MI on memorized
 training frames, which is 0 by construction).
 
-**Distributions.** `actor_loss_histogram`, `flow_loss_per_sample_std` and its
-histogram, `discrete_ce_loss_histogram_flat`, `discrete_z_loss_histogram_flat`,
-`discrete_aux_loss_histogram`. Flow slices: `flow_loss_timestep/mean_lt_0.3` and
-`mean_gt_0.7` (early vs late flow time), `flow_loss_time/mean_first_10` and
-`mean_last_10` (early vs late action step).
+**Distributions and slices.** W&B keeps exactly three histograms:
+`flow_loss_per_sample_histogram`, `discrete_ce_loss_per_sample_histogram`, and
+`auxiliary_loss_per_sample_histogram` (the weighted flow + discrete auxiliary
+contribution). Raw-MSE duplicates, flow-time slices, and z-loss telemetry stay out.
+Detailed measurements remain in validation probes where applicable.
 
-**Auxiliary components.** `action_aux/{path_mse,shape_mse,terminal_mse,
-terminal_direction_loss}_{mean,p50,p75,p90}` plus `_fraction` (how often each
-threshold gate fired), and `discrete_aux/{ordinal_ce,path_mse,shape_mse}_{mean,
-p50,p75,p90}`. The `action_aux/*` quantiles are the in-training version of the
-numbers `action_trace` writes, so they can also be used to retune a threshold
-mid-run.
+**Auxiliary components.** W&B keeps only
+`action_aux/{path_relative,shape_relative,terminal_relative,terminal_direction_loss}_mean`
+and their gate fractions. The discrete branch keeps
+`discrete_aux/{ordinal_ce,path_relative,shape_relative}_mean`.
+`action_trace` retains richer offline quantiles.
 
-**Depth** (point-map through the independent copied visual path into the VLM
-prefix; no gate): scale is localized with `depth_fine_token_rms`,
-`depth_block3_token_rms`, `depth_block7_token_rms`,
-`depth_projected_token_rms`, and `depth_injected_token_rms`.
-`depth_late_early_rms_ratio` isolates residual growth across blocks 3→7;
-`depth_projected_late_rms_ratio` isolates the projector. The direct modality-match
-metric is `depth_rgb_rms_ratio`, measured from final depth and RGB prefix values at
-the exact text-embedding seam. `depth_token_rms_ratio` remains for chart continuity
-and now means projector-output RMS / text-table RMS. Gradients are logged both as
-`depth_grad_norm_preclip` and split across `_encoder`, `_blocks`, `_pooler`,
-`_projector`, `_marker`, all before clipping. Forward-scale metrics are captured on
-the first micro-batch because a later consume-once forward overwrites them.
+**Depth.** W&B keeps `depth_rgb_rms_ratio` at the text-embedding seam and the
+total `depth_grad_norm_preclip`. The per-stage RMS values, ratios, and split gradient
+norms remain internal debugging diagnostics and are not permanent dashboard series.
 
 **Validation probes** at `val_freq` (action_trace carries the fit headline —
 normalized MSE vs the hold-still and dataset-mean baselines; critic probes
-self-skip under skip_critic). The `objective` probe additionally reports both
-auxiliary losses and each of their seven components as a **val-vs-train
-comparison** (`AUXILIARY_LOSS_KEYS` in `probes/objective.py`) — that ratio, not the
-train curve, is what says whether a term is buying generalization, and it is the
-direct follow-on to the v6 memorization result. Probes must thread
+self-skip under skip_critic). The `objective` probe's local report compares both
+auxiliary losses and all components on validation versus training data. W&B receives
+only `z` for the four headline objectives, plus held-out FAST top-1;
+component details remain in the probe artifact. That comparison, not the live train
+curve, says whether a term is buying generalization. Probes must thread
 `cfg.policy.inference_advantage` — not a hardcoded advantage — so eval prompts
 match training.
 
