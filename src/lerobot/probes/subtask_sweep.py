@@ -58,7 +58,10 @@ beyond noise, and readout 2 is then ranking noise: the rank histogram of a polic
 ignores the clause is uniform by construction, so it adds nothing. Read $S$ first, and
 only ask about ranks once it clears the floor.
 
-Cost is ``n_frames x (|vocab| + n_seeds)`` forwards, so both are small knobs.
+Cost is ``n_frames x (|vocab| + n_seeds)`` forwards, so both are small knobs. A second
+figure re-draws the fan as a ``subtask_sweep_fan_grid`` square of joints x frames, off the
+same forwards — no extra cost, and it is qualitative: the statistics stay the two panels
+above.
 
 Registered probe: enable with ``probe_parameters.enable_subtask_sweep``.
 """
@@ -113,6 +116,78 @@ def _caption(ax, lines: list[str]) -> None:
     """
     ax.text(0.0, -0.20, "\n".join(lines), transform=ax.transAxes, fontsize=7.4,
             va="top", ha="left", color="#333333", linespacing=1.55)
+
+
+def _spread_by_joint(examples: list[dict]) -> "np.ndarray":
+    """Across-label std per joint, averaged over chunk steps and over the given frames."""
+    per_frame = [
+        torch.stack(list(example["acts"].values())).float().std(dim=0).mean(dim=0)
+        for example in examples
+    ]
+    return torch.stack(per_frame).mean(dim=0).numpy()
+
+
+def _render_fan(examples: list[dict], vocabulary: list[str], grid: int, output_dir: str) -> None:
+    """The third summary panel, widened: the same fan over several joints and frames.
+
+    One panel of a fan is an illustration; a grid is closer to a look at the whole
+    object, because a clause that steers only one joint on only one frame shows up
+    here as fifteen flat panels next to one live one.
+    """
+    columns = [examples[i] for i in np.linspace(0, len(examples) - 1, grid).astype(int)]
+    joints = list(np.argsort(-_spread_by_joint(columns))[:grid])
+    colors = plt.cm.tab20(np.arange(len(vocabulary)) % 20)
+
+    # Shared y within a row: the fan's width is the thing being read, and per-panel
+    # autoscaling would rescale it frame by frame.
+    fig, axes = plt.subplots(
+        len(joints), len(columns), figsize=(4.1 * len(columns), 2.7 * len(joints)),
+        squeeze=False, sharex=True, sharey="row",
+    )
+    for col, example in enumerate(columns):
+        steps = np.arange(example["gt"].shape[0])
+        for row, joint in enumerate(joints):
+            ax = axes[row][col]
+            for color, (label, chunk) in zip(colors, example["acts"].items(), strict=True):
+                ax.plot(steps, chunk[:, joint], linewidth=0.85, alpha=0.65, color=color, label=label)
+            ax.plot(steps, example["gt"][:, joint], color="black", linewidth=2.4,
+                    label="GT (demonstrated)")
+            if example["gt_subtask"] in example["acts"]:
+                ax.plot(steps, example["acts"][example["gt_subtask"]][:, joint], color="black",
+                        linestyle="--", linewidth=1.9, label="chunk under the true label")
+            ax.grid(True, alpha=0.25, linestyle=":")
+            ax.tick_params(labelsize=8)
+            if row == 0:
+                ax.set_title(
+                    f"ep {example['episode_idx']} fr {example['frame_idx']}  ·  "
+                    f"$S$ = {example['separation']:.2f}x\ntrue label: {example['gt_subtask']}",
+                    fontsize=8.5,
+                )
+            if row == len(joints) - 1:
+                ax.set_xlabel("chunk step", fontsize=9)
+            if col == 0:
+                name = REBOT_JOINT_NAMES[joint] if joint < len(REBOT_JOINT_NAMES) else joint
+                ax.set_ylabel(f"{name}\nnormalized action", fontsize=9)
+
+    handles, labels = axes[0][0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=5, fontsize=7.5, frameon=False)
+    fig.suptitle(
+        f"Subtask clause → action fan ({len(joints)} joints x {len(columns)} frames, "
+        f"{len(vocabulary)} labels)",
+        fontsize=13,
+        fontweight="bold",
+    )
+    fig.text(
+        0.5, 0.955,
+        "Every coloured line is the same observation decoded under a different subtask label, "
+        "identical flow seed; black is the demonstrated chunk.\n"
+        "Rows are the joints the vocabulary moves most, so this is the most favourable view of "
+        "the clause; columns are frames spread across the sampled episodes.",
+        ha="center", va="top", fontsize=8.5, color="#333333", linespacing=1.5,
+    )
+    fig.tight_layout(rect=(0, 0.075, 1, 0.925))
+    fig.savefig(os.path.join(output_dir, "subtask_sweep_fan.png"), bbox_inches="tight", dpi=110)
+    plt.close(fig)
 
 
 def _render(rows: list[dict], vocabulary: list[str], example: dict | None, output_dir: str) -> None:
@@ -224,7 +299,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     adapter._set_probe_cuda_graph_enabled(False)
     rows: list[dict] = []
-    example: dict | None = None
+    examples: list[dict] = []
     try:
         for ep_idx, fr_idx, global_idx in samples:
             frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
@@ -262,12 +337,15 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                     "gt_mse_by_label": mse,
                 }
             )
-            if example is None:
-                example = {
-                    "acts": {label: chunk for label, chunk in acts.items()},
-                    "gt": gt_norm, "joint": 0,
+            # A chunk is (chunk_size, action_dim) floats, so keeping every frame's fan
+            # for the grid costs kilobytes and saves a second sweep.
+            examples.append(
+                {
+                    "acts": acts, "gt": gt_norm, "joint": 0,
                     "episode_idx": int(ep_idx), "frame_idx": int(fr_idx),
+                    "gt_subtask": frame["subtask"], "separation": rows[-1]["separation"],
                 }
+            )
     finally:
         adapter._restore_probe_cuda_graph_enabled()
 
@@ -297,7 +375,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     }
     with open(os.path.join(output_dir, "subtask_sweep.json"), "w") as f:
         json.dump(summary, f, indent=2)
-    _render(rows, vocabulary, example, output_dir)
+    _render(rows, vocabulary, examples[0], output_dir)
+    grid = min(
+        int(getattr(p, "subtask_sweep_fan_grid", 4)), len(examples), examples[0]["gt"].shape[1]
+    )
+    _render_fan(examples, vocabulary, grid, output_dir)
 
     write_index(
         output_dir,
@@ -321,6 +403,18 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "the dashed line is read-but-not-understood. Right: one frame's fan, to see what those "
                 "numbers look like. Read left to right — the ranks are noise until $S$ clears the floor.",
                 primary=True,
+                refs=["metadata_steering"],
+            ),
+            Panel(
+                "subtask_sweep_fan.png",
+                "The same fan over several joints and frames",
+                "The right-hand panel of the summary figure, widened into a grid: rows are the "
+                "joints the vocabulary moves most, columns are frames spread across the sampled "
+                "episodes, and each panel holds the observation fixed while sweeping every label "
+                "under one flow seed. Black is the demonstrated chunk and the dashed red line is "
+                "the chunk decoded under the true label, so a clause that is understood shows red "
+                "hugging black while the rest of the fan stands off it. Qualitative — the numbers "
+                "are still the summary figure's two statistics.",
                 refs=["metadata_steering"],
             ),
         ],

@@ -75,6 +75,7 @@ class MouseTeleop(Teleoperator):
 
         self.is_intervening = False
         self.gripper_closed = False
+        self.wrist_mode = False
         self.is_success = False
         self.terminate_episode = False
         self.start_episode = False
@@ -85,17 +86,14 @@ class MouseTeleop(Teleoperator):
 
     @property
     def action_features(self) -> dict:
+        # Wider than GamepadTeleop's (3,)/(4,) because of delta_tilt/delta_spin. The EE
+        # pipeline's `EEReferenceAndDelta` already consumes a rotation as target_wx/wy/wz,
+        # but `MapTensorToDeltaActionDictStep` would need to carry these two through
+        # before this drops into that pipeline unchanged.
+        names = {"delta_x": 0, "delta_y": 1, "delta_z": 2, "delta_tilt": 3, "delta_spin": 4}
         if self.config.use_gripper:
-            return {
-                "dtype": "float32",
-                "shape": (4,),
-                "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
-            }
-        return {
-            "dtype": "float32",
-            "shape": (3,),
-            "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2},
-        }
+            return {"dtype": "float32", "shape": (6,), "names": {**names, "gripper": 5}}
+        return {"dtype": "float32", "shape": (5,), "names": names}
 
     @property
     def feedback_features(self) -> dict:
@@ -171,8 +169,13 @@ class MouseTeleop(Teleoperator):
                             self._dy += event.value
                         elif event.code in (evdev.ecodes.REL_WHEEL, evdev.ecodes.REL_HWHEEL):
                             self._dwheel += event.value
-                elif event.type == evdev.ecodes.EV_KEY and event.value == 1:
-                    if event.code == evdev.ecodes.BTN_RIGHT:
+                elif event.type == evdev.ecodes.EV_KEY:
+                    if event.code == evdev.ecodes.BTN_MIDDLE:
+                        # Hold to steer the wrist instead of translating.
+                        self.wrist_mode = event.value == 1
+                    elif event.value != 1:
+                        continue
+                    elif event.code == evdev.ecodes.BTN_RIGHT:
                         self._toggle_intervention()
                     elif event.code == evdev.ecodes.BTN_LEFT:
                         self.gripper_closed = not self.gripper_closed
@@ -269,11 +272,24 @@ class MouseTeleop(Teleoperator):
         )
         delta = np.clip(delta * signs, -self.config.max_delta, self.config.max_delta)
 
-        action_dict = {
-            "delta_x": float(delta[0]),
-            "delta_y": float(delta[1]),
-            "delta_z": float(delta[2]),
-        }
+        # Holding the middle button steers the wrist instead of translating: pointer Y
+        # tilts the approach axis toward or away from the table, pointer X spins it.
+        if self.wrist_mode:
+            action_dict = {
+                "delta_x": 0.0,
+                "delta_y": 0.0,
+                "delta_z": 0.0,
+                "delta_tilt": float(delta[1]),
+                "delta_spin": float(delta[0]),
+            }
+        else:
+            action_dict = {
+                "delta_x": float(delta[0]),
+                "delta_y": float(delta[1]),
+                "delta_z": float(delta[2]),
+                "delta_tilt": 0.0,
+                "delta_spin": 0.0,
+            }
         if self.config.use_gripper:
             action_dict["gripper"] = float(
                 GripperAction.CLOSE.value if self.gripper_closed else GripperAction.OPEN.value

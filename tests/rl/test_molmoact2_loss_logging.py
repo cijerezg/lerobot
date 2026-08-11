@@ -142,3 +142,71 @@ def test_depth_optimizer_inherits_joint_lr_when_override_is_null() -> None:
     assert by_name["depth"]["lr"] == 3e-5
     depth_ids = {id(parameter) for parameter in policy.pointmap_encoder.parameters()}
     assert {id(parameter) for parameter in by_name["depth"]["params"]} == depth_ids
+
+
+def test_actor_freeze_trains_late_visual_path_but_not_rgb_stem() -> None:
+    from types import SimpleNamespace
+
+    from torch import nn
+
+    from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
+
+    class _ImageVit(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.patch_embedding = nn.Linear(2, 2)
+            self.positional_embedding = nn.Parameter(torch.zeros(1, 2))
+            self.transformer = nn.Module()
+            self.transformer.resblocks = nn.ModuleList(nn.Linear(2, 2) for _ in range(25))
+
+    class _VisionBackbone(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.image_vit = _ImageVit()
+            self.image_pooling_2d = nn.Linear(2, 2)
+            self.image_projector = nn.Linear(2, 2)
+
+    class _Transformer(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.wte = nn.Embedding(4, 2)
+            self.blocks = nn.ModuleList(nn.Linear(2, 2) for _ in range(36))
+            self.ln_f = nn.LayerNorm(2)
+
+    class _Policy(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.model = nn.Module()
+            self.model.vision_backbone = _VisionBackbone()
+            self.model.transformer = _Transformer()
+            self.model.lm_head = nn.Linear(2, 4)
+            self.model.action_expert = nn.Linear(2, 2)
+            self.pointmap_encoder = nn.Linear(2, 2)
+
+    policy = _Policy()
+    tp = SimpleNamespace(
+        vision_from_layer=16,
+        language_from_layer=28,
+        depth_warmup=False,
+    )
+    MolmoAct2Trainer._apply_actor_freeze(policy, tp, freeze_embedding=True)
+
+    trainable = {name for name, parameter in policy.named_parameters() if parameter.requires_grad}
+
+    assert not any("patch_embedding" in name for name in trainable)
+    assert not any("positional_embedding" in name for name in trainable)
+    assert not any("resblocks.15." in name for name in trainable)
+    assert any("resblocks.16." in name for name in trainable)
+    assert any("resblocks.24." in name for name in trainable)
+    assert any("image_pooling_2d" in name for name in trainable)
+    assert any("image_projector" in name for name in trainable)
+
+    assert not any("transformer.wte" in name for name in trainable)
+    assert not any("transformer.blocks.27." in name for name in trainable)
+    assert any("transformer.blocks.28." in name for name in trainable)
+    assert any("transformer.blocks.35." in name for name in trainable)
+    assert any("transformer.ln_f" in name for name in trainable)
+    assert any("lm_head" in name for name in trainable)
+
+    assert any("action_expert" in name for name in trainable)
+    assert any("pointmap_encoder" in name for name in trainable)

@@ -37,8 +37,8 @@ class MouseTeleopConfig(TeleoperatorConfig):
 
     # Counts of pointer motion that map to a full-scale (1.0) delta on one axis. Larger
     # values mean slower, finer control. Tune this in simulation before going to hardware.
-    counts_per_unit: float = 200.0
-    wheel_counts_per_unit: float = 3.0
+    counts_per_unit: float = 100.0
+    wheel_counts_per_unit: float = 2.0
 
     # Per-axis sign, applied after normalization. Depends on how the operator's view is
     # oriented relative to the robot base frame; set these by watching the sim.
@@ -48,8 +48,10 @@ class MouseTeleopConfig(TeleoperatorConfig):
 
     # Hard cap on the magnitude of a single normalized delta. EEBoundsAndSafety raises
     # (it does not clamp) when a commanded step exceeds max_ee_step_m, so a fast flick
-    # must never be allowed to reach it.
-    max_delta: float = 0.6
+    # must never be allowed to reach it. The budget is
+    #     max_delta * end_effector_step_sizes <= max_ee_step_m
+    # i.e. 1.2 * 0.03 = 0.036 m against a 0.05 m limit, leaving 28% margin.
+    max_delta: float = 1.2
 
     # Take exclusive ownership of the device (EVIOCGRAB) while intervening, so pointer
     # motion and clicks never reach the desktop underneath.

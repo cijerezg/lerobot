@@ -3,9 +3,8 @@ r"""When does short-term memory help, and when does it hurt? (04_memory §2.4)
 `mem_history_influence` averages the usefulness of each history channel over frames and
 reports one bar per channel. That mean is a sum over two populations rather than a
 description of either: on v6/1600 it read $+0.00067$, built out of 47% of frames that
-improved and 53% that got worse. This probe is the per-frame view the mean hides — which
-frames memory helps, which it hurts, whether either sign is real, and what separates
-them.
+improved and 53% that got worse. This probe is the per-frame view the mean hides — how
+many frames memory helps, how many it hurts, and whether either sign is real.
 
 Four forwards per sampled frame. The present observation is identical in all four; only
 the lookback window and the flow seed move:
@@ -50,19 +49,13 @@ used. $G$ is paired within a frame, so the mean over frames divided by its stand
 is the whole test: $z<2$ is no evidence the content matters, however large
 $\Delta(\mathrm{full})$ looks. Read $z$ before reading anything else here.
 
-**When.** Each frame carries covariates measured off the dataset, never off the model:
-where it sits in the episode, how far the arm travelled over the lookback window, how much
-the pixels changed over it, how far the demonstrated chunk travels from the current pose,
-the gripper's swing inside that chunk, how wrong the no-history prediction already was,
-and how many history slots were repeat-padded against the episode start. Each is ranked by
-Spearman $\rho$ against $\Delta(\mathrm{full})$ and drawn as four equal-count bins with
-their standard errors.
-
-Those correlations are marginal and the covariates are not independent — phase, padded
-slots and lookback travel all move together near the start of an episode — so a bin plot
-says *where* the effect concentrates, never *why*. With eight covariates, one crossing the
-$\pm1.96/\sqrt{n-3}$ band by chance is the expectation, not a finding: take a covariate
-seriously when its bins are monotone and its examples read the way its $\rho$ claims.
+*Which* frames memory helps on is not answered here. A Spearman ranking of
+$\Delta(\mathrm{full})$ against dataset-side covariates (episode phase, lookback travel,
+scene change, chunk travel, gripper swing, baseline error, repeat-padded slots) was removed
+2026-08-10: at the sample sizes this probe runs at, every $\rho$ sat inside its own
+$\pm1.96/\sqrt{n-3}$ band or barely outside it, the covariates are not independent of each
+other, and the bin panels resolved differences an order of magnitude below $\tau$. Nothing
+was ever concluded from it. The examples below are the per-frame view that remains.
 
 Registered probe: enable with ``probe_parameters.enable_mem_history_regime``.
 """
@@ -80,18 +73,14 @@ from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     as_image,
     assemble_frame_history,
-    build_episode_index,
     get_frame_data,
-    history_offsets,
     joint_names_for_dim,
     makedirs,
     probe_frame_inputs,
     probe_image_stride,
     sample_episodes_evenly,
-    subtask_group,
     trajectory_error_components,
 )
-from lerobot.utils.constants import OBS_STATE
 
 _CONDITION_STYLE = {
     "full": ("#2A9D8F", "-"),
@@ -100,19 +89,6 @@ _CONDITION_STYLE = {
 }
 
 _VERDICT_COLOR = {"helped": "#2A9D8F", "hurt": "#E63946", "indistinguishable": "#9AA0A6"}
-
-# Everything measured off the dataset rather than off the model, so a correlation with
-# it cannot be an artefact of the same forward that produced the effect.
-_COVARIATES = (
-    ("phase", "position in episode (0 start, 1 end)"),
-    ("lookback_motion", "arm travel over the window ($\\sigma$)"),
-    ("scene_change", "pixel change over the window (0-1)"),
-    ("chunk_motion", "demonstrated chunk travel (norm.)"),
-    ("gripper_swing", "gripper range within the chunk ($\\sigma$)"),
-    ("baseline_error", "MSE(none) — wrongness without memory"),
-    ("padded_slots", "history slots repeat-padded (start)"),
-    ("chunk_padding", "GT steps repeat-padded (end)"),
-)
 
 
 def _variant_observation(obs: dict, history_on: bool) -> dict:
@@ -159,88 +135,6 @@ def _predict(adapter, frame: dict, obs: dict, seed: int) -> torch.Tensor:
         metadata=frame["metadata"],
         generator=generator,
     )[1]
-
-
-def _frame_covariates(dataset, frame, obs, gt_norm, offsets, state_std, action_std, ep_len) -> dict:
-    """Dataset-side description of the frame the model was just asked about."""
-    global_idx, frame_idx = frame["global_idx"], frame["frame_idx"]
-    oldest = max(global_idx - offsets[0], global_idx - frame_idx)
-
-    state_now = dataset.hf_dataset[global_idx][OBS_STATE].float()
-    state_then = dataset.hf_dataset[oldest][OBS_STATE].float()
-    travel = ((state_now - state_then) / state_std).pow(2).mean().sqrt()
-
-    changes = [
-        float((obs[key].float() - obs[f"history.{key}"][0, 0].float()).abs().mean())
-        for key in sorted(obs)
-        if key.startswith("observation.images.") and f"history.{key}" in obs
-    ]
-
-    gt_raw = frame["gt_actions"]
-    return {
-        "phase": frame_idx / max(ep_len - 1, 1),
-        "lookback_motion": float(travel),
-        "scene_change": float(np.mean(changes)) if changes else 0.0,
-        "chunk_motion": float((gt_norm - gt_norm[0]).pow(2).mean().sqrt()),
-        "gripper_swing": float((gt_raw[:, -1].max() - gt_raw[:, -1].min()) / action_std[-1]),
-        "padded_slots": sum(1 for o in offsets if frame_idx - o < 0),
-        "chunk_padding": max(gt_raw.shape[0] - (ep_len - frame_idx), 0),
-        "subtask": subtask_group(frame["subtask"]),
-        "episode": int(frame["episode_idx"]),
-    }
-
-
-def _binned(values: np.ndarray, target: np.ndarray, n_bins: int = 4):
-    """Bin frames by ``values``; mean and SEM of ``target`` in each bin.
-
-    A covariate taking few distinct values — ``padded_slots`` is 0 on every frame
-    away from an episode start — gets one bin per value. Splitting *those* into
-    equal counts puts the same number on both sides of a bin edge and draws four
-    points stacked at one $x$. Everything else is split off the sort order rather
-    than off quantile edges, so ties cannot empty a bin.
-    """
-    unique = np.unique(values)
-    if len(unique) <= 2 * n_bins:
-        groups = [g for g in (np.flatnonzero(values == v) for v in unique) if len(g) >= 3]
-    else:
-        groups = np.array_split(np.argsort(values, kind="stable"), n_bins)
-    centers, means, errors, counts = [], [], [], []
-    for group in groups:
-        if not len(group):
-            continue
-        centers.append(float(np.median(values[group])))
-        means.append(float(np.mean(target[group])))
-        errors.append(float(np.std(target[group], ddof=1) / np.sqrt(len(group))) if len(group) > 1 else 0.0)
-        counts.append(len(group))
-    return np.array(centers), np.array(means), np.array(errors), counts
-
-
-def _grouped(labels: list, target: np.ndarray, min_count: int = 3):
-    """Same as `_binned` for a categorical covariate, dropping thin groups."""
-    names, means, errors, counts = [], [], [], []
-    for name in sorted(set(labels)):
-        mask = np.array([label == name for label in labels])
-        if mask.sum() < min_count:
-            continue
-        names.append(str(name))
-        means.append(float(target[mask].mean()))
-        errors.append(float(target[mask].std(ddof=1) / np.sqrt(mask.sum())) if mask.sum() > 1 else 0.0)
-        counts.append(int(mask.sum()))
-    return names, np.array(means), np.array(errors), counts
-
-
-def _correlations(rows: list[dict], target: np.ndarray) -> list[dict]:
-    """Spearman $\\rho$ of every non-constant covariate against the target, ranked."""
-    from scipy.stats import spearmanr
-
-    out = []
-    for key, label in _COVARIATES:
-        values = np.array([row[key] for row in rows], dtype=float)
-        if np.ptp(values) == 0:
-            continue
-        rho, pvalue = spearmanr(values, target)
-        out.append({"key": key, "label": label, "rho": float(rho), "p": float(pvalue)})
-    return sorted(out, key=lambda item: abs(item["rho"]), reverse=True)
 
 
 def _render_regime(rows: list[dict], summary: dict, output_dir: str) -> None:
@@ -311,73 +205,6 @@ def _render_regime(rows: list[dict], summary: dict, output_dir: str) -> None:
         fontsize=13, fontweight="bold",
     )
     fig.savefig(os.path.join(output_dir, "regime.png"), bbox_inches="tight", dpi=110)
-    plt.close(fig)
-
-
-def _render_covariates(rows: list[dict], summary: dict, output_dir: str) -> None:
-    """Rank the covariates, then show the shape behind each ranking."""
-    delta = np.array([row["delta_full"] for row in rows])
-    tau = summary["sampler_floor"]
-    correlations = summary["correlations"]
-    band = 1.96 / np.sqrt(max(len(rows) - 3, 1))
-
-    n_cols = 4
-    continuous = [key for key, _ in _COVARIATES if np.ptp([row[key] for row in rows]) > 0]
-    n_rows = 1 + (len(continuous) + n_cols - 1) // n_cols + 1
-    fig = plt.figure(figsize=(18, 3.6 * n_rows))
-    grid = fig.add_gridspec(n_rows, n_cols, hspace=0.62, wspace=0.30, top=0.93, bottom=0.04)
-
-    ax = fig.add_subplot(grid[0, :])
-    y = np.arange(len(correlations))
-    ax.barh(y, [item["rho"] for item in correlations],
-            color=["#2A9D8F" if item["rho"] > 0 else "#E63946" for item in correlations])
-    ax.axvspan(-band, band, color="#9AA0A6", alpha=0.22, label=rf"$\pm 1.96/\sqrt{{n-3}}$ = $\pm${band:.2f}")
-    ax.axvline(0.0, color="black", linewidth=0.8)
-    ax.set_yticks(y)
-    ax.set_yticklabels([item["label"] for item in correlations], fontsize=9)
-    ax.invert_yaxis()
-    ax.set_xlabel(r"Spearman $\rho$ against $\Delta(\mathrm{full})$  (positive = memory helps more there)")
-    ax.set_title(
-        "Which frames memory helps on — covariates ranked  "
-        "(with eight of them, one bar outside the band is the chance expectation)",
-        fontsize=11,
-    )
-    ax.legend(fontsize=8, loc="lower right")
-
-    labels = dict(_COVARIATES)
-    for position, key in enumerate(continuous):
-        ax = fig.add_subplot(grid[1 + position // n_cols, position % n_cols])
-        centers, means, errors, counts = _binned(np.array([row[key] for row in rows], dtype=float), delta)
-        ax.errorbar(centers, means, yerr=errors, marker="o", color="#264653", linewidth=1.4, capsize=3)
-        ax.axhline(0.0, color="black", linewidth=0.8)
-        ax.axhspan(-tau, tau, color="#9AA0A6", alpha=0.18)
-        rho = next((item["rho"] for item in correlations if item["key"] == key), 0.0)
-        ax.set_title(f"{labels[key]}\n" + rf"$\rho$={rho:+.2f}, n per bin {counts}", fontsize=8.5)
-        ax.set_ylabel(r"mean $\Delta(\mathrm{full})$", fontsize=8)
-        ax.tick_params(labelsize=7)
-        ax.grid(True, alpha=0.25, linestyle=":")
-
-    for position, (key, title) in enumerate((("subtask", "subtask (verb)"), ("episode", "episode"))):
-        ax = fig.add_subplot(grid[n_rows - 1, position * 2:(position + 1) * 2])
-        names, means, errors, counts = _grouped([row[key] for row in rows], delta)
-        if not names:
-            ax.axis("off")
-            continue
-        ax.bar(np.arange(len(names)), means, yerr=errors, color="#457B9D", capsize=3)
-        ax.axhline(0.0, color="black", linewidth=0.8)
-        ax.axhspan(-tau, tau, color="#9AA0A6", alpha=0.18)
-        ax.set_xticks(np.arange(len(names)))
-        ax.set_xticklabels([f"{name}\nn={count}" for name, count in zip(names, counts, strict=True)], fontsize=7.5)
-        ax.set_ylabel(r"mean $\Delta(\mathrm{full})$", fontsize=8)
-        ax.set_title(title, fontsize=9)
-        ax.grid(True, alpha=0.25, linestyle=":", axis="y")
-
-    fig.suptitle(
-        "What separates the frames memory helps from the ones it hurts "
-        f"({len(rows)} frames; shaded band is the sampler floor $\\pm\\tau$)",
-        fontsize=13, fontweight="bold",
-    )
-    fig.savefig(os.path.join(output_dir, "covariates.png"), bbox_inches="tight", dpi=110)
     plt.close(fig)
 
 
@@ -453,12 +280,7 @@ def _render_example(dataset, memory_cfg, fps: float, diagnostic: dict, label: st
     fig.suptitle(
         f"{label.upper()} — episode {ep_idx}, frame {frame_idx}  |  "
         rf"$\Delta$(full)={row['delta_full']:+.4f} ({row['verdict']}), "
-        rf"$G$={row['content_gain']:+.4f}, moved RMSE={row['rmse_full']:.4f}"
-        "\n"
-        f"phase {row['phase']:.2f} · arm travel {row['lookback_motion']:.2f}σ · "
-        f"pixels {row['scene_change']:.3f} · chunk travel {row['chunk_motion']:.3f} · "
-        f"gripper swing {row['gripper_swing']:.2f}σ · padded slots {row['padded_slots']} · "
-        f"subtask '{row['subtask']}'",
+        rf"$G$={row['content_gain']:+.4f}, moved RMSE={row['rmse_full']:.4f}",
         fontsize=12, fontweight="bold",
     )
     fig.savefig(output_path, bbox_inches="tight", dpi=130)
@@ -483,23 +305,10 @@ sitting above an orange cloud at the same $x$ is the shape of memory working.
 the definition of $\tau$ puts outside the band by construction, so a helped fraction at
 the line is a helped fraction of zero."""
 
-_COVARIATES_HOW = r"""**Top — ranking.** Spearman $\rho$ between each dataset-side
-covariate and $\Delta(\mathrm{full})$, so a positive bar means memory helps more on frames
-where that covariate is larger. Nothing here is computed from the model, so a correlation
-cannot be an artefact of the forward that produced the effect. The band is
-$\pm1.96/\sqrt{n-3}$: with eight covariates, expect one bar outside it under the null.
-
-**Below — the shape.** Each covariate's frames split into four equal-count bins, mean
-$\Delta(\mathrm{full})$ per bin with its standard error, against the sampler floor
-$\pm\tau$. A monotone run of bins is worth more than a large $\rho$ built from one
-extreme bin. These are marginal relationships and the covariates are correlated with each
-other — episode phase, repeat-padded slots and lookback travel all move together near an
-episode start — so the panels locate the effect, they do not attribute it."""
-
 _EXAMPLE_HOW = {
     "helped": "A frame where real history moved the chunk toward the demonstration. Read the "
               "history strip first: if nothing in it is informative, the improvement is a "
-              "coincidence the covariate panels should have caught.",
+              "coincidence and this frame is the tail of the distribution, not a mechanism.",
     "hurt": "A frame where history moved the chunk away. This is the population the mean in "
             "`mem_history_influence` cancels against, and it is the same size as the helped one.",
     "moved_but_null": "A frame where history moved the chunk hard and it changed nothing "
@@ -520,14 +329,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     p = cfg.probe_parameters
     fps = float(cfg.env.fps)
     chunk_size = int(cfg.policy.chunk_size)
-    offsets = history_offsets(memory_cfg, fps)
     lag = int(round(memory_cfg.history_window_seconds * fps))
-
-    episode_lengths = {ep: len(indices) for ep, indices in build_episode_index(dataset).items()}
-    state_std = dataset.meta.stats[OBS_STATE]["std"]
-    action_std = dataset.meta.stats["action"]["std"]
-    state_std = torch.as_tensor(np.asarray(state_std), dtype=torch.float32).clamp_min(1e-6)
-    action_std = np.clip(np.asarray(action_std, dtype=np.float32), 1e-6, None)
 
     samples = sample_episodes_evenly(
         dataset, p.n_frames_per_episode, p.max_episodes, p.random_seed, probe_image_stride(cfg)
@@ -576,7 +378,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "frame_idx": int(_fr),
                 "mse": mse,
                 "trajectory": trajectory,
-                "baseline_error": mse["none"],  # a covariate: how wrong the frame already was
                 "delta_full": mse["none"] - mse["full"],
                 "delta_stale": mse["none"] - mse["stale"],
                 "delta_seed": mse["none"] - mse["none_reseed"],
@@ -587,20 +388,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "stale_shift": int(stale_shift),
                 "stale_valid": stale_shift == lag,
             }
-            row.update(
-                _frame_covariates(
-                    dataset, frame, obs, gt_norm, offsets, state_std, action_std,
-                    episode_lengths[int(_ep)],
-                )
-            )
             rows.append(row)
             diagnostics.append({"gt": gt_norm, "acts": acts, "row": row})
-            if len(rows) == 1:
-                # A declared covariate nobody writes only surfaces in the plotting pass —
-                # after every forward has already been spent. Fail on frame one instead.
-                missing = [key for key, _ in _COVARIATES if key not in row]
-                if missing:
-                    raise KeyError(f"[mem_history_regime] declared covariates never computed: {missing}")
     finally:
         adapter._restore_probe_cuda_graph_enabled()
 
@@ -655,12 +444,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "rmse_stale_mean": float(np.mean([row["rmse_stale"] for row in rows])),
         "rmse_seed_mean": float(np.mean([row["rmse_seed"] for row in rows])),
     }
-    summary["correlations"] = _correlations(rows, delta)
     with open(os.path.join(output_dir, "regime.json"), "w") as f:
         json.dump({"summary": summary, "per_frame": rows}, f, indent=2)
 
     _render_regime(rows, summary, output_dir)
-    _render_covariates(rows, summary, output_dir)
 
     examples_dir = os.path.join(output_dir, "examples")
     makedirs(examples_dir)
@@ -732,8 +519,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         panels=[
             Panel("regime.png", "Real history against a wrong-content null and a sampler null",
                   how=_REGIME_HOW, primary=True, refs=["mem_history_influence"]),
-            Panel("covariates.png", "Which frames the effect concentrates on",
-                  how=_COVARIATES_HOW, primary=True),
         ] + [
             Panel(f"examples/{filename}", f"{label.replace('_', ' ')} — history, then every joint against GT",
                   how=_EXAMPLE_HOW[label])
@@ -760,6 +545,5 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     logging.info(
         f"[mem_history_regime] n={len(rows)}  helped={summary['helped_fraction']:.0%}  "
         f"hurt={summary['hurt_fraction']:.0%}  tau={tau:.5f}  "
-        f"content gain={summary['content_gain']:+.5f} (z={summary['content_gain_z']:+.2f})  "
-        + "  ".join(f"{item['key']} rho={item['rho']:+.2f}" for item in summary["correlations"][:3])
+        f"content gain={summary['content_gain']:+.5f} (z={summary['content_gain_z']:+.2f})"
     )

@@ -338,10 +338,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         )
 
     mse_by_condition: dict[str, list[float]] = {c: [] for c in CONDITIONS}
-    trajectory_by_condition = {
-        key: {condition: [] for condition in CONDITIONS}
-        for key in ("path_mse", "shape_mse", "terminal_mse", "terminal_direction_loss")
-    }
+    # Keyed by whatever trajectory_error_components returns, so a new criterion
+    # flows through to the summary instead of raising here.
+    trajectory_by_condition: dict[str, dict[str, list[float]]] = {}
     pairwise_deltas: dict[tuple[str, str], list[float]] = {pair: [] for pair in CONDITION_PAIRS}
     sens_depth_list: list[float] = []
     sens_rgb_list: list[float] = []
@@ -438,7 +437,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                     value = float(tensor) if bool(torch.isfinite(tensor)) else None
                     row["trajectory"][condition][key] = value
                     if value is not None:
-                        trajectory_by_condition[key][condition].append(value)
+                        by_condition = trajectory_by_condition.setdefault(
+                            key, {c: [] for c in CONDITIONS}
+                        )
+                        by_condition[condition].append(value)
                 logging.info(f"  mse_norm[{condition:>9s}] = {mse:.5f}")
             for left, right in CONDITION_PAIRS:
                 delta = (actions[left] - actions[right]).abs().max().item()

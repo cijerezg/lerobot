@@ -583,7 +583,9 @@ def render_action_exemplars(bands, adapter, dataset, cfg, output_dir: str) -> bo
         _analyse,
         _camera_context,
         _figure,
+        _normalized_chunks,
         _resolve_actuator_config,
+        _trajectory_metrics,
         _write_dashboard_html,
     )
     from lerobot.robots.rebot_b601_follower.kinematics import RebotKinematics
@@ -608,7 +610,7 @@ def render_action_exemplars(bands, adapter, dataset, cfg, output_dir: str) -> bo
                 generator.manual_seed(
                     action_inspector_sample_seed(cfg.probe_parameters.random_seed, source["global_idx"])
                 )
-                prediction, _, _ = adapter.predict_action_chunk(
+                prediction, prediction_norm, _ = adapter.predict_action_chunk(
                     frame["obs"],
                     frame["task"],
                     state=state,
@@ -647,7 +649,9 @@ def render_action_exemplars(bands, adapter, dataset, cfg, output_dir: str) -> bo
                         f"ep {source['episode_idx']} frame {source['frame_idx']}"
                     ),
                     sample_names=["generated action"],
+                    norm=_normalized_chunks(adapter, prediction_norm, frame["gt_actions"], state),
                 )
+                record["metrics"].update(_trajectory_metrics(record["norm"]))
                 records.append(record)
     finally:
         adapter._restore_probe_cuda_graph_enabled()

@@ -49,20 +49,43 @@ fall somewhere between. A monotone staircase means "$N$ of 5" is read as an orde
 quantity; two clumps at the ends mean the model binarized it; interior levels off the
 axis mean they are their own thing rather than a point on a scale.
 
-**3. Is it obeyed?** Moving the chunk is not the same as moving it somewhere sensible.
-Quality is annotated per segment, so a frame has a *true* quality and can be asked a
-different one. With
+**3. Is the response conditional on the frame, or a constant?** Moving the chunk is not
+the same as reading the clause. Write $v^{(c)} = a^{(c)} - a^{(\mathrm{none})}$ for the
+displacement a clause causes, $h$ for the chunk that repeats the measured state and never
+moves, and
 
-$$\Delta\mathrm{MSE}(c)=\frac{1}{TD}\sum_{t,d}\left(a^{(\mathrm{none})}_{t,d}-a^{\star}_{t,d}\right)^{2}
--\frac{1}{TD}\sum_{t,d}\left(a^{(c)}_{t,d}-a^{\star}_{t,d}\right)^{2}$$
+$$\rho(c)=\frac{\frac{1}{TD}\sum_{t,d}\left(v^{(c)}_{t,d}\right)^{2}}
+{\max\left(\frac{1}{TD}\sum_{t,d}\left(h_{t,d}-a^{(\mathrm{none})}_{t,d}\right)^{2},\ \phi\right)}$$
 
-the obedience matrix averages $\Delta\mathrm{MSE}(q_{\text{asked}})$ over the frames
-whose true quality is $q_{\text{true}}$. A model that understands the clause has the
-diagonal winning each column: told what actually happened, it predicts what actually
-happened. A model that reads the clause as "try harder" has row $q_5$ winning every
-column, including the columns where the demonstration was mediocre.
+for its size in units of the chunk's own motion, $\phi$ being the scale floor from
+``action_metrics``. $\rho=1$ means the clause rewrote as much trajectory as the
+trajectory has, and — this is the point — every frame contributes on one scale no matter
+how far the arm travels in it, so frames may be compared with each other.
 
-**4. Which clause carries it?** The old poles bundled both — quality 5 with no mistake
+Quality is annotated per segment, so a frame has a *true* level and can be asked a
+different one. A model that reads the frame moves least when asked the truth and more as
+the mismatch grows, giving $\rho(q)$ a dip at $q_{\text{true}} = q$. A clause applied as a
+constant prior gives a $\rho(q)$ that does not depend on the true level at all.
+
+**4. One direction, or one per frame?** A prior is literally a shared vector. Within a
+frame the two poles should oppose, $\cos(v^{(q_1)},v^{(q_5)})\approx-1$, if the levels
+sit on one signed axis. Across frames, $\cos(v^{(q_5)}_f, \bar{v}_{-f})$ against the
+leave-one-out mean separates one global style offset ($+1$) from a displacement computed
+per frame ($0$), with reseeded flow noise as the null. The shared fraction
+
+$$R=\frac{\lVert\bar{u}\rVert^{2}}{\operatorname{mean}_f\lVert u_f\rVert^{2}},
+\qquad u_f=a^{(q_5)}_f-a^{(q_1)}_f$$
+
+is that statement as one number, and $\bar{u}$ itself — per joint, per chunk step — is
+what the model thinks "quality 5" means.
+
+Nothing on that page is scored against the demonstration. $a^{\star}$ is one sample from
+a multimodal conditional, so "did the clause move the chunk toward it" measures the
+sampler's mode choice as much as it measures the clause, and at these bucket sizes the
+mode choice wins. The per-condition MSE against $a^{\star}$ stays in
+``metadata_steering.json`` and is off the figures.
+
+**5. Which clause carries it?** The old poles bundled both — quality 5 with no mistake
 against quality 1 with a mistake — so a difference could not be attributed. The $2\times2$
 separates them: the quality effect $\lVert a^{(q_5,m)}-a^{(q_1,m)}\rVert$ averaged over
 the mistake flag, the mistake effect $\lVert a^{(q,\mathrm{T})}-a^{(q,\mathrm{F})}\rVert$
@@ -76,7 +99,7 @@ well defined. And the levels are not uniform in training: the annotated corpus r
 2026-08-02 merge), so asking for quality 1 is a rare prompt and a weak response at the
 low end is as much a data statement as a model one. Which levels the *held-out* frames
 actually cover is in the provenance box, and a level missing there has no column in the
-obedience matrix.
+conditionality panel.
 
 Cost is ``n_frames x (9 + n_seeds - 1)`` forwards.
 
@@ -95,6 +118,7 @@ import numpy as np
 import torch
 
 from lerobot.probes.manifest import Panel, write_index
+from lerobot.utils.action_metrics import TRAJECTORY_RELATIVE_KEYS, trajectory_error_components
 from lerobot.probes.utils import (
     frame_metadata_lookup,
     joint_names_for_dim,
@@ -130,6 +154,11 @@ def _rmse(a: torch.Tensor, b: torch.Tensor) -> float:
     return float((a - b).pow(2).mean().sqrt())
 
 
+def _step_rms(chunk: torch.Tensor) -> float:
+    """RMS per-step travel — how much the chunk moves, as opposed to where it sits."""
+    return float(torch.diff(chunk, dim=-2).pow(2).mean().sqrt())
+
+
 def _pairwise_rmse(chunks: list[torch.Tensor]) -> tuple[float, float]:
     """Mean and max pairwise RMSE — the seed floor when the chunks differ only in noise."""
     if len(chunks) < 2:
@@ -152,6 +181,45 @@ def _mean(rows: list[dict], key: str) -> float:
 def _sem(rows: list[dict], key: str) -> float:
     values = _column(rows, key)
     return float(values.std(ddof=1) / np.sqrt(values.size)) if values.size > 1 else 0.0
+
+
+def _median(rows: list[dict], key: str) -> float:
+    values = _column(rows, key)
+    return float(np.median(values)) if values.size else float("nan")
+
+
+def _median_se(rows: list[dict], key: str, n_boot: int = 512) -> float:
+    """Bootstrap standard error of the median.
+
+    The relative displacements are a ratio with a heavy right tail, so the buckets are
+    summarized by their median; this is the matching spread. Seeded per call so the
+    figure is reproducible.
+    """
+    values = _column(rows, key)
+    if values.size < 2:
+        return 0.0
+    rng = np.random.default_rng(0)
+    draws = rng.choice(values, size=(n_boot, values.size), replace=True)
+    return float(np.median(draws, axis=1).std())
+
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
+    return float(a @ b / denominator) if denominator > 1e-12 else 0.0
+
+
+def _loo_alignment(vectors: list[np.ndarray]) -> list[float]:
+    r"""Each displacement against the mean of every *other* frame's displacement.
+
+    Leave-one-out because including $f$ in its own reference is positively biased by
+    $1/N$ of the reference's own norm, which at these sample sizes is the whole effect
+    being looked for.
+    """
+    if len(vectors) < 2:
+        return []
+    stack = np.stack(vectors)
+    total = stack.sum(axis=0)
+    return [_cosine(v, (total - v) / (len(vectors) - 1)) for v in stack]
 
 
 def _quality_projection(acts: dict[str, torch.Tensor]) -> tuple[dict[int, float], float]:
@@ -183,8 +251,8 @@ def _provenance(rows: list[dict], dataset, cfg, conditions: list[str], n_seeds: 
 
     Derived from the measured rows rather than from config, so it describes the frames
     that actually produced numbers after stride snapping and the episode budget dropped
-    whatever they dropped. The label mix is the part that decides what the obedience
-    matrix can say: a quality level with no frames in this split has no column, and one
+    whatever they dropped. The label mix is the part that decides what the conditionality
+    panel can say: a quality level with no frames in this split has no column, and one
     with three frames has a column that is three frames wide.
     """
     p = cfg.probe_parameters
@@ -199,14 +267,14 @@ def _provenance(rows: list[dict], dataset, cfg, conditions: list[str], n_seeds: 
         ", ".join(f"quality {q}: {mix[q]} frames" for q in _QUALITY_LEVELS if mix[q])
         + f"; {flagged} of {len(rows)} frames carry the mistake flag"
         if labelled
-        else "no quality / mistake labels on this split — ``gt`` and the obedience matrix are unavailable"
+        else "no quality / mistake labels on this split — ``gt`` and the conditionality panel are unavailable"
     )
     if missing and labelled:
         label_line += (
             "; no frames at quality "
             + "/".join(str(q) for q in missing)
             + f", so {'that level is' if len(missing) == 1 else 'those levels are'} asked for "
-            "but never true here — it gets a row in the obedience matrix and no column"
+            "but never true here — it gets a line in the conditionality panel and no column"
         )
 
     return {
@@ -253,9 +321,19 @@ def _provenance(rows: list[dict], dataset, cfg, conditions: list[str], n_seeds: 
             ],
             ["Label mix of the sampled frames", label_line],
             [
+                "Scale for every displacement",
+                "the frozen-arm chunk — the measured state repeated "
+                f"{int(cfg.policy.chunk_size)} times and normalized like a prediction — so "
+                "$\\rho$ reads as the fraction of the chunk's own motion the clause rewrote, "
+                "floored by ``action_metrics.DEFAULT_SCALE_FLOORS``",
+            ],
+            [
                 "Demonstration",
                 f"$a^{{\\star}}$ is the recorded action at the sampled frame and the "
-                f"{int(cfg.policy.chunk_size) - 1} that follow it, normalized like the prediction",
+                f"{int(cfg.policy.chunk_size) - 1} that follow it, normalized like the "
+                "prediction. It scores no figure — it is one sample of a multimodal "
+                "conditional, so an error against it moves with the sampler's mode choice. "
+                "The per-condition MSE against it is in ``metadata_steering.json``",
             ],
         ],
         "sampling": (
@@ -263,11 +341,13 @@ def _provenance(rows: list[dict], dataset, cfg, conditions: list[str], n_seeds: 
             f"grid; episodes drawn by a seeded subset when the budget is smaller than the "
             f"split (seed {int(p.random_seed)}). Every distance is a within-frame difference "
             "between two conditions on the same observation, so uneven sampling cannot "
-            "manufacture an effect — but the obedience matrix *does* compare across frames, "
-            "and its columns inherit whatever the label mix above is. A chunk that would run "
-            "past the end of its episode is repeat-padded with the last recorded action, "
-            f"which makes the demonstration partly constant within {int(cfg.policy.chunk_size)} "
-            "frames of the end and shrinks what any clause can improve there."
+            "manufacture an effect — but the conditionality panel *does* compare label groups "
+            "across frames, which is why it is drawn in $\\rho$ rather than raw distance: the "
+            "per-frame denominator is what makes two frames comparable at all. Its columns "
+            "still inherit whatever the label mix above is. Chunks running past the end of an "
+            "episode are repeat-padded with the last recorded action; no figure is scored "
+            "against the demonstration, so that padding reaches only the $a^{\\star}$ numbers "
+            "kept in the JSON."
         ),
         "regime": (
             "one frame per forward, batch size 1; "
@@ -365,110 +445,123 @@ def _render_floor(rows: list[dict], summary: dict, output_path: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Figure 2 — is the clause obeyed?
+# Figure 2 — is the response conditional on the frame, and is it one direction?
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _render_obedience(rows: list[dict], summary: dict, output_path: str) -> None:
+def _render_response(rows: list[dict], mean_axis: np.ndarray, summary: dict, output_path: str) -> None:
     labelled = [row for row in rows if row["gt_quality"] is not None]
     columns = [q for q in _QUALITY_LEVELS if any(row["gt_quality"] == q for row in labelled)]
+    buckets = {q: [row for row in labelled if row["gt_quality"] == q] for q in columns}
 
     fig = plt.figure(figsize=(18, 6.6))
-    grid = fig.add_gridspec(1, 3, wspace=0.42, left=0.05, right=0.985, top=0.78, bottom=0.32)
+    grid = fig.add_gridspec(1, 3, wspace=0.30, left=0.05, right=0.985, top=0.78, bottom=0.32)
     axes = [fig.add_subplot(grid[0, col]) for col in range(3)]
 
-    asked = [f"q{q}" for q in _QUALITY_LEVELS] + ["gt"]
-    matrix = np.full((len(asked), len(columns)), np.nan)
-    for col, true_q in enumerate(columns):
-        bucket = [row for row in labelled if row["gt_quality"] == true_q]
-        for line, name in enumerate(asked):
-            matrix[line, col] = _mean(bucket, f"{name}_gt_mse_improvement")
-
-    scale = np.nanmax(np.abs(matrix)) if np.isfinite(matrix).any() else 1.0
-    image = axes[0].imshow(1e3 * matrix, cmap="RdBu", vmin=-1e3 * scale, vmax=1e3 * scale,
-                           aspect="auto")
-    axes[0].set_xticks(range(len(columns)),
-                       [f"{q}\n(n={sum(r['gt_quality'] == q for r in labelled)})" for q in columns])
-    axes[0].set_yticks(range(len(asked)),
-                       [f"asked {q}" for q in _QUALITY_LEVELS] + ["gt (+mistake)"])
-    axes[0].set_xlabel("quality the segment actually is")
-    for col, true_q in enumerate(columns):
-        for line, name in enumerate(asked):
-            if not np.isfinite(matrix[line, col]):
-                continue
-            diagonal = name == f"q{true_q}"
-            axes[0].text(col, line, f"{1e3 * matrix[line, col]:+.2f}", ha="center", va="center",
-                         fontsize=8, fontweight="bold" if diagonal else "normal")
-            if diagonal:
-                axes[0].add_patch(plt.Rectangle((col - 0.5, line - 0.5), 1, 1, fill=False,
-                                                edgecolor="black", linewidth=2.0))
-    fig.colorbar(image, ax=axes[0], fraction=0.046, pad=0.03).set_label(
-        r"$\Delta$MSE $\times 10^{3}$"
-    )
-    axes[0].set_title("Obedience: does asking the truth\nbeat asking for quality 5?")
-    # Two-line column ticks plus an axis label sit under this panel, so its caption
-    # starts lower than the default.
-    _caption(axes[0], y=-0.30, lines=[
-        r"Cell = mean $\Delta\mathrm{MSE}$ over the frames in that column, $\times 10^{3}$: how much squared",
-        r"error against the demonstration the clause removes relative to no clause at all. Blue helped,",
-        r"red hurt, white did nothing. Boxed = the honest cell, where the asked quality is the true one.",
-        r"Understood clause: the boxed cell is the best of its column. 'Try harder' clause: the $q_5$ row",
-        r"wins everywhere, including columns where the demonstration was mediocre. The bottom row adds",
-        r"the true mistake flag on top of the true quality, so it differs from the boxed cell only on",
-        r"flagged frames. Columns are independent samples of frames — read down them, not across.",
-    ])
-
-    width = 0.26
-    x = np.arange(len(columns))
-    buckets = {q: [row for row in labelled if row["gt_quality"] == q] for q in columns}
-    # `None` means "ask for whatever this column's true quality is" — the diagonal.
-    series = [("asked = truth", None, "#2A9D8F"), ("asked = 5 (rollout)", 5, "#457B9D"),
-              ("asked = 1", 1, "#F4A261")]
-    for offset, (label, asked_q, color) in enumerate(series):
-        keys = [f"q{asked_q or q}_gt_mse_improvement" for q in columns]
-        axes[1].bar(
-            x + (offset - 1) * width,
-            [_mean(buckets[q], key) for q, key in zip(columns, keys, strict=True)],
-            width=width,
-            yerr=[_sem(buckets[q], key) for q, key in zip(columns, keys, strict=True)],
-            capsize=2, color=color, label=label,
+    for q in _QUALITY_LEVELS:
+        key = f"q{q}_disp_path"
+        medians = [_median(buckets[true_q], key) for true_q in columns]
+        axes[0].errorbar(
+            columns, medians, yerr=[_median_se(buckets[true_q], key) for true_q in columns],
+            marker="o", capsize=3, linewidth=1.8, color=_QUALITY_COLORS[q], label=f"asked {q}",
         )
-    axes[1].axhline(0.0, color="black", linewidth=0.8)
-    axes[1].set_xticks(x, [f"true quality {q}" for q in columns])
-    axes[1].set_ylabel(r"$\Delta$MSE vs no clause (positive = helped)")
-    axes[1].set_title("The same three rows, with their\nstandard errors")
-    axes[1].legend(fontsize=8)
-    _caption(axes[1], [
-        r"Three rows of the matrix drawn with the uncertainty the colours hide: the diagonal, the clause",
-        r"every rollout issues, and the opposite pole. Whisker = standard error of the column mean, so",
-        r"overlapping whiskers mean the matrix's colour difference is not resolved at this sample size.",
-        r"The comparison that matters is green vs blue inside a column: green above blue on the low-quality",
-        r"columns is the clause being obeyed; blue on top everywhere is quality 5 acting as a global prior.",
+        # The frames this level is the truth about: where a frame-reading model moves least.
+        if q in columns:
+            axes[0].plot([q], [medians[columns.index(q)]], marker="o", markersize=13,
+                         markerfacecolor="none", markeredgecolor="black", markeredgewidth=1.5)
+    if "gt_disp_path" in rows[0]:
+        axes[0].errorbar(
+            columns, [_median(buckets[true_q], "gt_disp_path") for true_q in columns],
+            yerr=[_median_se(buckets[true_q], "gt_disp_path") for true_q in columns],
+            marker="D", linestyle=":", linewidth=1.8, color=_CONDITION_STYLE["gt"][0], label="gt",
+        )
+    floor = summary["seed_floor_disp_path"]
+    axes[0].axhline(floor, color="#E63946", linestyle="--", linewidth=1.2, label="flow-seed floor")
+    # Symlog with the floor as the threshold: decades above it, linear below. A clause that
+    # moves nothing lands at zero, which a log axis would drop silently — and the diagonal
+    # points, the ones this panel is about, are exactly where that is most likely.
+    axes[0].set_yscale("symlog", linthresh=max(floor, 1e-12))
+    axes[0].set_ylim(bottom=0.0)
+    axes[0].set_xticks(columns, [f"{q}\n(n={len(buckets[q])})" for q in columns])
+    axes[0].set_xlabel("quality the segment actually is")
+    axes[0].set_ylabel(r"$\rho$ — displacement from no clause (units of the chunk's own motion)")
+    axes[0].set_title(
+        "Does the response depend on the frame,\nor is it the same move everywhere?\n"
+        rf"conditionality $C$ = {summary['conditionality_ratio']:.2f}x"
+    )
+    axes[0].legend(fontsize=7, ncol=3, framealpha=0.9)
+    _caption(axes[0], y=-0.30, lines=[
+        r"$\rho(q) = \|a^{(q)} - a^{(none)}\|^2 / \|h - a^{(none)}\|^2$: how much of the chunk's own motion the clause",
+        r"rewrote, $h$ = the frozen-arm chunk. Per-frame ratio, so unlike an MSE these points are",
+        r"comparable between columns. Median over the column's frames, whisker = bootstrap SE of it.",
+        r"READ ALONG A LINE, NOT DOWN THE COLUMN: one line is one clause, so its shape is the frame's",
+        r"doing. Ringed = the column where that line is the truth. A model that reads the frame dips at",
+        r"its own ring and rises with mismatch; flat lines are a constant offset applied blind. Below the",
+        r"dashed floor the axis turns linear — that band is unresolved, not small. $C$ is the median over",
+        r"levels of (off-diagonal $\rho$) / (diagonal $\rho$), both floored at the seed floor so an effect",
+        r"nothing can resolve reads as exactly $1$: $1$ = blind, $> 1$ = the clause is read against the frame.",
     ])
 
-    order = [f"q{q}" for q in _QUALITY_LEVELS] + [f"q{q}m" for q in _MISTAKE_POLES] + ["gt"]
-    order = [name for name in order if f"{name}_gt_mse_improvement" in rows[0]]
-    values = [_mean(rows, f"{name}_gt_mse_improvement") for name in order]
-    errors = [_sem(rows, f"{name}_gt_mse_improvement") for name in order]
-    colors = [_CONDITION_STYLE[name][0] for name in order]
-    # q1m/q5m carry their pole's colour, so the mistake sentence has to be the hatch.
-    axes[2].bar(np.arange(len(order)), values, yerr=errors, capsize=3, color=colors,
-                hatch=["//" if name.endswith("m") else "" for name in order],
-                edgecolor="white")
-    axes[2].axhline(0.0, color="black", linewidth=0.8)
-    axes[2].set_xticks(np.arange(len(order)), order, rotation=45, ha="right")
-    axes[2].set_ylabel(r"$\Delta$MSE vs no clause")
-    axes[2].set_title("Usefulness of every condition,\nover all frames")
-    _caption(axes[2], [
-        r"$\Delta\mathrm{MSE}(c) = \frac{1}{TD}\sum (a^{(none)} - a^{\star})^2 - \frac{1}{TD}\sum (a^{(c)} - a^{\star})^2$,",
-        r"averaged over every sampled frame regardless of its labels. Positive means the clause moved the",
-        r"chunk toward the demonstration; below zero it moved it away, which is worse than not reading it.",
-        r"gt should be the tallest bar here — conditioning on what actually happened is the easiest",
-        r"version of the prediction problem. If q5 matches or beats gt, the model is answering a",
-        r"prior rather than the clause. Squared normalized action units, not comparable to the RMSE panels.",
+    pole = _column(rows, "pole_cosine")
+    shared = _column(rows, "shared_cosine")
+    null = _column(rows, "noise_shared_cosine")
+    groups = [
+        (f"$q_1$ vs $q_5$\nsame frame", pole, "#457B9D"),
+        (f"$q_5$ vs other frames\nleave-one-out", shared, "#2A9D8F"),
+        (f"flow noise\nsame test (null)", null, "#ADB5BD"),
+    ]
+    boxes = axes[1].boxplot([values for _label, values, _color in groups],
+                            tick_labels=[label for label, _values, _color in groups],
+                            patch_artist=True, widths=0.55)
+    for patch, (_label, _values, color) in zip(boxes["boxes"], groups, strict=True):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.65)
+    for offset, (_label, values, _color) in enumerate(groups):
+        jitter = np.random.default_rng(0).normal(0.0, 0.045, size=len(values))
+        axes[1].plot(offset + 1 + jitter, values, ".", color="#1D3557", markersize=3, alpha=0.35)
+    for level in (-1.0, 0.0, 1.0):
+        axes[1].axhline(level, color="black", linewidth=0.8,
+                        linestyle="-" if level == 0.0 else ":")
+    axes[1].set_ylim(-1.08, 1.08)
+    axes[1].set_ylabel(r"cosine between displacement vectors $v^{(c)} = a^{(c)} - a^{(none)}$")
+    axes[1].set_title(
+        "Is the clause one shared vector\nor a per-frame response?\n"
+        rf"poles {np.median(pole):+.2f}  ·  shared {np.median(shared):+.2f}  ·  null {np.median(null):+.2f}"
+    )
+    _caption(axes[1], y=-0.30, lines=[
+        r"Each displacement is the $T \times D$ chunk difference flattened; one point per frame.",
+        r"Left: do the two poles pull against each other on the same frame? $-1$ = one signed quality",
+        r"axis, $0$ = two unrelated edits that both happen to move the chunk. Middle: is a frame's $q_5$",
+        r"displacement the mean of all the OTHER frames' (leave-one-out, so no frame flatters itself)?",
+        r"$+1$ = one global style offset stamped on every observation, which is what a prior is; $0$ = the",
+        r"response is computed from the frame. Right: the same leave-one-out test on the displacement",
+        r"between two flow seeds, which shares no direction by construction — the zero this panel needs.",
+    ])
+
+    scale = float(np.abs(mean_axis).max()) or 1.0
+    image = axes[2].imshow(mean_axis.T, cmap="RdBu_r", vmin=-scale, vmax=scale, aspect="auto")
+    axes[2].set_yticks(range(mean_axis.shape[1]), joint_names_for_dim(mean_axis.shape[1]), fontsize=8)
+    axes[2].set_xlabel("chunk step")
+    fig.colorbar(image, ax=axes[2], fraction=0.046, pad=0.03).set_label(
+        r"mean $a^{(q_5)} - a^{(q_1)}$ (normalized)"
+    )
+    axes[2].set_title(
+        "What the model thinks 'quality 5' is\n"
+        rf"shared fraction $R$ = {summary['shared_fraction']:.2f}  ·  "
+        rf"per-step motion x{summary['step_motion_ratio']:.3f}"
+    )
+    _caption(axes[2], y=-0.30, lines=[
+        r"$\bar{u} = \mathrm{mean}_f\,(a^{(q_5)}_f - a^{(q_1)}_f)$, the average pole-to-pole edit, per joint and chunk step.",
+        r"Red = asking for 5 raises the joint, blue = lowers it. A vertical band means the edit is a",
+        r"posture offset held for the whole chunk; a ramp toward the right means it changes where the",
+        r"chunk ends up. $R = \|\bar{u}\|^2 / \mathrm{mean}_f \|u_f\|^2$ is how much of a typical frame's edit this",
+        r"average keeps: near $1$ the map IS the edit, near $0$ the frames disagree and the map is the",
+        r"residue of cancellation — read it with the middle panel, not alone. The motion ratio is",
+        r"RMS per-step travel under $q_5$ over $q_1$: above 1, asking for quality 5 means moving more.",
     ])
 
     fig.suptitle(
-        f"Metadata steering — is the clause obeyed? ({len(labelled)} labelled frames)",
+        f"Metadata steering — what the clause does to the chunk "
+        f"({len(labelled)} labelled frames, {summary['n_frames']} total)",
         fontsize=13, fontweight="bold",
     )
     fig.savefig(output_path, bbox_inches="tight", dpi=110)
@@ -485,24 +578,26 @@ def _render_factorial(rows: list[dict], summary: dict, output_path: str) -> None
     axes = [fig.add_subplot(grid[0, col]) for col in range(3)]
 
     for mistake, marker, color in ((False, "o", "#2A9D8F"), (True, "s", "#E63946")):
-        keys = [f"q{q}{'m' if mistake else ''}_gt_mse_improvement" for q in _MISTAKE_POLES]
+        keys = [f"q{q}{'m' if mistake else ''}_disp_path" for q in _MISTAKE_POLES]
         axes[0].errorbar(
-            _MISTAKE_POLES, [_mean(rows, key) for key in keys],
-            yerr=[_sem(rows, key) for key in keys],
+            _MISTAKE_POLES, [_median(rows, key) for key in keys],
+            yerr=[_median_se(rows, key) for key in keys],
             marker=marker, color=color, linewidth=2.0, capsize=3,
             label="mistake sentence on" if mistake else "no mistakes",
         )
-    axes[0].axhline(0.0, color="black", linewidth=0.8)
+    axes[0].axhline(summary["seed_floor_disp_path"], color="#E63946", linestyle="--",
+                    linewidth=1.2, label="flow-seed floor")
     axes[0].set_xticks(list(_MISTAKE_POLES), [f"quality {q}" for q in _MISTAKE_POLES])
-    axes[0].set_ylabel(r"$\Delta$MSE vs no clause")
+    axes[0].set_ylabel(r"$\rho$ — displacement from no clause")
     axes[0].set_title("The 2x2, as an interaction plot")
     axes[0].legend(fontsize=8)
     _caption(axes[0], [
-        r"Four cells: quality $\in \{1, 5\}$ crossed with the mistake sentence on/off. Parallel lines mean",
-        r"the two clauses act independently — whatever the mistake sentence does, it does the same at",
-        r"either pole. Crossing lines mean the model reads them jointly (a mistake at quality 5 is a",
-        r"different situation than a mistake at quality 1), which is what the annotation actually means.",
-        r"A vertical gap between the lines is the mistake sentence's effect; the slope is quality's.",
+        r"Four cells: quality $\in \{1, 5\}$ crossed with the mistake sentence on/off, each cell the median",
+        r"$\rho$ of figure 2 — how much of the chunk's own motion that clause rewrote. Parallel lines mean the",
+        r"two clauses act independently: whatever the mistake sentence does, it does the same at either",
+        r"pole. Crossing lines mean the model reads them jointly (a mistake at quality 5 is a different",
+        r"situation from a mistake at quality 1), which is what the annotation actually means. The vertical",
+        r"gap is the mistake sentence's effect, the slope is quality's, and both are sizes, not verdicts.",
     ])
 
     effects = [
@@ -618,37 +713,48 @@ The endpoints are pinned by construction ($\pi(5)-\pi(1)=\lVert u\rVert$); what 
 being measured is where 2, 3 and 4 land. A rising staircase is a scale the model
 reads as ordered. A flat middle is a switch wearing five labels."""
 
-_OBEDIENCE_HOW = r"""Quality is annotated per segment, so every held-out frame has a
-true level and can be asked a different one. That is what makes obedience measurable
-here and not in the previous version, which only ever split on the mistake flag (five
-windows in this split).
+_RESPONSE_HOW = r"""Nothing here is scored against the demonstration. $a^{\star}$ is one
+draw from a multimodal conditional, so an error against it moves with which mode the
+sampler picked, and at these bucket sizes that swamps any clause. What is measurable
+without it is the *displacement* the clause causes — its size, whether that size depends
+on the frame, and what direction it points.
 
-**Left — the matrix.** Rows are what the prompt asked for, columns what the segment
-actually was, cells the mean $\Delta\mathrm{MSE}$ against the demonstration relative to
-no clause, in units of $10^{-3}$. Blue helped, red hurt. The boxed diagonal is the
-honest cell. **Read down a column, not across a row**: each column is its own sample of
-frames, and their sizes are in the tick labels. A clause that is understood puts the
-boxed cell at the top of its column; a clause read as "try harder" puts the $q_5$ row on
-top everywhere, including where the demonstration was mediocre.
+Everything is expressed as $\rho$: the squared displacement from the no-clause chunk
+divided by that chunk's own squared motion away from a frozen arm, floored by the
+``action_metrics`` scale floors. $\rho = 1$ means the clause rewrote as much trajectory
+as the trajectory had. Being a per-frame ratio, it is comparable *between* frames, which
+is what lets the left panel compare label groups at all.
 
-**Middle — the same rows with error bars.** Diagonal, rollout clause ($q_5$) and opposite
-pole ($q_1$) per column, with the standard error the heat map's colours hide. Overlapping
-whiskers mean the colour difference is not resolved at this sample size.
+**Left — is the response conditional?** One line per asked level, drawn across the true
+level of the segment. Read **along a line**: the clause is fixed there, so any shape is
+the frame's doing. The ring on each line marks the column where that level is the truth.
+A model that reads the frame moves least at its own ring and more as the mismatch grows;
+a clause applied blind gives flat lines and $C \approx 1$. Between-line offsets are the
+dose from figure 1, not conditionality.
 
-**Right — usefulness overall.** Every condition against ``none`` over all frames.
-``gt`` should be the tallest: conditioning on what actually happened is the easiest
-version of the prediction problem. ``q5`` matching ``gt`` means the model is answering a
-prior instead of the clause, and any bar below zero is a clause that is read and points
-the wrong way."""
+**Middle — one vector or many?** A prior is a shared vector, so this is the direct test.
+$q_1$ against $q_5$ within a frame near $-1$ means the levels sit on one signed axis.
+$q_5$ against the leave-one-out mean of every other frame near $+1$ means the identical
+edit is stamped on every observation regardless of what it shows; near $0$ means the
+response is computed per frame. The flow-noise column is the same statistic on a
+displacement with no shared direction by construction — the zero the other two are read
+against.
+
+**Right — what that vector is.** The mean $q_1 \rightarrow q_5$ edit per joint and chunk
+step. $R$ says how much of a typical frame's edit survives the average, so a low $R$
+means the map is cancellation residue and only the middle panel is load-bearing. The
+per-step motion ratio is the one-line physical reading: above 1, "quality 5" means the
+model moves the arm more."""
 
 _FACTORIAL_HOW = r"""The old ``good``/``bad`` contrast moved both clauses at once. This
 page separates them, with $d_m = a^{(q_5,m)} - a^{(q_1,m)}$ the quality response at a
 fixed mistake flag $m$.
 
-**Left — interaction plot.** The four cells of the $2\times2$ as usefulness. Parallel
-lines mean the two clauses act independently; crossing lines mean the model reads them
-jointly, which is what the annotation means (a mistake inside a quality-5 segment is a
-different situation from a mistake inside a quality-1 one).
+**Left — interaction plot.** The four cells of the $2\times2$ as displacement from the
+no-clause chunk, in the $\rho$ units of figure 2. Parallel lines mean the two clauses act
+independently; crossing lines mean the model reads them jointly, which is what the
+annotation means (a mistake inside a quality-5 segment is a different situation from a
+mistake inside a quality-1 one).
 
 **Middle — main effects as distances.** Quality
 $=\frac{1}{2}(\lVert d_F\rVert+\lVert d_T\rVert)$, mistake
@@ -683,8 +789,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     if not gt_metadata:
         logging.warning(
             "[metadata_steering] no meta/episode_metadata.parquet + mistakes.parquet on "
-            f"{dataset.root} — no ``gt`` condition and no obedience matrix; the steering "
-            "range and the factorial still run."
+            f"{dataset.root} — no ``gt`` condition, and the response figure needs the true "
+            "level to draw against, so it is skipped whole; the steering range and the "
+            "factorial still run."
         )
 
     adapter._set_probe_cuda_graph_enabled(False)  # prompt changes per condition; keep eager
@@ -698,10 +805,17 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     rows: list[dict] = []
     diagnostics: list[dict] = []
+    geometry: list[dict] = []
     try:
         for episode_idx, frame_idx, global_idx in samples:
             frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size, metadata=None)
             gt_norm = adapter.normalize_gt_actions(frame["gt_actions"], frame["state"])
+            # The frozen-arm chunk: the scale every displacement below is divided by, so a
+            # frame the arm barely moves in cannot dominate an average of ratios.
+            hold_raw = frame["state"][: frame["gt_actions"].shape[-1]].unsqueeze(0).repeat(
+                frame["gt_actions"].shape[0], 1
+            )
+            hold_norm = adapter.normalize_gt_actions(hold_raw, frame["state"]).float()
             labels = gt_metadata.get(global_idx)
 
             def predict(metadata: dict | None, seed: int = 0) -> torch.Tensor:
@@ -723,6 +837,20 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
             projection, tau = _quality_projection(acts)
             base = acts["none"]
+
+            def displacement(moved: torch.Tensor, reference: torch.Tensor) -> dict[str, float]:
+                """How far ``moved`` sits from ``reference``, in units of the chunk's own motion.
+
+                ``trajectory_error_components`` with the reference chunk in the target slot:
+                the ``_relative`` terms are then the displacement over the frozen-arm
+                baseline's own distance from that same reference.
+                """
+                components = trajectory_error_components(
+                    moved.float(), reference.float(), hold_norm
+                )
+                return {key.removesuffix("_relative"): float(components[key])
+                        for key in TRAJECTORY_RELATIVE_KEYS}
+
             gt_mse = {name: float((act - gt_norm).pow(2).mean()) for name, act in acts.items()}
             quality_effect = [_rmse(acts[f"q5{m}"], acts[f"q1{m}"]) for m in ("", "m")]
             mistake_effect = [_rmse(acts[f"q{q}m"], acts[f"q{q}"]) for q in _MISTAKE_POLES]
@@ -746,14 +874,33 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             }
             row["separation"] = row["quality_range_rmse"] / max(floor_mean, 1e-9)
             row["mistake_separation"] = row["mistake_flip_rmse"] / max(floor_mean, 1e-9)
+            row["step_motion_ratio"] = _step_rms(acts["q5"]) / max(_step_rms(acts["q1"]), 1e-9)
+            # The floor in the same relative units: the rollout clause against itself under a
+            # different seed. Its denominator is that chunk's excursion rather than
+            # ``none``'s, which differ by exactly the effect being measured — second order.
+            row["seed_floor_disp_path"] = float(np.mean(
+                [displacement(draw, acts[_ROLLOUT])["path"] for draw in floor_draws[1:]]
+            ))
             for name, act in acts.items():
                 row[f"{name}_gt_mse"] = gt_mse[name]
                 if name != "none":
                     row[f"{name}_rmse"] = _rmse(act, base)
                     row[f"{name}_maxabs"] = float((act - base).abs().max())
                     row[f"{name}_gt_mse_improvement"] = gt_mse["none"] - gt_mse[name]
+                    for term, value in displacement(act, base).items():
+                        row[f"{name}_disp_{term}"] = value
+
+            poles = {q: (acts[f"q{q}"] - base).flatten().float().cpu().numpy() for q in (1, 5)}
+            row["pole_cosine"] = _cosine(poles[1], poles[5])
             rows.append(row)
             diagnostics.append({"gt": gt_norm, "acts": acts, "row": row})
+            geometry.append({
+                "q5": poles[5],
+                # Same displacement measured across a reseed instead of across a clause:
+                # the null the leave-one-out alignment is read against.
+                "noise": (floor_draws[1] - floor_draws[0]).flatten().float().cpu().numpy(),
+                "axis": (acts["q5"] - acts["q1"]).float().cpu().numpy(),
+            })
     finally:
         adapter._restore_probe_cuda_graph_enabled()
 
@@ -764,6 +911,41 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     conditions = ["none"] + list(_STEERED) + (["gt"] if "gt_gt_mse" in rows[0] else [])
     labelled = [row for row in rows if row["gt_quality"] is not None]
     flagged = [row for row in rows if row["gt_mistake"]]
+
+    # Direction geometry. Leave-one-out, so a frame is never part of the reference it is
+    # scored against, and the same statistic on the reseed displacement as the null.
+    # Both alignment lists are either as long as ``rows`` or empty (a single frame has no
+    # "every other frame" to be compared against), so the pairing is not strict.
+    for row, shared, null in zip(
+        rows,
+        _loo_alignment([g["q5"] for g in geometry]),
+        _loo_alignment([g["noise"] for g in geometry]),
+        strict=False,
+    ):
+        row["shared_cosine"] = shared
+        row["noise_shared_cosine"] = null
+
+    axis_stack = np.stack([g["axis"] for g in geometry])
+    mean_axis = axis_stack.mean(axis=0)
+    shared_fraction = float(
+        (mean_axis**2).sum() / max(float((axis_stack**2).sum(axis=(1, 2)).mean()), 1e-12)
+    )
+
+    # Conditionality: for each level that some segment truly is, how much more the clause
+    # moves the frames it is wrong about than the frames it is right about. Both sides are
+    # floored at the seed floor, below which no displacement is resolvable, so a clause with
+    # no measurable effect reads as exactly 1 (blind) instead of diverging on a near-zero
+    # denominator or — flooring one side only — landing under 1 and inviting the reverse
+    # reading. Only differences the sampler's own noise cannot explain move C off 1.
+    seed_floor_disp = _median(rows, "seed_floor_disp_path")
+    true_levels = [q for q in _QUALITY_LEVELS if any(row["gt_quality"] == q for row in labelled)]
+    conditionality = [
+        max(_median([row for row in labelled if row["gt_quality"] != q], f"q{q}_disp_path"),
+            seed_floor_disp)
+        / max(_median([row for row in labelled if row["gt_quality"] == q], f"q{q}_disp_path"),
+              seed_floor_disp)
+        for q in true_levels
+    ]
 
     summary = {
         "n_frames": len(rows),
@@ -783,20 +965,31 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "mistake_separation_median": float(np.median(_column(rows, "mistake_separation"))),
         "kendall_tau_mean": _mean(rows, "kendall_tau"),
         "monotone_fraction": float(np.mean([row["monotone"] for row in rows])),
+        "seed_floor_disp_path": seed_floor_disp,
+        "conditionality_ratio": float(np.median(conditionality)) if conditionality else float("nan"),
+        "shared_fraction": shared_fraction,
+        "step_motion_ratio": _median(rows, "step_motion_ratio"),
+        "pole_cosine_median": _median(rows, "pole_cosine"),
+        "shared_cosine_median": _median(rows, "shared_cosine"),
+        "noise_cosine_median": _median(rows, "noise_shared_cosine"),
         "quality_mix": {
             str(q): sum(row["gt_quality"] == q for row in labelled) for q in _QUALITY_LEVELS
         },
         "verdict_note": (
             "separation ~1 => the quality clause moves the chunk no more than flow noise does, "
-            "and the obedience matrix is then ranking noise. separation >> 1 with the q5 row "
-            "winning every column of the matrix => the clause is read as a global prior rather "
-            "than as a description of the frame."
+            "and nothing downstream of it means anything. separation >> 1 with "
+            "conditionality_ratio ~1 and shared_cosine_median ~+1 => the clause is read, but as "
+            "one global offset stamped on every frame rather than as a description of this one."
         ),
     }
     for name in conditions:
         summary[f"{name}_gt_mse"] = _mean(rows, f"{name}_gt_mse")
         if name != "none":
             summary[f"{name}_rmse"] = _mean(rows, f"{name}_rmse")
+            summary[f"{name}_disp_path"] = _median(rows, f"{name}_disp_path")
+            # Against the demonstration: kept for the record, off the figures. One
+            # demonstration is one sample of a multimodal conditional, so this ranks the
+            # sampler's mode choice as much as it ranks the clause.
             summary[f"{name}_gt_mse_improvement"] = _mean(rows, f"{name}_gt_mse_improvement")
             if flagged:
                 summary[f"{name}_gt_mse_improvement_on_gt_mistake"] = _mean(
@@ -809,8 +1002,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     _render_floor(rows, summary, os.path.join(output_dir, "steering_floor.png"))
     _render_factorial(rows, summary, os.path.join(output_dir, "factorial.png"))
-    if labelled:
-        _render_obedience(rows, summary, os.path.join(output_dir, "obedience.png"))
+    if labelled and len(rows) > 1:
+        _render_response(rows, mean_axis, summary, os.path.join(output_dir, "response.png"))
 
     examples_dir = os.path.join(output_dir, "examples")
     makedirs(examples_dir)
@@ -839,9 +1032,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         Panel("steering_floor.png",
               "Floor, dose and ordering — is the clause read, and is it read as a scale?",
               how=_FLOOR_HOW, primary=True, refs=["subtask_sweep"]),
-        Panel("obedience.png",
-              "Asked quality against true quality — is the clause obeyed or is it a prior?",
-              how=_OBEDIENCE_HOW, primary=True),
+        Panel("response.png",
+              "What the clause does to the chunk — is the move conditional on the frame, "
+              "and is it one shared direction?",
+              how=_RESPONSE_HOW, primary=True),
         Panel("factorial.png",
               "The 2x2 — does the number or the mistake sentence carry the effect?",
               how=_FACTORIAL_HOW),
@@ -869,6 +1063,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         f"({summary['separation_median']:.2f}x floor)  "
         f"mistake={summary['mistake_flip_rmse']:.4f}  "
         f"tau={summary['kendall_tau_mean']:+.2f}  "
-        f"gt improvement={summary.get('gt_gt_mse_improvement', float('nan')):+.5f}  "
-        f"q5 improvement={summary['q5_gt_mse_improvement']:+.5f}"
+        f"rho(q5)={summary['q5_disp_path']:.4f} (floor {summary['seed_floor_disp_path']:.4f})  "
+        f"conditionality={summary['conditionality_ratio']:.2f}x  "
+        f"shared cos={summary['shared_cosine_median']:+.2f} (null {summary['noise_cosine_median']:+.2f})  "
+        f"R={summary['shared_fraction']:.2f}"
     )

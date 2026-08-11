@@ -135,7 +135,8 @@ and over the individual decoded tokens.
 ## What it writes
 
 * ``budget.png`` — the six per-checkpoint panels, over a filmstrip.
-* ``concentration.png`` — the within-segment distributions and $n_{90}$.
+* ``concentration.png`` — the within-segment distributions and $n_{90}$, one row per
+  probed layer on a shared order and a shared scale.
 * ``trajectory.png`` — every checkpoint of the run against training step. Only appears
   once two exist. Also buildable on its own, against a run that has already trained:
   ``python -m lerobot.probes.attention_budget <run>/validation/step_<n>/attention_budget``.
@@ -783,7 +784,7 @@ def _render(
 
 
 def _curve_panel(ax, ordered: list[str], curves: np.ndarray, ranks: np.ndarray,
-                 n90: np.ndarray, layer: int) -> None:
+                 n90: np.ndarray, *, title: bool, caption: bool) -> None:
     r"""How few columns hold each segment's mass.
 
     This is the panel that answers "the cameras bring 196 columns, but how many of them
@@ -801,19 +802,22 @@ def _curve_panel(ax, ordered: list[str], curves: np.ndarray, ranks: np.ndarray,
     ax.set_ylim(0, 1.02)
     ax.set_xlabel("columns of the segment, hottest first (log)")
     ax.set_ylabel("share of that segment's own mass")
-    ax.set_title(f"How concentrated is each segment? Layer {layer}")
-    _caption(ax, [
-        r"Sort segment $S$'s columns by mass, descending: $s_1 \geq s_2 \geq \ldots \geq s_{n_S}$, summing to $m_S$.",
-        r"Curve = $\frac{1}{m_S}\sum_{i \leq k} s_i$ against $k$, so it starts at the hottest column's share of its",
-        r"own segment and reaches 1 at $k=n_S$; held at 1 past $n_S$ so segments of different width share the axis.",
-        r"Dot = where the curve crosses 0.9, which is the count in the middle panel — that panel's labelled rows",
-        r"are this figure's legend. Averaged over frames, heads and the action chunk.",
-        r"A curve says nothing about how much mass $S$ got, only how it spread what it got.",
-    ])
+    if title:
+        ax.set_title("How concentrated is each segment?")
+    if caption:
+        _caption(ax, [
+            r"Sort segment $S$'s columns by mass, descending: $s_1 \geq s_2 \geq \ldots \geq s_{n_S}$, summing to $m_S$.",
+            r"Curve = $\frac{1}{m_S}\sum_{i \leq k} s_i$ against $k$, so it starts at the hottest column's share of its",
+            r"own segment and reaches 1 at $k=n_S$; held at 1 past $n_S$ so segments of different width share the axis.",
+            r"Dot = where the curve crosses 0.9, which is the count in the middle panel — that panel's labelled rows",
+            r"are this figure's legend. Averaged over frames, heads and the action chunk.",
+            r"A curve says nothing about how much mass $S$ got, only how it spread what it got.",
+        ])
 
 
 def _n90_panel(ax, ordered: list[str], n90_mean: np.ndarray, n90_low: np.ndarray,
-               n90_high: np.ndarray, token_counts: dict[str, int], layer: int) -> None:
+               n90_high: np.ndarray, token_counts: dict[str, int], *,
+               title: bool, caption: bool) -> None:
     """The same thing as one count per segment, against the columns it was given."""
     y = np.arange(len(ordered))[::-1]
     counts = np.asarray([token_counts.get(n, 0) for n in ordered], dtype=float)
@@ -831,7 +835,10 @@ def _n90_panel(ax, ordered: list[str], n90_mean: np.ndarray, n90_low: np.ndarray
     for tick in ax.get_yticklabels():
         tick.set_color(_INK)
     ax.set_xlabel("columns")
-    ax.set_title(f"Columns holding 90% of the segment, layer {layer}")
+    if title:
+        ax.set_title("Columns holding 90% of the segment")
+    if not caption:
+        return
     _caption(ax, [
         r"Coloured bar = $n_{90} = \min\{k : \sum_{i \leq k} s_i \geq 0.9\,m_S\}$, the number of the segment's columns",
         r"that carry 90% of the mass it received. Grey bar behind = $n_S$, every column it brought.",
@@ -841,64 +848,101 @@ def _n90_panel(ax, ordered: list[str], n90_mean: np.ndarray, n90_low: np.ndarray
     ])
 
 
-def _column_mass_panel(ax, ordered: list[str], curves: np.ndarray, ranks: np.ndarray,
-                       mass_mean: np.ndarray, token_counts: dict[str, int], layer: int) -> None:
+def _per_column_mass(curve: np.ndarray, ranks: np.ndarray, total: float, n_columns: int) -> np.ndarray:
+    r"""One segment's per-rank share *of the whole budget*, NaN past its last column.
+
+    The stored curve is held at 1 past the segment's last column, so those ranks carry
+    no mass and would otherwise draw a line along the bottom of the axis.
+    """
+    per_column = np.diff(curve, prepend=0.0) * total / np.diff(ranks, prepend=0)
+    per_column[ranks > n_columns] = np.nan
+    return per_column
+
+
+def _column_mass_panel(ax, ordered: list[str], per_column: np.ndarray, ranks: np.ndarray,
+                       ylim: tuple[float, float], *, title: bool, caption: bool) -> None:
     r"""The distribution itself, in budget units, so segments can be compared column to column."""
-    widths = np.diff(ranks, prepend=0)
-    floor = np.inf
     for row, name in enumerate(ordered):
-        per_column = np.diff(curves[row], prepend=0.0) * mass_mean[row] / widths
-        # The stored curve is held at 1 past the segment's last column, so those ranks
-        # carry no mass and would otherwise draw a line along the bottom of the axis.
-        per_column[ranks > token_counts.get(name, len(ranks))] = np.nan
-        ax.plot(ranks, per_column, color=_color(name), linewidth=1.5, zorder=3,
+        ax.plot(ranks, per_column[row], color=_color(name), linewidth=1.5, zorder=3,
                 path_effects=[path_effects.withStroke(linewidth=3.0, foreground="white")])
-        positive = per_column[np.isfinite(per_column) & (per_column > 0)]
-        floor = min(floor, float(positive.min())) if positive.size else floor
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlim(1, float(ranks.max()))
-    ax.set_ylim(floor / 2.5, None)
+    ax.set_ylim(*ylim)
     ax.set_xlabel("columns of the segment, hottest first (log)")
     ax.set_ylabel("share of the budget on that column (log)")
-    ax.set_title(f"Mass distribution within each segment, layer {layer}")
+    if title:
+        ax.set_title("Mass distribution within each segment")
+    if not caption:
+        return
     _caption(ax, [
         r"Same sort as the left panel, but in absolute units: $y$ is the share of the whole budget that lands on",
         r"one column, so heights are directly comparable between segments and each line ends at that segment's",
         r"$n_S$. Rank 1 is exact; past it each point is the mean over the ranks since the previous point, because",
-        r"the curve is stored on a log-spaced grid. Both axes log; colours are the middle panel's rows.",
+        r"the curve is stored on a log-spaced grid. Colours are the middle panel's rows. Both axes are log and",
+        r"the $y$-range is shared by every layer row, so a height is comparable down the figure as well as across it.",
         r"This is the panel that says whether the hottest camera patch is read as hard as a state column.",
         r"A flat line is a segment read evenly across its columns; a steep one is a segment with a few that matter.",
     ])
 
 
 def _render_concentration(names, mass, curves, ranks, n90, token_counts, layers, output_path) -> None:
-    """Three views of the within-segment distribution at the focus layer."""
+    """Three views of the within-segment distribution, one row per probed layer.
+
+    Rows are layers because concentration is the half of the budget story that is *not*
+    fixed by the prompt layout: $n_S$ is the same at every layer, so anything that moves
+    down a column of this figure is the model changing how it reads a segment rather than
+    the token histogram reasserting itself. Two things are therefore held constant across
+    the rows — the segment order and the right column's $y$-range — since a per-row fit
+    would rescale each layer onto its own axes and hide the drift the rows exist to show.
+    """
     focus = len(layers) // 2
-    mass_mean = mass[:, focus, :].mean(axis=0)
-    curve_mean = curves[:, focus, :, :].mean(axis=0)          # [segments, ranks]
+    mass_mean = mass.mean(axis=0)                              # [layers, segments]
+    curve_mean = curves.mean(axis=0)                           # [layers, segments, ranks]
     # Ordered by the hottest column's share of its own segment: the concentration story,
-    # not the mass story, so the rows of this figure sort on what it is about.
-    order = np.argsort(-curve_mean[:, 0])
+    # not the mass story, so the rows of this figure sort on what it is about. Taken at
+    # the focus layer and reused down the figure, so one middle-panel row is one segment.
+    order = np.argsort(-curve_mean[focus, :, 0])
     ordered = [names[i] for i in order]
 
-    fig = plt.figure(figsize=(20, 7.4))
-    grid = fig.add_gridspec(1, 3, wspace=0.26, left=0.05, right=0.985, top=0.90, bottom=0.36)
-    axes = [fig.add_subplot(grid[0, c]) for c in range(3)]
+    per_column = np.stack([
+        [_per_column_mass(curve_mean[index, segment], ranks, mass_mean[index, segment],
+                          token_counts.get(names[segment], len(ranks)))
+         for segment in order]
+        for index in range(len(layers))
+    ])                                                         # [layers, segments, ranks]
+    positive = per_column[np.isfinite(per_column) & (per_column > 0)]
+    ylim = (float(positive.min()) / 2.5, float(positive.max()) * 1.6)
 
-    _curve_panel(axes[0], ordered, curve_mean[order], ranks,
-                 np.round(n90[:, focus, :].mean(axis=0))[order], layers[focus])
-    _n90_panel(axes[1], ordered, n90[:, focus, :].mean(axis=0)[order],
-               n90[:, focus, :].min(axis=0)[order], n90[:, focus, :].max(axis=0)[order],
-               token_counts, layers[focus])
-    _column_mass_panel(axes[2], ordered, curve_mean[order], ranks, mass_mean[order],
-                       token_counts, layers[focus])
+    fig = plt.figure(figsize=(20, 17))
+    grid = fig.add_gridspec(len(layers), 3, wspace=0.26, hspace=0.30,
+                            left=0.055, right=0.985, top=0.945, bottom=0.155)
+    for row, layer in enumerate(layers):
+        axes = [fig.add_subplot(grid[row, column]) for column in range(3)]
+        # Titles on the top row and captions under the bottom one: every row plots the
+        # same three quantities, and repeating either three times only costs the space
+        # the panels need.
+        head, foot = row == 0, row == len(layers) - 1
+        _curve_panel(axes[0], ordered, curve_mean[row][order], ranks,
+                     np.round(n90[:, row, :].mean(axis=0))[order], title=head, caption=foot)
+        _n90_panel(axes[1], ordered, n90[:, row, :].mean(axis=0)[order],
+                   n90[:, row, :].min(axis=0)[order], n90[:, row, :].max(axis=0)[order],
+                   token_counts, title=head, caption=foot)
+        _column_mass_panel(axes[2], ordered, per_column[row], ranks, ylim,
+                           title=head, caption=foot)
+        box = axes[0].get_position()
+        fig.text(box.x0 - 0.043, (box.y0 + box.y1) / 2, f"layer {layer}", rotation=90,
+                 va="center", ha="center", fontsize=14, fontweight="bold")
 
     fig.suptitle(
-        f"Within-segment concentration — layer {layers[focus]}, {mass.shape[0]} frames.  "
-        "The budget says what each segment got; this says over how many of its columns.",
-        fontsize=14, fontweight="bold",
+        f"Within-segment concentration — layers {', '.join(str(x) for x in layers)} down the rows, "
+        f"{mass.shape[0]} frames.  The budget says what each segment got; this says over how many "
+        "of its columns.",
+        fontsize=14, fontweight="bold", y=0.985,
     )
+    fig.text(0.5, 0.963, "Every row shares the segment order (sorted at layer "
+             f"{layers[focus]}) and the right column's scale, so what differs between rows is the read itself.",
+             ha="center", fontsize=10.5, color="#333333")
     fig.savefig(output_path, bbox_inches="tight", dpi=125)
     plt.close(fig)
 
@@ -1436,10 +1480,12 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             ),
             Panel(
                 "concentration.png",
-                f"Within-segment concentration at layer {layers[focus]}",
+                f"Within-segment concentration at layers {', '.join(str(x) for x in layers)}",
                 "The budget above says what each segment got. This says over how many of its columns, "
                 "which is what makes the totals readable: a camera brings 196 columns and a clause "
-                "brings 9, so a bigger total is not by itself a stronger read. **Left** sorts each "
+                "brings 9, so a bigger total is not by itself a stronger read. One **row per probed "
+                "layer**, on a shared segment order and a shared scale, so a change down a column is "
+                "the model reading a segment differently and not the token histogram. **Left** sorts each "
                 "segment's own columns hottest-first and plots the running share of that segment's "
                 "mass — an elbow near the left edge is a segment read through a few of its columns, a "
                 "straight ramp is one read whole. **Middle** is the same thing as one count, $n_{90}$, "

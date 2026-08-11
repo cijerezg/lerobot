@@ -43,9 +43,9 @@ the effect, never as an additive decomposition.
 
 Every number here is a mean over frames, and on a checkpoint where memory helps half the
 frames and hurts the other half that mean is near zero whatever the effect size. This
-probe answers *which channel*; `mem_history_regime` answers *which frames*, with the
-per-frame distribution and the nulls that say whether either sign is real. Read this one
-first only to find out where to look.
+probe answers *which channel*; `mem_history_regime` splits that mean into its two halves,
+with the nulls that say whether either sign is real. Read this one first only to find out
+where to look.
 
 Registered probe: enable with ``probe_parameters.enable_mem_history_influence``.
 """

@@ -294,7 +294,7 @@ class ProbeConfig:
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
     enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
     enable_mem_history_influence: bool = False  # MEM: how much history (full/image/state) shifts the action chunk
-    enable_mem_history_regime: bool = False  # MEM: which frames history helps on, against a wrong-window null
+    enable_mem_history_regime: bool = False  # MEM: helped/hurt split, against a wrong-window null
     enable_mem_temporal_attention: bool = False  # MEM: temporal-read distributions + spatial examples
     enable_action_trace: bool = False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
     enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
@@ -373,10 +373,12 @@ class ProbeConfig:
     subtask_sweep_n_frames: int = 8
     subtask_sweep_max_labels: int = 16
     subtask_sweep_n_seeds: int = 3
+    # Side figure only: a fan grid of this many joints x this many of the swept frames.
+    subtask_sweep_fan_grid: int = 4
 
     # Metadata steering: n_frames x (8 clauses + gt + n_seeds - 1) forwards. n_frames is
-    # per episode and falls back to n_frames_per_episode; the obedience matrix splits
-    # those frames by their true quality, so cutting it thins the columns, not the rows.
+    # per episode and falls back to n_frames_per_episode; the conditionality panel splits
+    # those frames by their true quality, so cutting it thins the columns, not the lines.
     metadata_steering_n_frames: int | None = None
     metadata_steering_n_seeds: int = 3
 

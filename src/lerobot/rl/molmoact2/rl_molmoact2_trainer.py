@@ -385,7 +385,11 @@ class MolmoAct2Trainer(Trainer):
             elif ".image_vit.transformer.resblocks." in name:
                 param.requires_grad = _layer_idx_after(name, ".resblocks.") in vt_layers
             elif ".image_vit.patch_embedding" in name or ".image_vit.positional_embedding" in name:
-                param.requires_grad = vision_on
+                # Keep the pretrained RGB input interface fixed. The selected
+                # late ViT blocks and the downstream pooler/projector may adapt,
+                # but raw patches must continue to enter the frozen lower tower
+                # in exactly the checkpoint's representation space.
+                param.requires_grad = False
             elif ".image_pooling_2d" in name or ".image_projector" in name:
                 param.requires_grad = vision_on
             else:
@@ -421,7 +425,9 @@ class MolmoAct2Trainer(Trainer):
             elif ".image_vit.transformer.resblocks." in name:
                 param.requires_grad = _layer_idx_after(name, ".resblocks.") in cr_vt_layers
             elif ".image_vit.patch_embedding" in name or ".image_vit.positional_embedding" in name:
-                param.requires_grad = cr_vision_on
+                # Mirror the actor boundary: late critic vision blocks and the
+                # connector may adapt, while the pretrained RGB stem stays fixed.
+                param.requires_grad = False
             elif ".image_pooling_2d" in name or ".image_projector" in name:
                 param.requires_grad = cr_vision_on
             else:

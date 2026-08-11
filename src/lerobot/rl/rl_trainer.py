@@ -16,8 +16,9 @@ class TrainableParamsConfig:
     with index >= N (i.e., the top (depth - N) layers).
 
     Implicit rules baked into every trainer's freeze_model:
-      - When `vision_from_layer` is set, the multi-modal projector + ViT stem
-        train alongside the selected ViT layers (no separate knob).
+      - When `vision_from_layer` is set, policy-specific visual connectors train
+        alongside the selected ViT layers. MolmoAct2 keeps its RGB patch and
+        positional embeddings frozen.
       - When `language_from_layer` is set, the final layer norm (and lm_head,
         where untied) train alongside the selected language blocks.
       - The action expert is always trainable.
