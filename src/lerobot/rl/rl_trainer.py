@@ -77,6 +77,15 @@ class Trainer(ABC):
         additional offline datasets load (the vocab remap extends the metadata).
         """
 
+    def subtask_vocabulary(self, preprocessor) -> list[str]:
+        """Subtask strings the prompt seam can render, in vocabulary-index order.
+
+        Empty by default; policies carrying a subtask vocabulary override. Used by
+        the eval subtask console to validate operator bindings against the strings
+        the checkpoint was actually trained on.
+        """
+        return []
+
     @abstractmethod
     def make_policy(self, cfg) -> nn.Module:
         """

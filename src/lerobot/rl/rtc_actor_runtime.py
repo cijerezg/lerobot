@@ -31,10 +31,12 @@ from lerobot.rl.gym_manipulator import (
     make_robot_env,
     step_env_and_process_transition,
 )
-from lerobot.rl.inference_utils import convert_env_obs_to_policy_format, apply_butterworth_filter
+from lerobot.rl.inference_utils import convert_env_obs_to_policy_format
+from lerobot.utils.action_smoothing import apply_butterworth_filter
 from lerobot.rl.utils import save_video_with_critic_overlay
 from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.rl.rl_trainer import Trainer
+from lerobot.rl.subtask_console import make_subtask_console
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport.utils import bytes_to_state_dict, python_object_to_bytes
 from lerobot.utils.device_utils import get_safe_torch_device
@@ -106,9 +108,12 @@ class RTCSharedState:
         self.episode_active = False
         self.history_offsets: dict[str, list[int]] | None = None
         self.history_entries: deque | None = None
-        # Generated current subtask (high-level query).
+        # Current subtask: decoded by the high-level query, or latched by the
+        # operator console. default_subtask is what an episode reset falls back to
+        # (None until the console installs its first binding).
         self.current_subtask_name: str | None = None
         self.current_subtask_index: int = -1
+        self.default_subtask: tuple[str | None, int] = (None, -1)
         self.policy_reset_requested = False
         self.update_parameters_requested = False
         self.running = True
@@ -286,10 +291,15 @@ class RTCSharedState:
         with self.lock:
             return self.current_subtask_name, self.current_subtask_index
 
+    def set_default_subtask(self, name: str, index: int) -> None:
+        with self.lock:
+            self.default_subtask = (name, index)
+            self.current_subtask_name = name
+            self.current_subtask_index = index
+
     def clear_subtask_state(self) -> None:
         with self.lock:
-            self.current_subtask_name = None
-            self.current_subtask_index = -1
+            self.current_subtask_name, self.current_subtask_index = self.default_subtask
 
     def push_history(self, entry: dict) -> None:
         with self.lock:
@@ -464,7 +474,10 @@ def rtc_inference_worker(
         time_per_chunk = 1.0 / cfg.env.fps
         task_str = cfg.policy.task
         action_dim = _action_dim(cfg)
-        subtask_enabled = int(getattr(cfg.policy, "subtask_max_new_tokens", 0)) > 0
+        # Operator-fed subtasks REPLACE generation: the console latches the current
+        # step into shared_state, so the clause is still rendered but never decoded.
+        operator_subtasks = bool(getattr(cfg.policy, "eval_subtasks", None))
+        subtask_enabled = operator_subtasks or int(getattr(cfg.policy, "subtask_max_new_tokens", 0)) > 0
         subtask_interval = float(getattr(cfg.policy, "subtask_regeneration_interval", 1.0))
         last_subtask_time: float | None = None
         # Metadata steering at inference = prompt the best behavior (π0.7: quality 5,
@@ -536,7 +549,7 @@ def rtc_inference_worker(
             with torch.no_grad():
                 # Subtask generation at cadence (two-prompt design). Runs in THIS
                 # thread — generation is not safe against a concurrent worker.
-                if subtask_enabled and (
+                if subtask_enabled and not operator_subtasks and (
                     last_subtask_time is None
                     or (current_time - last_subtask_time) >= subtask_interval
                 ):
@@ -1408,6 +1421,12 @@ def act_with_policy_rtc_inference(
     )
     action_queue = ActionQueue(policy.config.rtc_config)
 
+    # Operator subtask console: validated against the checkpoint vocabulary before
+    # any hardware moves, so a mistyped binding fails at startup, not mid-rollout.
+    subtask_console = make_subtask_console(cfg, trainer, preprocessor, shared)
+    if subtask_console is not None:
+        shared.set_default_subtask(*subtask_console.initial)
+
     post_inference_hook = None
     if post_inference_hook_factory is not None:
         post_inference_hook = post_inference_hook_factory(policy, preprocessor, postprocessor, device, cfg)
@@ -1430,6 +1449,8 @@ def act_with_policy_rtc_inference(
     )
 
     try:
+        if subtask_console is not None:
+            subtask_console.start()
         env_thread.start()
         time.sleep(1.0)
         inf_thread.start()
@@ -1482,6 +1503,8 @@ def act_with_policy_rtc_inference(
     finally:
         shutdown_event.set()
         shared.running = False
+        if subtask_console is not None:
+            subtask_console.stop()
         for thread in (inf_thread, env_thread):
             thread.join(timeout=5.0)
         try:

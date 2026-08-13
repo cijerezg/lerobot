@@ -158,6 +158,12 @@ class ProbablePolicy(ABC):
                   in dataset units (after anchor/delta reconstruction).
                 - ``pred_norm``:   ``[chunk_size, action_dim]`` float32 CPU,
                   in normalised model space.
+
+            Both are the policy's own output. Neither carries the smoothing the
+            deployed runtimes apply between the chunk and the controller — a probe
+            that reports what the arm would *do*, rather than what the model said,
+            applies ``utils.action_smoothing`` itself, as ``action_trace_probe``
+            does in ``_analyse``.
                 - ``pred_subtask``: decoded subtask string, or ``None`` for
                   policies that don't generate subtasks.
         """

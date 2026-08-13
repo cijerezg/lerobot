@@ -1168,6 +1168,9 @@ class MolmoAct2Trainer(Trainer):
         name = step.subtask_names[index] if index >= 0 else raw_text
         return raw_text, name, index
 
+    def subtask_vocabulary(self, preprocessor) -> list[str]:
+        return list(self._pack_step(preprocessor).subtask_names)
+
     @staticmethod
     def _pack_step(preprocessor):
         from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep

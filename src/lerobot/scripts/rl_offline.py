@@ -37,7 +37,6 @@ Compared to offline_learner_pi05.py this script:
 import contextlib
 import dataclasses
 import gc
-import json
 import logging
 import os
 import sys
@@ -222,24 +221,6 @@ def _quiet_probe_logging(probe_output_dir: str):
             handler.removeFilter(console_filter)
 
 
-def _label_probe_split(probe_output_dir: str, suffix: str) -> None:
-    """Name the split in the viewer sidebar.
-
-    ``write_index`` derives the probe id from the output directory, so the train passes
-    are already distinct rows — but most probes pass an explicit ``title=``, which would
-    stack three rows all reading "Attention Maps". Retitling here keeps every probe
-    unaware of splits. A probe that skipped itself wrote no manifest; nothing to label.
-    """
-    if not suffix:
-        return
-    index_path = Path(probe_output_dir) / "index.json"
-    if not index_path.exists():
-        return
-    index = json.loads(index_path.read_text())
-    index["title"] = f"{index['title']} · train:{suffix.removeprefix('__train_')}"
-    index_path.write_text(json.dumps(index, indent=2))
-
-
 _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_objective", "lerobot.probes.objective", "objective"),
     _ValidationProbeSpec("enable_actions", "lerobot.probes.actions", "actions"),
@@ -292,7 +273,6 @@ def _run_validation_probes(
     cfg: TrainRLServerPipelineConfig,
     step: int,
     wandb_logger=None,
-    train_probe_datasets=None,
 ) -> None:
     """Dispatch every probe whose ``cfg.probe_parameters.enable_*`` flag is set.
 
@@ -302,12 +282,6 @@ def _run_validation_probes(
     The objective probe's headline scalars are pushed to W&B under the training run's
     own step key, so held-out loss lands on the same axes as the curve it should be
     read against. It is the only probe that produces a number belonging on that chart.
-
-    ``train_probe_datasets`` (from :func:`_load_train_probe_datasets`) re-runs the same
-    suite over slices of seen training data, into sibling ``<probe>__train_<source>``
-    directories. Every probe becomes a seen/unseen pair that way without any probe
-    knowing it happened. ``objective`` is excluded: it already measures val against a
-    matched training sample internally, so an extra pass would double-count.
     """
     p = cfg.probe_parameters
     output_root = os.path.join(cfg.output_dir, "validation", f"step_{step:08d}")
@@ -318,48 +292,41 @@ def _run_validation_probes(
 
         _validate_probe_registry(p)
 
-        splits = [("", val_dataset), *(train_probe_datasets or [])]
-
         import importlib
         for spec in _VALIDATION_PROBES:
             if not bool(getattr(p, spec.flag, False)):
                 continue
-            for suffix, eval_dataset in splits:
-                if suffix and spec.output_subdir == "objective":
-                    continue
-                probe_id = spec.output_subdir + suffix
-                logging.info(f"[VAL step={step}] probe '{probe_id}' started")
-                try:
-                    probe_output_dir = os.path.join(output_root, probe_id)
-                    with _quiet_probe_logging(probe_output_dir):
-                        module = importlib.import_module(spec.module_path)
-                        run_probe = getattr(module, spec.run_attr)
-                        if spec.output_subdir == "actions":
-                            run_probe(
-                                adapter,
-                                reference_dataset if reference_dataset is not None else eval_dataset,
-                                cfg,
-                                probe_output_dir,
-                                eval_dataset=eval_dataset,
+            logging.info(f"[VAL step={step}] probe '{spec.output_subdir}' started")
+            try:
+                probe_output_dir = os.path.join(output_root, spec.output_subdir)
+                with _quiet_probe_logging(probe_output_dir):
+                    module = importlib.import_module(spec.module_path)
+                    run_probe = getattr(module, spec.run_attr)
+                    if spec.output_subdir == "actions":
+                        run_probe(
+                            adapter,
+                            reference_dataset if reference_dataset is not None else val_dataset,
+                            cfg,
+                            probe_output_dir,
+                            eval_dataset=val_dataset,
+                        )
+                    elif spec.output_subdir == "objective":
+                        summary = run_probe(
+                            adapter, val_dataset, cfg, probe_output_dir,
+                            train_dataset=reference_dataset,
+                        )
+                        if summary is not None and wandb_logger is not None:
+                            scalars = module.wandb_scalars(summary)
+                            scalars["Optimization step"] = step
+                            wandb_logger.log_dict(
+                                d=scalars, mode="train", custom_step_key="Optimization step"
                             )
-                        elif spec.output_subdir == "objective":
-                            summary = run_probe(
-                                adapter, eval_dataset, cfg, probe_output_dir,
-                                train_dataset=reference_dataset,
-                            )
-                            if summary is not None and wandb_logger is not None:
-                                scalars = module.wandb_scalars(summary)
-                                scalars["Optimization step"] = step
-                                wandb_logger.log_dict(
-                                    d=scalars, mode="train", custom_step_key="Optimization step"
-                                )
-                        else:
-                            run_probe(adapter, eval_dataset, cfg, probe_output_dir)
-                    _label_probe_split(probe_output_dir, suffix)
-                except Exception as exc:
-                    logging.warning(f"[VAL step={step}] probe '{probe_id}' failed: {exc}")
-                else:
-                    logging.info(f"[VAL step={step}] probe '{probe_id}' finished successfully")
+                    else:
+                        run_probe(adapter, val_dataset, cfg, probe_output_dir)
+            except Exception as exc:
+                logging.warning(f"[VAL step={step}] probe '{spec.output_subdir}' failed: {exc}")
+            else:
+                logging.info(f"[VAL step={step}] probe '{spec.output_subdir}' finished successfully")
 
         # Drop the adapter; the policy lives on in the training scope.
         del adapter
@@ -385,46 +352,6 @@ def _load_val_dataset(cfg: TrainRLServerPipelineConfig, fallback_dataset):
     ds.delta_timestamps = None
     ds.delta_indices = None
     return ds
-
-
-def _load_train_probe_datasets(cfg: TrainRLServerPipelineConfig) -> list[tuple[str, object]]:
-    """Training episodes the probe suite runs over alongside the held-out set.
-
-    The val set is a separate recording session, so a train/val difference in any probe
-    mixes memorisation with session shift; these slices are the seen-data half of that
-    pair. Probe budgets are per-episode (``n_frames_per_episode`` x ``max_episodes``),
-    not per-frame, so what makes the two sides comparable is matching the episode
-    *count* and picking episodes of similar length to the val episode carrying the same
-    task string — episode length tracks task difficulty in this corpus.
-
-    Each source is its own root and there is no multi-root dataset class, so every named
-    source becomes its own probe pass. Returns ``(output-dir suffix, dataset)`` pairs.
-    """
-    episodes_by_source = cfg.probe_parameters.train_probe_episodes
-    if not episodes_by_source:
-        return []
-
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    from lerobot.rl.offline_dataset_utils import get_offline_dataset_sources
-
-    roots = {source.name: source.root for source in get_offline_dataset_sources(cfg)}
-    unknown = sorted(set(episodes_by_source) - set(roots))
-    if unknown:
-        raise ValueError(
-            f"probe_parameters.train_probe_episodes names source(s) absent from dataset.sources: "
-            f"{unknown}. Known sources: {sorted(roots)}"
-        )
-
-    splits = []
-    for name, episodes in episodes_by_source.items():
-        ds = LeRobotDataset(repo_id=cfg.dataset.repo_id, root=roots[name], episodes=list(episodes))
-        ds.delta_timestamps = None
-        ds.delta_indices = None
-        logging.info(
-            f"[VAL] Train probe split '{name}': episodes {list(episodes)}, {len(ds)} frames"
-        )
-        splits.append((f"__train_{name}", ds))
-    return splits
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -771,7 +698,6 @@ def run_offline_training(
 
     # ── Validation dataset (used by probes) ───────────────────────────────────
     val_dataset = _load_val_dataset(cfg, fallback_dataset=offline_dataset)
-    train_probe_datasets = _load_train_probe_datasets(cfg)
     val_freq = int(getattr(cfg, "val_freq", 0) or 0)
     val_on_start = bool(getattr(cfg, "val_on_start", False))
 
@@ -789,7 +715,6 @@ def run_offline_training(
             policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
             val_dataset=val_dataset, reference_dataset=offline_dataset,
             device=device, cfg=cfg, step=0, wandb_logger=wandb_logger,
-            train_probe_datasets=train_probe_datasets,
         )
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -937,7 +862,6 @@ def run_offline_training(
                 policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
                 val_dataset=val_dataset, reference_dataset=offline_dataset,
                 device=device, cfg=cfg, step=optimization_step, wandb_logger=wandb_logger,
-                train_probe_datasets=train_probe_datasets,
             )
 
     logging.info(f"[RL_OFFLINE] Training complete after {optimization_step} steps.")

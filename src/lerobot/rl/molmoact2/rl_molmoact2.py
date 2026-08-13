@@ -60,6 +60,12 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     subtask_regeneration_interval: float = 1.0  # seconds between regenerations
     subtask_loss_weight: float = 0.0  # CE weight on generation answers; 0 = no subtask training
 
+    # ── Operator subtask console (eval only) ─────────────────────────────────
+    # keyboard key -> subtask string. Non-empty REPLACES generation at rollout:
+    # the operator latches the current step live. Strings must appear verbatim in
+    # the checkpoint's subtask vocabulary; the first entry is the episode default.
+    eval_subtasks: dict[str, str] = field(default_factory=dict)
+
     # ── Replay buffer ──────────────────────────────────────────────────────
     storage_device: str = "cpu"
     offline_buffer_capacity: int = 100_000

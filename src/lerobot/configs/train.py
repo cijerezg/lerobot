@@ -303,13 +303,6 @@ class ProbeConfig:
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
 
-    # Training episodes to run the whole enabled suite over, alongside the held-out set:
-    # ``{<dataset.sources name>: [episode_index, ...]}``. Every probe then reports a
-    # seen/unseen pair instead of an unpaired number. Each source is its own root and
-    # there is no multi-root dataset, so each name here costs one extra probe pass.
-    # None = val only, the previous behaviour.
-    train_probe_episodes: dict[str, list[int]] | None = None
-
     # Common
     output_dir: str = "outputs/probe"
     mode: str = "all"  # "collect" | "plot" | "all"

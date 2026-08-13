@@ -9,7 +9,11 @@ answers four questions:
      separate diagnostics keep the failure mode visible: path MSE, temporal-shape MSE,
      final-position MSE, and pure final-direction alignment. The last is a cosine from the
      hold position, so it ignores how long the final displacement is. At or below zero
-     skill, repeating the measured pose scores as well.
+     skill, repeating the measured pose scores as well. These are the only numbers here
+     scored on the **unfiltered** model output: they live in the space the flow loss and
+     the trajectory aux loss are defined in, and a low-pass would credit the filter for
+     removing exactly the high-frequency content ``shape_mse`` measures. Everything in
+     task space is scored on the filtered command instead.
   2. **Clearance.** Would any link go through the table during the next chunk? From
      per-link convex hulls, not link origins, so the gripper body and elbow count. A
      genuine pre-flight check: it runs before the arm ever moves.
@@ -21,12 +25,19 @@ answers four questions:
      trace step, and its cause is left open — servo tracking, timestamp alignment,
      calibration, or a genuinely discontinuous prediction all produce it.
 
-Two things change how every number here reads. Every action, GT or predicted, is a
+Three things change how every number here reads. Every action, GT or predicted, is a
 **commanded** leader pose, while the arm and the ``measured now`` marker are the
-**measured** follower pose. And it is **open-loop**: each anchor restarts the policy from
-a demo state, so compounding error and recovery are invisible by construction, and
-divergence from GT is not automatically error on a multimodal task — read the fan, and
-prefer ``ee_err_best`` over ``ee_err_mean``.
+**measured** follower pose. Every *predicted* chunk is the **filtered** command: the flow
+fan and the FAST decode pass through the same zero-phase Butterworth low-pass the deployed
+runtimes put between the policy and the controller (applied in ``_analyse``, so the paths
+and the numbers printed on them describe one trajectory), which makes the traces what the
+arm would be told to do rather than the raw decode. GT is not filtered — it is a recorded
+demonstration, not something this pipeline would command — and neither is the normalized
+``pred`` behind ``fit.*``, see item 1. The safety clamp is not applied either, so
+``joint_limit_margin`` still reports commanded violations. And it is **open-loop**: each
+anchor restarts the policy from a demo state, so compounding error and recovery are
+invisible by construction, and divergence from GT is not automatically error on a
+multimodal task — read the fan, and prefer ``ee_err_best`` over ``ee_err_mean``.
 
 Per-anchor numbers are in ``metrics.csv``; the per-joint split, baseline MSEs, and
 across-anchor trajectory-metric distributions are in ``action_metrics.json``.
@@ -61,6 +72,7 @@ from lerobot.probes.utils import (
     trajectory_error_components,
 )
 from lerobot.robots.rebot_b601_follower.kinematics import LINK_NAMES, RebotKinematics
+from lerobot.utils.action_smoothing import apply_butterworth_filter
 from lerobot.utils.constants import OBS_STATE
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -286,6 +298,12 @@ def _analyse(
 ):
     """Reduce raw command chunks into spatial, orientation, actuator, and safety readouts.
 
+    Predicted chunks are low-passed on entry (``utils.action_smoothing``), so every
+    readout below — clearance especially, which is a pre-flight check on a trajectory the
+    robot is about to be commanded through — describes the filtered command rather than
+    the raw decode. ``samples`` therefore arrives raw and leaves smoothed in
+    ``sample_chunks``; callers that draw the returned chunks get the deployed one.
+
     The measured follower state and first commanded target are deliberately kept as
     distinct quantities. Their gap is not an interpolated trajectory step, but it is
     also not dismissed as harmless: it is the target displacement the controller sees
@@ -298,7 +316,14 @@ def _analyse(
     if horizon < 1:
         raise ValueError("Action Inspector received an empty action chunk.")
     gt_chunk = np.asarray(gt_chunk[:horizon], dtype=np.float64)
-    sample_chunks = np.stack([np.asarray(sample[:horizon], dtype=np.float64) for sample in samples])
+    # Predicted chunks are smoothed here and nowhere earlier: this is the one reduction
+    # every drawn path, hover, legend and task-space metric comes out of, so the trace
+    # and the numbers printed on it cannot disagree about which trajectory they describe.
+    # GT is left raw — it is the demonstrated leader command, which never passed through
+    # this filter — and so is the normalized ``pred``, which scores the model itself.
+    sample_chunks = np.stack(
+        [apply_butterworth_filter(np.asarray(sample[:horizon], dtype=np.float64)) for sample in samples]
+    )
     state = np.asarray(state, dtype=np.float64).reshape(-1)
     action_dim = gt_chunk.shape[-1]
 
@@ -1691,8 +1716,10 @@ def run(adapter, dataset, cfg, output_dir):
             if has_decoder_comparison:
                 record.update(fast_error=fast_error, fast_chunk=None, fast_ee=None)
                 if fast_prediction is not None:
-                    fast_chunk = np.asarray(
-                        fast_prediction[: len(record["gt_chunk"])], dtype=np.float64
+                    # Smoothed like the flow fan: the two share one set of axes, and the
+                    # comparison is only a comparison if both are the deployed command.
+                    fast_chunk = apply_butterworth_filter(
+                        np.asarray(fast_prediction[: len(record["gt_chunk"])], dtype=np.float64)
                     )
                     if len(fast_chunk) < 1:
                         raise RuntimeError("FAST reconstruction returned an empty action chunk.")

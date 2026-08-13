@@ -13,9 +13,9 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import cv2
 from tqdm import tqdm
-from scipy.signal import butter, filtfilt
 
 import torch
+from lerobot.utils.action_smoothing import apply_butterworth_filter
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.processor import TransitionKey
 from lerobot.teleoperators.utils import TeleopEvents
@@ -23,19 +23,6 @@ from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.rl.utils import save_video_with_critic_overlay
 
 logger = logging.getLogger(__name__)
-
-_BUTTER_B, _BUTTER_A = butter(N=2, Wn=0.2, btype='low')
-
-
-def apply_butterworth_filter(actions: torch.Tensor) -> torch.Tensor:
-    """Zero-phase low-pass Butterworth filter along the time axis of an [T, D]
-    action chunk. Returns input unchanged when T is too short for filtfilt's
-    default padlen (3 * max(len(a), len(b)) = 9)."""
-    if actions.shape[0] <= 9:
-        return actions
-    arr = actions.detach().to(torch.float32).cpu().numpy()
-    smoothed = filtfilt(_BUTTER_B, _BUTTER_A, arr, axis=0)
-    return torch.as_tensor(smoothed.copy(), dtype=actions.dtype, device=actions.device)
 
 
 def align_prev_actions(
