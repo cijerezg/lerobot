@@ -34,12 +34,60 @@ from .configuration_molmoact2 import MolmoAct2Config
 
 logger = logging.getLogger(__name__)
 
+DEPTH_GRIPPER_CLOSE_TARGET = "depth_gripper_close_target"
+DEPTH_GRIPPER_OPEN_TARGET = "depth_gripper_open_target"
+
 
 def _finite_mean(values: Tensor, dim: int) -> Tensor:
     finite = torch.isfinite(values)
     count = finite.sum(dim=dim)
     mean = torch.where(finite, values, torch.zeros_like(values)).sum(dim=dim) / count.clamp_min(1)
     return torch.where(count > 0, mean, torch.full_like(mean, torch.nan))
+
+
+def _depth_gripper_event_loss(
+    logits: Tensor,
+    close_target: Tensor,
+    open_target: Tensor,
+    valid_mask: Tensor,
+    *,
+    weight: float,
+    reduction: str,
+) -> tuple[Tensor, Tensor]:
+    """Weighted soft-target BCE, masking the samples whose depth bank was nulled."""
+    if logits.ndim != 2 or logits.shape[-1] != 2:
+        raise ValueError(f"depth gripper event logits must have shape [B, 2], got {tuple(logits.shape)}.")
+    batch_size = int(logits.shape[0])
+    targets = torch.stack(
+        [
+            torch.as_tensor(close_target, device=logits.device, dtype=torch.float32).reshape(-1),
+            torch.as_tensor(open_target, device=logits.device, dtype=torch.float32).reshape(-1),
+        ],
+        dim=-1,
+    )
+    if tuple(targets.shape) != tuple(logits.shape):
+        raise ValueError(
+            f"depth gripper event targets must have shape {tuple(logits.shape)}, got {tuple(targets.shape)}."
+        )
+    if not torch.isfinite(targets).all() or torch.any((targets < 0) | (targets > 1)):
+        raise ValueError("depth gripper event targets must be finite values in [0, 1].")
+    valid = torch.as_tensor(valid_mask, device=logits.device, dtype=torch.bool).reshape(-1)
+    if valid.shape[0] != batch_size:
+        raise ValueError(
+            f"depth gripper event valid mask must have {batch_size} elements, got {valid.shape[0]}."
+        )
+
+    per_head = F.binary_cross_entropy_with_logits(logits.float(), targets, reduction="none")
+    valid_float = valid.to(per_head.dtype)
+    valid_count = valid_float.sum().clamp_min(1)
+    head_means = (per_head * valid_float[:, None]).sum(dim=0) / valid_count
+
+    # update_actor means the per-example vector. Rescale valid rows so that mean(B)
+    # is exactly the valid-only mean, preserving the configured weight under dropout.
+    per_example = per_head.mean(dim=-1) * valid_float
+    weighted_by_example = per_example * (batch_size / valid_count) * float(weight)
+    loss = weighted_by_example.mean() if reduction == "mean" else weighted_by_example
+    return loss, head_means
 
 
 def _action_trajectory_components_with_padding(
@@ -671,11 +719,11 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
                 )
             if depth is not None:
                 # Point-map depth tokens replace the arbitrary DEPTH_TOKEN base embedding
-                # with depth_marker + projected features, mirroring the image-patch value.
-                # Unlike state history the clause is never dropped
+                # with the already-bounded complete depth values. Unlike state history the
+                # clause is never dropped
                 # (modality dropout swaps the encoder's null bank instead), so every sample
                 # carries exactly N placeholders.
-                embeds, token_id, marker = depth  # (B, N, D), int, (D,)
+                embeds, token_id = depth  # (B, N, D), int
                 is_depth = input_ids == token_id
                 counts = is_depth.sum(dim=1)
                 n_depth = int(embeds.shape[1])
@@ -683,11 +731,8 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
                     raise RuntimeError(
                         f"Expected {n_depth} depth placeholders per sample, got {counts.tolist()}."
                     )
-                # Match RGB exactly: modality marker plus projected visual feature.
                 # Assignment intentionally removes the unrelated <extra_1> embedding.
-                depth_values = marker.to(flat_x.dtype) + embeds.to(flat_x.dtype).reshape(
-                    -1, embeds.shape[-1]
-                )
+                depth_values = embeds.to(flat_x.dtype).reshape(-1, embeds.shape[-1])
                 flat_x[is_depth.reshape(-1)] = depth_values
                 self._lerobot_depth_input_rms = (
                     depth_values.detach().float().square().mean().sqrt()
@@ -1305,7 +1350,18 @@ def _patch_numpy_dtype_cast(backbone: Any) -> None:
     backbone_module._to_numpy = _to_numpy_patched
 
 
-_DEPTH_PARAMETER_NAMES = ("pointmap_encoder", "depth_visual", "depth_marker")
+_DEPTH_PARAMETER_NAMES = (
+    "pointmap_encoder",
+    "depth_visual",
+    "depth_marker",
+    "depth_gripper_event_norm",
+    "depth_gripper_event_head",
+)
+
+
+def _soft_bound_depth_tokens(values: Tensor, bound: float) -> Tensor:
+    """Identity-like elementwise bound used at the depth/VLM fusion seam."""
+    return torch.tanh(values / bound) * bound
 
 
 class DepthVisualBackbone(nn.Module):
@@ -1581,6 +1637,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.pointmap_encoder: DepthPointmapEncoder | None = None
         self.depth_visual: DepthVisualBackbone | None = None
         self.depth_marker: nn.Parameter | None = None
+        self.depth_gripper_event_norm: nn.LayerNorm | None = None
+        self.depth_gripper_event_head: nn.Module | None = None
+        self._depth_gripper_event_logits: Tensor | None = None
+        self._depth_gripper_event_valid: Tensor | None = None
         # Legacy key remains the visual projector output / embedding-table RMS.
         # Separate seam metrics below report marker+feature and depth/RGB directly.
         self._depth_token_rms: Tensor | None = None
@@ -1606,6 +1666,21 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 image_patch_id = torch.tensor([backbone.config.image_patch_id], device=device)
                 marker = backbone.transformer.wte(image_patch_id)[0].detach().clone()
             self.depth_marker = nn.Parameter(marker)
+            if self.config.depth_gripper_event_loss.enabled:
+                d_text = int(self._hf_model().config.text_config.hidden_size)
+                self.depth_gripper_event_norm = nn.LayerNorm(d_text).to(
+                    device=device, dtype=torch.float32
+                )
+                hidden_dim = self.config.depth_gripper_event_loss.hidden_dim
+                self.depth_gripper_event_head = (
+                    nn.Linear(d_text, 2)
+                    if hidden_dim is None
+                    else nn.Sequential(
+                        nn.Linear(d_text, int(hidden_dim)),
+                        nn.GELU(),
+                        nn.Linear(int(hidden_dim), 2),
+                    )
+                ).to(device=device, dtype=torch.float32)
             # Keep the existing telemetry denominator for continuity with old runs.
             self._depth_embed_rms = _token_embedding_rms(backbone)
 
@@ -1859,13 +1934,15 @@ class MolmoAct2Policy(PreTrainedPolicy):
 
     def _stash_depth_inputs(self, batch: dict[str, Tensor]) -> None:
         """Point-map depth transport. The CNN + copied visual path run HERE once per
-        forward, and projected tokens are stashed for build_input_embeddings to place on
-        DEPTH_TOKEN placeholders. Consume-once, like the vision and state stashes; every
+        forward, and bounded complete tokens are stashed for build_input_embeddings to
+        place on DEPTH_TOKEN placeholders. Consume-once, like the vision and state stashes; every
         forward path funnels through _model_inputs, so a stash never crosses forwards.
 
         Runs on every path including discrete: depth is in the prefix, so it reaches the
         FAST-token logits and the flow expert alike (the expert reads the LLM's KV)."""
         backbone = self._backbone()
+        self._depth_gripper_event_logits = None
+        self._depth_gripper_event_valid = None
         if self.pointmap_encoder is None:
             backbone._lerobot_depth = None
             return
@@ -1878,18 +1955,33 @@ class MolmoAct2Policy(PreTrainedPolicy):
             backbone._lerobot_depth = None
             return
         device = next(self.model.parameters()).device
-        tokens = self.pointmap_encoder.memory_from_batch(
-            batch, batch_size=int(batch["input_ids"].shape[0]), device=device
+        tokens, depth_valid = self.pointmap_encoder.memory_from_batch(
+            batch,
+            batch_size=int(batch["input_ids"].shape[0]),
+            device=device,
+            return_valid_mask=True,
         )
         if self.depth_visual is None or self.depth_marker is None:
             raise RuntimeError("pointmap_encoder exists without its depth visual path.")
         projected = self.depth_visual(tokens)
-        injected = projected + self.depth_marker.to(projected.dtype)
+        raw_injected = projected + self.depth_marker.to(projected.dtype)
+        injected = _soft_bound_depth_tokens(
+            raw_injected, float(self.config.pointmap_config.output_bound)
+        )
+        if self.depth_gripper_event_norm is not None and self.depth_gripper_event_head is not None:
+            normalized = self.depth_gripper_event_norm(
+                injected.to(dtype=self.depth_gripper_event_norm.weight.dtype)
+            )
+            self._depth_gripper_event_logits = self.depth_gripper_event_head(normalized.mean(dim=1))
+            self._depth_gripper_event_valid = depth_valid
         # Kept on-device (no .item(), no sync); the trainer converts on capture steps.
         self._depth_token_rms = projected.detach().float().square().mean().sqrt()
         self._depth_injected_rms = injected.detach().float().square().mean().sqrt()
         self._depth_stage_rms = dict(self.depth_visual.last_rms)
-        backbone._lerobot_depth = (projected, int(token_id), self.depth_marker)
+        self._depth_stage_rms["pre_bound"] = (
+            raw_injected.detach().float().square().mean().sqrt()
+        )
+        backbone._lerobot_depth = (injected, int(token_id))
 
     def _run_prefix_backbone(self, model_inputs: dict[str, Tensor]) -> Any:
         """Run the prefix backbone forward (``use_cache``); ``outputs`` carries past_key_values."""
@@ -3301,6 +3393,35 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 )
             if flow_diagnostics_requested:
                 metrics.update(flow_diagnostics)
+
+        depth_event_config = self.config.depth_gripper_event_loss
+        if depth_event_config.enabled:
+            if self._depth_gripper_event_logits is None or self._depth_gripper_event_valid is None:
+                raise RuntimeError(
+                    "depth gripper event loss is enabled, but this forward produced no depth tokens."
+                )
+            missing = [
+                key
+                for key in (DEPTH_GRIPPER_CLOSE_TARGET, DEPTH_GRIPPER_OPEN_TARGET)
+                if key not in batch
+            ]
+            if missing:
+                raise KeyError(
+                    "depth gripper event loss is enabled, but the batch is missing "
+                    + ", ".join(missing)
+                )
+            depth_event_loss, depth_event_head_bce = _depth_gripper_event_loss(
+                self._depth_gripper_event_logits,
+                batch[DEPTH_GRIPPER_CLOSE_TARGET],
+                batch[DEPTH_GRIPPER_OPEN_TARGET],
+                self._depth_gripper_event_valid,
+                weight=float(depth_event_config.weight),
+                reduction=reduction,
+            )
+            losses.append(depth_event_loss)
+            metrics["depth_gripper_event_loss"] = depth_event_loss.detach().float().mean().item()
+            metrics["depth_gripper_close_bce"] = depth_event_head_bce[0].detach().float().item()
+            metrics["depth_gripper_open_bce"] = depth_event_head_bce[1].detach().float().item()
 
         loss = torch.stack(losses).sum(dim=0)
         metrics["loss"] = loss.detach().float().mean().item()

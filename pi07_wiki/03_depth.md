@@ -118,8 +118,9 @@ $$t_{ab} = f_{ab} + g_{ab} + e_{mod}$$
 ($e_{mod}$ a learned modality embedding). Division of labor: $f$ = local shape
 (recentered), $g$ = global position (absolute). **Empty patches** (all pixels
 invalid) are replaced by a learned per-patch `null_tokens` bank — never dropped
-(variable count breaks batching). The same bank substitutes the whole sample under
-modality dropout (`dropout_prob: 0.25`, train only) and when depth is missing.
+(variable count breaks batching). The same bank can substitute the whole sample
+under optional modality dropout and when depth is missing. Modality dropout remains
+wired for ablations but is disabled by default (`dropout_prob: 0.0`).
 
 Depth tokenization is independent of the RGB tower's 378×378 resize; the two grids
 never align pixel-wise. Depth and RGB meet through **attention** (Part B), not
@@ -271,7 +272,7 @@ step.
 
 Modality-laziness counterpart of the read (depth_redesign_options.md §2.3, §4.3):
 with RGB explaining the demos, even a healthy depth path gets ~no gradient. At
-train time, with probability `pointmap_config.rgb_dropout_prob` (default 0.15),
+train time, with probability `pointmap_config.rgb_dropout_prob` (default 0.0),
 the depth camera's contribution is **removed from attention** for that sample:
 
 $$\text{attention\_mask}\big[b,\ S_b[cT_w : (c{+}1)T_w]\big] = 0$$
@@ -295,9 +296,11 @@ residual for dropped rows: forward contribution and gradient both vanish, and th
 row's depth stream runs depth-only (self-attn + MLP). Single source of truth —
 the mask — for every path.
 
-Independent of the depth-modality dropout (`dropout_prob` 0.25) and the shared
-history dropout. Training-text path only; inference is unaffected (`cross_on` is
-all-True when the mask has no zeros in the span).
+Independent of the optional depth-modality dropout (`dropout_prob` defaults to
+0.0) and the shared history dropout. Both depth and wrist-RGB modality dropout are
+currently disabled, while their paths remain available for controlled ablations.
+Training-text path only; inference is unaffected (`cross_on` is all-True when the
+mask has no zeros in the span).
 
 Telemetry (replaces `pointmap_gate*`): `depth_attn_mass_mean`/`_max` (softmax
 mass on depth columns, aggregated over stream layers, captured on the first

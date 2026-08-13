@@ -72,15 +72,13 @@ are exact inverses; a decode with no `Subtask:` marker is treated as subtask-onl
 (memory kept). Decoded subtask text is snapped to the annotation vocabulary by
 `snap_to_subtask_vocab` (normalized exact match → difflib fuzzy at cutoff 0.6 → −1).
 
-### 1.3 Training dropouts (π0.7 recipe, training text only)
+### 1.3 Training dropouts (optional, currently off)
 
 Applied per sample in the pack step
 ([processor_molmoact2.py:1118-1128](../src/lerobot/policies/molmoact2/processor_molmoact2.py#L1118-L1128)):
-`subtask_dropout = 0.3`, `metadata_dropout = 0.15`, `history_dropout = 0.3` — one
-flip drops the **whole** short-term block (states and frames describe the same
-window; dropping them independently would let the model exploit whichever
-survived). On the generation side, `summary_dropout = 0.3` drops the memory clause
-AND the answer's memory span together (the sample degrades to subtask-only).
+all three rates are explicitly `0.0` in the active config. If history deletion is
+enabled for an ablation, one flip drops the **whole** state/RGB/depth history block.
+The rates are explicit config fields and are saved with the checkpoint.
 
 ## 2. Short-term history
 
@@ -92,7 +90,7 @@ Configured by the shared, model-agnostic `MemoryConfig`
 history_keys: list[str] = []        # empty = disabled (zero behavior change)
 history_window_seconds: float = 5.0
 history_num_samples: int = 5        # 5 s @ 30 fps → offsets [30, 60, 90, 120, 150]
-history_dropout: float = 0.3
+history_dropout: float = 0.0
 ```
 
 (Widened 4→5 past frames 2026-07-22 to match MEM's pretraining setup — 5 past +

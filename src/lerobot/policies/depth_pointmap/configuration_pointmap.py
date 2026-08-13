@@ -54,16 +54,16 @@ class DepthPointmapConfig:
     # λ_min = patch_size·z_min/fx (near token spacing), λ_max = 2·z_max (scene).
     num_wavelengths: int = 8
 
-    # Modality dropout p_drop: swap to the learned null bank at train time.
-    dropout_prob: float = 0.25
+    # Optional modality dropout: swap to the learned null bank at train time.
+    # Disabled by default; keep the mechanism available for controlled ablations.
+    dropout_prob: float = 0.0
     # Anti-laziness RGB dropout (depth_redesign_options.md §4.3): at train time,
     # mask the depth camera's <im_patch> span out of the attention mask with this
     # probability — nothing attends the span and no gradient flows through its
     # vision path, so those samples are solvable only through depth. Independent of
-    # the depth modality dropout above. 0 disables. Raise this hard for the
-    # optional depth-only diagnostic stage: with the trunk frozen, RGB plus proprio
-    # already satisfies most of the loss and depth can otherwise remain unused.
-    rgb_dropout_prob: float = 0.15
+    # the depth modality dropout above. Disabled by default; keep the mechanism
+    # available for controlled ablations.
+    rgb_dropout_prob: float = 0.0
 
     # Patch-CNN trunk widths (the two hidden stages; the third stage outputs the
     # stream width). Bumped from (32, 64) 2026-07-25 — depth capacity is cheap next
@@ -90,6 +90,11 @@ class DepthPointmapConfig:
     visual_feature_taps: tuple[int, int] = (3, 7)
     # RGB block indices used only to initialize the independent depth blocks.
     visual_source_indices: tuple[int, ...] = (0, 4, 8, 12, 16, 20, 24)
+    # Elementwise soft bound on the complete token injected into the VLM prefix:
+    # output_bound * tanh((projected_feature + depth_marker) / output_bound).
+    # This is locally identity-like around zero while preventing the depth path or
+    # its trainable marker from growing the fusion input without limit.
+    output_bound: float = 128.0
 
     # CRITIC-ONLY (rl_molmoact2.py): the critic still runs its own co-evolving
     # DepthStreamBlocks over its own encoder's tokens. The actor no longer does —
@@ -144,6 +149,8 @@ class DepthPointmapConfig:
             raise ValueError(
                 "visual_feature_taps must contain two increasing, valid one-based block numbers."
             )
+        if self.output_bound <= 0:
+            raise ValueError(f"output_bound must be > 0, got {self.output_bound}.")
         if not 0 < self.z_min_mm < self.z_max_mm:
             raise ValueError(f"need 0 < z_min < z_max, got ({self.z_min_mm}, {self.z_max_mm}).")
         if self.coord_scale_mm <= 0:

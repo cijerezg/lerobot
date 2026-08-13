@@ -56,9 +56,8 @@ $$\mathcal L = \underbrace{\mathcal L_{flow} + \mathcal L_{aux}}_{\text{action e
   are additive per-sample corrections, never replacements: the base flow loss and
   the base FAST CE apply to every sample regardless. §2.1 and §2.2.
 
-Prompt conditioning per sample: subtask clause (70%), metadata clause (85%),
-history clause (if `memory.history_keys` set, 70%) — `subtask_dropout` 0.3 /
-`metadata_dropout` 0.15 / `history_dropout` 0.3, applied to training text only.
+Prompt conditioning matches deployment on every sample: subtask, metadata, and history
+dropouts are explicitly `0.0`. The deletion paths remain available for controlled ablations.
 **No advantage clause** under `skip_critic` (`advantage=None` in
 `build_training_batch`; `inference_advantage` must stay null so eval matches).
 
@@ -254,7 +253,9 @@ train/val-interleaved subset: `loss_flow`, `loss_action_aux`, `loss_discrete_ce`
 diagnostic returned by the update.
 
 **Losses.** `loss_actor`, `loss_flow`, `loss_discrete_ce`, `loss_action_aux`,
-and `loss_discrete_aux`; optional losses are popped when their term is off, so a
+and `loss_discrete_aux`; the depth-only event head adds weighted
+`loss_depth_event` plus raw `depth_event/close_bce` and
+`depth_event/open_bce`. Optional losses are popped when their term is off, so a
 disabled term leaves no flat-zero panel. `loss_subtask_ce` appears only when
 `subtask_loss_weight > 0`. **There is no `loss_summary_ce`** — the summary-memory
 seam was removed, along with `materialize_summaries` and the hold/update split.
@@ -262,7 +263,8 @@ seam was removed, along with `materialize_summaries` and the hold/update split.
 **Held-out losses** (`val_loss_frames: 128`, one effective batch packed once at
 startup with seeded flow noise, so the comparison is apples-to-apples across
 steps): `val_loss_flow`, `val_loss_discrete_ce`, plus `val_loss_action_aux` /
-`val_loss_discrete_aux` whenever those terms report. This replaced the modality
+`val_loss_discrete_aux` whenever those terms report, and
+`val_loss_depth_event` when the depth-event objective is enabled. This replaced the modality
 ablation deltas (removed 2026-08-08: they estimated conditional MI on memorized
 training frames, which is 0 by construction).
 
@@ -312,7 +314,8 @@ match training.
 | `policy.subtask_loss_weight` | **0.0** | generation CE **off** |
 | `policy.memory.metadata_enabled` | true | quality/mistake clauses from dataset meta |
 | `policy.memory.history_keys` | state + top/wrist images + depth | short-term history on; 5 samples over 5 s → offsets 30/60/90/120/150 |
-| `policy.pointmap_config` | set | depth on; factory intrinsics; z ∈ [70, 800] mm; `rgb_dropout_prob` 0.15 on the wrist camera |
+| `policy.pointmap_config` | set | depth on; factory intrinsics; z ∈ [70, 800] mm; depth and wrist-RGB dropout both 0.0 |
+| `policy.depth_gripper_event_loss` | enabled, weight 0.2, `hidden_dim: null` | depth-token LN → mean → linear close/open logits; null-depth samples masked |
 | `policy.depth_lr` | null | inherit `optimizer_lr` exactly; separate group only excludes pretrained merge |
 | `policy.norm_tag` | null | stats from the dataset |
 | `policy.rtc_config` | enabled, `execution_horizon: 5` | RTC inference; the horizon is the frozen-prefix length, unrelated to `image_stride` |

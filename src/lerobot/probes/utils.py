@@ -27,6 +27,7 @@ from lerobot.utils.action_metrics import (
     TRAJECTORY_RELATIVE_KEYS,
     trajectory_error_components,
 )
+from lerobot.utils.depth_gripper_events import load_depth_gripper_event_targets
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -85,9 +86,7 @@ def makedirs(*paths: str) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 # The metadata clause a rollout asks for: the best behaviour the steering offers.
-# Probes that omit the clause entirely land in a prompt regime that covers ~1.35%
-# of training samples (subtask 0.3 x metadata 0.15 x history 0.3) and is not the
-# deployment regime either. `metadata_steering` is the probe that varies this.
+# Active dropout is zero; `metadata_steering` intentionally varies this deployment input.
 DEPLOYMENT_METADATA = {"quality": 5, "mistake": False}
 
 _PACK_DROPOUT_FIELDS = (
@@ -105,10 +104,10 @@ def suppress_pack_dropout(preprocessor):
     The MolmoAct2 pack step fires subtask/metadata/history/RGB dropout
     whenever the transition carries an ACTION (`build_action_labels`,
     processor_molmoact2.py), which every attention/Jacobian capture does because it
-    drives the flow loss. Left on, each probe frame independently loses the wrist
-    camera (rgb_dropout 0.15) or the whole short-term block (history_dropout 0.3)
-    from an unseeded `random.random()` draw — the overlay videos flicker and the
-    episode-wide p98 vmax they are normalized against is computed over a mixture.
+    drives the flow loss. If configured above zero, each probe frame can
+    independently lose the wrist camera or the whole short-term block from an
+    unseeded `random.random()` draw — the overlay videos flicker and the episode-wide
+    p98 vmax they are normalized against is computed over a mixture.
 
     None of these dropouts zeroes a tensor; each builds a mask (history_on, the
     camera's <im_patch> attention span) or drops a prompt clause. Holding the
@@ -433,7 +432,7 @@ def probe_frame_inputs(
             keys = [k for k in keys if not k.startswith("depth.")]
         obs.update(assemble_frame_history(dataset, global_idx, memory_cfg, cfg.env.fps, keys))
 
-    return {
+    result = {
         "obs": obs,
         "gt_actions": gt_actions,
         "state": state,
@@ -444,6 +443,11 @@ def probe_frame_inputs(
         "frame_idx": frame_idx,
         "global_idx": global_idx,
     }
+    depth_event_config = getattr(cfg.policy, "depth_gripper_event_loss", None)
+    if getattr(depth_event_config, "enabled", False):
+        targets = load_depth_gripper_event_targets(dataset)
+        result.update({key: values[global_idx] for key, values in targets.items()})
+    return result
 
 
 def history_offsets(memory_cfg, fps: float) -> list[int]:

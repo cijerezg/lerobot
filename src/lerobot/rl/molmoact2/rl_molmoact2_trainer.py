@@ -40,7 +40,16 @@ def _layer_idx_after(name: str, marker: str) -> int:
 
 
 def _is_actor_depth_parameter(name: str) -> bool:
-    return any(part in name for part in ("pointmap_encoder", "depth_visual", "depth_marker"))
+    return any(
+        part in name
+        for part in (
+            "pointmap_encoder",
+            "depth_visual",
+            "depth_marker",
+            "depth_gripper_event_norm",
+            "depth_gripper_event_head",
+        )
+    )
 
 
 def _actor_depth_component(name: str) -> str | None:
@@ -193,12 +202,18 @@ class MolmoAct2Trainer(Trainer):
             "val_loss_discrete_ce",
             "loss_discrete_aux",
             "val_loss_discrete_aux",
+            "loss_depth_event",
+            "val_loss_depth_event",
+            "depth_event/close_bce",
+            "depth_event/open_bce",
             "loss_subtask_ce",
             "actor_grad_norm",
             "flow_loss_per_sample_histogram",
             "discrete_ce_loss_per_sample_histogram",
             "auxiliary_loss_per_sample_histogram",
             "depth_rgb_rms_ratio",
+            "depth_pre_bound_token_rms",
+            "depth_injected_token_rms",
             "depth_grad_norm_preclip",
             "action_aux/path_relative_mean",
             "action_aux/shape_relative_mean",
@@ -698,7 +713,19 @@ class MolmoAct2Trainer(Trainer):
         }
         if comp:
             pre_input[TransitionKey.COMPLEMENTARY_DATA] = comp
-        return preprocessor(pre_input)
+        batch = preprocessor(pre_input)
+        if cfg.policy.depth_gripper_event_loss.enabled:
+            from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
+
+            missing = [key for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS if key not in raw_comp]
+            if missing:
+                raise KeyError(
+                    "Depth gripper event loss is enabled, but replay samples are missing "
+                    + ", ".join(missing)
+                )
+            for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS:
+                batch[key] = raw_comp[key].float()
+        return batch
 
     def actor_forward(
         self,
@@ -759,6 +786,9 @@ class MolmoAct2Trainer(Trainer):
             "loss_action_aux": 0.0,
             "loss_discrete_ce": 0.0,
             "loss_discrete_aux": 0.0,
+            "loss_depth_event": 0.0,
+            "depth_event/close_bce": 0.0,
+            "depth_event/open_bce": 0.0,
             "loss_subtask_ce": 0.0,
         }
         actor_loss_list: list[torch.Tensor] = []
@@ -907,6 +937,15 @@ class MolmoAct2Trainer(Trainer):
             accum["loss_discrete_aux"] += float(
                 metrics.get("discrete_auxiliary_loss", 0.0)
             ) / grad_accum
+            accum["loss_depth_event"] += float(
+                metrics.get("depth_gripper_event_loss", 0.0)
+            ) / grad_accum
+            accum["depth_event/close_bce"] += float(
+                metrics.get("depth_gripper_close_bce", 0.0)
+            ) / grad_accum
+            accum["depth_event/open_bce"] += float(
+                metrics.get("depth_gripper_open_bce", 0.0)
+            ) / grad_accum
 
             actor_loss_raw = metrics.get("loss_raw", loss.detach().float() if isinstance(loss, torch.Tensor) else None)
             if isinstance(actor_loss_raw, torch.Tensor):
@@ -1054,6 +1093,10 @@ class MolmoAct2Trainer(Trainer):
             accum.pop("loss_action_aux", None)
         if not getattr(cfg.policy.discrete_action_auxiliary_loss, "enabled", False):
             accum.pop("loss_discrete_aux", None)
+        if not getattr(cfg.policy.depth_gripper_event_loss, "enabled", False):
+            accum.pop("loss_depth_event", None)
+            accum.pop("depth_event/close_bce", None)
+            accum.pop("depth_event/open_bce", None)
         if float(getattr(cfg.policy, "subtask_loss_weight", 0.0)) <= 0:
             accum.pop("loss_subtask_ce", None)
 
@@ -1326,8 +1369,11 @@ class MolmoAct2Trainer(Trainer):
             "loss_action_aux", "val_loss_action_aux",
             "loss_discrete_ce", "val_loss_discrete_ce",
             "loss_discrete_aux", "val_loss_discrete_aux",
+            "loss_depth_event", "val_loss_depth_event",
+            "depth_event/close_bce", "depth_event/open_bce",
             "loss_subtask_ce", "actor_grad_norm", "loss_critic",
-            "depth_rgb_rms_ratio", "depth_late_early_rms_ratio", "depth_grad_norm_preclip",
+            "depth_rgb_rms_ratio", "depth_pre_bound_token_rms", "depth_injected_token_rms",
+            "depth_late_early_rms_ratio", "depth_grad_norm_preclip",
         )
         console_scalars = {
             k: training_infos[k]

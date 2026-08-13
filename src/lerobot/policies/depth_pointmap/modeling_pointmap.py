@@ -420,8 +420,13 @@ class DepthPointmapEncoder(nn.Module):
         return torch.where(empty[..., None], null, token)
 
     def memory_from_batch(
-        self, batch: dict[str, Tensor], *, batch_size: int, device: torch.device
-    ) -> Tensor:
+        self,
+        batch: dict[str, Tensor],
+        *,
+        batch_size: int,
+        device: torch.device,
+        return_valid_mask: bool = False,
+    ) -> Tensor | tuple[Tensor, Tensor]:
         """Depth tokens from a policy batch: back-project → encode (design §1, §5).
 
         Consumes raw metric depth from observation.depth.{depth_key} (no [0,1]
@@ -437,9 +442,12 @@ class DepthPointmapEncoder(nn.Module):
         depth is missing, keeping shapes static.
 
         Returns fine-grid memory (B, N, d_mem) — the actor visual path's input.
+        With ``return_valid_mask=True``, also returns the exact per-sample mask
+        remaining after missing-depth handling and this call's modality-dropout draw.
         """
         cfg = self.config
         depth = batch.get(f"observation.depth.{cfg.depth_key}")
+        depth_valid = torch.full((batch_size,), depth is not None, device=device, dtype=torch.bool)
         if depth is None:
             memory = self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
         else:
@@ -466,6 +474,9 @@ class DepthPointmapEncoder(nn.Module):
             memory = torch.where(
                 dropped[:, None, None], self.null_memory(memory.shape[0]).to(memory.dtype), memory
             )
+            depth_valid = depth_valid & ~dropped
+        if return_valid_mask:
+            return memory, depth_valid
         return memory
 
     def _backproject(self, depth: Tensor) -> Tensor:

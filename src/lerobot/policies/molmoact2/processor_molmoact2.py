@@ -674,18 +674,20 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     max_action_dim: int = 32
     env_action_dim: int | None = None
     # Memory prompt clauses: index → name vocabulary (from subtasks.parquet) and
-    # per-component training dropout (π0.7 recipe; applied only when actions are
-    # present, i.e. training text — inference prompts are deterministic).
+    # optional per-component training dropout (applied only when actions are
+    # present, i.e. training text — inference prompts are deterministic). Zero is
+    # the default so training matches deployment unless the launch explicitly asks
+    # for clause deletion.
     subtask_names: list[str] = field(default_factory=list)
-    subtask_dropout: float = 0.3
-    metadata_dropout: float = 0.15
+    subtask_dropout: float = 0.0
+    metadata_dropout: float = 0.0
     # Short-term memory (04_memory.md §2.4): state history becomes continuous
     # placeholder tokens, image history rides to the MEM video encoder as tensors
     # (complementary keys "history.{OBS_STATE}" / "history.{OBS_IMAGES}.{cam}").
     # Absent keys = clause/tensors off (byte-identical legacy prompt); one dropout
     # flip removes the WHOLE block (states + frames) for training text only.
     # history_stride_seconds parameterizes the e(t) time stamps.
-    history_dropout: float = 0.3
+    history_dropout: float = 0.0
     history_stride_seconds: float = 1.0
     # Anti-laziness RGB dropout (depth_redesign_options.md §4.3): mask ONE camera's
     # <im_patch> span out of the attention mask (the depth camera's), so the sample
@@ -1354,7 +1356,7 @@ def make_molmoact2_pre_post_processors(
     # MemoryConfig lives on the RL wrapper config (MolmoAct2RLConfig.memory), not on the
     # bare MolmoAct2Config used for BC/eval, hence the getattr default.
     memory_cfg = getattr(config, "memory", None)
-    history_dropout = memory_cfg.history_dropout if memory_cfg is not None else 0.3
+    history_dropout = memory_cfg.history_dropout if memory_cfg is not None else 0.0
     # Anti-laziness RGB dropout rides pointmap_config (depth_redesign_options.md §4.3):
     # the blacked camera is the depth camera; depth-free configs get 0 (no-op).
     pointmap_cfg = getattr(config, "pointmap_config", None)
@@ -1387,6 +1389,8 @@ def make_molmoact2_pre_post_processors(
             chunk_size=chunk_size,
             max_action_dim=config.expected_max_action_dim,
             env_action_dim=env_action_dim,
+            subtask_dropout=config.subtask_dropout,
+            metadata_dropout=config.metadata_dropout,
             history_dropout=history_dropout,
             history_stride_seconds=config.history_stride_seconds,
             rgb_dropout=rgb_dropout,

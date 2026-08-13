@@ -160,6 +160,27 @@ class DiscreteActionAuxiliaryLossConfig:
             raise ValueError("enabled discrete action auxiliary loss requires at least one positive weight.")
 
 
+@dataclass
+class DepthGripperEventLossConfig:
+    """Depth-only prediction of the next close/open event proximity targets."""
+
+    enabled: bool = False
+    weight: float = 0.0
+    # ``None`` is the deliberately restrictive linear head. A positive value enables
+    # Linear(D, hidden_dim) -> GELU -> Linear(hidden_dim, 2) for a later ablation.
+    hidden_dim: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.weight < 0:
+            raise ValueError(f"depth gripper event weight must be non-negative, got {self.weight}.")
+        if self.enabled and self.weight <= 0:
+            raise ValueError("enabled depth gripper event loss requires a positive weight.")
+        if self.hidden_dim is not None and self.hidden_dim < 1:
+            raise ValueError(
+                f"depth gripper event hidden_dim must be positive or null, got {self.hidden_dim}."
+            )
+
+
 @PreTrainedConfig.register_subclass("molmoact2")
 @dataclass
 class MolmoAct2Config(PreTrainedConfig):
@@ -201,6 +222,12 @@ class MolmoAct2Config(PreTrainedConfig):
     temporal_layer_stride: int = 4
     history_stride_seconds: float = 1.0
 
+    # Training-time prompt deletion. Keep these explicit on the policy config so
+    # the saved checkpoint and launch YAML, rather than pack-step implementation
+    # defaults, determine which conditioning clauses the policy is trained to use.
+    subtask_dropout: float = 0.0
+    metadata_dropout: float = 0.0
+
     # --- Back-projected point-map depth (depth_pointmap_design.md) -------------
     # None => depth-free: no encoder built, no depth key shipped, prompt is
     # byte-identical to the legacy one, forward cost unchanged. When set, the
@@ -231,6 +258,9 @@ class MolmoAct2Config(PreTrainedConfig):
     discrete_action_auxiliary_loss: DiscreteActionAuxiliaryLossConfig = field(
         default_factory=DiscreteActionAuxiliaryLossConfig
     )
+    depth_gripper_event_loss: DepthGripperEventLossConfig = field(
+        default_factory=DepthGripperEventLossConfig
+    )
     num_inference_steps: int | None = None
     mask_action_dim_padding: bool = True
     enable_inference_cuda_graph: bool = True
@@ -244,7 +274,7 @@ class MolmoAct2Config(PreTrainedConfig):
     enable_lora_vlm: bool = False
     lora_rank: int = 64
     lora_alpha: int = 16
-    lora_dropout: float = 0.05
+    lora_dropout: float = 0.0
     lora_bias: str = "none"
     enable_lora_action_expert: bool = False
     knowledge_insulation: bool = False
@@ -321,6 +351,14 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError(
                 f"Unsupported dtype={self.dtype!r}. Expected 'float32', 'bfloat16', or 'float16'."
             )
+        if not 0 <= self.subtask_dropout < 1:
+            raise ValueError(
+                f"subtask_dropout must be in [0, 1), got {self.subtask_dropout}."
+            )
+        if not 0 <= self.metadata_dropout < 1:
+            raise ValueError(
+                f"metadata_dropout must be in [0, 1), got {self.metadata_dropout}."
+            )
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}.")
         if self.lora_alpha < 1:
@@ -356,6 +394,8 @@ class MolmoAct2Config(PreTrainedConfig):
             )
         if self.discrete_action_auxiliary_loss.enabled and self.action_mode == "continuous":
             raise ValueError("discrete_action_auxiliary_loss requires action_mode='discrete' or 'both'.")
+        if self.depth_gripper_event_loss.enabled and self.pointmap_config is None:
+            raise ValueError("depth_gripper_event_loss requires pointmap_config.")
 
     def inferred_max_sequence_length(
         self,

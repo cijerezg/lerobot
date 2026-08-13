@@ -29,6 +29,7 @@ class _FakePolicy:
             metrics.update(
                 action_auxiliary_loss=2.0 * marker,
                 discrete_auxiliary_loss=2.0 * marker + 2.0,
+                depth_gripper_event_loss=3.0 * marker,
             )
         return torch.tensor(0.0), metrics
 
@@ -62,6 +63,7 @@ def test_val_loss_logs_enabled_auxiliaries_with_frame_weighting() -> None:
         "val_loss_discrete_ce": 4.0,
         "val_loss_action_aux": 4.0,
         "val_loss_discrete_aux": 6.0,
+        "val_loss_depth_event": 6.0,
     }
     assert policy.training
 
@@ -107,12 +109,25 @@ def test_training_wandb_metrics_use_compact_allowlist() -> None:
         "action_aux/path_mse_mean": 0.03,
         "actor_loss_histogram": object(),
         "depth_block3_token_rms": 1.2,
+        "depth_pre_bound_token_rms": 140.0,
+        "depth_injected_token_rms": 96.0,
+        "loss_depth_event": 0.12,
+        "val_loss_depth_event": 0.14,
+        "depth_event/close_bce": 0.55,
+        "depth_event/open_bce": 0.65,
+        "depth_event/close_target_mean": 0.2,
     }
 
     assert MolmoAct2Trainer._wandb_metrics(metrics) == {
         "Optimization step": 12,
         "loss_flow": 0.2,
         "action_aux/path_relative_mean": 0.7,
+        "depth_pre_bound_token_rms": 140.0,
+        "depth_injected_token_rms": 96.0,
+        "loss_depth_event": 0.12,
+        "val_loss_depth_event": 0.14,
+        "depth_event/close_bce": 0.55,
+        "depth_event/open_bce": 0.65,
     }
 
 
@@ -128,6 +143,7 @@ def test_depth_optimizer_inherits_joint_lr_when_override_is_null() -> None:
             super().__init__()
             self.body = nn.Linear(2, 2)
             self.pointmap_encoder = nn.Linear(2, 2)
+            self.depth_gripper_event_head = nn.Linear(2, 2)
 
     policy = _Policy()
     cfg = SimpleNamespace(policy=SimpleNamespace(optimizer_lr=3e-5, depth_lr=None))
@@ -141,6 +157,7 @@ def test_depth_optimizer_inherits_joint_lr_when_override_is_null() -> None:
     assert by_name["policy"]["lr"] == 3e-5
     assert by_name["depth"]["lr"] == 3e-5
     depth_ids = {id(parameter) for parameter in policy.pointmap_encoder.parameters()}
+    depth_ids.update(id(parameter) for parameter in policy.depth_gripper_event_head.parameters())
     assert {id(parameter) for parameter in by_name["depth"]["params"]} == depth_ids
 
 
@@ -182,6 +199,7 @@ def test_actor_freeze_trains_late_visual_path_but_not_rgb_stem() -> None:
             self.model.lm_head = nn.Linear(2, 4)
             self.model.action_expert = nn.Linear(2, 2)
             self.pointmap_encoder = nn.Linear(2, 2)
+            self.depth_gripper_event_head = nn.Linear(2, 2)
 
     policy = _Policy()
     tp = SimpleNamespace(
@@ -210,3 +228,4 @@ def test_actor_freeze_trains_late_visual_path_but_not_rgb_stem() -> None:
 
     assert any("action_expert" in name for name in trainable)
     assert any("pointmap_encoder" in name for name in trainable)
+    assert any("depth_gripper_event_head" in name for name in trainable)

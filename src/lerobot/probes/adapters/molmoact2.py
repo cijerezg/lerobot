@@ -33,6 +33,7 @@ from lerobot.probes.base import ActionSensitivityResult, AttentionCaptureResult,
 from lerobot.probes.utils import find_normalizer_step, suppress_pack_dropout
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
 
 
 class MolmoAct2Adapter(ProbablePolicy):
@@ -226,6 +227,9 @@ class MolmoAct2Adapter(ProbablePolicy):
                 subtask=frame["subtask"],
                 metadata=frame["metadata"],
             )
+        for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS:
+            if key in frame:
+                batch[key] = frame[key].reshape(1).float().to(self._device)
 
         # Shapes come from the packed batch, not from the raw chunk: the pack step pads
         # the horizon and the action dim out to the checkpoint's 32, and the noise
@@ -298,6 +302,18 @@ class MolmoAct2Adapter(ProbablePolicy):
             "loss_discrete_aux": (
                 float(metrics["discrete_auxiliary_loss"])
                 if "discrete_auxiliary_loss" in metrics else None
+            ),
+            "loss_depth_event": (
+                float(metrics["depth_gripper_event_loss"])
+                if "depth_gripper_event_loss" in metrics else None
+            ),
+            "depth_event_close_bce": (
+                float(metrics["depth_gripper_close_bce"])
+                if "depth_gripper_close_bce" in metrics else None
+            ),
+            "depth_event_open_bce": (
+                float(metrics["depth_gripper_open_bce"])
+                if "depth_gripper_open_bce" in metrics else None
             ),
             "action_aux_path_mse": component("action_auxiliary_components", "path_mse"),
             "action_aux_shape_mse": component("action_auxiliary_components", "shape_mse"),

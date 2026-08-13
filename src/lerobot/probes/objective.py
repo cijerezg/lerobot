@@ -63,6 +63,9 @@ TRAIN_COLOR = "#457B9D"
 AUXILIARY_LOSS_KEYS = (
     "loss_action_aux",
     "loss_discrete_aux",
+    "loss_depth_event",
+    "depth_event_close_bce",
+    "depth_event_open_bce",
     "action_aux_path_mse",
     "action_aux_shape_mse",
     "action_aux_terminal_mse",
@@ -805,6 +808,7 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
         ("flow aux", "loss_action_aux"),
         ("FAST CE", "loss_discrete_ce"),
         ("FAST aux", "loss_discrete_aux"),
+        ("depth event", "loss_depth_event"),
     ):
         entry = summary[key]
         if not entry:

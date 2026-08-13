@@ -140,6 +140,36 @@ def test_encoder_is_gate_free():
     assert mem.shape == (2, enc.num_tokens, 16)
 
 
+def test_memory_from_batch_returns_the_exact_modality_dropout_mask(monkeypatch):
+    cfg = DepthPointmapConfig(
+        image_size=(40, 40),
+        patch_size=40,
+        pooling_size=(1, 1),
+        token_width=16,
+        dropout_prob=0.5,
+        cnn_hidden_channels=(4, 8),
+    )
+    enc = DepthPointmapEncoder(cfg, d_mem=16).train()
+    monkeypatch.setattr(
+        enc,
+        "forward",
+        lambda pointmap, history_pm=None, history_on=None: torch.ones(2, 1, 16),
+    )
+    monkeypatch.setattr(torch, "rand", lambda *args, **kwargs: torch.tensor([0.1, 0.9]))
+    depth = torch.full((2, 40, 40), 3000.0)
+
+    memory, valid = enc.memory_from_batch(
+        {"observation.depth.wrist": depth},
+        batch_size=2,
+        device=torch.device("cpu"),
+        return_valid_mask=True,
+    )
+
+    assert valid.tolist() == [False, True]
+    torch.testing.assert_close(memory[0], enc.null_memory(2)[0])
+    torch.testing.assert_close(memory[1], torch.ones_like(memory[1]))
+
+
 # --- Depth stream blocks -----------------------------------------------------------
 # CRITIC-ONLY: the actor's depth now enters the VLM prefix as placeholder tokens, so the
 # co-evolving DepthStream aggregate, its per-layer joint-softmax read (join_depth_columns,
@@ -502,6 +532,19 @@ def test_depth_visual_backbone_backpropagates_through_every_copied_block():
 
 
 
+def test_soft_depth_bound_is_identity_like_and_limits_every_coordinate():
+    from lerobot.policies.molmoact2.modeling_molmoact2 import _soft_bound_depth_tokens
+
+    values = torch.tensor([-1000.0, -1.0, 0.0, 1.0, 1000.0], requires_grad=True)
+    bounded = _soft_bound_depth_tokens(values, 128.0)
+
+    assert torch.all(bounded.abs() <= 128.0)
+    torch.testing.assert_close(bounded[1:4], values[1:4], atol=1e-4, rtol=1e-4)
+    bounded.sum().backward()
+    assert torch.isfinite(values.grad).all()
+    torch.testing.assert_close(values.grad[2], torch.tensor(1.0))
+
+
 def test_depth_scatter_replaces_extra_token_and_measures_rgb_depth_seam():
     from types import SimpleNamespace
 
@@ -533,17 +576,16 @@ def test_depth_scatter_replaces_extra_token_and_measures_rgb_depth_seam():
         backbone.transformer.wte.weight[9].fill_(100.0)  # arbitrary <extra_1> base
     _patch_leaf_safe_input_embedding_update(backbone)
     features = torch.tensor([[[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]]])
-    marker = nn.Parameter(torch.tensor([0.5, 0.5, 0.5, 0.5]))
-    backbone._lerobot_depth = (features, 9, marker)
+    backbone._lerobot_depth = (features, 9)
 
     embeds, _ = backbone.build_input_embeddings(
         torch.tensor([[7, 9, 9]]), images=torch.zeros(1), token_pooling=torch.zeros(1)
     )
     torch.testing.assert_close(embeds[:, 0], torch.full((1, 4), 3.0))
-    torch.testing.assert_close(embeds[:, 1:], features + marker)
+    torch.testing.assert_close(embeds[:, 1:], features)
     assert not torch.any(embeds[:, 1:] == 100.0)
     torch.testing.assert_close(backbone._lerobot_rgb_input_rms, torch.tensor(3.0))
-    expected_depth_rms = (features + marker).square().mean().sqrt()
+    expected_depth_rms = features.square().mean().sqrt()
     torch.testing.assert_close(backbone._lerobot_depth_input_rms, expected_depth_rms)
 
 

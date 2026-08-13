@@ -2,8 +2,8 @@ r"""Metadata-steering probe: does the quality / mistake clause reach the actions
 
 The action prompt carries a steering clause built by ``_build_robot_text``
 (processor_molmoact2.py) — "The quality is $N$ of 5." and "The robot made a
-mistake."/"The robot made no mistakes." — trained with ``metadata_dropout`` so the
-model sees it on ~85% of samples. At rollout every deployment prompt asks for the
+mistake."/"The robot made no mistakes." The active config keeps it on every
+training sample. At rollout every deployment prompt asks for the
 same thing: quality 5, no mistakes. This probe is the whole test of whether asking
 does anything.
 
@@ -309,7 +309,7 @@ def _provenance(rows: list[dict], dataset, cfg, conditions: list[str], n_seeds: 
                 "``The quality is $N$ of 5.``  and  ``The robot made a mistake.`` / "
                 "``The robot made no mistakes.``, appended to the action prompt by "
                 "``_build_robot_text``. ``none`` omits both sentences, which is what "
-                "``metadata_dropout`` shows the model on ~15% of training samples.",
+                "an explicit metadata ablation would show; active dropout is zero.",
             ],
             [
                 "Where the labels come from",

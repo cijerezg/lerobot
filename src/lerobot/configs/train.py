@@ -301,6 +301,7 @@ class ProbeConfig:
     enable_depth_modality: bool = False  # point-map depth: 2x2 modality grid, per-layer mass, b_l
     enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
+    enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
 
     # Common
@@ -368,6 +369,11 @@ class ProbeConfig:
     subtask_sweep_n_seeds: int = 3
     # Side figure only: a fan grid of this many joints x this many of the swept frames.
     subtask_sweep_fan_grid: int = 4
+
+    # Task sweep: same intervention/noise-floor test over meta/tasks.parquet.
+    task_sweep_n_frames: int = 8
+    task_sweep_max_labels: int = 16
+    task_sweep_n_seeds: int = 3
 
     # Metadata steering: n_frames x (8 clauses + gt + n_seeds - 1) forwards. n_frames is
     # per episode and falls back to n_frames_per_episode; the conditionality panel splits

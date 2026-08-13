@@ -93,6 +93,38 @@ def test_current_task_and_subtask_labels_overlay_cached_buffer():
     assert resolve_task_strings(raw, vocabulary, "fallback", 3) == ["pick and place"] * 3
 
 
+def test_depth_event_targets_overlay_cached_buffer(monkeypatch):
+    import lerobot.rl.offline_dataset_utils as offline_utils
+
+    dataset = _fake_dataset(["pick"], [0, 0], ["grasp"], [0, 0], "/main")
+    buffer = _fake_buffer(capacity=2)
+    monkeypatch.setattr(
+        offline_utils,
+        "load_depth_gripper_event_targets",
+        lambda _dataset: {
+            "depth_gripper_close_target": torch.tensor([0.25, 1.0]),
+            "depth_gripper_open_target": torch.tensor([0.0, 0.5]),
+        },
+    )
+
+    materialize_dataset_labels(
+        buffer,
+        dataset,
+        dataset,
+        source_index=0,
+        require_depth_gripper_event_labels=True,
+    )
+
+    torch.testing.assert_close(
+        buffer.complementary_info["depth_gripper_close_target"],
+        torch.tensor([0.25, 1.0]),
+    )
+    torch.testing.assert_close(
+        buffer.complementary_info["depth_gripper_open_target"],
+        torch.tensor([0.0, 0.5]),
+    )
+
+
 def test_subtask_windows_overlay_when_frame_column_is_missing(tmp_path):
     root = tmp_path / "annotated"
     meta = root / "meta"
@@ -169,6 +201,62 @@ def test_molmoact2_resolves_a_different_task_for_each_sample():
         "rollout fallback",
         "pick",
     ]
+
+
+def test_molmoact2_training_batch_carries_depth_event_targets() -> None:
+    trainer = object.__new__(MolmoAct2Trainer)
+    trainer._task_index_to_name = {}
+    raw = {
+        "complementary_info": {
+            "depth_gripper_close_target": torch.tensor([0.25, 1.0]),
+            "depth_gripper_open_target": torch.tensor([0.0, 0.5]),
+        }
+    }
+    cfg = SimpleNamespace(
+        policy=SimpleNamespace(
+            task="pick",
+            output_features={"action": SimpleNamespace(shape=(1,))},
+            depth_gripper_event_loss=SimpleNamespace(enabled=True),
+        )
+    )
+
+    batch = trainer.build_training_batch(
+        raw,
+        {"observation.state": torch.zeros(2, 1)},
+        torch.zeros(2, 1, 1),
+        lambda values: dict(values),
+        dataset=None,
+        cfg=cfg,
+    )
+
+    torch.testing.assert_close(
+        batch["depth_gripper_close_target"], torch.tensor([0.25, 1.0])
+    )
+    torch.testing.assert_close(
+        batch["depth_gripper_open_target"], torch.tensor([0.0, 0.5])
+    )
+
+
+def test_molmoact2_training_batch_requires_depth_event_targets() -> None:
+    trainer = object.__new__(MolmoAct2Trainer)
+    trainer._task_index_to_name = {}
+    cfg = SimpleNamespace(
+        policy=SimpleNamespace(
+            task="pick",
+            output_features={"action": SimpleNamespace(shape=(1,))},
+            depth_gripper_event_loss=SimpleNamespace(enabled=True),
+        )
+    )
+
+    with pytest.raises(KeyError, match="replay samples are missing"):
+        trainer.build_training_batch(
+            {"complementary_info": {}},
+            {"observation.state": torch.zeros(1, 1)},
+            torch.zeros(1, 1, 1),
+            lambda values: dict(values),
+            dataset=None,
+            cfg=cfg,
+        )
 
 
 def _transition_batch(task_index=None):

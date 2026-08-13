@@ -115,8 +115,9 @@ revision (where width × depth actually multiplies), not to more history params.
   the same masking trick the video encoder uses.
 - **Missing history window** (plain offline eval, cold RTC deque): same
   masking. Replaces today's null-slot substitution.
-- **Whole-modality dropout** (`dropout_prob` 0.25): unchanged; it replaces the
-  assembled tokens with the learned null bank.
+- **Whole-modality dropout**: the mechanism remains wired and replaces assembled
+  tokens with the learned null bank, but is disabled by default
+  (`dropout_prob: 0.0`).
 - **Empty current patch**: recover from the newest valid history. If history is
   masked/missing or every slot is empty, use the learned per-patch null token.
 

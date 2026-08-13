@@ -10,6 +10,7 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.depth_gripper_events import load_depth_gripper_event_targets
 
 
 @dataclass(frozen=True)
@@ -410,8 +411,9 @@ def materialize_dataset_labels(
     vocabulary_dataset,
     source_index: int,
     is_main_process: bool = False,
+    require_depth_gripper_event_labels: bool = False,
 ) -> None:
-    """Overlay current task/subtask labels on heavy cache data without decoding video."""
+    """Overlay current labels on heavy cache data without decoding video."""
     task_indices = _dataset_index_column(dataset, "task_index")
     if task_indices is None:
         raise ValueError(f"Offline dataset {dataset.root} has no task_index column.")
@@ -434,6 +436,14 @@ def materialize_dataset_labels(
         torch.full_like(task_indices, int(source_index)),
         fill_value=-1,
     )
+    if require_depth_gripper_event_labels:
+        for key, values in load_depth_gripper_event_targets(dataset).items():
+            _install_buffer_column(buffer, key, values, fill_value=0)
+        if is_main_process:
+            logging.info(
+                "[OfflineCollection] Materialized depth gripper-event labels from %s",
+                Path(dataset.root) / "meta" / "depth_gripper_event_labels.parquet",
+            )
 
 
 def resolve_task_strings(raw_batch: dict, dataset, fallback_task: str, batch_size: int) -> list[str]:
@@ -520,7 +530,16 @@ def load_additional_offline_buffers(
                 image_stride=image_stride,
                 history_offsets=history_offsets,
             )
-        materialize_dataset_labels(buffer, dataset, main_dataset, source_index, is_main_process)
+        materialize_dataset_labels(
+            buffer,
+            dataset,
+            main_dataset,
+            source_index,
+            is_main_process,
+            require_depth_gripper_event_labels=bool(
+                getattr(getattr(cfg.policy, "depth_gripper_event_loss", None), "enabled", False)
+            ),
+        )
         buffer.dataset = dataset
         buffer.offline_source = source
         if memory_cfg is not None and memory_cfg.metadata_enabled:

@@ -17,8 +17,9 @@ class MemoryConfig:
     history_keys: list[str] = field(default_factory=list)
     history_window_seconds: float = 5.0
     history_num_samples: int = 5
-    # π0.7 recipe: dropout on the consumption-side history clause (training text only).
-    history_dropout: float = 0.3
+    # Optional dropout on the whole consumption-side history block (training only).
+    # Default off so the train-time observation matches deployment.
+    history_dropout: float = 0.0
     # π0.7-style metadata steering: per-episode quality + per-window mistake
     # loaded from the dataset (metadata_annotate.py; speed omitted) and
     # prompt quality=5 / mistake=false at inference.

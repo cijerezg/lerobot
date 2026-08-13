@@ -137,6 +137,20 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                 note="RMS of final depth prefix tokens divided by final RGB prefix-token RMS at the exact text-embedding seam. This is the direct scale-matching measurement; sustained drift above 1 means depth is becoming louder than the tested RGB path.",
             ),
             Metric(
+                "depth_pre_bound_token_rms",
+                "Depth RMS before tanh bound",
+                good="none",
+                fmt=3,
+                note="RMS of projected depth plus its marker immediately before the tanh. This may grow above 128 and reveals pressure against the bound.",
+            ),
+            Metric(
+                "depth_injected_token_rms",
+                "Depth RMS after tanh bound",
+                good="none",
+                fmt=3,
+                note="RMS of the actual bounded depth tokens injected at the text-embedding seam. Every coordinate is limited to ±output_bound.",
+            ),
+            Metric(
                 "depth_token_rms_ratio",
                 "Depth projector / embedding RMS",
                 good="none",
@@ -532,6 +546,12 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         logging.info(
             f"depth_rgb_rms_ratio = {summary['depth_rgb_rms_ratio']:.3f} "
             f"(final depth prefix RMS / final RGB prefix RMS)"
+        )
+    if "depth_pre_bound_token_rms" in summary and "depth_injected_token_rms" in summary:
+        logging.info(
+            f"depth token RMS: pre_bound={summary['depth_pre_bound_token_rms']:.3f} "
+            f"bounded={summary['depth_injected_token_rms']:.3f} "
+            f"(coordinate bound={policy.config.pointmap_config.output_bound:g})"
         )
     if "depth_token_rms_ratio" in summary:
         logging.info(

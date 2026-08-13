@@ -51,6 +51,7 @@ from lerobot.probes.utils import (
 )
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION
+from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
 
 
 def _CONSUMED_BY_PACK(key: str) -> bool:
@@ -151,11 +152,15 @@ class ValLoss:
                 "metadata": [f["metadata"] for f in frames],
             },
         }
-        return {
+        packed = {
             k: (v.cpu() if isinstance(v, torch.Tensor) else v)
             for k, v in preprocessor(flat).items()
             if not _CONSUMED_BY_PACK(k)
         }
+        for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS:
+            if key in frames[0]:
+                packed[key] = torch.stack([f[key] for f in frames]).float().cpu()
+        return packed
 
     @torch.no_grad()
     def __call__(self, policy) -> dict[str, float]:
@@ -181,6 +186,7 @@ class ValLoss:
                     "action_auxiliary_loss": "val_loss_action_aux",
                     "discrete_ce_loss": "val_loss_discrete_ce",
                     "discrete_auxiliary_loss": "val_loss_discrete_aux",
+                    "depth_gripper_event_loss": "val_loss_depth_event",
                 }
                 for source, destination in metric_keys.items():
                     if source not in metrics:
