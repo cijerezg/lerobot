@@ -1,5 +1,5 @@
 # =============================================================================
-# Unified RL training config  —  PI05 and MolmoAct2
+# rebot B601 RL training config  —  MolmoAct2
 # =============================================================================
 # Used by:
 #   - lerobot/src/lerobot/rl/rl_offline.py   (offline BC / offline RL)
@@ -8,56 +8,87 @@
 #
 # Schema: TrainRLServerPipelineConfig in lerobot/src/lerobot/configs/train.py
 #
-# ── HOW TO SWITCH MODELS ─────────────────────────────────────────────────────
-# 1. Set policy.type to the model you want.
-# 2. Adjust the hot knobs in the model's section.
-# rl_offline.py automatically strips fields that belong to the inactive model
-# before passing the config to draccus, so all sections can coexist here.
+# rl_offline.py strips policy fields that do not belong to the active
+# policy.type, so a section for another policy could coexist here. The legacy
+# PI05 / SO-101 section was removed 2026-07-30 — this robot is 7-DOF rebot only.
 #
 # =============================================================================
-
-
-# ── SWITCH MODEL: set policy.type below and adjust that model's hot knobs ─────
 
 
 # -----------------------------------------------------------------------------
 # Hot knobs (changed often)
 # -----------------------------------------------------------------------------
-offline_output_dir: outputs/molmoact2_offline_anchor_actions_test
-batch_size: 96
+offline_output_dir: outputs/molmoact2_offline_rebot_all-v1-5
+batch_size: 32
 
 # -----------------------------------------------------------------------------
-# Dataset
+# Dataset — the merged, relabelled corpus. Four train sources, one held-out val
+# set. 46 eps / 181,398 train frames.
 # -----------------------------------------------------------------------------
+# These replace the nine per-session sources: the sessions were consolidated BY TASK
+# (migration/consolidate_stage_*.py, verified bit-identical) and then relabelled with
+# per-segment quality + semantic mistake spans (pi07_wiki/annotation_rubric.md).
+# `-annotated-v2` roots hardlink data/videos/depth from the merged roots and carry
+# fresh meta/: episode_metadata.parquet is now one row per SUBTASK SEGMENT, not per
+# episode. rebot_sorting_clothes_v3-4 stays excluded — its parquet was destroyed.
+#
+# Each source stays its own dataset and its own memmap cache; task/subtask
+# vocabularies are remapped onto sources[0] at load, so all FOUR distinct task
+# strings survive into the per-sample prompts — socks_basket carries two of them
+# ("Put socks in brown basket" and "Put socks in basket by pairs") because the
+# merge grouped by task family, not by task string. Pooled subtask vocab is 36.
+#
+# NOTE ON WEIGHTS: _weighted_batch_sizes returns 1 + (B-N)*w_i/W — a floor of one
+# slot per source plus a proportional share of the REMAINDER, not of the whole, so
+# only batch_size really moves the mix (each grad-accum micro-step draws its own
+# batch, so accumulation does not dilute the floor).
+# batch_size 32 -> [12,6,11,3] for the frame-proportional weights below.
+#
+# sources[0] also supplies normalization stats and is the probes' reference
+# dataset; pool_lowdim_stats then replaces its action/state stats with values
+# pooled over all four roots (a single root's quantiles clamp the others).
 dataset:
-  root: outputs/annotated-dataset-v7
-  repo_id: cijerezg/yellow-car-offline-training-v2
+  repo_id: cijerezg/rebot-all-v1
   use_imagenet_stats: false
   max_episodes: null
-  # Preferred separate-dataset collection. The normalization source is loaded
-  # first and supplies processor stats; every source keeps its own replay cache.
-  sources: []
-  # sources:
-  #   - {name: atomic_pick, root: outputs/atomic-pick, weight: 1.0, normalization_source: true}
-  #   - {name: atomic_place, root: outputs/atomic-place, weight: 1.0}
-  #   - {name: pick_place, root: outputs/pick-place, weight: 2.0}
-  additional_offline_dataset_paths: []   # legacy equal-weight shorthand
+  sources:
+    - name: socks_basket                # 15 eps / 68635 frames — largest, "Put socks in brown basket"
+      root: outputs/rebot_socks_basket-annotated-v2
+      weight: 68635
+      normalization_source: true
+    - name: shirts_bin                  # 9 eps / 30822 frames — "Put shirts in bin"
+      root: outputs/rebot_shirts_bin-annotated-v2
+      weight: 30822
+    - name: two_container               # 14 eps / 66283 frames — socks to basket AND shirts to bin
+      root: outputs/rebot_two_container-annotated-v2
+      weight: 66283
+    - name: sorting_clothes_v4          # 8 eps / 15658 frames — task-routed socks and shirts
+      root: outputs/rebot_sorting_clothes_v4-multitask-annotated-v1
+      weight: 15658
 
-buffer_cache_dir: outputs/buffer_cache-v7  # Cache directory for the buffer
-cache_policy: fallback  # set to require after building every source cache
+buffer_cache_dir: outputs/buffer_cache-rebot-annot-v2  # one dir; each source gets its own fingerprint subdir
+cache_policy: require   # a cache miss is a hard error — 180k frames of video decode is not a fallback
 
 # -----------------------------------------------------------------------------
 # RL flags (shared)
 # -----------------------------------------------------------------------------
-skip_critic: true    # Skip critic if not interested in RECAP. It also saved VRAM and training is faster.
+skip_critic: true    # Skip critic if not interested in RECAP. It also saves VRAM and training is faster.
 
 # -----------------------------------------------------------------------------
 # Validation (shared)
 # -----------------------------------------------------------------------------
-val_dataset_path: outputs/annotated-dataset-validation-v7   # Strongly suggest to have a separate validation dataset. MSE on training is not good indicator of performance 
+# Held out: 4 eps / 15802 frames, including the new v4-1 socks episode, while
+# retaining coverage of the socks-basket, shirts-bin, and two-container families.
+val_dataset_path: outputs/rebot_val-annotated-v3
 val_split: 0.0    # If you don't have a separate val set, split your main set using this param.
-val_freq: 800     # How often to run val scripts. They are time-consuming.
-val_on_start: false     # Runs validation at start. This is useful as a baseline, but it takes time.
+val_freq: 400    # matches offline_save_freq, so every probe pass lands on a saved checkpoint
+val_on_start: true   # Runs validation at start. This is useful as a baseline, but it takes time.
+# Held-out flow + FAST CE, logged every log_freq next to the train losses. One
+# effective batch (batch_size 32 x grad_accum 4), packed once at startup, so a call
+# is 4 no-grad forwards. Replaces the modality ablation deltas (removed 2026-08-08:
+# they estimated conditional MI on memorised training frames, which is 0 by
+# construction, and read 0.12% of the CE they sat on).
+val_loss_frames: 128
 
 # =============================================================================
 # Policy: MolmoAct2  (active when policy.type: molmoact2_rl)
@@ -66,9 +97,11 @@ policy:
   type: molmoact2_rl
 
   # ---- Identity & checkpoint ------------------------------------------------
-  task: "Pick up the red truck and put it in the bowl"
-  pretrained_path: null   # Use if you have a finetuned model   
-  base_path: outputs/MolmoAct2-SO100_101 # Path to HF Molmo model. Download using: hf download allenai/molmoact2-so100_101
+  # Fallback prompt + cfg.env.task for online rollouts only: offline batches take
+  # their task string per-sample from task_index, so all four task strings are used.
+  task: "Put sock in brown basket and shirts in bin"
+  pretrained_path: null   # v6's last checkpoint (run killed at 1647)
+  base_path: outputs/MolmoAct2 # Multi-embodiment foundation checkpoint. Download using: hf download allenai/MolmoAct2 --local-dir outputs/MolmoAct2
 
   # ---- Training mode --------------------------------------------------------
   # KI-style training: VLM trained by discrete CE on FAST tokens, action expert
@@ -89,25 +122,32 @@ policy:
   # ViT depth = 25 (resblocks 0..24); language transformer depth = 36.
   # Implicit rules:
   #   • vision_from_layer set → image_pooling_2d + image_projector train too
+  #   • RGB patch_embedding + positional_embedding always stay frozen
   #   • language_from_layer set → final layer norm (ln_f) + lm_head train too
   #   • action expert is always trained
   # Critic_* knobs are ignored when skip_critic: true.
   trainable_params:
     vision_from_layer: 16
-    language_from_layer: 0
-    critic_vision_from_layer: 4
-    critic_language_from_layer: 18
+    language_from_layer: 18
+    critic_vision_from_layer: 16
+    critic_language_from_layer: 4
+    # Optional depth-only diagnostic: true freezes everything except the independent
+    # point-map CNN, copied depth visual path, and marker. Joint training is the default.
+    depth_warmup: false
+  lora_dropout: 0.0                       # LoRA is off; keep its dormant dropout explicit too
 
   # ---- Losses & optimizer ---------------------------------------------------
-  optimizer_lr: 5.0e-5                  # action expert LR (VLM frozen)
+  optimizer_lr: 5.0e-5
+  depth_lr: null        # inherit optimizer_lr exactly; separate group only prevents pretrained-weight merging
   optimizer_grad_clip_norm: 1.0
   optimizer_weight_decay: 0.1
 
   # ---- Reward shaping -------------------------------------------------------
+  # Per-step reward is -1.0 before normalization; dividing by 10 gives -0.1/step,
+  # which keeps the TD value mid-support. At 1.0 the -1.0/step penalty pins V at
+  # the value_support_min floor (-2) after a single bootstrap step.
   reward_normalization_constant: 10.0
-  terminal_failure_reward: -10.0
-  advantage_scaling: 0.2
-  advantage_top_k_fraction: 0.3            # top fraction of non-override samples labeled positive (per-batch quantile cut)
+  terminal_failure_reward: -10.0           # /10 → -1.0, inside [value_support_min, 0]
 
   # ---- Periodic merge toward pretrained weights (see RETAIN paper) ------
   pretrained_merge_alpha: 0.2
@@ -119,9 +159,9 @@ policy:
   num_value_bins: 201
   value_support_min: -2.0
   value_support_max: 0.0
-  hl_gauss_sigma_ratio: 5.0
+  hl_gauss_sigma_ratio: 8.0
   critic_lr: 1.0e-4
-  critic_target_update_weight: 0.005
+  critic_target_update_weight: 0.05
   critic_target_update_every: 4
   discount: 0.97
 
@@ -130,41 +170,199 @@ policy:
   online_buffer_capacity: 5000
   online_step_before_learning: 10         # transitions before first gradient step
   online_steps: 20000
-  offline_steps: 10000
+  # 30000 opt steps x (batch_size 32 x grad_accum 4 = 128/step) = 3.84M samples
+  # ~= 21.2 epochs over the 181,398 train frames. Two earlier versions of this note said
+  # "grad_accum 2 = 64/step" and quoted half these figures; grad_accum has been 4.
+  # Drop grad_accum to 2 for ~10.6 epochs, or to 1 for ~5.3, at the same LR.
+  offline_steps: 30000
   policy_update_freq: 1
   critic_warmup_steps: 0
   utd_ratio: 1
-  async_prefetch: false
+  async_prefetch: true    # 4 offline buffers are sampled per batch; set false only to attach pdb
   storage_device: cpu
+  # Offline cache stores image/depth rows every N-th frame (30Hz -> 10Hz at 3); low-dim
+  # stays dense so action chunks are exact. Must divide chunk_size. Cache must be built
+  # with the same stride: lerobot_memmap_buffer_cache.py --image-stride 3
+  # Depth is now recorded sparse at this same rate (--dataset.depth_stride=3), so the
+  # PNG16s on disk are exactly the rows the cache reads.
+  image_stride: 3
 
   # ---- Inference -----------------------------------------------------------
-  torch_compile: true                     # compile action expert. Helps meet 30Hz run goal
-  action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]  # These values can be obtained from teleoperation  
-  inference_advantage: 1.0                # matches skip_critic: false (training prompt carries the clause; deploy with the "positive" label)
+  torch_compile: false                    # off for the first depth run (rule out compile/graph-break noise); re-enable once healthy. Helps meet 30Hz run goal
+  action_clamp_limits: null  # TODO: 7 [min, max] pairs for the rebot, obtained from teleoperation joint ranges
+  subtask_regeneration_interval: 4.0      # seconds between HL subtask decodes at rollout
+  subtask_max_new_tokens: 64             # HL decode budget for the subtask answer; 0 disables generation (inference only — does NOT train)
+  subtask_loss_weight: 0.0                # CE weight on the generation answer span; 0 disables the training half
+  # Train on the same complete prompt used at deployment. These used to be hidden
+  # pack-step defaults (0.30 / 0.15), which made the subtask optional on 30% of BC
+  # samples even though the operator always supplies one at rollout.
+  subtask_dropout: 0.0
+  metadata_dropout: 0.0
+
+  # Operator subtask console (eval only). Non-empty REPLACES decoding: the generation
+  # head is untrained (subtask_loss_weight 0.0), so the operator latches the current
+  # step by keypress instead. Strings must be VERBATIM entries of the checkpoint's
+  # pooled subtask vocabulary — startup hard-errors and prints the vocabulary on a miss.
+  # First entry is the episode default (and what a reset falls back to). Empty = decode.
+  # Latency: a press lands on the next chunk build, so press ~0.5s ahead of the transition.
+  eval_subtasks:
+    "1": "grasp the black sock"
+    "2": "move the black sock to the basket"
+    "3": "release the black sock in the basket"
+    "4": "grasp the red shirt"
+    "5": "move the red shirt to the bin"
+    "6": "release the red shirt in the bin"
+    "7": "return to home"
+  memory:
+    metadata_enabled: true                # quality/mistake loaded from dataset meta; hard-errors until metadata_annotate.py finalize has run
+    history_dropout: 0.0                  # keep the full state/RGB/depth history block on every training sample
+    # Short-term memory (MEM shape): 5s/5-sample lookback (defaults → offsets 30/60/90/120/150,
+    # all multiples of image_stride 3). Consumed: image history through the MEM video encoder
+    # (temporal attention in the ViT, zero extra LLM tokens), state history as continuous
+    # tokens (one position per past state), depth window fused inside the patch CNN
+    # by same-pixel temporal attention (fine grid stays 768; pooled prefix stays 192; pi07_wiki/
+    # depth_history_design.md). Design: pi07_wiki/04_memory.md §2.4.
+    history_keys: [observation.state, observation.images.top, observation.images.wrist, depth.wrist.depth]
   rtc_config:                             # real-time chunking
     enabled: true
-    execution_horizon: 5
+    execution_horizon: 5          # queue low-water mark ABOVE the auto-measured p95 latency, and the RTC frozen-prefix length; unrelated to image_stride
     prefix_attention_schedule: LINEAR
     max_guidance_weight: 10.0
     debug: false
     debug_maxlen: 100
 
   # ---- Architecture ---------------------------------------------------------
-  chunk_size: 30
+  chunk_size: 30                        # 1.0s at 30Hz (pi0's horizon in wall-clock); divisors 1,2,3,5,6,10,15,30 keep every useful image_stride legal
   n_action_steps: 30
   num_inference_steps: 5                # flow-matching denoising steps
-  gradient_accumulation_steps: 1        # effective batch = batch_size * grad_accum
+  gradient_accumulation_steps: 4        # effective batch = batch_size * grad_accum = 32 * 4 = 128
   dtype: bfloat16
 
+  # ---- Back-projected point-map depth (depth_pointmap_design.md) -------------
+  # null = depth-free. depth_key is the BARE cam name (must be one of image_keys).
+  # intrinsics = factory calibration of D405 427622270837 (640x480 z16,
+  # rectified: zero distortion), read from device 2026-07-02.
+  # Read = the VLM prefix itself. The CNN emits a 24x32 fine grid; seven independent
+  # copies of Molmo ViT blocks expose H3/H7, then copied 2x2 attention pooling and the
+  # copied gated projector emit 12x16 = 192 tokens alongside the image patches.
+  # Optional depth/RGB modality-dropout mechanisms remain wired for ablations, but
+  # both are disabled for training: depth guides the gripper and wrist RGB refines
+  # alignment once the object is visible.
+  pointmap_config:
+    depth_key: wrist
+    depth_units_mm: 0.1
+    intrinsics: [394.9832, 394.9832, 322.5604, 238.6966]
+    image_size: [480, 640]
+    patch_size: 20        # → 768 fine tokens (24×32)
+    pooling_size: [2, 2]    # copied attention pooler → 192 prefix tokens (12×16)
+    z_min_mm: 70.0
+    z_max_mm: 800.0
+    token_width: 1152     # exactly Molmo's ViT width
+    visual_num_blocks: 7
+    visual_feature_taps: [3, 7]  # one-based depth-block outputs; concatenated [H7; H3]
+    visual_source_indices: [0, 4, 8, 12, 16, 20, 24]  # initialization only; no RGB sharing
+    output_bound: 128.0    # complete injected token = 128*tanh((projected + marker)/128)
+    dropout_prob: 0.0      # keep real depth on every training sample
+    rgb_dropout_prob: 0.0  # keep wrist RGB visible on every training sample
+
+  # ---- Depth-only future gripper-event auxiliary loss ----------------------
+  # Labels are dense 30 Hz sidecars under each dataset's meta/. The head reads
+  # only the bounded depth prefix: LN per token -> token mean -> two independent
+  # sigmoid logits (close/open). [0, 0] represents neither event within 5 seconds.
+  # Samples replaced by pointmap modality dropout's null bank are excluded.
+  # hidden_dim: null is the deliberately restrictive linear head; set a positive
+  # width only for a controlled MLP ablation.
+  depth_gripper_event_loss:
+    enabled: true
+    weight: 0.2
+    hidden_dim: null
+
   # ---- Normalization --------------------------------------------------------
-  norm_tag: so100_so101_molmoact2     # loads norm stats from HF checkpoint
+  norm_tag: null                      # rebot stats come from the dataset; tags in the HF checkpoint are for its own embodiments
   normalize_gripper: true             # must match base model (False crushes gripper to 1.0 via post-norm clamp)
 
   # ---- Action encoding -----------------------------------------------------
   # "absolute" (default) | "anchor" | "delta"
   action_encoding: anchor   # molmo was originally trained on absolute actions, but in our experiments anchor works better
   # Required when action_encoding is anchor/delta; ignored otherwise.
-  action_encoding_stats_path: outputs/stats/action_stats_anchor_so101_v3_to_v21_annotated-dataset-v7.pt
+  # Pooled over the four training roots at chunk_size 30 (must match cfg.policy.chunk_size
+  # or make_processors hard-errors). Regenerate whenever dataset.sources changes:
+  #   python lerobot/src/lerobot/scripts/compute_delta_stats.py --encoding anchor --chunk-size 30 \
+  #     --name rebot-annot-v3 --root <every root listed in dataset.sources>
+  action_encoding_stats_path: outputs/stats/action_stats_anchor_rebot-annot-v3.pt
+
+  # ---- Optional action-trajectory auxiliary loss ---------------------------
+  # pi07_wiki/05_training.md §2.1. The base flow loss still applies to every sample
+  # and every flow time; these are ADDED per sample, never a replacement.
+  #
+  # The flow branch predicts a velocity, so the metrics are taken on the one-step
+  # denoised chunk a_hat = x_t + (1-t)*v_theta at each sampled flow time, then
+  # averaged over flow times. No extra forward, no ODE solve.
+  #
+  # Path, shape, and terminal errors are divided per chunk by the matching error of
+  # the hold-still predictor (with the shared corpus-derived denominator floors).
+  # Thus 0 is exact, 1 is no better than hold, and >1 is worse than hold. Raw MSEs
+  # remain telemetry only. Direction is already dimensionless.
+  #
+  # Each term is independent: weight 0 disables it. A numeric threshold is a HARD
+  # GATE on the flow-time-averaged relative metric, not a hinge — below it the term
+  # contributes exactly 0, above it the term contributes its FULL value (there is no
+  # subtraction of the threshold). null = apply on every valid sample. Samples whose
+  # metric is NaN (padded terminal step, or a target that never moves from hold) are
+  # inactive for that term either way.
+  #
+  # The 0.5 thresholds activate each term above half of its hold-baseline error.
+  # The action-trace probe keeps richer quantiles in action_metrics.json for offline
+  # inspection, while live training telemetry stays compact.
+  #
+  # Requires action_encoding != delta (config rejects it) and batch["action_hold"].
+  # Logged as loss_action_aux, val_loss_action_aux, each optimized relative term's
+  # mean, and its active fraction (how often the gate fired).
+  action_auxiliary_loss:
+    enabled: true
+    path_weight: 5.0e-2
+    path_threshold: 0.2       # path error / hold path power
+    shape_weight: 5.0e-2
+    shape_threshold: 0.2      # adjacent-difference error / hold shape power
+    terminal_weight: 5.0e-2
+    terminal_threshold: 0.2   # final-position error / hold final-displacement power
+    direction_weight: 5.0e-2
+    direction_threshold: 0.2  # 1 - cos of final displacement from hold; 0 aligned, 1 perpendicular, 2 opposite
+
+  # ---- Optional FAST-token trajectory auxiliary loss ----------------------
+  # pi07_wiki/05_training.md §2.2. The existing FAST BPE CE is unchanged; these are
+  # ADDED to it. Zero new parameters — all three read the discrete head's own
+  # teacher-forced logits. Requires action_mode discrete or both.
+  #
+  # Construction: under teacher forcing the ground-truth tokens pin every token
+  # boundary, so each of the 30*7 = 210 DCT coefficient slots is covered by exactly
+  # one token position. Grouping that position's logits by the coefficient value each
+  # candidate token would place at that slot (tokens too short fall in a drop bin,
+  # excluded from the normalizer) gives a marginal q_n per slot.
+  #
+  #   ordinal  cumulative-threshold binary CE over the ordered bins, meaned over cuts
+  #            and then UNIFORMLY over all 210 slots. Note: coefficient energy is
+  #            concentrated in the low frequencies and the high-frequency slots are
+  #            covered by long zero-run merge tokens, so read discrete_aux/ordinal_ce
+  #            before trusting what this number is measuring.
+  #   path     (E[c] - c*)^2 / scale^2. By Parseval this IS the per-element
+  #            trajectory MSE — computed in DCT space, no IDCT.
+  #   shape    the same squared error reweighted by 4 sin^2(pi k / 2T), which is
+  #            exactly the adjacent-difference MSE.
+  #
+  # path/shape are regression terms on the MEAN coefficient, divided by the target
+  # chunk's matching hold-baseline power; only ordinal stays in the CE family and is
+  # intentionally not power-normalized. The base FAST token CE is also unchanged.
+  # The master switch is authoritative; each weight selects a term.
+  # NOT YET RUN END-TO-END — smoke this on a few steps before a real run, and watch
+  # step time (the components are computed in a per-example Python loop).
+  # Logged as loss_discrete_aux, val_loss_discrete_aux, and the mean of ordinal,
+  # relative path, and relative shape.
+  discrete_action_auxiliary_loss:
+    enabled: true
+    ordinal_weight: 5.0e-1
+    path_weight: 5.0e-1
+    shape_weight: 5.0e-1
 
   # ---- Feature schema -------------------------------------------------------
   normalization_mapping:
@@ -180,11 +378,11 @@ policy:
       shape: [3, 480, 640]
     observation.state:
       type: STATE
-      shape: [6]
+      shape: [7]
   output_features:
     action:
       type: ACTION
-      shape: [6]
+      shape: [7]
 
   # ---- Devices --------------------------------------------------------------
   device: cuda
@@ -202,14 +400,14 @@ policy:
     learner: threads
 
   # ---- Hub (required by validate(); not actually pushed) --------------------
-  repo_id: cijerezg/multi-task-toys-merged-v2
+  repo_id: cijerezg/rebot-all-v1
 
 
 # -----------------------------------------------------------------------------
 # Run identity & I/O
 # -----------------------------------------------------------------------------
 output_dir: null
-job_name: molmoact2_bc
+job_name: rebot_molmoact2_bc
 resume: false
 seed: 42
 
@@ -219,16 +417,19 @@ seed: 42
 # -----------------------------------------------------------------------------
 log_freq: 20
 save_checkpoint: true
-save_freq: 100                # online checkpoint cadence (optimizer steps)
-offline_save_freq: 400        # offline checkpoint cadence
+save_freq: 1000                # online checkpoint cadence (optimizer steps)
+# Nothing prunes old checkpoints and each one is ~21 GB of weights plus optimizer
+# state. At 2000 the 30000-step run writes 15 of them; 200 (the old value, sized
+# for a 10000-step run) would have written 150 and filled the disk.
+offline_save_freq: 400
 use_rerun: true
 
 
 # -----------------------------------------------------------------------------
 # Episode-level logging (online actor)
 # -----------------------------------------------------------------------------
-episode_logging_freq: 10        # log every Nth episode
-episode_save_freq: 10          # save buffer snapshot every Nth episode
+episode_logging_freq: 1        # log every Nth episode
+episode_save_freq: 2          # save buffer snapshot every Nth episode
 video_logging_cameras: [top, wrist]
 
 
@@ -243,8 +444,8 @@ num_workers: 4
 # -----------------------------------------------------------------------------
 wandb:
   enable: true
-  project: so101_real-v1
-  offline_project: so101_real_offline-v1
+  project: rebot_online-v1
+  offline_project: rebot_offline-v1
   disable_artifact: true
 
 
@@ -253,33 +454,161 @@ wandb:
 # =============================================================================
 # All probes enabled for validation diagnostics.
 # Note: critic probes still skip themselves when skip_critic=true / no critic is present.
+# Every probe forward now runs the DEPLOYMENT REGIME (probes/utils.py
+# probe_frame_inputs): subtask clause + metadata clause + short-term history + the wrist
+# depth sidecar and its history window. Two consequences worth knowing:
+#   • every sampler snaps anchors onto image_stride (depth PNGs and stored image rows
+#     only exist on that grid), so a probe asking for more frames than the grid holds
+#     gets fewer, not duplicates;
+#   • the pack step's training dropouts (subtask/metadata/history/RGB) are held
+#     at zero for the duration of a capture — the attention/Jacobian probes drive a flow
+#     loss, which is exactly what used to arm them.
 probe_parameters:
   # ---- Enable flags ---------------------------------------------------------
+  # NOTE: every flag below is currently true. The 2026-08-07 note that used to sit here
+  # ("everything off but the objective") no longer describes this file — the suite was
+  # turned back on after the probes were reworked, and several per-probe "Off <date>"
+  # comments below are likewise leftovers from that pass. Read the flag, not the comment.
+  # The standard from that post-mortem still holds and is what to judge output by: a
+  # probe earns its slot only if it reports its own noise floor alongside its effect,
+  # since the v6 suite reported effects below their floor and so could not come out bad.
+  enable_objective: true                 # flow + FAST loss on val vs a matched training sample
   enable_actions: true
-  enable_representations: true
+  # Stale "off" note (2026-07-31), kept for the caveat: this probe mean-pools the whole
+  # sequence of one layer, so its by_subtask separation may just be the subtask string
+  # sitting in the prompt rather than anything the policy learned.
+  # Re-enable only with per-token-group pooling and a decodability metric.
+  enable_representations: false
   enable_attention: true
   enable_spatial_memorization: true
-  enable_action_drift_jacobian: true
-  enable_spatial_memorization_jacobian: true
+  enable_action_drift_jacobian: false       # grouped action-output gradients by subtask
+  enable_spatial_memorization_jacobian: false  # legacy attention-edge flow-loss attribution
   enable_critic_values_distribution: true
+  enable_mem_history_influence: true     # MEM: history's effect on the action chunk (04_memory §2.4)
+  enable_mem_history_regime: true        # MEM: helped/hurt split, vs a wrong-window and a reseed null
+  enable_mem_temporal_attention: true    # MEM: temporal-read distributions + spatial examples
+  enable_action_trace: true             # action inspector: 3D + wrist/gripper + safety fan + the normalized-MSE headline
+  enable_metadata_steering: true         # quality/mistake clause: seed floor, q1-q5 dose, conditionality + direction, 2x2
+  enable_depth_modality: true            # point-map depth: 2x2 modality grid, per-layer mass, b_l
+  enable_attention_budget: true          # how the action tokens' attention budget shifts over frames
+  enable_subtask_sweep: true             # does the subtask clause move actions (gates the memory chain)
+  enable_task_sweep: true                # does the high-level task string beat the flow-seed floor?
 
   # ---- Common ---------------------------------------------------------------
-  # Cheap defaults — 1 episode, few frames — surfaces wiring bugs quickly.
-  # Bump these once the probes are validated.
+  # REAL-RUN SETTINGS. n_frames_per_episode is the one knob that moves the total: it
+  # drives the long-form probes. Attention is the main video producer; grouped
+  # action sensitivity is backward-heavy and separately caps each subtask below.
+  # Cut this first if the step-0 pass comes in slower than you want.
   output_dir: outputs/probe
   mode: all
-  max_episodes: 5
+  max_episodes: 3               # action sensitivity treats episodes as independent replicates
+  # Sets the attention / drift-jacobian video length, the representation-manifold point
+  # count, and 64x4=256 forwards per episode for each of mem_history_influence and
+  # mem_history_regime (the latter also decodes a second history window per frame for its
+  # stale control). Every sampler stretches its
+  # stride to span the whole episode, so 64 frames = one frame every ~2 s across 120 s.
   n_frames_per_episode: 64
   random_seed: 42
   timestep: 0.5
+  action_sensitivity_frames_per_subtask: 6  # evenly spread within each episode/subtask
+  action_sensitivity_projections: 4         # VJPs per proximal-arm / wrist / gripper map
 
   # ---- Actions / representations --------------------------------------------
-  ref_max_episodes: 50
-  ref_n_frames_per_episode: 128
+  # The reference action manifold, fit on the GT of every source in dataset.sources —
+  # rl_offline hands the probe only the normalization source, so the probe reloads the
+  # rest itself (probes/actions.py reference_datasets). Reference collection reads the
+  # parquet only — no model forwards, no video decode — and the fit is cached in
+  # validation/action_manifold.pt and reused by every validation step of the run, so the
+  # cost is one PCA + two UMAP fits per run. Keep it wide: eval frames are judged against
+  # this set, and a thin manifold puts all of them "outside" by construction.
+  ref_max_episodes: 40          # per source; a ceiling, not a choice — takes every episode
+  ref_n_frames_per_episode: 256
+  action_pca_dims: 50           # the space every action metric is measured in
+  # Reference frames a prediction may match against once pose-matched. ~2.5% of a 10k
+  # reference set: tight enough to mean "from a similar pose", wide enough not to be noise.
+  action_nn_state_k: 256
+  repr_pca_dims: 48             # representations has 64 samples to fit
+  umap_n_neighbors: 15          # must stay below the 64-sample representation set
 
-  # Layers / subsampling (relevant once attention / spatial / jacobian are on)
+  # Three layers: early / middle / late. Two only answers "did it change", three shows
+  # where in the stack it changed.
   spatial_layers: "0,14,28"
-  attn_eval_subsample: 3
+  attn_eval_subsample: 3        # floor only; max_frames widens the stride to span the episode
+  # 32 frames spread over the four val episodes (8 each). This is the sample count
+  # the mean/std memorization maps are computed over.
+  spatial_n_frames: 32
+
+  # Ignored while skip_critic: true; kept small so the flip to false stays cheap.
+  critic_adv_frames: 32         # full: 1000
+  critic_grad_frames: 8         # full: 200
+
+  # ---- Depth modality (2x2 conditions + 2 finite-difference forwards per frame) ----
+  # 6 frames x 6 forwards ~= 11 s. The per-layer b_l readout is static, so more frames
+  # only sharpen the MSE/sensitivity means.
+  depth_modality_n_frames: 6
+
+  # ---- Attention budget ------------------------------------------------------
+  # Attention mass says the action tokens READ a source; it does not say the read is
+  # load-bearing. The FD series answers that at two extra forwards per frame.
+  budget_fd_sensitivity: true
+  # 16 x 3 episodes = 48 frames. Unlike the other probes, this one PLOTS the frame axis:
+  # the shared 64 gave 192 points of frame-to-frame wiggle in the compositional-shift
+  # panel, which is a hairball rather than a series. 48 still spans each episode (the
+  # sampler stretches its stride) and is plenty for the clr std and the depth/distance
+  # Spearman, which are the numbers anything is concluded from.
+  budget_n_frames_per_episode: 16
+
+  # ---- Subtask sweep ---------------------------------------------------------
+  # ---- Objective ------------------------------------------------------------
+  # One forward per frame per split. Val is 4 episodes, so 24 x 4 = 96 val frames; the
+  # train budget of 8 episodes is split across the four sources (2 each) for
+  # 8 x 24 = 192 train frames — 288 forwards per pass. Raise n_frames
+  # before episodes: the standard error on the val mean is what decides whether a gap
+  # is real, and frames within an episode are the cheap way to shrink it.
+  objective_n_frames_per_episode: 24
+  objective_max_episodes: 8
+
+  # Priced as n_frames x (max_labels + n_seeds) forwards. The relabelled corpus pools
+  # 36 subtask labels, up from 28, so the default max_labels=16 would sweep under half
+  # the vocabulary and read as "the clause does little" for the labels it skipped.
+  # 8 x (24 + 3) = 216 forwards covers two thirds, weighted to the frequent labels.
+  subtask_sweep_n_frames: 8
+  subtask_sweep_max_labels: 24
+  subtask_sweep_n_seeds: 3
+
+  # All held-out task strings on the same frame, with the true subtask/metadata kept.
+  # 8 frames per episode x (3 val tasks + 3 seeds) = 144 forwards.
+  task_sweep_n_frames: 8
+  task_sweep_max_labels: 16
+  task_sweep_n_seeds: 3
+
+  # Priced as n_frames x (8 clauses + gt + n_seeds - 1) = 11 forwards per frame. Unlike
+  # the sweep above, this one also compares ACROSS frames — the conditionality panel splits
+  # them by their true quality — so n_frames is what fills the columns, and val's mix
+  # (quality 2/3/4/5 only, ~2.5% of frames flagged as mistakes) decides how thin the
+  # thinnest one is. null = n_frames_per_episode: 3 x 64 x 11 = 2112 forwards.
+  metadata_steering_n_frames: null
+  metadata_steering_n_seeds: 3
+
+  # ---- Action trace (URDF clearance + multimodality fan) ---------------------
+  # episodes x anchors x samples = forward passes. This is an inspector you page through
+  # by hand, not an estimator: 16 anchors is already more than anyone scrolls, and the
+  # cost is paid at every val_freq. 3 x ~5 x 4 = ~60 forwards.
+  #
+  # Anchors snap onto the depth grid (image_stride), because off-grid frames have no depth
+  # sidecar. They start at frame 0 and stop at max_anchors, so the stride has to be near
+  # episode_length / max_anchors or you only ever probe the opening seconds: the val
+  # episodes are 178 / 120 / 169 s, so 6 anchors want 30 s to span the longest.
+  #
+  # trace_episodes is a no-op on the 3-episode val set the training loop hands the probe.
+  # It exists for the standalone CLI, which has no val set to fall back on and loads
+  # dataset.sources[0] instead — 15 episodes, i.e. ~180 anchors, if left unpinned.
+  trace_episodes: "0,1,2"
+  trace_anchor_stride_s: 30.0
+  trace_max_anchors_per_episode: 6
+  trace_n_samples: 4            # the fan; below ~4 draws the spread is noise
+  trace_table_z: 0.0            # table plane (m) in the arm's base frame; 0 = mounting plane
+  trace_clearance_warn_m: 0.01  # anchors below this are dashed in the figure and logged as WARNING
 
 
 # =============================================================================
@@ -292,28 +621,33 @@ env:
 
   # ---- Robot ----------------------------------------------------------------
   robot:
-    type: so101_follower
+    type: rebot_b601_follower
     port: /dev/ttyACM0
-    id: follower_arm_v3
+    id: rebot_follower_v1
     cameras:
+      # --- D405 wrist-mounted depth camera: produces wrist.depth for pointmap_config ---
       wrist:
-        type: opencv
-        index_or_path: 0
+        type: intelrealsense
+        serial_number_or_name: "427622270837"  # D405
+        use_depth: true
+        depth_filters: true   # spatial + hole-fill (no temporal; safe under motion)
         height: 480
         width: 640
         fps: 30
       top:
         type: opencv
-        index_or_path: 2
+        # Stable by-id path: the D405 owns /dev/video0-5, so bare indices shuffle with plug order
+        # (index 2 grabbed the D405's own color node and blocked its pipeline.start, errno=5).
+        index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0
         height: 480
         width: 640
         fps: 30
 
   # ---- Teleop ---------------------------------------------------------------
   teleop:
-    type: so101_leader
-    port: /dev/ttyACM1
-    id: leader_arm_v3
+    type: rebot_102_leader
+    port: /dev/ttyUSB0
+    id: rebot_leader_v1
 
   # ---- Processor (gym wrapper) ----------------------------------------------
   processor:
@@ -328,7 +662,7 @@ env:
       use_gripper: true
       gripper_penalty: 0.00
     reset:
-      fixed_reset_joint_positions: [0.54, -90.69, 99.55, 73.70, -92.23, 42.71]
+      fixed_reset_joint_positions: null  # TODO: 7 rebot values; needed before online runs
       reset_time_s: 10
       control_time_s: 200.0
       terminate_on_success: true
@@ -344,129 +678,12 @@ env:
       shape: [3, 480, 640]
     observation.state:
       type: STATE
-      shape: [6]
+      shape: [7]
     action:
       type: ACTION
-      shape: [6]
+      shape: [7]
   features_map:
     observation.images.wrist: observation.images.wrist
     observation.images.top: observation.images.top
     observation.state: observation.state
     action: action
-
-
-
-# =============================================================================
-# Policy: PI05  (active when policy.type: pi05_rl)
-# — fields here are ignored when policy.type is molmoact2_rl —
-# =============================================================================
-# policy:
-#   type: pi05_rl
-#   task: "Pick up the red truck and put it in the bowl"
-#   pretrained_path: outputs/pi05_full_offline_training_diverse-v2/checkpoints/008800/pretrained_model
-#
-#   gradient_accumulation_steps: 2
-#
-#   trainable_params:
-#     vision_from_layer: 5         # train SigLIP layers >= 5 (depth 27); projector trains too
-#     language_from_layer: 5       # train Gemma blocks >= 5 (depth 18); ln_f trains too
-#     critic_vision_from_layer: null
-#     critic_language_from_layer: 5
-#
-#   loss_weight_flow: 1.0
-#   loss_weight_action_ce: 1.0
-#   loss_weight_subtask_ce: 1.0
-#   optimizer_lr: 0.00005
-#   critic_lr: 0.0001
-#   optimizer_weight_decay: 0.1
-#   optimizer_grad_clip_norm: 2.0
-#
-#   reward_normalization_constant: 10.0
-#   terminal_failure_reward: -15.0
-#   advantage_scaling: 0.20
-#
-#   pretrained_merge_alpha: 0.2
-#   pretrained_merge_every_n_steps: 2000
-#   pretrained_merge_targets: [policy, critic]
-#
-#   critic_llm_depth: 6
-#   num_value_bins: 201
-#   value_support_min: -2.0
-#   value_support_max: 0.0
-#   hl_gauss_sigma_ratio: 8
-#   critic_target_update_weight: 0.02
-#   critic_target_update_every: 4
-#   discount: 0.97
-#
-#   online_buffer_capacity: 5000
-#   offline_buffer_capacity: 50000
-#   online_step_before_learning: 10
-#   online_steps: 20000
-#   offline_steps: 10000
-#   policy_update_freq: 1
-#   critic_warmup_steps: 0
-#   utd_ratio: 1
-#   async_prefetch: false
-#   storage_device: cpu
-#   image_storage_dtype: uint8
-#   image_storage_size: [224, 224]
-#
-#   action_clamp_limits: [[-105, 105], [-102, 102], [-95, 95], [-99, 99], [-159, 170], [1, 98]]
-#   inference_advantage: 1.0
-#   subtask_regeneration_interval: 1.5
-#   rtc_config:
-#     enabled: true
-#     execution_horizon: 10
-#     prefix_attention_schedule: LINEAR
-#     max_guidance_weight: 10.0
-#     debug: false
-#     debug_maxlen: 100
-#
-#   tokenizer_max_length: 64
-#   max_state_dim: 6
-#   action_dim: 6
-#   max_action_dim: 6
-#   chunk_size: 50
-#   n_action_steps: 50
-#   num_inference_steps: 5
-#   max_decoding_steps: 24
-#   knowledge_insulation: true
-#   use_separate_critic: true
-#   dtype: bfloat16
-#   gradient_checkpointing: true
-#   action_encoding: anchor
-#   action_encoding_stats_path: outputs/stats/action_stats_anchor_annotated_dataset-v4.pt
-#   normalization_mapping:
-#     VISUAL: IDENTITY
-#     STATE: MIN_MAX
-#     ENV: MIN_MAX
-#     ACTION: QUANTILES
-#   input_features:
-#     observation.images.wrist:
-#       type: VISUAL
-#       shape: [3, 224, 224]
-#     observation.images.top:
-#       type: VISUAL
-#       shape: [3, 224, 224]
-#     observation.state:
-#       type: STATE
-#       shape: [6]
-#   output_features:
-#     action:
-#       type: ACTION
-#       shape: [6]
-#
-#   device: cuda
-#   actor_device: cuda:0
-#   learner_device: cuda:0
-#   storage_device: cpu
-#
-#   actor_learner_config:
-#     learner_host: 192.168.50.1
-#     learner_port: 50051
-#     policy_parameters_push_frequency: 180
-#   concurrency:
-#     actor: threads
-#     learner: threads
-#
-#   repo_id: cijerezg/multi-task-toys-merged-v2
