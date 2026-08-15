@@ -765,6 +765,17 @@ class MolmoAct2Trainer(Trainer):
         Handles gradient accumulation.  Only the "policy" optimizer is touched here.
         """
         from lerobot.rl.buffer import concatenate_batch_transitions
+        from lerobot.rl.training_runtime import TrainingRuntime
+
+        runtime = kwargs.get("training_runtime") or TrainingRuntime(device=device)
+        raw_policy = runtime.unwrap_model(policy)
+        subtask_loss_weight = float(getattr(cfg.policy, "subtask_loss_weight", 0.0))
+        if runtime.num_processes > 1 and subtask_loss_weight > 0:
+            raise ValueError(
+                "Distributed MolmoAct2 offline training does not yet support "
+                "policy.subtask_loss_weight > 0 because ranks can select different "
+                "numbers of annotated samples. Set it to 0.0."
+            )
 
         grad_accum = int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
         clip_norm = float(getattr(cfg.policy, "optimizer_grad_clip_norm", 1.0))
@@ -803,7 +814,7 @@ class MolmoAct2Trainer(Trainer):
         discrete_ce_loss_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
-        depth_on = getattr(policy, "depth_visual", None) is not None
+        depth_on = getattr(raw_policy, "depth_visual", None) is not None
         optimization_step = kwargs.get("optimization_step")
         log_freq = max(1, int(getattr(cfg, "log_freq", 1)))
         # Callers pass the outer optimization step. Keep the fallback enabled for
@@ -815,11 +826,11 @@ class MolmoAct2Trainer(Trainer):
 
         # Identify actor params for grad clipping (excludes critic).
         critic_param_ids: set[int] = set()
-        if hasattr(policy, "critic"):
-            critic_net: nn.Module = getattr(policy, "critic")
+        if hasattr(raw_policy, "critic"):
+            critic_net: nn.Module = raw_policy.critic
             critic_param_ids = {id(p) for p in critic_net.parameters()}
         actor_params = [
-            p for p in policy.parameters()
+            p for p in raw_policy.parameters()
             if p.requires_grad and id(p) not in critic_param_ids
         ]
 
@@ -869,64 +880,71 @@ class MolmoAct2Trainer(Trainer):
                 cfg=cfg,
             )
 
-            loss, metrics = policy.forward(fwd_batch, reduction="none", return_diagnostics=True)
+            with runtime.no_sync(policy, accum_idx, grad_accum):
+                # Calling the wrapper enters DDP's reducer for this microbatch.
+                loss, metrics = policy(
+                    fwd_batch, reduction="none", return_diagnostics=True
+                )
 
-            # Read scale from THIS forward: the stashes are consume-once and a later
-            # validation/subtask forward would overwrite the seam measurements.
-            if depth_on and capture_modality_telemetry and accum_idx == 0:
-                embed_rms = float(policy._depth_embed_rms)
-                if policy._depth_token_rms is not None:
-                    projected_rms = policy._depth_token_rms.item()
-                    accum["depth_projected_token_rms"] = projected_rms
-                    # Legacy chart continuity: old adapter output vs new projector output.
-                    accum["depth_token_rms_ratio"] = projected_rms / embed_rms
-                for stage, value in policy._depth_stage_rms.items():
-                    accum[f"depth_{stage}_token_rms"] = value.item()
-                pm_cfg = policy.config.pointmap_config
-                early_tap, late_tap = pm_cfg.visual_feature_taps
-                early = policy._depth_stage_rms.get(f"block{early_tap}")
-                late = policy._depth_stage_rms.get(f"block{late_tap}")
-                if early is not None and late is not None:
-                    accum["depth_late_early_rms_ratio"] = late.item() / max(early.item(), 1e-12)
-                if late is not None and policy._depth_token_rms is not None:
-                    accum["depth_projected_late_rms_ratio"] = (
-                        policy._depth_token_rms.item() / max(late.item(), 1e-12)
-                    )
-                backbone = policy._backbone()
-                depth_input_rms = getattr(backbone, "_lerobot_depth_input_rms", None)
-                rgb_input_rms = getattr(backbone, "_lerobot_rgb_input_rms", None)
-                if depth_input_rms is not None:
-                    depth_input = depth_input_rms.item()
-                    accum["depth_injected_token_rms"] = depth_input
-                    accum["depth_injected_rms_ratio"] = depth_input / embed_rms
-                if rgb_input_rms is not None:
-                    rgb_input = rgb_input_rms.item()
-                    accum["rgb_injected_token_rms"] = rgb_input
-                    if depth_input_rms is not None:
-                        accum["depth_rgb_rms_ratio"] = depth_input_rms.item() / max(
-                            rgb_input, 1e-12
+                # Read scale from THIS forward: the stashes are consume-once and a later
+                # validation/subtask forward would overwrite the seam measurements.
+                if depth_on and capture_modality_telemetry and accum_idx == 0:
+                    embed_rms = float(raw_policy._depth_embed_rms)
+                    if raw_policy._depth_token_rms is not None:
+                        projected_rms = raw_policy._depth_token_rms.item()
+                        accum["depth_projected_token_rms"] = projected_rms
+                        # Legacy chart continuity: old adapter output vs new projector output.
+                        accum["depth_token_rms_ratio"] = projected_rms / embed_rms
+                    for stage, value in raw_policy._depth_stage_rms.items():
+                        accum[f"depth_{stage}_token_rms"] = value.item()
+                    pm_cfg = raw_policy.config.pointmap_config
+                    early_tap, late_tap = pm_cfg.visual_feature_taps
+                    early = raw_policy._depth_stage_rms.get(f"block{early_tap}")
+                    late = raw_policy._depth_stage_rms.get(f"block{late_tap}")
+                    if early is not None and late is not None:
+                        accum["depth_late_early_rms_ratio"] = late.item() / max(early.item(), 1e-12)
+                    if late is not None and raw_policy._depth_token_rms is not None:
+                        accum["depth_projected_late_rms_ratio"] = (
+                            raw_policy._depth_token_rms.item() / max(late.item(), 1e-12)
                         )
+                    backbone = raw_policy._backbone()
+                    depth_input_rms = getattr(backbone, "_lerobot_depth_input_rms", None)
+                    rgb_input_rms = getattr(backbone, "_lerobot_rgb_input_rms", None)
+                    if depth_input_rms is not None:
+                        depth_input = depth_input_rms.item()
+                        accum["depth_injected_token_rms"] = depth_input
+                        accum["depth_injected_rms_ratio"] = depth_input / embed_rms
+                    if rgb_input_rms is not None:
+                        rgb_input = rgb_input_rms.item()
+                        accum["rgb_injected_token_rms"] = rgb_input
+                        if depth_input_rms is not None:
+                            accum["depth_rgb_rms_ratio"] = depth_input_rms.item() / max(
+                                rgb_input, 1e-12
+                            )
 
-            loss_for_backward = (
-                loss.mean()
-                if isinstance(loss, torch.Tensor)
-                else torch.as_tensor(loss, device=actions.device)
-            )
-            (loss_for_backward / grad_accum).backward()
+                loss_for_backward = (
+                    loss.mean()
+                    if isinstance(loss, torch.Tensor)
+                    else torch.as_tensor(loss, device=actions.device)
+                )
+                runtime.backward(loss_for_backward / grad_accum)
 
-            # Subtask-generation CE (two-prompt design): separate forward on the
-            # generation prompt for annotated samples; grads accumulate alongside.
-            subtask_loss_weight = float(getattr(cfg.policy, "subtask_loss_weight", 0.0))
-            if subtask_loss_weight > 0:
-                generation = self._subtask_generation_loss(policy, raw, observations, preprocessor, cfg)
-                if generation is not None:
-                    generation_loss, generation_parts = generation
-                    # The generation prompt carries no depth clause, so under depth_warmup
-                    # this loss touches nothing trainable and backward would raise. Its
-                    # metrics stay worth logging as a frozen-model baseline.
-                    if generation_loss.requires_grad:
-                        (subtask_loss_weight * generation_loss / grad_accum).backward()
-                    accum["loss_subtask_ce"] += generation_parts["loss_subtask_ce"] / grad_accum
+                # Subtask-generation CE (two-prompt design): separate forward on the
+                # generation prompt for annotated samples; grads accumulate alongside.
+                if subtask_loss_weight > 0:
+                    generation = self._subtask_generation_loss(
+                        raw_policy, raw, observations, preprocessor, cfg
+                    )
+                    if generation is not None:
+                        generation_loss, generation_parts = generation
+                        # The generation prompt carries no depth clause, so under depth_warmup
+                        # this loss touches nothing trainable and backward would raise. Its
+                        # metrics stay worth logging as a frozen-model baseline.
+                        if generation_loss.requires_grad:
+                            runtime.backward(subtask_loss_weight * generation_loss / grad_accum)
+                        accum["loss_subtask_ce"] += (
+                            generation_parts["loss_subtask_ce"] / grad_accum
+                        )
 
             accum["loss_actor"] += float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
@@ -1004,7 +1022,7 @@ class MolmoAct2Trainer(Trainer):
             grads_by_component: dict[str, list[torch.Tensor]] = {
                 component: [] for component in components
             }
-            for name, parameter in policy.named_parameters():
+            for name, parameter in raw_policy.named_parameters():
                 component = _actor_depth_component(name)
                 if component is not None and parameter.grad is not None:
                     grads_by_component[component].append(parameter.grad.detach())
@@ -1025,7 +1043,7 @@ class MolmoAct2Trainer(Trainer):
                 if all_component_norms else 0.0
             )
 
-        actor_grad_norm = torch.nn.utils.clip_grad_norm_(actor_params, clip_norm).item()
+        actor_grad_norm = runtime.clip_grad_norm_(actor_params, clip_norm).item()
 
         policy_opt.step()
         if depth_opt is not None:

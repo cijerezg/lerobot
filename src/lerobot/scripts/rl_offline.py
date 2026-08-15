@@ -30,7 +30,7 @@ Config fields required beyond the standard TrainRLServerPipelineConfig:
 
 Compared to offline_learner_pi05.py this script:
   - Is model-agnostic (works for pi05_rl, molmoact2_rl, ...)
-  - Is single-process only (no Accelerator / DDP)
+  - Supports one process directly and DDP via `accelerate launch`
   - Defers all model-specific logic to Trainer
 """
 
@@ -76,6 +76,7 @@ from lerobot.rl.offline_dataset_utils import (
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.utils import build_named_adamw_optimizers, cast_to_bf16
 from lerobot.rl.pretrained_merge import build_pretrained_merges, apply_pretrained_merges
+from lerobot.rl.training_runtime import TrainingRuntime
 from lerobot.common.wandb_utils import WandBLogger
 from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
@@ -457,9 +458,78 @@ def main() -> None:
     offline_train_cli()  # type: ignore[call-arg]  # @parser.wrap rewrites signature
 
 
-def offline_train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None) -> None:
+def _build_on_each_process_main_first(runtime: TrainingRuntime, factory):
+    """Run cache/download-prone construction on rank 0 before the other ranks."""
+    result = factory() if runtime.is_main_process else None
+    runtime.wait_for_everyone()
+    if not runtime.is_main_process:
+        result = factory()
+    runtime.wait_for_everyone()
+    return result
+
+
+def _validate_distributed_config(
+    cfg: TrainRLServerPipelineConfig,
+    runtime: TrainingRuntime,
+) -> None:
+    accumulation = int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
+    effective_batch = int(cfg.batch_size) * accumulation * runtime.num_processes
+    logging.info(
+        "[RL_OFFLINE] ranks=%d  batch/rank=%d  accumulation=%d  effective_batch=%d",
+        runtime.num_processes,
+        cfg.batch_size,
+        accumulation,
+        effective_batch,
+    )
+    if runtime.num_processes == 1:
+        return
+
+    errors = []
+    if cfg.policy.type != "molmoact2_rl":
+        errors.append("policy.type must be 'molmoact2_rl'")
+    if not bool(getattr(cfg, "skip_critic", False)):
+        errors.append("skip_critic must be true")
+    if float(getattr(cfg.policy, "subtask_loss_weight", 0.0)) != 0.0:
+        errors.append("policy.subtask_loss_weight must be 0.0")
+    if torch.device(cfg.policy.storage_device).type == "cuda":
+        errors.append("policy.storage_device must be CPU-backed")
+    if errors:
+        raise ValueError(
+            "Unsupported multi-process rl_offline configuration:\n  - "
+            + "\n  - ".join(errors)
+        )
+    if effective_batch != 128:
+        logging.warning(
+            "[RL_OFFLINE] Effective global batch is %d, not the current baseline 128. "
+            "Set accumulation explicitly if this is not intentional.",
+            effective_batch,
+        )
+
+
+def offline_train(
+    cfg: TrainRLServerPipelineConfig,
+    job_name: str | None = None,
+    accelerator=None,
+) -> None:
+    from lerobot.utils.import_utils import require_package
+
+    require_package("accelerate", extra="training")
+    from accelerate import Accelerator
+    from accelerate.utils import DistributedDataParallelKwargs
+
     cfg.validate()
     cfg.env.task = cfg.policy.task
+
+    if accelerator is None:
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        requested_device = getattr(cfg.policy, "learner_device", None) or cfg.policy.device
+        accelerator = Accelerator(
+            step_scheduler_with_optimizer=False,
+            mixed_precision="no",
+            kwargs_handlers=[ddp_kwargs],
+            cpu=str(requested_device).startswith("cpu"),
+        )
+    runtime = TrainingRuntime(accelerator)
 
     if job_name is None:
         job_name = cfg.job_name
@@ -476,24 +546,34 @@ def offline_train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None)
     cfg.output_dir = str(output_dir)
 
     log_dir = os.path.join(cfg.output_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
+    if runtime.is_main_process:
+        os.makedirs(log_dir, exist_ok=True)
+    runtime.wait_for_everyone()
     log_file = os.path.join(log_dir, f"rl_offline_{job_name}.log")
-    init_logging(log_file=log_file, display_pid=False)
-    logging.info(f"[RL_OFFLINE] Logging → {log_file}")
-    logging.info(pformat(cfg.to_dict()))
-
-    if cfg.wandb.enable:
-        if getattr(cfg.wandb, "offline_project", None):
-            cfg.wandb.project = cfg.wandb.offline_project
-    wandb_logger = (
-        WandBLogger(cfg) if (cfg.wandb.enable and cfg.wandb.project) else None
+    init_logging(
+        log_file=log_file if runtime.is_main_process else None,
+        display_pid=False,
+        accelerator=accelerator,
     )
-    if wandb_logger is None:
-        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+    if runtime.is_main_process:
+        logging.info(f"[RL_OFFLINE] Logging → {log_file}")
+        logging.info(pformat(cfg.to_dict()))
 
     if cfg.dataset is None:
         raise ValueError("cfg.dataset is required for offline training.")
+    _validate_distributed_config(cfg, runtime)
 
+    if cfg.wandb.enable and getattr(cfg.wandb, "offline_project", None):
+        cfg.wandb.project = cfg.wandb.offline_project
+    wandb_logger = (
+        WandBLogger(cfg)
+        if runtime.is_main_process and cfg.wandb.enable and cfg.wandb.project
+        else None
+    )
+    if wandb_logger is None and runtime.is_main_process:
+        logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+
+    # All ranks use the same seed until DDP has synchronized model parameters.
     if cfg.seed is not None:
         set_seed(seed=cfg.seed)
 
@@ -501,8 +581,12 @@ def offline_train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None)
     torch.backends.cuda.matmul.allow_tf32 = True
 
     shutdown_event = ProcessSignalHandler(use_threads=True, display_pid=False).shutdown_event
-
-    run_offline_training(cfg=cfg, wandb_logger=wandb_logger, shutdown_event=shutdown_event)
+    run_offline_training(
+        cfg=cfg,
+        wandb_logger=wandb_logger,
+        shutdown_event=shutdown_event,
+        training_runtime=runtime,
+    )
 
 
 # ── Core loop ─────────────────────────────────────────────────────────────────
@@ -512,6 +596,7 @@ def run_offline_training(
     cfg: TrainRLServerPipelineConfig,
     wandb_logger: WandBLogger | None,
     shutdown_event,
+    training_runtime: TrainingRuntime | None = None,
 ) -> None:
     """
     Model-agnostic offline training loop.
@@ -524,9 +609,14 @@ def run_offline_training(
             → trainer.log_metrics(...)
     """
     # ── Config unpacking ──────────────────────────────────────────────────────
-    device_name = getattr(cfg.policy, "learner_device", None) or cfg.policy.device
-    device = get_safe_torch_device(try_device=device_name, log=True)
+    if training_runtime is None:
+        requested_device = getattr(cfg.policy, "learner_device", None) or cfg.policy.device
+        local_device = get_safe_torch_device(try_device=requested_device, log=True)
+        training_runtime = TrainingRuntime(device=local_device)
+    runtime = training_runtime
+    device = runtime.device
     storage_device = get_safe_torch_device(try_device=cfg.policy.storage_device)
+    _validate_distributed_config(cfg, runtime)
 
     offline_steps = cfg.policy.offline_steps
     utd_ratio = getattr(cfg.policy, "utd_ratio", 1)
@@ -548,10 +638,12 @@ def run_offline_training(
     # ── Build policy via Trainer ──────────────────────────────────────────────
     trainer = Trainer.for_config(cfg)
 
-    original_device = cfg.policy.device
-    cfg.policy.device = device_name
-    policy = trainer.make_policy(cfg)
-    cfg.policy.device = original_device
+    # Accelerator owns rank-local placement (including CUDA_VISIBLE_DEVICES remapping).
+    cfg.policy.device = str(device)
+    policy = _build_on_each_process_main_first(
+        runtime,
+        lambda: trainer.make_policy(cfg),
+    )
 
     assert isinstance(policy, nn.Module)
     policy.train()
@@ -578,27 +670,44 @@ def run_offline_training(
         normalization_source.name,
         normalization_source.root,
     )
-    offline_dataset = load_offline_dataset(cfg, normalization_source)
-    pool_lowdim_stats(cfg, offline_dataset, is_main_process=True)
+    offline_dataset = _build_on_each_process_main_first(
+        runtime,
+        lambda: load_offline_dataset(cfg, normalization_source),
+    )
+    pool_lowdim_stats(cfg, offline_dataset, is_main_process=runtime.is_main_process)
 
     # ── Preprocessors ─────────────────────────────────────────────────────────
-    preprocessor, postprocessor = trainer.make_processors(
-        cfg, dataset=offline_dataset, is_main_process=True
+    preprocessor, postprocessor = _build_on_each_process_main_first(
+        runtime,
+        lambda: trainer.make_processors(
+            cfg, dataset=offline_dataset, is_main_process=runtime.is_main_process
+        ),
     )
     policy.preprocessor = preprocessor
     policy.postprocessor = postprocessor
 
     # ── Optimizers ────────────────────────────────────────────────────────────
-    optimizers = build_named_adamw_optimizers(
+    raw_optimizers = build_named_adamw_optimizers(
         trainer.get_optimizer_groups(policy, cfg),
         cfg.policy,
     )
     pretrained_merges = build_pretrained_merges(
-        optimizers=optimizers,
+        optimizers=raw_optimizers,
         alpha=float(getattr(cfg.policy, "pretrained_merge_alpha", 0.0)),
         every_n_steps=int(getattr(cfg.policy, "pretrained_merge_every_n_steps", 0)),
         targets=list(getattr(cfg.policy, "pretrained_merge_targets", [])),
     )
+    runtime.wait_for_everyone()
+    policy, optimizers = runtime.prepare_model_and_optimizers(policy, raw_optimizers)
+    raw_policy = runtime.unwrap_model(policy)
+    policy.train()
+
+    # Model creation was identically seeded and DDP has now synchronized weights.
+    # From here onward, replay draws and dropout must differ between ranks.
+    if cfg.seed is not None:
+        set_seed(int(cfg.seed) + runtime.process_index)
+    elif runtime.num_processes > 1:
+        set_seed(runtime.process_index)
 
     # ── Replay buffer ─────────────────────────────────────────────────────────
     memory_cfg = getattr(cfg.policy, "memory", None)
@@ -622,20 +731,23 @@ def run_offline_training(
                 f"({normalization_source.root}) under {cache_dir!r}."
             )
 
-    offline_replay_buffer = ReplayBuffer.from_lerobot_dataset(
-        offline_dataset,
-        device=device,
-        state_keys=cfg.policy.input_features.keys(),
-        storage_device=storage_device,
-        optimize_memory=True,
-        capacity=cfg.policy.offline_buffer_capacity,
-        reward_normalization_constant=cfg.policy.reward_normalization_constant,
-        terminal_failure_reward=cfg.policy.terminal_failure_reward,
-        cache_dir=getattr(cfg, "buffer_cache_dir", None),
-        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
-        image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
-        image_stride=getattr(cfg.policy, "image_stride", 1),
-        history_offsets=history_offsets,
+    offline_replay_buffer = _build_on_each_process_main_first(
+        runtime,
+        lambda: ReplayBuffer.from_lerobot_dataset(
+            offline_dataset,
+            device=device,
+            state_keys=cfg.policy.input_features.keys(),
+            storage_device=storage_device,
+            optimize_memory=True,
+            capacity=cfg.policy.offline_buffer_capacity,
+            reward_normalization_constant=cfg.policy.reward_normalization_constant,
+            terminal_failure_reward=cfg.policy.terminal_failure_reward,
+            cache_dir=getattr(cfg, "buffer_cache_dir", None),
+            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+            image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
+            image_stride=getattr(cfg.policy, "image_stride", 1),
+            history_offsets=history_offsets,
+        ),
     )
     offline_replay_buffer.dataset = offline_dataset
     offline_replay_buffer.offline_source = normalization_source
@@ -644,24 +756,29 @@ def run_offline_training(
         offline_dataset,
         offline_dataset,
         source_index=0,
-        is_main_process=True,
+        is_main_process=runtime.is_main_process,
         require_depth_gripper_event_labels=bool(
             getattr(getattr(cfg.policy, "depth_gripper_event_loss", None), "enabled", False)
         ),
     )
     if memory_cfg is not None and memory_cfg.metadata_enabled:
         offline_replay_buffer.materialize_metadata(*load_metadata_rows(offline_dataset.root))
-    additional_buffers = load_additional_offline_buffers(
-        cfg=cfg,
-        main_dataset=offline_dataset,
-        device=device,
-        storage_device=storage_device,
-        is_main_process=True,
-        history_offsets=history_offsets,
-        memory_cfg=memory_cfg,
+    additional_buffers = _build_on_each_process_main_first(
+        runtime,
+        lambda: load_additional_offline_buffers(
+            cfg=cfg,
+            main_dataset=offline_dataset,
+            device=device,
+            storage_device=storage_device,
+            is_main_process=runtime.is_main_process,
+            history_offsets=history_offsets,
+            memory_cfg=memory_cfg,
+        ),
     )
     # Additional datasets may have extended the subtask vocabulary via the remap.
-    trainer.sync_subtask_vocabulary(preprocessor, offline_dataset, is_main_process=True)
+    trainer.sync_subtask_vocabulary(
+        preprocessor, offline_dataset, is_main_process=runtime.is_main_process
+    )
 
     offline_buffers = [offline_replay_buffer, *additional_buffers]
     logging.info(
@@ -670,14 +787,18 @@ def run_offline_training(
     )
 
     # Share frozen critic-target params to save VRAM
-    if not skip_critic and hasattr(policy, "critic") and hasattr(policy, "critic_target"):
-        for p, p_tgt in zip(policy.critic.parameters(), policy.critic_target.parameters()):
+    if not skip_critic and hasattr(raw_policy, "critic") and hasattr(raw_policy, "critic_target"):
+        for p, p_tgt in zip(
+            raw_policy.critic.parameters(),
+            raw_policy.critic_target.parameters(),
+            strict=True,
+        ):
             if not p.requires_grad:
                 p_tgt.data = p.data
 
     # ── Training info ─────────────────────────────────────────────────────────
-    n_trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
-    n_total = sum(p.numel() for p in policy.parameters())
+    n_trainable = sum(p.numel() for p in raw_policy.parameters() if p.requires_grad)
+    n_total = sum(p.numel() for p in raw_policy.parameters())
     logging.info(colored("=" * 70, "yellow", attrs=["bold"]))
     logging.info(colored("RL_OFFLINE — generic offline training", "yellow", attrs=["bold"]))
     logging.info(colored("=" * 70, "yellow", attrs=["bold"]))
@@ -705,37 +826,50 @@ def run_offline_training(
     )
 
     # ── Validation dataset (used by probes) ───────────────────────────────────
-    val_dataset = _load_val_dataset(cfg, fallback_dataset=offline_dataset)
+    val_dataset = (
+        _load_val_dataset(cfg, fallback_dataset=offline_dataset)
+        if runtime.is_main_process
+        else offline_dataset
+    )
+    runtime.wait_for_everyone()
     val_freq = int(getattr(cfg, "val_freq", 0) or 0)
     val_on_start = bool(getattr(cfg, "val_on_start", False))
 
-    # Held-out flow + FAST CE at log_freq. Built here because the val dataset lives
-    # here; the sample is packed once, so the loop only pays the forwards.
+    # Held-out flow + FAST CE at log_freq. Only rank 0 owns its packed CPU cache.
     val_loss_frames = int(getattr(cfg, "val_loss_frames", 0) or 0)
     val_loss = None
-    if val_loss_frames > 0:
+    if runtime.is_main_process and val_loss_frames > 0:
         from lerobot.rl.molmoact2.val_loss import ValLoss
 
         val_loss = ValLoss(val_dataset, preprocessor, cfg, device, n_frames=val_loss_frames)
 
     if val_on_start:
-        _run_validation_probes(
-            policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
-            val_dataset=val_dataset, reference_dataset=offline_dataset,
-            device=device, cfg=cfg, step=0, wandb_logger=wandb_logger,
-        )
+        runtime.wait_for_everyone()
+        if runtime.is_main_process:
+            _run_validation_probes(
+                policy=raw_policy, preprocessor=preprocessor, postprocessor=postprocessor,
+                val_dataset=val_dataset, reference_dataset=offline_dataset,
+                device=device, cfg=cfg, step=0, wandb_logger=wandb_logger,
+            )
+            for parameter in raw_policy.parameters():
+                parameter.grad = None
+            raw_policy.train()
+        runtime.wait_for_everyone()
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     optimization_step = 0
 
     while optimization_step < offline_steps:
-        if shutdown_event is not None and shutdown_event.is_set():
-            logging.info("[RL_OFFLINE] Shutdown signal — exiting.")
+        local_shutdown = shutdown_event is not None and shutdown_event.is_set()
+        if runtime.any_process(local_shutdown):
+            if runtime.is_main_process:
+                logging.info("[RL_OFFLINE] Shutdown signal — exiting all ranks.")
+            runtime.wait_for_everyone()
             break
 
         t0 = time.time()
 
-        if optimization_step % 10 == 0:
+        if runtime.is_main_process and optimization_step % 10 == 0:
             print(f"[RL_OFFLINE] step {optimization_step}/{offline_steps}")
 
         # ── Critic updates (UTD - 1 extra rounds before the last combined step) ──
@@ -775,6 +909,7 @@ def run_offline_training(
                 clip_grad_norm_value=clip_grad_norm_value,
                 cast_to_bf16_fn=cast_to_bf16_fn,
                 optimization_step=optimization_step,
+                training_runtime=runtime,
             )
         else:
             # Full RL: critic then actor (respecting critic_warmup_steps)
@@ -812,67 +947,100 @@ def run_offline_training(
                     clip_grad_norm_value=clip_grad_norm_value,
                     cast_to_bf16_fn=cast_to_bf16_fn,
                     optimization_step=optimization_step,
+                    training_runtime=runtime,
                 )
                 training_infos.update(actor_infos)
 
-        merge_fires = any(m.should_merge(optimization_step) for m in pretrained_merges.values())
+        merge_fires = any(
+            merge.should_merge(optimization_step) for merge in pretrained_merges.values()
+        )
         if merge_fires:
-            _save_pretrained_merge_checkpoint(cfg, optimization_step, offline_steps, policy, preprocessor, postprocessor, "pre_merge")
-        apply_pretrained_merges(pretrained_merges, optimizers, optimization_step)
+            runtime.wait_for_everyone()
+            if runtime.is_main_process:
+                _save_pretrained_merge_checkpoint(
+                    cfg, optimization_step, offline_steps, raw_policy,
+                    preprocessor, postprocessor, "pre_merge",
+                )
+            runtime.wait_for_everyone()
+
+        apply_pretrained_merges(pretrained_merges, raw_optimizers, optimization_step)
         if merge_fires:
-            _save_pretrained_merge_checkpoint(cfg, optimization_step, offline_steps, policy, preprocessor, postprocessor, "post_merge")
+            runtime.wait_for_everyone()
+            if runtime.is_main_process:
+                _save_pretrained_merge_checkpoint(
+                    cfg, optimization_step, offline_steps, raw_policy,
+                    preprocessor, postprocessor, "post_merge",
+                )
+            runtime.wait_for_everyone()
+
+        step_time = runtime.reduce_scalar(time.time() - t0, reduction="max")
+        step_hz = 1.0 / (step_time + 1e-9)
 
         # ── Logging ───────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:
-            if val_loss is not None:
-                training_infos.update(val_loss(policy))
             training_infos["offline_buffer_size"] = sum(len(b) for b in offline_buffers)
             training_infos["Optimization step"] = optimization_step
-            trainer.log_metrics(
-                training_infos=training_infos,
-                step=optimization_step,
-                wandb_logger=wandb_logger,
-                _policy=policy,
-            )
+            training_infos = runtime.reduce_metrics(training_infos)
+            runtime.wait_for_everyone()
+            if runtime.is_main_process and val_loss is not None:
+                training_infos.update(val_loss(raw_policy))
+            runtime.wait_for_everyone()
+            if runtime.is_main_process:
+                trainer.log_metrics(
+                    training_infos=training_infos,
+                    step=optimization_step,
+                    wandb_logger=wandb_logger,
+                    _policy=raw_policy,
+                )
 
-        step_time = time.time() - t0
-        step_hz = 1.0 / (step_time + 1e-9)
-        if wandb_logger is not None:
+        if runtime.is_main_process and wandb_logger is not None:
             wandb_logger.log_dict(
                 {"Optimization frequency loop [Hz]": step_hz, "Optimization step": optimization_step},
                 mode="train",
                 custom_step_key="Optimization step",
             )
+        runtime.wait_for_everyone()
 
         optimization_step += 1
 
-        if optimization_step % log_freq == 0:
+        if runtime.is_main_process and optimization_step % log_freq == 0:
             logging.info(f"[RL_OFFLINE] step {optimization_step}/{offline_steps}  {step_hz:.2f} Hz")
 
         # ── Checkpoint ────────────────────────────────────────────────────────
         if saving_checkpoint and (
             optimization_step % save_freq == 0 or optimization_step == offline_steps
         ):
-            _save_checkpoint(
-                cfg=cfg,
-                step=optimization_step,
-                total_steps=offline_steps,
-                policy=policy,
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-            )
-            gc.collect()
-            torch.cuda.empty_cache()
+            runtime.wait_for_everyone()
+            if runtime.is_main_process:
+                _save_checkpoint(
+                    cfg=cfg,
+                    step=optimization_step,
+                    total_steps=offline_steps,
+                    policy=raw_policy,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                )
+                gc.collect()
+                torch.cuda.empty_cache()
+            runtime.wait_for_everyone()
 
         # ── Validation probes ─────────────────────────────────────────────────
         if val_freq > 0 and optimization_step % val_freq == 0:
-            _run_validation_probes(
-                policy=policy, preprocessor=preprocessor, postprocessor=postprocessor,
-                val_dataset=val_dataset, reference_dataset=offline_dataset,
-                device=device, cfg=cfg, step=optimization_step, wandb_logger=wandb_logger,
-            )
+            runtime.wait_for_everyone()
+            if runtime.is_main_process:
+                _run_validation_probes(
+                    policy=raw_policy, preprocessor=preprocessor, postprocessor=postprocessor,
+                    val_dataset=val_dataset, reference_dataset=offline_dataset,
+                    device=device, cfg=cfg, step=optimization_step, wandb_logger=wandb_logger,
+                )
+                for parameter in raw_policy.parameters():
+                    parameter.grad = None
+                raw_policy.train()
+            runtime.wait_for_everyone()
 
-    logging.info(f"[RL_OFFLINE] Training complete after {optimization_step} steps.")
+    runtime.wait_for_everyone()
+    if runtime.is_main_process:
+        logging.info(f"[RL_OFFLINE] Training complete after {optimization_step} steps.")
 
 
 if __name__ == "__main__":
