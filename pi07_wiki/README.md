@@ -29,6 +29,7 @@ Standalone documents that sit alongside the numbered pages.
 
 | Note | Status |
 |---|---|
+| [On Mean Squared Error for Imitation Learning](mse_for_imitation_learning.md) | Why equal flow MSE can hide very different action trajectories, and how the hold-relative path, shape, terminal, and direction losses guide it |
 | [FAST tokenizer deletes DCT coefficients](fast_tokenizer_alphabet_bug.md) | **FIXED 2026-08-08** — silent coefficient deletion had scrambled 4.2% of training chunks; `_tokenize_discrete_action` now snaps to the nearest encodable bin and asserts the decoded coefficient count. Kept for the mechanism, the forensics, and the prevalence numbers |
 | [Trajectory-aware auxiliary loss for the FAST head](archive/fast_soft_decode_auxiliary.md) | **ARCHIVED — UNCONFIRMED 2026-08-09.** Its numbers were imprecise and overstated; do not cite them, and do not read it as a spec for the code that shipped. The as-built loss is [05 §2.2](05_training.md) |
 | [Depth short-term history](depth_history_design.md) | Built 2026-07-25 — temporal attention inside the patch CNN |

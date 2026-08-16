@@ -175,4 +175,8 @@ outputs/
 *.stl
 *.urdf
 *.xml
+# The reBot descriptions are runtime package data, not generated experiment files.
+!src/lerobot/robots/rebot_b601_follower/urdf/*.urdf
+!src/lerobot/robots/rebot_b601_follower/mjcf/*.xml
+!src/lerobot/robots/rebot_b601_follower/mjcf/assets/*_col_*.stl
 *.part

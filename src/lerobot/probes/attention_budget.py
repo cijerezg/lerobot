@@ -90,11 +90,10 @@ Three properties of a share force the transforms:
   $\log_2(m_\text{depth} / m_\text{wrist})$ the honest test of "depth matters more
   up close".
 
-Nothing in the figure is stacked. A stacked composition puts each segment on the
-running total of the ones below it, so one large segment moving displaces every
-series above it and none of them can be read. Levels are shown once, as independent
-bars with their across-frame range, and the time axis belongs to the clr panel where
-a move means a move.
+The primary budget figure intentionally uses ordinary linear percentages: a 100%
+stacked composition over frames, a mean-share bar chart with the frame range, and
+percentage heatmaps over layers and action-chunk position. The log-ratio statistics
+remain in the JSON and training-history analysis, not in the primary PNG.
 
 Two controls ship alongside, because both failure modes are real:
 
@@ -107,11 +106,8 @@ Two controls ship alongside, because both failure modes are real:
   number divides by the median count and ``budget.json`` carries the min and max beside
   it, so a segment whose width moved is visible instead of silently rescaling its row.
 
-A filmstrip runs along the bottom of the figure: the model-view RGB of each camera
-segment plus the wrist depth map, for an evenly spaced subset of the sampled frames.
-The frame-axis panels carry x-ticks at exactly those frames and the distance scatter
-labels the same ones, so every feature of the series can be traced back to the scene
-that produced it — a budget move is only interpretable next to its frame.
+The primary PNG has fixed dimensions and contains no off-axis captions or filmstrip.
+That keeps the artifact cheap and safe to render even when a segment has tiny mass.
 
 ## Two things this probe cannot tell you
 
@@ -134,7 +130,7 @@ and over the individual decoded tokens.
 
 ## What it writes
 
-* ``budget.png`` — the six per-checkpoint panels, over a filmstrip.
+* ``budget.png`` — four fixed-size, linear percentage views of the budget.
 * ``concentration.png`` — the within-segment distributions and $n_{90}$, one row per
   probed layer on a shared order and a shared scale.
 * ``trajectory.png`` — every checkpoint of the run against training step. Only appears
@@ -722,64 +718,86 @@ def _render(
     thumbnails: list[dict],
     output_path: str,
 ) -> None:
-    focus = len(layers) // 2  # middle probed layer: past the near-positional early stack
+    """Render the primary budget artifact as plain percentages on linear axes."""
+    del entropy, depth_mm, thumbnails
+
+    focus = len(layers) // 2
     focus_mass = mass[:, focus, :]
-    # One ordering, largest share first, shared by every segment-indexed panel so a
-    # reader learns the row order once.
+    focus_pct = 100.0 * focus_mass
+    steps = np.arange(len(frame_meta))
     order = np.argsort(-focus_mass.mean(axis=0))
-    ordered = [names[i] for i in order]
+    ordered = [names[index] for index in order]
 
-    strip_keys = sorted({k for t in thumbnails for k in t if k != "depth"})
-    strip_keys += ["depth"] if any("depth" in t for t in thumbnails) else []
-    picks = np.unique(np.linspace(0, len(frame_meta) - 1, min(len(frame_meta), 12)).round().astype(int))
-    strip_height = 1.25 * len(strip_keys)
+    fig, axes = plt.subplots(2, 2, figsize=(18, 10), constrained_layout=True)
 
-    fig = plt.figure(figsize=(20, 13.5 + strip_height))
-    if strip_keys:
-        outer = fig.add_gridspec(
-            2, 1, height_ratios=[13.5, strip_height], hspace=0.34,
-            left=0.05, right=0.985, top=0.945, bottom=0.045,
-        )
-        panels = outer[0].subgridspec(2, 3, hspace=0.78, wspace=0.28)
-        _filmstrip(fig, outer[1].subgridspec(len(strip_keys), len(picks), hspace=0.06, wspace=0.03),
-                   strip_keys, picks, thumbnails, frame_meta)
-    else:
-        panels = fig.add_gridspec(2, 3, hspace=0.78, wspace=0.28,
-                                  left=0.05, right=0.985, top=0.94, bottom=0.08)
-    axes = np.array([[fig.add_subplot(panels[r, c]) if (r, c) != (0, 0) else None for c in range(3)]
-                     for r in range(2)])
-    # The levels cell holds two bar charts sharing one row order: the budget, and the
-    # budget per column. Splitting the cell keeps them adjacent, which is the whole point.
-    levels = panels[0, 0].subgridspec(1, 2, wspace=0.08)
-    ax_total = fig.add_subplot(levels[0, 0])
-    ax_per_token = fig.add_subplot(levels[0, 1], sharey=ax_total)
-
-    _levels_panel(ax_total, ax_per_token, ordered, focus_mass, order, token_counts, layers[focus])
-    kept = _shift_panel(axes[0, 1], focus_mass, names, frame_meta, layers[focus])
-    _layer_panel(fig, axes[0, 2], mass, ordered, order, layers, token_counts)
-    _distance_panel(axes[1, 0], focus_mass, names, depth_mm, picks, layers[focus])
-    _entropy_panel(axes[1, 1], entropy, layers, frame_meta,
-                   float(_clr_at_focus(focus_mass, names)[0].std(axis=0).max()))
-    _chunk_panel(fig, axes[1, 2], by_query[:, focus, :, :], ordered, order, layers[focus])
-
-    # Tick only where a filmstrip thumbnail exists, so a tick label names a picture.
-    if strip_keys:
-        for ax in (axes[0, 1], axes[1, 1]):
-            ax.set_xticks(picks, [f"f{p}" for p in picks], fontsize=7)
-
-    variable = ", ".join(
-        f"{name} {token_counts.get(name, 0)} tok" for name in _VARIABLE_LENGTH_SEGMENTS if name in names
+    ax = axes[0, 0]
+    ax.stackplot(
+        steps, focus_pct.T, labels=names,
+        colors=[_color(name) for name in names], alpha=0.9,
     )
-    dropped = [n for n in names if n not in kept]
+    _episode_rules(ax, frame_meta)
+    ax.set_xlim(0, max(len(steps) - 1, 1))
+    ax.set_ylim(0, 100)
+    ax.set_xlabel("sampled frame")
+    ax.set_ylabel("share of attention budget (%)")
+    ax.set_title(f"Budget composition, layer {layers[focus]}")
+    ax.legend(fontsize=7, ncol=2, loc="upper right")
+
+    ax = axes[0, 1]
+    means = focus_pct.mean(axis=0)[order]
+    lows = focus_pct.min(axis=0)[order]
+    highs = focus_pct.max(axis=0)[order]
+    y = np.arange(len(ordered))[::-1]
+    ax.barh(y, means, color=[_color(name) for name in ordered], alpha=0.9, height=0.72)
+    ax.hlines(y, lows, highs, color=_INK, linewidth=1.1)
+    pad = max(0.35, float(highs.max()) * 0.015)
+    for row, mean, high in zip(y, means, highs):
+        ax.text(high + pad, row, f"{mean:.2f}%", va="center", fontsize=8)
+    ax.set_xlim(0, min(100.0, float(highs.max()) + max(5.0, 6 * pad)))
+    ax.set_yticks(
+        y, [f"{name}  ({token_counts.get(name, 0)} cols)" for name in ordered],
+        fontsize=8,
+    )
+    ax.set_xlabel("mean share of attention budget (%)")
+    ax.set_title(f"Mean share, layer {layers[focus]} (rule = frame range)")
+
+    ax = axes[1, 0]
+    layer_grid = 100.0 * mass.mean(axis=0).T[order]
+    image = ax.imshow(
+        layer_grid, aspect="auto", cmap="viridis", vmin=0.0,
+        vmax=max(float(layer_grid.max()), 1.0),
+    )
+    for row in range(layer_grid.shape[0]):
+        for col in range(layer_grid.shape[1]):
+            value = layer_grid[row, col]
+            ax.text(
+                col, row, f"{value:.1f}%", ha="center", va="center", fontsize=7,
+                color="white" if value < 0.62 * image.norm.vmax else "black",
+            )
+    ax.set_xticks(range(len(layers)), [str(layer) for layer in layers])
+    ax.set_yticks(range(len(ordered)), ordered, fontsize=8)
+    ax.set_xlabel("action-expert layer")
+    ax.set_title("Mean share by layer (%)")
+    fig.colorbar(image, ax=ax, fraction=0.046, label="share of attention budget (%)")
+
+    ax = axes[1, 1]
+    query_grid = 100.0 * by_query[:, focus, :, :].mean(axis=0)[order]
+    image = ax.imshow(
+        query_grid, aspect="auto", cmap="viridis", vmin=0.0,
+        vmax=max(float(query_grid.max()), 1.0),
+    )
+    ax.set_yticks(range(len(ordered)), ordered, fontsize=8)
+    ax.set_xlabel("action-chunk position")
+    ax.set_title(f"Mean share across the action chunk, layer {layers[focus]} (%)")
+    fig.colorbar(image, ax=ax, fraction=0.046, label="share of attention budget (%)")
+
     fig.suptitle(
         f"Action-token attention budget — {len(frame_meta)} frames, layers {layers}, "
-        f"focus layer {layers[focus]}"
-        + (f"  |  variable-length clauses: {variable}" if variable else "")
-        + (f"  |  no mass: {', '.join(dropped)}" if dropped else ""),
-        fontsize=14,
-        fontweight="bold",
+        f"focus layer {layers[focus]}",
+        fontsize=14, fontweight="bold",
     )
-    fig.savefig(output_path, bbox_inches="tight", dpi=125)
+    # Fixed output dimensions: never let a transformed artist expand the canvas.
+    fig.savefig(output_path, dpi=125)
     plt.close(fig)
 
 
@@ -1462,19 +1480,12 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             Panel(
                 "budget.png",
                 f"Attention budget across {len(frame_meta)} frames, focus layer {layers[focus]}",
-                "Six panels over one filmstrip; each panel carries the computation behind it "
-                "underneath. **Left column** is the two questions with an answer: what the budget is "
-                "(mean share per segment, log axis, whisker = across-frame range) and whether depth's "
-                "share rises as the scene gets closer. **Middle column** is the signal and its "
-                "control: each segment's share of the softmax row per frame, in $\\log_2$ against the "
-                "geometric mean of the field and against its own average — so a rise is that segment "
-                "gaining, never another one shrinking — above the row entropy, which is the one thing "
-                "that could move every share at once without any change of preference. "
-                "**Right column** resolves the same budget over layers and over position in the "
-                "action chunk, each row normalized on itself so the image segments don't own the "
-                "colour scale. Segment colours are fixed across every panel and listed in the "
-                "top-left one. The filmstrip's frames line up with the x-ticks above, so any feature "
-                "in the series can be traced to the scene that produced it.",
+                "Four fixed-size panels using ordinary percentages and linear axes. "
+                "**Top left:** the complete 100% budget across sampled frames. "
+                "**Top right:** each segment's mean share, with its min-to-max frame range. "
+                "**Bottom left:** mean percentage by probed layer. "
+                "**Bottom right:** mean percentage by action-chunk position. "
+                "Segment colours are fixed across panels; labels include encoder-column counts.",
                 primary=True,
                 refs=["attention"],
             ),
@@ -1516,16 +1527,48 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     )
 
 
+def rerender_budget(step_dir: str) -> str:
+    """Rebuild budget.png from the saved arrays, with no model or dataset load."""
+    archive_path = os.path.join(step_dir, "budget_data.npz")
+    with np.load(archive_path, allow_pickle=True) as data:
+        names = [str(value) for value in data["segment_names"]]
+        layers = [int(value) for value in data["layers"]]
+        mass = np.asarray(data["mass"])
+        by_query = np.asarray(data["mass_by_query"])
+        entropy = np.asarray(data["entropy"])
+        depth_mm = np.asarray(data["median_depth_mm"])
+        counts = [int(value) for value in data["token_counts"]]
+        episode_idx = np.asarray(data["episode_idx"])
+        frame_idx = (
+            np.asarray(data["frame_idx"])
+            if "frame_idx" in data.files
+            else np.arange(len(episode_idx))
+        )
+
+    frame_meta = [
+        {"episode_idx": int(episode), "frame_idx": int(frame)}
+        for episode, frame in zip(episode_idx, frame_idx)
+    ]
+    output_path = os.path.join(step_dir, "budget.png")
+    _render(
+        names, mass, by_query, entropy, layers, frame_meta, depth_mm,
+        dict(zip(names, counts)), [], output_path,
+    )
+    return output_path
+
+
 if __name__ == "__main__":
-    # Build the trajectory for a run that already has checkpoints on disk, without a GPU:
-    #   python -m lerobot.probes.attention_budget <run>/validation/step_<n>/attention_budget
+    # Re-render the fixed percentage budget from saved arrays, without a GPU:
+    #   python -m lerobot.probes.attention_budget <step>/attention_budget --budget-only
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     target = sys.argv[1].rstrip("/")
-    result = build_history(target, os.path.join(target, "trajectory.png"))
-    if not result:
-        logging.warning("nothing to compare: need two checkpoints sharing a layer and a segment.")
-    else:
-        logging.info(json.dumps({k: v for k, v in result.items() if k != "mass_change"}, indent=2))
+    logging.info(f"wrote {rerender_budget(target)}")
+    if "--budget-only" not in sys.argv[2:]:
+        result = build_history(target, os.path.join(target, "trajectory.png"))
+        if not result:
+            logging.warning("nothing to compare: need two checkpoints sharing a layer and a segment.")
+        else:
+            logging.info(json.dumps({k: v for k, v in result.items() if k != "mass_change"}, indent=2))
 
 
 def _fd_sensitivity(adapter, frame, pointmap_config) -> dict:
