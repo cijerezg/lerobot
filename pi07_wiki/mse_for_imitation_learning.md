@@ -1,232 +1,169 @@
 # On Mean Squared Error for Imitation Learning
 
-In our imitation-learning setup, we learn a velocity field. The model does not
-directly emit a finished action chunk during training. Instead, it sees a noisy
-point between Gaussian noise $\varepsilon$ and the demonstrated action chunk $a$:
+One common objective function for robot learning is the learning of a velocity
+field that transports noise to actions. The policy is not trained to emit an
+action chunk directly: it sees a point between Gaussian noise $z$ and a
+demonstrated chunk $a$,
 
 $$
-x_t = (1-t)\varepsilon + ta,
+x_t = (1-t)\,z + t\,a ,
 $$
 
-and learns the velocity that carries that point toward the demonstration:
+and predicts the velocity that carries that point to the demonstration,
+$v^* = a - z$. From a predicted velocity $\hat v$ the clean action is recovered
+in one step,
 
 $$
-v^* = a-\varepsilon.
+\hat a = x_t + (1-t)\,\hat v ,
 $$
 
-Given a predicted velocity $v_\theta$, we can reconstruct the model's estimate of
-the clean action in one step:
+which equals $a$ when the velocity is exact. At inference the same field is
+integrated from noise by a short Euler scheme.
+
+The training objective is the squared error of the predicted velocity,
 
 $$
-\hat a = x_t + (1-t)v_\theta.
+L_{\mathrm{flow}} = \mathrm{E}\left[\ \frac{1}{N}\sum_{k,d}
+\left(\hat v_{k,d} - v^*_{k,d}\right)^2\ \right] ,
 $$
 
-If the velocity is exact, then $\hat a=a$. At inference time we use the same
-velocity field repeatedly, starting from noise and following it with a short Euler
-integration until it produces an action chunk.
+over demonstrations, noise, and flow time $t$, where $k$ indexes the steps of the
+chunk, $d$ the action dimensions, and $N$ the number of valid pairs. Two
+properties of this objective are described below, followed by four auxiliary
+terms on the reconstructed chunk.
 
-The usual training objective is mean squared error on the velocity:
+## 1. Equal loss does not imply equal trajectory
 
-$$
-\mathcal L_{\mathrm{flow}}
-= \operatorname{mean}\left[(v_\theta-v^*)^2\right].
-$$
-
-This is a sensible objective. It is simple, stable, dense, and gives a gradient for
-every action dimension at every point in the chunk. The problem is not that MSE is
-wrong. The problem is that MSE has a very limited idea of what it means for an
-action to be good.
-
-## Equal MSE does not mean equal behavior
-
-MSE treats every scalar error independently, squares it, and averages the results.
-Once it has done that, the ordering and sign pattern of those errors have
-disappeared.
-
-Consider a four-step, one-dimensional example. Suppose the target is zero and two
-predictions have the following errors:
+Consider a one-dimensional chunk of four steps and two predictions with velocity
+residuals
 
 $$
-e_A = [1, 1, 1, 1], \qquad
-e_B = [1, -1, 1, -1].
+r_A = [\,1,\ 1,\ 1,\ 1\,], \qquad
+r_B = [\,1,\ -1,\ 1,\ -1\,] ,
 $$
 
-Both receive exactly the same MSE:
+both of mean squared value one. The residual is on the velocity, but the
+reconstruction is affine in it: at fixed $t$, $\hat a - a = (1-t)(\hat v - v^*)$.
+Each pattern therefore reaches the action unchanged in form and scaled by
+$(1-t)$, so the two reconstructions also have equal squared error while differing
+in shape — the first offset from the demonstration by a constant, the second
+alternating about it.
 
-$$
-\operatorname{MSE}(e_A)=\operatorname{MSE}(e_B)=1.
-$$
+On adjacent differences they separate: the offset gives zero, the alternating
+pattern gives adjacent differences of two and an error of four, in velocity
+units. Equal flow loss thus does not imply equal reconstruction. The objective
+also assigns no distinct role to the final step, and does not measure the
+direction of the motion.
 
-But they are not the same action. The first is a smooth, constant offset. The
-second changes direction at every step. A robot executing the second chunk would
-oscillate, even though the scalar loss says it is no worse than the first.
+## 2. The objective is in absolute units
 
-The same ambiguity survives action reconstruction. At a fixed flow time,
+The error is measured in squared action units, so for the same *fractional*
+mistake a large-displacement demonstration yields a larger gradient than a small
+one. Conversely, a correction of amplitude $0.01$ that is predicted with the
+wrong sign still incurs a small absolute error. The objective reports how many
+normalized action units the prediction was wrong by, not how wrong it was
+relative to the motion the example required.
 
-$$
-\hat a-a=(1-t)(v_\theta-v^*),
-$$
+## 3. Auxiliary terms
 
-so both examples are merely multiplied by the same $(1-t)$ factor. Their raw
-reconstructed-action MSE is still equal, while the trajectories still have very
-different shapes. For the example above, the adjacent-difference error of the
-constant offset is zero, whereas the oscillating error has adjacent differences
-of magnitude two and a shape MSE of four.
+The flow loss is kept and four terms are added on the reconstruction $\hat a$,
+which is already available from $x_t$ and $\hat v$ — no extra forward pass or ODE
+solve. Each is evaluated at every sampled flow time and averaged per example.
 
-This is the main blind spot: equal velocity MSE does not imply equal action
-quality. MSE cannot tell a smooth bias from a zigzag, it does not give the last
-target any special importance, and it does not directly ask whether the robot is
-moving in the intended direction.
+Let $h$ be the **hold-still chunk**, which repeats the current pose and never
+moves (the zero trajectory in anchor-encoded action space). Each term divides the
+error of the prediction by the error the same demonstration assigns to $h$. That
+denominator is the demonstration's own scale, measured in the matching quantity —
+total excursion for path, per-step motion for shape, final displacement for
+terminal — so all terms read alike: zero is exact, one is no better than freezing
+the arm, above one is worse than freezing it. Sums run over the valid entries of
+the term in question, $N$ is their number, and $T$ is the last step.
 
-## MSE favors large motions
-
-There is a second, less obvious problem. Absolute MSE is measured in squared
-action units. For a comparable fractional mistake, a large-displacement
-demonstration produces a larger error and gradient. Such examples can dominate a
-batch even when the policy has
-already learned their broad shape.
-
-Subtle actions have the opposite failure mode. Imagine a delicate correction
-whose amplitude is only $0.01$. A prediction that reverses the whole correction
-can still have a tiny absolute MSE because every number involved is tiny. The
-trajectory may be qualitatively wrong—closing instead of opening, drifting left
-instead of right, or alternating around a contact—but its contribution can be
-buried beneath a large arm sweep elsewhere in the batch.
-
-In other words, absolute MSE answers, “How many normalized action units were we
-wrong by?” It does not answer, “How wrong were we relative to the motion this
-example required?” Those are different questions. For imitation learning, the
-second one is often closer to what matters.
-
-## The auxiliary trajectory losses
-
-We therefore keep the flow MSE and add four losses on the reconstructed action
-chunk $\hat a$. They do not require another model forward or an ODE solve: the
-one-step reconstruction is already available from $x_t$ and the predicted
-velocity. The metrics are computed at every sampled flow time and then averaged
-per training example.
-
-Let $h$ be the **hold-still trajectory**: the action chunk that repeats the
-robot's current pose and makes no motion. In anchor-encoded action space this is
-the zero trajectory. This gives each demonstration its own meaningful baseline.
-
-### 1. Relative path loss: did we reconstruct the chunk?
-
-The path term measures ordinary MSE over every valid time step and action
-dimension, then compares it with the error made by holding still:
+**Path.** The ordinary squared error over the chunk, expressed as a fraction of
+what standing still would cost. It answers whether the reconstruction as a whole
+is closer to the demonstration than doing nothing.
 
 $$
 R_{\mathrm{path}} =
-\frac{\operatorname{MSE}(\hat a,a)}
-{\max\left(\operatorname{MSE}(h,a),\tau_{\mathrm{path}}\right)}.
+\frac{\frac{1}{N}\sum_{k,d}\left(\hat a_{k,d}-a_{k,d}\right)^2}
+{\frac{1}{N}\sum_{k,d}\left(h_{k,d}-a_{k,d}\right)^2} .
 $$
 
-This term reads naturally: zero is exact, one is no better than doing nothing,
-and a value above one is worse than holding still.
+The numerator is the flow residual scaled by $(1-t)^2$; the denominator is what
+the term adds.
 
-Raw path MSE is not new information. At a fixed $t$ it is just the velocity MSE
-scaled by $(1-t)^2$. Its value here is the **hold-relative normalization and
-gating**. A small but badly reconstructed motion can now matter as much as a large
-motion with the same relative error.
-
-### 2. Relative shape loss: did we move the right way over time?
-
-The shape term applies MSE to adjacent differences:
+**Shape.** Two chunks can sit equally far from the demonstration on average while
+one tracks its motion and the other jitters around it. Differencing removes any
+constant offset and leaves only how the motion evolves from step to step:
 
 $$
 R_{\mathrm{shape}} =
-\frac{
-\operatorname{MSE}\left(\Delta\hat a,\Delta a\right)
-}{
-\max\left(\operatorname{MSE}(\Delta h,\Delta a),\tau_{\mathrm{shape}}\right)
-}.
+\frac{\frac{1}{N}\sum_{k,d}
+\big[(\hat a_{k,d}-\hat a_{k-1,d})-(a_{k,d}-a_{k-1,d})\big]^2}
+{\frac{1}{N}\sum_{k,d}
+\big[(h_{k,d}-h_{k-1,d})-(a_{k,d}-a_{k-1,d})\big]^2} ,
+\qquad k \ge 2 .
 $$
 
-Because a constant offset disappears under $\Delta$, this loss separates a
-trajectory's shape from its absolute bias. It is the term that distinguishes the
-smooth `[1, 1, 1, 1]` error from `[1, -1, 1, -1]`. Reversals, jitter, and badly
-timed changes become expensive even when their raw path MSE looks harmless.
+This separates the two residuals of Section 1, which the path term scores
+identically.
 
-### 3. Relative terminal loss: did we arrive at the right place?
-
-An action chunk is often judged by where it ends: whether the gripper reached the
-object, whether the wrist completed its rotation, or whether the arm stopped at
-the intended pose. Plain path MSE dilutes a terminal miss across the whole chunk.
-With a 30-step horizon, an error that appears only at the final step contributes
-only one thirtieth of the corresponding per-step error.
-
-The terminal term gives that last target its own objective:
+**Terminal.** Where the chunk ends is often what the task turns on — the gripper
+reaches the object or it does not. The path term dilutes a miss at the last step
+across the whole chunk, a thirtieth of its per-step size at a horizon of 30, so
+the last step is also scored on its own:
 
 $$
 R_{\mathrm{terminal}} =
-\frac{
-\operatorname{MSE}(\hat a_T,a_T)
-}{
-\max\left(\operatorname{MSE}(h_T,a_T),\tau_{\mathrm{terminal}}\right)
-}.
+\frac{\frac{1}{N}\sum_{d}\left(\hat a_{T,d}-a_{T,d}\right)^2}
+{\frac{1}{N}\sum_{d}\left(h_{T,d}-a_{T,d}\right)^2} .
 $$
 
-It uses the same interpretation as the path term: zero is exact and one is no
-better than never moving.
-
-### 4. Terminal direction loss: did we at least go the right way?
-
-Finally, we compare the predicted and demonstrated final displacements from the
-hold pose:
+**Direction.** The three terms above still reward a small error over a correct
+intent: a prediction that moves a little the wrong way scores better than one
+that moves the right way and overshoots. The cosine asks only where the final
+displacement points, and is unchanged if either displacement is rescaled. With
+$u_d = \hat a_{T,d} - h_{T,d}$ and $w_d = a_{T,d} - h_{T,d}$,
 
 $$
-R_{\mathrm{direction}} = 1-\cos\left(
-\hat a_T-h_T,\ a_T-h_T
-\right).
+R_{\mathrm{direction}} = 1 -
+\frac{\sum_{d} u_d\,w_d}
+{\sqrt{\sum_{d} u_d^2}\ \sqrt{\sum_{d} w_d^2}} .
 $$
 
-This is zero when the two displacements are aligned, one when they are
-perpendicular—or when the prediction does not move—and two when they point in
-opposite directions. Unlike MSE, it ignores displacement magnitude and asks only
-about intent. It is especially useful when the action is small: moving a little
-in the wrong direction should not look successful merely because the numbers are
-small. The term is undefined and omitted when the demonstrated final
-displacement is zero.
+This is zero for parallel displacements, one for orthogonal ones or when the
+prediction does not move, and two for antiparallel ones. It is omitted when the
+demonstrated final displacement is zero.
 
-## How the losses are combined
+## 4. Combination
 
-The auxiliary terms are additions to the base objective, not replacements:
+The terms are added to the base objective, not substituted for it:
 
 $$
-\mathcal L = \mathcal L_{\mathrm{flow}} +
-\sum_j \lambda_j\,\mathbf 1[R_j>\gamma_j]R_j.
+L = L_{\mathrm{flow}} + \sum_j w_j\, G_{g_j}(R_j),
+\qquad
+G_g(R) =
+\begin{cases}
+R, & R > g, \\
+0, & \text{otherwise.}
+\end{cases}
 $$
 
-Each term has its own weight $\lambda_j$ and optional threshold $\gamma_j$. The
-threshold is a hard gate, not a margin: below it the term contributes zero; above
-it the full value contributes. The base flow MSE continues to train every sample
-at every flow time, while the auxiliary losses spend extra gradient on examples
-that are still behaviorally poor.
+The threshold $g_j$ is a hard gate, not a margin: below it the term contributes
+nothing, above it its full value. All four weights are `0.05` and all four gates
+are `0.2`, so a term activates once its error exceeds 20% of the hold-still
+error.
 
-In the current configuration, all four weights are `0.05` and all four gates are
-`0.2`. Thus a relative term turns on when its reconstruction error exceeds 20% of
-the error made by holding still. Small denominator floors keep nearly stationary
-chunks from producing unbounded ratios. Padded action dimensions and padded
-timesteps are excluded from every calculation.
+## 5. Discussion
 
-## What this changes
+The flow loss states one requirement, that each velocity component be close to
+its target. The four terms add the error over the chunk, the error in its
+adjacent differences, the error at its final step, and the angle of the final
+displacement, each relative to the same example's hold-still baseline. The first
+three are the flow residual under different weightings; the fourth is independent
+of magnitude.
 
-The original MSE gives the model one undifferentiated instruction: make every
-velocity component numerically close to its target. The auxiliary losses turn
-that into four more useful questions:
-
-1. Is the whole reconstructed chunk better than doing nothing?
-2. Does it have the right temporal shape?
-3. Does it finish at the right target?
-4. Does its final motion point in the right direction?
-
-Together, these losses preserve the stability of flow-matching MSE while adding
-the structure that MSE averages away. They also place large and subtle actions on
-a shared, task-relative scale. A millimeter-scale correction can no longer hide
-simply because a different example moves the arm across the table.
-
-This still does not make the objective identical to task success. The losses live
-in normalized joint-action space; they do not directly know about collisions,
-contacts, object state, or Cartesian distance. They are better understood as
-guides for MSE: inexpensive signals that tell the optimizer which equal-MSE
-solutions look more like the demonstrated behavior.
+They are not a measure of task success: they live in normalized joint-action
+space and refer to nothing outside it — no collisions, contacts, object state, or
+Cartesian distance. They are inexpensive statistics that distinguish
+reconstructions the flow loss scores equally.
