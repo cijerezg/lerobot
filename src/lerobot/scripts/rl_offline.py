@@ -44,6 +44,7 @@ import tempfile
 import time
 import traceback
 import warnings
+from datetime import timedelta
 from pathlib import Path
 from pprint import pformat
 
@@ -289,6 +290,15 @@ def _run_validation_probes(
     output_root = os.path.join(cfg.output_dir, "validation", f"step_{step:08d}")
     was_training = policy.training
     policy.eval()
+    # Added 2026-08-17. Grads left over from the last actor update are a full
+    # trainable-param copy, and on multi-GPU rank 0 also carries DDP's flat gradient
+    # buckets — so the grad-driven probes (attention_budget, mem_*, action_trace) have
+    # materially less headroom here than in a single-GPU run and OOM into the per-probe
+    # except below, where the failure only surfaces as a warning. The next
+    # ``update_actor`` zero_grad()s anyway, and the caller clears probe-created grads on
+    # the way out, so dropping them here is free.
+    for parameter in policy.parameters():
+        parameter.grad = None
     try:
         adapter = _build_validation_adapter(policy, preprocessor, postprocessor, device, cfg)
 
@@ -515,18 +525,27 @@ def offline_train(
 
     require_package("accelerate", extra="training")
     from accelerate import Accelerator
-    from accelerate.utils import DistributedDataParallelKwargs
+    from accelerate.utils import DistributedDataParallelKwargs, InitProcessGroupKwargs
 
     cfg.validate()
     cfg.env.task = cfg.policy.task
 
     if accelerator is None:
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        # Added 2026-08-17. Non-main ranks idle inside a barrier while rank 0 runs the
+        # probe suite, ValLoss and checkpoint saves. NCCL's default collective timeout
+        # is 600s (accelerate forwards no override), and the full probe suite on a 5B
+        # policy runs far longer than that — the watchdog then tears down every idle
+        # rank while training itself looks healthy. Revert this handler if the process
+        # group needs the stock timeout back.
+        pg_kwargs = InitProcessGroupKwargs(
+            timeout=timedelta(seconds=int(os.environ.get("RL_OFFLINE_PG_TIMEOUT_S", 4 * 3600)))
+        )
         requested_device = getattr(cfg.policy, "learner_device", None) or cfg.policy.device
         accelerator = Accelerator(
             step_scheduler_with_optimizer=False,
             mixed_precision="no",
-            kwargs_handlers=[ddp_kwargs],
+            kwargs_handlers=[ddp_kwargs, pg_kwargs],
             cpu=str(requested_device).startswith("cpu"),
         )
     runtime = TrainingRuntime(accelerator)
@@ -841,7 +860,7 @@ def run_offline_training(
     if runtime.is_main_process and val_loss_frames > 0:
         from lerobot.rl.molmoact2.val_loss import ValLoss
 
-        val_loss = ValLoss(val_dataset, preprocessor, cfg, device, n_frames=val_loss_frames)
+        val_loss = ValLoss(val_dataset, preprocessor, cfg, device, n_frames=val_loss_frames, batch_size=8)
 
     if val_on_start:
         runtime.wait_for_everyone()
