@@ -153,6 +153,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 import numpy as np
 import torch
 
@@ -706,6 +707,67 @@ def _chunk_panel(fig, ax, by_query: np.ndarray, ordered: list[str], order: np.nd
     ])
 
 
+def _series_panel(ax, ordered: list[str], pct: np.ndarray, frame_meta: list[dict], layer: int) -> None:
+    """One line per segment against the frame axis, every line on the same baseline.
+
+    This panel used to be a stacked area, which cannot be read: a band's thickness is its
+    share but its position is the running total of the bands beneath it, so one segment
+    moving displaces every series above it and no single share can be traced or compared.
+    Sharing one baseline costs the "sums to 100%" cue — which the mean-share panel beside
+    it carries anyway — and buys the only thing anyone asks this panel: what fraction of
+    the budget went to depth, and did it move.
+
+    Shares span two decades (depth ~35%, residual ~0.3%), so the axis is logarithmic;
+    on a linear one the bottom half of the segments lie on the axis in a single smear.
+    Each line is named twice, in the legend with its mean and again at its right end, so
+    a reader tracing a line never has to match a hue against a swatch far away.
+    """
+    halo = [path_effects.withStroke(linewidth=3.0, foreground="white")]
+    steps = np.arange(pct.shape[0])
+    # A segment with no mass has no line. Clamping zero onto the log floor would draw it
+    # as a flat series at whatever the floor happens to be, which reads as a real share.
+    drawn = [i for i, _ in enumerate(ordered) if pct[:, i].max() > 0]
+    silent = [ordered[i] for i in range(len(ordered)) if i not in drawn]
+    positive = pct[pct > 0]
+    floor = float(positive.min()) * 0.7 if positive.size else 1e-3
+
+    for column in drawn:
+        series = np.where(pct[:, column] > 0, pct[:, column], np.nan)
+        ax.plot(steps, series, color=_color(ordered[column]), linewidth=1.6, marker="o",
+                markersize=2.6, zorder=3, path_effects=halo,
+                label=f"{ordered[column]} — {pct[:, column].mean():.1f}%")
+
+    _episode_rules(ax, frame_meta)
+    ax.set_yscale("log")
+    ax.set_xlim(-0.5, len(steps) - 0.5 + 0.20 * max(len(steps) - 1, 1))
+    ax.set_ylim(floor, float(pct.max()) * 1.6)
+    # Percentages, not scientific notation, and ticked at 1-2-5 within each decade: a
+    # plain log axis over this range labels only "10", which is one tick to read 13 series
+    # against. This panel is read for "about what percent", so the axis has to answer that.
+    ax.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0, 2.0, 5.0), numticks=15))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+    ax.grid(True, which="major", axis="y", color="#dddddd", linewidth=0.5, zorder=0)
+
+    # Direct end-labels as well as the legend: 13 hues is past what a swatch key resolves.
+    span = abs(np.log10(ax.get_ylim()[1]) - np.log10(ax.get_ylim()[0]))
+    ends = {ordered[i]: np.log10(max(pct[-1, i], floor)) for i in drawn if pct[-1, i] > 0}
+    for name, y in _declutter(ends, 0.055 * span):
+        ax.annotate(name, (steps[-1], 10.0 ** y), xytext=(5, 0), textcoords="offset points",
+                    fontsize=6.5, color=_color(name), fontweight="bold", va="center",
+                    annotation_clip=False, path_effects=halo)
+
+    ax.set_xlabel("sampled frame")
+    ax.set_ylabel("share of attention budget (%)")
+    ax.set_title(f"Share per segment, layer {layer} (log axis, shared baseline)"
+                 + (f" — no mass: {', '.join(silent)}" if silent else ""),
+                 fontsize=10)
+    # Below the axes, not over them: the lines run the full width of the panel and any
+    # in-axes anchor sits on top of the segments with the smallest shares.
+    ax.legend(fontsize=6.5, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.13),
+              frameon=False, handlelength=1.6, columnspacing=1.4)
+
+
 def _render(
     names: list[str],
     mass: np.ndarray,          # [frames, layers, segments]
@@ -730,18 +792,7 @@ def _render(
 
     fig, axes = plt.subplots(2, 2, figsize=(18, 10), constrained_layout=True)
 
-    ax = axes[0, 0]
-    ax.stackplot(
-        steps, focus_pct.T, labels=names,
-        colors=[_color(name) for name in names], alpha=0.9,
-    )
-    _episode_rules(ax, frame_meta)
-    ax.set_xlim(0, max(len(steps) - 1, 1))
-    ax.set_ylim(0, 100)
-    ax.set_xlabel("sampled frame")
-    ax.set_ylabel("share of attention budget (%)")
-    ax.set_title(f"Budget composition, layer {layers[focus]}")
-    ax.legend(fontsize=7, ncol=2, loc="upper right")
+    _series_panel(axes[0, 0], ordered, focus_pct[:, order], frame_meta, layers[focus])
 
     ax = axes[0, 1]
     means = focus_pct.mean(axis=0)[order]
@@ -1481,7 +1532,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "budget.png",
                 f"Attention budget across {len(frame_meta)} frames, focus layer {layers[focus]}",
                 "Four fixed-size panels using ordinary percentages and linear axes. "
-                "**Top left:** the complete 100% budget across sampled frames. "
+                "**Top left:** every segment's share against the frame axis, one line per segment on a "
+                "shared baseline and a log y-axis, so a share can be read off the axis and two "
+                "segments compared. Nothing is stacked: on a stacked area a band sits on the "
+                "running total beneath it, so one segment moving displaces every series above it. "
                 "**Top right:** each segment's mean share, with its min-to-max frame range. "
                 "**Bottom left:** mean percentage by probed layer. "
                 "**Bottom right:** mean percentage by action-chunk position. "

@@ -142,7 +142,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         return
 
     p = cfg.probe_parameters
-    tasks = _vocabulary(dataset, int(getattr(p, "task_sweep_max_labels", 16)))
+    tasks = _vocabulary(dataset, int(getattr(p, "task_sweep_max_labels", None) or p.max_labels))
     if len(tasks) < 2:
         logging.info("[task_sweep] dataset has fewer than two task strings — skipping.")
         return
@@ -150,8 +150,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     makedirs(output_dir)
     device = adapter.device
     chunk_size = int(cfg.policy.chunk_size)
-    n_seeds = max(int(getattr(p, "task_sweep_n_seeds", 3)), 2)
-    n_frames = int(getattr(p, "task_sweep_n_frames", 8))
+    n_seeds = max(int(getattr(p, "task_sweep_n_seeds", None) or p.n_seeds), 2)
+    n_frames = int(getattr(p, "task_sweep_n_frames", None) or p.n_frames_per_episode)
     samples = sample_episodes_evenly(
         dataset, n_frames, p.max_episodes, p.random_seed, probe_image_stride(cfg)
     )

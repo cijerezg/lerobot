@@ -311,6 +311,12 @@ class ProbeConfig:
     n_frames_per_episode: int = 128
     random_seed: int = 42
     timestep: float = 0.5  # single diffusion timestep used by all probes
+    # Every per-probe frame / episode / seed / label knob below defaults to None, meaning
+    # "inherit the common value above". Set one to a number only to hold a single probe
+    # down, and say why: the common knob is what a run is supposed to be tuned with, and a
+    # probe pinned to its own number silently stops tracking it.
+    n_seeds: int = 3  # flow draws behind every intervention probe's noise floor
+    max_labels: int = 16  # vocabulary ceiling for the subtask / task sweeps
     # Action sensitivity: sample real frames within every episode/subtask and
     # estimate each grouped full-horizon Jacobian norm with this many VJPs.
     action_sensitivity_frames_per_subtask: int = 6
@@ -342,8 +348,8 @@ class ProbeConfig:
     spatial_layers: str = "0,9,17"
     spatial_n_frames: int = 32  # total frames (1 per unique episode)
 
-    # Depth modality (2x2 conditions x FD sensitivity per frame, so keep it small)
-    depth_modality_n_frames: int = 6
+    # Depth modality: 2x2 conditions x FD sensitivity = ~6 forwards per frame.
+    depth_modality_n_frames: int | None = None
 
     # Attention budget. Reuses spatial_layers, and n_frames_per_episode unless
     # budget_n_frames_per_episode overrides it (one capture per frame covers every
@@ -356,30 +362,33 @@ class ProbeConfig:
     budget_fd_sensitivity: bool = False
 
     # Objective. One forward per frame per split, so the cost is
-    # n_frames_per_episode x episodes x 2. objective_max_episodes is split across the
-    # training sources, so it is the total train-side episode budget, not per source.
-    objective_n_frames_per_episode: int = 24
-    objective_max_episodes: int | None = 8
+    # n_frames_per_episode x episodes x 2 — the cheapest probe per frame, and the one whose
+    # val SEM decides whether a generalisation gap is readable, so it is the last to cut.
+    # objective_max_episodes is split across the training sources, so it is the total
+    # train-side episode budget, not per source; on the val side it is the episode cap.
+    objective_n_frames_per_episode: int | None = None
+    objective_max_episodes: int | None = None
     # Deterministic generated-vs-GT 3-D action traces at each of p5 / p50 / p95.
     objective_exemplars_per_band: int = 3
 
-    # Subtask sweep: n_frames x (max_labels + n_seeds) forwards, so keep all three small.
-    subtask_sweep_n_frames: int = 8
-    subtask_sweep_max_labels: int = 16
-    subtask_sweep_n_seeds: int = 3
+    # Subtask sweep: n_frames x (max_labels + n_seeds) forwards — ~20 per frame, the most
+    # expensive per frame of any probe, so this is the first place a common-knob rise bites.
+    subtask_sweep_n_frames: int | None = None
+    subtask_sweep_max_labels: int | None = None
+    subtask_sweep_n_seeds: int | None = None
     # Side figure only: a fan grid of this many joints x this many of the swept frames.
     subtask_sweep_fan_grid: int = 4
 
     # Task sweep: same intervention/noise-floor test over meta/tasks.parquet.
-    task_sweep_n_frames: int = 8
-    task_sweep_max_labels: int = 16
-    task_sweep_n_seeds: int = 3
+    task_sweep_n_frames: int | None = None
+    task_sweep_max_labels: int | None = None
+    task_sweep_n_seeds: int | None = None
 
     # Metadata steering: n_frames x (8 clauses + gt + n_seeds - 1) forwards. n_frames is
     # per episode and falls back to n_frames_per_episode; the conditionality panel splits
     # those frames by their true quality, so cutting it thins the columns, not the lines.
     metadata_steering_n_frames: int | None = None
-    metadata_steering_n_seeds: int = 3
+    metadata_steering_n_seeds: int | None = None
 
     # Critic values distribution
     critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution

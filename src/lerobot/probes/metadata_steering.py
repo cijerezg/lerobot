@@ -782,7 +782,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     p = cfg.probe_parameters
     device = adapter.device
     chunk_size = int(cfg.policy.chunk_size)
-    n_seeds = max(int(getattr(p, "metadata_steering_n_seeds", 3)), 2)
+    n_seeds = max(int(getattr(p, "metadata_steering_n_seeds", None) or p.n_seeds), 2)
     n_frames = int(getattr(p, "metadata_steering_n_frames", None) or p.n_frames_per_episode)
 
     gt_metadata = frame_metadata_lookup(dataset)

@@ -510,6 +510,9 @@ probe_parameters:
   n_frames_per_episode: 64
   random_seed: 42
   timestep: 0.5
+  # Inherited by every intervention probe (subtask sweep, task sweep, metadata steering).
+  n_seeds: 3                    # flow draws behind each probe's own noise floor
+  max_labels: 24                 # the relabelled corpus pools 36 subtask labels
   action_sensitivity_frames_per_subtask: 6  # evenly spread within each episode/subtask
   action_sensitivity_projections: 4         # VJPs per proximal-arm / wrist / gripper map
 
@@ -542,11 +545,6 @@ probe_parameters:
   critic_adv_frames: 32         # full: 1000
   critic_grad_frames: 8         # full: 200
 
-  # ---- Depth modality (2x2 conditions + 2 finite-difference forwards per frame) ----
-  # 6 frames x 6 forwards ~= 11 s. The per-layer b_l readout is static, so more frames
-  # only sharpen the MSE/sensitivity means.
-  depth_modality_n_frames: 6
-
   # ---- Attention budget ------------------------------------------------------
   # Attention mass says the action tokens READ a source; it does not say the read is
   # load-bearing. The FD series answers that at two extra forwards per frame.
@@ -558,37 +556,20 @@ probe_parameters:
   # Spearman, which are the numbers anything is concluded from.
   budget_n_frames_per_episode: 16
 
-  # ---- Subtask sweep ---------------------------------------------------------
-  # ---- Objective ------------------------------------------------------------
-  # One forward per frame per split. Val is 4 episodes, so 24 x 4 = 96 val frames; the
-  # train budget of 8 episodes is split across the four sources (2 each) for
-  # 8 x 24 = 192 train frames — 288 forwards per pass. Raise n_frames
-  # before episodes: the standard error on the val mean is what decides whether a gap
-  # is real, and frames within an episode are the cheap way to shrink it.
-  objective_n_frames_per_episode: 24
-  objective_max_episodes: 8
-
-  # Priced as n_frames x (max_labels + n_seeds) forwards. The relabelled corpus pools
-  # 36 subtask labels, up from 28, so the default max_labels=16 would sweep under half
-  # the vocabulary and read as "the clause does little" for the labels it skipped.
-  # 8 x (24 + 3) = 216 forwards covers two thirds, weighted to the frequent labels.
-  subtask_sweep_n_frames: 8
-  subtask_sweep_max_labels: 24
-  subtask_sweep_n_seeds: 3
-
-  # All held-out task strings on the same frame, with the true subtask/metadata kept.
-  # 8 frames per episode x (3 val tasks + 3 seeds) = 144 forwards.
-  task_sweep_n_frames: 8
-  task_sweep_max_labels: 16
-  task_sweep_n_seeds: 3
-
-  # Priced as n_frames x (8 clauses + gt + n_seeds - 1) = 11 forwards per frame. Unlike
-  # the sweep above, this one also compares ACROSS frames — the conditionality panel splits
-  # them by their true quality — so n_frames is what fills the columns, and val's mix
-  # (quality 2/3/4/5 only, ~2.5% of frames flagged as mistakes) decides how thin the
-  # thinnest one is. null = n_frames_per_episode: 3 x 64 x 11 = 2112 forwards.
-  metadata_steering_n_frames: null
-  metadata_steering_n_seeds: 3
+  # ---- Intervention sweeps and the objective ---------------------------------
+  # Nothing here sets its own frame count any more. objective, subtask_sweep, task_sweep,
+  # metadata_steering and depth_modality all sample n_frames_per_episode frames from
+  # max_episodes episodes, and the sweeps draw n_seeds flow noise draws over max_labels
+  # labels. Per-probe overrides still exist in ProbeConfig (all default to null = inherit)
+  # but a probe pinned to its own number stops tracking the common dial, which is how the
+  # objective ended up reporting a gap off two val frames — so pin one only with a reason.
+  #
+  # What the dial costs, per frame, per episode:
+  #   objective        1 forward   (per split, so x2)
+  #   attention budget 1 forward   (+2 with budget_fd_sensitivity)
+  #   depth modality   ~6 forwards
+  #   metadata steering ~11 forwards  (8 clauses + gt + n_seeds - 1)
+  #   subtask / task sweep  max_labels + n_seeds forwards  — the expensive ones
 
   # ---- Action trace (URDF clearance + multimodality fan) ---------------------
   # episodes x anchors x samples = forward passes. This is an inspector you page through

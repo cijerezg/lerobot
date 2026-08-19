@@ -138,8 +138,8 @@ def measure_split(adapter, datasets, cfg, split: str, timesteps: np.ndarray) -> 
     p = cfg.probe_parameters
     chunk_size = int(cfg.policy.chunk_size)
     stride = probe_image_stride(cfg)
-    n_frames = int(getattr(p, "objective_n_frames_per_episode", 24))
-    max_episodes = getattr(p, "objective_max_episodes", 8)
+    n_frames = int(getattr(p, "objective_n_frames_per_episode", None) or p.n_frames_per_episode)
+    max_episodes = getattr(p, "objective_max_episodes", None) or p.max_episodes
     grid = torch.from_numpy(timesteps).float()
     per_source = (
         None if max_episodes is None else max(int(max_episodes) // max(len(datasets), 1), 1)
@@ -248,8 +248,8 @@ def provenance(val_rows: list[dict], train_rows: list[dict], cfg, timesteps: np.
     return {
         "val": split_provenance(val_rows),
         "train": split_provenance(train_rows),
-        "frames_per_episode": int(getattr(p, "objective_n_frames_per_episode", 24)),
-        "episode_budget": getattr(p, "objective_max_episodes", None),
+        "frames_per_episode": int(getattr(p, "objective_n_frames_per_episode", None) or p.n_frames_per_episode),
+        "episode_budget": getattr(p, "objective_max_episodes", None) or p.max_episodes,
         "image_stride": probe_image_stride(cfg),
         "chunk_size": int(cfg.policy.chunk_size),
         "batch_size": 1,

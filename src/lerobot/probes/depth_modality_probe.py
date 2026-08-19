@@ -316,7 +316,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         frame_indices = [
             g for _, _, g in sample_episodes_evenly(
                 dataset,
-                int(getattr(p, "depth_modality_n_frames", 6)),
+                int(getattr(p, "depth_modality_n_frames", None) or p.n_frames_per_episode),
                 p.max_episodes,
                 p.random_seed,
                 probe_image_stride(cfg),
