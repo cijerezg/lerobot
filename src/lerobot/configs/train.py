@@ -334,7 +334,9 @@ class ProbeConfig:
     # Dataset-only spectrum diagnostic. The candidate bands partition DCT indices and
     # are reported, not silently treated as a recommendation. Empty = automatic
     # coarse partition for the configured horizon.
-    action_spectrum_bands: str = "dc=0;transport=1-2;maneuver=3-8;fine=9-"
+    action_spectrum_bands: str = (
+        "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20;untrusted_tail=21-"
+    )
     action_spectrum_n_frames_per_episode: int | None = None
     action_spectrum_max_episodes: int | None = None
     # Where the fitted reference manifold is cached. None = action_manifold.pt one level

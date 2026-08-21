@@ -107,9 +107,15 @@ def infer_molmoact2_max_sequence_length(
 
 @dataclass
 class ActionAuxiliaryLossConfig:
-    """Independent, optionally threshold-gated hold-relative trajectory losses."""
+    """Fixed gamma-tempered DCT metric added to the ordinary flow MSE."""
 
     enabled: bool = False
+    weight: float = 1.0
+    band_spec: str = ""
+    band_powers: tuple[float, ...] = ()
+    gamma: float = 0.25
+    # Parse-only compatibility for recursively merged checkpoints trained with the
+    # removed hold-relative auxiliary. No active loss code reads these fields.
     path_weight: float = 0.0
     path_threshold: float | None = None
     shape_weight: float = 0.0
@@ -121,31 +127,47 @@ class ActionAuxiliaryLossConfig:
     eps: float = 1e-6
 
     def __post_init__(self) -> None:
-        for name in ("path", "shape", "terminal", "direction"):
-            weight = getattr(self, f"{name}_weight")
-            threshold = getattr(self, f"{name}_threshold")
-            if weight < 0:
-                raise ValueError(f"{name}_weight must be non-negative, got {weight}.")
-            if threshold is not None and threshold <= 0:
-                raise ValueError(f"{name}_threshold must be positive or null, got {threshold}.")
-        if self.direction_threshold is not None and self.direction_threshold > 2:
-            raise ValueError(
-                "direction_threshold cannot exceed 2 because direction loss is 1 - cosine similarity."
+        if self.weight < 0:
+            raise ValueError(f"action auxiliary weight must be non-negative, got {self.weight}.")
+        if not 0 <= self.gamma <= 1:
+            raise ValueError(f"action auxiliary gamma must be in [0, 1], got {self.gamma}.")
+        if any(float(power) <= 0 or not math.isfinite(float(power)) for power in self.band_powers):
+            raise ValueError("action auxiliary band_powers must be finite and strictly positive.")
+        if self.enabled:
+            legacy_enabled = any(
+                float(getattr(self, f"{name}_weight")) > 0
+                for name in ("path", "shape", "terminal", "direction")
             )
-        if self.eps <= 0:
-            raise ValueError(f"eps must be positive, got {self.eps}.")
-        if self.enabled and not any(
-            getattr(self, f"{name}_weight") > 0 for name in ("path", "shape", "terminal", "direction")
-        ):
-            raise ValueError("enabled action auxiliary loss requires at least one positive weight.")
+            if self.weight <= 0:
+                raise ValueError("enabled action auxiliary loss requires a positive weight.")
+            has_spec = bool(self.band_spec.strip())
+            has_powers = bool(self.band_powers)
+            if has_spec != has_powers:
+                raise ValueError(
+                    "enabled action auxiliary loss requires band_spec and fixed band_powers."
+                )
+            if not has_spec:
+                if legacy_enabled:
+                    self.enabled = False
+                else:
+                    raise ValueError(
+                        "enabled action auxiliary loss requires band_spec and fixed band_powers."
+                    )
+            else:
+                for name in ("path", "shape", "terminal", "direction"):
+                    setattr(self, f"{name}_weight", 0.0)
+                    setattr(self, f"{name}_threshold", None)
 
 
 @dataclass
 class DiscreteActionAuxiliaryLossConfig:
-    """Zero-parameter ordinal and hold-relative losses derived from FAST-token logits."""
+    """Band-balanced ordinal score derived from teacher-forced FAST-token logits."""
 
     enabled: bool = False
     ordinal_weight: float = 0.0
+    band_spec: str = "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20"
+    # Parse-only compatibility for checkpoints trained with the removed coefficient-
+    # mean path and shape auxiliaries. No active loss code reads these fields.
     path_weight: float = 0.0
     shape_weight: float = 0.0
 
@@ -154,10 +176,22 @@ class DiscreteActionAuxiliaryLossConfig:
             weight = float(getattr(self, f"{name}_weight"))
             if weight < 0:
                 raise ValueError(f"{name}_weight must be non-negative, got {weight}.")
-        if self.enabled and not any(
-            float(getattr(self, f"{name}_weight")) > 0 for name in ("ordinal", "path", "shape")
-        ):
-            raise ValueError("enabled discrete action auxiliary loss requires at least one positive weight.")
+        if self.enabled:
+            legacy_enabled = self.path_weight > 0 or self.shape_weight > 0
+            if self.ordinal_weight <= 0:
+                if legacy_enabled:
+                    self.enabled = False
+                else:
+                    raise ValueError(
+                        "enabled discrete action auxiliary loss requires a positive ordinal_weight."
+                    )
+            elif not self.band_spec.strip():
+                raise ValueError(
+                    "enabled discrete action auxiliary loss requires a non-empty band_spec."
+                )
+            else:
+                self.path_weight = 0.0
+                self.shape_weight = 0.0
 
 
 @dataclass
@@ -387,11 +421,6 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError(f"max_sequence_length must be >= 1 or None, got {self.max_sequence_length}.")
         if self.action_auxiliary_loss.enabled and self.action_mode == "discrete":
             raise ValueError("action_auxiliary_loss requires a continuous action expert.")
-        if self.action_auxiliary_loss.enabled and getattr(self, "action_encoding", "absolute") == "delta":
-            raise ValueError(
-                "action_auxiliary_loss does not support delta action encoding: final position and "
-                "trajectory shape are not represented directly in delta space."
-            )
         if self.discrete_action_auxiliary_loss.enabled and self.action_mode == "continuous":
             raise ValueError("discrete_action_auxiliary_loss requires action_mode='discrete' or 'both'.")
         if self.depth_gripper_event_loss.enabled and self.pointmap_config is None:

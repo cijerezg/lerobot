@@ -291,78 +291,54 @@ policy:
   #     --name rebot-annot-v3 --root <every root listed in dataset.sources>
   action_encoding_stats_path: outputs/stats/action_stats_anchor_rebot-annot-v3.pt
 
-  # ---- Optional action-trajectory auxiliary loss ---------------------------
-  # pi07_wiki/05_training.md §2.1. The base flow loss still applies to every sample
-  # and every flow time; these are ADDED per sample, never a replacement.
+  # ---- Fixed temporal-band auxiliary on the flow residual ------------------
+  # Ordinary flow MSE remains unchanged and covers all k=0..29. This adds a second
+  # fixed quadratic metric directly on r = v_theta - u; no clean-action
+  # reconstruction, target-dependent denominator, threshold, or ODE solve.
   #
-  # The flow branch predicts a velocity, so the metrics are taken on the one-step
-  # denoised chunk a_hat = x_t + (1-t)*v_theta at each sampled flow time, then
-  # averaged over flow times. No extra forward, no ODE solve.
+  # The six declared bands cover k=0..20. The k=21..29 (>10 Hz) untrusted tail is
+  # absent from this auxiliary but remains penalized by ordinary flow MSE, so it is
+  # not an unconstrained output subspace. Tail-padded chunks skip only the auxiliary.
   #
-  # Path, shape, and terminal errors are divided per chunk by the matching error of
-  # the hold-still predictor (with the shared corpus-derived denominator floors).
-  # Thus 0 is exact, 1 is no better than hold, and >1 is worse than hold. Raw MSEs
-  # remain telemetry only. Direction is already dimensionless.
+  # beta_b(gamma) is the normalized geometric interpolation between the MSE-width
+  # budget |B_b|/T and the inverse corpus-power budget 1/P_b. gamma=0 is MSE-shaped
+  # over the selected signal coefficients; gamma=1 equalizes their expected target-
+  # energy contribution; gamma=1/4 applies one quarter of that log-space correction.
+  # beta sums to one, so on a temporally white residual the unscaled auxiliary has
+  # the same magnitude as MSE. `weight` is the explicit additive coefficient.
   #
-  # Each term is independent: weight 0 disables it. A numeric threshold is a HARD
-  # GATE on the flow-time-averaged relative metric, not a hinge — below it the term
-  # contributes exactly 0, above it the term contributes its FULL value (there is no
-  # subtraction of the threshold). null = apply on every valid sample. Samples whose
-  # metric is NaN (padded terminal step, or a target that never moves from hold) are
-  # inactive for that term either way.
-  #
-  # The 0.5 thresholds activate each term above half of its hold-baseline error.
-  # The action-trace probe keeps richer quantiles in action_metrics.json for offline
-  # inspection, while live training telemetry stays compact.
-  #
-  # Requires action_encoding != delta (config rejects it) and batch["action_hold"].
-  # Logged as loss_action_aux, val_loss_action_aux, each optimized relative term's
-  # mean, and its active fraction (how often the gate fired).
+  # band_powers are mean squared DCT coefficients in hold-relative model space from
+  # outputs/probe/action_spectrum/action_spectrum.json (507 full validation chunks).
+  # Recompute them if action normalization, chunk size, encoding, or dataset changes.
   action_auxiliary_loss:
     enabled: true
-    path_weight: 5.0e-2
-    path_threshold: 0.2       # path error / hold path power
-    shape_weight: 5.0e-2
-    shape_threshold: 0.2      # adjacent-difference error / hold shape power
-    terminal_weight: 5.0e-2
-    terminal_threshold: 0.2   # final-position error / hold final-displacement power
-    direction_weight: 5.0e-2
-    direction_threshold: 0.2  # 1 - cos of final displacement from hold; 0 aligned, 1 perpendicular, 2 opposite
+    weight: 1.0
+    gamma: 0.25
+    band_spec: "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20"
+    band_powers: [1.0086008381, 0.0411540009, 0.0067903467, 0.0012663327, 0.0001327078, 0.0000066883]
 
-  # ---- Optional FAST-token trajectory auxiliary loss ----------------------
-  # pi07_wiki/05_training.md §2.2. The existing FAST BPE CE is unchanged; these are
-  # ADDED to it. Zero new parameters — all three read the discrete head's own
-  # teacher-forced logits. Requires action_mode discrete or both.
+  # ---- Optional FAST-token ordinal auxiliary loss -------------------------
+  # The existing autoregressive FAST BPE CE is unchanged. This zero-parameter term is
+  # added to it and reads the discrete head's teacher-forced logits.
   #
-  # Construction: under teacher forcing the ground-truth tokens pin every token
-  # boundary, so each of the 30*7 = 210 DCT coefficient slots is covered by exactly
-  # one token position. Grouping that position's logits by the coefficient value each
-  # candidate token would place at that slot (tokens too short fall in a drop bin,
-  # excluded from the normalizer) gives a marginal q_n per slot.
+  # Ground-truth tokens pin each BPE boundary. At each DCT coefficient slot, candidate
+  # token logits are grouped by the ordered coefficient value that token places there;
+  # candidates too short to reach the slot are conditioned away. Cumulative-threshold
+  # binary CE gives one ordinal score per coefficient slot.
   #
-  #   ordinal  cumulative-threshold binary CE over the ordered bins, meaned over cuts
-  #            and then UNIFORMLY over all 210 slots. Note: coefficient energy is
-  #            concentrated in the low frequencies and the high-frequency slots are
-  #            covered by long zero-run merge tokens, so read discrete_aux/ordinal_ce
-  #            before trusting what this number is measuring.
-  #   path     (E[c] - c*)^2 / scale^2. By Parseval this IS the per-element
-  #            trajectory MSE — computed in DCT space, no IDCT.
-  #   shape    the same squared error reweighted by 4 sin^2(pi k / 2T), which is
-  #            exactly the adjacent-difference MSE.
+  # Reduction is mean over dimensions and coefficients within a band, then mean over
+  # the six bands. Each band therefore receives exactly 1/6 of the ordinal auxiliary
+  # budget regardless of width. k=21..29 is excluded from this auxiliary as the
+  # untrusted tail; base token CE still supervises every ground-truth BPE token.
   #
-  # path/shape are regression terms on the MEAN coefficient, divided by the target
-  # chunk's matching hold-baseline power; only ordinal stays in the CE family and is
-  # intentionally not power-normalized. The base FAST token CE is also unchanged.
-  # The master switch is authoritative; each weight selects a term.
-  # NOT YET RUN END-TO-END — smoke this on a few steps before a real run, and watch
-  # step time (the components are computed in a per-example Python loop).
-  # Logged as loss_discrete_aux, val_loss_discrete_aux, and the mean of ordinal,
-  # relative path, and relative shape.
+  # ordinal_weight is the explicit coefficient against base token CE. There are no
+  # coefficient-mean path or shape losses and no per-example power normalization.
+  # Logged as loss_discrete_aux, val_loss_discrete_aux, ordinal_ce, and each band's
+  # ordinal CE. The component calculation remains a per-example Python loop.
   discrete_action_auxiliary_loss:
     enabled: true
     ordinal_weight: 5.0e-1
-    path_weight: 5.0e-1
-    shape_weight: 5.0e-1
+    band_spec: "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20"
 
   # ---- Feature schema -------------------------------------------------------
   normalization_mapping:
@@ -536,7 +512,7 @@ probe_parameters:
   action_nn_state_k: 256
   # Candidate DCT partition for the action-spectrum diagnostic. These labels do not
   # choose beta: the probe compares MSE-width, equal-band, and corpus-equalising beta.
-  action_spectrum_bands: "dc=0;transport=1-2;maneuver=3-8;fine=9-"
+  action_spectrum_bands: "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20;untrusted_tail=21-"
   action_spectrum_n_frames_per_episode: 256
   action_spectrum_max_episodes: null  # null = every validation episode
   repr_pca_dims: 48             # representations has 64 samples to fit

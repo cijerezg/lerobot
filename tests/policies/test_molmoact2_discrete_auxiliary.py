@@ -21,7 +21,7 @@ def test_discrete_auxiliary_config_has_master_switch_and_validates_weights() -> 
     disabled = DiscreteActionAuxiliaryLossConfig()
     assert not disabled.enabled
 
-    with pytest.raises(ValueError, match="at least one positive weight"):
+    with pytest.raises(ValueError, match="positive ordinal_weight"):
         DiscreteActionAuxiliaryLossConfig(enabled=True)
     with pytest.raises(ValueError, match="ordinal_weight must be non-negative"):
         DiscreteActionAuxiliaryLossConfig(ordinal_weight=-1.0)
@@ -29,6 +29,13 @@ def test_discrete_auxiliary_config_has_master_switch_and_validates_weights() -> 
     enabled = DiscreteActionAuxiliaryLossConfig(enabled=True, ordinal_weight=0.25)
     assert enabled.enabled
     assert enabled.ordinal_weight == 0.25
+    assert enabled.path_weight == enabled.shape_weight == 0
+
+    with pytest.raises(ValueError, match="non-empty band_spec"):
+        DiscreteActionAuxiliaryLossConfig(enabled=True, ordinal_weight=0.25, band_spec="")
+
+    legacy = DiscreteActionAuxiliaryLossConfig(enabled=True, path_weight=0.5)
+    assert not legacy.enabled
 
 
 def test_grouped_logsumexp_matches_direct_computation_and_has_finite_gradients() -> None:
@@ -81,21 +88,19 @@ def test_cumulative_ordinal_ce_is_finite_for_extreme_wrong_logits() -> None:
     assert logits.grad.abs().max() <= 1
 
 
-def test_fast_auxiliary_path_and_shape_use_conditional_coefficient_means() -> None:
-    # One ground-truth token represents two coefficients [0, 0] (T=2, D=1).
-    # Candidate token values by offset:
-    #   v0 -> [0, 0], length 2, probability 1/2 (ground truth)
-    #   v1 -> [1],    length 1, probability 1/4 (cannot reach offset 1)
-    #   v2 -> [-1,1], length 2, probability 1/4
-    # At offset 0 the conditional mean is 0. At offset 1 it is 1/3, because v1
-    # is conditioned away. Hence path MSE=1/18 and shape MSE=2/9 at scale 1.
-    logits = torch.log(torch.tensor([[0.5, 0.25, 0.25]])).requires_grad_()
-    token_lengths = torch.tensor([2, 1, 2])
-    # Real bins are [-1, 0, 1] -> [0, 1, 2]; 3 is the non-reaching sentinel.
+def test_fast_auxiliary_balances_bands_and_excludes_untrusted_tail() -> None:
+    # The ground-truth token represents [0, 0, 0, 0] (T=4, D=1). The other
+    # candidate is wrong at k=0,1,3 but correct at k=2. Its k=3 error must not
+    # affect the loss because the band spec stops at k=2.
+    logits = torch.log(torch.tensor([[0.75, 0.25]])).requires_grad_()
+    token_lengths = torch.tensor([4, 4])
+    # Real bins are [0, 1]; 2 is the non-reaching sentinel.
     value_bins_by_offset = torch.tensor(
         [
-            [1, 2, 0],
-            [1, 3, 2],
+            [0, 1],
+            [0, 1],
+            [0, 0],
+            [0, 1],
         ]
     )
 
@@ -105,22 +110,19 @@ def test_fast_auxiliary_path_and_shape_use_conditional_coefficient_means() -> No
         torch.tensor([0]),
         token_lengths=token_lengths,
         value_bins_by_offset=value_bins_by_offset,
-        coefficient_values=torch.tensor([-1.0, 0.0, 1.0]),
-        coefficient_min=-1,
-        horizon=2,
-        scale=1.0,
+        num_bins=2,
+        horizon=4,
         batch_size=1,
-        target_actions=torch.zeros(1, 2, 1),
-        hold_actions=torch.tensor([[[1.0], [-1.0]]]),
+        band_spec="dc=0;wide=1-2",
     )
 
-    torch.testing.assert_close(components["path_mse"], torch.tensor([1.0 / 18.0]))
-    torch.testing.assert_close(components["shape_mse"], torch.tensor([2.0 / 9.0]))
-    torch.testing.assert_close(components["path_relative"], torch.tensor([1.0 / 18.0]))
-    torch.testing.assert_close(components["shape_relative"], torch.tensor([1.0 / 18.0]))
-    assert torch.isfinite(components["ordinal_ce"]).all()
+    wrong = torch.tensor([-math.log(0.75)])
+    torch.testing.assert_close(components["band_dc_ordinal_ce"], wrong)
+    torch.testing.assert_close(components["band_wide_ordinal_ce"], wrong / 2)
+    torch.testing.assert_close(components["ordinal_ce"], 3 * wrong / 4)
+    assert set(components) == {"ordinal_ce", "band_dc_ordinal_ce", "band_wide_ordinal_ce"}
 
-    sum(value.sum() for value in components.values()).backward()
+    components["ordinal_ce"].sum().backward()
     assert logits.grad is not None
     assert torch.isfinite(logits.grad).all()
 
@@ -147,7 +149,6 @@ def test_fast_auxiliary_table_builder_aligns_lm_and_bpe_ids() -> None:
 
     assert tables["action_lm_ids"].tolist() == [101, 102, 103]
     assert tables["token_lengths"].tolist() == [1, 2, 1]
-    assert tables["coefficient_min"] == -1
-    assert tables["coefficient_values"].tolist() == [-1.0, 0.0, 1.0]
+    assert tables["num_bins"] == 3
     # BPE id 0 says value 0 at offset 0 and does not reach offset 1.
     assert tables["value_bins_by_offset"][:, 0].tolist() == [1, 3]

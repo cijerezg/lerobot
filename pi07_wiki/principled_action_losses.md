@@ -1,6 +1,6 @@
 # Choosing a Principled Action Objective
 
-**Status:** decision memo. This is a companion to
+**Status:** flow and FAST objectives selected and implemented. This is a companion to
 [action_trajectory_losses.md](action_trajectory_losses.md), not a replacement for
 its band analysis. That note contains the DCT definitions, path/shape equivalence,
 frequency interpretation, gripper discussion, and option catalogue. Those
@@ -24,20 +24,17 @@ problems:
 They may be evaluated with the same trajectory decomposition, but they need not
 use the same training loss.
 
-The conservative recommendation is:
+The selected flow objective is:
 
-1. **Flow:** compare ordinary flow MSE against a **fixed equal-band quadratic
-   metric used as the flow loss itself**, not added as an auxiliary. Replacement
-   avoids an arbitrary auxiliary coefficient.
-2. **FAST:** retain token cross-entropy. Report bandwise coefficient/ordinal
-   diagnostics first. Add a trajectory-aware FAST score only if those diagnostics
-   expose a failure that matters for rollout behavior.
+1. **Flow:** retain ordinary flow MSE on every DCT coefficient and add the fixed
+   gamma-tempered band metric defined in §7. The old hold-relative path, shape,
+   terminal, and direction auxiliaries are removed.
+2. **FAST:** unchanged by this decision. Its objective will be discussed separately.
 3. **Dimension normalization:** the dataset transform already supplies a fixed
    per-dimension metric. Add another fixed dimension weight only to express an
    explicit priority not captured by that transform, and test it separately.
-4. **Dataset statistics:** use fixed per-(band, dimension) power only as a separate
-   ablation with the explicit interpretation “equal relative error across corpus
-   bands.” Do not mix it into the default band objective.
+4. **Dataset statistics:** use the fixed corpus band powers measured by the action
+   spectrum diagnostic to temper, rather than fully equalize, band contributions.
 5. **Per-example denominators:** treat them as a serious alternative when relative
    accuracy on small motions is the goal, but recognize that they perform deliberate
    importance weighting rather than neutral normalization.
@@ -562,60 +559,109 @@ Only after that decision should weights or floors be estimated.
 
 ---
 
-## 7. Recommendation for the flow expert
+## 7. Implemented flow objective
 
-Run the following controlled comparison:
-
-1. ordinary flow MSE, equation (5.2);
-2. equal-band flow loss, equation (5.3);
-3. optionally, corpus-relative band loss, equation (5.5).
-
-Use each as the complete flow loss rather than adding it to ordinary MSE. Keep the
-other reductions as diagnostics on the same validation batches.
-
-This experiment answers two clean questions:
-
-1. Does equalizing semantic temporal bands improve the finite-capacity action
-   expert?
-2. If so, does additional corpus-relative normalization help, or merely amplify
-   inactive bands?
-
-Do not combine per-example normalization with the band change in the first
-experiment. Its effect is qualitatively different and should be isolated after the
-fixed-metric comparison. This is sequencing, not a rejection of the idea: if the
-measured failure is poor **relative** accuracy on small motions, per-example
-normalization is the objective that addresses it most directly.
-
-For that experiment, compare the least granular variants first:
-
-1. one scalar denominator for the whole chunk, equation (3.14);
-2. one denominator per chunk and action dimension, equation (3.15);
-3. only then, one denominator per chunk, dimension, and band, equation (5.6).
-
-This ordering reveals whether the benefit comes from reweighting demonstrations,
-balancing dimensions within a demonstration, or balancing temporal bands. Report
-the denominator distribution, fraction of samples hitting the floor, and effective
-weight quantiles; otherwise the result cannot be interpreted.
-
-Likewise, do not add another dimension normalization automatically. First inspect
-dimensionwise residuals and rollout failures under the existing dataset transform.
-If a dimension is underweighted, test a fixed dimension metric as its own ablation
-before making it example-dependent.
-
-The quadratic loss should be computed directly on the velocity residual
-$r_\theta$. The one-step clean-action error is
+The chosen partition for $T=30$ is
 
 $$
-\widehat a-a=(1-\tau)r_\theta,
+\mathcal B=(\{0\},\{1\},\{2\},\{3\},\{4,\ldots,9\},\{10,\ldots,20\}).
 \tag{7.1}
 $$
 
+Indices $21,\ldots,29$ form an untrusted tail. They are excluded from the band
+auxiliary, not from ordinary flow MSE.
+
+For each selected band, the diagnostic supplies one fixed mean target power $P_b$.
+Let $m_b=|\mathcal B_b|$. Define the tempered band budget
+
+$$
+\boxed{
+\beta_b(\gamma)
+=
+\frac{(m_b/T)^{1-\gamma}P_b^{-\gamma}}
+{\sum_c(m_c/T)^{1-\gamma}P_c^{-\gamma}}.
+}
+\tag{7.2}
+$$
+
+Thus $\gamma=0$ is MSE-width weighting normalized over the selected signal
+subspace, while $\gamma=1$ is full inverse-power equalization. The selected value
+$\gamma=1/4$ applies one quarter of the correction in log space.
+
+With $r_{f}=v_\theta(X_{\tau_f},\tau_f,C)-U$ and orthonormal DCT coefficients
+$\widetilde r_f$, define
+
+$$
+L_{\mathrm{band}}
+=\frac1F\sum_{f=1}^F\sum_b\beta_b
+\frac{1}{m_bD}\sum_{k\in\mathcal B_b}\sum_d
+|\widetilde r_{f,k,d}|^2.
+\tag{7.3}
+$$
+
+The implemented loss is additive:
+
+$$
+\boxed{
+L_{\mathrm{flow,total}}
+=L_{\mathrm{flow,MSE}}+\lambda_{\mathrm{band}}L_{\mathrm{band}},
+\qquad \lambda_{\mathrm{band}}=1.
+}
+\tag{7.4}
+$$
+
+The outer coefficient is explicit. Because $\sum_b\beta_b=1$, a temporally white
+residual gives the unscaled band term the same value as MSE; $\lambda=1$ therefore
+gives the two metrics equal scale under that reference residual.
+
+The fixed powers and resulting budgets are:
+
+| band | width | $P_b$ | $\beta_b(1/4)$ | total per-coefficient multiplier versus MSE |
+|---|---:|---:|---:|---:|
+| $k=0$ | 1 | 1.0086008381 | 0.00599340 | 1.1798 |
+| $k=1$ | 1 | 0.0411540009 | 0.01333522 | 1.4001 |
+| $k=2$ | 1 | 0.0067903467 | 0.02092330 | 1.6277 |
+| $k=3$ | 1 | 0.0012663327 | 0.03183950 | 1.9552 |
+| $k=4\ldots9$ | 6 | 0.0001327078 | 0.21453220 | 2.0727 |
+| $k=10\ldots20$ | 11 | 0.0000066883 | 0.71337639 | 2.9456 |
+| $k=21\ldots29$ | 9 | not used | 0 | 1.0000 |
+
+The last column is
+
+$$
+1+\lambda_{\mathrm{band}}\frac{T\beta_b}{m_b},
+\tag{7.5}
+$$
+
+and includes the unchanged unit MSE weight. This shows why a numerically large
+budget for the wide $10\ldots20$ band does not mean a $71\times$ coefficient
+multiplier.
+
+The $P_b$ values are fixed constants measured in hold-relative normalized model
+space over 507 full validation chunks. They must be recomputed if the action
+encoding, action normalization, chunk length, control rate, or dataset changes.
+They never depend on the current training example, so the metric remains fixed and
+the population optimum result in §3.2 still applies.
+
+The loss is computed directly on the velocity residual. The one-step clean-action
+error is
+
+$$
+\widehat a-a=(1-\tau)r_\theta,
+\tag{7.6}
+$$
+
 so reconstructing and dividing by $(1-\tau)^2$ only adds numerical conditioning
-problems near $\tau=1$.
+problems near $\tau=1$. Padded action dimensions are masked. A chunk with any
+tail-padding skips the band auxiliary because a fixed-length DCT of a padded chunk
+does not have the intended spectrum; ordinary MSE still applies to its valid steps.
+
+The FAST choice below uses the same fixed partition for interpretability, but it is
+an independent objective on the VLM backbone and does not share the flow metric.
 
 ---
 
-## 8. Recommendation for FAST
+## 8. Selected objective for FAST
 
 FAST is not a continuous regressor. Its base objective is autoregressive token
 cross-entropy:
@@ -631,23 +677,21 @@ This objective handles token identity, BPE length, and autoregressive boundary
 propagation. A bandwise coefficient loss cannot replace it without losing those
 properties.
 
-### 8.1 First use bands as diagnostics
+### 8.1 Selected band-balanced ordinal auxiliary
 
-Using the existing teacher-forced coefficient marginals, report by band and
-dimension:
+Ground-truth BPE tokens fix each token boundary. For coefficient slot $(k,d)$,
+candidate-token logits are grouped by the ordered coefficient value that the token
+would place at that slot; candidates too short to reach the slot are conditioned
+away. This gives the teacher-forced coefficient marginal $q_{k,d}$ used by the
+cumulative ordinal score $\ell_{\mathrm{ord}}$.
 
-- ordinal score;
-- squared error of the coefficient mean;
-- expected squared coefficient error;
-- correct-token mass and covered mass;
-- error conditioned on gripper switching or other important events.
+For $T=30$, the trusted bands are $\{0\}$, $\{1\}$, $\{2\}$, $\{3\}$,
+$\{4,\ldots,9\}$, and $\{10,\ldots,20\}$. Coefficients $k=21,\ldots,29$ form the
+untrusted tail and are excluded from the ordinal auxiliary only.
 
-These diagnostics determine whether FAST CE actually has a band-specific failure.
-They do not require a new training coefficient.
+### 8.2 Implemented objective and reduction
 
-### 8.2 If an ordinal auxiliary is justified
-
-A band-balanced ordinal score can mirror (5.3):
+The selected band-balanced ordinal score is
 
 $$
 L_{\mathrm{FAST,ord\ band}}
@@ -658,7 +702,7 @@ L_{\mathrm{FAST,ord\ band}}
 \tag{8.2}
 $$
 
-The total FAST objective would be
+The implemented FAST objective is
 
 $$
 L_{\mathrm{FAST}}
@@ -667,15 +711,18 @@ L_{\mathrm{FAST}}
 \tag{8.3}
 $$
 
-Unlike the flow replacement, $\lambda_{\mathrm{ord}}$ is unavoidable because CE
-must remain. There is no universal theoretical value. If this experiment becomes
-necessary:
+Unlike the flow auxiliary, $\lambda_{\mathrm{ord}}$ is unavoidable because token CE
+must remain and the two terms have different units. The current configuration uses
+$\lambda_{\mathrm{ord}}=0.5$; this is an explicit starting coefficient, not a value
+derived from the flow power statistics.
 
-1. normalize both losses by their documented reductions;
-2. report the auxiliary/base gradient norm ratio on VLM parameters;
-3. sweep a small fixed set of coefficients;
-4. require rollout or representation-level improvement, not merely lower ordinal
-   loss.
+The reduction in (8.2) means:
+
+- every trusted band receives total weight $1/6$;
+- coefficients within a band divide that band's weight uniformly;
+- action dimensions divide each coefficient's weight uniformly;
+- the untrusted tail receives zero ordinal-auxiliary weight but remains supervised
+  through ordinary token CE.
 
 The current teacher-forced marginal is conditioned on the demonstrated BPE
 boundary. It does not model the downstream shift caused by a wrong-length token.
@@ -758,16 +805,14 @@ multi-step composition.
 
 ## 10. Minimal experimental plan
 
-### Phase A: no new FAST training term
+### Phase A: selected objectives
 
-Train:
+Train the two independent heads with:
 
-1. flow MSE;
-2. equal-band flow replacement;
-3. corpus-relative band replacement only if its fixed weights are numerically
-   reasonable.
+1. ordinary flow MSE plus the fixed gamma-tempered band auxiliary in §7;
+2. ordinary FAST token CE plus the band-balanced ordinal auxiliary in §8.
 
-Keep FAST CE unchanged in all three.
+Ablate each auxiliary independently before interpreting a joint run.
 
 ### Phase B: diagnostics
 
@@ -775,7 +820,7 @@ For every checkpoint, report:
 
 - flow residual under all three reductions;
 - residual by band and action dimension;
-- FAST ordinal and coefficient errors by the same bands;
+- FAST ordinal error by the same bands;
 - rollout success and failure category;
 - gripper event accuracy and timing;
 - executed-action chatter or jerk;
@@ -789,9 +834,10 @@ relatively, compare the scalar, per-dimension, and finally per-band per-example
 denominators in the order given in §7. Do not change the band metric in the same
 ablation.
 
-### Phase D: only if FAST diagnostics justify it
+### Phase D: validate the FAST coefficient
 
-Test the band-balanced ordinal auxiliary with an explicit coefficient sweep.
+Compare the current $\lambda_{\mathrm{ord}}=0.5$ against the ordinal-off control and
+at most one neighboring value while holding the band partition fixed.
 
 ### Acceptance criterion
 

@@ -315,35 +315,37 @@ class MolmoAct2Adapter(ProbablePolicy):
                 float(metrics["depth_gripper_open_bce"])
                 if "depth_gripper_open_bce" in metrics else None
             ),
-            "action_aux_path_mse": component("action_auxiliary_components", "path_mse"),
-            "action_aux_shape_mse": component("action_auxiliary_components", "shape_mse"),
-            "action_aux_terminal_mse": component("action_auxiliary_components", "terminal_mse"),
-            "action_aux_path_relative": component(
-                "action_auxiliary_components", "path_relative"
+            "action_aux_tempered_mse": component("action_auxiliary_components", "tempered_mse"),
+            "action_aux_band_dc_mse": component("action_auxiliary_components", "band_dc_mse"),
+            "action_aux_band_k1_mse": component("action_auxiliary_components", "band_k1_mse"),
+            "action_aux_band_k2_mse": component("action_auxiliary_components", "band_k2_mse"),
+            "action_aux_band_k3_mse": component("action_auxiliary_components", "band_k3_mse"),
+            "action_aux_band_detail_mse": component(
+                "action_auxiliary_components", "band_detail_mse"
             ),
-            "action_aux_shape_relative": component(
-                "action_auxiliary_components", "shape_relative"
-            ),
-            "action_aux_terminal_relative": component(
-                "action_auxiliary_components", "terminal_relative"
-            ),
-            "action_aux_terminal_direction_loss": component(
-                "action_auxiliary_components", "terminal_direction_loss"
+            "action_aux_band_high_mse": component(
+                "action_auxiliary_components", "band_high_mse"
             ),
             "discrete_aux_ordinal_ce": component(
                 "discrete_auxiliary_components", "ordinal_ce"
             ),
-            "discrete_aux_path_mse": component(
-                "discrete_auxiliary_components", "path_mse"
+            "discrete_aux_band_dc_ordinal_ce": component(
+                "discrete_auxiliary_components", "band_dc_ordinal_ce"
             ),
-            "discrete_aux_shape_mse": component(
-                "discrete_auxiliary_components", "shape_mse"
+            "discrete_aux_band_k1_ordinal_ce": component(
+                "discrete_auxiliary_components", "band_k1_ordinal_ce"
             ),
-            "discrete_aux_path_relative": component(
-                "discrete_auxiliary_components", "path_relative"
+            "discrete_aux_band_k2_ordinal_ce": component(
+                "discrete_auxiliary_components", "band_k2_ordinal_ce"
             ),
-            "discrete_aux_shape_relative": component(
-                "discrete_auxiliary_components", "shape_relative"
+            "discrete_aux_band_k3_ordinal_ce": component(
+                "discrete_auxiliary_components", "band_k3_ordinal_ce"
+            ),
+            "discrete_aux_band_detail_ordinal_ce": component(
+                "discrete_auxiliary_components", "band_detail_ordinal_ce"
+            ),
+            "discrete_aux_band_high_ordinal_ce": component(
+                "discrete_auxiliary_components", "band_high_ordinal_ce"
             ),
             "discrete_token_ce": array("discrete_token_ce"),
             "discrete_token_top1": array("discrete_token_top1"),
