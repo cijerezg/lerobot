@@ -37,6 +37,7 @@ from collections import defaultdict
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, NullFormatter
 import numpy as np
 import torch
 
@@ -53,6 +54,10 @@ from lerobot.probes.utils import (
     probe_frame_inputs,
     probe_image_stride,
     sample_episodes_evenly,
+)
+from lerobot.utils.depth_gripper_events import (
+    DEPTH_GRIPPER_CLOSE_TARGET,
+    DEPTH_GRIPPER_OPEN_TARGET,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -79,6 +84,15 @@ AUXILIARY_LOSS_KEYS = (
     "discrete_aux_path_relative",
     "discrete_aux_shape_relative",
 )
+
+# Soft-target BCE cannot be read on its own: it has an irreducible floor E[H(t)] and
+# a no-information ceiling H(E[t]) only ~0.155 nats apart on these labels, and neither
+# is drawn on a raw loss curve. Carry the targets through so both ends are reported
+# next to the measured value. See DEPTH_EVENT_OPEN_HEAD.md.
+DEPTH_EVENT_TARGET_BY_HEAD = {
+    "close": DEPTH_GRIPPER_CLOSE_TARGET,
+    "open": DEPTH_GRIPPER_OPEN_TARGET,
+}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -162,6 +176,14 @@ def measure_split(adapter, datasets, cfg, split: str, timesteps: np.ndarray) -> 
             rows.append(
                 {
                     **losses,
+                    # Kept per frame, not pooled from the sidecar, so the floor and
+                    # ceiling describe exactly the frames the BCE was measured on.
+                    **{
+                        f"depth_event_{head}_target": (
+                            float(frame[key]) if frame.get(key) is not None else None
+                        )
+                        for head, key in DEPTH_EVENT_TARGET_BY_HEAD.items()
+                    },
                     "split": split,
                     "source": name,
                     "source_root": str(getattr(dataset, "root", "")),
@@ -304,6 +326,59 @@ def compare(val_rows: list[dict], train_rows: list[dict], key: str) -> dict:
     }
 
 
+def binary_entropy(p: np.ndarray | float) -> np.ndarray:
+    """Entropy in nats of a Bernoulli with soft parameter ``p``."""
+    p = np.clip(np.asarray(p, dtype=np.float64), 1e-12, 1.0 - 1e-12)
+    return -(p * np.log(p) + (1.0 - p) * np.log1p(-p))
+
+
+def _paired_depth_event(rows: list[dict], head: str) -> tuple[np.ndarray, np.ndarray]:
+    """Targets and measured BCE over the frames that carry both."""
+    targets, losses = [], []
+    for row in rows:
+        target = row.get(f"depth_event_{head}_target")
+        loss = row.get(f"depth_event_{head}_bce")
+        if target is None or loss is None:
+            continue
+        targets.append(float(target))
+        losses.append(float(loss))
+    return np.asarray(targets, dtype=np.float64), np.asarray(losses, dtype=np.float64)
+
+
+def depth_event_reference(rows: list[dict], head: str) -> dict:
+    """One head's BCE placed between the two predictors that bracket it.
+
+    ``floor`` is E[H(t)], what a predictor that outputs the target exactly still pays
+    because the targets are soft. ``constant`` is H(E[t]), what a predictor that
+    ignores its input entirely gets for free from the base rate. ``captured`` maps the
+    measured BCE onto that interval: 1.0 is a perfect predictor, 0.0 is one that has
+    learned nothing about the depth observation, and negative is worse than the base
+    rate. The interval is narrow (~0.155 nats here), which is why the raw curve looks
+    static whatever the head is doing.
+    """
+    targets, losses = _paired_depth_event(rows, head)
+    if targets.size == 0:
+        return {}
+    base_rate = float(targets.mean())
+    floor = float(binary_entropy(targets).mean())
+    constant = float(binary_entropy(base_rate))
+    bce = float(losses.mean())
+    learnable = constant - floor
+    entry = {
+        "n": int(targets.size),
+        "base_rate": base_rate,
+        "floor": floor,
+        "constant": constant,
+        "learnable_range": learnable,
+        "bce": bce,
+        "bce_sem": sem(losses),
+    }
+    if learnable > 0:
+        entry["captured"] = (constant - bce) / learnable
+        entry["captured_sem"] = sem(losses) / learnable
+    return entry
+
+
 def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, cfg) -> dict:
     summary: dict = {
         "n_val_frames": len(val_rows),
@@ -320,6 +395,17 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
     summary.update({key: compare(val_rows, train_rows, key) for key in AUXILIARY_LOSS_KEYS})
 
     splits = (("val", val_rows), ("train", train_rows))
+
+    depth_event_reference_summary = {
+        head: {
+            split: entry
+            for split, rows in splits
+            if (entry := depth_event_reference(rows, head))
+        }
+        for head in DEPTH_EVENT_TARGET_BY_HEAD
+    }
+    if any(depth_event_reference_summary.values()):
+        summary["depth_event_reference"] = depth_event_reference_summary
 
     for split, rows in splits:
         top1 = [np.asarray(r["discrete_token_top1"]) for r in rows if r.get("discrete_token_top1") is not None]
@@ -427,8 +513,77 @@ def _overlaid_hist(ax, val_rows, train_rows, key: str, title: str, xlabel: str) 
     _style(ax, title)
 
 
+def _trimmed_gap(val: np.ndarray, train: np.ndarray, fraction: float) -> tuple[float, float]:
+    """Mean ratio and absolute gap after dropping the worst ``fraction`` of BOTH splits.
+
+    The tail test. If the gap is a handful of blown frames, dropping them collapses it;
+    if the whole distribution moved, the ratio barely budges.
+    """
+    keep_v = np.sort(val)[: max(int(val.size * (1.0 - fraction)), 1)]
+    keep_t = np.sort(train)[: max(int(train.size * (1.0 - fraction)), 1)]
+    return float(keep_v.mean() / keep_t.mean()), float(keep_v.mean() - keep_t.mean())
+
+
+def _ecdf_panel(ax, val_rows, train_rows, key: str, title: str, xlabel: str) -> None:
+    r"""Empirical CDFs of the per-frame loss, val against train.
+
+    A mean gap has two very different causes that the mean cannot tell apart: every frame
+    got a little worse, or a few frames blew up. The histogram beside it shows shape but
+    the eye cannot integrate it; stepping the sorted values against $i/n$ can be read
+    directly. Curves that coincide low and separate only in the last few percent are a
+    tail; curves offset across their whole range are a distribution shift, and the
+    distinction decides whether to go looking at individual frames or at the training
+    distribution as a whole.
+
+    The trimmed-mean box states the answer numerically, because two step curves a few
+    percent apart look identical at figure scale.
+    """
+    val, train = column(val_rows, key), column(train_rows, key)
+    if val.size == 0:
+        ax.text(0.5, 0.5, "not measured", ha="center", va="center")
+        ax.axis("off")
+        return
+
+    for sample, color, label in ((train, TRAIN_COLOR, "train"), (val, VAL_COLOR, "val")):
+        if sample.size == 0:
+            continue
+        ordered = np.sort(sample)
+        # Step from 1/n to 1: the largest observation is the 100th percentile, not 1-1/n.
+        ax.step(ordered, np.arange(1, ordered.size + 1) / ordered.size,
+                where="post", color=color, linewidth=1.8, label=label, zorder=3)
+
+    # Log x, because the question is about a RATIO. A loss that is uniformly k times worse
+    # is a curve displaced horizontally by a constant log k at every height, so a shift
+    # reads as two parallel curves and a tail reads as curves that meet low and split high.
+    # A linear axis instead lets the two largest frames stretch the range and squeezes the
+    # decade everything actually lives in into the left fifth of the panel.
+    ax.set_xscale("log")
+    for quantile in (0.5, 0.9):
+        ax.axhline(quantile, color="#bbbbbb", linewidth=0.6, linestyle=":", zorder=0)
+        ax.annotate(f"p{int(quantile * 100)}", (0.005, quantile), xycoords=("axes fraction", "data"),
+                    fontsize=6.5, color="#777777", va="bottom", ha="left", zorder=1)
+
+    if train.size:
+        full = val.mean() / train.mean()
+        trimmed, _ = _trimmed_gap(val, train, 0.05)
+        # Ratios, so the reader can see whether trimming moved it, not just where it landed.
+        ax.text(0.97, 0.06,
+                f"mean ratio  {full:.3f}\ntop 5% trimmed  {trimmed:.3f}",
+                transform=ax.transAxes, fontsize=7.5, ha="right", va="bottom",
+                bbox={"boxstyle": "round,pad=0.35", "facecolor": "white",
+                      "edgecolor": "#cccccc", "alpha": 0.9})
+
+    ax.set_ylim(0, 1.02)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("fraction of frames $\\leq$ x")
+    ax.legend(fontsize=8, loc="lower right", bbox_to_anchor=(1.0, 0.30))
+    _style(ax, title)
+
+
 def render_objective(summary, val_rows, train_rows, output_dir: str) -> None:
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.4))
+    fig, axes = plt.subplots(1, 4, figsize=(21, 4.4))
     _pair_points(axes[0], summary["loss_flow"], "Flow-matching loss", "$\\mathcal{L}_{flow}$")
     if summary["loss_discrete_ce"]:
         _pair_points(axes[1], summary["loss_discrete_ce"], "FAST token cross-entropy", "CE (nats)")
@@ -437,6 +592,9 @@ def render_objective(summary, val_rows, train_rows, output_dir: str) -> None:
         axes[1].axis("off")
     _overlaid_hist(axes[2], val_rows, train_rows, "loss_flow",
                    "Per-frame flow loss", "$\\mathcal{L}_{flow}$ per frame")
+    _ecdf_panel(axes[3], val_rows, train_rows, "loss_flow",
+                "Cumulative distribution — tail or shift?",
+                "$\\mathcal{L}_{flow}$ per frame")
     fig.suptitle(
         f"Training objective on held-out data — {summary['n_val_frames']} val / "
         f"{summary['n_train_frames']} train frames, dropout suppressed on both",
@@ -818,6 +976,19 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
             + (f" train={entry['train']:.5f} (z={entry['z']:+.1f})" if "train" in entry else "")
         )
     logging.info("[objective] " + "  |  ".join(parts))
+
+    # The raw BCE above is unreadable without its floor and ceiling; print the
+    # normalised form next to it so a flat curve can be told from a dead head.
+    for head, splits in (summary.get("depth_event_reference") or {}).items():
+        for split, entry in splits.items():
+            if "captured" not in entry:
+                continue
+            logging.info(
+                f"[objective] depth_event/{head} {split}: bce={entry['bce']:.4f} "
+                f"in [{entry['floor']:.4f} floor, {entry['constant']:.4f} base-rate] "
+                f"-> captured={entry['captured']:+.1%} +/- {entry['captured_sem']:.1%} "
+                f"(n={entry['n']}, base rate {entry['base_rate']:.2%})"
+            )
     return summary
 
 
@@ -841,6 +1012,12 @@ def wandb_scalars(summary: dict) -> dict:
     for split, entry in (summary.get("discrete") or {}).items():
         if split == "val":
             scalars["objective_val_fast_top1"] = entry["top1"]
+    # Fraction of the learnable BCE range each depth head holds — the raw BCE moves
+    # too little against its own sampling noise to be worth a W&B panel.
+    for head, splits in (summary.get("depth_event_reference") or {}).items():
+        captured = (splits.get("val") or {}).get("captured")
+        if captured is not None:
+            scalars[f"objective_val_depth_event_{head}_captured"] = float(captured)
     return scalars
 
 
@@ -897,6 +1074,24 @@ def _write_index(summary: dict, output_dir: str) -> None:
             Metric("discrete.val.perplexity", "FAST perplexity (val)", good="low", fmt=1,
                    note="$e^{CE}$ — the effective number of action tokens the head is "
                         "choosing between at each position."),
+            *[
+                Metric(
+                    f"depth_event_reference.{head}.val.captured", label, good="high", fmt=3,
+                    baseline=0.0, primary=True,
+                    note="Fraction of the learnable BCE range this depth head holds: "
+                         "$1 - (\\mathcal{L} - \\mathbb{E}[H(t)]) / (H(\\mathbb{E}[t]) - "
+                         "\\mathbb{E}[H(t)])$. Soft targets give BCE an irreducible floor "
+                         "$\\mathbb{E}[H(t)]$, and the base rate alone buys "
+                         "$H(\\mathbb{E}[t])$; the two are ~0.155 nats apart here, so the "
+                         "raw loss cannot be read on its own. $1$ is a perfect predictor, "
+                         "$0$ ignores the depth observation, negative is worse than the "
+                         "base rate.",
+                )
+                for head, label in (
+                    ("close", "Depth close-event range captured (val)"),
+                    ("open", "Depth open-event range captured (val)"),
+                )
+            ],
             Metric("n_val_frames", "Val frames measured", good="none", fmt=0),
         ],
         extra={

@@ -474,6 +474,10 @@ probe_parameters:
   # since the v6 suite reported effects below their floor and so could not come out bad.
   enable_objective: true                 # flow + FAST loss on val vs a matched training sample
   enable_actions: true
+  # Dataset-only and checkpoint-invariant: enable for a deliberate validation pass or
+  # run standalone when choosing temporal bands; leaving it on every val step repeats
+  # the same corpus measurement.
+  enable_action_spectrum: false
   # Stale "off" note (2026-07-31), kept for the caveat: this probe mean-pools the whole
   # sequence of one layer, so its by_subtask separation may just be the subtask string
   # sitting in the prompt rather than anything the policy learned.
@@ -530,6 +534,11 @@ probe_parameters:
   # Reference frames a prediction may match against once pose-matched. ~2.5% of a 10k
   # reference set: tight enough to mean "from a similar pose", wide enough not to be noise.
   action_nn_state_k: 256
+  # Candidate DCT partition for the action-spectrum diagnostic. These labels do not
+  # choose beta: the probe compares MSE-width, equal-band, and corpus-equalising beta.
+  action_spectrum_bands: "dc=0;transport=1-2;maneuver=3-8;fine=9-"
+  action_spectrum_n_frames_per_episode: 256
+  action_spectrum_max_episodes: null  # null = every validation episode
   repr_pca_dims: 48             # representations has 64 samples to fit
   umap_n_neighbors: 15          # must stay below the 64-sample representation set
 

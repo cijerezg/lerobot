@@ -3142,6 +3142,8 @@ placo-dep = [
 probes = [
     { name = "cmeel-urdfdom" },
     { name = "contourpy" },
+    { name = "imageio" },
+    { name = "imageio-ffmpeg" },
     { name = "matplotlib" },
     { name = "mujoco" },
     { name = "placo" },
@@ -3279,6 +3281,8 @@ requires-dist = [
     { name = "hf-libero", marker = "sys_platform == 'linux' and extra == 'libero'", specifier = ">=0.1.3,<0.2.0" },
     { name = "hidapi", marker = "extra == 'gamepad'", specifier = ">=0.14.0,<0.15.0" },
     { name = "huggingface-hub", specifier = ">=1.0.0,<2.0.0" },
+    { name = "imageio", marker = "extra == 'probes'", specifier = ">=2.34.0,<3.0.0" },
+    { name = "imageio-ffmpeg", marker = "extra == 'probes'", specifier = ">=0.5.1,<1.0.0" },
     { name = "ipykernel", marker = "extra == 'notebook'", specifier = ">=6.0.0,<7.0.0" },
     { name = "jsonlines", marker = "extra == 'dataset'", specifier = ">=4.0.0,<5.0.0" },
     { name = "jupyter", marker = "extra == 'notebook'", specifier = ">=1.0.0,<2.0.0" },

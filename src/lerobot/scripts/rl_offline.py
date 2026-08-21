@@ -226,6 +226,9 @@ def _quiet_probe_logging(probe_output_dir: str):
 _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_objective", "lerobot.probes.objective", "objective"),
     _ValidationProbeSpec("enable_actions", "lerobot.probes.actions", "actions"),
+    _ValidationProbeSpec(
+        "enable_action_spectrum", "lerobot.probes.action_spectrum", "action_spectrum"
+    ),
     _ValidationProbeSpec("enable_action_trace", "lerobot.probes.action_trace_probe", "action_trace"),
     _ValidationProbeSpec("enable_attention", "lerobot.probes.attention", "attention"),
     _ValidationProbeSpec("enable_critic_values_distribution", "lerobot.probes.critic", "critic"),

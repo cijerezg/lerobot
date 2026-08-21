@@ -287,6 +287,7 @@ class ProbeConfig:
 
     # Enable / disable individual probes
     enable_actions: bool = True
+    enable_action_spectrum: bool = False  # GT temporal spectrum + candidate band-weight geometry
     enable_representations: bool = True
     enable_attention: bool = True
     enable_spatial_memorization: bool = True
@@ -330,6 +331,12 @@ class ProbeConfig:
     # against ("is this motion performed *from here*"). Too wide and it degenerates to
     # the global nearest neighbour; too narrow and the neighbourhood is noise.
     action_nn_state_k: int = 256
+    # Dataset-only spectrum diagnostic. The candidate bands partition DCT indices and
+    # are reported, not silently treated as a recommendation. Empty = automatic
+    # coarse partition for the configured horizon.
+    action_spectrum_bands: str = "dc=0;transport=1-2;maneuver=3-8;fine=9-"
+    action_spectrum_n_frames_per_episode: int | None = None
+    action_spectrum_max_episodes: int | None = None
     # Where the fitted reference manifold is cached. None = action_manifold.pt one level
     # above the probe's output, i.e. shared by every validation step of a run. Point
     # several runs at one path to hold the coordinate system fixed across checkpoints; a
