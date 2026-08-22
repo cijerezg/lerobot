@@ -1,5 +1,6 @@
 """Numerical and presentation contracts for the interactive Action Inspector."""
 
+import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,7 +10,9 @@ from lerobot.probes.action_trace_probe import (
     _analyse,
     _figure,
     _fit_metrics,
+    _intricacy_diagnostics,
     _rotation_distance_deg,
+    _target_spectral_metrics,
     _write_dashboard_html,
 )
 from lerobot.probes.utils import (
@@ -73,6 +76,79 @@ def make_record():
 def _norm_chunks(pred: torch.Tensor, gt: torch.Tensor) -> dict:
     """Normalized-space chunks as ``run()`` attaches them; hold-still is the zero chunk."""
     return {"pred": pred, "gt": gt, "hold": torch.zeros_like(gt)}
+
+
+def _dct_mode(horizon: int, frequency: int) -> torch.Tensor:
+    step = torch.arange(horizon, dtype=torch.float64)
+    scale = math.sqrt(1.0 / horizon) if frequency == 0 else math.sqrt(2.0 / horizon)
+    return scale * torch.cos(math.pi * frequency * (step + 0.5) / horizon)
+
+
+def test_target_intricacy_is_arm_only_detail_fraction() -> None:
+    horizon, action_dim = 30, 7
+    hold = torch.zeros(horizon, action_dim, dtype=torch.float64)
+    low = _dct_mode(horizon, 1)
+    detail = _dct_mode(horizon, 4)
+
+    target = hold.clone()
+    target[:, 0] = math.sqrt(3.0) * low + detail
+    # A large gripper-only detail component must not change arm intricacy.
+    target[:, 6] = 100.0 * detail
+    metrics = _target_spectral_metrics({"gt": target, "hold": hold, "pred": hold})
+    assert np.isclose(metrics["target_intricacy_arm"], 0.25)
+    assert not metrics["target_arm_is_constant"]
+    assert metrics["target_arm_dimensions"] == 6
+    assert metrics["arm_path_mse"] > 0
+
+    low_only = hold.clone()
+    low_only[:, 0] = low
+    assert np.isclose(
+        _target_spectral_metrics({"gt": low_only, "hold": hold})["target_intricacy_arm"],
+        0.0,
+        atol=1e-12,
+    )
+
+    detail_only = hold.clone()
+    detail_only[:, 0] = detail
+    assert np.isclose(
+        _target_spectral_metrics({"gt": detail_only, "hold": hold})["target_intricacy_arm"],
+        1.0,
+    )
+
+    constant = hold.clone()
+    constant[:, :6] = 2.0
+    constant_metrics = _target_spectral_metrics({"gt": constant, "hold": hold})
+    assert constant_metrics["target_intricacy_arm"] is None
+    assert constant_metrics["target_arm_is_constant"]
+
+
+def test_intricacy_diagnostics_write_density_heatmaps_and_summary(tmp_path) -> None:
+    records = []
+    for index in range(9):
+        intricacy = index / 10.0
+        records.append(
+            {
+                "norm": {"gt": torch.zeros(30, 7)},
+                "metrics": {
+                    "target_intricacy_arm": intricacy,
+                    "target_signal_energy_arm": float(index + 1),
+                    "path_mse": float((index + 1) ** 2),
+                    "ee_err_sample0": float(index + 1) / 1000.0,
+                    "gripper_transition": index % 2 == 0,
+                },
+            }
+        )
+
+    summary = _intricacy_diagnostics(records, str(tmp_path))
+
+    assert (tmp_path / "intricacy_vs_mse.png").stat().st_size > 0
+    assert (tmp_path / "energy_intricacy_error_heatmaps.png").stat().st_size > 0
+    assert summary["anchors"] == 9
+    assert summary["valid_intricacy"] == 9
+    assert summary["constant_chunks"] == 0
+    assert np.isclose(summary["spearman_intricacy_arm_action_mse"], 1.0)
+    assert len(summary["cells"]) == 9
+    assert sum(cell["count"] for cell in summary["cells"]) == 9
 
 
 def test_rotation_distance_is_geodesic_degrees():

@@ -40,7 +40,10 @@ invisible by construction, and divergence from GT is not automatically error on 
 multimodal task — read the fan, and prefer ``ee_err_best`` over ``ee_err_mean``.
 
 Per-anchor numbers are in ``metrics.csv``; the per-joint split, baseline MSEs, and
-across-anchor trajectory-metric distributions are in ``action_metrics.json``.
+across-anchor trajectory-metric distributions are in ``action_metrics.json``. Two
+static diagnostics test whether target arm intricacy predicts error after accounting
+for action energy: ``intricacy_vs_mse.png`` and
+``energy_intricacy_error_heatmaps.png``.
 """
 
 import base64
@@ -58,6 +61,7 @@ import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
+from lerobot.probes.action_spectrum import dct_coefficients
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
@@ -206,13 +210,71 @@ def _normalized_chunks(adapter, pred_norm, gt_actions, state):
     }
 
 
-def _trajectory_metrics(norm: dict[str, torch.Tensor]) -> dict[str, float | None]:
+def _trajectory_metrics(norm: dict[str, torch.Tensor]) -> dict[str, float | int | bool | None]:
     """JSON-safe trajectory metrics for one anchor and flow sample 0."""
     components = trajectory_error_components(norm["pred"], norm["gt"], norm["hold"])
-    return {
-        key: float(value) if bool(torch.isfinite(value)) else None
-        for key, value in components.items()
+    metrics = {
+        key: float(value) if bool(torch.isfinite(value)) else None for key, value in components.items()
     }
+    metrics.update(_target_spectral_metrics(norm))
+    return metrics
+
+
+def _target_spectral_metrics(norm: dict[str, torch.Tensor]) -> dict[str, float | int | bool | None]:
+    r"""Target arm energy and intricacy in normalized model-motion space.
+
+    The target is measured relative to the normalized hold chunk. This removes the
+    normalizer's affine offset and makes DC describe commanded displacement from the
+    measured pose. Intricacy is the fraction of trusted non-DC arm energy in k=4..20:
+
+        C_arm = sum_{d in arm, k=4..20} |a_tilde[k,d]|^2
+                / sum_{d in arm, k=1..20} |a_tilde[k,d]|^2.
+
+    A numerically constant chunk has no defined intricacy; it is counted separately
+    instead of receiving a denominator floor.
+    """
+    target = norm["gt"]
+    hold = norm["hold"]
+    if target.ndim != 2 or target.shape != hold.shape:
+        raise ValueError(
+            "Target intricacy requires matching [T,D] gt and hold chunks, got "
+            f"{tuple(target.shape)} and {tuple(hold.shape)}."
+        )
+    horizon, action_dim = target.shape
+    names = joint_names_for_dim(action_dim)
+    arm_indices = [index for index, name in enumerate(names) if "gripper" not in name.lower()]
+    if not arm_indices:
+        arm_indices = list(range(action_dim))
+
+    target_cpu = target.detach().to(device="cpu", dtype=torch.float64)
+    hold_cpu = hold.detach().to(device="cpu", dtype=torch.float64)
+    motion = target_cpu - hold_cpu
+    coefficients = dct_coefficients(motion[None, :, arm_indices])[0]
+    power = coefficients.square()
+    trusted_stop = min(horizon, 21)
+    signal = power[:trusted_stop]
+    non_dc = power[1:trusted_stop]
+    detail = power[4:trusted_stop]
+
+    signal_sum = float(signal.sum())
+    non_dc_sum = float(non_dc.sum())
+    detail_sum = float(detail.sum())
+    numerical_tolerance = torch.finfo(power.dtype).eps * max(signal_sum, 1.0) * max(int(power.numel()), 1)
+    constant = non_dc_sum <= numerical_tolerance
+    metrics = {
+        "target_signal_energy_arm": float(signal.mean()) if signal.numel() else 0.0,
+        "target_non_dc_energy_arm": float(non_dc.mean()) if non_dc.numel() else 0.0,
+        "target_detail_energy_arm": float(detail.mean()) if detail.numel() else 0.0,
+        "target_intricacy_arm": None if constant else detail_sum / non_dc_sum,
+        "target_arm_is_constant": constant,
+        "target_arm_dimensions": len(arm_indices),
+    }
+    if "pred" in norm:
+        prediction = norm["pred"].detach().to(device="cpu", dtype=torch.float64)
+        metrics["arm_path_mse"] = float(
+            (prediction[:, arm_indices] - target_cpu[:, arm_indices]).square().mean()
+        )
+    return metrics
 
 
 def _fit_metrics(records: list[dict]) -> dict:
@@ -282,6 +344,239 @@ def _fit_metrics(records: list[dict]) -> dict:
         metrics["baseline_dataset_mean"], 1e-12
     )
     return metrics
+
+
+def _spearman(x: np.ndarray, y: np.ndarray) -> float | None:
+    """Finite Spearman rank correlation, or None when the sample cannot define one."""
+    valid = np.isfinite(x) & np.isfinite(y)
+    if valid.sum() < 3 or np.unique(x[valid]).size < 2 or np.unique(y[valid]).size < 2:
+        return None
+    from scipy.stats import spearmanr
+
+    correlation = float(spearmanr(x[valid], y[valid]).statistic)
+    return correlation if np.isfinite(correlation) else None
+
+
+def _quantile_bins(values: np.ndarray, requested: int = 3) -> tuple[np.ndarray, np.ndarray]:
+    """Quantile bins with duplicate edges collapsed instead of splitting tied values."""
+    if values.ndim != 1 or not values.size or not np.isfinite(values).all():
+        raise ValueError("Quantile binning requires a non-empty finite rank-one array.")
+    edges = np.unique(np.quantile(values, np.linspace(0.0, 1.0, requested + 1)))
+    if edges.size == 1:
+        return np.zeros(values.size, dtype=np.int64), edges
+    return np.searchsorted(edges[1:-1], values, side="right"), edges
+
+
+def _bin_labels(count: int) -> list[str]:
+    if count == 1:
+        return ["all"]
+    if count == 2:
+        return ["low", "high"]
+    if count == 3:
+        return ["low", "medium", "high"]
+    return [f"bin {index + 1}" for index in range(count)]
+
+
+def _intricacy_diagnostics(records: list[dict], output_dir: str) -> dict:
+    """Write target-intricacy/error plots and return their machine-readable summary."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    intricacy = np.asarray(
+        [
+            np.nan
+            if record["metrics"].get("target_intricacy_arm") is None
+            else record["metrics"]["target_intricacy_arm"]
+            for record in records
+        ],
+        dtype=np.float64,
+    )
+    energy = np.asarray(
+        [record["metrics"]["target_signal_energy_arm"] for record in records],
+        dtype=np.float64,
+    )
+    action_mse = np.asarray(
+        [
+            (
+                record["metrics"]["arm_path_mse"]
+                if "arm_path_mse" in record["metrics"]
+                else record["metrics"]["path_mse"]
+            )
+            for record in records
+        ],
+        dtype=np.float64,
+    )
+    ee_error = np.asarray([record["metrics"]["ee_err_sample0"] for record in records], dtype=np.float64)
+    gripper_transition = np.asarray(
+        [bool(record["metrics"].get("gripper_transition", False)) for record in records],
+        dtype=bool,
+    )
+    constant_count = int(np.count_nonzero(~np.isfinite(intricacy)))
+    valid_scatter = np.isfinite(intricacy) & np.isfinite(action_mse)
+    valid_heatmap = valid_scatter & np.isfinite(energy) & np.isfinite(ee_error)
+
+    positive_mse = action_mse[valid_scatter & (action_mse > 0)]
+    display_floor = max(float(positive_mse.min()) * 0.1, 1e-12) if positive_mse.size else 1e-12
+    log_mse = np.log10(np.maximum(action_mse, display_floor))
+
+    fig, ax = plt.subplots(figsize=(8.6, 5.4))
+    scatter_count = int(valid_scatter.sum())
+    if scatter_count:
+        x = intricacy[valid_scatter]
+        y = log_mse[valid_scatter]
+        if scatter_count >= 4:
+            gridsize = max(6, min(20, int(round(np.sqrt(scatter_count) * 2))))
+            density = ax.hexbin(x, y, gridsize=gridsize, mincnt=1, bins="log", cmap="viridis")
+            fig.colorbar(density, ax=ax, label="chunk count (log colour scale)")
+        else:
+            ax.scatter(x, y, color="#457B9D", s=45, label="chunk")
+
+        switched = valid_scatter & gripper_transition
+        if switched.any():
+            ax.scatter(
+                intricacy[switched],
+                log_mse[switched],
+                marker="D",
+                s=38,
+                facecolors="none",
+                edgecolors="#D97706",
+                linewidths=1.2,
+                label="gripper transition",
+            )
+            ax.legend(loc="best")
+
+        rho = _spearman(intricacy[valid_scatter], action_mse[valid_scatter])
+        rho_text = "undefined" if rho is None else f"{rho:+.3f}"
+        ax.text(
+            0.02,
+            0.98,
+            f"Spearman rho = {rho_text}\nn = {scatter_count}; constant = {constant_count}",
+            transform=ax.transAxes,
+            va="top",
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.9},
+        )
+    else:
+        rho = None
+        ax.text(0.5, 0.5, "No non-constant target chunks", ha="center", va="center")
+
+    ax.set(
+        xlabel="target arm intricacy  C = energy(k=4..20) / energy(k=1..20)",
+        ylabel=f"log10 normalized arm generated-chunk MSE (display floor {display_floor:.1e})",
+        title="Do spectrally intricate demonstrated motions have larger prediction error?",
+    )
+    ax.grid(alpha=0.2)
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "intricacy_vs_mse.png"), dpi=180)
+    plt.close(fig)
+
+    cells = []
+    energy_edges = np.asarray([], dtype=np.float64)
+    intricacy_edges = np.asarray([], dtype=np.float64)
+    fig, axes = plt.subplots(1, 2, figsize=(12.0, 5.2), constrained_layout=True)
+    if valid_heatmap.any():
+        valid_energy = energy[valid_heatmap]
+        valid_intricacy = intricacy[valid_heatmap]
+        energy_bin, energy_edges = _quantile_bins(valid_energy)
+        intricacy_bin, intricacy_edges = _quantile_bins(valid_intricacy)
+        energy_count = int(energy_bin.max()) + 1
+        intricacy_count = int(intricacy_bin.max()) + 1
+        counts = np.zeros((energy_count, intricacy_count), dtype=np.int64)
+        action_grid = np.full((energy_count, intricacy_count), np.nan)
+        ee_grid_mm = np.full((energy_count, intricacy_count), np.nan)
+        switch_grid = np.full((energy_count, intricacy_count), np.nan)
+        valid_action = action_mse[valid_heatmap]
+        valid_ee_mm = ee_error[valid_heatmap] * 1000.0
+        valid_switch = gripper_transition[valid_heatmap]
+
+        for energy_idx in range(energy_count):
+            for intricacy_idx in range(intricacy_count):
+                member = (energy_bin == energy_idx) & (intricacy_bin == intricacy_idx)
+                count = int(member.sum())
+                counts[energy_idx, intricacy_idx] = count
+                if count:
+                    action_grid[energy_idx, intricacy_idx] = float(np.median(valid_action[member]))
+                    ee_grid_mm[energy_idx, intricacy_idx] = float(np.median(valid_ee_mm[member]))
+                    switch_grid[energy_idx, intricacy_idx] = float(valid_switch[member].mean())
+                cells.append(
+                    {
+                        "energy_bin": energy_idx,
+                        "intricacy_bin": intricacy_idx,
+                        "count": count,
+                        "arm_action_mse_median": (
+                            None if not count else float(action_grid[energy_idx, intricacy_idx])
+                        ),
+                        "ee_error_sample0_median_m": (
+                            None if not count else float(ee_grid_mm[energy_idx, intricacy_idx] / 1000.0)
+                        ),
+                        "gripper_transition_fraction": (
+                            None if not count else float(switch_grid[energy_idx, intricacy_idx])
+                        ),
+                    }
+                )
+
+        xlabels = _bin_labels(intricacy_count)
+        ylabels = _bin_labels(energy_count)
+        for ax, grid, title, unit in (
+            (axes[0], action_grid, "Median normalized arm action MSE", ""),
+            (axes[1], ee_grid_mm, "Median sample-0 end-effector trace error", " mm"),
+        ):
+            image = ax.imshow(np.ma.masked_invalid(grid), origin="lower", aspect="auto", cmap="magma")
+            if np.isfinite(grid).any():
+                fig.colorbar(image, ax=ax, label=title + unit)
+            for energy_idx in range(energy_count):
+                for intricacy_idx in range(intricacy_count):
+                    count = counts[energy_idx, intricacy_idx]
+                    value = grid[energy_idx, intricacy_idx]
+                    rendered = "—" if not np.isfinite(value) else f"{value:.3g}{unit}"
+                    ax.text(
+                        intricacy_idx,
+                        energy_idx,
+                        f"{rendered}\nn={count}",
+                        ha="center",
+                        va="center",
+                        color="white",
+                        fontsize=9,
+                        bbox={"facecolor": "black", "alpha": 0.35, "edgecolor": "none"},
+                    )
+            ax.set_xticks(range(intricacy_count), xlabels)
+            ax.set_yticks(range(energy_count), ylabels)
+            ax.set_xlabel("target arm intricacy quantile")
+            ax.set_ylabel("target trusted-energy quantile")
+            ax.set_title(title)
+    else:
+        for ax in axes:
+            ax.text(0.5, 0.5, "No complete non-constant records", ha="center", va="center")
+            ax.set_axis_off()
+
+    fig.suptitle(
+        "Prediction error after separating action magnitude from temporal intricacy"
+        f"  (constant chunks excluded: {constant_count})"
+    )
+    fig.savefig(os.path.join(output_dir, "energy_intricacy_error_heatmaps.png"), dpi=180)
+    plt.close(fig)
+
+    horizon = int(records[0]["norm"]["gt"].shape[0]) if records else 0
+    trusted_last = min(20, horizon - 1)
+    return {
+        "definition": (
+            "arm-only trusted detail-energy fraction: sum power(k=4..20) / "
+            "sum power(k=1..20), in normalized target-minus-hold model space"
+        ),
+        "trusted_indices": [0, trusted_last] if horizon else [],
+        "detail_indices": [4, trusted_last] if trusted_last >= 4 else [],
+        "anchors": len(records),
+        "valid_intricacy": scatter_count,
+        "constant_chunks": constant_count,
+        "gripper_transition_chunks": int(gripper_transition.sum()),
+        "spearman_intricacy_arm_action_mse": rho,
+        "spearman_intricacy_ee_error_sample0": _spearman(intricacy, ee_error),
+        "mse_log_display_floor": display_floor,
+        "energy_quantile_edges": energy_edges.tolist(),
+        "intricacy_quantile_edges": intricacy_edges.tolist(),
+        "cells": cells,
+    }
 
 
 def _analyse(
@@ -378,6 +673,7 @@ def _analyse(
 
     metrics = {
         "ee_err_mean": float(position_errors.mean()),
+        "ee_err_sample0": float(position_errors[0]),
         "ee_err_best": float(position_errors.min()),
         "ee_err_terminal_best": float(position_error_t[:, -1].min()),
         "orientation_err_mean_deg": float(orientation_errors.mean()),
@@ -1466,7 +1762,18 @@ def _write_manifest(
             "Interactive task-space and joint-space action inspector",
             how=how,
             primary=True,
-        )
+        ),
+        Panel(
+            "energy_intricacy_error_heatmaps.png",
+            "Generated-action error by target energy and arm intricacy",
+            how="Rows and columns are quantile bins over non-constant demonstrated chunks; tied boundaries are collapsed. Each cell shows the median error and sample count. If error rises from left to right within a row, intricacy predicts difficulty after approximately controlling for action magnitude.",
+            primary=True,
+        ),
+        Panel(
+            "intricacy_vs_mse.png",
+            "Target arm intricacy against arm-only generated-chunk MSE",
+            how="Hexagon colour is chunk density. Intricacy is the fraction of trusted non-DC arm energy in k=4..20; orange diamonds contain a gripper transition but the gripper never enters the intricacy calculation. Correlation is descriptive and does not establish task importance.",
+        ),
     ]
     return write_index(
         output_dir,
@@ -1713,6 +2020,12 @@ def run(adapter, dataset, cfg, output_dir):
             )
             record["metrics"].update(_trajectory_metrics(record["norm"]))
             record["metrics"]["mse_norm"] = record["metrics"]["path_mse"]
+            joint_names = joint_names_for_dim(int(gt_actions.shape[-1]))
+            gripper_indices = [index for index, name in enumerate(joint_names) if "gripper" in name.lower()]
+            record["metrics"]["gripper_transition"] = any(
+                float(gt_actions[:, index].max() - gt_actions[:, index].min()) > 1e-6
+                for index in gripper_indices
+            )
             if has_decoder_comparison:
                 record.update(fast_error=fast_error, fast_chunk=None, fast_ee=None)
                 if fast_prediction is not None:
@@ -1743,6 +2056,7 @@ def run(adapter, dataset, cfg, output_dir):
             writer.writerow({key: record.get(key, record["metrics"].get(key)) for key in columns})
 
     fit = _fit_metrics(records)
+    fit["intricacy"] = _intricacy_diagnostics(records, output_dir)
     with open(os.path.join(output_dir, "action_metrics.json"), "w") as handle:
         json.dump(fit, handle, indent=2)
 
