@@ -30,11 +30,31 @@ from lerobot.utils.hub import HubMixin
 from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
-from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
+from .default import AimConfig, DatasetConfig, EvalConfig, PeftConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
 TRAIN_CONFIG_NAME = "train_config.json"
+
+
+def _migrate_legacy_wandb_config(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Translate saved W&B logger settings so pre-migration checkpoints still load."""
+    if "wandb" not in config:
+        return None
+
+    migrated_config = dict(config)
+    legacy = migrated_config.pop("wandb") or {}
+    if "aim" not in migrated_config:
+        aim_config: dict[str, Any] = {
+            "enable": bool(legacy.get("enable", False)),
+            "experiment": legacy.get("project") or "lerobot",
+            "notes": legacy.get("notes"),
+            "add_tags": bool(legacy.get("add_tags", True)),
+        }
+        if legacy.get("offline_project"):
+            aim_config["offline_experiment"] = legacy["offline_project"]
+        migrated_config["aim"] = aim_config
+    return migrated_config
 
 
 def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None:
@@ -110,7 +130,7 @@ class TrainPipelineConfig(HubMixin):
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
     eval: EvalConfig = field(default_factory=EvalConfig)
-    wandb: WandBConfig = field(default_factory=WandBConfig)
+    aim: AimConfig = field(default_factory=AimConfig)
     peft: PeftConfig | None = None
 
     # Sample weighting configuration (e.g., for RA-BC training)
@@ -264,8 +284,11 @@ class TrainPipelineConfig(HubMixin):
         if config_file is not None and config_file.endswith(".json"):
             with open(config_file) as f:
                 config = json.load(f)
-            migrated_config = _migrate_legacy_rabc_fields(config)
-            if migrated_config is not None:
+            migrated_config = _migrate_legacy_wandb_config(config) or config
+            migrated_rabc_config = _migrate_legacy_rabc_fields(migrated_config)
+            if migrated_rabc_config is not None:
+                migrated_config = migrated_rabc_config
+            if migrated_config != config:
                 with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".json") as f:
                     json.dump(migrated_config, f)
                     config_file = f.name
@@ -293,11 +316,17 @@ class ProbeConfig:
     enable_spatial_memorization: bool = True
     enable_action_drift_jacobian: bool = False  # subtask-conditioned action-output/token Jacobians
     enable_spatial_memorization_jacobian: bool = False  # aggregated causal spatial stats (needs backward)
-    enable_critic_values_distribution: bool = False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
-    enable_mem_history_influence: bool = False  # MEM: how much history (full/image/state) shifts the action chunk
+    enable_critic_values_distribution: bool = (
+        False  # critic V/TD-error distributions + gradient magnitudes (needs backward)
+    )
+    enable_mem_history_influence: bool = (
+        False  # MEM: how much history (full/image/state) shifts the action chunk
+    )
     enable_mem_history_regime: bool = False  # MEM: helped/hurt split, against a wrong-window null
     enable_mem_temporal_attention: bool = False  # MEM: temporal-read distributions + spatial examples
-    enable_action_trace: bool = False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
+    enable_action_trace: bool = (
+        False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
+    )
     enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
     enable_depth_modality: bool = False  # point-map depth: 2x2 modality grid, per-layer mass, b_l
     enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
@@ -334,9 +363,7 @@ class ProbeConfig:
     # Dataset-only spectrum diagnostic. The candidate bands partition DCT indices and
     # are reported, not silently treated as a recommendation. Empty = automatic
     # coarse partition for the configured horizon.
-    action_spectrum_bands: str = (
-        "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20;untrusted_tail=21-"
-    )
+    action_spectrum_bands: str = "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20;untrusted_tail=21-"
     action_spectrum_n_frames_per_episode: int | None = None
     action_spectrum_max_episodes: int | None = None
     # Where the fitted reference manifold is cached. None = action_manifold.pt one level
@@ -425,7 +452,9 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # uncached dataset for hours.
     cache_policy: str = "fallback"
     use_rerun: bool = True
-    video_logging_cameras: list[str] | None = None  # derived from policy.image_features in validate() when unset
+    video_logging_cameras: list[str] | None = (
+        None  # derived from policy.image_features in validate() when unset
+    )
     episode_logging_freq: int = 4
     episode_save_freq: int = 10
     probe_parameters: ProbeConfig = field(default_factory=ProbeConfig)
@@ -439,13 +468,11 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # Frames are packed once at startup, so the per-call cost is ceil(n / batch_size)
     # forwards. 0 disables.
     val_loss_frames: int = 0
-    skip_critic: bool = False             # skip all critic training (forward+backward)
+    skip_critic: bool = False  # skip all critic training (forward+backward)
 
     def validate(self) -> None:
         super().validate()
         if self.cache_policy not in {"fallback", "require"}:
-            raise ValueError(
-                f"cache_policy must be 'fallback' or 'require', got {self.cache_policy!r}."
-            )
+            raise ValueError(f"cache_policy must be 'fallback' or 'require', got {self.cache_policy!r}.")
         if self.video_logging_cameras is None and self.policy is not None:
             self.video_logging_cameras = [k.split(".")[-1] for k in self.policy.image_features]

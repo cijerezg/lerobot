@@ -313,24 +313,23 @@ class Trainer(ABC):
         self,
         training_infos: dict,
         step: int,
-        wandb_logger,
+        aim_logger,
         _policy: nn.Module,  # available for subclasses that log weight stats / histograms
     ) -> None:
         """
-        Log scalar metrics + histogram (numpy-array) metrics to W&B.
+        Log scalar metrics + histogram (numpy-array) metrics to Aim.
 
-        Scalars  → wandb_logger.log_dict(...) with custom_step_key="Optimization step"
-        Histograms (any numpy.ndarray value) → wandb.Histogram, optionally clipped
+        Scalars  → aim_logger.log_dict(...) with custom_step_key="Optimization step"
+        Histograms (any numpy.ndarray value) → Aim Distribution, optionally clipped
                    via cls._HISTOGRAM_CLIP_RANGES[key].
 
         Subclasses can override _HISTOGRAM_CLIP_RANGES to add per-key clipping or
         override this method entirely for richer behaviour.
         """
-        if step == 0 or wandb_logger is None:
+        if step == 0 or aim_logger is None:
             return
 
         import numpy as np  # local import to keep base trainer lightweight
-        import wandb        # local import to avoid hard wandb dep at import time
 
         scalars: dict = {}
         histograms: dict = {}
@@ -347,19 +346,14 @@ class Trainer(ABC):
                 scalars[k] = v
 
         if scalars:
-            wandb_logger.log_dict(
-                d=scalars, mode="train", custom_step_key="Optimization step"
-            )
+            aim_logger.log_dict(d=scalars, mode="train", custom_step_key="Optimization step")
 
         for key, arr in histograms.items():
             arr = arr.flatten()
             clip = self._HISTOGRAM_CLIP_RANGES.get(key)
             if clip is not None:
                 arr = np.clip(arr, clip[0], clip[1])
-            wandb_logger._wandb.log({
-                f"train/{key}": wandb.Histogram(arr),
-                "Optimization step": step,
-            })
+            aim_logger.log_distribution(key, arr, step, mode="train")
 
     # ── Registry ──────────────────────────────────────────────────────────────
 
@@ -372,10 +366,14 @@ class Trainer(ABC):
         policy_type = getattr(cfg.policy, "type", None)
         if policy_type == "pi05_rl":
             from lerobot.rl.pi05.rl_pi05_trainer import PI05Trainer
+
             return PI05Trainer()
         if policy_type == "molmoact2_rl":
-            from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer  # noqa: F401 — registers MolmoAct2RLConfig
             import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
+            from lerobot.rl.molmoact2.rl_molmoact2_trainer import (
+                MolmoAct2Trainer,  # noqa: F401 — registers MolmoAct2RLConfig
+            )
+
             return MolmoAct2Trainer()
         raise ValueError(
             f"No Trainer registered for policy type {policy_type!r}. "

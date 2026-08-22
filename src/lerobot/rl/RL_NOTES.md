@@ -27,7 +27,7 @@ Trainer.for_config(cfg)          ← dispatches to MolmoAct2Trainer or PI05Train
       │
       ├── build_inference_batch() ← model-specific obs → tokenised batch for select_action
       ├── push_weights()          ← serialize trainable params → actor queue
-      └── log_metrics()           ← W&B scalar logging
+      └── log_metrics()           ← Aim scalar logging
 ```
 
 ### Offline loop (`scripts/rl_offline.py`)

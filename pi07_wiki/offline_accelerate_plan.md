@@ -15,7 +15,7 @@ The first supported production path is deliberately narrow:
 - current action, depth, memory, metadata, and auxiliary losses;
 - current replay-buffer iterator and multiple weighted dataset sources;
 - all validation probes and `ValLoss` execute only on the main process/GPU;
-- one W&B run and one set of checkpoints;
+- one Aim run and one set of checkpoints;
 - one machine initially (two GPUs expected, four possible);
 - DDP only: every GPU holds a complete model and optimizer replica.
 
@@ -69,7 +69,7 @@ and let the run config make this scientific choice explicit.
 5. The first `gradient_accumulation_steps - 1` microbatches do not all-reduce;
    only the last microbatch synchronizes gradients.
 6. All ranks take the same number and order of DDP forward/backward operations.
-7. Only the main process creates W&B, writes the shared log, saves checkpoints,
+7. Only the main process creates Aim, writes the shared log, saves checkpoints,
    runs `ValLoss`, and runs probes.
 8. Non-main ranks wait on both sides of main-only checkpoint/validation work and
    never enter the next DDP update early.
@@ -97,7 +97,7 @@ Add `src/lerobot/rl/training_runtime.py` with a small wrapper around an
 - gathering equal-shaped tensor/NumPy histogram values across ranks.
 
 The wrapper should not know anything about MolmoAct2, replay buffers, probes, or
-W&B. An optional/single-process implementation keeps direct Trainer unit calls
+Aim. An optional/single-process implementation keeps direct Trainer unit calls
 working without constructing a distributed process group.
 
 Pass this runtime through the existing generic `Trainer.update_actor(...,
@@ -108,7 +108,7 @@ Pass this runtime through the existing generic `Trainer.update_actor(...,
 Refactor `src/lerobot/scripts/rl_offline.py` using the established pattern in
 `src/lerobot/scripts/lerobot_train.py`:
 
-- require and construct `Accelerator` before logging/W&B initialization;
+- require and construct `Accelerator` before logging/Aim initialization;
 - use `DistributedDataParallelKwargs(find_unused_parameters=True)` because
   Molmo has conditional trainable paths;
 - keep Accelerate mixed precision disabled initially (`mixed_precision="no"`):
@@ -116,7 +116,7 @@ Refactor `src/lerobot/scripts/rl_offline.py` using the established pattern in
   should not change in the DDP patch;
 - call `init_logging(..., accelerator=accelerator)` so only main logs to the
   console and shared file;
-- instantiate W&B only on the main process;
+- instantiate Aim only on the main process;
 - use `accelerator.device` instead of `learner_device` to construct the local
   policy and replay buffers on the rank's GPU;
 - pass the real `is_main_process` value to dataset/stat/processor helpers instead
@@ -194,7 +194,7 @@ generic reducer before any main-only validation:
 - `Optimization step`: identical on all ranks; preserve it as an integer rather
   than averaging it to a float.
 
-Only main passes the reduced result to `trainer.log_metrics` and W&B. Step-Hz
+Only main passes the reduced result to `trainer.log_metrics` and Aim. Step-Hz
 should measure synchronized wall-clock time (barrier around the timed training
 step or maximum elapsed time across ranks), not rank 0's unsynchronized local
 time.
@@ -267,7 +267,7 @@ broken, but it is outside this plan's validation matrix.
 
 ### Phase B — offline loop plumbing
 
-- [ ] Construct Accelerator before logging and W&B.
+- [ ] Construct Accelerator before logging and Aim.
 - [ ] Add multi-process support guards.
 - [ ] Replace fixed learner device with rank-local Accelerator device.
 - [ ] Propagate `is_main_process` to setup helpers.
@@ -289,7 +289,7 @@ broken, but it is outside this plan's validation matrix.
 ### Phase D — side effects and validation
 
 - [ ] Reduce/gather training metrics on all ranks.
-- [ ] Make W&B and shared logging main-only.
+- [ ] Make Aim and shared logging main-only.
 - [ ] Make ordinary checkpoints main-only with barriers and unwrapping.
 - [ ] Make pretrained-merge checkpoints main-only; merge on every rank.
 - [ ] Construct and execute `ValLoss` only on main.
@@ -301,12 +301,12 @@ broken, but it is outside this plan's validation matrix.
 - [ ] Run focused unit tests for runtime and metric reduction.
 - [ ] Run existing replay, Molmo loss-logging, and probe tests.
 - [ ] Run formatting/lint/type checks on changed files.
-- [ ] One-GPU smoke: two optimizer steps, no probes, W&B disabled.
+- [ ] One-GPU smoke: two optimizer steps, no probes, Aim disabled.
 - [ ] One-GPU probe smoke: `val_on_start`, one cheap enabled probe.
 - [ ] Two-GPU smoke: two optimizer steps with accumulation 2.
 - [ ] Verify ranks sample distinct replay indices or deterministic batch hashes.
 - [ ] Verify a post-step trainable-parameter checksum agrees across ranks.
-- [ ] Verify only one log, W&B run, checkpoint tree, and probe output tree exist.
+- [ ] Verify only one log, Aim run, checkpoint tree, and probe output tree exist.
 - [ ] Verify a checkpoint reloads for ordinary single-GPU inference/probing.
 - [ ] Interrupt a two-GPU smoke and verify both ranks exit without hanging.
 
@@ -326,7 +326,7 @@ Add focused tests under `tests/rl/` for:
 - fail-fast unsupported distributed configurations.
 
 The real two-GPU smoke uses the current local caches/model and aggressive
-overrides: two offline steps, W&B off, checkpoints off, `val_freq: 0`,
+overrides: two offline steps, Aim off, checkpoints off, `val_freq: 0`,
 `val_on_start: false`, and `val_loss_frames: 0`. It is a manual/cloud validation,
 not a lightweight CI test.
 
@@ -388,7 +388,7 @@ This phase is complete when the same codebase:
 3. preserves effective batch 128 with accumulation 2 on two GPUs;
 4. demonstrates distinct replay data on the two ranks;
 5. produces synchronized trainable weights after an optimizer step;
-6. produces exactly one checkpoint/log/W&B/probe output set;
+6. produces exactly one checkpoint/log/Aim/probe output set;
 7. runs all probes on GPU 0 while GPU 1 waits and resumes without a DDP hang;
 8. exits both processes cleanly on an interrupt;
 9. leaves the single-GPU checkpoint format and downstream inference unchanged.

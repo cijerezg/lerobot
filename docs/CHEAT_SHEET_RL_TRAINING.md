@@ -105,7 +105,7 @@ $UV_RUN python -m lerobot.scripts.rl_offline \
   --policy.offline_steps=20 \
   --val_freq=0 \
   --save_checkpoint=false \
-  --wandb.enable=false
+  --aim.enable=false
 ```
 
 Actor-only / BC-style offline run:

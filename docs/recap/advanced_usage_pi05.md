@@ -110,7 +110,7 @@ The config file (`config-hiserl.yaml`) drives all scripts. The fields below are 
 | `output_dir` | str\|null | `null` | Output directory for the **online** run (checkpoints, videos, buffer dumps). Null = auto-generated timestamped dir. |
 | `offline_output_dir` | str | — | Separate output dir for offline training. Keep it distinct from `output_dir` so offline and online artifacts don't overwrite each other. |
 | `batch_size` | int | `8` | Replay buffer sampling batch size. Multiplied by `gradient_accumulation_steps` to get the effective batch. |
-| `log_freq` | int | `20` | WandB logging frequency, in optimization steps. |
+| `log_freq` | int | `20` | Aim logging frequency, in optimization steps. |
 | `save_freq` | int | `100` | Online checkpoint frequency (steps). |
 | `offline_save_freq` | int | `400` | Offline checkpoint frequency (steps). |
 

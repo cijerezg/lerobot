@@ -19,7 +19,7 @@ grid $t_k = t_0 + (t_{\max}-t_0)F^{-1}\!\big((k+\tfrac12)/K\big)$ of the trainin
 distribution instead of being drawn — equiprobable strata, so the mean estimates the
 same $\mathbb{E}_t[\mathcal{L}(t)]$ with the sampler's variance removed and the grid
 identical at every checkpoint. And the pack step's dropout is suppressed on both sides,
-which is why these numbers are **not** the wandb ``train/loss_flow`` curve: that one is
+which is why these numbers are **not** the Aim ``train/loss_flow`` curve: that one is
 measured with dropout armed and reads higher. Compare val to the train column here.
 
 Registered probe: enable with ``probe_parameters.enable_objective``.
@@ -35,11 +35,12 @@ import textwrap
 from collections import defaultdict
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter, NullFormatter
 import numpy as np
 import torch
+from matplotlib.ticker import FuncFormatter, NullFormatter
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
@@ -101,6 +102,7 @@ DEPTH_EVENT_TARGET_BY_HEAD = {
 # Measurement setup
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def flow_timestep_grid(policy_cfg, n_timesteps: int) -> np.ndarray:
     """Stratified quantile grid of the training timestep distribution.
 
@@ -149,6 +151,7 @@ def gap_z(val: np.ndarray, train: np.ndarray) -> float:
 # Collection
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def measure_split(adapter, datasets, cfg, split: str, timesteps: np.ndarray) -> list[dict]:
     """One ``training_losses`` forward per sampled frame, over every dataset in the split."""
     p = cfg.probe_parameters
@@ -157,9 +160,7 @@ def measure_split(adapter, datasets, cfg, split: str, timesteps: np.ndarray) -> 
     n_frames = int(getattr(p, "objective_n_frames_per_episode", None) or p.n_frames_per_episode)
     max_episodes = getattr(p, "objective_max_episodes", None) or p.max_episodes
     grid = torch.from_numpy(timesteps).float()
-    per_source = (
-        None if max_episodes is None else max(int(max_episodes) // max(len(datasets), 1), 1)
-    )
+    per_source = None if max_episodes is None else max(int(max_episodes) // max(len(datasets), 1), 1)
 
     rows: list[dict] = []
     for name, dataset in datasets:
@@ -272,7 +273,9 @@ def provenance(val_rows: list[dict], train_rows: list[dict], cfg, timesteps: np.
     return {
         "val": split_provenance(val_rows),
         "train": split_provenance(train_rows),
-        "frames_per_episode": int(getattr(p, "objective_n_frames_per_episode", None) or p.n_frames_per_episode),
+        "frames_per_episode": int(
+            getattr(p, "objective_n_frames_per_episode", None) or p.n_frames_per_episode
+        ),
         "episode_budget": getattr(p, "objective_max_episodes", None) or p.max_episodes,
         "image_stride": probe_image_stride(cfg),
         "chunk_size": int(cfg.policy.chunk_size),
@@ -304,6 +307,7 @@ def group_mean(rows: list[dict], group_key: str, value_key: str) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def compare(val_rows: list[dict], train_rows: list[dict], key: str) -> dict:
     """Val and train means for one loss, with the standard errors and the gap."""
@@ -388,7 +392,7 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
         "flow_timesteps": timesteps.tolist(),
         "data": provenance(val_rows, train_rows, cfg, timesteps),
         "regime": "prompt/modality dropout suppressed on both splits; flow timesteps on "
-                  "the stratified quantile grid; flow noise seeded per frame.",
+        "the stratified quantile grid; flow noise seeded per frame.",
         "loss_flow": compare(val_rows, train_rows, "loss_flow"),
         "loss_discrete_ce": compare(val_rows, train_rows, "loss_discrete_ce"),
         "loss_discrete_z": compare(val_rows, train_rows, "loss_discrete_z"),
@@ -399,21 +403,21 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
     splits = (("val", val_rows), ("train", train_rows))
 
     depth_event_reference_summary = {
-        head: {
-            split: entry
-            for split, rows in splits
-            if (entry := depth_event_reference(rows, head))
-        }
+        head: {split: entry for split, rows in splits if (entry := depth_event_reference(rows, head))}
         for head in DEPTH_EVENT_TARGET_BY_HEAD
     }
     if any(depth_event_reference_summary.values()):
         summary["depth_event_reference"] = depth_event_reference_summary
 
     for split, rows in splits:
-        top1 = [np.asarray(r["discrete_token_top1"]) for r in rows if r.get("discrete_token_top1") is not None]
+        top1 = [
+            np.asarray(r["discrete_token_top1"]) for r in rows if r.get("discrete_token_top1") is not None
+        ]
         if not top1:
             continue
-        top5 = [np.asarray(r["discrete_token_top5"]) for r in rows if r.get("discrete_token_top5") is not None]
+        top5 = [
+            np.asarray(r["discrete_token_top5"]) for r in rows if r.get("discrete_token_top5") is not None
+        ]
         summary.setdefault("discrete", {})[split] = {
             "top1": float(np.concatenate(top1).mean()),
             "top5": float(np.concatenate(top5).mean()),
@@ -465,6 +469,7 @@ def build_summary(val_rows, train_rows, timesteps, action_dim, n_action_tokens, 
 # Figures
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _style(ax, title: str) -> None:
     """Wrapped title and quiet ticks. Not ``utils.ax_style`` — that one is for UMAP."""
     ax.set_title(textwrap.fill(title, width=48), fontsize=10)
@@ -490,8 +495,9 @@ def _pair_points(ax, entry: dict, title: str, ylabel: str) -> None:
     ax.errorbar([0, 1], means, yerr=errors, fmt="none", ecolor="#333", capsize=6, linewidth=1.4)
     ax.scatter([0, 1], means, s=140, c=[TRAIN_COLOR, VAL_COLOR], zorder=3, edgecolor="white")
     for x, value in enumerate(means):
-        ax.annotate(f"{value:.4f}", (x, value), textcoords="offset points",
-                    xytext=(14, 0), va="center", fontsize=9)
+        ax.annotate(
+            f"{value:.4f}", (x, value), textcoords="offset points", xytext=(14, 0), va="center", fontsize=9
+        )
     ax.set_xticks([0, 1])
     ax.set_xticklabels(["train", "val"])
     ax.set_xlim(-0.6, 1.7)
@@ -551,8 +557,15 @@ def _ecdf_panel(ax, val_rows, train_rows, key: str, title: str, xlabel: str) -> 
             continue
         ordered = np.sort(sample)
         # Step from 1/n to 1: the largest observation is the 100th percentile, not 1-1/n.
-        ax.step(ordered, np.arange(1, ordered.size + 1) / ordered.size,
-                where="post", color=color, linewidth=1.8, label=label, zorder=3)
+        ax.step(
+            ordered,
+            np.arange(1, ordered.size + 1) / ordered.size,
+            where="post",
+            color=color,
+            linewidth=1.8,
+            label=label,
+            zorder=3,
+        )
 
     # Log x, because the question is about a RATIO. A loss that is uniformly k times worse
     # is a curve displaced horizontally by a constant log k at every height, so a shift
@@ -562,18 +575,31 @@ def _ecdf_panel(ax, val_rows, train_rows, key: str, title: str, xlabel: str) -> 
     ax.set_xscale("log")
     for quantile in (0.5, 0.9):
         ax.axhline(quantile, color="#bbbbbb", linewidth=0.6, linestyle=":", zorder=0)
-        ax.annotate(f"p{int(quantile * 100)}", (0.005, quantile), xycoords=("axes fraction", "data"),
-                    fontsize=6.5, color="#777777", va="bottom", ha="left", zorder=1)
+        ax.annotate(
+            f"p{int(quantile * 100)}",
+            (0.005, quantile),
+            xycoords=("axes fraction", "data"),
+            fontsize=6.5,
+            color="#777777",
+            va="bottom",
+            ha="left",
+            zorder=1,
+        )
 
     if train.size:
         full = val.mean() / train.mean()
         trimmed, _ = _trimmed_gap(val, train, 0.05)
         # Ratios, so the reader can see whether trimming moved it, not just where it landed.
-        ax.text(0.97, 0.06,
-                f"mean ratio  {full:.3f}\ntop 5% trimmed  {trimmed:.3f}",
-                transform=ax.transAxes, fontsize=7.5, ha="right", va="bottom",
-                bbox={"boxstyle": "round,pad=0.35", "facecolor": "white",
-                      "edgecolor": "#cccccc", "alpha": 0.9})
+        ax.text(
+            0.97,
+            0.06,
+            f"mean ratio  {full:.3f}\ntop 5% trimmed  {trimmed:.3f}",
+            transform=ax.transAxes,
+            fontsize=7.5,
+            ha="right",
+            va="bottom",
+            bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#cccccc", "alpha": 0.9},
+        )
 
     ax.set_ylim(0, 1.02)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
@@ -592,15 +618,22 @@ def render_objective(summary, val_rows, train_rows, output_dir: str) -> None:
     else:
         axes[1].text(0.5, 0.5, "no discrete head", ha="center", va="center")
         axes[1].axis("off")
-    _overlaid_hist(axes[2], val_rows, train_rows, "loss_flow",
-                   "Per-frame flow loss", "$\\mathcal{L}_{flow}$ per frame")
-    _ecdf_panel(axes[3], val_rows, train_rows, "loss_flow",
-                "Cumulative distribution — tail or shift?",
-                "$\\mathcal{L}_{flow}$ per frame")
+    _overlaid_hist(
+        axes[2], val_rows, train_rows, "loss_flow", "Per-frame flow loss", "$\\mathcal{L}_{flow}$ per frame"
+    )
+    _ecdf_panel(
+        axes[3],
+        val_rows,
+        train_rows,
+        "loss_flow",
+        "Cumulative distribution — tail or shift?",
+        "$\\mathcal{L}_{flow}$ per frame",
+    )
     fig.suptitle(
         f"Training objective on held-out data — {summary['n_val_frames']} val / "
         f"{summary['n_train_frames']} train frames, dropout suppressed on both",
-        fontsize=12, fontweight="bold",
+        fontsize=12,
+        fontweight="bold",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.90))
     fig.savefig(os.path.join(output_dir, "objective.png"), bbox_inches="tight", dpi=125)
@@ -623,8 +656,9 @@ def render_flow(summary, output_dir: str) -> None:
         joints = summary["loss_flow_by_joint"].get(split)
         if joints:
             offset = -0.2 if split == "train" else 0.2
-            axes[2].barh(np.arange(len(joints)) + offset, list(joints.values()),
-                         height=0.38, color=color, label=split)
+            axes[2].barh(
+                np.arange(len(joints)) + offset, list(joints.values()), height=0.38, color=color, label=split
+            )
 
     axes[0].set_xlabel("flow timestep $t$  (0 = pure noise, 1 = data)")
     axes[0].set_ylabel("$\\mathcal{L}_{flow}(t)$")
@@ -659,12 +693,17 @@ def render_discrete(summary, val_rows, train_rows, output_dir: str) -> None:
         entry = discrete.get(split)
         if entry is None:
             continue
-        axes[0].bar(np.arange(2) + offset, [entry["top1"], entry["top5"]],
-                    width=width, color=color, label=split, edgecolor="white")
+        axes[0].bar(
+            np.arange(2) + offset,
+            [entry["top1"], entry["top5"]],
+            width=width,
+            color=color,
+            label=split,
+            edgecolor="white",
+        )
     chance = summary.get("discrete_chance_top1")
     if chance:
-        axes[0].axhline(chance, color="#666", linestyle="--", linewidth=1.2,
-                        label=f"chance ({chance:.1e})")
+        axes[0].axhline(chance, color="#666", linestyle="--", linewidth=1.2, label=f"chance ({chance:.1e})")
     axes[0].set_xticks(np.arange(2))
     axes[0].set_xticklabels(labels)
     axes[0].set_ylabel("fraction of action tokens correct")
@@ -672,8 +711,7 @@ def render_discrete(summary, val_rows, train_rows, output_dir: str) -> None:
     perplexity = (discrete.get("val") or {}).get("perplexity")
     _style(
         axes[0],
-        "FAST token accuracy"
-        + (f" — val perplexity {perplexity:.1f}" if perplexity is not None else ""),
+        "FAST token accuracy" + (f" — val perplexity {perplexity:.1f}" if perplexity is not None else ""),
     )
 
     # Only positions at least half the frames reach: beyond that the mean is a handful
@@ -697,8 +735,14 @@ def render_discrete(summary, val_rows, train_rows, output_dir: str) -> None:
         f"Cross-entropy along the span — positions ≥50% of frames reach (0–{covered - 1})",
     )
 
-    _overlaid_hist(axes[2], val_rows, train_rows, "loss_discrete_ce",
-                   "Per-frame FAST cross-entropy", "CE per chunk (nats)")
+    _overlaid_hist(
+        axes[2],
+        val_rows,
+        train_rows,
+        "loss_discrete_ce",
+        "Per-frame FAST cross-entropy",
+        "CE per chunk (nats)",
+    )
 
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "discrete.png"), bbox_inches="tight", dpi=125)
@@ -783,9 +827,7 @@ def render_action_exemplars(bands, adapter, dataset, cfg, output_dir: str) -> bo
                 )
 
                 if actuator_config is None:
-                    actuator_config = _resolve_actuator_config(
-                        cfg, int(frame["gt_actions"].shape[-1])
-                    )
+                    actuator_config = _resolve_actuator_config(cfg, int(frame["gt_actions"].shape[-1]))
                 motor_speeds, joint_lower, joint_upper = actuator_config
 
                 record = _analyse(
@@ -859,15 +901,14 @@ def render_breakdown(summary, val_rows, output_dir: str) -> None:
         # spread between groups is small next to the loss's floor, and a zero-based bar
         # chart renders every group identical. Groups stay in name order rather than
         # sorted by value, so the same bar means the same episode at every checkpoint.
-        ax.scatter(np.arange(len(names)), values, s=90, color=VAL_COLOR, zorder=3,
-                   edgecolor="white")
+        ax.scatter(np.arange(len(names)), values, s=90, color=VAL_COLOR, zorder=3, edgecolor="white")
         if train_mean is not None:
-            ax.axhline(train_mean, color=TRAIN_COLOR, linestyle="--", linewidth=1.4,
-                       label="train mean")
+            ax.axhline(train_mean, color=TRAIN_COLOR, linestyle="--", linewidth=1.4, label="train mean")
             ax.legend(fontsize=8)
         ax.set_xticks(np.arange(len(names)))
-        ax.set_xticklabels([f"{name} (n={group[name]['n']})" for name in names],
-                           rotation=35, ha="right", fontsize=7)
+        ax.set_xticklabels(
+            [f"{name} (n={group[name]['n']})" for name in names], rotation=35, ha="right", fontsize=7
+        )
         ax.set_xlabel(xlabel)
         ax.set_ylabel("$\\mathcal{L}_{flow}$")
         _style(ax, f"Val flow loss by {xlabel}")
@@ -888,8 +929,7 @@ def render_breakdown(summary, val_rows, output_dir: str) -> None:
                 means.append(losses[inside].mean())
         axes[2].plot(centres, means, "o-", color="#1D3557", linewidth=1.8, label="decile mean")
         if train_mean is not None:
-            axes[2].axhline(train_mean, color=TRAIN_COLOR, linestyle="--", linewidth=1.4,
-                            label="train mean")
+            axes[2].axhline(train_mean, color=TRAIN_COLOR, linestyle="--", linewidth=1.4, label="train mean")
         axes[2].legend(fontsize=8)
     axes[2].set_xlabel("position in the episode (0 = start, 1 = end)")
     axes[2].set_ylabel("$\\mathcal{L}_{flow}$")
@@ -904,11 +944,12 @@ def render_breakdown(summary, val_rows, output_dir: str) -> None:
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | None:
     """Measure the training objective on ``dataset`` (val) and on the training sources.
 
     Returns the summary dict so the caller can push the headline scalars onto the same
-    wandb axes as the training curve.
+    Aim axes as the training curve.
     """
     makedirs(output_dir)
     p = cfg.probe_parameters
@@ -994,10 +1035,10 @@ def run(adapter, dataset, cfg, output_dir: str, train_dataset=None) -> dict | No
     return summary
 
 
-def wandb_scalars(summary: dict) -> dict:
-    """Headline numbers for the training run's own wandb panel.
+def aim_scalars(summary: dict) -> dict:
+    """Headline numbers for the training run's own Aim panel.
 
-    Detailed val/train pairs stay in the probe artifact; W&B gets only generalization
+    Detailed val/train pairs stay in the probe artifact; Aim gets only generalization
     z-scores and held-out FAST top-1.
     """
     scalars: dict[str, float] = {}
@@ -1015,7 +1056,7 @@ def wandb_scalars(summary: dict) -> dict:
         if split == "val":
             scalars["objective_val_fast_top1"] = entry["top1"]
     # Fraction of the learnable BCE range each depth head holds — the raw BCE moves
-    # too little against its own sampling noise to be worth a W&B panel.
+    # too little against its own sampling noise to be worth a Aim panel.
     for head, splits in (summary.get("depth_event_reference") or {}).items():
         captured = (splits.get("val") or {}).get("captured")
         if captured is not None:
@@ -1035,59 +1076,134 @@ def _write_index(summary: dict, output_dir: str) -> None:
         summary=summary,
         see_also=["action_trace", "actions", "subtask_sweep"],
         metrics=[
-            Metric("loss_flow.val", "Flow loss (val)", good="low", fmt=5, primary=True,
-                   note="$\\mathbb{E}_{t,\\varepsilon}\\|v_\\theta(x_t) - (a - \\varepsilon)\\|^2$ "
-                        "on held-out frames. Large irreducible floor, so read the ratio "
-                        "and $z$, not this level."),
-            Metric("loss_flow.z", "Flow gap (standard errors)", good="low", fmt=1,
-                   baseline=0.0, warn=2.0, bad=5.0, primary=True,
-                   note="$(\\bar{\\mathcal{L}}_{val} - \\bar{\\mathcal{L}}_{train}) / "
-                        "\\sqrt{\\mathrm{SEM}^2_{val} + \\mathrm{SEM}^2_{train}}$." + provisional),
-            Metric("loss_flow.ratio", "Flow val/train ratio", good="low", fmt=3,
-                   baseline=1.0, primary=True,
-                   note="$\\bar{\\mathcal{L}}_{val} / \\bar{\\mathcal{L}}_{train}$. The floor "
-                        "compresses this toward 1, so a small excess is a large effect."),
-            Metric("loss_action_aux.val", "Flow auxiliary loss (val)", good="low", fmt=5,
-                   primary=True,
-                   note="Weighted, threshold-gated trajectory auxiliary loss on held-out frames. "
-                        "Absent when the continuous auxiliary family is disabled."),
-            Metric("loss_action_aux.z", "Flow auxiliary gap (standard errors)", good="low", fmt=1,
-                   baseline=0.0, warn=2.0, bad=5.0,
-                   note="Held-out minus training auxiliary loss in pooled SEM units." + provisional),
-            Metric("loss_discrete_aux.val", "FAST auxiliary loss (val)", good="low", fmt=5,
-                   primary=True,
-                   note="Weighted ordinal/path/shape auxiliary loss on held-out FAST logits."),
-            Metric("loss_discrete_aux.z", "FAST auxiliary gap (standard errors)", good="low", fmt=1,
-                   baseline=0.0, warn=2.0, bad=5.0,
-                   note="Held-out minus training FAST auxiliary loss in pooled SEM units." + provisional),
-            Metric("loss_discrete_ce.val", "FAST cross-entropy (val)", good="low", fmt=4,
-                   primary=True,
-                   note="$-\\frac{1}{N}\\sum_j \\log p(y_j \\mid y_{<j}, c)$ over the action-token "
-                        "span, token-weighted as the trainer weights it."),
-            Metric("loss_discrete_ce.z", "FAST CE gap (standard errors)", good="low", fmt=1,
-                   baseline=0.0, warn=2.0, bad=5.0, primary=True,
-                   note="As above for the CE. Deterministic given the frame, so this $z$ is "
-                        "frame-to-frame spread alone." + provisional),
-            Metric("discrete.val.top1", "FAST top-1 accuracy (val)", good="high", fmt=3,
-                   baseline=chance, primary=True,
-                   note=(f"Fraction of action tokens whose $\\arg\\max$ is correct under "
-                         f"teacher forcing. Chance $= 1/V = {chance:.1e}$."
-                         if chance else "No action-token vocabulary size in config.")),
-            Metric("discrete.val.perplexity", "FAST perplexity (val)", good="low", fmt=1,
-                   note="$e^{CE}$ — the effective number of action tokens the head is "
-                        "choosing between at each position."),
+            Metric(
+                "loss_flow.val",
+                "Flow loss (val)",
+                good="low",
+                fmt=5,
+                primary=True,
+                note="$\\mathbb{E}_{t,\\varepsilon}\\|v_\\theta(x_t) - (a - \\varepsilon)\\|^2$ "
+                "on held-out frames. Large irreducible floor, so read the ratio "
+                "and $z$, not this level.",
+            ),
+            Metric(
+                "loss_flow.z",
+                "Flow gap (standard errors)",
+                good="low",
+                fmt=1,
+                baseline=0.0,
+                warn=2.0,
+                bad=5.0,
+                primary=True,
+                note="$(\\bar{\\mathcal{L}}_{val} - \\bar{\\mathcal{L}}_{train}) / "
+                "\\sqrt{\\mathrm{SEM}^2_{val} + \\mathrm{SEM}^2_{train}}$." + provisional,
+            ),
+            Metric(
+                "loss_flow.ratio",
+                "Flow val/train ratio",
+                good="low",
+                fmt=3,
+                baseline=1.0,
+                primary=True,
+                note="$\\bar{\\mathcal{L}}_{val} / \\bar{\\mathcal{L}}_{train}$. The floor "
+                "compresses this toward 1, so a small excess is a large effect.",
+            ),
+            Metric(
+                "loss_action_aux.val",
+                "Flow auxiliary loss (val)",
+                good="low",
+                fmt=5,
+                primary=True,
+                note="Weighted, threshold-gated trajectory auxiliary loss on held-out frames. "
+                "Absent when the continuous auxiliary family is disabled.",
+            ),
+            Metric(
+                "loss_action_aux.z",
+                "Flow auxiliary gap (standard errors)",
+                good="low",
+                fmt=1,
+                baseline=0.0,
+                warn=2.0,
+                bad=5.0,
+                note="Held-out minus training auxiliary loss in pooled SEM units." + provisional,
+            ),
+            Metric(
+                "loss_discrete_aux.val",
+                "FAST auxiliary loss (val)",
+                good="low",
+                fmt=5,
+                primary=True,
+                note="Weighted ordinal/path/shape auxiliary loss on held-out FAST logits.",
+            ),
+            Metric(
+                "loss_discrete_aux.z",
+                "FAST auxiliary gap (standard errors)",
+                good="low",
+                fmt=1,
+                baseline=0.0,
+                warn=2.0,
+                bad=5.0,
+                note="Held-out minus training FAST auxiliary loss in pooled SEM units." + provisional,
+            ),
+            Metric(
+                "loss_discrete_ce.val",
+                "FAST cross-entropy (val)",
+                good="low",
+                fmt=4,
+                primary=True,
+                note="$-\\frac{1}{N}\\sum_j \\log p(y_j \\mid y_{<j}, c)$ over the action-token "
+                "span, token-weighted as the trainer weights it.",
+            ),
+            Metric(
+                "loss_discrete_ce.z",
+                "FAST CE gap (standard errors)",
+                good="low",
+                fmt=1,
+                baseline=0.0,
+                warn=2.0,
+                bad=5.0,
+                primary=True,
+                note="As above for the CE. Deterministic given the frame, so this $z$ is "
+                "frame-to-frame spread alone." + provisional,
+            ),
+            Metric(
+                "discrete.val.top1",
+                "FAST top-1 accuracy (val)",
+                good="high",
+                fmt=3,
+                baseline=chance,
+                primary=True,
+                note=(
+                    f"Fraction of action tokens whose $\\arg\\max$ is correct under "
+                    f"teacher forcing. Chance $= 1/V = {chance:.1e}$."
+                    if chance
+                    else "No action-token vocabulary size in config."
+                ),
+            ),
+            Metric(
+                "discrete.val.perplexity",
+                "FAST perplexity (val)",
+                good="low",
+                fmt=1,
+                note="$e^{CE}$ — the effective number of action tokens the head is "
+                "choosing between at each position.",
+            ),
             *[
                 Metric(
-                    f"depth_event_reference.{head}.val.captured", label, good="high", fmt=3,
-                    baseline=0.0, primary=True,
+                    f"depth_event_reference.{head}.val.captured",
+                    label,
+                    good="high",
+                    fmt=3,
+                    baseline=0.0,
+                    primary=True,
                     note="Fraction of the learnable BCE range this depth head holds: "
-                         "$1 - (\\mathcal{L} - \\mathbb{E}[H(t)]) / (H(\\mathbb{E}[t]) - "
-                         "\\mathbb{E}[H(t)])$. Soft targets give BCE an irreducible floor "
-                         "$\\mathbb{E}[H(t)]$, and the base rate alone buys "
-                         "$H(\\mathbb{E}[t])$; the two are ~0.155 nats apart here, so the "
-                         "raw loss cannot be read on its own. $1$ is a perfect predictor, "
-                         "$0$ ignores the depth observation, negative is worse than the "
-                         "base rate.",
+                    "$1 - (\\mathcal{L} - \\mathbb{E}[H(t)]) / (H(\\mathbb{E}[t]) - "
+                    "\\mathbb{E}[H(t)])$. Soft targets give BCE an irreducible floor "
+                    "$\\mathbb{E}[H(t)]$, and the base rate alone buys "
+                    "$H(\\mathbb{E}[t])$; the two are ~0.155 nats apart here, so the "
+                    "raw loss cannot be read on its own. $1$ is a perfect predictor, "
+                    "$0$ ignores the depth observation, negative is worse than the "
+                    "base rate.",
                 )
                 for head, label in (
                     ("close", "Depth close-event range captured (val)"),

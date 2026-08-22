@@ -5,6 +5,7 @@ Critic:  distributional TD with HL-Gauss soft targets.
 Actor:   flow matching + subtask CE auxiliary loss, conditioned on squashed advantage.
 Special: intervention transitions override the computed advantage with 1.0.
 """
+
 from __future__ import annotations
 
 import json
@@ -16,9 +17,11 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from lerobot.rl.rl_trainer import Trainer
-from lerobot.rl.rl_trainer import TrainableParamsConfig as TrainableParamsConfig  # re-exported for callers
 from lerobot.rl.buffer import concatenate_batch_transitions
+from lerobot.rl.rl_trainer import (
+    TrainableParamsConfig as TrainableParamsConfig,  # re-exported for callers
+    Trainer,
+)
 from lerobot.rl.utils import preprocess_batch_for_pi05
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport.utils import state_to_bytes
@@ -35,7 +38,6 @@ from lerobot.utils.constants import (
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
 from lerobot.utils.transition import move_state_dict_to_device, move_transition_to_device
-
 
 # SigLIP-400M / Gemma-2B depths used by PI05.
 _VISION_TOWER_DEPTH = 27
@@ -128,7 +130,9 @@ class PI05Trainer(Trainer):
             if dataset is not None:
                 return dataset.meta.stats
             if is_main_process:
-                logging.warning("PI05 stats: no checkpoint stats and no dataset provided — stats will be None.")
+                logging.warning(
+                    "PI05 stats: no checkpoint stats and no dataset provided — stats will be None."
+                )
 
         return None
 
@@ -166,6 +170,7 @@ class PI05Trainer(Trainer):
 
     def make_policy(self, cfg) -> nn.Module:
         from lerobot.policies.factory import make_policy
+
         return make_policy(cfg=cfg.policy, env_cfg=cfg.env)
 
     def make_actor_policy(self, cfg) -> nn.Module:
@@ -187,11 +192,11 @@ class PI05Trainer(Trainer):
         lm_layers = list(range(tp.language_from_layer, _LANGUAGE_MODEL_DEPTH)) if language_on else []
         cr_layers = (
             list(range(tp.critic_language_from_layer, critic_depth))
-            if tp.critic_language_from_layer is not None else []
+            if tp.critic_language_from_layer is not None
+            else []
         )
         cr_vt_layers = (
-            list(range(tp.critic_vision_from_layer, _CRITIC_VISION_TOWER_DEPTH))
-            if critic_vision_on else []
+            list(range(tp.critic_vision_from_layer, _CRITIC_VISION_TOWER_DEPTH)) if critic_vision_on else []
         )
 
         for name, param in policy.named_parameters():
@@ -221,10 +226,7 @@ class PI05Trainer(Trainer):
                 or ("critic.layers" in name and any(f".{i}." in name for i in cr_layers))
                 # Critic vision: ViT layers >= N, plus projector.
                 or (critic_vision_on and name.startswith("critic.") and "multi_modal_project" in name)
-                or (
-                    name.startswith("critic.vision_tower")
-                    and any(f".{i}." in name for i in cr_vt_layers)
-                )
+                or (name.startswith("critic.vision_tower") and any(f".{i}." in name for i in cr_vt_layers))
             )
 
     def get_optimizer_groups(self, policy: nn.Module, cfg) -> list[dict]:
@@ -296,9 +298,7 @@ class PI05Trainer(Trainer):
                 loss_raw_list.append(out["loss_critic_raw"].detach())
 
         critic_ensemble: nn.Module = getattr(policy, "critic_ensemble")
-        critic_grad_norm = torch.nn.utils.clip_grad_norm_(
-            critic_ensemble.parameters(), clip_norm
-        ).item()
+        critic_grad_norm = torch.nn.utils.clip_grad_norm_(critic_ensemble.parameters(), clip_norm).item()
         optimizers["critic"].step()
         optimizers["critic"].zero_grad(set_to_none=True)
 
@@ -358,7 +358,7 @@ class PI05Trainer(Trainer):
 
             intervention_key = TeleopEvents.IS_INTERVENTION.value
             if intervention_key in comp_data:
-                mask = (comp_data[intervention_key] > 0.5)
+                mask = comp_data[intervention_key] > 0.5
                 if mask.shape != raw_adv.shape:
                     mask = mask.view(raw_adv.shape)
                 raw_adv[mask] = 1.0
@@ -401,7 +401,11 @@ class PI05Trainer(Trainer):
                 else:
                     d_0 = actions[:, 0, :] - anchor_state
                     d_rest = torch.diff(actions, dim=1) if actions.shape[1] > 1 else None
-                    actions = torch.cat([d_0.unsqueeze(1), d_rest], dim=1) if d_rest is not None else d_0.unsqueeze(1)
+                    actions = (
+                        torch.cat([d_0.unsqueeze(1), d_rest], dim=1)
+                        if d_rest is not None
+                        else d_0.unsqueeze(1)
+                    )
             else:
                 logging.warning(f"action_encoding={action_encoding!r} but {OBS_STATE} not in observations.")
 
@@ -438,7 +442,7 @@ class PI05Trainer(Trainer):
 
         # Suppress subtask CE loss for online transitions (subtask_index == -1).
         if subtask_indices is not None and OBS_LANGUAGE_SUBTASK_ATTENTION_MASK in processed:
-            online_mask = (subtask_indices.view(-1) == -1)
+            online_mask = subtask_indices.view(-1) == -1
             if online_mask.any():
                 processed[OBS_LANGUAGE_SUBTASK_ATTENTION_MASK][online_mask] = False
 
@@ -587,8 +591,12 @@ class PI05Trainer(Trainer):
                     edge = min(10, T)
                     chunk_first = flow_raw[:, :edge, :].mean().item()
                     chunk_last = flow_raw[:, -edge:, :].mean().item()
-                    accum_flow_first_10 = chunk_first if accum_flow_first_10 is None else accum_flow_first_10 + chunk_first
-                    accum_flow_last_10 = chunk_last if accum_flow_last_10 is None else accum_flow_last_10 + chunk_last
+                    accum_flow_first_10 = (
+                        chunk_first if accum_flow_first_10 is None else accum_flow_first_10 + chunk_first
+                    )
+                    accum_flow_last_10 = (
+                        chunk_last if accum_flow_last_10 is None else accum_flow_last_10 + chunk_last
+                    )
 
                     mask_low = flow_time < 0.3
                     mask_high = flow_time > 0.7
@@ -605,9 +613,7 @@ class PI05Trainer(Trainer):
                 reward_list.append(rewards.detach().view(-1))
 
             actor_mod: nn.Module = getattr(policy, "actor")
-            actor_grad_norm = torch.nn.utils.clip_grad_norm_(
-                actor_mod.parameters(), clip_norm
-            ).item()
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(actor_mod.parameters(), clip_norm).item()
             optimizers["policy"].step()
             optimizers["policy"].zero_grad(set_to_none=True)
 
@@ -702,12 +708,10 @@ class PI05Trainer(Trainer):
             return None
 
         observations = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in observations.items()
+            k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in observations.items()
         }
         next_observations = {
-            k: v.to(device) if isinstance(v, torch.Tensor) else v
-            for k, v in next_observations.items()
+            k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in next_observations.items()
         }
         actions = transition[ACTION].to(device)
         if actions.ndim == 1:
@@ -734,11 +738,7 @@ class PI05Trainer(Trainer):
     def push_weights(self, policy: nn.Module, parameters_queue) -> None:
         """Push trainable actor parameters to the actor queue."""
         actor: nn.Module = getattr(policy, "actor")
-        trainable = {
-            name: param
-            for name, param in actor.named_parameters()
-            if param.requires_grad
-        }
+        trainable = {name: param for name, param in actor.named_parameters() if param.requires_grad}
         state_bytes = state_to_bytes({"policy": move_state_dict_to_device(trainable, "cpu")})
         parameters_queue.put(state_bytes)
 
@@ -748,27 +748,24 @@ class PI05Trainer(Trainer):
         self,
         training_infos: dict,
         step: int,
-        wandb_logger,
+        aim_logger,
         _policy: nn.Module,
     ) -> None:
         """
-        Log scalar and histogram metrics to W&B.
+        Log scalar and histogram metrics to Aim.
 
         The base Trainer.log_metrics handles the generic dispatch; this override
         just adds a console summary of the most important scalars first.
         """
         console_keys = ("loss_actor", "flow_mse_loss", "actor_grad_norm", "loss_critic")
         console_scalars = {
-            k: training_infos[k]
-            for k in console_keys
-            if isinstance(training_infos.get(k), (int, float))
+            k: training_infos[k] for k in console_keys if isinstance(training_infos.get(k), (int, float))
         }
         if console_scalars and step > 0:
             logging.info(
-                f"[PI05Trainer] step={step}  "
-                + "  ".join(f"{k}={v:.4f}" for k, v in console_scalars.items())
+                f"[PI05Trainer] step={step}  " + "  ".join(f"{k}={v:.4f}" for k, v in console_scalars.items())
             )
-        super().log_metrics(training_infos, step, wandb_logger, _policy)
+        super().log_metrics(training_infos, step, aim_logger, _policy)
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
@@ -798,9 +795,7 @@ class PI05Trainer(Trainer):
         actions = batch[ACTION]
         rewards = batch["reward"]
         done = batch["done"]
-        observations = batch.get("state") or {
-            k: v for k, v in batch.items() if k.startswith("observation.")
-        }
+        observations = batch.get("state") or {k: v for k, v in batch.items() if k.startswith("observation.")}
         next_observations = batch.get("next_state") or {
             k: v for k, v in batch.items() if k.startswith("next.observation.")
         }
@@ -812,11 +807,7 @@ class PI05Trainer(Trainer):
         if isinstance(indices, torch.Tensor):
             indices = indices.tolist()
 
-        has_meta = (
-            dataset is not None
-            and hasattr(dataset, "meta")
-            and hasattr(dataset.meta, "subtasks")
-        )
+        has_meta = dataset is not None and hasattr(dataset, "meta") and hasattr(dataset.meta, "subtasks")
         subtasks_df = dataset.meta.subtasks if has_meta else None
         names = []
 
@@ -853,6 +844,7 @@ class PI05Trainer(Trainer):
 
 
 # ── Module-level helpers ───────────────────────────────────────────────────────
+
 
 def _scalar(v) -> float:
     """Safely extract a scalar from a tensor or return the value as-is."""

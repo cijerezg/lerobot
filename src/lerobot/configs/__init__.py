@@ -23,11 +23,11 @@ Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 
 from .dataset import DatasetRecordConfig
 from .default import (
+    AimConfig,
     DatasetConfig,
     EvalConfig,
     OfflineDatasetSourceConfig,
     PeftConfig,
-    WandBConfig,
 )
 from .policies import PreTrainedConfig
 from .types import (
@@ -58,7 +58,7 @@ __all__ = [
     "EvalConfig",
     "PeftConfig",
     "PreTrainedConfig",
-    "WandBConfig",
+    "AimConfig",
     "VideoEncoderConfig",
     # Defaults
     "camera_encoder_defaults",

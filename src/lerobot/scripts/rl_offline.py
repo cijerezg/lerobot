@@ -61,6 +61,13 @@ from termcolor import colored
 from torch import nn
 
 from lerobot.cameras import opencv, realsense  # noqa: F401
+from lerobot.common.aim_utils import AimLogger
+from lerobot.common.train_utils import (
+    get_step_checkpoint_dir,
+    get_step_identifier,
+    save_checkpoint,
+    update_last_checkpoint,
+)
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.rl.buffer import ReplayBuffer
@@ -74,23 +81,15 @@ from lerobot.rl.offline_dataset_utils import (
     materialize_dataset_labels,
     pool_lowdim_stats,
 )
+from lerobot.rl.pretrained_merge import apply_pretrained_merges, build_pretrained_merges
 from lerobot.rl.rl_trainer import Trainer
-from lerobot.rl.utils import build_named_adamw_optimizers, cast_to_bf16
-from lerobot.rl.pretrained_merge import build_pretrained_merges, apply_pretrained_merges
 from lerobot.rl.training_runtime import TrainingRuntime
-from lerobot.common.wandb_utils import WandBLogger
-from lerobot.common.train_utils import (
-    get_step_checkpoint_dir,
-    get_step_identifier,
-    save_checkpoint,
-    update_last_checkpoint,
-)
+from lerobot.rl.utils import build_named_adamw_optimizers, cast_to_bf16
 from lerobot.utils.constants import CHECKPOINTS_DIR, TRAINING_STATE_DIR
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import format_big_number, init_logging
-
 
 
 def _save_checkpoint(
@@ -163,6 +162,7 @@ def _build_validation_adapter(policy, preprocessor, postprocessor, device, cfg):
     Mirrors :meth:`ProbablePolicy.for_config` but reuses the existing policy.
     """
     from lerobot.probes.base import _adapter_for_type
+
     adapter_cls = _adapter_for_type(getattr(cfg.policy, "type", None))
     return adapter_cls(policy, preprocessor, postprocessor, device, cfg)
 
@@ -194,8 +194,7 @@ def _quiet_probe_logging(probe_output_dir: str):
     console_handlers = [
         handler
         for handler in existing_handlers
-        if isinstance(handler, logging.StreamHandler)
-        and not isinstance(handler, logging.FileHandler)
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler)
     ]
     detail_handler = logging.FileHandler(log_path, mode="w")
     formatter = next(
@@ -226,23 +225,33 @@ def _quiet_probe_logging(probe_output_dir: str):
 _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_objective", "lerobot.probes.objective", "objective"),
     _ValidationProbeSpec("enable_actions", "lerobot.probes.actions", "actions"),
-    _ValidationProbeSpec(
-        "enable_action_spectrum", "lerobot.probes.action_spectrum", "action_spectrum"
-    ),
+    _ValidationProbeSpec("enable_action_spectrum", "lerobot.probes.action_spectrum", "action_spectrum"),
     _ValidationProbeSpec("enable_action_trace", "lerobot.probes.action_trace_probe", "action_trace"),
     _ValidationProbeSpec("enable_attention", "lerobot.probes.attention", "attention"),
     _ValidationProbeSpec("enable_critic_values_distribution", "lerobot.probes.critic", "critic"),
     _ValidationProbeSpec("enable_representations", "lerobot.probes.representations", "representations"),
-    _ValidationProbeSpec("enable_spatial_memorization", "lerobot.probes.spatial_memorization_attention", "spatial_memorization_attention"),
-    _ValidationProbeSpec("enable_action_drift_jacobian", "lerobot.probes.action_drift_jacobian", "action_drift_jacobian"),
+    _ValidationProbeSpec(
+        "enable_spatial_memorization",
+        "lerobot.probes.spatial_memorization_attention",
+        "spatial_memorization_attention",
+    ),
+    _ValidationProbeSpec(
+        "enable_action_drift_jacobian", "lerobot.probes.action_drift_jacobian", "action_drift_jacobian"
+    ),
     _ValidationProbeSpec(
         "enable_spatial_memorization_jacobian",
         "lerobot.probes.spatial_memorization_action_jacobian",
         "spatial_memorization_action_jacobian",
     ),
-    _ValidationProbeSpec("enable_mem_history_influence", "lerobot.probes.mem_history_influence", "mem_history_influence"),
-    _ValidationProbeSpec("enable_mem_history_regime", "lerobot.probes.mem_history_regime", "mem_history_regime"),
-    _ValidationProbeSpec("enable_mem_temporal_attention", "lerobot.probes.mem_temporal_attention", "mem_temporal_attention"),
+    _ValidationProbeSpec(
+        "enable_mem_history_influence", "lerobot.probes.mem_history_influence", "mem_history_influence"
+    ),
+    _ValidationProbeSpec(
+        "enable_mem_history_regime", "lerobot.probes.mem_history_regime", "mem_history_regime"
+    ),
+    _ValidationProbeSpec(
+        "enable_mem_temporal_attention", "lerobot.probes.mem_temporal_attention", "mem_temporal_attention"
+    ),
     _ValidationProbeSpec("enable_metadata_steering", "lerobot.probes.metadata_steering", "metadata_steering"),
     _ValidationProbeSpec("enable_depth_modality", "lerobot.probes.depth_modality_probe", "depth_modality"),
     _ValidationProbeSpec("enable_attention_budget", "lerobot.probes.attention_budget", "attention_budget"),
@@ -264,8 +273,7 @@ def _validate_probe_registry(probe_cfg) -> None:
     unregistered = sorted(_enabled_validation_flags(probe_cfg) - registered)
     if unregistered:
         raise ValueError(
-            "Enabled validation probe flag(s) have no generic rl_offline handler: "
-            + ", ".join(unregistered)
+            "Enabled validation probe flag(s) have no generic rl_offline handler: " + ", ".join(unregistered)
         )
 
 
@@ -278,14 +286,14 @@ def _run_validation_probes(
     device,
     cfg: TrainRLServerPipelineConfig,
     step: int,
-    wandb_logger=None,
+    aim_logger=None,
 ) -> None:
     """Dispatch every probe whose ``cfg.probe_parameters.enable_*`` flag is set.
 
     Each probe is wrapped in try/except so one failure doesn't kill training.
     The policy is put into eval mode for the duration and restored at the end.
 
-    The objective probe's headline scalars are pushed to W&B under the training run's
+    The objective probe's headline scalars are pushed to Aim under the training run's
     own step key, so held-out loss lands on the same axes as the curve it should be
     read against. It is the only probe that produces a number belonging on that chart.
     """
@@ -308,6 +316,7 @@ def _run_validation_probes(
         _validate_probe_registry(p)
 
         import importlib
+
         for spec in _VALIDATION_PROBES:
             if not bool(getattr(p, spec.flag, False)):
                 continue
@@ -327,15 +336,16 @@ def _run_validation_probes(
                         )
                     elif spec.output_subdir == "objective":
                         summary = run_probe(
-                            adapter, val_dataset, cfg, probe_output_dir,
+                            adapter,
+                            val_dataset,
+                            cfg,
+                            probe_output_dir,
                             train_dataset=reference_dataset,
                         )
-                        if summary is not None and wandb_logger is not None:
-                            scalars = module.wandb_scalars(summary)
+                        if summary is not None and aim_logger is not None:
+                            scalars = module.aim_scalars(summary)
                             scalars["Optimization step"] = step
-                            wandb_logger.log_dict(
-                                d=scalars, mode="train", custom_step_key="Optimization step"
-                            )
+                            aim_logger.log_dict(d=scalars, mode="train", custom_step_key="Optimization step")
                     else:
                         run_probe(adapter, val_dataset, cfg, probe_output_dir)
             except Exception as exc:
@@ -362,6 +372,7 @@ def _load_val_dataset(cfg: TrainRLServerPipelineConfig, fallback_dataset):
     if not val_path:
         return fallback_dataset
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
     logging.info(f"[VAL] Loading validation dataset from {val_path}")
     ds = LeRobotDataset(repo_id=cfg.dataset.repo_id, root=val_path)
     ds.delta_timestamps = None
@@ -386,6 +397,7 @@ def _preprocess_config_yaml(config_path: str) -> str:
     returns the path to a NamedTemporaryFile with the cleaned YAML.
     """
     import yaml
+
     from lerobot.configs import PreTrainedConfig
 
     with open(config_path) as f:
@@ -409,9 +421,7 @@ def _preprocess_config_yaml(config_path: str) -> str:
     except Exception:
         return config_path  # fall back on any error
 
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False, prefix="rl_offline_cfg_"
-    )
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, prefix="rl_offline_cfg_")
     yaml.dump(raw, tmp, allow_unicode=True)
     tmp.close()
     return tmp.name
@@ -455,9 +465,9 @@ def main() -> None:
     3. Delegate to offline_train_cli (parser.wrap handles config parsing).
     """
     # Register before parsing so draccus can resolve policy.type.
-    import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
     import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
-    from lerobot.robots import rebot_b601_follower, so_follower   # noqa: F401 — registers robot configs
+    import lerobot.rl.pi05.rl_pi05  # noqa: F401 — registers PI05RLConfig
+    from lerobot.robots import rebot_b601_follower, so_follower  # noqa: F401 — registers robot configs
     from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — registers teleop configs
 
     cli_args = sys.argv[1:]
@@ -507,10 +517,7 @@ def _validate_distributed_config(
     if torch.device(cfg.policy.storage_device).type == "cuda":
         errors.append("policy.storage_device must be CPU-backed")
     if errors:
-        raise ValueError(
-            "Unsupported multi-process rl_offline configuration:\n  - "
-            + "\n  - ".join(errors)
-        )
+        raise ValueError("Unsupported multi-process rl_offline configuration:\n  - " + "\n  - ".join(errors))
     if effective_batch != 128:
         logging.warning(
             "[RL_OFFLINE] Effective global batch is %d, not the current baseline 128. "
@@ -559,9 +566,7 @@ def offline_train(
         raise ValueError("job_name must be set in config or passed explicitly.")
 
     output_dir = (
-        getattr(cfg, "offline_output_dir", None)
-        or getattr(cfg, "output_dir_offline", None)
-        or cfg.output_dir
+        getattr(cfg, "offline_output_dir", None) or getattr(cfg, "output_dir_offline", None) or cfg.output_dir
     )
     if output_dir is None:
         raise ValueError("offline_output_dir or output_dir must be set.")
@@ -585,14 +590,10 @@ def offline_train(
         raise ValueError("cfg.dataset is required for offline training.")
     _validate_distributed_config(cfg, runtime)
 
-    if cfg.wandb.enable and getattr(cfg.wandb, "offline_project", None):
-        cfg.wandb.project = cfg.wandb.offline_project
-    wandb_logger = (
-        WandBLogger(cfg)
-        if runtime.is_main_process and cfg.wandb.enable and cfg.wandb.project
-        else None
-    )
-    if wandb_logger is None and runtime.is_main_process:
+    if cfg.aim.enable and getattr(cfg.aim, "offline_experiment", None):
+        cfg.aim.experiment = cfg.aim.offline_experiment
+    aim_logger = AimLogger(cfg) if runtime.is_main_process and cfg.aim.enable and cfg.aim.experiment else None
+    if aim_logger is None and runtime.is_main_process:
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     # All ranks use the same seed until DDP has synchronized model parameters.
@@ -605,7 +606,7 @@ def offline_train(
     shutdown_event = ProcessSignalHandler(use_threads=True, display_pid=False).shutdown_event
     run_offline_training(
         cfg=cfg,
-        wandb_logger=wandb_logger,
+        aim_logger=aim_logger,
         shutdown_event=shutdown_event,
         training_runtime=runtime,
     )
@@ -616,7 +617,7 @@ def offline_train(
 
 def run_offline_training(
     cfg: TrainRLServerPipelineConfig,
-    wandb_logger: WandBLogger | None,
+    aim_logger: AimLogger | None,
     shutdown_event,
     training_runtime: TrainingRuntime | None = None,
 ) -> None:
@@ -739,13 +740,17 @@ def run_offline_training(
 
     if getattr(cfg, "cache_policy", "fallback") == "require":
         cache_dir = getattr(cfg, "buffer_cache_dir", None)
-        cached = None if cache_dir is None else ReplayBuffer.find_cache(
-            offline_dataset,
-            cache_dir,
-            state_keys=cfg.policy.input_features.keys(),
-            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
-            image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
-            image_stride=getattr(cfg.policy, "image_stride", 1),
+        cached = (
+            None
+            if cache_dir is None
+            else ReplayBuffer.find_cache(
+                offline_dataset,
+                cache_dir,
+                state_keys=cfg.policy.input_features.keys(),
+                image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+                image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
+                image_stride=getattr(cfg.policy, "image_stride", 1),
+            )
         )
         if cached is None:
             raise FileNotFoundError(
@@ -798,9 +803,7 @@ def run_offline_training(
         ),
     )
     # Additional datasets may have extended the subtask vocabulary via the remap.
-    trainer.sync_subtask_vocabulary(
-        preprocessor, offline_dataset, is_main_process=runtime.is_main_process
-    )
+    trainer.sync_subtask_vocabulary(preprocessor, offline_dataset, is_main_process=runtime.is_main_process)
 
     offline_buffers = [offline_replay_buffer, *additional_buffers]
     logging.info(
@@ -869,9 +872,15 @@ def run_offline_training(
         runtime.wait_for_everyone()
         if runtime.is_main_process:
             _run_validation_probes(
-                policy=raw_policy, preprocessor=preprocessor, postprocessor=postprocessor,
-                val_dataset=val_dataset, reference_dataset=offline_dataset,
-                device=device, cfg=cfg, step=0, wandb_logger=wandb_logger,
+                policy=raw_policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                val_dataset=val_dataset,
+                reference_dataset=offline_dataset,
+                device=device,
+                cfg=cfg,
+                step=0,
+                aim_logger=aim_logger,
             )
             for parameter in raw_policy.parameters():
                 parameter.grad = None
@@ -951,10 +960,7 @@ def run_offline_training(
             trainer.update_target_networks(policy)
             training_infos.update(critic_infos)
 
-            if (
-                optimization_step >= critic_warmup_steps
-                and optimization_step % policy_update_freq == 0
-            ):
+            if optimization_step >= critic_warmup_steps and optimization_step % policy_update_freq == 0:
                 actor_infos = trainer.update_actor(
                     policy=policy,
                     optimizers=optimizers,
@@ -973,15 +979,18 @@ def run_offline_training(
                 )
                 training_infos.update(actor_infos)
 
-        merge_fires = any(
-            merge.should_merge(optimization_step) for merge in pretrained_merges.values()
-        )
+        merge_fires = any(merge.should_merge(optimization_step) for merge in pretrained_merges.values())
         if merge_fires:
             runtime.wait_for_everyone()
             if runtime.is_main_process:
                 _save_pretrained_merge_checkpoint(
-                    cfg, optimization_step, offline_steps, raw_policy,
-                    preprocessor, postprocessor, "pre_merge",
+                    cfg,
+                    optimization_step,
+                    offline_steps,
+                    raw_policy,
+                    preprocessor,
+                    postprocessor,
+                    "pre_merge",
                 )
             runtime.wait_for_everyone()
 
@@ -990,8 +999,13 @@ def run_offline_training(
             runtime.wait_for_everyone()
             if runtime.is_main_process:
                 _save_pretrained_merge_checkpoint(
-                    cfg, optimization_step, offline_steps, raw_policy,
-                    preprocessor, postprocessor, "post_merge",
+                    cfg,
+                    optimization_step,
+                    offline_steps,
+                    raw_policy,
+                    preprocessor,
+                    postprocessor,
+                    "post_merge",
                 )
             runtime.wait_for_everyone()
 
@@ -1011,12 +1025,12 @@ def run_offline_training(
                 trainer.log_metrics(
                     training_infos=training_infos,
                     step=optimization_step,
-                    wandb_logger=wandb_logger,
+                    aim_logger=aim_logger,
                     _policy=raw_policy,
                 )
 
-        if runtime.is_main_process and wandb_logger is not None:
-            wandb_logger.log_dict(
+        if runtime.is_main_process and aim_logger is not None:
+            aim_logger.log_dict(
                 {"Optimization frequency loop [Hz]": step_hz, "Optimization step": optimization_step},
                 mode="train",
                 custom_step_key="Optimization step",
@@ -1029,9 +1043,7 @@ def run_offline_training(
             logging.info(f"[RL_OFFLINE] step {optimization_step}/{offline_steps}  {step_hz:.2f} Hz")
 
         # ── Checkpoint ────────────────────────────────────────────────────────
-        if saving_checkpoint and (
-            optimization_step % save_freq == 0 or optimization_step == offline_steps
-        ):
+        if saving_checkpoint and (optimization_step % save_freq == 0 or optimization_step == offline_steps):
             runtime.wait_for_everyone()
             if runtime.is_main_process:
                 _save_checkpoint(
@@ -1051,9 +1063,15 @@ def run_offline_training(
             runtime.wait_for_everyone()
             if runtime.is_main_process:
                 _run_validation_probes(
-                    policy=raw_policy, preprocessor=preprocessor, postprocessor=postprocessor,
-                    val_dataset=val_dataset, reference_dataset=offline_dataset,
-                    device=device, cfg=cfg, step=optimization_step, wandb_logger=wandb_logger,
+                    policy=raw_policy,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    val_dataset=val_dataset,
+                    reference_dataset=offline_dataset,
+                    device=device,
+                    cfg=cfg,
+                    step=optimization_step,
+                    aim_logger=aim_logger,
                 )
                 for parameter in raw_policy.parameters():
                     parameter.grad = None

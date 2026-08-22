@@ -60,18 +60,50 @@ fingerprint — a mismatch is a hard error, not a silent fallback) and must divi
 
 ## Offline training (config: config_rl.yaml at repo root)
 
-Smoke test (few steps, no checkpoints, no wandb):
+Smoke test (few steps, no checkpoints, no Aim):
 
 uv run python -m lerobot.scripts.rl_offline \
     --config_path=config_rl.yaml \
     --policy.offline_steps=20 \
     --val_freq=0 \
     --save_checkpoint=false \
-    --wandb.enable=false
+    --aim.enable=false
 
 Full run:
 
 uv run python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml
+
+## Aim metrics UI
+
+Aim is enabled in config_rl.yaml, so the full training command above writes metrics while it runs.
+There is no account, login, or upload step. Run these commands from the workspace root.
+
+One-time environment setup (or after dependencies change):
+
+uv sync --project lerobot --extra training --extra molmoact2 --extra pi
+
+Terminal 1 - start training:
+
+uv run --project lerobot --no-sync python -m lerobot.scripts.rl_offline \
+    --config_path=config_rl.yaml
+
+Terminal 2 - start the metrics UI (during or after training):
+
+uv run --project lerobot --no-sync aim up --repo ./aim
+
+Open http://127.0.0.1:43800 in a browser. Refresh the runs page after training starts if it was
+initially empty. Metrics are stored locally in ./aim; the same repository lets the UI compare
+runs. Stop the UI with Ctrl+C. Training does not need the UI to be running.
+
+Useful override - disable Aim for a smoke test:
+
+uv run --project lerobot --no-sync python -m lerobot.scripts.rl_offline \
+    --config_path=config_rl.yaml \
+    --aim.enable=false
+
+To use a different metrics directory, pass the same location to both training
+(--aim.repo=PATH) and the UI (aim up --repo PATH). Do not delete ./aim unless you intend to
+delete all locally stored run history.
 
 ## Probe viewer
 

@@ -67,7 +67,7 @@ lerobot-train \
   --job_name=lerobot_training \
   --policy.device=cuda \
   --policy.repo_id=${HF_USER}/<desired_policy_repo_id>
-  --wandb.enable=true
+  --aim.enable=true
 ```
 
 _Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._

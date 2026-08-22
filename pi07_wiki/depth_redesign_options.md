@@ -332,12 +332,12 @@ draw is unchanged.
 
 ### 5.1 Probe suite (agreed 2026-07-26)
 
-Always-on wandb scalars (training loop):
+Always-on Aim scalars (training loop):
 
 - `depth_attn_mass_mean`/`_max` — fraction of the joint softmax's mass on depth
   columns, averaged over queries and heads, then aggregated over stream layers;
   free in path (a); the working replacement for `pointmap_gate`. The per-layer
-  `{ℓ}` breakdown is probe-only (one wandb panel per layer is unreadable).
+  `{ℓ}` breakdown is probe-only (one Aim panel per layer is unreadable).
 - Pre-clip depth-group gradient norm (current metric reads post-clip, ~4×
   understated at the observed grad norms).
 

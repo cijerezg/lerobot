@@ -176,7 +176,7 @@ LeRobot provides **feature-scoped extras** that map to common workflows. If you 
 | Extra      | What it adds                                | Typical use case                    |
 | ---------- | ------------------------------------------- | ----------------------------------- |
 | `dataset`  | `datasets`, `av`, `torchcodec`, `jsonlines` | Loading & creating datasets         |
-| `training` | `dataset` + `accelerate`, `wandb`           | Training policies                   |
+| `training` | `dataset` + `accelerate`, `aim`           | Training policies                   |
 | `hardware` | `pynput`, `pyserial`, `deepdiff`            | Connecting to real robots           |
 | `viz`      | `rerun-sdk`                                 | Visualization during recording/eval |
 
@@ -291,10 +291,12 @@ pip install -e ".[feetech]" # or "[dynamixel]" for example
 
 ### Experiment Tracking
 
-Weights and Biases is included in the `training` extra. To use [Weights and Biases](https://docs.wandb.ai/quickstart) for experiment tracking, log in with:
+Aim is included in the `training` extra. It stores runs locally and does not require an account. Aim logging currently requires Python 3.12. Enable it with `--aim.enable=true`, then launch the web UI with:
 
 ```bash
-wandb login
+aim up --repo ./aim
 ```
+
+Open `http://127.0.0.1:43800` to inspect and compare runs.
 
 You can now assemble your robot if it's not ready yet, look for your robot type on the left. Then follow the link below to use Lerobot with your robot.

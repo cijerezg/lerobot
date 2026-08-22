@@ -1,6 +1,6 @@
 # Validation Metrics & Probes
 
-This repo includes a suite of probes that automatically run during offline training or can be used as standalone scripts. All of them are configured via the `probe_parameters` section in the config file, and run at every validation step (`val_freq`). Results are logged to WandB and saved to `{output_dir}/validation/step_{N}/`.
+This repo includes a suite of probes that automatically run during offline training or can be used as standalone scripts. All of them are configured via the `probe_parameters` section in the config file, and run at every validation step (`val_freq`). Results are logged to Aim and saved to `{output_dir}/validation/step_{N}/`.
 
 To launch training with validation probes:
 
@@ -147,7 +147,7 @@ This probe checks whether predicted action chunks lie on the same manifold as th
 
 The probe runs in two phases. **First**, at startup, it builds a reference manifold: ground-truth action chunks from the validation set are flattened, reduced with PCA (down to `action_pca_dims` components), and then UMAP'd to 2D and 3D. The PCA and UMAP transforms are **frozen** after this step so that any change in the embedding reflects changes in the model, not the projection.
 
-**Second**, at every validation step, predicted and ground-truth actions are projected through the frozen transforms. For each predicted point, the probe finds its nearest neighbor in the reference set and reports the distance. The headline scalar logged to WandB is the ratio of the median predicted nearest-neighbor distance to the median ground-truth nearest-neighbor distance — a value near 1.0 means predictions sit on the manifold; much larger than 1.0 means they're drifting off it.
+**Second**, at every validation step, predicted and ground-truth actions are projected through the frozen transforms. For each predicted point, the probe finds its nearest neighbor in the reference set and reports the distance. The headline scalar logged to Aim is the ratio of the median predicted nearest-neighbor distance to the median ground-truth nearest-neighbor distance — a value near 1.0 means predictions sit on the manifold; much larger than 1.0 means they're drifting off it.
 
 The probe also outputs a PCA scree plot, which is a useful sanity check on the intrinsic dimensionality of the action space.
 

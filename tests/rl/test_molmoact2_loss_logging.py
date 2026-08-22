@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from lerobot.probes.objective import wandb_scalars
+from lerobot.probes.objective import aim_scalars
 from lerobot.rl.molmoact2.val_loss import ValLoss
 
 
@@ -74,7 +74,7 @@ def test_val_loss_omits_disabled_auxiliaries() -> None:
     assert set(metrics) == {"val_loss_flow", "val_loss_discrete_ce"}
 
 
-def test_objective_wandb_scalars_include_headlines_only() -> None:
+def test_objective_aim_scalars_include_headlines_only() -> None:
     summary = {
         "loss_flow": {"val": 1.0},
         "loss_action_aux": {"val": 2.0, "train": 1.5, "gap": 0.5, "z": 3.0},
@@ -88,7 +88,7 @@ def test_objective_wandb_scalars_include_headlines_only() -> None:
         },
     }
 
-    scalars = wandb_scalars(summary)
+    scalars = aim_scalars(summary)
 
     assert scalars == {
         "objective_z_action_aux": 3.0,
@@ -96,8 +96,7 @@ def test_objective_wandb_scalars_include_headlines_only() -> None:
     }
 
 
-
-def test_training_wandb_metrics_use_compact_allowlist() -> None:
+def test_training_aim_metrics_use_compact_allowlist() -> None:
     from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
 
     metrics = {
@@ -120,7 +119,7 @@ def test_training_wandb_metrics_use_compact_allowlist() -> None:
         "depth_event/close_target_mean": 0.2,
     }
 
-    assert MolmoAct2Trainer._wandb_metrics(metrics) == {
+    assert MolmoAct2Trainer._aim_metrics(metrics) == {
         "Optimization step": 12,
         "loss_flow": 0.2,
         "action_aux/tempered_mse_mean": 0.7,

@@ -262,7 +262,7 @@ one helper (`probes/utils.probe_frame_inputs`).
 
 Still open from it, deliberately: **nothing trends across checkpoints.** Every probe
 writes PNG/JSON under `validation/step_XXXXXXXX/` and the viewer reads them per step;
-no scalar reaches wandb, so "is this getting better" is answered by eye.
+no scalar reaches Aim, so "is this getting better" is answered by eye.
 
 ## 3. Long-term memory: subtask generation
 

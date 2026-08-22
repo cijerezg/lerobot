@@ -113,7 +113,7 @@ class GrootConfig(PreTrainedConfig):
     max_steps: int = 10000
     batch_size: int = 32
     dataloader_num_workers: int = 8
-    report_to: str = "wandb"
+    report_to: str = "none"
     resume: bool = False
 
     def __post_init__(self):

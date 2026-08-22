@@ -257,13 +257,13 @@ lerobot-train \
   --output_dir=outputs/train/hopejr_hand \
   --job_name=hopejr \
   --policy.device=mps \
-  --wandb.enable=true \
+  --aim.enable=true \
   --policy.repo_id=<USER>/hand_test_policy
 ```
 
 ### Evaluate
 
-This training run can be viewed as an example [here](https://wandb.ai/tino/lerobot/runs/rp0k8zvw?nw=nwusertino).
+View training runs locally with aim up --repo ./aim and open http://127.0.0.1:43800.
 
 ```bash
 lerobot-record \

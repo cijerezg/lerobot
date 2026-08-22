@@ -10,7 +10,7 @@ latency-aware replanning, intervention resets, and smooth execution.
 Three gRPC background threads (from actor.py):
   receive_policy    — pulls updated weights from the learner.
   send_transitions  — forwards completed episode transitions to the learner.
-  send_interactions — forwards episode stats for W&B logging.
+  send_interactions — forwards episode stats for Aim logging.
 
 Usage:
     python -m lerobot.rl.rl_actor_async \

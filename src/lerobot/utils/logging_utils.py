@@ -68,8 +68,8 @@ class MetricsTracker:
     # display current metrics
     logging.info(train_metrics)
 
-    # export for wandb
-    wandb.log(train_metrics.to_dict())
+    # export for Aim
+    aim_logger.log_dict(train_metrics.to_dict(), step)
 
     # reset averages after logging
     train_metrics.reset_averages()

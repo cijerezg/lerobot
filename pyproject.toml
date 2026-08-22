@@ -121,7 +121,7 @@ dataset = [
 training = [
     "lerobot[dataset]",
     "accelerate>=1.10.0,<2.0.0",
-    "wandb>=0.24.0,<0.25.0",
+    "aim==3.29.1; python_version < '3.13'",
 ]
 hardware = [
     "lerobot[pynput-dep]",

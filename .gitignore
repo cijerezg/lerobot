@@ -156,8 +156,8 @@ nautilus/*.yaml
 sbatch*.sh
 
 ### Miscellaneous ###
-# W&B
-wandb/
+# Aim experiment database
+aim/
 
 # Dev scripts
 .dev/

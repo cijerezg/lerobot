@@ -28,7 +28,7 @@ accelerate launch \
   --policy.repo_id=${HF_USER}/my_trained_policy \
   --output_dir=outputs/train/act_multi_gpu \
   --job_name=act_multi_gpu \
-  --wandb.enable=true
+  --aim.enable=true
 ```
 
 **Key accelerate parameters:**
@@ -62,7 +62,7 @@ accelerate launch $(which lerobot-train) \
   --policy.repo_id=${HF_USER}/my_trained_policy \
   --output_dir=outputs/train/act_multi_gpu \
   --job_name=act_multi_gpu \
-  --wandb.enable=true
+  --aim.enable=true
 ```
 
 ## How It Works
@@ -72,7 +72,7 @@ When you launch training with accelerate:
 1. **Automatic detection**: LeRobot automatically detects if it's running under accelerate
 2. **Data distribution**: Your batch is automatically split across GPUs
 3. **Gradient synchronization**: Gradients are synchronized across GPUs during backpropagation
-4. **Single process logging**: Only the main process logs to wandb and saves checkpoints
+4. **Single process logging**: Only the main process logs to Aim and saves checkpoints
 
 ## Learning Rate and Training Steps Scaling
 
@@ -120,6 +120,6 @@ accelerate launch --num_processes=2 $(which lerobot-train) \
 - The effective batch size is `batch_size × num_gpus`. If you use 4 GPUs with `--batch_size=8`, your effective batch size is 32.
 - Learning rate scheduling is handled correctly across multiple processes—LeRobot sets `step_scheduler_with_optimizer=False` to prevent accelerate from adjusting scheduler steps based on the number of processes.
 - When saving or pushing models, LeRobot automatically unwraps the model from accelerate's distributed wrapper to ensure compatibility.
-- WandB integration automatically initializes only on the main process, preventing multiple runs from being created.
+- Aim integration automatically initializes only on the main process, preventing multiple runs from being created.
 
 For more advanced configurations and troubleshooting, see the [Accelerate documentation](https://huggingface.co/docs/accelerate). If you want to learn more about how to train on a large number of GPUs, checkout this awesome guide: [Ultrascale Playbook](https://huggingface.co/spaces/nanotron/ultrascale-playbook).

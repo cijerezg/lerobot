@@ -82,17 +82,20 @@ class DatasetConfig:
 
 
 @dataclass
-class WandBConfig:
+class AimConfig:
     enable: bool = False
-    # Set to true to disable saving an artifact despite training.save_checkpoint=True
-    disable_artifact: bool = False
-    project: str = "lerobot"
-    entity: str | None = None
+    # Parent directory of the shared .aim repository, or an aim:// remote URL.
+    repo: str = "./aim"
+    experiment: str = "lerobot"
+    offline_experiment: str | None = None
     notes: str | None = None
-    run_id: str | None = None
-    mode: str | None = None  # Allowed values: 'online', 'offline' 'disabled'. Defaults to 'online'
-    offline_project: str | None = None
-    add_tags: bool = True  # If True, save configuration as tags in the WandB run.
+    run_hash: str | None = None
+    add_tags: bool = True
+    histogram_bins: int = 64
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.histogram_bins <= 512:
+            raise ValueError("aim.histogram_bins must be between 1 and 512.")
 
 
 @dataclass

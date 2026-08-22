@@ -416,13 +416,14 @@ num_workers: 4
 
 
 # -----------------------------------------------------------------------------
-# Weights & Biases
+# Aim experiment tracking
 # -----------------------------------------------------------------------------
-wandb:
+aim:
   enable: true
-  project: rebot_online-v1
-  offline_project: rebot_offline-v1
-  disable_artifact: true
+  repo: ./aim
+  experiment: rebot_online-v1
+  offline_experiment: rebot_offline-v1
+  histogram_bins: 64
 
 
 # =============================================================================

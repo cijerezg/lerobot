@@ -246,10 +246,10 @@ Fully bypassed in the current offline run.
 
 ## 5. Telemetry
 
-Console + wandb via the `accum` dict → `log_metrics`. The console line is a fixed
+Console + Aim via the `accum` dict → `log_metrics`. The console line is a fixed
 train/val-interleaved subset: `loss_flow`, `loss_action_aux`, `loss_discrete_ce`,
 `loss_discrete_aux`, each next to its `val_*` twin, then `loss_subtask_ce`,
-`actor_grad_norm`, `loss_critic`. W&B uses a compact allowlist rather than every
+`actor_grad_norm`, `loss_critic`. Aim uses a compact allowlist rather than every
 diagnostic returned by the update.
 
 **Losses.** `loss_actor`, `loss_flow`, `loss_discrete_ce`, `loss_action_aux`,
@@ -268,26 +268,26 @@ steps): `val_loss_flow`, `val_loss_discrete_ce`, plus `val_loss_action_aux` /
 ablation deltas (removed 2026-08-08: they estimated conditional MI on memorized
 training frames, which is 0 by construction).
 
-**Distributions and slices.** W&B keeps exactly three histograms:
+**Distributions and slices.** Aim keeps exactly three histograms:
 `flow_loss_per_sample_histogram`, `discrete_ce_loss_per_sample_histogram`, and
 `auxiliary_loss_per_sample_histogram` (the weighted flow + discrete auxiliary
 contribution). Raw-MSE duplicates, flow-time slices, and z-loss telemetry stay out.
 Detailed measurements remain in validation probes where applicable.
 
-**Auxiliary components.** W&B keeps only
+**Auxiliary components.** Aim keeps only
 `action_aux/{path_relative,shape_relative,terminal_relative,terminal_direction_loss}_mean`
 and their gate fractions. The discrete branch keeps
 `discrete_aux/{ordinal_ce,path_relative,shape_relative}_mean`.
 `action_trace` retains richer offline quantiles.
 
-**Depth.** W&B keeps `depth_rgb_rms_ratio` at the text-embedding seam and the
+**Depth.** Aim keeps `depth_rgb_rms_ratio` at the text-embedding seam and the
 total `depth_grad_norm_preclip`. The per-stage RMS values, ratios, and split gradient
 norms remain internal debugging diagnostics and are not permanent dashboard series.
 
 **Validation probes** at `val_freq` (action_trace carries the fit headline —
 normalized MSE vs the hold-still and dataset-mean baselines; critic probes
 self-skip under skip_critic). The `objective` probe's local report compares both
-auxiliary losses and all components on validation versus training data. W&B receives
+auxiliary losses and all components on validation versus training data. Aim receives
 only `z` for the four headline objectives, plus held-out FAST top-1;
 component details remain in the probe artifact. That comparison, not the live train
 curve, says whether a term is buying generalization. Probes must thread

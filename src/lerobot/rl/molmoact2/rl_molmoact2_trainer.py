@@ -5,10 +5,11 @@ Actor-only mode     (skip_critic=True):  update_actor only; no critic updates.
 Critic-trained mode (skip_critic=False): update_critic (HL-Gauss distributional TD) + actor.
 Actor prompt conditioning is subtask + metadata clauses (no advantage clause).
 """
+
 from __future__ import annotations
 
-from copy import deepcopy
 import logging
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -27,11 +28,10 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.transition import move_transition_to_device
 
-
 # Depths for the SO100/SO101 MolmoAct2 checkpoint. Adjust if you point this
 # trainer at a different variant.
-_MOLMOACT2_VIT_DEPTH = 25        # image_vit.transformer.resblocks.{0..24}
-_MOLMOACT2_LANGUAGE_DEPTH = 36   # transformer.blocks.{0..35}
+_MOLMOACT2_VIT_DEPTH = 25  # image_vit.transformer.resblocks.{0..24}
+_MOLMOACT2_LANGUAGE_DEPTH = 36  # transformer.blocks.{0..35}
 
 
 def _layer_idx_after(name: str, marker: str) -> int:
@@ -97,10 +97,7 @@ def _saved_processor_path(cfg: Any) -> Path | None:
 
     if getattr(cfg, "output_dir", None):
         candidates.append(
-            Path(cfg.output_dir).expanduser()
-            / CHECKPOINTS_DIR
-            / LAST_CHECKPOINT_LINK
-            / PRETRAINED_MODEL_DIR
+            Path(cfg.output_dir).expanduser() / CHECKPOINTS_DIR / LAST_CHECKPOINT_LINK / PRETRAINED_MODEL_DIR
         )
 
     for path in candidates:
@@ -176,8 +173,6 @@ def _override_action_stats(processors: tuple, action_stats: dict[str, Any]) -> t
     return processors
 
 
-
-
 class MolmoAct2Trainer(Trainer):
     """Trainer for MolmoAct2RLPolicy. Supports actor-only and critic-trained modes."""
 
@@ -190,7 +185,7 @@ class MolmoAct2Trainer(Trainer):
     }
 
     # Compact, decision-oriented live dashboard. Rich distributions stay in probes.
-    _WANDB_METRIC_KEYS = frozenset(
+    _AIM_METRIC_KEYS = frozenset(
         {
             "Optimization step",
             "loss_actor",
@@ -289,6 +284,7 @@ class MolmoAct2Trainer(Trainer):
                 result = _override_action_stats(result, action_stats_override)
             if action_encoding in ("anchor", "delta"):
                 from lerobot.policies.molmoact2.anchor_encoding import policy_action_with_anchor_to_transition
+
                 result[1].to_transition = policy_action_with_anchor_to_transition
         else:
             if is_main_process:
@@ -310,6 +306,7 @@ class MolmoAct2Trainer(Trainer):
 
     def make_policy(self, cfg) -> nn.Module:
         from lerobot.policies.factory import make_policy
+
         return make_policy(cfg=cfg.policy, env_cfg=cfg.env)
 
     def freeze_model(self, policy: nn.Module, cfg) -> None:
@@ -365,12 +362,8 @@ class MolmoAct2Trainer(Trainer):
     def _apply_actor_freeze(policy: nn.Module, tp, *, freeze_embedding: bool) -> None:
         vision_on = tp.vision_from_layer is not None
         language_on = tp.language_from_layer is not None
-        vt_layers = (
-            set(range(tp.vision_from_layer, _MOLMOACT2_VIT_DEPTH)) if vision_on else set()
-        )
-        lm_layers = (
-            set(range(tp.language_from_layer, _MOLMOACT2_LANGUAGE_DEPTH)) if language_on else set()
-        )
+        vt_layers = set(range(tp.vision_from_layer, _MOLMOACT2_VIT_DEPTH)) if vision_on else set()
+        lm_layers = set(range(tp.language_from_layer, _MOLMOACT2_LANGUAGE_DEPTH)) if language_on else set()
 
         for name, param in policy.named_parameters():
             if name.startswith("critic.") or name.startswith("critic_target."):
@@ -383,10 +376,7 @@ class MolmoAct2Trainer(Trainer):
                 param.requires_grad = _is_actor_depth_parameter(name)
                 continue
 
-            if (
-                _is_actor_depth_parameter(name)
-                or "state_history_projector" in name
-            ):
+            if _is_actor_depth_parameter(name) or "state_history_projector" in name:
                 # Independent depth modules plus the fresh MEM state-history
                 # projector are always trainable. Without this whitelist they fall
                 # through to the unknown-parameter branch and are frozen.
@@ -421,12 +411,12 @@ class MolmoAct2Trainer(Trainer):
         cr_vision_on = tp.critic_vision_from_layer is not None
         cr_language_on = tp.critic_language_from_layer is not None
         cr_vt_layers = (
-            set(range(tp.critic_vision_from_layer, _MOLMOACT2_VIT_DEPTH))
-            if cr_vision_on else set()
+            set(range(tp.critic_vision_from_layer, _MOLMOACT2_VIT_DEPTH)) if cr_vision_on else set()
         )
         cr_layers = (
             set(range(tp.critic_language_from_layer, int(getattr(cfg.policy, "critic_llm_depth", 12))))
-            if cr_language_on else set()
+            if cr_language_on
+            else set()
         )
 
         for name, param in critic_net.named_parameters():
@@ -462,21 +452,26 @@ class MolmoAct2Trainer(Trainer):
 
         if skip_critic or not hasattr(policy, "critic"):
             trainable = [p for p in policy.parameters() if p.requires_grad]
-            return self._split_depth_group(policy, cfg, [
-                {"name": "policy", "params": trainable, "lr": cfg.policy.optimizer_lr},
-            ])
+            return self._split_depth_group(
+                policy,
+                cfg,
+                [
+                    {"name": "policy", "params": trainable, "lr": cfg.policy.optimizer_lr},
+                ],
+            )
 
         critic_net: nn.Module = getattr(policy, "critic")
         critic_param_ids = {id(p) for p in critic_net.parameters()}
-        actor_params = [
-            p for p in policy.parameters()
-            if p.requires_grad and id(p) not in critic_param_ids
-        ]
+        actor_params = [p for p in policy.parameters() if p.requires_grad and id(p) not in critic_param_ids]
         critic_params = list(critic_net.parameters())
-        return self._split_depth_group(policy, cfg, [
-            {"name": "policy", "params": actor_params, "lr": cfg.policy.optimizer_lr},
-            {"name": "critic", "params": critic_params, "lr": cfg.policy.critic_lr},
-        ])
+        return self._split_depth_group(
+            policy,
+            cfg,
+            [
+                {"name": "policy", "params": actor_params, "lr": cfg.policy.optimizer_lr},
+                {"name": "critic", "params": critic_params, "lr": cfg.policy.critic_lr},
+            ],
+        )
 
     @staticmethod
     def _split_depth_group(policy: nn.Module, cfg, groups: list[dict]) -> list[dict]:
@@ -487,9 +482,9 @@ class MolmoAct2Trainer(Trainer):
         pretrained_merge_targets (the checkpoint has none of these weights, so a
         merge would drag them back toward their init)."""
         depth_ids = {
-            id(p) for name, p in policy.named_parameters()
-            if _is_actor_depth_parameter(name)
-            or "state_history_projector" in name
+            id(p)
+            for name, p in policy.named_parameters()
+            if _is_actor_depth_parameter(name) or "state_history_projector" in name
         }
         policy_group = next(g for g in groups if g["name"] == "policy")
         depth_params = [p for p in policy_group["params"] if id(p) in depth_ids]
@@ -569,9 +564,7 @@ class MolmoAct2Trainer(Trainer):
             # Lift depth into both critic batches (no-op unless pointmap_config is set): current-state
             # depth for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
             # Unconsumed until the critic-side depth read lands (TODO(pointmap-critic), rl_molmoact2.py).
-            observations = self._inject_depth_observations(
-                observations, raw.get("complementary_info"), cfg
-            )
+            observations = self._inject_depth_observations(observations, raw.get("complementary_info"), cfg)
             next_observations = self._inject_depth_observations(
                 next_observations, raw.get("complementary_info"), cfg, key_prefix="next_depth."
             )
@@ -603,9 +596,9 @@ class MolmoAct2Trainer(Trainer):
             critic_out = _fwd_critic(curr_batch)
             logits = critic_out["logits"]  # [B, num_bins]
 
-            ce_per_sample = -(
-                soft_target.to(logits.device) * F.log_softmax(logits.float(), dim=-1)
-            ).sum(dim=-1)
+            ce_per_sample = -(soft_target.to(logits.device) * F.log_softmax(logits.float(), dim=-1)).sum(
+                dim=-1
+            )
             loss_ce = ce_per_sample.mean()
             (loss_ce / grad_accum).backward()
 
@@ -620,9 +613,7 @@ class MolmoAct2Trainer(Trainer):
                 loss_per_sample_list.append(ce_per_sample.detach().float().view(-1))
 
         critic_net2: nn.Module = getattr(policy, "critic")
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            list(critic_net2.parameters()), clip_norm
-        ).item()
+        grad_norm = torch.nn.utils.clip_grad_norm_(list(critic_net2.parameters()), clip_norm).item()
         optimizers["critic"].step()
 
         all_v_curr = torch.cat(v_curr_list)
@@ -824,9 +815,7 @@ class MolmoAct2Trainer(Trainer):
         # Callers pass the outer optimization step. Keep the fallback enabled for
         # direct/unit callers that do not, but production training only pays for
         # modality telemetry on steps whose returned metrics are actually logged.
-        capture_modality_telemetry = (
-            optimization_step is None or int(optimization_step) % log_freq == 0
-        )
+        capture_modality_telemetry = optimization_step is None or int(optimization_step) % log_freq == 0
 
         # Identify actor params for grad clipping (excludes critic).
         critic_param_ids: set[int] = set()
@@ -834,8 +823,7 @@ class MolmoAct2Trainer(Trainer):
             critic_net: nn.Module = raw_policy.critic
             critic_param_ids = {id(p) for p in critic_net.parameters()}
         actor_params = [
-            p for p in raw_policy.parameters()
-            if p.requires_grad and id(p) not in critic_param_ids
+            p for p in raw_policy.parameters() if p.requires_grad and id(p) not in critic_param_ids
         ]
 
         for accum_idx in range(grad_accum):
@@ -860,9 +848,7 @@ class MolmoAct2Trainer(Trainer):
 
             # Lift recorded depth into the actor forward batch (no-op unless
             # pointmap_config set).
-            observations = self._inject_depth_observations(
-                observations, raw.get("complementary_info"), cfg
-            )
+            observations = self._inject_depth_observations(observations, raw.get("complementary_info"), cfg)
             # One-shot depth check for the TRAINING path (the inference path has its own):
             # a cache/buffer without the depth column would otherwise train on the null bank silently.
             pointmap_config = getattr(cfg.policy, "pointmap_config", None)
@@ -886,9 +872,7 @@ class MolmoAct2Trainer(Trainer):
 
             with runtime.no_sync(policy, accum_idx, grad_accum):
                 # Calling the wrapper enters DDP's reducer for this microbatch.
-                loss, metrics = policy(
-                    fwd_batch, reduction="none", return_diagnostics=True
-                )
+                loss, metrics = policy(fwd_batch, reduction="none", return_diagnostics=True)
 
                 # Read scale from THIS forward: the stashes are consume-once and a later
                 # validation/subtask forward would overwrite the seam measurements.
@@ -908,8 +892,8 @@ class MolmoAct2Trainer(Trainer):
                     if early is not None and late is not None:
                         accum["depth_late_early_rms_ratio"] = late.item() / max(early.item(), 1e-12)
                     if late is not None and raw_policy._depth_token_rms is not None:
-                        accum["depth_projected_late_rms_ratio"] = (
-                            raw_policy._depth_token_rms.item() / max(late.item(), 1e-12)
+                        accum["depth_projected_late_rms_ratio"] = raw_policy._depth_token_rms.item() / max(
+                            late.item(), 1e-12
                         )
                     backbone = raw_policy._backbone()
                     depth_input_rms = getattr(backbone, "_lerobot_depth_input_rms", None)
@@ -922,9 +906,7 @@ class MolmoAct2Trainer(Trainer):
                         rgb_input = rgb_input_rms.item()
                         accum["rgb_injected_token_rms"] = rgb_input
                         if depth_input_rms is not None:
-                            accum["depth_rgb_rms_ratio"] = depth_input_rms.item() / max(
-                                rgb_input, 1e-12
-                            )
+                            accum["depth_rgb_rms_ratio"] = depth_input_rms.item() / max(rgb_input, 1e-12)
 
                 loss_for_backward = (
                     loss.mean()
@@ -946,30 +928,22 @@ class MolmoAct2Trainer(Trainer):
                         # metrics stay worth logging as a frozen-model baseline.
                         if generation_loss.requires_grad:
                             runtime.backward(subtask_loss_weight * generation_loss / grad_accum)
-                        accum["loss_subtask_ce"] += (
-                            generation_parts["loss_subtask_ce"] / grad_accum
-                        )
+                        accum["loss_subtask_ce"] += generation_parts["loss_subtask_ce"] / grad_accum
 
-            accum["loss_actor"] += float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
+            accum["loss_actor"] += (
+                float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
+            )
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
-            accum["loss_action_aux"] += float(
-                metrics.get("action_auxiliary_loss", 0.0)
-            ) / grad_accum
+            accum["loss_action_aux"] += float(metrics.get("action_auxiliary_loss", 0.0)) / grad_accum
             accum["loss_discrete_ce"] += float(metrics.get("discrete_ce_loss", 0.0)) / grad_accum
-            accum["loss_discrete_aux"] += float(
-                metrics.get("discrete_auxiliary_loss", 0.0)
-            ) / grad_accum
-            accum["loss_depth_event"] += float(
-                metrics.get("depth_gripper_event_loss", 0.0)
-            ) / grad_accum
-            accum["depth_event/close_bce"] += float(
-                metrics.get("depth_gripper_close_bce", 0.0)
-            ) / grad_accum
-            accum["depth_event/open_bce"] += float(
-                metrics.get("depth_gripper_open_bce", 0.0)
-            ) / grad_accum
+            accum["loss_discrete_aux"] += float(metrics.get("discrete_auxiliary_loss", 0.0)) / grad_accum
+            accum["loss_depth_event"] += float(metrics.get("depth_gripper_event_loss", 0.0)) / grad_accum
+            accum["depth_event/close_bce"] += float(metrics.get("depth_gripper_close_bce", 0.0)) / grad_accum
+            accum["depth_event/open_bce"] += float(metrics.get("depth_gripper_open_bce", 0.0)) / grad_accum
 
-            actor_loss_raw = metrics.get("loss_raw", loss.detach().float() if isinstance(loss, torch.Tensor) else None)
+            actor_loss_raw = metrics.get(
+                "loss_raw", loss.detach().float() if isinstance(loss, torch.Tensor) else None
+            )
             if isinstance(actor_loss_raw, torch.Tensor):
                 actor_loss_list.append(actor_loss_raw.detach().float().view(-1))
             flow_loss_per_sample = metrics.get("flow_loss_per_sample")
@@ -1023,9 +997,7 @@ class MolmoAct2Trainer(Trainer):
         # the clip and understated the gradient ~4× at the observed norms).
         if depth_on and capture_modality_telemetry:
             components = ("encoder", "blocks", "pooler", "projector", "marker")
-            grads_by_component: dict[str, list[torch.Tensor]] = {
-                component: [] for component in components
-            }
+            grads_by_component: dict[str, list[torch.Tensor]] = {component: [] for component in components}
             for name, parameter in raw_policy.named_parameters():
                 component = _actor_depth_component(name)
                 if component is not None and parameter.grad is not None:
@@ -1044,7 +1016,8 @@ class MolmoAct2Trainer(Trainer):
                     accum[f"depth_grad_norm_preclip_{component}"] = 0.0
             accum["depth_grad_norm_preclip"] = (
                 torch.linalg.vector_norm(torch.stack(all_component_norms)).item()
-                if all_component_norms else 0.0
+                if all_component_norms
+                else 0.0
             )
 
         actor_grad_norm = runtime.clip_grad_norm_(actor_params, clip_norm).item()
@@ -1064,7 +1037,9 @@ class MolmoAct2Trainer(Trainer):
             all_flow_per_sample = torch.cat(flow_loss_per_sample_list)
             # No _mean here: it is loss_flow by construction (action_flow_loss is
             # this same per-sample tensor's mean).
-            accum["flow_loss_per_sample_std"] = all_flow_per_sample.std().item() if all_flow_per_sample.numel() > 1 else 0.0
+            accum["flow_loss_per_sample_std"] = (
+                all_flow_per_sample.std().item() if all_flow_per_sample.numel() > 1 else 0.0
+            )
             accum["flow_loss_per_sample_histogram"] = all_flow_per_sample.cpu().numpy()
         if flow_loss_per_timestep_list and flow_timesteps_list:
             all_flow_by_timestep = torch.cat(flow_loss_per_timestep_list)
@@ -1096,9 +1071,7 @@ class MolmoAct2Trainer(Trainer):
                 prefix = f"discrete_aux/{key}"
                 accum[f"{prefix}_mean"] = values.mean().item()
         if auxiliary_loss_list:
-            accum["auxiliary_loss_per_sample_histogram"] = torch.cat(
-                auxiliary_loss_list
-            ).cpu().numpy()
+            accum["auxiliary_loss_per_sample_histogram"] = torch.cat(auxiliary_loss_list).cpu().numpy()
         if discrete_ce_loss_list:
             all_discrete_ce = torch.cat(discrete_ce_loss_list)
             accum["discrete_ce_loss_per_sample_histogram"] = all_discrete_ce.cpu().numpy()
@@ -1372,43 +1345,48 @@ class MolmoAct2Trainer(Trainer):
     # ── Logging ───────────────────────────────────────────────────────────────
 
     @classmethod
-    def _wandb_metrics(cls, training_infos: dict) -> dict:
-        return {
-            key: value
-            for key, value in training_infos.items()
-            if key in cls._WANDB_METRIC_KEYS
-        }
+    def _aim_metrics(cls, training_infos: dict) -> dict:
+        return {key: value for key, value in training_infos.items() if key in cls._AIM_METRIC_KEYS}
 
     def log_metrics(
         self,
         training_infos: dict,
         step: int,
-        wandb_logger,
+        aim_logger,
         _policy: nn.Module,
     ) -> None:
         console_keys = (
-            "loss_flow", "val_loss_flow",
-            "loss_action_aux", "val_loss_action_aux",
-            "loss_discrete_ce", "val_loss_discrete_ce",
-            "loss_discrete_aux", "val_loss_discrete_aux",
-            "loss_depth_event", "val_loss_depth_event",
-            "depth_event/close_bce", "depth_event/open_bce",
-            "loss_subtask_ce", "actor_grad_norm", "loss_critic",
-            "depth_rgb_rms_ratio", "depth_pre_bound_token_rms", "depth_injected_token_rms",
-            "depth_late_early_rms_ratio", "depth_grad_norm_preclip",
+            "loss_flow",
+            "val_loss_flow",
+            "loss_action_aux",
+            "val_loss_action_aux",
+            "loss_discrete_ce",
+            "val_loss_discrete_ce",
+            "loss_discrete_aux",
+            "val_loss_discrete_aux",
+            "loss_depth_event",
+            "val_loss_depth_event",
+            "depth_event/close_bce",
+            "depth_event/open_bce",
+            "loss_subtask_ce",
+            "actor_grad_norm",
+            "loss_critic",
+            "depth_rgb_rms_ratio",
+            "depth_pre_bound_token_rms",
+            "depth_injected_token_rms",
+            "depth_late_early_rms_ratio",
+            "depth_grad_norm_preclip",
         )
         console_scalars = {
-            k: training_infos[k]
-            for k in console_keys
-            if isinstance(training_infos.get(k), (int, float))
+            k: training_infos[k] for k in console_keys if isinstance(training_infos.get(k), (int, float))
         }
         if console_scalars:
             logging.info(
                 f"[MolmoAct2Trainer] step={step}  "
                 + "  ".join(f"{k}={v:.4f}" for k, v in console_scalars.items())
             )
-        wandb_infos = self._wandb_metrics(training_infos)
-        super().log_metrics(wandb_infos, step, wandb_logger, _policy)
+        aim_infos = self._aim_metrics(training_infos)
+        super().log_metrics(aim_infos, step, aim_logger, _policy)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

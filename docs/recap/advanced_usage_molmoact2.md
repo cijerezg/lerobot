@@ -117,7 +117,7 @@ The reference config is [`config_rl.yaml`](../../../config_rl.yaml). The fields 
 | `batch_size` | int | `96` | Replay buffer sampling batch size. Multiplied by `policy.gradient_accumulation_steps` to get the effective batch. |
 | `skip_critic` | bool | `true` | Skip critic training entirely. Saves VRAM and speeds up training. Set `false` only if you are running RECAP-style RL with the distributional critic. |
 | `treat_main_dataset_as_golden` | bool | `true` | When `true`, every demo in `dataset.root` is treated as optimal (advantage forced to 1.0). Set to `true` for teleop demos; set to `false` only if your main dataset includes failed episodes that should be down-weighted by the critic. |
-| `log_freq` | int | `20` | WandB logging frequency, in optimization steps. |
+| `log_freq` | int | `20` | Aim logging frequency, in optimization steps. |
 | `save_freq` | int | `100` | Online checkpoint frequency (steps). |
 | `offline_save_freq` | int | `400` | Offline checkpoint frequency (steps). |
 

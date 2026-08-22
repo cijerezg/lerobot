@@ -12,15 +12,16 @@ Architecture:
 
 Queues:
   transition_queue          — actor → learner: episode transitions
-  interaction_message_queue — actor → learner: episode stats for W&B
+  interaction_message_queue — actor → learner: episode stats for Aim
   parameters_queue          — learner → actor: updated weights
 
 Usage:
     python -m lerobot.rl.rl_learner \
         --config_path lerobot/src/lerobot/rl/config_rl.yaml
 """
-import logging
+
 import json
+import logging
 import os
 import shutil
 import time
@@ -31,19 +32,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-from termcolor import colored
 from PIL import Image
+from termcolor import colored
 from torch import nn
 from torch.multiprocessing import Process, Queue
 
-from lerobot.common.wandb_utils import WandBLogger
+import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
+import lerobot.rl.pi05.rl_pi05  # noqa: F401 — registers PI05RLConfig
+from lerobot.common.aim_utils import AimLogger
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-import lerobot.rl.pi05.rl_pi05            # noqa: F401 — registers PI05RLConfig
-import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
-from lerobot.robots import rebot_b601_follower, so_follower   # noqa: F401 — registers robot configs
-from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — registers teleop configs
 from lerobot.rl.buffer import ReplayBuffer
+from lerobot.rl.learner import (
+    check_nan_in_transition,
+    log_training_info,
+    process_interaction_messages,
+    save_training_checkpoint,
+    start_learner,
+)
 from lerobot.rl.offline_dataset_utils import (
     get_offline_dataset_sources,
     get_offline_dataset_weights,
@@ -52,24 +58,17 @@ from lerobot.rl.offline_dataset_utils import (
     make_combined_offline_iterator,
     materialize_dataset_labels,
 )
-from lerobot.rl.learner import (
-    check_nan_in_transition,
-    log_training_info,
-    process_interaction_messages,
-    save_training_checkpoint,
-    start_learner,
-)
+from lerobot.rl.pretrained_merge import apply_pretrained_merges, build_pretrained_merges
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.utils import build_named_adamw_optimizers, save_video_with_critic_overlay
-from lerobot.rl.pretrained_merge import build_pretrained_merges, apply_pretrained_merges
+from lerobot.robots import rebot_b601_follower, so_follower  # noqa: F401 — registers robot configs
+from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — registers teleop configs
 from lerobot.transport.utils import bytes_to_transitions
 from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
-
-
 
 # ── Thread/process helpers ────────────────────────────────────────────────────
 
@@ -106,10 +105,10 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None) -> None
     logging.info(f"Learner logging initialized, writing to {log_file}")
     logging.info(pformat(cfg.to_dict()))
 
-    if cfg.wandb.enable and cfg.wandb.project:
-        wandb_logger = WandBLogger(cfg)
+    if cfg.aim.enable and cfg.aim.experiment:
+        aim_logger = AimLogger(cfg)
     else:
-        wandb_logger = None
+        aim_logger = None
         logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
 
     set_seed(seed=cfg.seed)
@@ -119,7 +118,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None) -> None
     is_threaded = _use_threads(cfg)
     shutdown_event = ProcessSignalHandler(is_threaded, display_pid=not is_threaded).shutdown_event
 
-    start_learner_threads(cfg=cfg, wandb_logger=wandb_logger, shutdown_event=shutdown_event)
+    start_learner_threads(cfg=cfg, aim_logger=aim_logger, shutdown_event=shutdown_event)
 
 
 # ── Thread management ─────────────────────────────────────────────────────────
@@ -127,7 +126,7 @@ def train(cfg: TrainRLServerPipelineConfig, job_name: str | None = None) -> None
 
 def start_learner_threads(
     cfg: TrainRLServerPipelineConfig,
-    wandb_logger: WandBLogger | None,
+    aim_logger: AimLogger | None,
     shutdown_event,
 ) -> None:
     transition_queue: Queue = Queue()
@@ -145,7 +144,7 @@ def start_learner_threads(
 
     add_actor_information_and_train(
         cfg=cfg,
-        wandb_logger=wandb_logger,
+        aim_logger=aim_logger,
         shutdown_event=shutdown_event,
         transition_queue=transition_queue,
         interaction_message_queue=interaction_message_queue,
@@ -166,7 +165,7 @@ def start_learner_threads(
 
 def add_actor_information_and_train(
     cfg: TrainRLServerPipelineConfig,
-    wandb_logger: WandBLogger | None,
+    aim_logger: AimLogger | None,
     shutdown_event,
     transition_queue: Queue,
     interaction_message_queue: Queue,
@@ -241,9 +240,7 @@ def add_actor_information_and_train(
     replay_buffer.reward_normalization_constant = float(
         getattr(cfg.policy, "reward_normalization_constant", 1.0)
     )
-    replay_buffer.terminal_failure_reward = float(
-        getattr(cfg.policy, "terminal_failure_reward", -10.0)
-    )
+    replay_buffer.terminal_failure_reward = float(getattr(cfg.policy, "terminal_failure_reward", -10.0))
 
     offline_replay_buffer = None
     offline_buffers: list[ReplayBuffer] = []
@@ -287,7 +284,7 @@ def add_actor_information_and_train(
         interaction_message = process_interaction_messages(
             interaction_message_queue=interaction_message_queue,
             interaction_step_shift=interaction_step_shift,
-            wandb_logger=wandb_logger,
+            aim_logger=aim_logger,
             shutdown_event=shutdown_event,
         )
 
@@ -390,13 +387,13 @@ def add_actor_information_and_train(
             trainer.log_metrics(
                 training_infos=training_infos,
                 step=optimization_step,
-                wandb_logger=wandb_logger,
+                aim_logger=aim_logger,
                 _policy=policy,
             )
 
         step_hz = 1.0 / (time.time() - t0 + 1e-9)
-        if wandb_logger:
-            wandb_logger.log_dict(
+        if aim_logger:
+            aim_logger.log_dict(
                 {"Optimization frequency loop [Hz]": step_hz, "Optimization step": optimization_step},
                 mode="train",
                 custom_step_key="Optimization step",
@@ -408,9 +405,7 @@ def add_actor_information_and_train(
         optimization_step += 1
 
         # ── Checkpoint ────────────────────────────────────────────────────
-        if saving_checkpoint and (
-            optimization_step % save_freq == 0 or optimization_step == online_steps
-        ):
+        if saving_checkpoint and (optimization_step % save_freq == 0 or optimization_step == online_steps):
             save_training_checkpoint(
                 cfg=cfg,
                 optimization_step=optimization_step,
@@ -656,13 +651,17 @@ def _init_offline_buffer(
 
     if getattr(cfg, "cache_policy", "fallback") == "require":
         cache_dir = getattr(cfg, "buffer_cache_dir", None)
-        cached = None if cache_dir is None else ReplayBuffer.find_cache(
-            offline_dataset,
-            cache_dir,
-            state_keys=cfg.policy.input_features.keys(),
-            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
-            image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
-            image_stride=getattr(cfg.policy, "image_stride", 1),
+        cached = (
+            None
+            if cache_dir is None
+            else ReplayBuffer.find_cache(
+                offline_dataset,
+                cache_dir,
+                state_keys=cfg.policy.input_features.keys(),
+                image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
+                image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
+                image_stride=getattr(cfg.policy, "image_stride", 1),
+            )
         )
         if cached is None:
             raise FileNotFoundError(
@@ -686,9 +685,7 @@ def _init_offline_buffer(
     )
     buf.dataset = offline_dataset
     buf.offline_source = source
-    materialize_dataset_labels(
-        buf, offline_dataset, offline_dataset, source_index=0, is_main_process=True
-    )
+    materialize_dataset_labels(buf, offline_dataset, offline_dataset, source_index=0, is_main_process=True)
     return buf
 
 
@@ -700,8 +697,9 @@ def _save_online_buffer(
     step: int,
 ) -> None:
     online_buffer_dir = os.path.join(cfg.output_dir, "online_buffer")
-    logging.info(f"[LEARNER] Saving online buffer at episode {episode}, step {step}, "
-                 f"buffer size {len(replay_buffer)}")
+    logging.info(
+        f"[LEARNER] Saving online buffer at episode {episode}, step {step}, buffer size {len(replay_buffer)}"
+    )
     if os.path.exists(online_buffer_dir) and os.path.isdir(online_buffer_dir):
         shutil.rmtree(online_buffer_dir)
     replay_buffer.to_lerobot_dataset(
