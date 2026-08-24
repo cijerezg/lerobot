@@ -1689,6 +1689,7 @@ button:hover { background:#f0f0f1; }
     Plotly.relayout(plot, {'sliders[0].active':bounded});
     render(bounded);
   }
+  window.probeInspectorGo = go;
   plot.on('plotly_sliderchange', event => render(event.step.value ?? event.step.args[0][0]));
   document.getElementById('prev').addEventListener('click', () => go(active-1));
   document.getElementById('next').addEventListener('click', () => go(active+1));

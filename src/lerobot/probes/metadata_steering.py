@@ -101,7 +101,10 @@ low end is as much a data statement as a model one. Which levels the *held-out* 
 actually cover is in the provenance box, and a level missing there has no column in the
 conditionality panel.
 
-Cost is ``n_frames x (9 + n_seeds - 1)`` forwards.
+Cost is ``n_frames x (9 + n_seeds - 1)`` forwards, issued as two batched calls per
+frame — every clause in one, the seed floor in the other. The clause rows share the
+frame's images and one flow-noise draw, so what separates them is the clause alone
+(batched 2026-08-22).
 
 Registered probe: enable with ``probe_parameters.enable_metadata_steering``.
 """
@@ -780,7 +783,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     makedirs(output_dir)
     p = cfg.probe_parameters
-    device = adapter.device
     chunk_size = int(cfg.policy.chunk_size)
     n_seeds = max(int(getattr(p, "metadata_steering_n_seeds", None) or p.n_seeds), 2)
     n_frames = int(getattr(p, "metadata_steering_n_frames", None) or p.n_frames_per_episode)
@@ -818,21 +820,37 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             hold_norm = adapter.normalize_gt_actions(hold_raw, frame["state"]).float()
             labels = gt_metadata.get(global_idx)
 
-            def predict(metadata: dict | None, seed: int = 0) -> torch.Tensor:
-                generator = torch.Generator(device=device)
-                generator.manual_seed(seed)
-                return adapter.predict_action_chunk(
-                    frame["obs"], frame["task"], state=frame["state"],
-                    subtask=frame["subtask"], metadata=metadata, generator=generator,
-                )[1]
-
-            acts = {"none": predict(None)}
-            acts |= {name: predict(metadata) for name, metadata in _STEERED.items()}
+            # Every clause in one forward, all sharing seed 0's noise draw exactly as
+            # the per-clause loop did — the contrast is the clause, so a per-row noise
+            # slice would fold the draw into it. Batched 2026-08-22.
+            condition_names: list[str] = ["none"]
+            condition_metadata: list[dict | None] = [None]
+            for name, steered_metadata in _STEERED.items():
+                condition_names.append(name)
+                condition_metadata.append(steered_metadata)
             if labels is not None:
-                acts["gt"] = predict(labels)
+                condition_names.append("gt")
+                condition_metadata.append(labels)
+            _, condition_chunks = adapter.predict_action_chunk_batch(
+                frame["obs"], frame["task"], [frame["subtask"]] * len(condition_names),
+                metadatas=condition_metadata,
+                noise=adapter.flow_noise_like(len(condition_names), 0),
+            )
+            acts = {name: condition_chunks[i] for i, name in enumerate(condition_names)}
+
             # Seed floor: the rollout clause re-drawn under different noise. Without it
-            # every distance above is a number with no scale.
-            floor_draws = [acts[_ROLLOUT]] + [predict(_STEERED[_ROLLOUT], seed) for seed in range(1, n_seeds)]
+            # every distance above is a number with no scale. One row per reseed.
+            floor_draws = [acts[_ROLLOUT]]
+            if n_seeds > 1:
+                floor_noise = torch.cat(
+                    [adapter.flow_noise_like(1, seed) for seed in range(1, n_seeds)], dim=0
+                )
+                _, floor_chunks = adapter.predict_action_chunk_batch(
+                    frame["obs"], frame["task"], [frame["subtask"]] * (n_seeds - 1),
+                    metadatas=[_STEERED[_ROLLOUT]] * (n_seeds - 1),
+                    noise=floor_noise,
+                )
+                floor_draws += [floor_chunks[i] for i in range(n_seeds - 1)]
             floor_mean, floor_max = _pairwise_rmse(floor_draws)
 
             projection, tau = _quality_projection(acts)

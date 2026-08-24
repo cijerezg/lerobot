@@ -3088,6 +3088,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         inference_delay: int | None,
         prev_chunk_left_over: Tensor | None,
         execution_horizon: int | None,
+        noise: Tensor | None = None,
     ) -> Tensor:
         backbone = self._backbone()
         action_expert = self._action_expert()
@@ -3118,14 +3119,30 @@ class MolmoAct2Policy(PreTrainedPolicy):
         source_tensor = encoder_kv_states[0][0]
         batch_size = int(source_tensor.shape[0])
         device = source_tensor.device
-        trajectory = torch.randn(
+        trajectory_dtype = next(action_expert.parameters()).dtype
+        trajectory_shape = (
             batch_size,
             self._generation_action_horizon(),
             int(backbone.config.max_action_dim),
-            device=device,
-            dtype=next(action_expert.parameters()).dtype,  # patched: match model dtype for bf16
-            generator=generator,
         )
+        if noise is not None:
+            # Caller-supplied flow noise. Probes batch N prompt variants that must share
+            # ONE noise draw: a single torch.randn over [B, ...] hands every row a
+            # different slice of the stream, which would fold noise into what is meant to
+            # be a prompt-only contrast. Passing noise explicitly is the only way to hold
+            # it fixed across the batch. Added 2026-08-22.
+            if tuple(noise.shape) != trajectory_shape:
+                raise ValueError(
+                    f"noise must have shape {trajectory_shape}, got {tuple(noise.shape)}."
+                )
+            trajectory = noise.to(device=device, dtype=trajectory_dtype)
+        else:
+            trajectory = torch.randn(
+                *trajectory_shape,
+                device=device,
+                dtype=trajectory_dtype,  # patched: match model dtype for bf16
+                generator=generator,
+            )
         if self.config.mask_action_dim_padding:
             trajectory = self._mask_action_dim_tensor(trajectory, action_dim_is_pad)
 
@@ -3404,6 +3421,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                     inference_delay=kwargs.get("inference_delay"),
                     prev_chunk_left_over=kwargs.get("prev_chunk_left_over"),
                     execution_horizon=kwargs.get("execution_horizon"),
+                    noise=kwargs.get("noise"),
                 )
             else:
                 actions = self._backbone().generate_actions_from_inputs(

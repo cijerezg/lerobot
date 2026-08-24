@@ -39,7 +39,18 @@ def _vocabulary(dataset, limit: int) -> list[str]:
     if table is None or not hasattr(table, "index"):
         return []
     tasks = [str(name) for name in table.index]
-    return tasks[:limit] if limit > 0 else tasks
+    if limit > 0 and len(tasks) > limit:
+        # Loud, because the index is sorted: a cap slices the vocabulary rather than
+        # sampling it, and the swept set can end up sharing a verb while differing only
+        # in the object. That is how subtask_sweep came to report a low separation for a
+        # reason that had nothing to do with the policy (2026-08-22). Same trap here.
+        logging.warning(
+            f"[task_sweep] max_labels={limit} truncates {len(tasks)} tasks to the first "
+            f"{limit} IN SORTED ORDER — this slices the vocabulary, it does not sample it. "
+            f"Dropped: {tasks[limit:]}"
+        )
+        return tasks[:limit]
+    return tasks
 
 
 def _render(rows: list[dict], tasks: list[str], example: dict, output_dir: str) -> None:

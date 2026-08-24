@@ -193,6 +193,130 @@ class MolmoAct2Adapter(ProbablePolicy):
         pred_unnorm = unnorm.squeeze(0).float().cpu()
         return pred_unnorm, pred_norm, None
 
+    @staticmethod
+    def _expand_to_batch(value: Tensor, n: int) -> Tensor:
+        """Give *value* a leading batch of exactly *n*, replicating a single sample.
+
+        Probe observations arrive unbatched ([D] state, [C,H,W] image) or with a
+        leading 1. MolmoAct2PackInputsProcessorStep._batch_size reads the batch off
+        those same ranks, so widening here is all the preprocessor needs to build N
+        prompt variants over one frame. Added 2026-08-22.
+        """
+        if value.ndim >= 2 and value.shape[0] == 1:
+            # Already carries a singleton batch: depth (1,1,H,W), history windows
+            # (1,T_h,C,H,W), and images/state that arrived pre-batched all land here,
+            # so rank is not a usable discriminator — the leading dim is.
+            pass
+        elif value.ndim in (1, 3):  # bare state (D,) / image (C,H,W)
+            value = value.unsqueeze(0)
+        else:
+            raise ValueError(
+                f"cannot batch an observation with shape {tuple(value.shape)}: expected a "
+                "leading singleton batch, a 1-D state, or a 3-D image."
+            )
+        return value.expand(n, *value.shape[1:]).contiguous()
+
+    def _make_batch_multi(
+        self,
+        obs: dict[str, Tensor],
+        task_str: str,
+        subtasks: list[str | None],
+        metadatas: list[dict] | None = None,
+    ) -> dict:
+        """Preprocessor input for N prompt variants over ONE frame."""
+        n = len(subtasks)
+        device = self._device
+        obs_on_device = {k: self._expand_to_batch(v.to(device), n) for k, v in obs.items()}
+        flat: dict = {**obs_on_device, "task": [task_str] * n}
+        complementary: dict = {"subtask": list(subtasks)}
+        if metadatas is not None:
+            if len(metadatas) != n:
+                raise ValueError(f"metadatas must have length {n}, got {len(metadatas)}.")
+            complementary["metadata"] = list(metadatas)
+        flat[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        batch = self._preprocessor(flat)
+        return {
+            k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+            for k, v in batch.items()
+        }
+
+    @torch.no_grad()
+    def predict_action_chunk_batch(
+        self,
+        obs: dict[str, Tensor],
+        task_str: str,
+        subtasks: list[str | None],
+        *,
+        metadatas: list[dict] | None = None,
+        noise: Tensor | None = None,
+        generator: torch.Generator | None = None,
+    ) -> tuple[Tensor, Tensor]:
+        """One forward over N prompt variants of a single frame.
+
+        Returns (unnormalized, normalized) action chunks, each [N, chunk, action_dim].
+
+        Pass *noise* to hold the flow draw identical across the N rows — the sweeps
+        contrast prompts, so letting each row take its own slice of a generator's
+        stream would fold noise into the contrast. See modeling_molmoact2.py's
+        _generate_actions_from_inputs_with_rtc. Added 2026-08-22.
+        """
+        n = len(subtasks)
+        if n == 0:
+            raise ValueError("subtasks must be non-empty.")
+        batch = self._make_batch_multi(obs, task_str, subtasks, metadatas)
+        inference_action_mode = self._inference_action_mode()
+        rtc_config = getattr(self._policy.config, "rtc_config", None)
+        restore_rtc = bool(
+            inference_action_mode == "discrete"
+            and rtc_config is not None
+            and bool(getattr(rtc_config, "enabled", False))
+        )
+        if restore_rtc:
+            rtc_config.enabled = False
+        try:
+            norm_actions = self._policy.predict_action_chunk(
+                batch,
+                inference_action_mode=inference_action_mode,
+                generator=generator,
+                noise=noise,
+            ).float()
+        finally:
+            if restore_rtc:
+                rtc_config.enabled = True
+        pred_norm = norm_actions.float().cpu()
+        action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
+        if action_encoding in ("anchor", "delta"):
+            anchor = self._expand_to_batch(
+                obs[OBS_STATE].to(self._device), n
+            )[..., : self.action_dim]
+            unnorm = self._postprocessor({ACTION: norm_actions, ANCHOR_KEY: anchor})
+        else:
+            unnorm = self._postprocessor(norm_actions)
+        return unnorm.float().cpu(), pred_norm
+
+    def flow_noise_like(
+        self, n: int, seed: int, device: torch.device | None = None
+    ) -> Tensor:
+        """One flow-noise draw for *seed*, replicated across *n* rows.
+
+        Mirrors the [B, horizon, max_action_dim] draw the RTC path would make, so a
+        batched call with this noise matches N single-sample calls that each seeded
+        their own generator with *seed*. Added 2026-08-22.
+        """
+        device = device or self._device
+        generator = torch.Generator(device=device)
+        generator.manual_seed(seed)
+        horizon = int(self._policy._generation_action_horizon())
+        max_action_dim = int(self._policy._backbone().config.max_action_dim)
+        # Draw in the action expert's dtype, matching the RTC path's own randn. A
+        # float32 draw cast down afterwards consumes the generator differently and
+        # would not reproduce the unbatched result for the same seed.
+        dtype = next(self._policy._action_expert().parameters()).dtype
+        single = torch.randn(
+            1, horizon, max_action_dim, device=device, dtype=dtype, generator=generator
+        )
+        return single.expand(n, horizon, max_action_dim).contiguous()
+
     @property
     def action_token_vocab_size(self) -> int | None:
         return int(getattr(self._policy.model.config, "num_action_tokens", 0)) or None

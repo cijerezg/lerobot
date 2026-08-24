@@ -412,6 +412,14 @@ class ProbeConfig:
     subtask_sweep_n_frames: int | None = None
     subtask_sweep_max_labels: int | None = None
     subtask_sweep_n_seeds: int | None = None
+    # Explicit vocabulary for the sweep, overriding max_labels. The fallback truncates
+    # meta/subtasks.parquet to the first max_labels entries, and that index is sorted, so
+    # a cap slices by verb: on rebot-annot-v3 the first 8 of 19 are six ``grasp`` and two
+    # ``move`` — no ``release``, no ``return to home``. The contrast then varies only the
+    # OBJECT, which the chunk has little reason to react to, and the separation statistic
+    # reads low for a reason that has nothing to do with the model. Name the labels here
+    # to span the verbs instead. Added 2026-08-22.
+    subtask_sweep_labels: list[str] | None = None
     # Side figure only: a fan grid of this many joints x this many of the swept frames.
     subtask_sweep_fan_grid: int = 4
 

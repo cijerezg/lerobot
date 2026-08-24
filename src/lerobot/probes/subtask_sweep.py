@@ -58,7 +58,11 @@ beyond noise, and readout 2 is then ranking noise: the rank histogram of a polic
 ignores the clause is uniform by construction, so it adds nothing. Read $S$ first, and
 only ask about ranks once it clears the floor.
 
-Cost is ``n_frames x (|vocab| + n_seeds)`` forwards, so both are small knobs. A second
+Cost is ``n_frames x (|vocab| + n_seeds)`` forwards, so both are small knobs. Those
+forwards are issued as two batched calls per frame — the whole vocabulary in one, the
+seed floor in the other — since every row shares the frame's images and differs only in
+the prompt. The vocabulary rows also share one flow-noise draw, which is what makes the
+spread a clause contrast rather than a noise one (batched 2026-08-22). A second
 figure re-draws the fan as a ``subtask_sweep_fan_grid`` square of joints x frames, off the
 same forwards — no extra cost, and it is qualitative: the statistics stay the two panels
 above.
@@ -87,13 +91,39 @@ from lerobot.probes.utils import (
 )
 
 
-def _vocabulary(dataset, limit: int) -> list[str]:
-    """Subtask label texts from meta/subtasks.parquet (the text is the frame index)."""
+def _vocabulary(dataset, limit: int, explicit: list[str] | None = None) -> list[str]:
+    """Subtask label texts from meta/subtasks.parquet (the text is the frame index).
+
+    *explicit* names the labels to sweep and overrides *limit*. Prefer it: the parquet
+    index is sorted, so truncating to *limit* slices the vocabulary by verb rather than
+    sampling it — on rebot-annot-v3 the first 8 of 19 are six ``grasp`` and two ``move``,
+    leaving the sweep to contrast objects within one verb and reporting a separation that
+    says more about the label set than the policy. Unknown names are an error, not a
+    silent drop: a typo would otherwise shrink the sweep without saying so.
+    """
     table = getattr(getattr(dataset, "meta", None), "subtasks", None)
     if table is None or not hasattr(table, "index"):
         return []
     labels = [str(name) for name in table.index]
-    return labels[:limit] if limit and limit > 0 else labels
+    if explicit:
+        wanted = [str(name) for name in explicit]
+        missing = [name for name in wanted if name not in set(labels)]
+        if missing:
+            raise ValueError(
+                "probe_parameters.subtask_sweep_labels names labels that are not in "
+                f"{getattr(dataset, 'root', 'the dataset')}/meta/subtasks.parquet: "
+                f"{missing}. Available: {labels}"
+            )
+        return wanted
+    if limit and limit > 0 and len(labels) > limit:
+        logging.warning(
+            f"[subtask_sweep] max_labels={limit} truncates {len(labels)} labels to the first "
+            f"{limit} IN SORTED ORDER — this slices the vocabulary, it does not sample it, so "
+            f"the sweep can end up contrasting objects within one verb. Set "
+            f"probe_parameters.subtask_sweep_labels to name them instead. Dropped: {labels[limit:]}"
+        )
+        return labels[:limit]
+    return labels
 
 
 def _pairwise_rmse(chunks: list[torch.Tensor]) -> tuple[float, float]:
@@ -278,13 +308,16 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         return
 
     p = cfg.probe_parameters
-    vocabulary = _vocabulary(dataset, int(getattr(p, "subtask_sweep_max_labels", None) or p.max_labels))
+    vocabulary = _vocabulary(
+        dataset,
+        int(getattr(p, "subtask_sweep_max_labels", None) or p.max_labels),
+        explicit=getattr(p, "subtask_sweep_labels", None),
+    )
     if len(vocabulary) < 2:
         logging.info("[subtask_sweep] dataset has no subtask vocabulary — skipping.")
         return
 
     makedirs(output_dir)
-    device = adapter.device
     chunk_size = int(cfg.policy.chunk_size)
     n_seeds = max(int(getattr(p, "subtask_sweep_n_seeds", None) or p.n_seeds), 2)
     n_frames = int(getattr(p, "subtask_sweep_n_frames", None) or p.n_frames_per_episode)
@@ -305,19 +338,31 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
             gt_norm = adapter.normalize_gt_actions(frame["gt_actions"], frame["state"])
 
-            def predict(subtask: str, seed: int) -> torch.Tensor:
-                generator = torch.Generator(device=device)
-                generator.manual_seed(seed)
-                return adapter.predict_action_chunk(
-                    frame["obs"], frame["task"], state=frame["state"], subtask=subtask,
-                    metadata=frame["metadata"], generator=generator,
-                )[1]
+            # One forward over the whole vocabulary. Every label shares seed 0's noise
+            # draw, exactly as the per-label loop did — the contrast is the clause, so
+            # letting each row take its own slice of a generator stream would fold noise
+            # into it. Batched 2026-08-22.
+            labels = list(vocabulary)
+            _, label_chunks = adapter.predict_action_chunk_batch(
+                frame["obs"], frame["task"], labels,
+                metadatas=[frame["metadata"]] * len(labels),
+                noise=adapter.flow_noise_like(len(labels), 0),
+            )
+            acts = {label: label_chunks[i] for i, label in enumerate(labels)}
 
-            acts = {label: predict(label, 0) for label in vocabulary}
             # Seed floor: same clause, different noise. Without it the vocabulary
-            # spread has no scale and any number looks like evidence.
+            # spread has no scale and any number looks like evidence. One row per
+            # seed, each row carrying that seed's own draw.
             gt_subtask = frame["subtask"] or vocabulary[0]
-            seed_draws = [predict(gt_subtask, seed) for seed in range(1, n_seeds + 1)]
+            seed_noise = torch.cat(
+                [adapter.flow_noise_like(1, seed) for seed in range(1, n_seeds + 1)], dim=0
+            )
+            _, seed_chunks = adapter.predict_action_chunk_batch(
+                frame["obs"], frame["task"], [gt_subtask] * n_seeds,
+                metadatas=[frame["metadata"]] * n_seeds,
+                noise=seed_noise,
+            )
+            seed_draws = [seed_chunks[i] for i in range(n_seeds)]
 
             vocab_mean, vocab_max = _pairwise_rmse(list(acts.values()))
             seed_mean, seed_max = _pairwise_rmse(seed_draws)

@@ -78,6 +78,7 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from matplotlib.colors import TwoSlopeNorm
 from torch.nn import functional
 
 from lerobot.policies.molmoact2.modeling_molmoact2 import _MEM_TEMPORAL_CAPTURE
@@ -272,9 +273,17 @@ def _spread_panel(ax, temporal_mass, layer_labels, uniform_mass) -> None:
     ])
 
 
-def _scene_panel(fig, ax, temporal_mass, layer_labels, frame_meta, uniform_mass) -> None:
-    vmax = max(float(np.percentile(temporal_mass, 98)), uniform_mass)
-    image = ax.imshow(temporal_mass, aspect="auto", cmap="viridis", vmin=0.0, vmax=vmax)
+def _scene_panel(fig, ax, temporal_mass, layer_labels, frame_meta) -> None:
+    # The panel asks a contrast question — layer against layer, frame against frame — so
+    # the colour scale is spent on the range m actually occupies. Anchoring it at 0 and
+    # the uniform baseline instead put over half the map on values m never takes, which
+    # compressed a real 0.09-wide layer effect into a few neighbouring shades. Clip both
+    # ends to the middle 96% and print the range on the bar: this scale is data-adaptive
+    # and therefore not comparable across runs, which the caption says out loud.
+    low, high = (float(value) for value in np.percentile(temporal_mass, [2, 98]))
+    if high - low < 1e-6:  # a degenerate spread would blow the norm up, not flatten it
+        low, high = low - 5e-7, high + 5e-7
+    image = ax.imshow(temporal_mass, aspect="auto", cmap="viridis", vmin=low, vmax=high)
     ax.set_xticks(range(len(layer_labels)), layer_labels)
     stride = max(1, len(frame_meta) // 10)
     ticks = list(range(0, len(frame_meta), stride))
@@ -284,13 +293,16 @@ def _scene_panel(fig, ax, temporal_mass, layer_labels, frame_meta, uniform_mass)
             ax.axhline(index - 0.5, color="white", linewidth=0.7, alpha=0.8)
     ax.set_xlabel("ViT temporal layer")
     ax.set_title("Is the amount read scene-dependent?")
-    fig.colorbar(image, ax=ax, fraction=0.046, label="past mass")
+    fig.colorbar(image, ax=ax, fraction=0.046, label=f"past mass (clipped {low:.2f}–{high:.2f})")
     panel_caption(ax, [
         r"The same $m$, one row per sampled frame, ordered by episode; white rules are episode",
         r"boundaries. Vertical stripes mean the layer sets the level and the scene does not",
         r"change it — a fixed schedule, not retrieval. Horizontal structure is the opposite:",
         r"some frames pull more history than others. Read the columns, not the rows: the",
         r"frame axis is a concatenation of episodes, not one trajectory.",
+        r"Colour is clipped to the middle 96% of $m$ and so shows contrast, not level: the",
+        r"level is the boxplot to the left, and the baseline is in the figure title. The",
+        r"range on the bar is set from this run's data — colours do not carry across runs.",
     ])
 
 
@@ -415,7 +427,7 @@ def _render_distribution(
     axes = np.array([[fig.add_subplot(panels[r, c]) for c in range(3)] for r in range(2)])
 
     _spread_panel(axes[0, 0], temporal_mass, layer_labels, uniform_mass)
-    _scene_panel(fig, axes[0, 1], temporal_mass, layer_labels, frame_meta, uniform_mass)
+    _scene_panel(fig, axes[0, 1], temporal_mass, layer_labels, frame_meta)
     _age_panel(axes[0, 2], shape, layers, history_seconds, colors)
     _head_panel(fig, axes[1, 0], head_total.mean(axis=(0, 2)), layer_labels, n_heads)
     _camera_panel(fig, axes[1, 1], head_total.mean(axis=(0, 3)), layer_labels, camera_names)
@@ -437,7 +449,7 @@ def _render_spatial_example(
     diagnostic: dict,
     percentile: int,
     uniform_mass: float,
-    vmax: float,
+    patch_range: tuple[float, float],
     output_path: str,
 ) -> None:
     """Show the most-read history moment and where the current frame reads history."""
@@ -449,6 +461,18 @@ def _render_spatial_example(
     head_age = diagnostic["head_age"]
     patch_mass = diagnostic["patch_mass"].mean(axis=0)
     age_by_camera = head_age.mean(axis=(0, 2))
+
+    # Diverging around the uniform baseline, so "reads history more than indifference
+    # would" is a colour flip and not a shade you have to judge against a number. The
+    # two slopes are scaled independently, which keeps full contrast across the
+    # sub-baseline range where in practice every patch sits. Bounds are shared by all
+    # three percentile examples so they stay comparable.
+    low, high = patch_range
+    norm = TwoSlopeNorm(
+        vcenter=uniform_mass,
+        vmin=min(low, uniform_mass - 1e-3),
+        vmax=max(high, uniform_mass + 1e-3),
+    )
 
     fig, axes = plt.subplots(len(camera_keys), 3, figsize=(15, 4.2 * len(camera_keys)), squeeze=False)
     overlay_images = []
@@ -475,13 +499,20 @@ def _render_spatial_example(
             heat, size=current.shape[:2], mode="bilinear", align_corners=False
         )[0, 0].numpy()
         axes[camera_idx, 2].imshow(current)
-        overlay = axes[camera_idx, 2].imshow(heat, cmap="magma", alpha=0.58, vmin=0.0, vmax=vmax)
+        overlay = axes[camera_idx, 2].imshow(heat, cmap="RdBu_r", alpha=0.62, norm=norm)
         overlay_images.append(overlay)
         axes[camera_idx, 2].set_title("current-frame patches reading history")
         axes[camera_idx, 2].axis("off")
 
     score = float(diagnostic["temporal_mass"].mean())
-    fig.colorbar(overlay_images[-1], ax=axes[:, 2].tolist(), fraction=0.025, pad=0.02, label="past mass")
+    bar = fig.colorbar(
+        overlay_images[-1], ax=axes[:, 2].tolist(), fraction=0.025, pad=0.02, label="past mass"
+    )
+    bar.ax.axhline(uniform_mass, color="#111111", linewidth=1.3)
+    bar.ax.text(
+        0.5, uniform_mass, "uniform", transform=bar.ax.get_yaxis_transform(), ha="center",
+        va="bottom", fontsize=7.5, color="#111111",
+    )
     fig.suptitle(
         f"Temporal-read p{percentile} — episode {ep_idx}, frame {frame_idx}  |  "
         f"mean mass={score:.4f} ({score / max(uniform_mass, 1e-12):.2f}× uniform baseline)",
@@ -696,7 +727,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     examples_dir = os.path.join(output_dir, "examples")
     makedirs(examples_dir)
     scores = temporal_mass.mean(axis=1)
-    patch_vmax = max(float(np.percentile(patch_mass, 98)), 1e-8)
+    # The overlay draws the layer mean, so its scale is set from that same reduction —
+    # percentiles of the raw per-layer array describe a population no panel ever shows.
+    drawn_patch_mass = patch_mass.mean(axis=1)
+    patch_range = tuple(float(value) for value in np.percentile(drawn_patch_mass, [2, 98]))
     examples: list[tuple[int, str]] = []
     for percentile, index in _percentile_examples(scores):
         diagnostic = {
@@ -718,7 +752,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             diagnostic,
             percentile,
             uniform_mass,
-            patch_vmax,
+            patch_range,
             os.path.join(examples_dir, filename),
         )
         examples.append((percentile, filename))
