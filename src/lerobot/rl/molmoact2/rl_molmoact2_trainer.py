@@ -324,8 +324,9 @@ class MolmoAct2Trainer(Trainer):
            embeddings governed by `freeze_embedding`; everything else gated
            by the schedule (unknown params default to frozen).
 
-        Critic-trained mode (skip_critic=False): critic params are then
-        unfrozen — either fully (path 1) or per the critic_* schedule (path 2).
+        Critic-trained mode (skip_critic=False): every critic-owned projection,
+        fusion, and head parameter trains. Policy modality encoders remain governed
+        by the actor schedule and are detached at the critic boundary.
         critic_target stays frozen.
         """
         skip_critic: bool = bool(getattr(cfg, "skip_critic", True))
@@ -408,39 +409,12 @@ class MolmoAct2Trainer(Trainer):
 
     @staticmethod
     def _apply_critic_freeze(critic_net: nn.Module, tp, cfg) -> None:
-        cr_vision_on = tp.critic_vision_from_layer is not None
-        cr_language_on = tp.critic_language_from_layer is not None
-        cr_vt_layers = (
-            set(range(tp.critic_vision_from_layer, _MOLMOACT2_VIT_DEPTH)) if cr_vision_on else set()
-        )
-        cr_layers = (
-            set(range(tp.critic_language_from_layer, int(getattr(cfg.policy, "critic_llm_depth", 12))))
-            if cr_language_on
-            else set()
-        )
-
-        for name, param in critic_net.named_parameters():
-            # Always-trainable critic heads + depth modules (fresh, trained from scratch).
-            if (
-                name.startswith("value_queries")
-                or name.startswith("bin_logit_head")
-                or name.startswith("depth_")  # depth_encoder / depth_blocks / depth_read_proj
-            ):
-                param.requires_grad = True
-            elif "transformer_blocks." in name:
-                param.requires_grad = _layer_idx_after(name, "transformer_blocks.") in cr_layers
-            elif name.startswith("ln_f"):
-                param.requires_grad = cr_language_on
-            elif ".image_vit.transformer.resblocks." in name:
-                param.requires_grad = _layer_idx_after(name, ".resblocks.") in cr_vt_layers
-            elif ".image_vit.patch_embedding" in name or ".image_vit.positional_embedding" in name:
-                # Mirror the actor boundary: late critic vision blocks and the
-                # connector may adapt, while the pretrained RGB stem stays fixed.
-                param.requires_grad = False
-            elif ".image_pooling_2d" in name or ".image_projector" in name:
-                param.requires_grad = cr_vision_on
-            else:
-                param.requires_grad = False
+        # The hybrid critic contains only critic-owned, randomly initialized
+        # projection/fusion/head parameters. Policy encoders are outside this module
+        # and detached at the feature boundary, so copied-layer schedules no longer apply.
+        del tp, cfg
+        for param in critic_net.parameters():
+            param.requires_grad = True
 
     def get_optimizer_groups(self, policy: nn.Module, cfg) -> list[dict]:
         """

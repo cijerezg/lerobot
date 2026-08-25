@@ -176,21 +176,6 @@ uv run --project lerobot python -m lerobot.scripts.view_probes \
   --no-open
 ```
 
-Compare the same probe outputs across one to four runs or checkpoints:
-
-```bash
-uv run python -m lerobot.scripts.compare_probes \
-  outputs/molmoact2_probes_v4_ckpt400 \
-  outputs/molmoact2_probes_v4_scratch \
-  outputs/molmoact2_probes_v4_mse_ckpt400 \
-  --label=ckpt400 \
-  --label=scratch \
-  --label=mse400
-```
-
-Each path may be a run directory, its `validation/` directory, or a specific
-`step_*` directory. Labels are optional and correspond to the paths in order.
-
 ## Standalone Robot Inference
 
 Run the configured policy on the real robot without the online learner/actor

@@ -707,7 +707,8 @@ def _chunk_panel(fig, ax, by_query: np.ndarray, ordered: list[str], order: np.nd
     ])
 
 
-def _series_panel(ax, ordered: list[str], pct: np.ndarray, frame_meta: list[dict], layer: int) -> None:
+def _series_panel(ax, ordered: list[str], pct: np.ndarray, frame_meta: list[dict], layer: int,
+                  *, legend: bool = True, ylim: tuple[float, float] | None = None) -> None:
     """One line per segment against the frame axis, every line on the same baseline.
 
     This panel used to be a stacked area, which cannot be read: a band's thickness is its
@@ -730,6 +731,12 @@ def _series_panel(ax, ordered: list[str], pct: np.ndarray, frame_meta: list[dict
     silent = [ordered[i] for i in range(len(ordered)) if i not in drawn]
     positive = pct[pct > 0]
     floor = float(positive.min()) * 0.7 if positive.size else 1e-3
+    top = float(pct.max()) * 1.6
+    # A caller drawing one panel per layer passes a shared range: the point of putting
+    # layer 0 above layer 14 is that the cameras collapse between them, and per-panel
+    # autoscale would rescale that collapse away.
+    if ylim is not None:
+        floor, top = ylim
 
     for column in drawn:
         series = np.where(pct[:, column] > 0, pct[:, column], np.nan)
@@ -740,7 +747,7 @@ def _series_panel(ax, ordered: list[str], pct: np.ndarray, frame_meta: list[dict
     _episode_rules(ax, frame_meta)
     ax.set_yscale("log")
     ax.set_xlim(-0.5, len(steps) - 0.5 + 0.20 * max(len(steps) - 1, 1))
-    ax.set_ylim(floor, float(pct.max()) * 1.6)
+    ax.set_ylim(floor, top)
     # Percentages, not scientific notation, and ticked at 1-2-5 within each decade: a
     # plain log axis over this range labels only "10", which is one tick to read 13 series
     # against. This panel is read for "about what percent", so the axis has to answer that.
@@ -764,8 +771,9 @@ def _series_panel(ax, ordered: list[str], pct: np.ndarray, frame_meta: list[dict
                  fontsize=10)
     # Below the axes, not over them: the lines run the full width of the panel and any
     # in-axes anchor sits on top of the segments with the smallest shares.
-    ax.legend(fontsize=6.5, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.13),
-              frameon=False, handlelength=1.6, columnspacing=1.4)
+    if legend:
+        ax.legend(fontsize=6.5, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.13),
+                  frameon=False, handlelength=1.6, columnspacing=1.4)
 
 
 def _render(
@@ -790,9 +798,25 @@ def _render(
     order = np.argsort(-focus_mass.mean(axis=0))
     ordered = [names[index] for index in order]
 
-    fig, axes = plt.subplots(2, 2, figsize=(18, 10), constrained_layout=True)
+    # Left column is one frame-series per probed layer; the right column keeps the three
+    # summary panels, which stay at the focus layer. Three rows minimum so those three
+    # always have a home even when fewer layers were probed.
+    rows = max(len(layers), 3)
+    fig, axes = plt.subplots(rows, 2, figsize=(18, 5 * rows), constrained_layout=True)
 
-    _series_panel(axes[0, 0], ordered, focus_pct[:, order], frame_meta, layers[focus])
+    all_pct = 100.0 * mass
+    positive = all_pct[all_pct > 0]
+    shared_ylim = (
+        float(positive.min()) * 0.7 if positive.size else 1e-3,
+        float(all_pct.max()) * 1.6,
+    )
+    for row, layer in enumerate(layers):
+        _series_panel(
+            axes[row, 0], ordered, all_pct[:, row, :][:, order], frame_meta, layer,
+            legend=(row == len(layers) - 1), ylim=shared_ylim,
+        )
+    for row in range(len(layers), rows):
+        axes[row, 0].axis("off")
 
     ax = axes[0, 1]
     means = focus_pct.mean(axis=0)[order]
@@ -812,7 +836,7 @@ def _render(
     ax.set_xlabel("mean share of attention budget (%)")
     ax.set_title(f"Mean share, layer {layers[focus]} (rule = frame range)")
 
-    ax = axes[1, 0]
+    ax = axes[1, 1]
     layer_grid = 100.0 * mass.mean(axis=0).T[order]
     image = ax.imshow(
         layer_grid, aspect="auto", cmap="viridis", vmin=0.0,
@@ -831,7 +855,7 @@ def _render(
     ax.set_title("Mean share by layer (%)")
     fig.colorbar(image, ax=ax, fraction=0.046, label="share of attention budget (%)")
 
-    ax = axes[1, 1]
+    ax = axes[2, 1]
     query_grid = 100.0 * by_query[:, focus, :, :].mean(axis=0)[order]
     image = ax.imshow(
         query_grid, aspect="auto", cmap="viridis", vmin=0.0,
@@ -912,7 +936,7 @@ def _n90_panel(ax, ordered: list[str], n90_mean: np.ndarray, n90_low: np.ndarray
         r"Coloured bar = $n_{90} = \min\{k : \sum_{i \leq k} s_i \geq 0.9\,m_S\}$, the number of the segment's columns",
         r"that carry 90% of the mass it received. Grey bar behind = $n_S$, every column it brought.",
         r"Rule = min..max across frames; the number is the mean, rounded.",
-        r"A count, not an index: read it as \"90% of what this segment got landed on this many of its columns\".",
+        r"A count, not an index: read it as “90% of what this segment got landed on this many of its columns”.",
         r"Computed on the head-averaged row, so it counts what the layer reads — one head can only read fewer.",
     ])
 
@@ -955,6 +979,62 @@ def _column_mass_panel(ax, ordered: list[str], per_column: np.ndarray, ranks: np
     ])
 
 
+def _read_strength_panel(ax, ordered: list[str], mean_col: np.ndarray, hot_col: np.ndarray,
+                         xlim: tuple[float, float], *, title: bool, caption: bool) -> None:
+    r"""How hard one column of each segment is read, against a column with no opinion.
+
+    The budget panel cannot answer "is depth preferred": a segment's share is mostly its
+    column count, and the two cameras and the depth bank bring near-identical counts yet
+    land three-fold apart. Dividing by $n_S$ fixes the count, but a bare per-column share
+    is an unreadable $10^{-4}$, so it is expressed against the one level that means
+    *nothing was decided*: $1/N$, the share every column would get if the row were flat.
+
+    So 1.0 is "read exactly like a column the model has no opinion about", left of the
+    rule is a column actively marked down, and right of it is one sought out. The dumbbell
+    is the segment's mean column and its hottest, which is the spread the count hides: a
+    camera whose mean sits at $0.4$ but whose best patch reaches $2.4$ is being filtered,
+    not ignored.
+    """
+    y = np.arange(len(ordered))[::-1]
+    ax.axvspan(xlim[0], 1.0, color="#f0f0ec", zorder=0)
+    ax.axvline(1.0, color=_INK, linewidth=0.9, linestyle="--", zorder=2)
+
+    for row, name, mean, hot in zip(y, ordered, mean_col, hot_col):
+        if not (np.isfinite(mean) and np.isfinite(hot)) or mean <= 0 or hot <= 0:
+            ax.text(xlim[0] * 1.15, row, f"{name}: no mass", va="center", fontsize=7,
+                    color="#777777")
+            continue
+        ax.hlines(row, mean, hot, color=_color(name), linewidth=2.4, zorder=3)
+        ax.scatter([mean], [row], s=34, color=_color(name), zorder=4,
+                   edgecolor="white", linewidth=0.7)
+        ax.scatter([hot], [row], s=30, facecolor="white", zorder=4,
+                   edgecolor=_color(name), linewidth=1.5)
+        ax.text(hot * 1.10, row, f"{mean:.2f} \u2192 {hot:.2f}", va="center", fontsize=7)
+
+    ax.set_xscale("log")
+    ax.set_xlim(*xlim)
+    ax.set_ylim(-0.8, len(ordered) - 0.2)
+    ax.set_yticks(y, ordered, fontsize=7.5)
+    for tick in ax.get_yticklabels():
+        tick.set_color(_INK)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    ax.set_xlabel("read strength of one column (× a no-opinion column, log)")
+    if title:
+        ax.set_title("How hard is one column read?")
+    if not caption:
+        return
+    _caption(ax, [
+        r"Filled dot = $\frac{m_S}{n_S} \cdot N$, the segment's mean column as a multiple of $1/N$, the share a",
+        r"column gets when the row is flat. Hollow dot = the same for its hottest column, $s_1 \cdot N$.",
+        r"Rule at 1.0 is that flat-row level; the shaded half is columns read *less* than no-opinion.",
+        r"Both dots are shares of the whole budget, so segments are directly comparable and the count is",
+        r"already divided out — this is the only panel where depth and a camera can be compared as columns.",
+        r"The $x$-range is shared by every layer row, so a dot's position is comparable down the figure.",
+        r"Averaged over frames, heads and the action chunk.",
+    ])
+
+
 def _render_concentration(names, mass, curves, ranks, n90, token_counts, layers, output_path) -> None:
     """Three views of the within-segment distribution, one row per probed layer.
 
@@ -974,33 +1054,34 @@ def _render_concentration(names, mass, curves, ranks, n90, token_counts, layers,
     order = np.argsort(-curve_mean[focus, :, 0])
     ordered = [names[i] for i in order]
 
-    per_column = np.stack([
-        [_per_column_mass(curve_mean[index, segment], ranks, mass_mean[index, segment],
-                          token_counts.get(names[segment], len(ranks)))
-         for segment in order]
-        for index in range(len(layers))
-    ])                                                         # [layers, segments, ranks]
-    positive = per_column[np.isfinite(per_column) & (per_column > 0)]
-    ylim = (float(positive.min()) / 2.5, float(positive.max()) * 1.6)
+    # Every column's mass as a multiple of 1/N, the share it would get if the row were
+    # flat. N is every attendable column, which is what the budget's shares are over, so
+    # 1.0 here is exactly "this column was read like one nothing was decided about".
+    total_columns = max(sum(token_counts.get(name, 0) for name in names), 1)
+    counts = np.asarray([max(token_counts.get(names[i], 0), 1) for i in order], dtype=float)
+    ordered_mass = mass_mean[:, order]                         # [layers, segments]
+    mean_col = ordered_mass / counts * total_columns           # [layers, segments]
+    hot_col = curve_mean[:, order, 0] * ordered_mass * total_columns
+    both = np.concatenate([mean_col.ravel(), hot_col.ravel()])
+    both = both[np.isfinite(both) & (both > 0)]
+    xlim = (float(both.min()) / 1.8, float(both.max()) * 2.6)
 
-    fig = plt.figure(figsize=(20, 17))
-    grid = fig.add_gridspec(len(layers), 3, wspace=0.26, hspace=0.30,
-                            left=0.055, right=0.985, top=0.945, bottom=0.155)
+    fig = plt.figure(figsize=(15, 16))
+    grid = fig.add_gridspec(len(layers), 2, wspace=0.30, hspace=0.30,
+                            left=0.10, right=0.985, top=0.945, bottom=0.155)
     for row, layer in enumerate(layers):
-        axes = [fig.add_subplot(grid[row, column]) for column in range(3)]
+        axes = [fig.add_subplot(grid[row, column]) for column in range(2)]
         # Titles on the top row and captions under the bottom one: every row plots the
         # same three quantities, and repeating either three times only costs the space
         # the panels need.
         head, foot = row == 0, row == len(layers) - 1
-        _curve_panel(axes[0], ordered, curve_mean[row][order], ranks,
-                     np.round(n90[:, row, :].mean(axis=0))[order], title=head, caption=foot)
-        _n90_panel(axes[1], ordered, n90[:, row, :].mean(axis=0)[order],
+        _n90_panel(axes[0], ordered, n90[:, row, :].mean(axis=0)[order],
                    n90[:, row, :].min(axis=0)[order], n90[:, row, :].max(axis=0)[order],
                    token_counts, title=head, caption=foot)
-        _column_mass_panel(axes[2], ordered, per_column[row], ranks, ylim,
-                           title=head, caption=foot)
+        _read_strength_panel(axes[1], ordered, mean_col[row], hot_col[row], xlim,
+                             title=head, caption=foot)
         box = axes[0].get_position()
-        fig.text(box.x0 - 0.043, (box.y0 + box.y1) / 2, f"layer {layer}", rotation=90,
+        fig.text(box.x0 - 0.075, (box.y0 + box.y1) / 2, f"layer {layer}", rotation=90,
                  va="center", ha="center", fontsize=14, fontweight="bold")
 
     fig.suptitle(
@@ -1010,7 +1091,8 @@ def _render_concentration(names, mass, curves, ranks, n90, token_counts, layers,
         fontsize=14, fontweight="bold", y=0.985,
     )
     fig.text(0.5, 0.963, "Every row shares the segment order (sorted at layer "
-             f"{layers[focus]}) and the right column's scale, so what differs between rows is the read itself.",
+             f"{layers[focus]}) and the right column's scale, so what differs between rows is the read itself. "
+             "Left: over how many columns. Right: how hard each one, against a flat-row column.",
              ha="center", fontsize=10.5, color="#333333")
     fig.savefig(output_path, bbox_inches="tight", dpi=125)
     plt.close(fig)

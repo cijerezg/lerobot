@@ -24,6 +24,14 @@ The existing :mod:`lerobot.scripts.view_probes` remains the detailed single-run
 viewer. This companion keeps runs as columns and aligns figures by their exact
 probe-relative filename. With a fixed validation set, paths such as
 ``ep0000_L14/overlay_img_top_summary.mp4`` identify the same sampled view.
+
+Probes that pick their examples by percentile break that assumption: the band is
+fixed but the frame it lands on is not, so the same figure is called
+``examples/frame_p10_ep0002_fr004248.png`` in one run and
+``examples/frame_p10_ep0002_fr001632.png`` in the next, and under exact-name
+matching it is unique to its run and hidden by the shared-files filter. Those
+panels carry an ``align`` key naming the band instead; older manifests, written
+before the key existed, get the same key derived from the filename.
 """
 
 from __future__ import annotations
@@ -31,8 +39,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import threading
 import webbrowser
+from collections import Counter
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,6 +52,10 @@ from urllib.parse import unquote, urlparse
 from lerobot.scripts.view_probes import _json_response, _send_file, build_index, resolve_validation_dir
 
 MAX_RUNS = 4
+
+# ``frame_p10_ep0002_fr004248.png`` — the trailing episode and frame are what makes an
+# otherwise identical panel unique to its run.
+SAMPLE_SUFFIX = re.compile(r"_ep\d+_fr\d+(?=\.[^.]+$)")
 
 
 @dataclass(frozen=True)
@@ -91,6 +105,23 @@ def resolve_compare_sources(
             )
         )
     return sources
+
+
+def _alignment_keys(panels: list[dict]) -> dict[str, str]:
+    """Map each panel file to the name it answers to in every run.
+
+    A probe states the key itself with ``Panel(align=...)``. Manifests written before
+    that field existed get the same key by dropping the episode/frame suffix, which is
+    only sound when it still names one figure: probes that write several examples per
+    band collapse onto one key, and a key that names two panels in the same run names
+    nothing, so those keep their exact filename and stay unaligned as before.
+    """
+    derived = {
+        panel["file"]: panel.get("align") or SAMPLE_SUFFIX.sub("", panel["file"])
+        for panel in panels
+    }
+    counts = Counter(derived.values())
+    return {file: key if counts[key] == 1 else file for file, key in derived.items()}
 
 
 def _interactive_samples(
@@ -154,7 +185,9 @@ def build_compare_index(sources: list[CompareSource]) -> dict:
                 groups.append(group)
         for probe in index["probes"]:
             for panels in probe["panels"].values():
+                keys = _alignment_keys(panels)
                 for panel in panels:
+                    panel["align"] = keys[panel["file"]]
                     relative = panel["url"].removeprefix("/asset/")
                     step_name = relative.split("/", 1)[0]
                     interactive = _interactive_samples(
@@ -315,7 +348,7 @@ th{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06
 <div class="lightbox" id="lightbox" onclick="if(event.target===this)closeLightbox()"><button class="lightclose" onclick="closeLightbox()">Close</button>
  <img id="lightimg" alt="Full-size probe figure"></div>
 <script>
-let DATA=null, stepIndices=[], cur=null, selectedFile=null, selectedContext="", sharedOnly=true;
+let DATA=null, stepIndices=[], cur=null, selectedKey=null, selectedContext="", sharedOnly=true;
 let zoom="fit", columnSize="auto", syncEnabled=true, synchronizing=false, refreshTimer=null;
 let interactiveKey=null, runSampleIndices={};
 const severity={bad:3,warn:2,good:1,info:0};
@@ -334,32 +367,36 @@ function probeCatalog(){
  return [...found.values()].sort((a,b)=>{const ga=DATA.groups.indexOf(a.group),gb=DATA.groups.indexOf(b.group);
   return (ga<0?999:ga)-(gb<0?999:gb)||natural(a.title,b.title);});
 }
+// A panel's row identity is its alignment key: the same relative path for most figures,
+// and the band alone for percentile examples, whose filename records the frame they landed
+// on and so differs run to run. row.files collects what that key actually resolved to.
+function alignOf(pn){return pn.align||pn.file;}
 function panelCatalog(all=false){
- const found=new Map();DATA.runs.forEach((_,ri)=>panelsAt(ri).forEach(pn=>{const row=found.get(pn.file)||{file:pn.file,
-  caption:pn.caption||pn.file,how:pn.how||"",kind:pn.kind||"data",primary:false,count:0};row.count++;row.primary=row.primary||pn.primary;
-  if(!row.how&&pn.how)row.how=pn.how;found.set(pn.file,row);}));
- let rows=[...found.values()].sort((a,b)=>(b.primary?1:0)-(a.primary?1:0)||natural(a.file,b.file));
+ const found=new Map();DATA.runs.forEach((_,ri)=>panelsAt(ri).forEach(pn=>{const key=alignOf(pn),row=found.get(key)||{key:key,
+  caption:pn.caption||key,how:pn.how||"",kind:pn.kind||"data",primary:false,count:0,files:new Set()};row.count++;row.primary=row.primary||pn.primary;
+  row.files.add(pn.file);if(!row.how&&pn.how)row.how=pn.how;found.set(key,row);}));
+ let rows=[...found.values()].sort((a,b)=>(b.primary?1:0)-(a.primary?1:0)||natural(a.key,b.key));
  return all||!sharedOnly?rows:rows.filter(x=>x.count===DATA.runs.length);
 }
 function dirOf(file){const i=file.lastIndexOf("/");return i<0?"":file.slice(0,i);}
 function baseOf(file){const i=file.lastIndexOf("/");return i<0?file:file.slice(i+1);}
 function normalizeSelection(){
- const rows=panelCatalog();if(rows.some(x=>x.file===selectedFile)){selectedContext=dirOf(selectedFile);return;}
- const contexts=[...new Set(rows.map(x=>dirOf(x.file)))].sort(natural);
+ const rows=panelCatalog();if(rows.some(x=>x.key===selectedKey)){selectedContext=dirOf(selectedKey);return;}
+ const contexts=[...new Set(rows.map(x=>dirOf(x.key)))].sort(natural);
  if(!contexts.includes(selectedContext))selectedContext=contexts[0]||"";
- const here=rows.filter(x=>dirOf(x.file)===selectedContext);selectedFile=(here.find(x=>x.primary)||here[0]||{}).file||null;
+ const here=rows.filter(x=>dirOf(x.key)===selectedContext);selectedKey=(here.find(x=>x.primary)||here[0]||{}).key||null;
 }
 function resetInteractive(){interactiveKey=null;runSampleIndices={};}
-function setProbe(id){cur=id;selectedFile=null;selectedContext="";resetInteractive();normalizeSelection();draw();document.getElementById("main").scrollTop=0;}
-function setContext(value){selectedContext=value;const here=panelCatalog().filter(x=>dirOf(x.file)===value);
- selectedFile=(here.find(x=>x.primary)||here[0]||{}).file||null;resetInteractive();drawMain();}
-function setFile(value){selectedFile=value;selectedContext=dirOf(value);resetInteractive();drawMain();}
+function setProbe(id){cur=id;selectedKey=null;selectedContext="";resetInteractive();normalizeSelection();draw();document.getElementById("main").scrollTop=0;}
+function setContext(value){selectedContext=value;const here=panelCatalog().filter(x=>dirOf(x.key)===value);
+ selectedKey=(here.find(x=>x.primary)||here[0]||{}).key||null;resetInteractive();drawMain();}
+function setPanel(value){selectedKey=value;selectedContext=dirOf(value);resetInteractive();drawMain();}
 function setStep(ri,value){const at=DATA.runs[ri].steps.findIndex(s=>String(s.step)===value);if(at>=0)stepIndices[ri]=at;
  const available=probeCatalog();if(!available.some(p=>p.id===cur))cur=available[0]?.id||null;resetInteractive();normalizeSelection();draw();}
 function setShared(value){sharedOnly=value;normalizeSelection();drawMain();}
-function currentPanel(){return panelCatalog(true).find(x=>x.file===selectedFile)||null;}
+function currentPanel(){return panelCatalog(true).find(x=>x.key===selectedKey)||null;}
 function interactiveInfo(){
- const panels=DATA.runs.map((_,ri)=>panelsAt(ri).find(pn=>pn.file===selectedFile)||null);
+ const panels=DATA.runs.map((_,ri)=>panelsAt(ri).find(pn=>alignOf(pn)===selectedKey)||null);
  const perRun=panels.map(pn=>pn?.samples||[]),hasSamples=perRun.some(rows=>rows.length);
  if(!hasSamples)return {panels,perRun,common:[],hasSamples:false,alignment:null};
  const common=perRun.every(rows=>rows.length)?perRun[0].filter(sample=>
@@ -441,6 +478,13 @@ function alignmentWarning(info){
   Same-frame comparison is not possible from this artifact.${shortcut}</div>`;
 }
 
+function bandWarning(panel){
+ if(!panel||panel.files.size<2)return "";
+ return `<div class="alignmentwarn"><strong>Band-aligned, not frame-aligned.</strong>
+  Each run selected its own frame for this figure, so the columns show the same place in the
+  distribution at different observations — the frame each one landed on is named in its card
+  footer. A difference between these images is not evidence on its own.</div>`;
+}
 function figureHtml(pn,ri){
  if(pn.kind==="image")return `<div class="media"><img src="${attr(pn.url)}" alt="${attr(pn.caption)}" onload="fitImage(this)"
   ondblclick="openLightbox(this.src)"></div>`;
@@ -463,12 +507,12 @@ function drawList(){
    <span class="count">${p.count}/${DATA.runs.length}</span></button>`).join("");}).join("")||`<div class="empty">No matching probes</div>`;
 }
 function panelControls(){
- const rows=panelCatalog(),contexts=[...new Set(rows.map(x=>dirOf(x.file)))].sort(natural),here=rows.filter(x=>dirOf(x.file)===selectedContext);
+ const rows=panelCatalog(),contexts=[...new Set(rows.map(x=>dirOf(x.key)))].sort(natural),here=rows.filter(x=>dirOf(x.key)===selectedContext);
  const sharedCount=currentPanel()?.count||0;
  return `<label class="field">Sample / facet <select onchange="setContext(this.value)">${contexts.map(x=>`<option value="${attr(x)}"
   ${x===selectedContext?'selected':''}>${esc(x||'top level')}</option>`).join('')}</select></label>
- <label class="field">Figure <select onchange="setFile(this.value)">${here.map(x=>`<option value="${attr(x.file)}" ${x.file===selectedFile?'selected':''}>
-  ${x.primary?'★ ':''}${esc(x.caption!==x.file?x.caption:baseOf(x.file))}</option>`).join('')}</select></label>
+ <label class="field">Figure <select onchange="setPanel(this.value)">${here.map(x=>`<option value="${attr(x.key)}" ${x.key===selectedKey?'selected':''}>
+  ${x.primary?'★ ':''}${esc(x.caption!==x.key?x.caption:baseOf(x.key))}</option>`).join('')}</select></label>
  <span class="pill ${sharedCount<DATA.runs.length?'warn':''}">${sharedCount}/${DATA.runs.length} runs</span>`;
 }
 function stepSelect(run,ri){if(run.steps.length<=1)return `<span class="pill">step ${run.steps[0]?.step??'—'}</span>`;
@@ -476,13 +520,14 @@ function stepSelect(run,ri){if(run.steps.length<=1)return `<span class="pill">st
   ${i===stepIndices[ri]?'selected':''}>step ${s.step.toLocaleString()}</option>`).join('')}</select>`;}
 function comparisonGrid(panel,info){
  return `<div class="compare-scroll"><section class="compare-grid ${DATA.runs.length===1?'one':''}" style="--run-count:${DATA.runs.length}">
- ${DATA.runs.map((run,ri)=>{const pn=panelsAt(ri).find(x=>x.file===selectedFile),status=statusAt(ri);
+ ${DATA.runs.map((run,ri)=>{const pn=panelsAt(ri).find(x=>alignOf(x)===selectedKey),status=statusAt(ri);
   return `<article class="run-card"><div class="runhead"><i class="dot ${status}"></i><strong title="${attr(run.run.dir)}">${esc(run.run.label)}</strong>
-   ${stepSelect(run,ri)}</div>${pn?individualNav(ri,pn,info):''}${pn?figureHtml(pn,ri):`<div class="missing"><div><strong>Not written for this run</strong><br><span class="mono">${esc(selectedFile)}</span></div></div>`}
-   <div class="cardfoot"><span class="file mono">${esc(selectedFile)}</span><span class="native"></span>${pn?`<a class="openfull" href="${attr(pn.url)}"
+   ${stepSelect(run,ri)}</div>${pn?individualNav(ri,pn,info):''}${pn?figureHtml(pn,ri):`<div class="missing"><div><strong>Not written for this run</strong><br><span class="mono">${esc(selectedKey)}</span></div></div>`}
+   <div class="cardfoot"><span class="file mono">${esc(pn?pn.file:selectedKey)}</span><span class="native"></span>${pn?`<a class="openfull" href="${attr(pn.url)}"
     target="_blank">open ↗</a>`:''}</div></article>`;}).join('')}</section></div>
+ ${bandWarning(panel)}
  ${panel?`<section class="guide"><h3>${esc(panel.caption)}</h3>${panel.how?`<p>${esc(panel.how)}</p>`:''}
-  <p class="mono">${esc(panel.file)}</p></section>`:''}`;
+  <p class="mono">${esc(panel.key)}</p></section>`:''}`;
 }
 function metricCatalog(){
  const found=new Map();DATA.runs.forEach((_,ri)=>{const p=probeAt(ri);if(!p)return;p.metrics.forEach(m=>{const row=found.get(m.key)||
@@ -510,7 +555,7 @@ function drawMain(){
  document.documentElement.style.setProperty("--col-min",(columnSize==="auto"?automatic:columnSize)+"px");
  const noShared=sharedOnly&&!visible.length&&all.length;
  main.innerHTML=`<div class="intro"><div><div class="eyebrow">${esc(meta.group)}</div><h1>${esc(meta.title)}</h1><p>${esc(meta.claim||"")}</p></div>
-  <div class="spacer"></div><div class="alignnote">Files align by relative name; interactive inspectors align by episode and frame when those keys are available.</div></div>
+  <div class="spacer"></div><div class="alignnote">Files align by relative name, percentile examples by their band; interactive inspectors align by episode and frame when those keys are available.</div></div>
  <div class="toolbar">${visible.length?panelControls():''}<label class="check"><input type="checkbox" ${sharedOnly?'checked':''} onchange="setShared(this.checked)">shared files only</label>${interactiveControls(info)}
   <span class="spacer"></span>${kind==="image"?`<label class="field">Zoom <select onchange="setZoom(this.value)"><option value="fit" ${zoom==='fit'?'selected':''}>fit column</option>
    <option value="0.5" ${zoom==='0.5'?'selected':''}>50%</option><option value="1" ${zoom==='1'?'selected':''}>100%</option><option value="1.5" ${zoom==='1.5'?'selected':''}>150%</option></select></label>`:''}
@@ -543,8 +588,8 @@ addEventListener("resize",()=>document.querySelectorAll(".media img").forEach(fi
  if(event.key==="Escape"){closeLightbox();return}if(event.target.tagName==="INPUT"||event.target.tagName==="SELECT")return;
  const probes=probeCatalog(),at=probes.findIndex(p=>p.id===cur);if(event.key==="j"&&probes.length)setProbe(probes[Math.min(probes.length-1,at+1)].id);
  if(event.key==="k"&&probes.length)setProbe(probes[Math.max(0,at-1)].id);if(event.key==="n"||event.key==="p"){
-  const rows=panelCatalog(),i=rows.findIndex(x=>x.file===selectedFile),next=Math.max(0,Math.min(rows.length-1,i+(event.key==="n"?1:-1)));
-  if(rows[next])setFile(rows[next].file)}if(event.code==="Space"){event.preventDefault();togglePlayback()}});
+  const rows=panelCatalog(),i=rows.findIndex(x=>x.key===selectedKey),next=Math.max(0,Math.min(rows.length-1,i+(event.key==="n"?1:-1)));
+  if(rows[next])setPanel(rows[next].key)}if(event.code==="Space"){event.preventDefault();togglePlayback()}});
 if(innerWidth<=850){layout.classList.add("norail");railbtn.textContent="▶"}reload();
 </script></body></html>"""
 

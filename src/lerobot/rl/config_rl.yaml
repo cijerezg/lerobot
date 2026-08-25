@@ -125,12 +125,10 @@ policy:
   #   • RGB patch_embedding + positional_embedding always stay frozen
   #   • language_from_layer set → final layer norm (ln_f) + lm_head train too
   #   • action expert is always trained
-  # Critic_* knobs are ignored when skip_critic: true.
+  # The hybrid critic owns and trains its complete fusion trunk; actor schedules do not gate it.
   trainable_params:
     vision_from_layer: 16
     language_from_layer: 18
-    critic_vision_from_layer: 16
-    critic_language_from_layer: 4
     # Optional depth-only diagnostic: true freezes everything except the independent
     # point-map CNN, copied depth visual path, and marker. Joint training is the default.
     depth_warmup: false
@@ -155,7 +153,14 @@ policy:
   pretrained_merge_targets: [policy, critic]        # molmo optimizer group names
 
   # ---- Distributional critic (online RL; skip_critic: true → ignored) -------
-  critic_llm_depth: 12
+  # Hybrid critic-owned fusion trunk. Policy modality features are detached before it.
+  critic_llm_depth: 6
+  critic_input_hidden_size: 2560
+  critic_hidden_size: 1024
+  critic_num_attention_heads: 16
+  critic_mlp_ratio: 4.0
+  critic_dropout: 0.0
+  critic_max_tokens: 2048
   num_value_bins: 201
   value_support_min: -2.0
   value_support_max: 0.0

@@ -130,6 +130,13 @@ class Panel:
         refs: ids of other probes that qualify this one — the noise floor that
             makes this number meaningful, the ablation that contradicts it.
             Rendered as links the reader can follow.
+        align: the name this figure answers to when runs are compared side by
+            side, for the panels whose filename records which frame they landed
+            on. ``compare_probes`` puts figures in one row by relative path, so
+            ``examples/frame_p10_ep0002_fr004248.png`` pairs with nothing in the
+            next run. Set ``align="examples/frame_p10.png"`` and the band lines
+            up across columns while each file keeps its frame in its name. Leave
+            it empty when the path is already the same in every run.
     """
 
     file: str
@@ -138,6 +145,7 @@ class Panel:
     kind: str = ""
     primary: bool = False
     refs: list[str] = field(default_factory=list)
+    align: str = ""
 
     def as_dict(self) -> dict:
         return {
@@ -147,6 +155,7 @@ class Panel:
             "kind": self.kind or panel_kind(self.file),
             "primary": self.primary,
             "refs": list(self.refs),
+            "align": self.align,
         }
 
 

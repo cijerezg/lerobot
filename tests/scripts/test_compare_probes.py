@@ -4,19 +4,29 @@ from pathlib import Path
 import pytest
 
 from lerobot.scripts.compare_probes import (
+    _alignment_keys,
     _interactive_samples,
     build_compare_index,
     resolve_compare_sources,
 )
 
 
-def _write_run(root: Path, name: str, steps: tuple[int, ...] = (0,)) -> Path:
+def _write_run(
+    root: Path,
+    name: str,
+    steps: tuple[int, ...] = (0,),
+    examples: tuple[str, ...] = (),
+) -> Path:
     run_dir = root / name
     for step in steps:
         probe_dir = run_dir / "validation" / f"step_{step:08d}" / "attention"
         probe_dir.mkdir(parents=True)
         (probe_dir / "ep0000_L00").mkdir()
         (probe_dir / "ep0000_L00" / "overlay_img_top_summary.png").write_bytes(b"not-a-real-png")
+        if examples:
+            (probe_dir / "examples").mkdir()
+        for example in examples:
+            (probe_dir / "examples" / example).write_bytes(b"not-a-real-png")
         manifest = {
             "schema": 1,
             "id": "attention",
@@ -50,6 +60,17 @@ def _write_run(root: Path, name: str, steps: tuple[int, ...] = (0,)) -> Path:
                     "primary": True,
                     "refs": [],
                 }
+            ]
+            + [
+                {
+                    "file": f"examples/{example}",
+                    "caption": "Percentile example",
+                    "how": "",
+                    "kind": "image",
+                    "primary": False,
+                    "refs": [],
+                }
+                for example in examples
             ],
             "see_also": [],
             "extra": {},
@@ -110,6 +131,58 @@ def test_default_labels_distinguish_step_inputs(tmp_path: Path) -> None:
 
     assert sources[0].label == "experiment · step_00000400"
     assert sources[1].label == "experiment · step_00000800"
+
+def test_percentile_examples_align_on_their_band_across_runs() -> None:
+    keys = _alignment_keys(
+        [
+            {"file": "temporal_attention.png"},
+            {"file": "examples/frame_p10_ep0002_fr004248.png"},
+            {"file": "examples/frame_p90_ep0003_fr000171.png"},
+        ]
+    )
+
+    assert keys == {
+        "temporal_attention.png": "temporal_attention.png",
+        "examples/frame_p10_ep0002_fr004248.png": "examples/frame_p10.png",
+        "examples/frame_p90_ep0003_fr000171.png": "examples/frame_p90.png",
+    }
+
+
+def test_declared_alignment_key_wins_over_the_derived_one() -> None:
+    keys = _alignment_keys(
+        [{"file": "examples/p10_top.png", "align": "examples/frame_p10.png"}]
+    )
+
+    assert keys == {"examples/p10_top.png": "examples/frame_p10.png"}
+
+
+def test_several_examples_per_band_keep_their_exact_filenames() -> None:
+    # Two frames share the "hurt" band, so the band names no single figure and cannot
+    # order the columns; both fall back to the filename and stay unaligned.
+    files = [
+        "examples/hurt_ep0001_fr000114.png",
+        "examples/hurt_ep0002_fr002613.png",
+        "examples/helped_ep0000_fr002754.png",
+    ]
+
+    keys = _alignment_keys([{"file": file} for file in files])
+
+    assert keys["examples/hurt_ep0001_fr000114.png"] == "examples/hurt_ep0001_fr000114.png"
+    assert keys["examples/hurt_ep0002_fr002613.png"] == "examples/hurt_ep0002_fr002613.png"
+    assert keys["examples/helped_ep0000_fr002754.png"] == "examples/helped.png"
+
+
+def test_build_compare_index_labels_every_panel_with_its_alignment_key(tmp_path: Path) -> None:
+    run_dir = _write_run(tmp_path, "experiment", examples=("frame_p10_ep0002_fr004248.png",))
+
+    index = build_compare_index(resolve_compare_sources([run_dir]))
+
+    panels = {panel["file"]: panel["align"] for panel in index["runs"][0]["probes"][0]["panels"]["0"]}
+    assert panels == {
+        "ep0000_L00/overlay_img_top_summary.png": "ep0000_L00/overlay_img_top_summary.png",
+        "examples/frame_p10_ep0002_fr004248.png": "examples/frame_p10.png",
+    }
+
 
 def test_interactive_samples_expose_stable_frame_keys(tmp_path: Path) -> None:
     action_dir = tmp_path / "action_trace"

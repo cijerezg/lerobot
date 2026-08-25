@@ -10,27 +10,20 @@ Both are registered with type "molmoact2_rl" so:
     naming-convention fallback in _get_policy_cls_from_policy_name
   - Trainer.for_config() routes to MolmoAct2Trainer
 """
+
 from __future__ import annotations
 
 import copy
 import os
-from dataclasses import dataclass, field, replace
-from typing import Any
+from dataclasses import dataclass, field
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.policies.depth_pointmap.modeling_pointmap import DepthPointmapEncoder
-from lerobot.policies.depth_pointmap.modeling_stream import (
-    DepthStreamBlock,
-    gather_kv_at_indices,
-    wrist_cam_token_indices,
-)
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
 from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+from lerobot.rl.molmoact2.hybrid_critic import MolmoAct2Critic
 from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig, MemoryConfig
 
 # ── Config ─────────────────────────────────────────────────────────────────
@@ -84,14 +77,24 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # ── Online training ────────────────────────────────────────────────────
     online_steps: int = 1_000_000
     online_buffer_capacity: int = 100_000
-    online_step_before_learning: int = 100   # transitions before first gradient step
+    online_step_before_learning: int = 100  # transitions before first gradient step
     actor_device: str | None = None
     learner_device: str | None = None
     actor_learner_config: ActorLearnerConfig = field(default_factory=ActorLearnerConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
     # ── Distributional critic ──────────────────────────────────────────────
-    critic_llm_depth: int = 12
+    # Hybrid critic: policy modality encoders supply detached 2560-wide prefix
+    # tokens; a compact critic-owned transformer performs multimodal fusion.
+    # critic_llm_depth keeps its old config name for checkpoint/YAML compatibility,
+    # but now means the number of critic fusion blocks (not copied LLM blocks).
+    critic_llm_depth: int = 6
+    critic_input_hidden_size: int = 2560
+    critic_hidden_size: int = 1024
+    critic_num_attention_heads: int = 16
+    critic_mlp_ratio: float = 4.0
+    critic_dropout: float = 0.0
+    critic_max_tokens: int = 2048
     num_value_bins: int = 101
     value_support_min: float = -2.0
     value_support_max: float = 0.0
@@ -165,13 +168,29 @@ class MolmoAct2RLConfig(MolmoAct2Config):
                 )
             for idx, limits in enumerate(self.action_clamp_limits):
                 if not isinstance(limits, (list, tuple)) or len(limits) != 2:
-                    raise ValueError(
-                        f"action_clamp_limits[{idx}] must be a [min, max] pair, got {limits!r}."
-                    )
+                    raise ValueError(f"action_clamp_limits[{idx}] must be a [min, max] pair, got {limits!r}.")
                 if float(limits[0]) > float(limits[1]):
-                    raise ValueError(
-                        f"action_clamp_limits[{idx}] min must be <= max, got {limits!r}."
-                    )
+                    raise ValueError(f"action_clamp_limits[{idx}] min must be <= max, got {limits!r}.")
+
+        if self.critic_llm_depth < 1:
+            raise ValueError("critic_llm_depth must be >= 1.")
+        if self.critic_hidden_size < 1:
+            raise ValueError("critic_hidden_size must be >= 1.")
+        if self.critic_num_attention_heads < 1:
+            raise ValueError("critic_num_attention_heads must be >= 1.")
+        if self.critic_hidden_size % self.critic_num_attention_heads != 0:
+            raise ValueError(
+                "critic_hidden_size must be divisible by critic_num_attention_heads, got "
+                f"{self.critic_hidden_size} and {self.critic_num_attention_heads}."
+            )
+        if self.critic_mlp_ratio <= 0:
+            raise ValueError("critic_mlp_ratio must be > 0.")
+        if not 0 <= self.critic_dropout < 1:
+            raise ValueError("critic_dropout must be in [0, 1).")
+        if self.critic_max_tokens < 1:
+            raise ValueError("critic_max_tokens must be >= 1.")
+        if self.num_value_bins < 2:
+            raise ValueError("num_value_bins must be >= 2.")
 
         # Depth history rides the pointmap path: the memory block is the single source
         # of truth for the window shape, synced here so both encoder sites (policy +
@@ -182,322 +201,6 @@ class MolmoAct2RLConfig(MolmoAct2Config):
         ):
             self.pointmap_config.history_num_samples = self.memory.history_num_samples
             self.pointmap_config.history_window_seconds = self.memory.history_window_seconds
-
-
-# ── Critic ─────────────────────────────────────────────────────────────────
-
-
-class MolmoAct2Critic(nn.Module):
-    """
-    Distributional value critic for MolmoAct2RLPolicy.
-
-    Instantiated by MolmoAct2RLPolicy.init_critic() which deepcopies the
-    relevant parts of the loaded HF backbone.  At construction time the
-    backbone components are None; call initialize_weights_from_backbone()
-    before any forward pass.
-    """
-
-    TEXT_HIDDEN_SIZE = 2560  # molmoact2_text hidden_size
-
-    def __init__(self, config: Any) -> None:
-        super().__init__()
-        self.num_value_bins: int = int(config.num_value_bins)
-        self.num_critic_blocks: int = int(config.critic_llm_depth)
-        self.compute_dtype = torch.bfloat16 if config.dtype == "bfloat16" else torch.float32
-
-        D = self.TEXT_HIDDEN_SIZE
-
-        # Learnable distributional value queries (one per bin).
-        # BERT-style small init — many queries, collapse risk is real at std=1.
-        self.value_queries = nn.Parameter(torch.randn(1, self.num_value_bins, D) * 0.02)
-        self.value_queries.register_hook(lambda g: g.contiguous())
-
-        # Shared per-query logit head: D → 1 scalar per query → num_value_bins logits.
-        self.bin_logit_head = nn.Linear(D, 1)
-
-        # Value support (registered as non-persistent buffers so they move with .to()).
-        bin_centers = torch.linspace(
-            float(config.value_support_min),
-            float(config.value_support_max),
-            self.num_value_bins,
-        )
-        self.register_buffer("bin_centers", bin_centers, persistent=False)
-        bin_width = (config.value_support_max - config.value_support_min) / (self.num_value_bins - 1)
-        self.hl_gauss_sigma: float = float(config.hl_gauss_sigma_ratio) * float(bin_width)
-
-        # Backbone components — populated by initialize_weights_from_backbone().
-        self.vision_backbone: nn.Module | None = None
-        self.transformer_blocks: nn.ModuleList | None = None
-        self.rotary_emb: nn.Module | None = None
-        self.ln_f: nn.Module | None = None
-
-        # Point-map depth (actor/critic symmetry, depth_pointmap_design.md §B.8). The critic
-        # owns its OWN depth modules (mirrors its own vision_backbone): TD gradient trains
-        # only these, never the actor's flow-trained encoder, and they ride critic_target's
-        # EMA. The critic is bidirectional + reads its value queries once at the end, so the
-        # depth tokens co-evolve through their own DepthStreamBlocks (attending the critic's
-        # wrist-cam tokens) and the FINAL state is appended to the sequence for the queries to
-        # attend — no gate/sink (the critic isn't frozen, so no bit-identity constraint).
-        # Names are `depth_*` so _apply_critic_freeze keeps them trainable (else-branch freezes).
-        self.pointmap_config: Any = getattr(config, "pointmap_config", None)
-        self.depth_encoder: DepthPointmapEncoder | None = None
-        self.depth_blocks: nn.ModuleList | None = None
-        self.depth_read_proj: nn.Linear | None = None
-        if self.pointmap_config is not None:
-            pm = self.pointmap_config
-            # The actor's 20px/1152-wide fine grid should not silently multiply the
-            # legacy critic's sequence length and block size. Keep its old 40px/512 path.
-            critic_pm = replace(
-                pm,
-                patch_size=pm.critic_patch_size,
-                token_width=pm.critic_token_width,
-            )
-            self.depth_encoder = DepthPointmapEncoder(critic_pm, d_mem=critic_pm.token_width)
-            self.depth_blocks = nn.ModuleList(
-                DepthStreamBlock(
-                    d_d=critic_pm.token_width,
-                    d_vlm=D,  # critic wrist-cam tokens live at the text hidden size
-                    num_heads=critic_pm.stream_num_heads,
-                    mlp_ratio=critic_pm.stream_mlp_ratio,
-                )
-                for _ in range(self.num_critic_blocks)
-            )
-            self.depth_read_proj = nn.Linear(critic_pm.token_width, D)
-
-    # ── Weight initialisation ─────────────────────────────────────────────────
-
-    def initialize_weights_from_backbone(self, backbone: Any) -> None:
-        """
-        Deepcopy the relevant actor-backbone components into the critic.
-
-        backbone: the object returned by policy._backbone()
-            i.e. policy._hf_model().model
-        """
-        transformer = backbone.transformer
-
-        # Full vision backbone (ViT + adapter) — same depth as actor, no truncation.
-        self.vision_backbone = copy.deepcopy(backbone.vision_backbone)
-
-        # First N text-transformer blocks.
-        self.transformer_blocks = nn.ModuleList(
-            [copy.deepcopy(transformer.blocks[i]) for i in range(self.num_critic_blocks)]
-        )
-
-        # Rotary embeddings and final norm.
-        self.rotary_emb = copy.deepcopy(transformer.rotary_emb)
-        self.ln_f = copy.deepcopy(transformer.ln_f)
-
-    # ── Observation embedding ─────────────────────────────────────────────────
-
-    def embed_observation(
-        self,
-        backbone: Any,
-        input_ids: Tensor,
-        pixel_values: Tensor | None,
-        image_token_pooling: Tensor | None = None,
-        image_grids: Any = None,
-        image_num_crops: Any = None,
-    ) -> Tensor:
-        """
-        Build [B, seq_len, D] embeddings for the critic's transformer.
-
-        - Text part: actor's wte (word-token embeddings), detached.
-        - Vision part: critic's own vision_backbone, spliced into the text
-          sequence at image-patch positions (same logic as the actor's
-          build_input_embeddings monkeypatch).
-        """
-        # Text embeddings — detached; the critic does not back-prop into actor wte.
-        input_ids_safe = input_ids * (input_ids != -1).to(input_ids.dtype)
-        text_embeds: Tensor = backbone.transformer.wte(input_ids_safe).detach().clone()
-
-        if pixel_values is None or self.vision_backbone is None:
-            return text_embeds
-
-        # Image preprocessing (actor's merge_visual_inputs; no grad needed here).
-        merge_visual = getattr(backbone, "merge_visual_inputs", None)
-        if not callable(merge_visual):
-            return text_embeds
-
-        with torch.no_grad():
-            images, token_pooling = merge_visual(
-                input_ids=input_ids,
-                pixel_values=pixel_values,
-                image_token_pooling=image_token_pooling,
-                image_grids=image_grids,
-                image_num_crops=image_num_crops,
-                pixel_values_videos=None,
-                video_token_pooling=None,
-                video_grids=None,
-            )
-
-        if images is None:
-            return text_embeds
-
-        # Critic's own vision features — gradients flow through here.
-        vision_features: Tensor = self.vision_backbone(images, token_pooling).to(text_embeds.device)
-
-        # Splice vision into text at image-patch token positions.
-        image_patch_id = int(backbone.config.image_patch_id)
-        is_image_patch = input_ids.reshape(-1) == image_patch_id
-        flat = text_embeds.reshape(-1, text_embeds.shape[-1]).clone()
-        flat[is_image_patch] = flat[is_image_patch] + vision_features.to(flat)
-        return flat.reshape_as(text_embeds)
-
-    # ── Depth co-evolution ────────────────────────────────────────────────────
-
-    def compute_depth_tokens(
-        self,
-        batch: dict,
-        inputs_embeds: Tensor,
-        input_ids: Tensor,
-        *,
-        image_patch_id: int,
-        num_images: int,
-        cam_index: int,
-        attention_mask: Tensor | None = None,
-    ) -> Tensor | None:
-        """Co-evolve point-map depth tokens attending the critic's wrist-cam tokens (D6).
-
-        Encodes the batch's depth into N tokens, evolves them through the critic's own
-        DepthStreamBlocks (each attending the depth camera's tokens sliced from the critic's
-        obs embeds), and projects the final state to the text hidden size. Returns (B, N, D)
-        to append to the critic sequence, or None when depth-free. Mirrors the actor's
-        co-evolving stream, adapted to the critic's single (end-of-stack) read.
-        """
-        if self.depth_encoder is None:
-            return None
-        init = self.depth_encoder.memory_from_batch(
-            batch, batch_size=inputs_embeds.shape[0], device=inputs_embeds.device
-        ).to(dtype=inputs_embeds.dtype)  # (B, N, d_d)
-        sel = wrist_cam_token_indices(
-            input_ids, image_patch_id=image_patch_id, num_images=num_images, cam_index=cam_index
-        )
-        wrist, _ = gather_kv_at_indices(inputs_embeds, inputs_embeds, sel)  # (B, T_w, D)
-        # RGB dropout masks the wrist span out of attention; this direct gather bypasses
-        # attention masks, so the bridge is killed per-row from the same mask (mirrors the
-        # actor stream's cross_on).
-        cross_on = None
-        if attention_mask is not None:
-            cross_on = torch.gather(attention_mask.to(torch.bool), 1, sel).any(dim=1)
-        tokens = init
-        for block in self.depth_blocks:
-            tokens = block(tokens, wrist, wrist, cross_on=cross_on)
-        return self.depth_read_proj(tokens)  # (B, N, D)
-
-    # ── Forward pass ──────────────────────────────────────────────────────────
-
-    def forward(
-        self, inputs_embeds: Tensor, attention_mask: Tensor, depth_tokens: Tensor | None = None
-    ) -> dict[str, Tensor]:
-        """
-        Args:
-            inputs_embeds:  [B, seq_len, D]
-            attention_mask: [B, seq_len]  (bool; True = valid token)
-        Returns:
-            logits: [B, num_value_bins]
-            probs:  [B, num_value_bins]
-            value:  [B, 1]
-        """
-        assert self.transformer_blocks is not None, "Call initialize_weights_from_backbone first."
-
-        B, seq_len, D = inputs_embeds.shape
-        device = inputs_embeds.device
-        dtype = inputs_embeds.dtype
-
-        # Sequence: [obs | depth (optional) | value-queries]. Depth tokens are full
-        # bidirectional members — the value queries read them, and the critic is trained
-        # from scratch so there is no frozen-policy constraint to preserve.
-        queries = self.value_queries.expand(B, -1, -1).to(dtype=dtype)
-        attn_bool = attention_mask.to(torch.bool)
-        parts = [inputs_embeds]
-        masks = [attn_bool]
-        if depth_tokens is not None:
-            parts.append(depth_tokens.to(dtype=dtype))
-            masks.append(torch.ones(B, depth_tokens.shape[1], dtype=torch.bool, device=device))
-        parts.append(queries)
-        masks.append(torch.ones(B, self.num_value_bins, dtype=torch.bool, device=device))
-        hidden_states = torch.cat(parts, dim=1)
-
-        # Build bidirectional 4-D attention bias.
-        full_mask = torch.cat(masks, dim=1)  # [B, full_len]
-        full_len = full_mask.shape[1]
-
-        # [B, 1, full_len, full_len] — valid → 0.0, invalid → -inf
-        bias = full_mask[:, None, None, :].expand(B, 1, full_len, full_len)
-        neg_inf = torch.finfo(dtype).min
-        attn_bias = torch.where(
-            bias,
-            torch.zeros(1, dtype=dtype, device=device),
-            torch.full((1,), neg_inf, dtype=dtype, device=device),
-        )
-
-        # Position IDs (packed; value queries follow the last valid token).
-        position_ids = torch.cumsum(full_mask.long(), dim=1) - 1
-        cache_position = torch.arange(full_len, device=device)
-
-        # Rotary embeddings.
-        position_embeddings = self.rotary_emb(hidden_states, position_ids)
-
-        # Transformer blocks — fully bidirectional (no causal mask for critic).
-        for block in self.transformer_blocks:
-            out = block(
-                hidden_states,
-                position_embeddings=position_embeddings,
-                attention_mask=attn_bias,
-                position_ids=position_ids,
-                past_key_values=None,
-                output_attentions=False,
-                use_cache=False,
-                cache_position=cache_position,
-            )
-            hidden_states = out[0]
-
-        hidden_states = self.ln_f(hidden_states)
-
-        # Extract query outputs and map to logits (value queries are the trailing tokens).
-        queries_out = hidden_states[:, -self.num_value_bins :]  # [B, num_value_bins, D]
-        logits = self.bin_logit_head(queries_out.to(self.compute_dtype)).squeeze(-1)  # [B, num_bins]
-
-        probs = F.softmax(logits, dim=-1)
-        value = self.value_from_probs(probs)  # [B, 1]
-
-        return {"logits": logits, "probs": probs, "value": value}
-
-    # ── Value / target helpers ─────────────────────────────────────────────────
-
-    def value_from_probs(self, probs: Tensor) -> Tensor:
-        """Expected value E[V] = sum_i p_i * c_i.  Returns [B, 1]."""
-        bin_centers = self.bin_centers.to(dtype=probs.dtype)
-        return (probs * bin_centers).sum(dim=-1, keepdim=True)
-
-    def value_from_logits(self, logits: Tensor) -> Tensor:
-        return self.value_from_probs(F.softmax(logits, dim=-1))
-
-    def hl_gauss_target(self, target_v: Tensor) -> Tensor:
-        """PI05-style HL-Gauss target distribution over value bins."""
-        if target_v.ndim == 2:
-            target_v = target_v.squeeze(-1)
-        target_v = target_v.to(dtype=self.bin_centers.dtype)
-
-        internal_edges = 0.5 * (self.bin_centers[:-1] + self.bin_centers[1:])
-        z = (internal_edges.unsqueeze(0) - target_v.unsqueeze(-1)) / (
-            self.hl_gauss_sigma * (2.0**0.5)
-        )
-        cdf_internal = 0.5 * (1.0 + torch.erf(z))
-
-        zeros = torch.zeros_like(cdf_internal[:, :1])
-        ones = torch.ones_like(cdf_internal[:, :1])
-        cdf_full = torch.cat([zeros, cdf_internal, ones], dim=-1)
-        return cdf_full[:, 1:] - cdf_full[:, :-1]
-
-    def one_hot_target(self, target_v: Tensor) -> Tensor:
-        """Nearest-bin one-hot target for exact terminal values."""
-        if target_v.ndim == 2:
-            target_v = target_v.squeeze(-1)
-        target_v = target_v.to(dtype=self.bin_centers.dtype)
-        idx = torch.argmin(torch.abs(self.bin_centers.unsqueeze(0) - target_v.unsqueeze(-1)), dim=-1)
-        return F.one_hot(idx, num_classes=self.bin_centers.shape[0]).to(dtype=self.bin_centers.dtype)
-
 
 
 # ── Policy ─────────────────────────────────────────────────────────────────
@@ -522,44 +225,13 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
         # silently dropped as "unexpected" during the default load.  Pre-init
         # the sub-module here so every key lands correctly.
         from safetensors import safe_open
+
         with safe_open(model_file, framework="pt", device="cpu") as _sf:
             file_keys = set(_sf.keys())
         has_critic = any(k.startswith("critic.") for k in file_keys)
         if has_critic and not hasattr(model, "critic"):
             model.init_critic()
-        result = super()._load_as_safetensor(model, model_file, map_location, strict)
-        # freeze_model() aliases frozen critic_target params onto critic params
-        # (p_tgt.data = p.data) to save VRAM.  safetensors deduplicates shared
-        # storage on save, so those critic_target.* keys are absent from the file.
-        # Restore them from critic — frozen params are never Polyak-updated, so
-        # critic_target.X == critic.X for every frozen X.
-        if hasattr(result, "critic") and hasattr(result, "critic_target"):
-            critic_module: nn.Module = getattr(result, "critic")
-            critic_target_module: nn.Module = getattr(result, "critic_target")
-            critic_tensors = {**dict(critic_module.named_parameters()), **dict(critic_module.named_buffers())}
-            with torch.no_grad():
-                for name, tensor in (
-                    list(critic_target_module.named_parameters())
-                    + list(critic_target_module.named_buffers())
-                ):
-                    if f"critic_target.{name}" not in file_keys and name in critic_tensors:
-                        tensor.data.copy_(critic_tensors[name].data)
-        return result
-
-    @classmethod
-    def _filter_load_keys(cls, model, missing_keys, unexpected_keys):
-        # freeze_model() aliases frozen critic_target params onto critic params, so
-        # safetensors deduplicates them and those critic_target.* keys are absent from
-        # the file. They are restored from critic in _load_as_safetensor, so reporting
-        # them as "missing" is spurious — drop any critic_target.X whose critic.X exists.
-        if hasattr(model, "critic") and hasattr(model, "critic_target"):
-            critic_module: nn.Module = getattr(model, "critic")
-            critic_names = set(dict(critic_module.named_parameters())) | set(dict(critic_module.named_buffers()))
-            prefix = "critic_target."
-            missing_keys = [
-                k for k in missing_keys if not (k.startswith(prefix) and k[len(prefix) :] in critic_names)
-            ]
-        return missing_keys, unexpected_keys
+        return super()._load_as_safetensor(model, model_file, map_location, strict)
 
     def init_critic(self) -> None:
         """
@@ -572,13 +244,12 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
         dtype = torch.bfloat16 if getattr(self.config, "dtype", "bfloat16") == "bfloat16" else torch.float32
 
         self.critic: MolmoAct2Critic = MolmoAct2Critic(self.config)
-        backbone = self._backbone()
-        self.critic.initialize_weights_from_backbone(backbone)
         self.critic = self.critic.to(device=device, dtype=dtype)
 
         self.critic_target: MolmoAct2Critic = copy.deepcopy(self.critic)
         for p in self.critic_target.parameters():
             p.requires_grad_(False)
+        self.critic_target.eval()
 
     # ── Critic forward ────────────────────────────────────────────────────────
 
@@ -590,49 +261,28 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
         """
         Shared forward path for critic and critic_target.
 
-        batch must contain the keys produced by the standard MolmoAct2
-        preprocessor: input_ids, pixel_values, attention_mask (optional),
-        and optionally image_token_pooling / image_grids / image_num_crops.
+        The policy's normal input builder is the shared encoder boundary. It
+        assembles RGB-temporal, depth-history, state-history, and language tokens
+        exactly as it does for the actor, but under no_grad. The critic sees only
+        detached tokens and cannot update the policy encoders.
         """
-        backbone = self._backbone()
-        input_ids = batch.get("input_ids")
-        pixel_values = batch.get("pixel_values")
-        attention_mask = batch.get("attention_mask")
+        with torch.no_grad():
+            model_inputs = self._model_inputs(batch)
+            encoder_tokens, _, _, _ = self._prepare_joint_training_backbone_inputs(model_inputs)
 
-        inputs_embeds = critic_module.embed_observation(
-            backbone,
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            image_token_pooling=batch.get("image_token_pooling"),
-            image_grids=batch.get("image_grids"),
-            image_num_crops=batch.get("image_num_crops"),
-        )
-
-        if attention_mask is None:
-            if input_ids is not None:
-                attention_mask = (input_ids != -1)
-            else:
-                attention_mask = torch.ones(
-                    inputs_embeds.shape[:2], dtype=torch.bool, device=inputs_embeds.device
+        attention_mask = model_inputs.get("attention_mask")
+        if not isinstance(attention_mask, Tensor) or attention_mask.ndim != 2:
+            input_ids = model_inputs.get("input_ids")
+            attention_mask = (
+                input_ids != -1
+                if input_ids is not None
+                else torch.ones(
+                    encoder_tokens.shape[:2],
+                    dtype=torch.bool,
+                    device=encoder_tokens.device,
                 )
-
-        # Point-map depth (D6): co-evolve depth tokens attending this critic's wrist-cam
-        # tokens, append them to the sequence for the value queries to read. critic_module is
-        # critic or critic_target, so V(s) uses the live depth modules and V(s') uses the EMA
-        # copy on next_depth (batch["observation.depth.{cam}"] holds the right one per caller).
-        depth_tokens = None
-        if critic_module.depth_encoder is not None and input_ids is not None:
-            image_patch_id, num_images, cam_index = self._pointmap_wrist_meta()
-            depth_tokens = critic_module.compute_depth_tokens(
-                batch,
-                inputs_embeds,
-                input_ids,
-                image_patch_id=image_patch_id,
-                num_images=num_images,
-                cam_index=cam_index,
-                attention_mask=attention_mask,
             )
-        return critic_module(inputs_embeds, attention_mask.to(torch.bool), depth_tokens=depth_tokens)
+        return critic_module(encoder_tokens.detach(), attention_mask.to(torch.bool))
 
     def forward_critic(self, batch: dict) -> dict[str, torch.Tensor]:
         """V(s) with gradient — used for critic updates."""
@@ -640,4 +290,5 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
 
     def forward_critic_target(self, batch: dict) -> dict[str, torch.Tensor]:
         """V(s') with frozen target network — used inside torch.no_grad()."""
+        self.critic_target.eval()
         return self._forward_critic_impl(self.critic_target, batch)

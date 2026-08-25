@@ -202,6 +202,9 @@ def _write_manifest(output_dir: str, summary: dict, examples: list[tuple[int, st
             f"examples/{filename}",
             f"p{percentile} temporal-read frame — most-read history image and spatial overlay",
             how="The overlay is on the current image: it marks which current patches spend their attention on the past. Compare the p10 and p90 frames — if they look alike, the read is not scene-driven.",
+            # The band is what survives across runs; the frame that lands in it does not,
+            # so the filename keeps the frame and the comparison viewer keys on the band.
+            align=f"examples/frame_p{percentile:02d}.png",
         )
         for percentile, filename in examples
     ]
