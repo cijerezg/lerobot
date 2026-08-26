@@ -88,10 +88,10 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # tokens; a compact critic-owned transformer performs multimodal fusion.
     # critic_llm_depth keeps its old config name for checkpoint/YAML compatibility,
     # but now means the number of critic fusion blocks (not copied LLM blocks).
-    critic_llm_depth: int = 6
+    critic_llm_depth: int = 4
     critic_input_hidden_size: int = 2560
-    critic_hidden_size: int = 1024
-    critic_num_attention_heads: int = 16
+    critic_hidden_size: int = 768
+    critic_num_attention_heads: int = 12
     critic_mlp_ratio: float = 4.0
     critic_dropout: float = 0.0
     critic_max_tokens: int = 2048

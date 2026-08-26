@@ -72,7 +72,7 @@ cache_policy: require   # a cache miss is a hard error — 180k frames of video 
 # -----------------------------------------------------------------------------
 # RL flags (shared)
 # -----------------------------------------------------------------------------
-skip_critic: true    # Skip critic if not interested in RECAP. It also saves VRAM and training is faster.
+skip_critic: false   # Train the MolmoAct2 distributional critic alongside the actor.
 
 # -----------------------------------------------------------------------------
 # Validation (shared)
@@ -154,10 +154,10 @@ policy:
 
   # ---- Distributional critic (online RL; skip_critic: true → ignored) -------
   # Hybrid critic-owned fusion trunk. Policy modality features are detached before it.
-  critic_llm_depth: 6
+  critic_llm_depth: 4
   critic_input_hidden_size: 2560
-  critic_hidden_size: 1024
-  critic_num_attention_heads: 16
+  critic_hidden_size: 768
+  critic_num_attention_heads: 12
   critic_mlp_ratio: 4.0
   critic_dropout: 0.0
   critic_max_tokens: 2048
@@ -475,7 +475,7 @@ probe_parameters:
   enable_mem_temporal_attention: true    # MEM: temporal-read distributions + spatial examples
   enable_action_trace: true             # action inspector: 3D + wrist/gripper + safety fan + the normalized-MSE headline
   enable_metadata_steering: true         # quality/mistake clause: seed floor, q1-q5 dose, conditionality + direction, 2x2
-  enable_depth_modality: true            # point-map depth: 2x2 modality grid, per-layer mass, b_l
+  enable_depth_modality: true            # matched foreign/stale depth; null depth is sensor-loss stress only
   enable_attention_budget: true          # how the action tokens' attention budget shifts over frames
   enable_subtask_sweep: true             # does the subtask clause move actions (gates the memory chain)
   enable_task_sweep: true                # does the high-level task string beat the flow-seed floor?
@@ -554,11 +554,12 @@ probe_parameters:
   # labels. Per-probe overrides still exist in ProbeConfig (all default to null = inherit)
   # but a probe pinned to its own number stops tracking the common dial, which is how the
   # objective ended up reporting a gap off two val frames — so pin one only with a reason.
+  depth_stale_seconds: 2.0
   #
   # What the dial costs, per frame, per episode:
   #   objective        1 forward   (per split, so x2)
   #   attention budget 1 forward   (+2 with budget_fd_sensitivity)
-  #   depth modality   ~6 forwards
+  #   depth modality   ~8 forwards  (real + foreign + stale + 3 stress cells + 2 FD)
   #   metadata steering ~11 forwards  (8 clauses + gt + n_seeds - 1)
   #   subtask / task sweep  max_labels + n_seeds forwards  — the expensive ones
 

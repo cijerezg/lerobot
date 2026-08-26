@@ -328,7 +328,7 @@ class ProbeConfig:
         False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
     )
     enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
-    enable_depth_modality: bool = False  # point-map depth: 2x2 modality grid, per-layer mass, b_l
+    enable_depth_modality: bool = False  # matched foreign/stale depth + null sensor-loss stress
     enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
@@ -384,8 +384,10 @@ class ProbeConfig:
     spatial_layers: str = "0,9,17"
     spatial_n_frames: int = 32  # total frames (1 per unique episode)
 
-    # Depth modality: 2x2 conditions x FD sensitivity = ~6 forwards per frame.
+    # Depth counterfactual: deployment, matched foreign, same-episode stale, and the
+    # legacy RGB/depth sensor-loss stress cells, plus FD sensitivity.
     depth_modality_n_frames: int | None = None
+    depth_stale_seconds: float = 2.0
 
     # Attention budget. Reuses spatial_layers, and n_frames_per_episode unless
     # budget_n_frames_per_episode overrides it (one capture per frame covers every
@@ -433,6 +435,19 @@ class ProbeConfig:
     # those frames by their true quality, so cutting it thins the columns, not the lines.
     metadata_steering_n_frames: int | None = None
     metadata_steering_n_seeds: int | None = None
+
+    # MEM temporal attention: one forward per frame for the real read, plus one each for
+    # the two positional controls when this is on. Mass on an age says the slot was read;
+    # it cannot say the slot was read *for its content*, because mass piled on the two ends
+    # of a sequence is also what an attention sink looks like, and the age profile alone
+    # cannot tell those apart. The controls can. `constant` copies the newest history frame
+    # into every slot, so the content is identical across ages by construction and whatever
+    # age structure survives is positional. `shuffled` deranges the same frames across slots
+    # with the age embedding left in place, asking whether the preference follows the frame
+    # or the slot — and it does so with in-distribution input, which `constant` (five
+    # identical frames, a thing training never showed the model) is not. Off = the real read
+    # only, at a third of the cost and with no null underneath the age profile.
+    mem_temporal_positional_control: bool = True
 
     # Critic values distribution
     critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution

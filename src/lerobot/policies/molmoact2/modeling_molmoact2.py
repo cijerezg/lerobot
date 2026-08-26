@@ -836,11 +836,27 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
         # the current frame's queries — the self column is dropped, so this stays the
         # mass spent on history and the probe's reductions are unchanged.
         past = weights[:, :, :, -1, :-1]
+        # A weight says how hard a timestep was looked at, never how much it delivered:
+        # the output below is sum_k w_k v_k, so a key whose value vector is small adds
+        # nothing however large its weight, which is exactly how an attention sink parks
+        # the probability softmax forces it to spend. Recording w_k ||v_k|| over every key
+        # (history and the current frame) lets the probe read the delivered profile beside
+        # the attended one, and costs one norm per temporal layer. Note this is each
+        # additive term's magnitude, not a decomposition of ||out||: the terms are vectors
+        # and can cancel, so treat it as a sink diagnostic, not an exact attribution.
+        value_norm = v.float().norm(dim=-1).permute(0, 3, 2, 1)  # (BC, heads, patches, keys)
+        contribution = weights[:, :, :, -1, :] * value_norm
         _MEM_TEMPORAL_CAPTURE["records"].append(
             {
                 "mean": past.sum(dim=-1).mean().detach(),
                 "by_bc_head_age": past.mean(dim=2).detach(),
                 "by_bc_patch": past.sum(dim=-1).mean(dim=1).detach(),
+                # (BC, patches, ages): which current-frame query patches read each
+                # history frame. The temporal probe uses this to render every labelled
+                # mistake-bearing age instead of showing only the history-summed map.
+                "by_bc_patch_age": past.mean(dim=1).detach(),
+                # (BC, heads, keys), keys oldest → newest with the current frame last.
+                "by_bc_head_key_value": contribution.mean(dim=2).detach(),
             }
         )
 

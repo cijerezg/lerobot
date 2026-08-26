@@ -6,14 +6,26 @@ description of either: on v6/1600 it read $+0.00067$, built out of 47% of frames
 improved and 53% that got worse. This probe is the per-frame view the mean hides — how
 many frames memory helps, how many it hurts, and whether either sign is real.
 
-Four forwards per sampled frame. The present observation is identical in all four; only
+Five forwards per sampled frame. The present observation is identical in all five; only
 the lookback window and the flow seed move:
 
-  condition   history in the prompt                    flow seed
-  none        dropped                                  0
-  full        the real window at this frame            0
-  stale       that window as it stood $W$ s earlier    0
-  none'       dropped                                  1
+  condition   history in the prompt                       flow seed
+  emptied     present, every slot holding the present     0
+  full        the real window at this frame               0
+  stale       that window as it stood $W$ s earlier       0
+  emptied'    present, every slot holding the present     1
+  none        dropped — legacy reference, never an origin 0
+
+``emptied`` is the origin, not ``none``. This policy trains at
+``memory.history_dropout: 0.0``, so a prompt with the history keys *removed* is a shape the
+model has never seen, and what it costs is lost information and distribution shift
+together. On rebot ckpt400 ``mem_history_influence`` measured that shift at 9.2x the real
+content effect, which means every $\Delta$ this probe used to compute was dominated by it
+and so was every verdict below. ``emptied`` keeps the window present and correctly shaped
+and lets it carry only what the current observation already carries, so a difference
+against it is about information alone. ``none`` is still run and still reported, as a
+reference column, so captures made before this change line up — and the gap between the two
+is the size of the artefact.
 
 $W$ is ``memory.history_window_seconds`` — the full span of the lookback — so every slot
 of the ``stale`` window is strictly older than the slot it replaces and none of them is
@@ -25,13 +37,16 @@ demonstrated chunk, and $T$, $D$ for chunk steps and action dimensions. Everythi
 is built from
 
 $$\mathrm{MSE}(c)=\frac{1}{TD}\sum_{t,d}\left(a^{(c)}_{t,d}-a^{\star}_{t,d}\right)^{2},
-\qquad \Delta(c)=\mathrm{MSE}(\mathrm{none})-\mathrm{MSE}(c) .$$
+\qquad \Delta(c)=\mathrm{MSE}(\mathrm{emptied})-\mathrm{MSE}(c) .$$
 
 **Is the sign real?** $\Delta(\mathrm{full})$ is positive on a frame where memory helped,
-but so is half of any symmetric noise. ``none'`` gives the scale of a $\Delta$ that means
-nothing: it changes the flow seed and nothing else, so
+but so is half of any symmetric noise. ``emptied'`` gives the scale of a $\Delta$ that
+means nothing: it changes the flow seed and nothing else, so
 
-$$\tau=Q_{0.9}\left(\left|\Delta(\mathrm{none}')\right|\right)$$
+$$\tau=Q_{0.9}\left(\left|\Delta(\mathrm{emptied}')\right|\right)$$
+
+and it is measured in the emptied condition rather than the dropped one, because a floor
+has to come from the regime the probe actually operates in.
 
 is the width within which a frame's $\Delta$ is not distinguishable from redrawing the
 sampler. Frames are labelled *helped* at $\Delta(\mathrm{full})>\tau$, *hurt* at
@@ -84,7 +99,7 @@ from lerobot.probes.utils import (
 
 _CONDITION_STYLE = {
     "full": ("#2A9D8F", "-"),
-    "none": ("#E63946", "--"),
+    "emptied": ("#E63946", "--"),
     "stale": ("#F4A261", "-."),
 }
 
@@ -105,6 +120,30 @@ def _variant_observation(obs: dict, history_on: bool) -> dict:
         for k, v in obs.items()
         if not k.startswith("history.") or k.startswith("history.depth.")
     }
+
+
+def _emptied_observation(obs: dict) -> dict:
+    r"""The lookback window present, correctly shaped, and carrying only the present.
+
+    The origin every $\Delta$ here is measured from. Dropping the history keys instead —
+    the old ``none`` — produces a prompt shape training never generated, because this
+    policy trains at ``memory.history_dropout: 0.0``; the damage it does is lost
+    information and distribution shift together, and on rebot ckpt400
+    ``mem_history_influence`` measured the shift at 9.2x the real content effect. Every
+    $\Delta$ anchored there is dominated by it, and so were the verdicts below.
+
+    Emptying instead of dropping keeps the prompt a shape the model has seen on every
+    training step, so a difference against it is about information alone.
+    """
+    out = dict(obs)
+    for key in list(out):
+        if not key.startswith("history.") or key.startswith("history.depth."):
+            continue
+        current = out.get(key.removeprefix("history."))
+        if current is None:
+            continue
+        out[key] = current.unsqueeze(1).repeat_interleave(int(out[key].shape[1]), dim=1).to(out[key].dtype)
+    return out
 
 
 def _stale_observation(obs: dict, dataset, memory_cfg, fps: float, global_idx: int, lag: int) -> tuple[dict, int]:
@@ -152,12 +191,12 @@ def _render_regime(rows: list[dict], summary: dict, output_dir: str) -> None:
     for values, label, color in (
         (delta, "full — real history", "#2A9D8F"),
         (delta_stale, "stale — wrong history", "#F4A261"),
-        (delta_seed, "none' — flow seed only", "#9AA0A6"),
+        (delta_seed, "emptied' — flow seed only", "#9AA0A6"),
     ):
         axes[0].hist(values, bins=bins, histtype="step", linewidth=1.6, color=color, label=label)
     axes[0].axvline(0.0, color="black", linewidth=0.8)
     axes[0].axvspan(-tau, tau, color="#9AA0A6", alpha=0.18, label=r"$\pm\tau$ (sampler floor)")
-    axes[0].set_xlabel(r"$\Delta(c)=\mathrm{MSE}(\mathrm{none})-\mathrm{MSE}(c)$")
+    axes[0].set_xlabel(r"$\Delta(c)=\mathrm{MSE}(\mathrm{emptied})-\mathrm{MSE}(c)$")
     axes[0].set_ylabel("frames")
     axes[0].set_title(
         "Is the helped/hurt split real?\n"
@@ -288,12 +327,12 @@ def _render_example(dataset, memory_cfg, fps: float, diagnostic: dict, label: st
 
 
 _REGIME_HOW = r"""**Left — is the split real?** Three distributions of the same quantity,
-$\Delta(c)=\mathrm{MSE}(\mathrm{none})-\mathrm{MSE}(c)$, over the sampled frames. Green is
+$\Delta(c)=\mathrm{MSE}(\mathrm{emptied})-\mathrm{MSE}(c)$, over the sampled frames. Green is
 the real history, orange is the window as it stood $W$ s earlier (a perturbation of the
 same size carrying the wrong content), grey changes only the flow seed. If green is not
 wider than orange, memory is being *reacted to* rather than *read*: the chunk moves, and
 lands closer to the demonstration exactly as often as a wrong window would. The shaded
-band is $\tau=Q_{0.9}(|\Delta(\mathrm{none}')|)$, the width a $\Delta$ has to clear to be
+band is $\tau=Q_{0.9}(|\Delta(\mathrm{emptied}')|)$, the width a $\Delta$ has to clear to be
 more than a redrawn sampler.
 
 **Middle — per frame.** How far the chunk moved against whether that move helped, one
@@ -334,7 +373,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     samples = sample_episodes_evenly(
         dataset, p.n_frames_per_episode, p.max_episodes, p.random_seed, probe_image_stride(cfg)
     )
-    logging.info(f"[mem_history_regime] {len(samples)} frames x 4 = {len(samples) * 4} forward passes")
+    logging.info(f"[mem_history_regime] {len(samples)} frames x 5 = {len(samples) * 5} forward passes")
 
     adapter._set_probe_cuda_graph_enabled(False)  # history mask varies per condition; keep eager
     rows: list[dict] = []
@@ -344,14 +383,20 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             frame = probe_frame_inputs(dataset, cfg, global_idx, chunk_size)
             obs, state = frame["obs"], frame["state"]
             stale_obs, stale_shift = _stale_observation(obs, dataset, memory_cfg, fps, global_idx, lag)
+            emptied_obs = _emptied_observation(obs)
             no_history = _variant_observation(obs, False)
 
             acts = {
-                "none": _predict(adapter, frame, no_history, 0),
+                "emptied": _predict(adapter, frame, emptied_obs, 0),
                 "full": _predict(adapter, frame, obs, 0),
                 "stale": _predict(adapter, frame, stale_obs, 0),
+                # Kept, reported, and never used as an origin: the legacy off-distribution
+                # drop, so captures made before this change still line up.
+                "none": _predict(adapter, frame, no_history, 0),
             }
-            reseeded = _predict(adapter, frame, no_history, 1)
+            # The sampler floor has to be measured where the probe operates. Reseeding the
+            # dropped-history prompt gave the spread of a regime the model is not in.
+            reseeded = _predict(adapter, frame, emptied_obs, 1)
 
             gt_norm = adapter.normalize_gt_actions(frame["gt_actions"], state)
             hold_raw = state[: frame["gt_actions"].shape[-1]].unsqueeze(0).repeat(
@@ -359,10 +404,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             )
             hold_norm = adapter.normalize_gt_actions(hold_raw, state)
             mse = {name: float((act - gt_norm).pow(2).mean()) for name, act in acts.items()}
-            mse["none_reseed"] = float((reseeded - gt_norm).pow(2).mean())
-            base = acts["none"]
+            mse["emptied_reseed"] = float((reseeded - gt_norm).pow(2).mean())
+            base = acts["emptied"]
             trajectory = {}
-            for name, act in {**acts, "none_reseed": reseeded}.items():
+            for name, act in {**acts, "emptied_reseed": reseeded}.items():
                 horizon = min(act.shape[0], gt_norm.shape[0])
                 components = trajectory_error_components(
                     act[:horizon], gt_norm[:horizon], hold_norm[:horizon]
@@ -378,10 +423,16 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "frame_idx": int(_fr),
                 "mse": mse,
                 "trajectory": trajectory,
-                "delta_full": mse["none"] - mse["full"],
-                "delta_stale": mse["none"] - mse["stale"],
-                "delta_seed": mse["none"] - mse["none_reseed"],
+                # Anchored on the emptied window, not on the dropped one.
+                "delta_full": mse["emptied"] - mse["full"],
+                "delta_stale": mse["emptied"] - mse["stale"],
+                "delta_seed": mse["emptied"] - mse["emptied_reseed"],
+                # Unchanged, and unaffected by the re-anchoring: the origin cancels out of
+                # a difference between two conditions that both carry a window.
                 "content_gain": mse["stale"] - mse["full"],
+                # Reference only. The gap between this and delta_full is the size of the
+                # distribution-shift artefact the old origin folded into every verdict.
+                "delta_full_vs_none_legacy": mse["none"] - mse["full"],
                 "rmse_full": float((acts["full"] - base).pow(2).mean().sqrt()),
                 "rmse_stale": float((acts["stale"] - base).pow(2).mean().sqrt()),
                 "rmse_seed": float((reseeded - base).pow(2).mean().sqrt()),
@@ -434,6 +485,17 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "indistinguishable_fraction": float(np.mean([row["verdict"] == "indistinguishable" for row in rows])),
         "delta_full_mean": float(delta.mean()),
         "delta_full_median": float(np.median(delta)),
+        # The old origin, reported side by side so the artefact is visible rather than
+        # merely described: this is the same Delta(full) measured against the dropped
+        # prompt. The ratio is how much of the old headline was distribution shift.
+        "delta_full_mean_vs_none_legacy": float(
+            np.mean([row["delta_full_vs_none_legacy"] for row in rows])
+        ),
+        "legacy_none_inflation": (
+            float(np.mean([row["delta_full_vs_none_legacy"] for row in rows]) / delta.mean())
+            if abs(delta.mean()) > 1e-12
+            else None
+        ),
         "content_gain": trajectory_content_gain["path_mse"] or 0.0,
         "trajectory_content_gain": trajectory_content_gain,
         "trajectory_content_gain_valid": trajectory_content_gain_valid,
@@ -542,8 +604,15 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         },
     )
 
+    inflation = summary["legacy_none_inflation"]
     logging.info(
         f"[mem_history_regime] n={len(rows)}  helped={summary['helped_fraction']:.0%}  "
         f"hurt={summary['hurt_fraction']:.0%}  tau={tau:.5f}  "
         f"content gain={summary['content_gain']:+.5f} (z={summary['content_gain_z']:+.2f})"
+    )
+    logging.info(
+        f"[mem_history_regime] origin check: Delta(full) vs emptied="
+        f"{summary['delta_full_mean']:+.5f}  vs dropped[OOD legacy]="
+        f"{summary['delta_full_mean_vs_none_legacy']:+.5f}"
+        + (f"  ({inflation:.1f}x inflated by the old origin)" if inflation else "")
     )
