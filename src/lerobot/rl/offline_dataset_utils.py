@@ -378,6 +378,59 @@ def _subtask_indices_from_windows(dataset, num_frames: int) -> torch.Tensor | No
     return result
 
 
+def _subtask_terminals_from_windows(dataset, num_frames: int) -> torch.Tensor | None:
+    """Materialize one terminal marker at every reviewed subtask boundary.
+
+    The frame-level label alone cannot recover adjacent windows with the same
+    text. Read the reviewed windows directly so the critic retains every
+    semantic boundary.
+    """
+    root = getattr(dataset, "root", None)
+    if root is None:
+        return None
+    path = Path(root) / "meta" / "subtask_windows.json"
+    if not path.exists():
+        return None
+
+    with path.open() as f:
+        payload = json.load(f)
+    episodes = payload.get("episodes") if isinstance(payload, dict) else None
+    if not isinstance(episodes, dict):
+        raise ValueError(f"{path} must contain an 'episodes' object.")
+
+    terminals = torch.zeros(num_frames, dtype=torch.bool)
+    episode_indices = _dataset_index_column(dataset, "episode_index")
+    for raw_episode_index, windows in episodes.items():
+        try:
+            episode_index = int(raw_episode_index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{path} has a non-integer episode key {raw_episode_index!r}.") from exc
+        if not isinstance(windows, list):
+            raise ValueError(f"{path} episode {episode_index} must contain a list of windows.")
+        for window_index, window in enumerate(windows):
+            if not isinstance(window, dict):
+                raise ValueError(f"{path} episode {episode_index} window {window_index} must be an object.")
+            try:
+                start = int(window["from_index"])
+                stop = int(window["to_index"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{path} episode {episode_index} window {window_index} must define integer from_index/to_index."
+                ) from exc
+            if not (0 <= start < stop <= num_frames):
+                raise ValueError(
+                    f"{path} episode {episode_index} window {window_index} has invalid "
+                    f"frame range [{start}, {stop}) for a {num_frames}-frame dataset."
+                )
+            if episode_indices is not None and not torch.all(episode_indices[start:stop] == episode_index):
+                raise ValueError(
+                    f"{path} episode {episode_index} window {window_index} range [{start}, {stop}) "
+                    "contains frames from another episode."
+                )
+            terminals[stop - 1] = True
+    return terminals
+
+
 def _remap_indices(values: torch.Tensor, remap: dict[int, int]) -> torch.Tensor:
     result = torch.full_like(values, -1)
     for old_index, new_index in remap.items():
@@ -430,6 +483,16 @@ def materialize_dataset_labels(
     if subtask_indices is not None:
         subtask_remap = remap_subtasks_for_dataset(vocabulary_dataset, dataset, is_main_process)
         _install_buffer_column(buffer, "subtask_index", _remap_indices(subtask_indices, subtask_remap))
+        subtask_terminals = _subtask_terminals_from_windows(dataset, len(task_indices))
+        if subtask_terminals is None:
+            # Datasets carrying only a frame-level label get a conservative
+            # boundary at label changes. Reviewed windows are preferred because
+            # adjacent identical labels are otherwise indistinguishable.
+            subtask_terminals = torch.zeros_like(subtask_indices, dtype=torch.bool)
+            if len(subtask_indices) > 1:
+                subtask_terminals[:-1] = subtask_indices[:-1] != subtask_indices[1:]
+            subtask_terminals[-1] = True
+        _install_buffer_column(buffer, "critic_subtask_terminal", subtask_terminals, fill_value=False)
     _install_buffer_column(
         buffer,
         "source_index",

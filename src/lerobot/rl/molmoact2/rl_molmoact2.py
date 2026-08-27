@@ -66,6 +66,8 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     image_storage_size: tuple[int, int] | None = None
     reward_normalization_constant: float = 1.0
     terminal_failure_reward: float = -10.0
+    critic_reward_mode: str = "episode"  # episode | subtask
+    critic_mistake_penalty: float = 0.0  # raw, one-time cost at each mistake-span entry
     async_prefetch: bool = False
 
     # ── Actor/learner concurrency (compatibility stubs) ─────────────────────

@@ -233,11 +233,11 @@ def run_episode_critic_traces(
         critic_values: list[float] = []
         critic_indices = list(range(0, len(indices), subsample))
         for ci in critic_indices:
-            obs, _, _, _, task_str, _, _ = get_frame_data(
+            obs, _, _, gt_subtask, task_str, _, _ = get_frame_data(
                 val_dataset, indices[ci], chunk_size,
             )
             try:
-                v = adapter.predict_value(obs, task_str)
+                v = adapter.predict_value(obs, task_str, gt_subtask)
             except Exception as exc:
                 logging.warning(f"[CRITIC] ep{ep_idx} step{ci}: V(s) failed: {exc}")
                 v = 0.0
@@ -305,7 +305,7 @@ def run_predicted_distributions(
         obs, _, _, gt_subtask, task_str, ep_idx, fr_idx = get_frame_data(
             val_dataset, idx, chunk_size,
         )
-        v, probs, bin_centers = adapter.predict_value_and_probs(obs, task_str)
+        v, probs, bin_centers = adapter.predict_value_and_probs(obs, task_str, gt_subtask)
         frames_to_end = ep_last_frame[ep_idx] - fr_idx
 
         ax = axes[i // n_cols, i % n_cols]
@@ -538,11 +538,11 @@ def run_critic_values_distribution(
     adv_subtasks: list[str] = []
     for idx in adv_indices:
         obs, _, _, gt_subtask, task_str, _, _ = get_frame_data(val_dataset, idx, chunk_size)
-        next_obs, _, _, _, next_task_str, _, _ = get_frame_data(
+        next_obs, _, _, next_subtask, next_task_str, _, _ = get_frame_data(
             val_dataset, idx + chunk_size, chunk_size,
         )
-        v_curr = adapter.predict_value(obs, task_str)
-        v_next = adapter.predict_value(next_obs, next_task_str)
+        v_curr = adapter.predict_value(obs, task_str, gt_subtask)
+        v_next = adapter.predict_value(next_obs, next_task_str, next_subtask)
 
         rewards, dones = [], []
         for off in range(chunk_size):

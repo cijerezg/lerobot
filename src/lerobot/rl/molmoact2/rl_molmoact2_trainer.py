@@ -231,6 +231,10 @@ class MolmoAct2Trainer(Trainer):
             "critic_value_mean",
             "target_value_mean",
             "td_error_mean",
+            "critic_value_histogram_from_critic",
+            "target_value_histogram",
+            "td_error_histogram",
+            "loss_critic_histogram_flat",
         }
     )
 
@@ -543,10 +547,26 @@ class MolmoAct2Trainer(Trainer):
                 next_observations, raw.get("complementary_info"), cfg, key_prefix="next_depth."
             )
 
-            # Critic and target must see the same per-sample task as the actor.
+            # Critic and target must see the same task as the actor. In subtask
+            # reward mode, V(s, z) is additionally conditioned on the active
+            # semantic goal z; a terminal transition never bootstraps into z'.
             tasks = self._resolve_batch_tasks(raw, cfg.policy.task, rewards.shape[0])
-            curr_batch = preprocessor({**observations, "task": tasks})
-            next_batch = preprocessor({**next_observations, "task": tasks})
+            critic_input: dict[str, Any] = {"task": tasks}
+            if str(getattr(cfg.policy, "critic_reward_mode", "episode")) == "subtask":
+                from lerobot.types import TransitionKey
+
+                subtask_index = (raw.get("complementary_info") or {}).get("subtask_index")
+                if subtask_index is None or torch.any(torch.as_tensor(subtask_index) < 0):
+                    if not getattr(self, "_warned_missing_critic_subtask", False):
+                        logging.warning(
+                            "[CRITIC] subtask reward mode received a batch without valid subtask labels; "
+                            "critic prompt will omit the subtask clause."
+                        )
+                        self._warned_missing_critic_subtask = True
+                else:
+                    critic_input[TransitionKey.COMPLEMENTARY_DATA] = {"subtask_index": subtask_index}
+            curr_batch = preprocessor({**observations, **critic_input})
+            next_batch = preprocessor({**next_observations, **critic_input})
 
             _fwd_critic = getattr(policy, "forward_critic")
             _fwd_target = getattr(policy, "forward_critic_target")

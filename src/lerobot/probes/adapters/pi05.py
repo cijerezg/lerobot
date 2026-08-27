@@ -177,7 +177,7 @@ class Pi05Adapter(ProbablePolicy):
 
         dummy_action = torch.zeros(1, 1, 6, device=device)
         complementary_data = {
-            "task": [task_str], "subtask": [""],
+            "task": [task_str], "subtask": [subtask or ""],
             "advantage": torch.tensor([[1.0]], device=device),
         }
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
@@ -380,7 +380,7 @@ class Pi05Adapter(ProbablePolicy):
 
     # ── Critic / value head ──────────────────────────────────────────────────
 
-    def _critic_forward(self, obs: dict[str, Tensor], task_str: str,
+    def _critic_forward(self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None,
                         with_grad: bool = False) -> tuple[dict, Tensor | None, Tensor | None]:
         """Run policy.critic and return (out, vision_features, critic_text_embs).
 
@@ -421,15 +421,15 @@ class Pi05Adapter(ProbablePolicy):
         return out, vision_features, critic_text_embs
 
     @torch.no_grad()
-    def predict_value(self, obs: dict[str, Tensor], task_str: str) -> float:
-        out, _, _ = self._critic_forward(obs, task_str)
+    def predict_value(self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None) -> float:
+        out, _, _ = self._critic_forward(obs, task_str, subtask)
         return float(out["value"].item())
 
     @torch.no_grad()
     def predict_value_and_probs(
-        self, obs: dict[str, Tensor], task_str: str,
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None,
     ) -> tuple[float, np.ndarray, np.ndarray]:
-        out, _, _ = self._critic_forward(obs, task_str)
+        out, _, _ = self._critic_forward(obs, task_str, subtask)
         v = float(out["value"].item())
         probs = out["probs"].squeeze(0).float().cpu().numpy()
         bin_centers = self._policy.critic.bin_centers.detach().float().cpu().numpy()

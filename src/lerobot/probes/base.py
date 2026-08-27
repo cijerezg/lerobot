@@ -259,12 +259,12 @@ class ProbablePolicy(ABC):
     # ── Critic / value head ──────────────────────────────────────────────────
 
     @abstractmethod
-    def predict_value(self, obs: dict[str, Tensor], task_str: str) -> float:
-        """Scalar V(s) for one observation."""
+    def predict_value(self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None) -> float:
+        """Scalar V(s) for one observation, optionally conditioned on a subtask."""
 
     @abstractmethod
     def predict_value_and_probs(
-        self, obs: dict[str, Tensor], task_str: str,
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None,
     ) -> tuple[float, "np.ndarray", "np.ndarray"]:
         """Scalar V(s) plus the predicted distribution over the value support.
 

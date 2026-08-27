@@ -713,6 +713,22 @@ def test_async_iterator_multiple_iterations():
     del iterator
 
 
+def test_async_iterator_surfaces_producer_error(monkeypatch):
+    buffer = _populate_buffer_for_async_test()
+
+    def fail_sample(*args, **kwargs):
+        raise ValueError("deliberate sampling failure")
+
+    monkeypatch.setattr(buffer, "sample", fail_sample)
+    iterator = buffer.get_iterator(batch_size=2, async_prefetch=True, queue_size=1)
+
+    with pytest.raises(RuntimeError, match="Replay-buffer prefetch failed") as exc_info:
+        next(iterator)
+
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert str(exc_info.value.__cause__) == "deliberate sampling failure"
+
+
 # ── Short-term memory: history lookback ──────────────────────────────────────
 
 

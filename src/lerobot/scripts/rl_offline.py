@@ -806,6 +806,16 @@ def run_offline_training(
     trainer.sync_subtask_vocabulary(preprocessor, offline_dataset, is_main_process=runtime.is_main_process)
 
     offline_buffers = [offline_replay_buffer, *additional_buffers]
+    critic_reward_mode = str(getattr(cfg.policy, "critic_reward_mode", "episode"))
+    critic_mistake_penalty = float(getattr(cfg.policy, "critic_mistake_penalty", 0.0))
+    for buffer in offline_buffers:
+        buffer.configure_critic_rewards(critic_reward_mode, critic_mistake_penalty)
+    if critic_reward_mode == "subtask":
+        logging.info(
+            "[RL_OFFLINE] Critic reward mode: subtask "
+            f"(normalizer={cfg.policy.reward_normalization_constant}, "
+            f"mistake-entry penalty={critic_mistake_penalty})"
+        )
     logging.info(
         f"[RL_OFFLINE] Buffer: {sum(len(b) for b in offline_buffers)} samples "
         f"({len(offline_buffers)} sources)"

@@ -178,6 +178,12 @@ class ReplayBuffer:
         self.optimize_memory = optimize_memory
         self.reward_normalization_constant = reward_normalization_constant
         self.terminal_failure_reward = terminal_failure_reward
+        # ``episode`` preserves the legacy reward transform. ``subtask`` is a
+        # critic-only view of the same replay: semantic subtask boundaries are
+        # terminals, while physical episode boundaries still govern history.
+        self.critic_reward_mode = "episode"
+        self.critic_mistake_penalty = 0.0
+        self._warned_missing_subtask_critic_labels = False
         self.image_storage_dtype = self._normalize_image_storage_dtype(image_storage_dtype)
         self.image_storage_size = self._normalize_image_storage_size(image_storage_size)
         # Image/depth rows kept every N-th frame (memmap caches only; see from_cache).
@@ -199,6 +205,14 @@ class ReplayBuffer:
             self.image_augmentation_function = torch.compile(base_function)
         self.use_drq = use_drq
 
+    def configure_critic_rewards(self, mode: str = "episode", mistake_penalty: float = 0.0) -> None:
+        """Select the critic's episode-level or subtask-level reward view."""
+        if mode not in {"episode", "subtask"}:
+            raise ValueError(f"Unsupported critic_reward_mode {mode!r}; expected 'episode' or 'subtask'.")
+        if mistake_penalty < 0:
+            raise ValueError("critic_mistake_penalty must be a non-negative magnitude.")
+        self.critic_reward_mode = mode
+        self.critic_mistake_penalty = float(mistake_penalty)
 
     @staticmethod
     def _normalize_image_storage_dtype(dtype: str) -> str:
@@ -449,9 +463,17 @@ class ReplayBuffer:
         for row in mistake_rows:
             if row["mistake"]:
                 mistake[row["from_index"] : min(int(row["to_index"]), self.size)] = 1.0
+        # Reward a mistake event once at its entry, not every annotated recovery
+        # frame; its cost must not depend on the span's annotated duration.
+        mistake_onset = torch.zeros_like(mistake)
+        if self.size > 0:
+            mistake_onset[0] = mistake[0]
+        if self.size > 1:
+            mistake_onset[1 : self.size] = mistake[1 : self.size] * (1.0 - mistake[: self.size - 1])
         self.complementary_info["metadata_quality"] = quality
         self.complementary_info["metadata_mistake"] = mistake
-        for key in ("metadata_quality", "metadata_mistake"):
+        self.complementary_info["critic_mistake_onset"] = mistake_onset
+        for key in ("metadata_quality", "metadata_mistake", "critic_mistake_onset"):
             if key not in self.complementary_info_keys:
                 self.complementary_info_keys.append(key)
         self.has_complementary_info = True
@@ -662,15 +684,43 @@ class ReplayBuffer:
                 batch_state[key] = augmented_images[i * 2 * batch_size : (i * 2 + 1) * batch_size]
                 batch_next_state[key] = augmented_images[(i * 2 + 1) * batch_size : (i + 1) * 2 * batch_size]
 
-        # Apply reward transformation outside the lock (works on local batch tensors)
-        new_rewards = torch.full_like(batch_rewards, -1.0)
-        # Success case: Done and Reward=1 -> 0
-        success_mask = (batch_dones > 0.5) & (batch_rewards > 0.5)
-        new_rewards[success_mask] = 0.0
-        # Failure case: Done and Reward=0 -> terminal_failure_reward
-        failure_mask = (batch_dones > 0.5) & (batch_rewards < 0.5)
-        new_rewards[failure_mask] = self.terminal_failure_reward
-        batch_rewards = new_rewards / self.reward_normalization_constant
+        # Apply reward transformation outside the lock (works on local batch tensors).
+        # A subtask critic uses the action chunk from s to s' directly: a semantic
+        # boundary in that window makes this TD transition terminal. This never
+        # alters self.dones, which remain the physical episode boundaries.
+        subtask_terminal = None
+        if self.critic_reward_mode == "subtask":
+            subtask_terminal = self.complementary_info.get("critic_subtask_terminal")
+
+        if subtask_terminal is not None:
+            critic_window = idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)
+            critic_window = torch.clamp(critic_window, max=self.size - 1)
+            boundary_mask = subtask_terminal[critic_window].bool().any(dim=1).to(self.device)
+            episode_mask = self.dones[critic_window].any(dim=1).to(self.device)
+            batch_dones = (boundary_mask | episode_mask).float()
+
+            new_rewards = torch.full_like(batch_rewards, -1.0)
+            new_rewards[batch_dones > 0.5] = 0.0
+            mistake_onset = self.complementary_info.get("critic_mistake_onset")
+            if mistake_onset is not None and self.critic_mistake_penalty > 0:
+                mistake_mask = mistake_onset[critic_window].bool().any(dim=1).to(self.device)
+                new_rewards[mistake_mask] -= self.critic_mistake_penalty
+            batch_rewards = new_rewards / self.reward_normalization_constant
+        else:
+            if self.critic_reward_mode == "subtask" and not self._warned_missing_subtask_critic_labels:
+                logger.warning(
+                    "Subtask critic requested but this replay buffer has no subtask terminals; "
+                    "falling back to episode rewards."
+                )
+                self._warned_missing_subtask_critic_labels = True
+            new_rewards = torch.full_like(batch_rewards, -1.0)
+            # Success case: Done and Reward=1 -> 0
+            success_mask = (batch_dones > 0.5) & (batch_rewards > 0.5)
+            new_rewards[success_mask] = 0.0
+            # Failure case: Done and Reward=0 -> terminal_failure_reward
+            failure_mask = (batch_dones > 0.5) & (batch_rewards < 0.5)
+            new_rewards[failure_mask] = self.terminal_failure_reward
+            batch_rewards = new_rewards / self.reward_normalization_constant
 
         return BatchTransition(
             state=batch_state,
@@ -733,33 +783,42 @@ class ReplayBuffer:
 
         data_queue: queue.Queue = queue.Queue(maxsize=queue_size)
         shutdown_event = threading.Event()
+        producer_errors: list[Exception] = []
 
         def producer() -> None:
             """Continuously put sampled batches into the queue until shutdown."""
-            while not shutdown_event.is_set():
-                try:
+            try:
+                while not shutdown_event.is_set():
                     batch = self.sample(batch_size, action_chunk_size=action_chunk_size)
-                    # The timeout ensures the thread unblocks if the queue is full
-                    # and the shutdown event gets set meanwhile.
-                    data_queue.put(batch, block=True, timeout=0.5)
-                except queue.Full:
-                    # Queue is full – loop again (will re-check shutdown_event)
-                    continue
-                except Exception:
-                    # Surface any unexpected error and terminate the producer.
-                    shutdown_event.set()
+                    # Keep the sampled batch while the queue is full. Resampling on
+                    # every timeout wastes CPU and pounds memmaps whenever training is
+                    # slower than the producer (or another source has failed).
+                    while not shutdown_event.is_set():
+                        try:
+                            data_queue.put(batch, block=True, timeout=0.5)
+                            break
+                        except queue.Full:
+                            continue
+            except Exception as exc:
+                # A producer exception must reach the consumer. Previously it was
+                # discarded, leaving next(iterator) blocked forever on an empty queue.
+                producer_errors.append(exc)
+                shutdown_event.set()
 
-        producer_thread = threading.Thread(target=producer, daemon=True)
+        producer_thread = threading.Thread(target=producer, daemon=True, name="replay-prefetch")
         producer_thread.start()
 
         try:
-            while not shutdown_event.is_set():
+            while True:
+                if producer_errors:
+                    raise RuntimeError("Replay-buffer prefetch failed.") from producer_errors[0]
                 try:
-                    yield data_queue.get(block=True)
-                except Exception:
-                    # If the producer already set the shutdown flag we exit.
-                    if shutdown_event.is_set():
-                        break
+                    yield data_queue.get(block=True, timeout=0.5)
+                except queue.Empty:
+                    if producer_errors:
+                        raise RuntimeError("Replay-buffer prefetch failed.") from producer_errors[0]
+                    if not producer_thread.is_alive():
+                        raise RuntimeError("Replay-buffer prefetch thread stopped unexpectedly.")
         finally:
             shutdown_event.set()
             # Drain the queue quickly to help the thread exit if it's blocked on `put`.

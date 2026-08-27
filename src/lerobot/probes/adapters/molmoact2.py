@@ -1130,23 +1130,23 @@ class MolmoAct2Adapter(ProbablePolicy):
 
     # ── Critic / value head ──────────────────────────────────────────────────
 
-    def _critic_batch(self, obs: dict[str, Tensor], task_str: str) -> dict:
+    def _critic_batch(self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None) -> dict:
         # No advantage clause: the critic is trained on prompts without one
         # (update_critic never threads advantage into the
         # critic forward). Injecting "positive"/"negative" here would feed the
         # critic an out-of-distribution prompt it never saw during training.
-        return self._make_batch(obs, task_str)
+        return self._make_batch(obs, task_str, subtask=subtask)
 
     @torch.no_grad()
-    def predict_value(self, obs: dict[str, Tensor], task_str: str) -> float:
-        out = self._policy.forward_critic(self._critic_batch(obs, task_str))
+    def predict_value(self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None) -> float:
+        out = self._policy.forward_critic(self._critic_batch(obs, task_str, subtask))
         return float(out["value"].mean().item())
 
     @torch.no_grad()
     def predict_value_and_probs(
-        self, obs: dict[str, Tensor], task_str: str,
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None,
     ) -> tuple[float, np.ndarray, np.ndarray]:
-        out = self._policy.forward_critic(self._critic_batch(obs, task_str))
+        out = self._policy.forward_critic(self._critic_batch(obs, task_str, subtask))
         v = float(out["value"].mean().item())
         probs = out["probs"].squeeze(0).float().cpu().numpy()
         bin_centers = self._policy.critic.bin_centers.detach().float().cpu().numpy()
