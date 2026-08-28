@@ -11,6 +11,7 @@ from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
 from lerobot.rl.offline_dataset_utils import (
     _weighted_batch_sizes,
     get_offline_dataset_sources,
+    load_additional_offline_buffers,
     materialize_dataset_labels,
     resolve_task_strings,
 )
@@ -70,6 +71,61 @@ def test_weighted_batch_sizes_are_exact_and_keep_every_source_present():
     assert _weighted_batch_sizes(96, [1, 1, 2]) == [24, 24, 48]
     with pytest.raises(ValueError, match="at least the number"):
         _weighted_batch_sizes(2, [1, 1, 1])
+
+
+def test_additional_cached_buffers_inherit_reward_configuration(monkeypatch):
+    import lerobot.rl.offline_dataset_utils as offline_utils
+
+    cfg = SimpleNamespace(
+        dataset=DatasetConfig(
+            repo_id="local/tasks",
+            sources=[
+                OfflineDatasetSourceConfig(
+                    root="/data/main",
+                    name="main",
+                    weight=1,
+                    normalization_source=True,
+                ),
+                OfflineDatasetSourceConfig(root="/data/peer", name="peer", weight=1),
+            ],
+        ),
+        policy=SimpleNamespace(
+            input_features={},
+            image_storage_dtype="uint8",
+            image_storage_size=None,
+            image_stride=1,
+            reward_normalization_constant=12.0,
+            terminal_failure_reward=-10.0,
+            depth_gripper_event_loss=SimpleNamespace(enabled=False),
+        ),
+        buffer_cache_dir="/cache",
+        cache_policy="require",
+    )
+    dataset = SimpleNamespace(root="/data/peer")
+    buffer = SimpleNamespace(size=1)
+    captured = {}
+
+    monkeypatch.setattr(offline_utils, "load_offline_dataset", lambda _cfg, _source: dataset)
+    monkeypatch.setattr(offline_utils.ReplayBuffer, "find_cache", lambda *_args, **_kwargs: "/cache/peer")
+
+    def fake_from_cache(**kwargs):
+        captured.update(kwargs)
+        return buffer
+
+    monkeypatch.setattr(offline_utils.ReplayBuffer, "from_cache", fake_from_cache)
+    monkeypatch.setattr(offline_utils, "materialize_dataset_labels", lambda *_args, **_kwargs: None)
+
+    result = load_additional_offline_buffers(
+        cfg,
+        main_dataset=SimpleNamespace(root="/data/main"),
+        device="cpu",
+        storage_device="cpu",
+        is_main_process=False,
+    )
+
+    assert result == [buffer]
+    assert captured["reward_normalization_constant"] == 12.0
+    assert captured["terminal_failure_reward"] == -10.0
 
 
 def test_current_task_and_subtask_labels_overlay_cached_buffer():

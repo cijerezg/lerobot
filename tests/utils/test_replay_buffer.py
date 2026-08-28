@@ -64,6 +64,36 @@ def create_empty_replay_buffer(
     )
 
 
+def test_subtask_mistake_penalty_is_reward_normalized() -> None:
+    replay_buffer = ReplayBuffer(
+        capacity=2,
+        device="cpu",
+        state_keys=[],
+        optimize_memory=False,
+        use_drq=False,
+        reward_normalization_constant=12.0,
+        terminal_failure_reward=-10.0,
+    )
+    for _ in range(2):
+        replay_buffer.add(
+            state={},
+            action=torch.zeros(1, 1),
+            reward=0.0,
+            next_state={},
+            done=False,
+            truncated=False,
+            complementary_info={
+                "critic_subtask_terminal": torch.tensor([False]),
+                "critic_mistake_onset": torch.tensor([True]),
+            },
+        )
+    replay_buffer.configure_critic_rewards(mode="subtask", mistake_penalty=5.0)
+
+    batch = replay_buffer.sample(batch_size=2, action_chunk_size=1)
+
+    torch.testing.assert_close(batch["reward"].float(), torch.full((2,), -0.5))
+
+
 def create_random_image() -> torch.Tensor:
     return torch.rand(3, 84, 84)
 

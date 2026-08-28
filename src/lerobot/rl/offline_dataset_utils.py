@@ -541,6 +541,8 @@ def load_additional_offline_buffers(
     image_storage_dtype = getattr(cfg.policy, "image_storage_dtype", "bfloat16")
     image_storage_size = getattr(cfg.policy, "image_storage_size", None)
     image_stride = getattr(cfg.policy, "image_stride", 1)
+    reward_normalization_constant = float(getattr(cfg.policy, "reward_normalization_constant", 1.0))
+    terminal_failure_reward = float(getattr(cfg.policy, "terminal_failure_reward", -1.0))
     buffers: list[ReplayBuffer] = []
     for source_index, source in enumerate(sources, start=1):
         if is_main_process:
@@ -574,6 +576,8 @@ def load_additional_offline_buffers(
                 cache_dir=cached,
                 device=device,
                 use_drq=False,
+                reward_normalization_constant=reward_normalization_constant,
+                terminal_failure_reward=terminal_failure_reward,
                 history_offsets=history_offsets,
             )
         else:
@@ -588,6 +592,8 @@ def load_additional_offline_buffers(
                 state_keys=state_keys,
                 storage_device=storage_device,
                 optimize_memory=True,
+                reward_normalization_constant=reward_normalization_constant,
+                terminal_failure_reward=terminal_failure_reward,
                 image_storage_dtype=image_storage_dtype,
                 image_storage_size=image_storage_size,
                 image_stride=image_stride,

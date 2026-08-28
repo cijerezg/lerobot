@@ -84,7 +84,12 @@ from lerobot.rl.offline_dataset_utils import (
 from lerobot.rl.pretrained_merge import apply_pretrained_merges, build_pretrained_merges
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.training_runtime import TrainingRuntime
-from lerobot.rl.utils import build_named_adamw_optimizers, cast_to_bf16
+from lerobot.rl.utils import (
+    build_named_adamw_optimizers,
+    build_named_schedulers,
+    cast_to_bf16,
+    step_named_schedulers,
+)
 from lerobot.utils.constants import CHECKPOINTS_DIR, TRAINING_STATE_DIR
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.process import ProcessSignalHandler
@@ -725,6 +730,27 @@ def run_offline_training(
     raw_policy = runtime.unwrap_model(policy)
     policy.train()
 
+    # ── LR schedulers ─────────────────────────────────────────────────────────
+    # Step counts are per optimizer group, not global: the critic steps utd_ratio
+    # times per loop iteration, while the actor is idle until critic_warmup_steps
+    # and then only fires every policy_update_freq. Accelerate was created with
+    # step_scheduler_with_optimizer=False, so each scheduler advances exactly where
+    # this loop steps its optimizer.
+    actor_steps = (
+        offline_steps
+        if skip_critic
+        else max(0, offline_steps - critic_warmup_steps) // max(1, policy_update_freq)
+    )
+    schedulers = build_named_schedulers(
+        optimizers,
+        cfg.policy,
+        num_training_steps={
+            "policy": actor_steps,
+            "depth": actor_steps,
+            "critic": 0 if skip_critic else offline_steps * max(1, utd_ratio),
+        },
+    )
+
     # Model creation was identically seeded and DDP has now synchronized weights.
     # From here onward, replay draws and dropout must differ between ranks.
     if cfg.seed is not None:
@@ -929,6 +955,7 @@ def run_offline_training(
                     clip_grad_norm_value=clip_grad_norm_value,
                     cast_to_bf16_fn=cast_to_bf16_fn,
                 )
+                step_named_schedulers(schedulers, "critic")
                 trainer.update_target_networks(policy)
 
         # ── Critic update (last / only round) + optional actor update ─────────
@@ -952,6 +979,7 @@ def run_offline_training(
                 optimization_step=optimization_step,
                 training_runtime=runtime,
             )
+            step_named_schedulers(schedulers, "policy", "depth")
         else:
             # Full RL: critic then actor (respecting critic_warmup_steps)
             critic_infos = trainer.update_critic(
@@ -967,6 +995,7 @@ def run_offline_training(
                 clip_grad_norm_value=clip_grad_norm_value,
                 cast_to_bf16_fn=cast_to_bf16_fn,
             )
+            step_named_schedulers(schedulers, "critic")
             trainer.update_target_networks(policy)
             training_infos.update(critic_infos)
 
@@ -987,6 +1016,7 @@ def run_offline_training(
                     optimization_step=optimization_step,
                     training_runtime=runtime,
                 )
+                step_named_schedulers(schedulers, "policy", "depth")
                 training_infos.update(actor_infos)
 
         merge_fires = any(merge.should_merge(optimization_step) for merge in pretrained_merges.values())
@@ -1025,6 +1055,8 @@ def run_offline_training(
         # ── Logging ───────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:
             training_infos["offline_buffer_size"] = sum(len(b) for b in offline_buffers)
+            for group_name, scheduler in schedulers.items():
+                training_infos[f"lr/{group_name}"] = scheduler.get_last_lr()[0]
             training_infos["Optimization step"] = optimization_step
             training_infos = runtime.reduce_metrics(training_infos)
             runtime.wait_for_everyone()

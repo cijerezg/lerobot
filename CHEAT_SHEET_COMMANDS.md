@@ -1,8 +1,17 @@
 # reBot Commands
 
+> **Run everything from this directory (the workspace root) with the root `.venv`.**
+> Every command below uses `uv run --no-project --python .venv/bin/python`. There is no
+> `pyproject.toml` at the workspace root, and `outputs/` + `config_rl.yaml` paths in the
+> config are relative to it.
+>
+> Do **not** use `uv run --project lerobot ...`: that resolves against
+> `lerobot/pyproject.toml` and builds a *separate* environment (cu128 pins, no
+> matplotlib), which fails in ways that never name the venv.
+
 ## Teleop
 
-uv run lerobot/src/lerobot/scripts/lerobot_teleoperate.py \
+uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobot_teleoperate.py \
     --robot.type=rebot_b601_follower \
     --robot.port=/dev/ttyACM0 \
     --robot.id=rebot_follower_v1 \
@@ -14,7 +23,7 @@ uv run lerobot/src/lerobot/scripts/lerobot_teleoperate.py \
 
 ## Record
 
-uv run lerobot/src/lerobot/scripts/lerobot_record.py \
+uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobot_record.py \
     --robot.type=rebot_b601_follower \
     --robot.port=/dev/ttyACM0 \
     --robot.id=rebot_follower_v1 \
@@ -41,14 +50,14 @@ config_rl.yaml, and that must divide `policy.chunk_size`.
 
 Anchor action stats (chunk-size must match policy.chunk_size; writes outputs/stats/action_stats_anchor_<dataset>.pt):
 
-uv run python -m lerobot.scripts.compute_delta_stats \
+uv run --no-project --python .venv/bin/python python -m lerobot.scripts.compute_delta_stats \
     --root outputs/rebot_dataset_dummy_v1 \
     --encoding anchor \
     --chunk-size 30
 
 Memmap buffer cache (pre-decodes frames so training doesn't hold all pixels in RAM; repo-id must match dataset.repo_id in config_rl.yaml):
 
-uv run python -m lerobot.scripts.lerobot_memmap_buffer_cache \
+uv run --no-project --python .venv/bin/python python -m lerobot.scripts.lerobot_memmap_buffer_cache \
     --repo-id cijerezg/rebot_dataset_dummy_v1 \
     --data-dir outputs/rebot_dataset_dummy_v1 \
     --cache-dir outputs/buffer_cache-rebot-dummy-v1 \
@@ -62,7 +71,7 @@ fingerprint — a mismatch is a hard error, not a silent fallback) and must divi
 
 Smoke test (few steps, no checkpoints, no Aim):
 
-uv run python -m lerobot.scripts.rl_offline \
+uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offline \
     --config_path=config_rl.yaml \
     --policy.offline_steps=20 \
     --val_freq=0 \
@@ -71,7 +80,7 @@ uv run python -m lerobot.scripts.rl_offline \
 
 Full run:
 
-uv run python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml
+uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml
 
 ## Aim metrics UI
 
@@ -84,12 +93,12 @@ uv sync --project lerobot --extra training --extra molmoact2 --extra pi
 
 Terminal 1 - start training:
 
-uv run --project lerobot --no-sync python -m lerobot.scripts.rl_offline \
+uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offline \
     --config_path=config_rl.yaml
 
 Terminal 2 - start the metrics UI (during or after training):
 
-uv run --project lerobot --no-sync aim up --repo ./aim
+uv run --no-project --python .venv/bin/python aim up --repo ./aim
 
 Open http://127.0.0.1:43800 in a browser. Refresh the runs page after training starts if it was
 initially empty. Metrics are stored locally in ./aim; the same repository lets the UI compare
@@ -97,7 +106,7 @@ runs. Stop the UI with Ctrl+C. Training does not need the UI to be running.
 
 Useful override - disable Aim for a smoke test:
 
-uv run --project lerobot --no-sync python -m lerobot.scripts.rl_offline \
+uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offline \
     --config_path=config_rl.yaml \
     --aim.enable=false
 
@@ -109,7 +118,7 @@ delete all locally stored run history.
 
 Browser UI over a run's validation probes (serves on http://127.0.0.1:7870):
 
-uv run python -m lerobot.scripts.view_probes outputs/molmoact2_offline_rebot_all-v6
+uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes outputs/molmoact2_offline_rebot_all-v6
 
 Takes a run directory, its `validation/`, or a single `step_*` dir. It re-scans
 `<run>/validation/step_*/<probe>/` on every request, so a checkpoint that lands

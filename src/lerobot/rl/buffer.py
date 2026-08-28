@@ -620,6 +620,22 @@ class ReplayBuffer:
                     batch_state[f"history.{key}"] = history[key].to(self.device)
                     batch_state[f"history.{key}_is_pad"] = pad[key].to(self.device)
 
+                # The critic target V(s') must see the same observation regime as
+                # V(s). The frozen target is a Polyak copy of a critic that is only
+                # ever *trained* on history-full inputs, so evaluating it on a
+                # history-free next_state puts it off-distribution and biases every
+                # non-terminal TD target (r + gamma * V_target(s')).
+                # next_state is the frame at idx + action_chunk_size -- the same
+                # index math the per-key loop above uses, and stride-aligned because
+                # action_chunk_size is a multiple of image_stride -- so its lookback
+                # is _gather_history at that index. Same reasoning as the
+                # next_depth.{key} columns emitted for complementary_info below.
+                next_hist_idx = (idx + action_chunk_size) % self.capacity
+                next_history, next_pad = self._gather_history(next_hist_idx)
+                for key in next_history:
+                    batch_next_state[f"history.{key}"] = next_history[key].to(self.device)
+                    batch_next_state[f"history.{key}_is_pad"] = next_pad[key].to(self.device)
+
             # Sample actions - handle both pre-chunked and single actions
             # Check if actions are already chunked (offline buffer: shape (N, chunk_size, action_dim))
             # or single actions that need chunking (online buffer: shape (N, action_dim))

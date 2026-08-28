@@ -42,6 +42,72 @@ def build_named_adamw_optimizers(groups: list[dict], policy_cfg) -> dict[str, to
         )
     return optimizers
 
+
+def build_named_schedulers(
+    optimizers: dict[str, torch.optim.Optimizer],
+    policy_cfg,
+    num_training_steps: dict[str, int],
+) -> dict[str, "torch.optim.lr_scheduler.LRScheduler"]:
+    """
+    Build one LR scheduler per named optimizer, for the groups policy_cfg lists in
+    ``scheduler_groups``. Groups left out keep a constant LR, and an empty list
+    disables scheduling entirely.
+
+    The shape comes from the policy's own ``get_scheduler_preset()`` — for
+    MolmoAct2 that is linear warmup then cosine decay, matching the recipe
+    allenai/molmoact trains with (``cosine_with_warmup``, ``alpha_f=0.1``). The
+    preset builds a ``LambdaLR``, which scales each param group's own base LR by
+    a factor in ``[decay_lr / peak_lr, 1]``, so one preset applies correctly to
+    optimizers whose peaks differ (policy vs critic vs depth).
+
+    Each scheduler advances only when its own optimizer steps, so the policy
+    schedule is not consumed while ``critic_warmup_steps`` holds the actor still.
+    """
+    group_names = list(getattr(policy_cfg, "scheduler_groups", None) or [])
+    if not group_names:
+        return {}
+
+    preset = policy_cfg.get_scheduler_preset()
+    if preset is None:
+        raise ValueError(
+            f"policy.scheduler_groups={group_names} requests an LR schedule but "
+            f"{type(policy_cfg).__name__}.get_scheduler_preset() returned None."
+        )
+
+    unknown = [name for name in group_names if name not in optimizers]
+    if unknown:
+        raise ValueError(
+            f"policy.scheduler_groups names optimizer group(s) {unknown} that do not "
+            f"exist; available groups are {sorted(optimizers)}."
+        )
+
+    schedulers: dict[str, torch.optim.lr_scheduler.LRScheduler] = {}
+    for name in group_names:
+        steps = int(num_training_steps.get(name, 0))
+        if steps <= 0:
+            raise ValueError(
+                f"Optimizer group {name!r} is scheduled but takes {steps} steps this run; "
+                "remove it from policy.scheduler_groups."
+            )
+        schedulers[name] = preset.build(optimizers[name], num_training_steps=steps)
+        logging.info(
+            f"[RL] LR schedule for group {name!r}: {type(preset).__name__} over {steps} of its own "
+            f"steps (warmup={preset.num_warmup_steps}, peak_lr={preset.peak_lr}, "
+            f"decay_lr={preset.decay_lr})"
+        )
+    return schedulers
+
+
+def step_named_schedulers(
+    schedulers: dict[str, "torch.optim.lr_scheduler.LRScheduler"], *names: str
+) -> None:
+    """Advance the named schedulers, ignoring groups that are unscheduled."""
+    for name in names:
+        scheduler = schedulers.get(name)
+        if scheduler is not None:
+            scheduler.step()
+
+
 def preprocess_batch_for_pi05(
     policy: nn.Module,
     observations: dict,

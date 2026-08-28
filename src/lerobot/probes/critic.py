@@ -44,7 +44,12 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
-from lerobot.probes.utils import build_episode_index, get_frame_data, load_probe_dataset
+from lerobot.probes.utils import (
+    build_episode_index,
+    get_frame_data,
+    load_probe_dataset,
+    probe_frame_inputs,
+)
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
@@ -64,8 +69,15 @@ def get_random_valid_samples(
     seed: int,
     val_ep_indices: set[int] | None = None,
     lookahead_frames: int = 1,
+    stride: int = 1,
 ) -> list[int]:
-    """Pick *n_frames* indices whose [idx, idx + lookahead_frames] window stays in one episode."""
+    """Pick *n_frames* indices whose [idx, idx + lookahead_frames] window stays in one episode.
+
+    ``stride`` snaps anchors onto the image/depth grid (``policy.image_stride``), the
+    same contract as ``probes.utils.sample_episodes_evenly``. Off-grid frames have no
+    depth PNG in the sidecar, so any caller feeding these indices to
+    ``probe_frame_inputs`` with depth enabled must pass the stride.
+    """
     rng = random.Random(seed)
 
     if val_ep_indices is not None:
@@ -83,6 +95,8 @@ def get_random_valid_samples(
         if end >= len(dataset):
             continue
         item = dataset.hf_dataset[idx]
+        if stride > 1 and int(item["frame_index"].item()) % stride != 0:
+            continue
         end_item = dataset.hf_dataset[end]
         if item["episode_index"].item() != end_item["episode_index"].item():
             continue
@@ -230,12 +244,23 @@ def run_episode_critic_traces(
                 )
 
         # ── 2. Subsampled V(s) via adapter ───────────────────────────────────
+        # Must use probe_frame_inputs, not get_frame_data: the training critic
+        # reads the encoder token sequence, which carries the state/RGB/depth
+        # history windows (buffer.py puts them in batch_state, and
+        # history_dropout is 0.0, so it sees them on every sample). Feeding a
+        # history-free frame here is an out-of-distribution prompt. Depth is
+        # included for parity, so anchors must stay on the image_stride grid.
+        # No metadata clause: update_critic builds the critic prompt from task
+        # + subtask_index only.
         critic_values: list[float] = []
-        critic_indices = list(range(0, len(indices), subsample))
+        stride = int(getattr(cfg.policy, "image_stride", 1))
+        step = subsample + (-subsample % stride)
+        critic_indices = list(range(0, len(indices), step))
         for ci in critic_indices:
-            obs, _, _, gt_subtask, task_str, _, _ = get_frame_data(
-                val_dataset, indices[ci], chunk_size,
+            frame = probe_frame_inputs(
+                val_dataset, cfg, indices[ci], chunk_size, metadata=None,
             )
+            obs, gt_subtask, task_str = frame["obs"], frame["subtask"], frame["task"]
             try:
                 v = adapter.predict_value(obs, task_str, gt_subtask)
             except Exception as exc:
@@ -286,6 +311,7 @@ def run_predicted_distributions(
     indices = get_random_valid_samples(
         val_dataset, n_frames, seed,
         val_ep_indices=val_ep_indices, lookahead_frames=0,
+        stride=int(getattr(cfg.policy, "image_stride", 1)),
     )
     if not indices:
         logging.warning("[CRITIC] predicted_distributions: no samples")
@@ -302,9 +328,9 @@ def run_predicted_distributions(
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 5, n_rows * 4), squeeze=False)
 
     for i, idx in enumerate(indices):
-        obs, _, _, gt_subtask, task_str, ep_idx, fr_idx = get_frame_data(
-            val_dataset, idx, chunk_size,
-        )
+        frame = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=None)
+        obs, gt_subtask, task_str = frame["obs"], frame["subtask"], frame["task"]
+        ep_idx, fr_idx = frame["episode_idx"], frame["frame_idx"]
         v, probs, bin_centers = adapter.predict_value_and_probs(obs, task_str, gt_subtask)
         frames_to_end = ep_last_frame[ep_idx] - fr_idx
 
@@ -528,6 +554,7 @@ def run_critic_values_distribution(
     adv_indices = get_random_valid_samples(
         val_dataset, n_adv, seed,
         val_ep_indices=val_ep_indices, lookahead_frames=2 * chunk_size - 1,
+        stride=int(getattr(cfg.policy, "image_stride", 1)),
     )
     if not adv_indices:
         logging.warning("[CRITIC] no advantage samples")
@@ -537,10 +564,10 @@ def run_critic_values_distribution(
     squashed: list[float] = []
     adv_subtasks: list[str] = []
     for idx in adv_indices:
-        obs, _, _, gt_subtask, task_str, _, _ = get_frame_data(val_dataset, idx, chunk_size)
-        next_obs, _, _, next_subtask, next_task_str, _, _ = get_frame_data(
-            val_dataset, idx + chunk_size, chunk_size,
-        )
+        fr_c = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=None)
+        fr_n = probe_frame_inputs(val_dataset, cfg, idx + chunk_size, chunk_size, metadata=None)
+        obs, gt_subtask, task_str = fr_c["obs"], fr_c["subtask"], fr_c["task"]
+        next_obs, next_subtask, next_task_str = fr_n["obs"], fr_n["subtask"], fr_n["task"]
         v_curr = adapter.predict_value(obs, task_str, gt_subtask)
         v_next = adapter.predict_value(next_obs, next_task_str, next_subtask)
 
@@ -592,13 +619,14 @@ def run_critic_values_distribution(
         grad_indices = get_random_valid_samples(
             val_dataset, n_grad, seed + 1,
             val_ep_indices=val_ep_indices,
+            stride=int(getattr(cfg.policy, "image_stride", 1)),
         )
         grad_mags, episodes, subtasks, frames = [], [], [], []
         frame_cache: dict[int, dict] = {}
         for idx in grad_indices:
-            obs, _, _, gt_subtask, task_str, ep_idx, fr_idx = get_frame_data(
-                val_dataset, idx, chunk_size,
-            )
+            _fr = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=None)
+            obs, gt_subtask, task_str = _fr["obs"], _fr["subtask"], _fr["task"]
+            ep_idx, fr_idx = _fr["episode_idx"], _fr["frame_idx"]
             frame_cache[idx] = {k: v.clone() for k, v in obs.items() if "image" in k}
             try:
                 mag = adapter.value_gradient_magnitude(obs, task_str)

@@ -112,6 +112,16 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     critic_warmup_steps: int = 0
     policy_update_freq: int = 1
 
+    # ── LR schedule ───────────────────────────────────────────────────────
+    # Names of the optimizer groups ("policy", "critic", "depth") that get the
+    # inherited MolmoAct2 cosine-with-warmup schedule; the rest hold a constant
+    # LR. Empty (the default) keeps the pre-scheduler behaviour of every group
+    # flat. Shape comes from scheduler_warmup_steps / scheduler_decay_steps /
+    # scheduler_decay_lr on MolmoAct2Config. scheduler_decay_lr is absolute and
+    # only its ratio to optimizer_lr is applied, so each group decays to
+    # (scheduler_decay_lr / optimizer_lr) x that group's own LR.
+    scheduler_groups: list[str] = field(default_factory=list)
+
     # ── Pretrained merge ──────────────────────────────────────────────────
     # Periodic convex pull toward pretrained weights. alpha == 0 or every_n_steps == 0 disables.
     pretrained_merge_alpha: float = 0.0
