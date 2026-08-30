@@ -103,11 +103,12 @@ def _extract(args: argparse.Namespace) -> None:
     spec = specs[args.source]
     audit = json.loads((args.output_root / "audits" / f"{spec.name}.json").read_text(encoding="utf-8"))
     manifest = json.loads(args.plan.read_text(encoding="utf-8"))
+    source_metadata_root = args.source_metadata_root or args.metadata_root / spec.name
     report = write_packed_v3_dataset(
         spec,
         audit,
         manifest,
-        args.metadata_root / spec.name,
+        source_metadata_root,
         args.staging_root,
         args.annotations_root,
         args.dataset_root,
@@ -161,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
     proxies.set_defaults(handler=_proxies)
     extract = commands.add_parser("extract", help="write a reviewed packed LeRobot v3 dataset")
     extract.add_argument("--source", required=True)
+    extract.add_argument(
+        "--source-metadata-root",
+        type=Path,
+        help="override the source metadata directory for a reviewed local v3 conversion",
+    )
     extract.add_argument("--plan", type=Path, required=True)
     extract.add_argument("--staging-root", type=Path, required=True)
     extract.add_argument("--annotations-root", type=Path, required=True)

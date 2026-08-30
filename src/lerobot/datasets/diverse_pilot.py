@@ -3,10 +3,13 @@
 """Admission-gated acquisition helpers for the diverse real-robot pilot.
 
 Metadata inspection is deliberately separate from payload acquisition. A
-source cannot produce a download plan until its audit proves that a native
-commanded joint-action field exists. Values are only selected or linearly
-interpolated in time: no normalization, delta conversion, joint remapping,
-clipping, or gripper transformation is implemented here.
+source cannot produce a download plan until its audit proves that a usable
+joint-action field exists. Native commanded actions are preserved when
+available. A source may explicitly opt into copying its measured joint state
+into the action field; this exception is recorded in provenance. Values are
+only selected or linearly interpolated in time: no normalization, delta
+conversion, joint remapping, clipping, or gripper transformation is
+implemented here.
 """
 
 from __future__ import annotations
@@ -54,6 +57,8 @@ class SourceSpec:
     gripper_semantics: str
     joint_names: tuple[str, ...]
     metadata_patterns: tuple[str, ...]
+    action_source: str = "native"
+    usage_basis: str | None = None
     notes: str = ""
 
     @classmethod
@@ -62,6 +67,12 @@ class SourceSpec:
         for key in ("state_fields", "action_fields", "joint_names", "metadata_patterns"):
             value[key] = tuple(value.get(key, ()))
         return cls(**value)
+
+    def __post_init__(self) -> None:
+        if self.action_source not in {"native", "copy_state"}:
+            raise ValueError(f"Unsupported action_source: {self.action_source}")
+        if self.action_source == "copy_state" and not self.state_fields:
+            raise ValueError("copy_state action sources require configured state_fields")
 
 
 @dataclass(frozen=True)
@@ -185,17 +196,23 @@ def audit_source(
     state_fields = _feature_summary(features, spec.state_fields)
     action_fields = _feature_summary(features, spec.action_fields)
     cameras = _camera_summary(features)
-    native_joint_action = bool(spec.action_fields) and all(item["present"] for item in action_fields)
+    native_joint_action = (
+        spec.action_source == "native"
+        and bool(spec.action_fields)
+        and all(item["present"] for item in action_fields)
+    )
+    copied_state_action = spec.action_source == "copy_state" and bool(spec.state_fields)
+    training_action_available = native_joint_action or copied_state_action
     state_present = bool(spec.state_fields) and all(item["present"] for item in state_fields)
     declared_license = spec.license or _license_from_tags(repo_tags or [])
 
     failures = []
-    if not declared_license:
+    if not declared_license and not spec.usage_basis:
         failures.append("No source license or usage grant is declared.")
     if not spec.real_robot_evidence:
         failures.append("Real-robot provenance is not documented.")
-    if not native_joint_action:
-        failures.append("No documented native commanded joint-action field is available.")
+    if not training_action_available:
+        failures.append("No usable joint-action field or approved state-copy exception is available.")
     if spec.source_format == "lerobot_v3" and not state_present:
         failures.append("Configured native joint-state field is missing from meta/info.json.")
     if spec.source_format == "lerobot_v3" and info.get("codebase_version") != "v3.0":
@@ -209,6 +226,7 @@ def audit_source(
             "resolved_revision": resolved_revision or spec.revision,
             "gated": gated,
             "license": declared_license,
+            "usage_basis": spec.usage_basis,
             "usage_restrictions": "See source license/card; no additional grant inferred.",
         },
         "real_robot_evidence": spec.real_robot_evidence,
@@ -226,10 +244,17 @@ def audit_source(
             "joint_names": list(spec.joint_names) or ["unknown"],
         },
         "action": {
-            "fields": action_fields,
+            "fields": state_fields if copied_state_action else action_fields,
             "semantics": spec.action_semantics,
+            "source": spec.action_source,
             "native_commanded_joint_action": native_joint_action,
-            "policy": "Preserve values; concatenate configured fields in listed order only.",
+            "copied_from_state": copied_state_action,
+            "training_action_available": training_action_available,
+            "policy": (
+                "Copy the configured measured joint-state vector exactly into action."
+                if copied_state_action
+                else "Preserve values; concatenate configured fields in listed order only."
+            ),
         },
         "gripper": {
             "field": spec.gripper_field,
@@ -325,8 +350,9 @@ def load_staged_lerobot_episode(
     episode_index: int,
 ) -> SourceEpisodeArrays:
     """Read one episode's native low-dimensional arrays from a staged shard."""
-    if spec.source_format != "lerobot_v3":
-        raise ValueError(f"Unsupported staged source format: {spec.source_format}")
+    staged_source_format = manifest.get("source_format", spec.source_format)
+    if staged_source_format != "lerobot_v3":
+        raise ValueError(f"Unsupported staged source format: {staged_source_format}")
     source_root = (staging_root / manifest["repo_id"].replace("/", "__")).resolve()
     episode_table = read_episode_table(metadata_root)
     all_rows = episode_table.to_pylist()
@@ -351,14 +377,20 @@ def load_staged_lerobot_episode(
     file_global_start = min(item["dataset_from_index"] for item in same_file_rows)
     offset = int(row["dataset_from_index"] - file_global_start)
     length = int(row["length"])
-    fields = ["timestamp", "episode_index", *spec.state_fields, *spec.action_fields]
+    fields = ["timestamp", "episode_index", *spec.state_fields]
+    if spec.action_source == "native":
+        fields.extend(spec.action_fields)
     shard = pq.read_table(data_path, columns=fields).slice(offset, length)
     episode_ids = np.asarray(shard["episode_index"].to_pylist(), dtype=np.int64)
     if len(episode_ids) != length or not np.all(episode_ids == episode_index):
         raise ValueError(f"Shard slice does not map exactly to source episode {episode_index}")
     timestamps = np.asarray(shard["timestamp"].to_pylist(), dtype=np.float64).reshape(-1)
     states = np.concatenate([_table_column_array(shard, field) for field in spec.state_fields], axis=1)
-    actions = np.concatenate([_table_column_array(shard, field) for field in spec.action_fields], axis=1)
+    actions = (
+        states.copy()
+        if spec.action_source == "copy_state"
+        else np.concatenate([_table_column_array(shard, field) for field in spec.action_fields], axis=1)
+    )
     if not np.isfinite(states).all() or not np.isfinite(actions).all():
         raise ValueError(f"Episode {episode_index} contains NaN or infinity")
     _validated_timestamps(timestamps)
@@ -777,6 +809,7 @@ def _packed_record(
     episode_index: int,
     sample: NumericalPackedSample,
     annotation: dict[str, Any],
+    robot_type: str | None = None,
 ) -> dict[str, Any]:
     return {
         "observation.state": sample.observation_values[-1],
@@ -794,7 +827,7 @@ def _packed_record(
         "source.action_interpolated_mask": sample.action.interpolated_mask,
         "source.repo_id": spec.repo_id,
         "source.revision": revision,
-        "source.robot_type": spec.robot_type,
+        "source.robot_type": robot_type or spec.robot_type,
         "source.joint_names": json.dumps(spec.joint_names),
         "source.state_semantics": spec.state_semantics,
         "source.action_semantics": spec.action_semantics,
@@ -829,6 +862,7 @@ def write_packed_v3_dataset(
     if dataset_root.exists():
         raise FileExistsError(f"Refusing to overwrite existing dataset root: {dataset_root}")
     source_info = _read_json(metadata_root / "meta/info.json")
+    physical_robot_type = str(source_info.get("robot_type") or spec.robot_type)
     episode_indices = [int(item["episode_index"]) for item in manifest["episodes"]]
     episodes = [
         load_staged_lerobot_episode(spec, manifest, metadata_root, staging_root, episode_index)
@@ -878,7 +912,7 @@ def write_packed_v3_dataset(
     dataset = LeRobotDataset.create(
         repo_id=output_repo_id,
         root=dataset_root,
-        robot_type=spec.robot_type,
+        robot_type=physical_robot_type,
         fps=1,
         features=features,
         use_videos=True,
@@ -889,6 +923,9 @@ def write_packed_v3_dataset(
     extraction_episodes = []
     try:
         for episode, episode_manifest in zip(episodes, manifest["episodes"], strict=True):
+            provenance_episode_index = int(
+                episode_manifest.get("source_episode_index", episode.episode_index)
+            )
             candidate_samples = pack_numerical_episode(
                 episode.timestamps,
                 episode.states,
@@ -897,7 +934,7 @@ def write_packed_v3_dataset(
                 native_action_rate_hz=float(source_info["fps"]),
                 stride_s=stride_s,
             )
-            annotations_path = annotations_root / f"episode_{episode.episode_index:06d}.annotations.json"
+            annotations_path = annotations_root / f"episode_{provenance_episode_index:06d}.annotations.json"
             annotations = _validated_annotations(
                 annotations_path, float(episode.timestamps[-1] - episode.timestamps[0])
             )
@@ -930,20 +967,24 @@ def write_packed_v3_dataset(
                 record = _packed_record(
                     spec,
                     manifest["revision"],
-                    episode.episode_index,
+                    provenance_episode_index,
                     sample,
                     labels,
+                    physical_robot_type,
                 )
                 for camera_key, frames in camera_frames.items():
                     record[camera_key] = frames[sample_index]
                 record["task"] = (
-                    episode.tasks[0] if episode.tasks else f"source episode {episode.episode_index}"
+                    episode.tasks[0]
+                    if episode.tasks
+                    else f"source episode {provenance_episode_index}"
                 )
                 dataset.add_frame(record)
             dataset.save_episode()
             extraction_episodes.append(
                 {
-                    "source_episode_index": episode.episode_index,
+                    "source_episode_index": provenance_episode_index,
+                    "converted_episode_index": episode.episode_index,
                     "source_frames": len(episode.timestamps),
                     "candidate_anchors": len(candidate_samples),
                     "packed_samples": len(samples),
@@ -976,6 +1017,11 @@ def write_packed_v3_dataset(
             "revision": manifest["revision"],
             "state_fields": list(spec.state_fields),
             "action_fields": list(spec.action_fields),
+            "action_source": spec.action_source,
+            "robot_type": physical_robot_type,
+            "action_copied_from_state_fields": (
+                list(spec.state_fields) if spec.action_source == "copy_state" else []
+            ),
             "gripper_field": spec.gripper_field,
             "physical_state_dtype": state_dtype,
             "physical_action_dtype": action_dtype,
@@ -983,7 +1029,10 @@ def write_packed_v3_dataset(
                 field: source_info["features"][field].get("dtype") for field in spec.state_fields
             },
             "declared_action_dtypes": {
-                field: source_info["features"][field].get("dtype") for field in spec.action_fields
+                field: source_info["features"][field].get("dtype")
+                for field in (
+                    spec.state_fields if spec.action_source == "copy_state" else spec.action_fields
+                )
             },
         },
     }
@@ -998,7 +1047,10 @@ def write_packed_v3_dataset(
     write_json(dataset_root / "meta/extraction_report.json", report)
     annotations_output = dataset_root / "meta/annotations"
     annotations_output.mkdir(parents=True, exist_ok=True)
-    for episode_index in episode_indices:
+    for episode_manifest in manifest["episodes"]:
+        episode_index = int(
+            episode_manifest.get("source_episode_index", episode_manifest["episode_index"])
+        )
         source = annotations_root / f"episode_{episode_index:06d}.annotations.json"
         shutil.copy2(source, annotations_output / source.name)
     return report

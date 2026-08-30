@@ -3,8 +3,10 @@
 This directory is the executable companion to `DIVERSE_ROBOT_DATASET_PLAN.md`.
 The tooling is deliberately admission-gated: it inspects Hub repository and
 LeRobot metadata first, writes source audits, and refuses to resolve or download
-episode payloads when the source license, real-robot provenance, native state,
-or native commanded joint action is not established.
+episode payloads when the source usage basis, real-robot provenance, native
+state, or usable action mapping is not established. Native commanded actions
+are preserved when present. RoboChallenge alone uses the explicitly configured
+`copy_state` exception described below.
 
 No command in the audit or nomination phase downloads `data/`, `videos/`, or
 `images/`. Set `HF_TOKEN` only if Hub authentication or license acceptance is
@@ -132,7 +134,34 @@ uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
   --confirm-validated-output
 ```
 
-Never substitute RoboChallenge end-effector poses or measured joint positions
-for native joint commands. Its two pilot slots stay blocked until the publisher
-supplies both a usage grant and unambiguous commanded joint actions, or the
-collection plan is explicitly revised.
+RoboChallenge does not expose a native commanded joint action. The approved
+source-specific exception copies each same-timestamp measured six-joint plus
+gripper-width vector exactly into both state and action. Do not use the source
+reference converter's end-effector action mapping, and do not apply this
+exception to UR7e, DROID, or another source with native actions.
+
+Convert only reviewed raw episodes into a temporary local v3 source:
+
+```bash
+uv run python lerobot/examples/dataset/diverse_robot_pilot/convert_robochallenge.py \
+  --raw-task-root outputs/diverse_robot_pilot/staging/robochallenge/shred_paper \
+  --dataset-root outputs/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source \
+  --repo-id local/robochallenge-ur5-shred-paper-source --episodes 484 731
+```
+
+The converter writes `meta/local_acquisition_manifest.json`, including the raw
+episode mapping. Pass the converted root explicitly to the standard extractor:
+
+```bash
+uv run python lerobot/src/lerobot/scripts/lerobot_diverse_pilot.py \
+  --config lerobot/examples/dataset/diverse_robot_pilot/config.json \
+  --metadata-root outputs/diverse_robot_pilot/metadata \
+  --output-root outputs/diverse_robot_pilot/generated \
+  extract --source robochallenge_raw \
+  --source-metadata-root outputs/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source \
+  --plan outputs/diverse_robot_pilot/staging/local__robochallenge-ur5-shred-paper-source/meta/local_acquisition_manifest.json \
+  --staging-root outputs/diverse_robot_pilot/staging \
+  --annotations-root outputs/diverse_robot_pilot/generated/review/robochallenge_shred_paper \
+  --dataset-root outputs/diverse_robot_pilot/datasets/robochallenge-ur5-shred-paper-filtered \
+  --repo-id local/diverse-robochallenge-ur5-shred-paper-filtered
+```

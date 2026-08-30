@@ -20,6 +20,11 @@ from lerobot.utils.constants import (
 from lerobot.types import TransitionKey
 
 
+# Optimizer group names the RL trainers can produce. Used to tell a config typo
+# in policy.scheduler_groups apart from a group that is inactive this run.
+KNOWN_OPTIMIZER_GROUPS = ("policy", "critic", "depth")
+
+
 def build_named_adamw_optimizers(groups: list[dict], policy_cfg) -> dict[str, torch.optim.Optimizer]:
     """
     Build one AdamW optimizer per trainer parameter group.
@@ -74,21 +79,33 @@ def build_named_schedulers(
             f"{type(policy_cfg).__name__}.get_scheduler_preset() returned None."
         )
 
-    unknown = [name for name in group_names if name not in optimizers]
+    # Typos are fatal, but a group that is simply inactive this run is not: the
+    # depth optimizer only exists when the policy has depth params, the critic
+    # only when skip_critic is false, and the actor takes zero steps whenever
+    # critic_warmup_steps covers the whole run. Listing every group in the config
+    # and skipping the absent ones is the intended usage.
+    unknown = [name for name in group_names if name not in KNOWN_OPTIMIZER_GROUPS]
     if unknown:
         raise ValueError(
-            f"policy.scheduler_groups names optimizer group(s) {unknown} that do not "
-            f"exist; available groups are {sorted(optimizers)}."
+            f"policy.scheduler_groups names unknown group(s) {unknown}; "
+            f"valid names are {sorted(KNOWN_OPTIMIZER_GROUPS)}."
         )
 
     schedulers: dict[str, torch.optim.lr_scheduler.LRScheduler] = {}
     for name in group_names:
+        if name not in optimizers:
+            logging.info(
+                f"[RL] LR schedule requested for group {name!r}, which has no optimizer this "
+                f"run (active groups: {sorted(optimizers)}). Skipping."
+            )
+            continue
         steps = int(num_training_steps.get(name, 0))
         if steps <= 0:
-            raise ValueError(
-                f"Optimizer group {name!r} is scheduled but takes {steps} steps this run; "
-                "remove it from policy.scheduler_groups."
+            logging.warning(
+                f"[RL] LR schedule requested for group {name!r}, but it takes 0 optimizer steps "
+                "this run. Skipping — its LR stays constant."
             )
+            continue
         schedulers[name] = preset.build(optimizers[name], num_training_steps=steps)
         logging.info(
             f"[RL] LR schedule for group {name!r}: {type(preset).__name__} over {steps} of its own "

@@ -1,0 +1,20 @@
+{
+  "source": "RoboChallenge/Table30v2",
+  "revision": "c58ad2cc76ce722ea54de51f9fae03012a698f47",
+  "target_episodes": 100,
+  "candidate_episodes_per_task": 15,
+  "accepted_episodes_per_task": 10,
+  "anchor_stride_seconds": 2,
+  "tasks": [
+    {"name": "shred_paper", "embodiment": "UR5", "archive_bytes": 9405818880},
+    {"name": "turn_on_the_light_switch", "embodiment": "ARX5", "archive_bytes": 16099092480},
+    {"name": "hang_the_cup", "embodiment": "ARX5", "archive_bytes": 25484789760},
+    {"name": "press_the_button", "embodiment": "ARX5", "archive_bytes": 31055769600},
+    {"name": "item_classification", "embodiment": "UR5", "archive_bytes": 31450972160},
+    {"name": "water_the_flowers", "embodiment": "ARX5", "archive_bytes": 46398894080},
+    {"name": "arrange_fruits", "embodiment": "UR5", "archive_bytes": 46507489280},
+    {"name": "wipe_the_table", "embodiment": "ARX5", "archive_bytes": 47592560640},
+    {"name": "pick_out_the_green_blocks", "embodiment": "ARX5", "archive_bytes": 66282731520},
+    {"name": "arrange_flowers", "embodiment": "ARX5", "archive_bytes": 177714237440}
+  ]
+}

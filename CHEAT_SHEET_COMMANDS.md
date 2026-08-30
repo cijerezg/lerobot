@@ -98,7 +98,7 @@ uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offli
 
 Terminal 2 - start the metrics UI (during or after training):
 
-uv run --no-project --python .venv/bin/python aim up --repo ./aim
+uv run aim up --repo ./aim
 
 Open http://127.0.0.1:43800 in a browser. Refresh the runs page after training starts if it was
 initially empty. Metrics are stored locally in ./aim; the same repository lets the UI compare

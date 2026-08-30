@@ -71,16 +71,18 @@
       "pilot_episodes": 2,
       "robot_type": "ARX5 and UR5",
       "license": null,
+      "usage_basis": "Public repository access under the Hugging Face Terms of Service; confirm institutional requirements before redistribution.",
       "real_robot_evidence": "Table30 v2 is described as demonstrations collected on real ARX5, UR5, ALOHA, and DOS-W1 robots.",
-      "state_fields": [],
+      "state_fields": ["observation.joint_position", "observation.gripper_position"],
       "action_fields": [],
-      "gripper_field": "states.jsonl:gripper_width",
-      "state_semantics": "Raw states.jsonl documents six joint angles in radians and actual gripper width in meters.",
-      "action_semantics": "No distinct commanded joint-action field is documented in the raw schema.",
-      "gripper_semantics": "Actual measured gripper width in meters; it is an observation, not a documented command.",
-      "joint_names": [],
+      "action_source": "copy_state",
+      "gripper_field": "observation.gripper_position",
+      "state_semantics": "Six measured joint angles in radians followed by measured gripper width in meters.",
+      "action_semantics": "RoboChallenge exception: an exact copy of the same-timestamp measured joint positions and gripper width; not a native commanded action.",
+      "gripper_semantics": "Measured gripper width in meters copied unchanged into both state and action; no inversion or normalization.",
+      "joint_names": ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "gripper_width"],
       "metadata_patterns": ["README.md", "convert_to_lerobot.py"],
-      "notes": "Admission is intentionally blocked: no raw license is declared and no native commanded joint action is documented. The example converter labels end-effector pose plus gripper width as actions and must not be used for this collection."
+      "notes": "Explicit source-specific exception approved: copy the measured joint-position plus gripper vector into action. Native actions remain mandatory and preserved for every other source."
     }
   ]
 }

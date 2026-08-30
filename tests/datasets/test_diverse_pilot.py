@@ -14,6 +14,7 @@ from lerobot.datasets.diverse_pilot import (
     audit_source,
     fetch_metadata,
     generate_review_proxies,
+    load_staged_lerobot_episode,
     loader_view,
     pack_numerical_episode,
     packed_feature_schema,
@@ -60,7 +61,69 @@ def test_audit_blocks_source_without_commanded_joint_action(tmp_path: Path):
     spec = _spec(source_format="split_tar_archives", action_fields=(), license=None)
     audit = audit_source(spec, tmp_path)
     assert not audit["admission"]["passed"]
-    assert "No documented native commanded joint-action" in " ".join(audit["admission"]["failures"])
+    assert "No usable joint-action field" in " ".join(audit["admission"]["failures"])
+
+
+def test_audit_admits_explicit_copy_state_action_exception(tmp_path: Path):
+    spec = _spec(
+        source_format="split_tar_archives",
+        action_fields=(),
+        action_source="copy_state",
+        license=None,
+        usage_basis="public repository usage grant",
+        action_semantics="measured state copied exactly into action",
+    )
+    audit = audit_source(spec, tmp_path)
+    assert audit["admission"]["passed"]
+    assert not audit["action"]["native_commanded_joint_action"]
+    assert audit["action"]["copied_from_state"]
+    assert audit["action"]["training_action_available"]
+    assert audit["action"]["source"] == "copy_state"
+
+
+def test_copy_state_loader_uses_exact_state_vector_as_action(tmp_path: Path):
+    spec = _spec(action_fields=(), action_source="copy_state")
+    metadata_root = tmp_path / "metadata"
+    episode_meta = metadata_root / "meta/episodes/chunk-000/file-000.parquet"
+    episode_meta.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "episode_index": [0],
+                "tasks": [["copy measured joints"]],
+                "length": [3],
+                "data/chunk_index": [0],
+                "data/file_index": [0],
+                "dataset_from_index": [0],
+                "dataset_to_index": [3],
+            }
+        ),
+        episode_meta,
+    )
+    staging_root = tmp_path / "staging"
+    data_path = staging_root / "owner__test/data/chunk-000/file-000.parquet"
+    data_path.parent.mkdir(parents=True)
+    state = np.asarray([[1.0, 0.08], [1.5, 0.04], [2.0, 0.0]], dtype=np.float32)
+    pq.write_table(
+        pa.table(
+            {
+                "timestamp": np.asarray([0.0, 0.1, 0.2], dtype=np.float32),
+                "episode_index": np.zeros(3, dtype=np.int64),
+                "observation.state": pa.array(state.tolist(), type=pa.list_(pa.float32())),
+            }
+        ),
+        data_path,
+    )
+    manifest = {
+        "repo_id": "owner/test",
+        "episodes": [
+            {"episode_index": 0, "files": {"data": "data/chunk-000/file-000.parquet"}}
+        ],
+    }
+    episode = load_staged_lerobot_episode(spec, manifest, metadata_root, staging_root, 0)
+    np.testing.assert_array_equal(episode.states, state)
+    np.testing.assert_array_equal(episode.actions, state)
+    assert not np.shares_memory(episode.actions, episode.states)
 
 
 def test_resolver_refuses_failed_audit(tmp_path: Path):

@@ -181,7 +181,8 @@ class MolmoAct2Trainer(Trainer):
     _HISTOGRAM_CLIP_RANGES = {
         "critic_value_histogram_from_critic": (-2.0, 0.1),
         "target_value_histogram": (-2.0, 0.1),
-        "loss_critic_histogram_flat": (0.0, 0.005),
+        "loss_critic_histogram_flat": (0.0, 6.0),
+        "critic_kl_histogram": (-0.5, 6.0),
     }
 
     # Compact, decision-oriented live dashboard. Rich distributions stay in probes.
@@ -227,14 +228,24 @@ class MolmoAct2Trainer(Trainer):
             "discrete_aux/band_high_ordinal_ce_mean",
             "loss_critic",
             "loss_critic_mse",
+            "critic_target_entropy",
+            "critic_kl",
+            "critic_pred_entropy",
+            "critic_pred_std",
+            "critic_hl_gauss_sigma",
+            "critic_done_fraction",
             "critic_grad_norm",
             "critic_value_mean",
+            "critic_value_std",
             "target_value_mean",
+            "target_value_std",
             "td_error_mean",
+            "td_error_std",
             "critic_value_histogram_from_critic",
             "target_value_histogram",
             "td_error_histogram",
             "loss_critic_histogram_flat",
+            "critic_kl_histogram",
         }
     )
 
@@ -518,6 +529,11 @@ class MolmoAct2Trainer(Trainer):
         td_target_list: list[torch.Tensor] = []
         td_error_list: list[torch.Tensor] = []
         loss_per_sample_list: list[torch.Tensor] = []
+        target_entropy_list: list[torch.Tensor] = []
+        kl_list: list[torch.Tensor] = []
+        pred_entropy_list: list[torch.Tensor] = []
+        pred_std_list: list[torch.Tensor] = []
+        done_list: list[torch.Tensor] = []
 
         for _ in range(grad_accum):
             raw = next(online_iter)
@@ -606,6 +622,35 @@ class MolmoAct2Trainer(Trainer):
                 td_error_list.append(td_target_step - v_curr_step)
                 loss_per_sample_list.append(ce_per_sample.detach().float().view(-1))
 
+                # CE = H(target) + KL(target || pred). H(target) is an irreducible
+                # floor the critic can never train away: ~3.50 nats for an interior
+                # HL-Gauss at sigma=8 bins, ~2.01 for a target clamped onto the
+                # support edge (the tail is truncated into one bin), 0 for a
+                # terminal one-hot. So the floor *moves with batch composition* and
+                # loss_critic can sit flat, or drift the wrong way, while the fit
+                # improves. critic_kl is the part the critic actually owns, and is
+                # the curve to read against loss_critic_mse.
+                target_probs = soft_target.to(logits.device).float()
+                target_entropy_list.append(
+                    -(target_probs * target_probs.clamp_min(1e-12).log()).sum(dim=-1).view(-1)
+                )
+                kl_list.append(ce_per_sample.detach().float().view(-1) - target_entropy_list[-1])
+
+                # Width of the predicted distribution, in value units, against the
+                # HL-Gauss target width (hl_gauss_sigma). CE is the mass-covering
+                # direction: a critic that sharpens below the target width pays a
+                # large KL even as its mean -- and therefore the MSE -- improves.
+                pred_probs = critic_out["probs"].detach().float()
+                pred_entropy_list.append(
+                    -(pred_probs * pred_probs.clamp_min(1e-12).log()).sum(dim=-1).view(-1)
+                )
+                centers = critic_net.bin_centers.to(device=pred_probs.device, dtype=pred_probs.dtype)
+                pred_mean = (pred_probs * centers).sum(dim=-1, keepdim=True)
+                pred_std_list.append(
+                    (pred_probs * (centers - pred_mean).square()).sum(dim=-1).clamp_min(0.0).sqrt().view(-1)
+                )
+                done_list.append(done.detach().float().view(-1))
+
         critic_net2: nn.Module = getattr(policy, "critic")
         grad_norm = torch.nn.utils.clip_grad_norm_(list(critic_net2.parameters()), clip_norm).item()
         optimizers["critic"].step()
@@ -614,10 +659,22 @@ class MolmoAct2Trainer(Trainer):
         all_td_target = torch.cat(td_target_list)
         all_td_error = torch.cat(td_error_list)
         all_loss_per_sample = torch.cat(loss_per_sample_list)
+        all_target_entropy = torch.cat(target_entropy_list)
+        all_kl = torch.cat(kl_list)
+        all_pred_entropy = torch.cat(pred_entropy_list)
+        all_pred_std = torch.cat(pred_std_list)
+        all_done = torch.cat(done_list)
 
         return {
             "loss_critic": accum_ce,
             "loss_critic_mse": all_td_error.square().mean().item(),
+            "critic_target_entropy": all_target_entropy.mean().item(),
+            "critic_kl": all_kl.mean().item(),
+            "critic_pred_entropy": all_pred_entropy.mean().item(),
+            "critic_pred_std": all_pred_std.mean().item(),
+            "critic_hl_gauss_sigma": float(getattr(critic_net2, "hl_gauss_sigma", float("nan"))),
+            "critic_done_fraction": all_done.mean().item(),
+            "critic_kl_histogram": all_kl.cpu().numpy(),
             "critic_grad_norm": grad_norm,
             "critic_value_mean": all_v_curr.mean().item(),
             "critic_value_std": all_v_curr.std().item() if all_v_curr.numel() > 1 else 0.0,
