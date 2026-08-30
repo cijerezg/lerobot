@@ -135,6 +135,26 @@ def summarize_episode(episode_root: Path) -> EpisodeSummary:
     )
 
 
+def robot_quotas(pool: list[EpisodeSummary], count: int) -> dict[str, int]:
+    """Split the candidate slots as evenly as the pool allows across physical robots.
+
+    Descriptor distance alone does not balance robots: when one robot's start and
+    end configurations sit far from the pool median, farthest-point sampling
+    spends every slot inside that one outlier cluster. Balance is therefore a
+    hard quota rather than a score adjustment.
+    """
+    available: dict[str, int] = {}
+    for summary in pool:
+        available[summary.robot_id] = available.get(summary.robot_id, 0) + 1
+    quotas = dict.fromkeys(available, 0)
+    for _ in range(count):
+        eligible = [robot for robot in sorted(available) if quotas[robot] < available[robot]]
+        if not eligible:
+            raise ValueError(f"Only {sum(available.values())} episodes are available for {count} candidates")
+        quotas[min(eligible, key=lambda robot: (quotas[robot], -available[robot], robot))] += 1
+    return quotas
+
+
 def farthest_point_candidates(summaries: list[EpisodeSummary], count: int) -> list[EpisodeSummary]:
     pool = [
         summary
@@ -145,6 +165,7 @@ def farthest_point_candidates(summaries: list[EpisodeSummary], count: int) -> li
     ]
     if len(pool) < count:
         raise ValueError(f"Only {len(pool)} eligible trajectories are available for {count} candidates")
+    quotas = robot_quotas(pool, count)
     descriptors = np.asarray([summary.descriptor for summary in pool], dtype=np.float64)
     median = np.median(descriptors, axis=0)
     scale = np.quantile(descriptors, 0.75, axis=0) - np.quantile(descriptors, 0.25, axis=0)
@@ -152,7 +173,7 @@ def farthest_point_candidates(summaries: list[EpisodeSummary], count: int) -> li
     descriptors = (descriptors - median) / scale
 
     selected: list[int] = []
-    robot_counts = {robot_id: 0 for robot_id in {summary.robot_id for summary in pool}}
+    robot_counts = dict.fromkeys(quotas, 0)
     min_distance = np.full(len(pool), np.inf)
     while len(selected) < count:
         if not selected:
@@ -161,13 +182,12 @@ def farthest_point_candidates(summaries: list[EpisodeSummary], count: int) -> li
             last = descriptors[selected[-1]]
             min_distance = np.minimum(min_distance, np.linalg.norm(descriptors - last, axis=1))
             score = min_distance.copy()
+        # Diversity is maximized only among robots that still hold an unfilled quota slot.
+        for index, summary in enumerate(pool):
+            if robot_counts[summary.robot_id] >= quotas[summary.robot_id]:
+                score[index] = -np.inf
         for index in selected:
             score[index] = -np.inf
-        # Prefer the currently underrepresented physical robot when diversity scores are close.
-        minimum_robot_count = min(robot_counts.values())
-        for index, summary in enumerate(pool):
-            if summary.robot_id != "" and robot_counts[summary.robot_id] > minimum_robot_count:
-                score[index] *= 0.8
         choice = int(np.argmax(score))
         selected.append(choice)
         robot_counts[pool[choice].robot_id] += 1
@@ -202,6 +222,13 @@ def nominate(task_root: Path, output: Path, count: int) -> dict:
             "minimum_candidate_anchors": 3,
             "minimum_active_anchor_fraction": 0.25,
             "maximum_joint_step_radians_l2": 0.35,
+        },
+        "robot_balance": {
+            "policy": "even per-robot quota enforced before descriptor diversity",
+            "selected": {
+                robot_id: sum(1 for summary in selected if summary.robot_id == robot_id)
+                for robot_id in sorted({summary.robot_id for summary in selected})
+            },
         },
         "candidates": [asdict(summary) for summary in selected],
         "scan_summary": {
@@ -252,6 +279,17 @@ def make_proxies(task_root: Path, manifest_path: Path, output_root: Path) -> Non
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                 "-i", str(proxy), "-vf", f"fps=1/4,scale=480:-2,tile={columns}x{rows}",
                 "-frames:v", "1", str(contact),
+            ],
+            check=True,
+        )
+        # The side-by-side sheet gives each of three ARX5 views about 160 px, which is
+        # too small to judge intent or spot a human reaching into the workspace. Render
+        # the global view alone at a legible size as the primary still-review surface.
+        subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", str(global_video), "-vf", f"fps=1/4,scale=400:-2,tile={columns}x{rows}",
+                "-frames:v", "1", str(stem.with_suffix(".global.jpg")),
             ],
             check=True,
         )

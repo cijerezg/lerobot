@@ -101,6 +101,111 @@ advantage_scaling: 0.2
 
 ---
 
+## Subtask critic: release folds into move
+
+**Status:** active since 2026-08-29. Applies whenever `critic_reward_mode: subtask`.
+
+### What the subtask critic measures
+
+With `critic_reward_mode: subtask` the critic is a *duration* model and nothing
+else: reward is `-1` per TD transition (one `chunk_size`-frame step, 1.0 s at 30 Hz),
+`0` at a terminal, normalized by `reward_normalization_constant`. A transition is
+terminal when a subtask boundary falls anywhere inside its chunk window, so
+`V(s) ≈ -(discounted seconds until the current subtask ends)`. Terminal value is `0`
+regardless of *how* the segment ended — duration is the critic's only expressive
+channel. Two consequences follow, and both drove the change below:
+
+- The last `chunk_size` frames of **every** segment are terminal with target exactly
+  `0`. Short segments are mostly, or entirely, this flat region.
+- Segment lengths must be roughly homogeneous, or the critic spends its capacity on
+  a bimodal duration distribution rather than on within-segment progress.
+
+### The change
+
+A `release ...` window is **not** treated as a subtask of its own. Its boundary with
+the `move ...` that precedes it is dropped, so the critic sees one
+move-through-release segment whose terminal lands where the object is actually let go.
+
+Implemented in `_subtask_terminals_from_windows` in `rl/offline_dataset_utils.py`,
+gated on `CRITIC_CONTINUATION_VERBS = ("release",)`. Only an *immediately adjacent*
+window folds — a frame gap means the two are not one continuous behaviour and both
+boundaries are kept.
+
+**Annotations are not modified.** `subtask_windows.json` is untouched, and
+`subtask_index` — the policy's language conditioning — still labels the release
+window separately, so `"release the black sock in the basket"` remains a distinct
+instruction the policy is conditioned on. `_subtask_indices_from_windows` and
+`_subtask_terminals_from_windows` read the same file independently; only the latter
+coarsens. This is the whole point of the design: the critic's horizon and the
+policy's instruction granularity do not have to agree.
+
+### Why (measured over the five annotated roots, 2026-08-29)
+
+Release is the outlier in a distribution that is otherwise homogeneous:
+
+| verb | median duration |
+|---|---|
+| grasp | 231–425 f |
+| move | 202–258 f |
+| return to home | 232–335 f |
+| **release** | **65–100 f** |
+
+At 65–100 frames against a 30-frame terminal window, roughly 40% of a release sits in
+the flat `V=0` region. Folding it into its move:
+
+| root | segments | median | min | terminal frac |
+|---|---|---|---|---|
+| socks_basket | 261 → 179 | 247 → 348 f | 22 → 63 | 11.4% → 7.8% |
+| two_container | 299 → 204 | 208 → 298 f | 9 → 26 | 13.5% → 9.2% |
+| shirts_bin | 138 → 95 | 206 → 296 f | 8 → 64 | 13.4% → 9.2% |
+| val | 76 → 52 | 184 → 319 f | 22 → 68 | 14.4% → 9.9% |
+| sorting_clothes_v4 | 59 → 42 | 272 → 363 f | 56 → 195 | 11.3% → 8.0% |
+
+The fold rule is unambiguous in the data: all 261 release windows across the five
+roots are preceded by an immediately adjacent `move`, none opens an episode.
+
+**Value support still fits.** Post-fold, over 572 segments: median 322 f
+(`V = -0.77`), p90 522 f (`V = -1.14`), max 1061 f (`V = -1.83`). At `discount: 0.97`
+and `reward_normalization_constant: 12.0`, the `[-2, 0]` floor is reached at ~1254
+frames, so nothing clips. Recheck this if either constant, `chunk_size`, or the
+annotation granularity changes — the asymptote is `-1/((1-γ)·N) = -2.78`, so the
+headroom is not large.
+
+### Open: `critic_mistake_penalty` likely double-counts
+
+Recorded here because it came out of the same investigation, but **not** changed yet.
+
+A mistake does *not* spawn a new subtask in these annotations. The vocabulary is
+strictly `grasp / move / release / return to home` (19 labels, no recovery verb);
+per-verb counts are balanced and there are **zero** consecutive same-label repeats in
+any root. A failed grasp stays *inside* its grasp window and inflates its duration:
+
+| root | grasp w/ flagged mistake | grasp clean |
+|---|---|---|
+| socks_basket | 615 f (n=20) | 371 f (n=62) |
+| two_container | 616 f (n=12) | 270 f (n=83) |
+| shirts_bin | 380 f (n=12) | 231 f (n=31) |
+
+So the retry already costs 250–350 extra frames ≈ 8–11 chunk-steps ≈ `-0.7` to
+`-0.95` normalized, and *proportionally to how long the recovery actually took*.
+`critic_mistake_penalty: 5.0` then subtracts a further `-0.42` at one arbitrary
+transition on top of that. Worth an ablation at `0.0`.
+
+If recovery-shaped subtasks ("reset grasp" and similar) do show up, they are coming
+from the rollout HL decode, not the data: `subtask_loss_weight: 0.0` leaves the
+generation head untrained, so it emits free-form text off the 19-label vocabulary
+every `subtask_regeneration_interval` seconds. That is a train/rollout segmentation
+mismatch and a separate problem from segment granularity.
+
+### If you revert
+
+Set `CRITIC_CONTINUATION_VERBS = ()`. The terminal derivation returns to one marker
+per annotated window with no other behavioural change. Tests:
+`tests/rl/test_offline_dataset_utils.py::test_release_window_folds_into_the_preceding_move_for_the_critic`
+and `::test_release_window_after_a_gap_keeps_both_boundaries`.
+
+---
+
 ## Actor / Learner — Online RL
 
 ### `rl_actor_async.py`

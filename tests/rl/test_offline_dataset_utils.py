@@ -336,3 +336,67 @@ def test_missing_collection_indices_are_padded_with_negative_one():
     combined = concatenate_batch_transitions(online, offline, action_dim=1)
 
     assert combined["complementary_info"]["task_index"].tolist() == [-1, 2]
+
+
+def _terminals_from_windows(tmp_path, windows_json, n_frames):
+    root = tmp_path / "annotated"
+    meta = root / "meta"
+    meta.mkdir(parents=True)
+    (meta / "subtask_windows.json").write_text(windows_json)
+    dataset = _fake_dataset(
+        ["sort clothes"],
+        [0] * n_frames,
+        ["move the sock to the basket", "release the sock in the basket", "grasp the sock"],
+        None,
+        root,
+        episode_indices=[0] * n_frames,
+    )
+    buffer = _fake_buffer(capacity=n_frames)
+    materialize_dataset_labels(buffer, dataset, dataset, source_index=0)
+    return buffer.complementary_info["critic_subtask_terminal"].tolist()
+
+
+def test_release_window_folds_into_the_preceding_move_for_the_critic(tmp_path):
+    """A release is the completion of its move, so only the release's end terminates.
+
+    subtask_index still labels the release window separately -- the fold is
+    critic-only.
+    """
+    terminals = _terminals_from_windows(
+        tmp_path,
+        """
+        {
+          "episodes": {
+            "0": [
+              {"from_index": 0, "to_index": 4, "subtask": "move the sock to the basket"},
+              {"from_index": 4, "to_index": 6, "subtask": "release the sock in the basket"},
+              {"from_index": 6, "to_index": 8, "subtask": "grasp the sock"}
+            ]
+          }
+        }
+        """,
+        n_frames=8,
+    )
+
+    # index 3 (end of move) is dropped; 5 (end of release) and 7 (end of grasp) remain.
+    assert terminals == [False, False, False, False, False, True, False, True]
+
+
+def test_release_window_after_a_gap_keeps_both_boundaries(tmp_path):
+    """A gap means the two windows are not one continuous behaviour: no fold."""
+    terminals = _terminals_from_windows(
+        tmp_path,
+        """
+        {
+          "episodes": {
+            "0": [
+              {"from_index": 0, "to_index": 3, "subtask": "move the sock to the basket"},
+              {"from_index": 4, "to_index": 6, "subtask": "release the sock in the basket"}
+            ]
+          }
+        }
+        """,
+        n_frames=6,
+    )
+
+    assert terminals == [False, False, True, False, False, True]

@@ -378,12 +378,33 @@ def _subtask_indices_from_windows(dataset, num_frames: int) -> torch.Tensor | No
     return result
 
 
+# Verbs whose window the critic folds into its predecessor instead of treating it
+# as a subtask of its own. Labels are NOT rewritten: subtask_index -- the policy's
+# language conditioning -- still sees `release ...` as its own window. Only the
+# critic's terminal placement changes. See "Subtask critic: release folds into
+# move" in src/lerobot/rl/RL_NOTES.md for the rationale and the measurements.
+CRITIC_CONTINUATION_VERBS = ("release",)
+
+
+def _is_critic_continuation(subtask: str) -> bool:
+    """True when this window continues its predecessor for critic-terminal purposes."""
+    return subtask.strip().lower().startswith(CRITIC_CONTINUATION_VERBS)
+
+
 def _subtask_terminals_from_windows(dataset, num_frames: int) -> torch.Tensor | None:
     """Materialize one terminal marker at every reviewed subtask boundary.
 
     The frame-level label alone cannot recover adjacent windows with the same
     text. Read the reviewed windows directly so the critic retains every
     semantic boundary.
+
+    One boundary is deliberately dropped: a `release ...` window is the completion
+    of the `move ...` that precedes it, not a horizon of its own (median 65-100
+    frames against 210-425 for move/grasp, so nearly half of it sits inside the
+    30-frame terminal window and reads V=0). The pair is folded into a single
+    move-through-release segment whose terminal lands where the object is actually
+    let go. Only an immediately adjacent window folds -- a gap means the two are
+    not one continuous behaviour.
     """
     root = getattr(dataset, "root", None)
     if root is None:
@@ -407,6 +428,7 @@ def _subtask_terminals_from_windows(dataset, num_frames: int) -> torch.Tensor | 
             raise ValueError(f"{path} has a non-integer episode key {raw_episode_index!r}.") from exc
         if not isinstance(windows, list):
             raise ValueError(f"{path} episode {episode_index} must contain a list of windows.")
+        parsed: list[tuple[int, int, str]] = []
         for window_index, window in enumerate(windows):
             if not isinstance(window, dict):
                 raise ValueError(f"{path} episode {episode_index} window {window_index} must be an object.")
@@ -427,6 +449,13 @@ def _subtask_terminals_from_windows(dataset, num_frames: int) -> torch.Tensor | 
                     f"{path} episode {episode_index} window {window_index} range [{start}, {stop}) "
                     "contains frames from another episode."
                 )
+            parsed.append((start, stop, str(window.get("subtask", ""))))
+
+        parsed.sort(key=lambda item: item[0])
+        for position, (_start, stop, _subtask) in enumerate(parsed):
+            following = parsed[position + 1] if position + 1 < len(parsed) else None
+            if following is not None and following[0] == stop and _is_critic_continuation(following[2]):
+                continue
             terminals[stop - 1] = True
     return terminals
 
