@@ -126,3 +126,34 @@ mid-session shows up on refresh — no export step. `--port` to move it, `--no-o
 skip the browser tab. Probes are written by the validation loop only when their
 `probe_parameters.enable_*` flag is set in config_rl.yaml.
 
+
+## Remote validation on the DGX
+
+Run a checkpoint's probe suite on the DGX from the main PC and pull the results back into
+the mirrored local path. Both boxes use the same absolute paths, so the checkpoint,
+run dir and results all keep their names.
+
+lerobot/scripts/remote_validate.sh outputs/molmoact2_offline_rebot_v4/checkpoints/000400
+
+It syncs `lerobot/src/lerobot/` + `config_rl.yaml`, pushes the checkpoint (~11 GB), runs
+
+    rl_offline --policy.pretrained_path=<ckpt> --policy.offline_steps=0 --val_on_start=true
+               --save_checkpoint=false --aim.enable=false --offline_output_dir=<run>
+
+streams the log, rsyncs `<run>/` back (~280 MB), then deletes the remote checkpoint copy.
+Results land in `outputs/remote_val/<run>-<step>/validation/step_00000000/`, which the probe
+viewer above reads directly. Which probes run is still `probe_parameters.enable_*` in
+config_rl.yaml — that file is part of the sync, so edit it locally.
+
+The remote run is detached (`setsid`), so a dropped ssh does not kill it: Ctrl-C only stops
+the tail, and `--attach <ckpt>` picks it back up. The checkpoint is kept on failure, and is
+never deleted if it already existed on the DGX before the run (`--force-delete` overrides).
+
+Needs a `Host dgx` block in `~/.ssh/config` with key auth (or `--host` / `$DGX_HOST`).
+Static assets — the four dataset roots, `outputs/rebot_val-annotated-v3`, `outputs/MolmoAct2`,
+the FAST tokenizer, `outputs/stats/`, the buffer cache — are NOT synced by this script; it
+reads their paths out of config_rl.yaml and fails fast if any is missing on the DGX.
+
+Other flags: `--dry-run` (prints the plan, needs no DGX), `--keep-checkpoint`,
+`--out DIR`, `--config PATH`, and a leading code-tree argument to ship a different
+checkout, e.g. `remote_validate.sh lerobot-tinypi outputs/.../checkpoints/000400`.
