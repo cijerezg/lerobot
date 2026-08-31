@@ -7,6 +7,7 @@ import pytest
 
 from lerobot.datasets.diverse_pilot import (
     ACTION_OFFSETS_SECONDS,
+    _loader_interpolation_atol,
     AdmissionError,
     SourceSpec,
     anchor_timestamps,
@@ -25,6 +26,30 @@ from lerobot.datasets.diverse_pilot import (
     write_json,
     write_packed_v3_dataset,
 )
+
+
+def test_loader_interpolation_tolerance_accounts_for_float32_timestamp_quantization() -> None:
+    action_timestamps = np.array([64.76667022705078], dtype=np.float32)
+    source_timestamps = np.array(
+        [[64.73332977294922, 64.80000305175781]], dtype=np.float32
+    )
+    source_values = np.array(
+        [[[0.026739750057458878], [0.2588106095790863]]], dtype=np.float32
+    )
+    physical_midpoint = np.array([[0.14277517795562744]], dtype=np.float32)
+    denominator = source_timestamps[:, 1] - source_timestamps[:, 0]
+    weight = (action_timestamps - source_timestamps[:, 0]) / denominator
+    loader_reconstruction = source_values[:, 0] + weight[:, None] * (
+        source_values[:, 1] - source_values[:, 0]
+    )
+
+    error = np.abs(physical_midpoint - loader_reconstruction)
+    legacy_tolerance = 1e-5 + 1e-5 * np.abs(loader_reconstruction)
+    assert np.any(error > legacy_tolerance)
+    propagated_tolerance = _loader_interpolation_atol(
+        action_timestamps, source_timestamps, source_values
+    ) + 1e-5 * np.abs(loader_reconstruction)
+    assert np.all(error <= propagated_tolerance)
 
 
 def _spec(**overrides) -> SourceSpec:

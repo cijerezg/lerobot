@@ -974,10 +974,13 @@ def write_packed_v3_dataset(
                 )
                 for camera_key, frames in camera_frames.items():
                     record[camera_key] = frames[sample_index]
+                # DROID Failure ships empty task strings, so the reviewed task
+                # identity from proxy review is the only real label available.
+                reviewed_task = str(annotations.get("task", "")).strip()
                 record["task"] = (
                     episode.tasks[0]
                     if episode.tasks
-                    else f"source episode {provenance_episode_index}"
+                    else reviewed_task or f"source episode {provenance_episode_index}"
                 )
                 dataset.add_frame(record)
             dataset.save_episode()
@@ -1100,6 +1103,28 @@ def _validate_physical_action_provenance(dataset_root: Path, physical_action_dty
     return float(np.abs(action - expected).max(initial=0.0))
 
 
+def _loader_interpolation_atol(
+    action_timestamps: np.ndarray,
+    source_timestamps: np.ndarray,
+    source_values: np.ndarray,
+) -> np.ndarray:
+    """Bound action error induced by float32 timestamps in the standard loader.
+
+    Physical Parquet provenance is validated separately at its stored dtype.
+    Reconstructing from the loader view can shift an interpolation weight by
+    one timestamp ULP, so scale that quantization by the interval action slope.
+    """
+    timestamp_spacing = abs(float(np.spacing(np.asarray(action_timestamps).max())))
+    denominator = source_timestamps[:, 1] - source_timestamps[:, 0]
+    slope = np.divide(
+        np.abs(source_values[:, 1] - source_values[:, 0]),
+        np.abs(denominator)[:, None],
+        out=np.zeros_like(source_values[:, 0], dtype=np.float64),
+        where=denominator[:, None] != 0,
+    )
+    return 1e-5 + timestamp_spacing * slope
+
+
 def validate_packed_v3_dataset(dataset_root: Path, repo_id: str) -> dict[str, Any]:
     """Decode every pilot row and verify packed temporal/interpolation integrity."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -1163,7 +1188,20 @@ def validate_packed_v3_dataset(dataset_root: Path, repo_id: str) -> dict[str, An
             where=denominator != 0,
         )
         expected = source_values[:, 0] + weight[:, None] * (source_values[:, 1] - source_values[:, 0])
-        np.testing.assert_allclose(action, expected, rtol=1e-5, atol=1e-5)
+        loader_action_atol = _loader_interpolation_atol(
+            action_timestamps, source_timestamps, source_values
+        )
+        loader_action_error = np.abs(action - expected)
+        loader_action_tolerance = loader_action_atol + 1e-5 * np.abs(expected)
+        if np.any(loader_action_error > loader_action_tolerance):
+            violation = loader_action_error - loader_action_tolerance
+            point, dimension = np.unravel_index(np.argmax(violation), violation.shape)
+            raise AssertionError(
+                "Loader action reconstruction mismatch at "
+                f"row {index}, point {point}, dimension {dimension}: "
+                f"error={loader_action_error[point, dimension]}, "
+                f"tolerance={loader_action_tolerance[point, dimension]}"
+            )
         if not np.array_equal(interpolated, denominator != 0):
             raise ValueError(f"Interpolation mask/provenance mismatch at row {index}")
         if not np.isfinite(state).all() or not np.isfinite(history).all() or not np.isfinite(action).all():

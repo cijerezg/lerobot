@@ -1,0 +1,78 @@
+{
+  "sources": [
+    {
+      "name": "droid_failure",
+      "repo_id": "jnogga/droid_failure",
+      "revision": "4231e59ca9b9fa89b873cfd41d55924a300383ca",
+      "source_format": "lerobot_v3",
+      "pilot_episodes": 10,
+      "robot_type": "franka_emika_panda_robotiq_2F-85",
+      "license": "cc-by-4.0",
+      "real_robot_evidence": "Source card identifies failure episodes from the real-robot DROID-COMMUNITY collection, ported from raw DROID 1.0.1 at full resolution.",
+      "state_fields": [
+        "observation.joint_position",
+        "observation.gripper_position"
+      ],
+      "action_fields": [
+        "action.joint_position",
+        "action.gripper_position"
+      ],
+      "gripper_field": "action.gripper_position",
+      "state_semantics": "Seven measured Franka joint positions plus the separately stored measured gripper position.",
+      "action_semantics": "Seven commanded Franka joint positions plus the separately stored commanded absolute gripper position.",
+      "gripper_semantics": "DROID absolute command in [0,1], with 0 fully open and 1 fully closed. Values remain source-native.",
+      "joint_names": [
+        "joint_0",
+        "joint_1",
+        "joint_2",
+        "joint_3",
+        "joint_4",
+        "joint_5",
+        "joint_6",
+        "gripper_position"
+      ],
+      "metadata_patterns": [
+        "README.md",
+        "meta/**"
+      ],
+      "notes": "Production component source. Native 15 Hz commanded actions, so the complete 8D vector is linearly interpolated to 30 Hz and the interpolation mask must be non-zero. Task/language strings are empty, so task identity and failure mode come from proxy review. pilot_episodes is the per-component acceptance target, not a pilot slot count."
+    },
+    {
+      "name": "droid_success",
+      "repo_id": "jnogga/droid_success",
+      "revision": "1fac60878954ad6f6e0652b9c11a50660660c220",
+      "source_format": "lerobot_v3",
+      "pilot_episodes": 10,
+      "robot_type": "franka_emika_panda_robotiq_2F-85",
+      "license": "cc-by-4.0",
+      "real_robot_evidence": "Source card identifies successful DROID-COMMUNITY episodes; DROID is an in-the-wild real Franka collection, ported from raw DROID 1.0.1 at full resolution.",
+      "state_fields": [
+        "observation.joint_position",
+        "observation.gripper_position"
+      ],
+      "action_fields": [
+        "action.joint_position",
+        "action.gripper_position"
+      ],
+      "gripper_field": "action.gripper_position",
+      "state_semantics": "Seven measured Franka joint positions plus the separately stored measured gripper position.",
+      "action_semantics": "Seven commanded Franka joint positions plus the separately stored commanded absolute gripper position.",
+      "gripper_semantics": "DROID absolute command in [0,1], with 0 fully open and 1 fully closed. Values remain source-native.",
+      "joint_names": [
+        "joint_0",
+        "joint_1",
+        "joint_2",
+        "joint_3",
+        "joint_4",
+        "joint_5",
+        "joint_6",
+        "gripper_position"
+      ],
+      "metadata_patterns": [
+        "README.md",
+        "meta/**"
+      ],
+      "notes": "Production component source. Same 15 Hz native commanded actions and 8D vector as droid_failure, so interpolation to 30 Hz runs and the mask must be non-zero. Unlike droid_failure this source carries language: three pipe-separated phrasings per episode. Language is a nomination and cross-check signal, not a substitute for proxy review. Selected primarily for recovery behaviour inside eventual successes per plan Section 1.6, not for additional clean successes."
+    }
+  ]
+}

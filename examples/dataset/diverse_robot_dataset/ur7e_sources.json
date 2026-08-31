@@ -1,0 +1,38 @@
+{
+  "sources": [
+    {
+      "name": "ur7e_stack",
+      "repo_id": "Cache-SCA/UR7e-CaP-Stack_Block-100epi",
+      "revision": "72e890c3d0f8469470ced5951762f52023ed630f",
+      "source_format": "lerobot_v3",
+      "pilot_episodes": 4,
+      "robot_type": "ur7e",
+      "license": "apache-2.0",
+      "real_robot_evidence": "Source card states these are real UR7e forward demonstrations.",
+      "state_fields": [
+        "observation.state"
+      ],
+      "action_fields": [
+        "action"
+      ],
+      "gripper_field": "action[6]",
+      "state_semantics": "Six measured UR7e joint positions followed by the source gripper ratio.",
+      "action_semantics": "Scripted-skill waypoint goal, NOT a dense per-step command: six absolute UR7e target joint positions plus the gripper target, equal to skill.goal_position.joint on 83% of rows and held constant for up to 143 frames before stepping to the next waypoint. Values are preserved exactly and are not converted, smoothed, or relabeled.",
+      "gripper_semantics": "Robotiq 2F-85 style ratio in source range [0,1]; open/closed orientation is not explicitly stated by the card and must not be inferred or changed.",
+      "joint_names": [
+        "shoulder_pan.pos",
+        "shoulder_lift.pos",
+        "elbow.pos",
+        "wrist_1.pos",
+        "wrist_2.pos",
+        "wrist_3.pos",
+        "gripper.pos"
+      ],
+      "metadata_patterns": [
+        "README.md",
+        "meta/**"
+      ],
+      "notes": "Production component source. One data shard and two camera shards hold all 100 episodes, so the whole payload is fetched once. Native 30 Hz absolute joint targets, so the interpolation path does NOT run and source.action_interpolated_mask is correctly all zeros: this is the only production source that exercises the native-rate branch. Section 4.1 caps the contribution at four episodes because the single stacking task is repetitive. Gripper open/closed orientation is not stated by the source card and must not be inferred. AUDIT FINDING 2026-08-30: the action stream is piecewise-constant. It changes on 18.6% of frames, single-frame steps reach 1.39 rad while the state does not move, and the action-to-state tracking error is 1.06 rad at p95. Activity screening for this source must therefore read observation.state, not action, because the action is stationary while the arm is moving. Section 7.5 already allows a per-source motion signal."
+    }
+  ]
+}
