@@ -1,0 +1,452 @@
+{
+  "review_provenance": {
+    "reviewer": "codex_assisted_visual_review",
+    "review_date": "2026-08-31",
+    "evidence": [
+      "full_episode_rgb_depth_video_all_four_physical_cameras",
+      "full_episode_2hz_temporal_contact_sheets",
+      "targeted_4hz_dense_sheets_for_long_grasp_rotate_and_insert_intervals",
+      "source_native_primitive_boundaries_and_complete_action_lengths"
+    ],
+    "limitations": "Outcome, ordinal quality, and subtle mistake/recovery supervision are left unknown unless directly supported. Expert-source status was not used as a label."
+  },
+  "subtask_defaults": {
+    "classification": "clean_complete",
+    "pause_assessment": "none_observed",
+    "retry_assessment": "none_observed",
+    "interruption_assessment": "none_observed",
+    "mistake_assessment": "unknown",
+    "recovery_assessment": "unknown",
+    "subtask_outcome": "unknown",
+    "quality": null,
+    "quality_provenance": "none",
+    "mistake_events": [],
+    "recovery_events": [],
+    "interruption_events": [],
+    "critic_eligible": true,
+    "critic_rejection_reason": null,
+    "notes": "The source-native interval is visually complete and continuous. No pause, retry, or interruption is visible; outcome, quality, mistake, and recovery supervision remains unknown."
+  },
+  "episodes": [
+    {
+      "source_path": "single_object_manipulation_dataset/1_L_S_6_horizontal_n_0.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_M_L_7_vertical_y_5.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_S_S_4_horizontal_y_7.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_L_L_7_vertical_n_0.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_M_S_4_horizontal_y_7.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_S_L_4_vertical_n_5.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_L_S_2_horizontal_n_4.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_M_L_8_vertical_y_6.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_S_S_2_horizontal_n_0.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_M_S_6_vertical_y_7.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_S_L_8_horizontal_y_9.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_L_L_3_vertical_n_4.npy",
+      "depth": {
+        "side_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "side_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_1": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        },
+        "wrist_2": {
+          "rgb_depth_aligned": true,
+          "persistent_occlusion": false,
+          "notes": "Spatial structure tracks the corresponding RGB view in the four-camera review video; no episode-long occlusion is present."
+        }
+      },
+      "episode": {
+        "clean_completion": true,
+        "pauses": [],
+        "retries": [],
+        "interruptions": [],
+        "outcome": "unknown",
+        "quality": null,
+        "notes": "Continuous end-to-end manipulation with no visible reset, human intervention, off-task motion, pause, or retry. Completion describes timeline coverage, not a success or quality label."
+      },
+      "subtask_overrides": []
+    }
+  ]
+}

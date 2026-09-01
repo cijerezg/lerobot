@@ -1,0 +1,92 @@
+{
+  "source_repo_id": "charlesxu0124/functional-manipulation-benchmark",
+  "source_revision": "f99fd55c072eea5573523c96aa527aed3c665690",
+  "source_subset": "single_object_manipulation_dataset",
+  "license": "CC-BY-4.0",
+  "nominal_fps": 10.0,
+  "selection": {
+    "episode_count": 12,
+    "reason": "Raw, complete single-object trajectories selected before payload inspection. The pilot covers all nine shape IDs and is exactly balanced across S/M/L size, S/L length, horizontal/vertical initial orientation, and distractor/no-distractor conditions.",
+    "counts": {
+      "shape": {"1": 2, "2": 2, "3": 2, "4": 1, "5": 1, "6": 1, "7": 1, "8": 1, "9": 1},
+      "size": {"S": 4, "M": 4, "L": 4},
+      "length": {"S": 6, "L": 6},
+      "angle": {"horizontal": 6, "vertical": 6},
+      "distractor": {"n": 6, "y": 6}
+    }
+  },
+  "files": [
+    {
+      "path": "single_object_manipulation_dataset/1_L_S_6_horizontal_n_0.npy",
+      "bytes": 350158427,
+      "sha256": "05c1b106281fd53579a5454c68553f5970c88273510d0cec3d3490bcb3c1a0c9",
+      "object": {"shape": "1", "size": "L", "length": "S", "color": "6", "angle": "horizontal", "distractor": "n", "trajectory": "0"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/2_M_L_7_vertical_y_5.npy",
+      "bytes": 153438867,
+      "sha256": "2cf162a8f0dff3d569e455a22378b28554c9e3128405e2bdd7742928f7d111cd",
+      "object": {"shape": "2", "size": "M", "length": "L", "color": "7", "angle": "vertical", "distractor": "y", "trajectory": "5"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/3_S_S_4_horizontal_y_7.npy",
+      "bytes": 331798131,
+      "sha256": "abcdfb4a423cc3b5e99c0b21eac66b0e98a0f20afe15d21f78783f9d5783ee0a",
+      "object": {"shape": "3", "size": "S", "length": "S", "color": "4", "angle": "horizontal", "distractor": "y", "trajectory": "7"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/4_L_L_7_vertical_n_0.npy",
+      "bytes": 141636009,
+      "sha256": "39c5fca121734100245dc53c5c1fa04bc4be28a6a1c3a47fa721858f11e3d51b",
+      "object": {"shape": "4", "size": "L", "length": "L", "color": "7", "angle": "vertical", "distractor": "n", "trajectory": "0"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/5_M_S_4_horizontal_y_7.npy",
+      "bytes": 495729155,
+      "sha256": "00d10bde1cfda5b88443e51fb388baba8fc39eb12890add50dc994e76cd98451",
+      "object": {"shape": "5", "size": "M", "length": "S", "color": "4", "angle": "horizontal", "distractor": "y", "trajectory": "7"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/6_S_L_4_vertical_n_5.npy",
+      "bytes": 239993115,
+      "sha256": "5382f4b04ebcaacefb94de10dbf8a2747594ef31aef876b3a99b8312a7c276dc",
+      "object": {"shape": "6", "size": "S", "length": "L", "color": "4", "angle": "vertical", "distractor": "n", "trajectory": "5"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/7_L_S_2_horizontal_n_4.npy",
+      "bytes": 371141595,
+      "sha256": "4327011b412adbbac247d040bbe66deeba6d807ec272d265a46effe19b5ff8f1",
+      "object": {"shape": "7", "size": "L", "length": "S", "color": "2", "angle": "horizontal", "distractor": "n", "trajectory": "4"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/8_M_L_8_vertical_y_6.npy",
+      "bytes": 184913139,
+      "sha256": "2f20595becf39461142753b54325f8995e82749dbc6d72bd70896617d95c9418",
+      "object": {"shape": "8", "size": "M", "length": "L", "color": "8", "angle": "vertical", "distractor": "y", "trajectory": "6"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/9_S_S_2_horizontal_n_0.npy",
+      "bytes": 317372203,
+      "sha256": "8243a6111217cd7787a8101b81b78f20884f121ebd43014e003c32eb96790f3a",
+      "object": {"shape": "9", "size": "S", "length": "S", "color": "2", "angle": "horizontal", "distractor": "n", "trajectory": "0"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/1_M_S_6_vertical_y_7.npy",
+      "bytes": 316055939,
+      "sha256": "c04d8209bd58f08837ee9df6f5407d87db39e1b6898defc396d39a8921e30221",
+      "object": {"shape": "1", "size": "M", "length": "S", "color": "6", "angle": "vertical", "distractor": "y", "trajectory": "7"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/2_S_L_8_horizontal_y_9.npy",
+      "bytes": 316060761,
+      "sha256": "ac2ac5f3a489269a58ac267b8314180079772ef7e02745e6b91fed8bd515163f",
+      "object": {"shape": "2", "size": "S", "length": "L", "color": "8", "angle": "horizontal", "distractor": "y", "trajectory": "9"}
+    },
+    {
+      "path": "single_object_manipulation_dataset/3_L_L_3_vertical_n_4.npy",
+      "bytes": 220321689,
+      "sha256": "4acaa3c0bb31ff18cbee9ad6d1be88be31edc3304188203d89f59eda026509c0",
+      "object": {"shape": "3", "size": "L", "length": "L", "color": "3", "angle": "vertical", "distractor": "n", "trajectory": "4"}
+    }
+  ]
+}

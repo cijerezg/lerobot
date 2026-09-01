@@ -1,0 +1,1693 @@
+{
+  "conversion_policy": {
+    "actor_future_fps": 30.0,
+    "actor_future_points": 30,
+    "actor_history_s": 6.0,
+    "actor_interpolation": "linear_in_source_native_action_space_no_extrapolation",
+    "depth_scale_provenance": "user_authorized_same_D405_model_assumption",
+    "depth_storage": "source_native_D405_Z16_uint16_levels",
+    "depth_units_mm_per_level": 0.1,
+    "invalid_depth_values": [
+      0,
+      65535
+    ],
+    "keep_depth": [
+      "wrist_1"
+    ],
+    "keep_rgb": [
+      "side_1",
+      "side_2",
+      "wrist_1"
+    ],
+    "omit_depth": [
+      "side_1",
+      "side_2",
+      "wrist_2"
+    ],
+    "omit_rgb": [
+      "wrist_2"
+    ],
+    "timestamp_provenance": "derived_nominal_grid_no_source_timestamps_in_npy"
+  },
+  "files": [
+    {
+      "bytes": 276717315,
+      "object": {
+        "angle": "horizontal",
+        "color": "4",
+        "distractor": "y",
+        "length": "L",
+        "shape": "1",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_L_L_4_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "5b83d89937f05382930b9ee153e8b6b314cf7dff487c71b8a714147ca1de6996",
+      "split": "train"
+    },
+    {
+      "bytes": 177044565,
+      "object": {
+        "angle": "vertical",
+        "color": "4",
+        "distractor": "y",
+        "length": "L",
+        "shape": "1",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_L_L_4_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "6fbc0b27dde21ef31237025624b855e41a35a5687edc2e88b3ebac0d00cf4a73",
+      "split": "train"
+    },
+    {
+      "bytes": 350158427,
+      "object": {
+        "angle": "horizontal",
+        "color": "6",
+        "distractor": "n",
+        "length": "S",
+        "shape": "1",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_L_S_6_horizontal_n_0.npy",
+      "pilot_reviewed": true,
+      "sha256": "05c1b106281fd53579a5454c68553f5970c88273510d0cec3d3490bcb3c1a0c9",
+      "split": "train"
+    },
+    {
+      "bytes": 177044571,
+      "object": {
+        "angle": "vertical",
+        "color": "6",
+        "distractor": "n",
+        "length": "S",
+        "shape": "1",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_L_S_6_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "54b5e08cffb16aebf6acb51896ec692393eed8bdde691f44f4a5d8f11b4ece5e",
+      "split": "validation"
+    },
+    {
+      "bytes": 396059107,
+      "object": {
+        "angle": "horizontal",
+        "color": "3",
+        "distractor": "n",
+        "length": "L",
+        "shape": "1",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_M_L_3_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "62b4f148196bf4ddc0803666c21fe9c6bed4fefc4239f2421a077764da79e695",
+      "split": "validation"
+    },
+    {
+      "bytes": 249173111,
+      "object": {
+        "angle": "vertical",
+        "color": "3",
+        "distractor": "n",
+        "length": "L",
+        "shape": "1",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_M_L_3_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "d4ec5592bfb19039f5a38dff5b0f63b7ff3415d2b2d78ab1a5b878f6eb03b01e",
+      "split": "train"
+    },
+    {
+      "bytes": 316055939,
+      "object": {
+        "angle": "vertical",
+        "color": "6",
+        "distractor": "y",
+        "length": "S",
+        "shape": "1",
+        "size": "M",
+        "trajectory": "7"
+      },
+      "path": "single_object_manipulation_dataset/1_M_S_6_vertical_y_7.npy",
+      "pilot_reviewed": true,
+      "sha256": "c04d8209bd58f08837ee9df6f5407d87db39e1b6898defc396d39a8921e30221",
+      "split": "train"
+    },
+    {
+      "bytes": 211141699,
+      "object": {
+        "angle": "vertical",
+        "color": "7",
+        "distractor": "n",
+        "length": "L",
+        "shape": "1",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_S_L_7_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "b6e306399fd1cf0a5145a8053fb93f8c5f52db005fe6088a9b77d28cdf917085",
+      "split": "train"
+    },
+    {
+      "bytes": 140324581,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "n",
+        "length": "S",
+        "shape": "1",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_S_S_8_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "47210e6bbc55708b25afca548b92ec29b056bbdeeaae1e42f56a5f457ff10f70",
+      "split": "train"
+    },
+    {
+      "bytes": 220321695,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "y",
+        "length": "S",
+        "shape": "1",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/1_S_S_8_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "0e783bd5a447e3a2a1bdc7309acf52f203980a0f129a8e6f01b67cdf44e16a5b",
+      "split": "train"
+    },
+    {
+      "bytes": 119341733,
+      "object": {
+        "angle": "vertical",
+        "color": "2",
+        "distractor": "n",
+        "length": "L",
+        "shape": "2",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_L_L_2_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "045587281cec93aff651744b3cdde9feb6b7acc953a5a7c071a6c62b8b9a70ad",
+      "split": "test"
+    },
+    {
+      "bytes": 121964589,
+      "object": {
+        "angle": "vertical",
+        "color": "2",
+        "distractor": "y",
+        "length": "L",
+        "shape": "2",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_L_L_2_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "cec187a6c3d215b6cc9cf7921b1fa801670cadfe56babc4a8c67874396b47e09",
+      "split": "train"
+    },
+    {
+      "bytes": 175733143,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "n",
+        "length": "S",
+        "shape": "2",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_L_S_8_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "f462261dccdcd33ad6e98e895003fdf8e64a6e838c576f61903b96cd2ec4c31c",
+      "split": "train"
+    },
+    {
+      "bytes": 144258871,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "y",
+        "length": "S",
+        "shape": "2",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_L_S_8_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "a88739a7ad4add3f9f28a3eb9aee70ce12e374a8575a3248644a1b199d64d303",
+      "split": "train"
+    },
+    {
+      "bytes": 288520353,
+      "object": {
+        "angle": "horizontal",
+        "color": "7",
+        "distractor": "y",
+        "length": "L",
+        "shape": "2",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_M_L_7_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "1a21b9fed41595bdf64c347fa012dcd22d25ef57f42e7154102ab399bb94a08f",
+      "split": "train"
+    },
+    {
+      "bytes": 153438867,
+      "object": {
+        "angle": "vertical",
+        "color": "7",
+        "distractor": "y",
+        "length": "L",
+        "shape": "2",
+        "size": "M",
+        "trajectory": "5"
+      },
+      "path": "single_object_manipulation_dataset/2_M_L_7_vertical_y_5.npy",
+      "pilot_reviewed": true,
+      "sha256": "2cf162a8f0dff3d569e455a22378b28554c9e3128405e2bdd7742928f7d111cd",
+      "split": "train"
+    },
+    {
+      "bytes": 384256075,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "y",
+        "length": "S",
+        "shape": "2",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_M_S_1_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "85dfe3af41f0bca81b9fd8c5bebbc16c012a5b971c95d7c8c9911712d3208a6a",
+      "split": "train"
+    },
+    {
+      "bytes": 131144591,
+      "object": {
+        "angle": "vertical",
+        "color": "1",
+        "distractor": "y",
+        "length": "S",
+        "shape": "2",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_M_S_1_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "1d5c2bfc3ea4bbb2624ca6b9bda8e0ab3fd6c0863bbfa5bbecbf9900745fdf6c",
+      "split": "train"
+    },
+    {
+      "bytes": 284586009,
+      "object": {
+        "angle": "horizontal",
+        "color": "8",
+        "distractor": "n",
+        "length": "L",
+        "shape": "2",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_S_L_8_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "242fd5b248c7141dcd74678e7ed65c8fef60e6cea8fc4264406754c898f82ee0",
+      "split": "train"
+    },
+    {
+      "bytes": 316060761,
+      "object": {
+        "angle": "horizontal",
+        "color": "8",
+        "distractor": "y",
+        "length": "L",
+        "shape": "2",
+        "size": "S",
+        "trajectory": "9"
+      },
+      "path": "single_object_manipulation_dataset/2_S_L_8_horizontal_y_9.npy",
+      "pilot_reviewed": true,
+      "sha256": "ac2ac5f3a489269a58ac267b8314180079772ef7e02745e6b91fed8bd515163f",
+      "split": "test"
+    },
+    {
+      "bytes": 390813309,
+      "object": {
+        "angle": "horizontal",
+        "color": "5",
+        "distractor": "n",
+        "length": "S",
+        "shape": "2",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_S_S_5_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "3707e6b52551244f30093d36ec25e88e5c683be2825e6f4ecfb3228ce9be3349",
+      "split": "train"
+    },
+    {
+      "bytes": 175733137,
+      "object": {
+        "angle": "vertical",
+        "color": "5",
+        "distractor": "y",
+        "length": "S",
+        "shape": "2",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/2_S_S_5_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "bed482e5d03febfd10eddf94ca6d18350e7db2777c05acf523902336d37befe9",
+      "split": "validation"
+    },
+    {
+      "bytes": 220321689,
+      "object": {
+        "angle": "vertical",
+        "color": "3",
+        "distractor": "n",
+        "length": "L",
+        "shape": "3",
+        "size": "L",
+        "trajectory": "4"
+      },
+      "path": "single_object_manipulation_dataset/3_L_L_3_vertical_n_4.npy",
+      "pilot_reviewed": true,
+      "sha256": "4acaa3c0bb31ff18cbee9ad6d1be88be31edc3304188203d89f59eda026509c0",
+      "split": "train"
+    },
+    {
+      "bytes": 217698833,
+      "object": {
+        "angle": "vertical",
+        "color": "3",
+        "distractor": "y",
+        "length": "L",
+        "shape": "3",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/3_L_L_3_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "58a16d1fd8f2efafbdedc122fea51d17b6a03562b72b5095f17bf9a8fbe37b82",
+      "split": "train"
+    },
+    {
+      "bytes": 163930291,
+      "object": {
+        "angle": "vertical",
+        "color": "7",
+        "distractor": "y",
+        "length": "S",
+        "shape": "3",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/3_L_S_7_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "306fff5e706d0f5bd92f40f021468e3077c3250684fdc1a15d0a42bb372951a5",
+      "split": "validation"
+    },
+    {
+      "bytes": 184913139,
+      "object": {
+        "angle": "vertical",
+        "color": "7",
+        "distractor": "y",
+        "length": "S",
+        "shape": "3",
+        "size": "L",
+        "trajectory": "1"
+      },
+      "path": "single_object_manipulation_dataset/3_L_S_7_vertical_y_1.npy",
+      "pilot_reviewed": false,
+      "sha256": "c9b29454221ee0855572b8be5bfdf919340a270e624bb684eeb821cd65aa5902",
+      "split": "train"
+    },
+    {
+      "bytes": 340978291,
+      "object": {
+        "angle": "horizontal",
+        "color": "5",
+        "distractor": "y",
+        "length": "L",
+        "shape": "3",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/3_M_L_5_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "04625d690ef762994b3bd964cc58703b99bf23e3d17af0e38e6aecac87d97302",
+      "split": "test"
+    },
+    {
+      "bytes": 316060761,
+      "object": {
+        "angle": "horizontal",
+        "color": "6",
+        "distractor": "y",
+        "length": "S",
+        "shape": "3",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/3_M_S_6_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "62a34c4503fa1b1010f5c67c220f2e35fbec6333d0035af1e93b921fbd4b5543",
+      "split": "train"
+    },
+    {
+      "bytes": 162618863,
+      "object": {
+        "angle": "vertical",
+        "color": "6",
+        "distractor": "y",
+        "length": "S",
+        "shape": "3",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/3_M_S_6_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "dd87409e075c5b6c35426484f3dea9fa400c90b20bd0dfc324291aa0d5c91349",
+      "split": "validation"
+    },
+    {
+      "bytes": 386878971,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "n",
+        "length": "L",
+        "shape": "3",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/3_S_L_1_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "ed2fe0443e03c3881cf806f78aa223734f75f69adb29970986db0e60d86661cf",
+      "split": "train"
+    },
+    {
+      "bytes": 424910963,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "y",
+        "length": "L",
+        "shape": "3",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/3_S_L_1_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "7eab948dafb766706fd0a726437036b23d74b6c1221fa312022c7182ac8fce2e",
+      "split": "train"
+    },
+    {
+      "bytes": 331798131,
+      "object": {
+        "angle": "horizontal",
+        "color": "4",
+        "distractor": "y",
+        "length": "S",
+        "shape": "3",
+        "size": "S",
+        "trajectory": "7"
+      },
+      "path": "single_object_manipulation_dataset/3_S_S_4_horizontal_y_7.npy",
+      "pilot_reviewed": true,
+      "sha256": "abcdfb4a423cc3b5e99c0b21eac66b0e98a0f20afe15d21f78783f9d5783ee0a",
+      "split": "train"
+    },
+    {
+      "bytes": 141636009,
+      "object": {
+        "angle": "vertical",
+        "color": "7",
+        "distractor": "n",
+        "length": "L",
+        "shape": "4",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_L_L_7_vertical_n_0.npy",
+      "pilot_reviewed": true,
+      "sha256": "39c5fca121734100245dc53c5c1fa04bc4be28a6a1c3a47fa721858f11e3d51b",
+      "split": "train"
+    },
+    {
+      "bytes": 178355999,
+      "object": {
+        "angle": "vertical",
+        "color": "2",
+        "distractor": "n",
+        "length": "S",
+        "shape": "4",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_L_S_2_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "11c1c763232cf4c0f4918561826a731d8e74752df6897dc4fc34f017385d7c10",
+      "split": "validation"
+    },
+    {
+      "bytes": 171798859,
+      "object": {
+        "angle": "vertical",
+        "color": "2",
+        "distractor": "y",
+        "length": "S",
+        "shape": "4",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_L_S_2_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "75f5adbc3ee3be4b2d730a4f1b329a8fda123c84ca35d226b692a12a6db34097",
+      "split": "train"
+    },
+    {
+      "bytes": 368518699,
+      "object": {
+        "angle": "horizontal",
+        "color": "2",
+        "distractor": "n",
+        "length": "L",
+        "shape": "4",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_M_L_2_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "965b7681634c507c7d1e589b9a6a20534d2d5f42646ab5764f8fe90432514bbd",
+      "split": "train"
+    },
+    {
+      "bytes": 359338563,
+      "object": {
+        "angle": "horizontal",
+        "color": "5",
+        "distractor": "n",
+        "length": "S",
+        "shape": "4",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_M_S_5_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "b9200b70dfa5e1d59a8285e7b7a74a0a13142a2b49017fc745aff85a34db3149",
+      "split": "validation"
+    },
+    {
+      "bytes": 359338563,
+      "object": {
+        "angle": "horizontal",
+        "color": "5",
+        "distractor": "y",
+        "length": "S",
+        "shape": "4",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_M_S_5_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "48c9eedaed1074d2755fb0cdb7bb5e59a5f56de04dcd7d77d819869b6f7d9f1c",
+      "split": "train"
+    },
+    {
+      "bytes": 133767447,
+      "object": {
+        "angle": "vertical",
+        "color": "3",
+        "distractor": "n",
+        "length": "L",
+        "shape": "4",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_S_L_3_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "09223025080e4cc53d3ca8318ca19a3a2238c1db1b864997340812571376ffc7",
+      "split": "train"
+    },
+    {
+      "bytes": 144258871,
+      "object": {
+        "angle": "vertical",
+        "color": "3",
+        "distractor": "y",
+        "length": "L",
+        "shape": "4",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_S_L_3_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "ff09f4f8354e074e81fbcc11b6f082f89808573a545793014318aac7789f1f87",
+      "split": "train"
+    },
+    {
+      "bytes": 380321725,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "n",
+        "length": "S",
+        "shape": "4",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_S_S_1_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "77a559a7676c3e3d637fcdf06d5c92f561b5a30b0a3c5a6c2e74625bd29137f6",
+      "split": "train"
+    },
+    {
+      "bytes": 120653161,
+      "object": {
+        "angle": "vertical",
+        "color": "1",
+        "distractor": "n",
+        "length": "S",
+        "shape": "4",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/4_S_S_1_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "29eeb1a125f242c20e14b44f6ce2274ee8cb76d29ea84dd4db0cdf713d9638b0",
+      "split": "train"
+    },
+    {
+      "bytes": 373764485,
+      "object": {
+        "angle": "horizontal",
+        "color": "8",
+        "distractor": "y",
+        "length": "L",
+        "shape": "5",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_L_L_8_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "dce3d6b236a16e21d57c255bb916feb98b1a541165e409b278ccd6fbd7a21696",
+      "split": "train"
+    },
+    {
+      "bytes": 215075977,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "y",
+        "length": "L",
+        "shape": "5",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_L_L_8_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "04a50b9cfef01d0506a70e5ed68cc406f503bf1971e4bf8e347826f4b195fb8e",
+      "split": "train"
+    },
+    {
+      "bytes": 310814969,
+      "object": {
+        "angle": "horizontal",
+        "color": "5",
+        "distractor": "y",
+        "length": "S",
+        "shape": "5",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_L_S_5_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "8742905c083f8a38973be7af6dafecf5ce0d29f480596e6396ee2f4649dd5154",
+      "split": "train"
+    },
+    {
+      "bytes": 128521735,
+      "object": {
+        "angle": "vertical",
+        "color": "5",
+        "distractor": "n",
+        "length": "S",
+        "shape": "5",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_L_S_5_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "b81324a73e5e4b3bf565794b1e3ad13bf740e1f5cf41c1feffe87423b745ad26",
+      "split": "validation"
+    },
+    {
+      "bytes": 285897457,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "y",
+        "length": "L",
+        "shape": "5",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_M_L_1_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "bf189948805ca6d48b855f8f4967df1e861e46d328dad99c801a9af991dc15cd",
+      "split": "test"
+    },
+    {
+      "bytes": 150816011,
+      "object": {
+        "angle": "vertical",
+        "color": "1",
+        "distractor": "n",
+        "length": "L",
+        "shape": "5",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_M_L_1_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "2d657a2f08f33c484890cab6f70defc58fd8cc916e75ab08c747f492f5a5cf80",
+      "split": "train"
+    },
+    {
+      "bytes": 495729155,
+      "object": {
+        "angle": "horizontal",
+        "color": "4",
+        "distractor": "y",
+        "length": "S",
+        "shape": "5",
+        "size": "M",
+        "trajectory": "7"
+      },
+      "path": "single_object_manipulation_dataset/5_M_S_4_horizontal_y_7.npy",
+      "pilot_reviewed": true,
+      "sha256": "00d10bde1cfda5b88443e51fb388baba8fc39eb12890add50dc994e76cd98451",
+      "split": "train"
+    },
+    {
+      "bytes": 319990223,
+      "object": {
+        "angle": "vertical",
+        "color": "4",
+        "distractor": "y",
+        "length": "S",
+        "shape": "5",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_M_S_4_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "02f09b88879c602818aa7f386e50097e2983aa82d5ae09bbd2a36e2ae7789738",
+      "split": "train"
+    },
+    {
+      "bytes": 482614675,
+      "object": {
+        "angle": "horizontal",
+        "color": "2",
+        "distractor": "n",
+        "length": "L",
+        "shape": "5",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_S_L_2_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "a33506118ae193a99d245f395be5a66edb9d78ddb49008e0562d1a5cc311775f",
+      "split": "test"
+    },
+    {
+      "bytes": 195404563,
+      "object": {
+        "angle": "vertical",
+        "color": "2",
+        "distractor": "n",
+        "length": "L",
+        "shape": "5",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_S_L_2_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "dfae6dfd513124a916d66e058789874e4803473787b8225eee3b4c2782a2d203",
+      "split": "train"
+    },
+    {
+      "bytes": 389501861,
+      "object": {
+        "angle": "horizontal",
+        "color": "2",
+        "distractor": "n",
+        "length": "S",
+        "shape": "5",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_S_S_2_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "31b9e1df50a6cb2753ecad6bc7d236f20a323781c9ad7f2a9df1e0f8db511d58",
+      "split": "train"
+    },
+    {
+      "bytes": 243927393,
+      "object": {
+        "angle": "vertical",
+        "color": "2",
+        "distractor": "n",
+        "length": "S",
+        "shape": "5",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/5_S_S_2_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "830a81c4754fb066c84b2e6571f40d41bc350c27e1b4909c68fe2e50e2f5d94f",
+      "split": "train"
+    },
+    {
+      "bytes": 575727477,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "y",
+        "length": "L",
+        "shape": "6",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_L_L_1_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "1fb0a8a0b42946aa2f8c81e786971320fe2c9cbabf40b1ee807521059d98bbb9",
+      "split": "train"
+    },
+    {
+      "bytes": 494417707,
+      "object": {
+        "angle": "horizontal",
+        "color": "3",
+        "distractor": "y",
+        "length": "S",
+        "shape": "6",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_L_S_3_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "1565d4e654a6e34427a60494955559da599f53f09c187b39acf693b3f0e4a9f3",
+      "split": "train"
+    },
+    {
+      "bytes": 554744315,
+      "object": {
+        "angle": "horizontal",
+        "color": "6",
+        "distractor": "n",
+        "length": "L",
+        "shape": "6",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_M_L_6_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "330fccda1002b4fc7fed46d9df827ae84b53cb7434cb3131077520e3a1fc632d",
+      "split": "train"
+    },
+    {
+      "bytes": 834082739,
+      "object": {
+        "angle": "horizontal",
+        "color": "6",
+        "distractor": "y",
+        "length": "L",
+        "shape": "6",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_M_L_6_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "c59d201d492c433d53068b07cf576da3be13894c2b5badd0c89acd5f623aeb99",
+      "split": "train"
+    },
+    {
+      "bytes": 598022099,
+      "object": {
+        "angle": "horizontal",
+        "color": "2",
+        "distractor": "n",
+        "length": "S",
+        "shape": "6",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_M_S_2_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "fa6e5e984f11ca17e140786636dda1fd1688089e58541585fa82970824c4f46c",
+      "split": "train"
+    },
+    {
+      "bytes": 432779651,
+      "object": {
+        "angle": "horizontal",
+        "color": "2",
+        "distractor": "y",
+        "length": "S",
+        "shape": "6",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_M_S_2_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "afcfd83e2613113fccd6e424bbc40c19a4ac2d39f177dcb07051adea6fe1d6d7",
+      "split": "train"
+    },
+    {
+      "bytes": 253107395,
+      "object": {
+        "angle": "vertical",
+        "color": "4",
+        "distractor": "n",
+        "length": "L",
+        "shape": "6",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_S_L_4_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "301b335ef7f29ba70910c178245cce3ea0e3bc201d42174efbc10f14ce35c916",
+      "split": "train"
+    },
+    {
+      "bytes": 239993115,
+      "object": {
+        "angle": "vertical",
+        "color": "4",
+        "distractor": "n",
+        "length": "L",
+        "shape": "6",
+        "size": "S",
+        "trajectory": "5"
+      },
+      "path": "single_object_manipulation_dataset/6_S_L_4_vertical_n_5.npy",
+      "pilot_reviewed": true,
+      "sha256": "5382f4b04ebcaacefb94de10dbf8a2747594ef31aef876b3a99b8312a7c276dc",
+      "split": "train"
+    },
+    {
+      "bytes": 548187069,
+      "object": {
+        "angle": "horizontal",
+        "color": "7",
+        "distractor": "y",
+        "length": "S",
+        "shape": "6",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_S_S_7_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "2940c418d7510784a4dad1dad41f644ff1ae5f0ab009c28a6aae10a3b8ceea6b",
+      "split": "train"
+    },
+    {
+      "bytes": 127210301,
+      "object": {
+        "angle": "vertical",
+        "color": "7",
+        "distractor": "n",
+        "length": "S",
+        "shape": "6",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/6_S_S_7_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "5cd78fe12ecd9a9801a62f26fa20fff580b3b1260fe6776a703605b05a99af11",
+      "split": "train"
+    },
+    {
+      "bytes": 285897451,
+      "object": {
+        "angle": "horizontal",
+        "color": "3",
+        "distractor": "n",
+        "length": "L",
+        "shape": "7",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_L_L_3_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "43e63ce74f435c557b9853ca10bb6a5e7babe16f3f0338f865db0e862dbad666",
+      "split": "train"
+    },
+    {
+      "bytes": 519335213,
+      "object": {
+        "angle": "horizontal",
+        "color": "3",
+        "distractor": "y",
+        "length": "L",
+        "shape": "7",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_L_L_3_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "4f0defd031e8cc7a1579073bd7e9d76ef93694ce0076056d219b2416cc6157bd",
+      "split": "train"
+    },
+    {
+      "bytes": 371141595,
+      "object": {
+        "angle": "horizontal",
+        "color": "2",
+        "distractor": "n",
+        "length": "S",
+        "shape": "7",
+        "size": "L",
+        "trajectory": "4"
+      },
+      "path": "single_object_manipulation_dataset/7_L_S_2_horizontal_n_4.npy",
+      "pilot_reviewed": true,
+      "sha256": "4327011b412adbbac247d040bbe66deeba6d807ec272d265a46effe19b5ff8f1",
+      "split": "validation"
+    },
+    {
+      "bytes": 162618863,
+      "object": {
+        "angle": "vertical",
+        "color": "2",
+        "distractor": "y",
+        "length": "S",
+        "shape": "7",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_L_S_2_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "849e36a5ded0e35a5bd387763dd893392ac42cf4ff2212c850cad85b76d7fa43",
+      "split": "train"
+    },
+    {
+      "bytes": 364584355,
+      "object": {
+        "angle": "horizontal",
+        "color": "4",
+        "distractor": "n",
+        "length": "L",
+        "shape": "7",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_M_L_4_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "004839a8bcd78f38d7a840bcd921d04ab226c7df5c416e0ceea5e99a84794f1a",
+      "split": "train"
+    },
+    {
+      "bytes": 187535995,
+      "object": {
+        "angle": "vertical",
+        "color": "4",
+        "distractor": "n",
+        "length": "L",
+        "shape": "7",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_M_L_4_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "2ae0bfa841fd6d35dab5f76d43205b1930e0c3345f3ed9468f68d5bfcd2d5648",
+      "split": "train"
+    },
+    {
+      "bytes": 470811643,
+      "object": {
+        "angle": "horizontal",
+        "color": "8",
+        "distractor": "n",
+        "length": "S",
+        "shape": "7",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_M_S_8_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "6de6cd86820b070314adf359d8b82c051085e2223b26f8eb3805d5e309138970",
+      "split": "validation"
+    },
+    {
+      "bytes": 299007375,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "n",
+        "length": "S",
+        "shape": "7",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_M_S_8_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "6afc2722bd1e30bb814b843dc63e533ecdd18ee4387092c6ba2c33af0051a5bd",
+      "split": "train"
+    },
+    {
+      "bytes": 124587451,
+      "object": {
+        "angle": "vertical",
+        "color": "6",
+        "distractor": "n",
+        "length": "L",
+        "shape": "7",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_S_L_6_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "dc57ee88fb24f7fc75399e8db2265d867d488a299fd0aba94543ac34ad1a593c",
+      "split": "train"
+    },
+    {
+      "bytes": 145570299,
+      "object": {
+        "angle": "vertical",
+        "color": "6",
+        "distractor": "y",
+        "length": "L",
+        "shape": "7",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_S_L_6_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "4eb0b130b6803bbb93eff83f398149240debb56149c6001e9f0dd5e33bc23319",
+      "split": "train"
+    },
+    {
+      "bytes": 317372203,
+      "object": {
+        "angle": "horizontal",
+        "color": "3",
+        "distractor": "n",
+        "length": "S",
+        "shape": "7",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/7_S_S_3_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "4d4c9d6b06fabfb3dc4e7763af69317a65bda09244fe0deda56dc1a188dfc68c",
+      "split": "train"
+    },
+    {
+      "bytes": 386878965,
+      "object": {
+        "angle": "horizontal",
+        "color": "3",
+        "distractor": "n",
+        "length": "S",
+        "shape": "7",
+        "size": "S",
+        "trajectory": "1"
+      },
+      "path": "single_object_manipulation_dataset/7_S_S_3_horizontal_n_1.npy",
+      "pilot_reviewed": false,
+      "sha256": "bae9a0b5575a38293e6c4e8a4a01118056ab58bec726a876430c73afb9d2683e",
+      "split": "train"
+    },
+    {
+      "bytes": 540318381,
+      "object": {
+        "angle": "horizontal",
+        "color": "6",
+        "distractor": "n",
+        "length": "L",
+        "shape": "8",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_L_L_6_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "bdeb172f6684569465727996cc3bc4e15e89c2d088bf8ee11a9f1352b98687db",
+      "split": "train"
+    },
+    {
+      "bytes": 346224077,
+      "object": {
+        "angle": "horizontal",
+        "color": "6",
+        "distractor": "y",
+        "length": "L",
+        "shape": "8",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_L_L_6_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "632e205dac84dd5ae130e2c6b7342a78deb437b498475f2c616d52fb5d4b0e5b",
+      "split": "train"
+    },
+    {
+      "bytes": 216387405,
+      "object": {
+        "angle": "vertical",
+        "color": "4",
+        "distractor": "n",
+        "length": "S",
+        "shape": "8",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_L_S_4_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "e6b306730fbd2800601f11261d4fba0c49f118cd2da74c25753425ea88a3caff",
+      "split": "train"
+    },
+    {
+      "bytes": 141636015,
+      "object": {
+        "angle": "vertical",
+        "color": "4",
+        "distractor": "y",
+        "length": "S",
+        "shape": "8",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_L_S_4_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "dab82bbc9fdafeb3678e74fce6e038e238e59072c7a3eff42853bfcd0bdb08ba",
+      "split": "test"
+    },
+    {
+      "bytes": 348846979,
+      "object": {
+        "angle": "horizontal",
+        "color": "8",
+        "distractor": "y",
+        "length": "L",
+        "shape": "8",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_M_L_8_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "96a2806b96c0aa23ae2a7d09e900f3fad3611a47827042f3e9303a4d50c63630",
+      "split": "train"
+    },
+    {
+      "bytes": 184913139,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "y",
+        "length": "L",
+        "shape": "8",
+        "size": "M",
+        "trajectory": "6"
+      },
+      "path": "single_object_manipulation_dataset/8_M_L_8_vertical_y_6.npy",
+      "pilot_reviewed": true,
+      "sha256": "2f20595becf39461142753b54325f8995e82749dbc6d72bd70896617d95c9418",
+      "split": "train"
+    },
+    {
+      "bytes": 331798137,
+      "object": {
+        "angle": "horizontal",
+        "color": "3",
+        "distractor": "y",
+        "length": "S",
+        "shape": "8",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_M_S_3_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "d61d89bebc69a9bda68e70b53f7f105e6ca246d5315ed85c174acc92ac7ba35b",
+      "split": "train"
+    },
+    {
+      "bytes": 127210307,
+      "object": {
+        "angle": "vertical",
+        "color": "3",
+        "distractor": "n",
+        "length": "S",
+        "shape": "8",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_M_S_3_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "01e9d1ff4158a8633ba1a5ea51e288dae575c8364d26ff0192d1a822a5aced23",
+      "split": "train"
+    },
+    {
+      "bytes": 184913139,
+      "object": {
+        "angle": "vertical",
+        "color": "5",
+        "distractor": "n",
+        "length": "L",
+        "shape": "8",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_S_L_5_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "e4c204bb0ced723fe03f2f7444993d6bc65482a0ac9fc5b1fd2a820132294c2b",
+      "split": "test"
+    },
+    {
+      "bytes": 111473171,
+      "object": {
+        "angle": "vertical",
+        "color": "5",
+        "distractor": "y",
+        "length": "L",
+        "shape": "8",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_S_L_5_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "d8a26dc3567dd2acdf30199e332d5cdeef6c64456c0eef34bb98c3fe0aeb886d",
+      "split": "train"
+    },
+    {
+      "bytes": 331798131,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "n",
+        "length": "S",
+        "shape": "8",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_S_S_1_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "090b73c2fadaf4abfe63175a2c0fb1eda46735390a5f44ed364fba64085d168c",
+      "split": "test"
+    },
+    {
+      "bytes": 190158845,
+      "object": {
+        "angle": "vertical",
+        "color": "1",
+        "distractor": "y",
+        "length": "S",
+        "shape": "8",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/8_S_S_1_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "52d6e31dc466a51e17903219ea40365f60734b563e498800b5ce10685c5e5442",
+      "split": "test"
+    },
+    {
+      "bytes": 394747653,
+      "object": {
+        "angle": "horizontal",
+        "color": "4",
+        "distractor": "n",
+        "length": "L",
+        "shape": "9",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_L_L_4_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "e548a4d3724623a41053a88893730dadf36ea5428e39065054ecd0e9b3c0282d",
+      "split": "train"
+    },
+    {
+      "bytes": 148193149,
+      "object": {
+        "angle": "vertical",
+        "color": "4",
+        "distractor": "y",
+        "length": "L",
+        "shape": "9",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_L_L_4_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "2515e664204bec7db08d9d0746f67dc892a2aac4e6ff16b9773561c6cbc0196e",
+      "split": "train"
+    },
+    {
+      "bytes": 319995105,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "n",
+        "length": "S",
+        "shape": "9",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_L_S_1_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "0e2f34dc4647f9c9fc808b01ba240f05606de8a212f751fa04026d8e24767e98",
+      "split": "train"
+    },
+    {
+      "bytes": 367207251,
+      "object": {
+        "angle": "horizontal",
+        "color": "1",
+        "distractor": "y",
+        "length": "S",
+        "shape": "9",
+        "size": "L",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_L_S_1_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "3ec9a3a625e85694a97e17e443e4fbd11d41ed30849dcd19db7d43acfa333f2c",
+      "split": "train"
+    },
+    {
+      "bytes": 314744511,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "n",
+        "length": "L",
+        "shape": "9",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_M_L_8_vertical_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "ca965ee8ac0c141b3e1ebd8486acb0413ee6c9d349ea29047475981dd7944273",
+      "split": "train"
+    },
+    {
+      "bytes": 120653167,
+      "object": {
+        "angle": "vertical",
+        "color": "8",
+        "distractor": "y",
+        "length": "L",
+        "shape": "9",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_M_L_8_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "afa52e4d5074e3c4acd7c47b73e5129882594f126638cefa5592eaa236bd67b8",
+      "split": "train"
+    },
+    {
+      "bytes": 325240897,
+      "object": {
+        "angle": "horizontal",
+        "color": "7",
+        "distractor": "n",
+        "length": "S",
+        "shape": "9",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_M_S_7_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "86a486adaa5e26806b6d4ef7db2961b6adc441ca9a1a8bf4e8a1b893f25458e3",
+      "split": "test"
+    },
+    {
+      "bytes": 333109585,
+      "object": {
+        "angle": "horizontal",
+        "color": "7",
+        "distractor": "y",
+        "length": "S",
+        "shape": "9",
+        "size": "M",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_M_S_7_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "e56cb2b53b9ec62a0a1f705d8cb95e8ac85d2711d0400751b686c6e1e071ba48",
+      "split": "train"
+    },
+    {
+      "bytes": 326552345,
+      "object": {
+        "angle": "horizontal",
+        "color": "5",
+        "distractor": "n",
+        "length": "L",
+        "shape": "9",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_S_L_5_horizontal_n_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "38e930a7a8ffef74bad943fcd06b66a03db5bdcb6ba915ac3e94a9567829f160",
+      "split": "train"
+    },
+    {
+      "bytes": 192781707,
+      "object": {
+        "angle": "vertical",
+        "color": "5",
+        "distractor": "y",
+        "length": "L",
+        "shape": "9",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_S_L_5_vertical_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "f5614899fae2b1f3f97847e10c98e572f69299366d021427f24a44e5dc9c122f",
+      "split": "train"
+    },
+    {
+      "bytes": 317372203,
+      "object": {
+        "angle": "horizontal",
+        "color": "2",
+        "distractor": "n",
+        "length": "S",
+        "shape": "9",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_S_S_2_horizontal_n_0.npy",
+      "pilot_reviewed": true,
+      "sha256": "8243a6111217cd7787a8101b81b78f20884f121ebd43014e003c32eb96790f3a",
+      "split": "train"
+    },
+    {
+      "bytes": 300323379,
+      "object": {
+        "angle": "horizontal",
+        "color": "2",
+        "distractor": "y",
+        "length": "S",
+        "shape": "9",
+        "size": "S",
+        "trajectory": "0"
+      },
+      "path": "single_object_manipulation_dataset/9_S_S_2_horizontal_y_0.npy",
+      "pilot_reviewed": false,
+      "sha256": "1dc7899a96389a8cbbb20d56e2d6bb6ebc1f2b184f17568a5fac49d0f4feed2c",
+      "split": "train"
+    }
+  ],
+  "license": "CC-BY-4.0",
+  "nominal_fps": 10.0,
+  "selection": {
+    "condition_counts": {
+      "angle": {
+        "horizontal": 50,
+        "vertical": 50
+      },
+      "color": {
+        "1": 13,
+        "2": 15,
+        "3": 13,
+        "4": 13,
+        "5": 11,
+        "6": 11,
+        "7": 10,
+        "8": 14
+      },
+      "distractor": {
+        "n": 50,
+        "y": 50
+      },
+      "length": {
+        "L": 49,
+        "S": 51
+      },
+      "shape": {
+        "1": 10,
+        "2": 12,
+        "3": 10,
+        "4": 10,
+        "5": 12,
+        "6": 10,
+        "7": 12,
+        "8": 12,
+        "9": 12
+      },
+      "size": {
+        "L": 33,
+        "M": 33,
+        "S": 34
+      }
+    },
+    "episode_count": 100,
+    "geometry_repeat_distribution": {
+      "1": 8,
+      "2": 46
+    },
+    "selection_policy": "The 12 reviewed pilot paths are retained, every one of the 54 shape-size-length geometries is covered before additional repeats, then geometry and angle/distractor counts are balanced deterministically without payload inspection.",
+    "split_episode_counts": {
+      "test": 10,
+      "train": 80,
+      "validation": 10
+    },
+    "unique_geometry_count": 54
+  },
+  "source_repo_id": "charlesxu0124/functional-manipulation-benchmark",
+  "source_revision": "f99fd55c072eea5573523c96aa527aed3c665690",
+  "source_subset": "single_object_manipulation_dataset"
+}

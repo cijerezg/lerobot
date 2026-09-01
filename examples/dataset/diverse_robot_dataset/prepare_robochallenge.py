@@ -16,6 +16,7 @@ import argparse
 import json
 import math
 import subprocess
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -194,9 +195,14 @@ def farthest_point_candidates(summaries: list[EpisodeSummary], count: int) -> li
     return [pool[index] for index in selected]
 
 
-def nominate(task_root: Path, output: Path, count: int) -> dict:
+def nominate(task_root: Path, output: Path, count: int, exclude: Iterable[int] = ()) -> dict:
+    """Nominate `count` candidates, skipping episodes already reviewed in an earlier round."""
     task_info = read_json(task_root / "meta" / "task_info.json")
-    episode_roots = sorted((task_root / "data").glob("episode_*"))
+    excluded = {int(index) for index in exclude}
+    all_roots = sorted((task_root / "data").glob("episode_*"))
+    episode_roots = [
+        path for path in all_roots if int(path.name.removeprefix("episode_")) not in excluded
+    ]
     summaries = []
     invalid_episodes = []
     for path in episode_roots:
@@ -218,6 +224,8 @@ def nominate(task_root: Path, output: Path, count: int) -> dict:
         "selection_status": "nominated_pending_visual_review",
         "candidate_count": count,
         "episodes_scanned": len(episode_roots),
+        "episodes_present": len(all_roots),
+        "excluded_episode_indices": sorted(excluded),
         "rejection_screen": {
             "minimum_candidate_anchors": 3,
             "minimum_active_anchor_fraction": 0.25,
@@ -371,6 +379,13 @@ def main() -> None:
     nomination.add_argument("--task-root", type=Path, required=True)
     nomination.add_argument("--output", type=Path, required=True)
     nomination.add_argument("--count", type=int, default=15)
+    nomination.add_argument(
+        "--exclude",
+        type=int,
+        nargs="*",
+        default=[],
+        help="Source episode indices already reviewed; they are removed from the pool.",
+    )
     proxies = subparsers.add_parser("proxies")
     proxies.add_argument("--task-root", type=Path, required=True)
     proxies.add_argument("--manifest", type=Path, required=True)
@@ -382,7 +397,7 @@ def main() -> None:
     annotations.add_argument("--accepted", type=int, nargs="+", required=True)
     args = parser.parse_args()
     if args.command == "nominate":
-        nominate(args.task_root, args.output, args.count)
+        nominate(args.task_root, args.output, args.count, args.exclude)
     elif args.command == "proxies":
         make_proxies(args.task_root, args.manifest, args.output_root)
     else:

@@ -1,0 +1,4693 @@
+{
+  "episodes": [
+    {
+      "source_path": "single_object_manipulation_dataset/1_L_L_4_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 33,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 33
+        },
+        {
+          "end_timestep_exclusive": 93,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 149,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 93
+        },
+        {
+          "end_timestep_exclusive": 179,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 149
+        },
+        {
+          "end_timestep_exclusive": 211,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 179
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_L_L_4_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 21,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 27,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 21
+        },
+        {
+          "end_timestep_exclusive": 57,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 27
+        },
+        {
+          "end_timestep_exclusive": 135,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 57
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_L_S_6_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 43,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 49,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 43
+        },
+        {
+          "end_timestep_exclusive": 109,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 49
+        },
+        {
+          "end_timestep_exclusive": 170,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 109
+        },
+        {
+          "end_timestep_exclusive": 210,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 170
+        },
+        {
+          "end_timestep_exclusive": 267,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 210
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_L_S_6_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 31,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 37,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 31
+        },
+        {
+          "end_timestep_exclusive": 71,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 37
+        },
+        {
+          "end_timestep_exclusive": 135,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 71
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_M_L_3_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 49,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 105,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 49
+        },
+        {
+          "end_timestep_exclusive": 167,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 105
+        },
+        {
+          "end_timestep_exclusive": 206,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 167
+        },
+        {
+          "end_timestep_exclusive": 302,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 206
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_M_L_3_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 28,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 58,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 28
+        },
+        {
+          "end_timestep_exclusive": 96,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 58
+        },
+        {
+          "end_timestep_exclusive": 190,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 96
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_M_S_6_vertical_y_7.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 43,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 86,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 43
+        },
+        {
+          "end_timestep_exclusive": 241,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 86
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_S_L_7_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 69,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 161,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 69
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_S_S_8_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 24,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 30,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 24
+        },
+        {
+          "end_timestep_exclusive": 58,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 30
+        },
+        {
+          "end_timestep_exclusive": 107,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 58
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/1_S_S_8_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 37,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 61,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 37
+        },
+        {
+          "end_timestep_exclusive": 168,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 61
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_L_L_2_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 57,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 91,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 57
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_L_L_2_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 31,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 31
+        },
+        {
+          "end_timestep_exclusive": 61,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 93,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 61
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_L_S_8_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 78,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 134,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 78
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_L_S_8_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 28,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 33,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 28
+        },
+        {
+          "end_timestep_exclusive": 70,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 33
+        },
+        {
+          "end_timestep_exclusive": 110,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 70
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_M_L_7_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 42,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 97,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 42
+        },
+        {
+          "end_timestep_exclusive": 155,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 97
+        },
+        {
+          "end_timestep_exclusive": 189,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 155
+        },
+        {
+          "end_timestep_exclusive": 220,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 189
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_M_L_7_vertical_y_5.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 26,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 56,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 26
+        },
+        {
+          "end_timestep_exclusive": 82,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 56
+        },
+        {
+          "end_timestep_exclusive": 117,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 82
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_M_S_1_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 47,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 118,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 47
+        },
+        {
+          "end_timestep_exclusive": 195,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 118
+        },
+        {
+          "end_timestep_exclusive": 241,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 195
+        },
+        {
+          "end_timestep_exclusive": 293,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 241
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_M_S_1_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 37,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 71,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 37
+        },
+        {
+          "end_timestep_exclusive": 100,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 71
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_S_L_8_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 43,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 101,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 43
+        },
+        {
+          "end_timestep_exclusive": 157,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 101
+        },
+        {
+          "end_timestep_exclusive": 192,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 157
+        },
+        {
+          "end_timestep_exclusive": 217,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 192
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_S_L_8_horizontal_y_9.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 48,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 54,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 48
+        },
+        {
+          "end_timestep_exclusive": 109,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 54
+        },
+        {
+          "end_timestep_exclusive": 166,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 109
+        },
+        {
+          "end_timestep_exclusive": 204,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 166
+        },
+        {
+          "end_timestep_exclusive": 241,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 204
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_S_S_5_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 41,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 47,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 41
+        },
+        {
+          "end_timestep_exclusive": 102,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 47
+        },
+        {
+          "end_timestep_exclusive": 166,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 102
+        },
+        {
+          "end_timestep_exclusive": 201,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 166
+        },
+        {
+          "end_timestep_exclusive": 298,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 201
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/2_S_S_5_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 44,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 53,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 44
+        },
+        {
+          "end_timestep_exclusive": 97,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 53
+        },
+        {
+          "end_timestep_exclusive": 134,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 97
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_L_L_3_vertical_n_4.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 59,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 66,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 59
+        },
+        {
+          "end_timestep_exclusive": 90,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 66
+        },
+        {
+          "end_timestep_exclusive": 168,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 90
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_L_L_3_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 44,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 72,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 44
+        },
+        {
+          "end_timestep_exclusive": 166,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 72
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_L_S_7_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 29,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 29
+        },
+        {
+          "end_timestep_exclusive": 72,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 125,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 72
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_L_S_7_vertical_y_1.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 27,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 27
+        },
+        {
+          "end_timestep_exclusive": 65,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 141,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 65
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_M_L_5_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 44,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 95,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 44
+        },
+        {
+          "end_timestep_exclusive": 171,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 95
+        },
+        {
+          "end_timestep_exclusive": 209,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 171
+        },
+        {
+          "end_timestep_exclusive": 260,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 209
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_M_S_6_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 42,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 50,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 42
+        },
+        {
+          "end_timestep_exclusive": 115,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 50
+        },
+        {
+          "end_timestep_exclusive": 176,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 115
+        },
+        {
+          "end_timestep_exclusive": 212,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 176
+        },
+        {
+          "end_timestep_exclusive": 241,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 212
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_M_S_6_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 37,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 42,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 37
+        },
+        {
+          "end_timestep_exclusive": 69,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 42
+        },
+        {
+          "end_timestep_exclusive": 124,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 69
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_S_L_1_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 51,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 56,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 51
+        },
+        {
+          "end_timestep_exclusive": 108,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 56
+        },
+        {
+          "end_timestep_exclusive": 188,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 108
+        },
+        {
+          "end_timestep_exclusive": 223,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 188
+        },
+        {
+          "end_timestep_exclusive": 295,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 223
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_S_L_1_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 51,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 60,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 51
+        },
+        {
+          "end_timestep_exclusive": 141,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 60
+        },
+        {
+          "end_timestep_exclusive": 216,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 141
+        },
+        {
+          "end_timestep_exclusive": 263,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 216
+        },
+        {
+          "end_timestep_exclusive": 324,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 263
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/3_S_S_4_horizontal_y_7.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 59,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 66,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 59
+        },
+        {
+          "end_timestep_exclusive": 123,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 66
+        },
+        {
+          "end_timestep_exclusive": 185,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 123
+        },
+        {
+          "end_timestep_exclusive": 222,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 185
+        },
+        {
+          "end_timestep_exclusive": 253,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 222
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_L_L_7_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 26,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 26
+        },
+        {
+          "end_timestep_exclusive": 62,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 108,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 62
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_L_S_2_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 45,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 75,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 45
+        },
+        {
+          "end_timestep_exclusive": 136,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 75
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_L_S_2_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 33,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 33
+        },
+        {
+          "end_timestep_exclusive": 67,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 131,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 67
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_M_L_2_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 43,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 49,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 43
+        },
+        {
+          "end_timestep_exclusive": 105,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 49
+        },
+        {
+          "end_timestep_exclusive": 189,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 105
+        },
+        {
+          "end_timestep_exclusive": 226,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 189
+        },
+        {
+          "end_timestep_exclusive": 281,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 226
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_M_S_5_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 29,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 29
+        },
+        {
+          "end_timestep_exclusive": 90,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 151,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 90
+        },
+        {
+          "end_timestep_exclusive": 190,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 151
+        },
+        {
+          "end_timestep_exclusive": 274,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 190
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_M_S_5_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 72,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 79,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 72
+        },
+        {
+          "end_timestep_exclusive": 151,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 79
+        },
+        {
+          "end_timestep_exclusive": 211,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 151
+        },
+        {
+          "end_timestep_exclusive": 241,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 211
+        },
+        {
+          "end_timestep_exclusive": 274,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 241
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_S_L_3_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 33,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 33
+        },
+        {
+          "end_timestep_exclusive": 63,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 102,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 63
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_S_L_3_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 44,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 72,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 44
+        },
+        {
+          "end_timestep_exclusive": 110,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 72
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_S_S_1_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 59,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 66,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 59
+        },
+        {
+          "end_timestep_exclusive": 133,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 66
+        },
+        {
+          "end_timestep_exclusive": 194,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 133
+        },
+        {
+          "end_timestep_exclusive": 230,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 194
+        },
+        {
+          "end_timestep_exclusive": 290,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 230
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/4_S_S_1_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 24,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 29,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 24
+        },
+        {
+          "end_timestep_exclusive": 53,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 29
+        },
+        {
+          "end_timestep_exclusive": 92,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 53
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_L_L_8_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 46,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 111,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 46
+        },
+        {
+          "end_timestep_exclusive": 172,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 111
+        },
+        {
+          "end_timestep_exclusive": 205,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 172
+        },
+        {
+          "end_timestep_exclusive": 285,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 205
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_L_L_8_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 31,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 31
+        },
+        {
+          "end_timestep_exclusive": 100,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 134,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 100
+        },
+        {
+          "end_timestep_exclusive": 164,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 134
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_L_S_5_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 41,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 95,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 41
+        },
+        {
+          "end_timestep_exclusive": 153,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 95
+        },
+        {
+          "end_timestep_exclusive": 184,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 153
+        },
+        {
+          "end_timestep_exclusive": 237,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 184
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_L_S_5_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 28,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 33,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 28
+        },
+        {
+          "end_timestep_exclusive": 58,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 33
+        },
+        {
+          "end_timestep_exclusive": 98,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 58
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_M_L_1_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 41,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 97,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 41
+        },
+        {
+          "end_timestep_exclusive": 156,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 97
+        },
+        {
+          "end_timestep_exclusive": 183,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 156
+        },
+        {
+          "end_timestep_exclusive": 218,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 183
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_M_L_1_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 28,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 28
+        },
+        {
+          "end_timestep_exclusive": 61,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 115,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 61
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_M_S_4_horizontal_y_7.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 45,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 103,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 45
+        },
+        {
+          "end_timestep_exclusive": 162,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 103
+        },
+        {
+          "end_timestep_exclusive": 297,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 162
+        },
+        {
+          "end_timestep_exclusive": 329,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 297
+        },
+        {
+          "end_timestep_exclusive": 378,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 329
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_M_S_4_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 33,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 33
+        },
+        {
+          "end_timestep_exclusive": 146,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 192,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 146
+        },
+        {
+          "end_timestep_exclusive": 244,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 192
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_S_L_2_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 46,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 103,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 46
+        },
+        {
+          "end_timestep_exclusive": 163,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 103
+        },
+        {
+          "end_timestep_exclusive": 305,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 163
+        },
+        {
+          "end_timestep_exclusive": 334,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 305
+        },
+        {
+          "end_timestep_exclusive": 368,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 334
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_S_L_2_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 23,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 29,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 23
+        },
+        {
+          "end_timestep_exclusive": 88,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 29
+        },
+        {
+          "end_timestep_exclusive": 122,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 88
+        },
+        {
+          "end_timestep_exclusive": 149,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 122
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_S_S_2_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 53,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 59,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 53
+        },
+        {
+          "end_timestep_exclusive": 115,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 59
+        },
+        {
+          "end_timestep_exclusive": 178,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 115
+        },
+        {
+          "end_timestep_exclusive": 218,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 178
+        },
+        {
+          "end_timestep_exclusive": 297,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 218
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/5_S_S_2_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 27,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 27
+        },
+        {
+          "end_timestep_exclusive": 107,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 147,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 107
+        },
+        {
+          "end_timestep_exclusive": 186,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 147
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_L_L_1_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 37,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 44,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 37
+        },
+        {
+          "end_timestep_exclusive": 171,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 44
+        },
+        {
+          "end_timestep_exclusive": 178,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 171
+        },
+        {
+          "end_timestep_exclusive": 238,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 178
+        },
+        {
+          "end_timestep_exclusive": 343,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 238
+        },
+        {
+          "end_timestep_exclusive": 381,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 343
+        },
+        {
+          "end_timestep_exclusive": 439,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 381
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_L_S_3_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 37,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 43,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 37
+        },
+        {
+          "end_timestep_exclusive": 99,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 43
+        },
+        {
+          "end_timestep_exclusive": 154,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 99
+        },
+        {
+          "end_timestep_exclusive": 304,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 154
+        },
+        {
+          "end_timestep_exclusive": 338,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 304
+        },
+        {
+          "end_timestep_exclusive": 377,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 338
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_M_L_6_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 41,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 187,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 41
+        },
+        {
+          "end_timestep_exclusive": 193,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 187
+        },
+        {
+          "end_timestep_exclusive": 256,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 193
+        },
+        {
+          "end_timestep_exclusive": 335,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 256
+        },
+        {
+          "end_timestep_exclusive": 374,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 335
+        },
+        {
+          "end_timestep_exclusive": 423,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 374
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_M_L_6_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 48,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 54,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 48
+        },
+        {
+          "end_timestep_exclusive": 177,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 54
+        },
+        {
+          "end_timestep_exclusive": 183,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 177
+        },
+        {
+          "end_timestep_exclusive": 238,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 183
+        },
+        {
+          "end_timestep_exclusive": 356,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 238
+        },
+        {
+          "end_timestep_exclusive": 497,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 356
+        },
+        {
+          "end_timestep_exclusive": 526,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 497
+        },
+        {
+          "end_timestep_exclusive": 636,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 526
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_M_S_2_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 55,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 61,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 55
+        },
+        {
+          "end_timestep_exclusive": 199,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 61
+        },
+        {
+          "end_timestep_exclusive": 205,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 199
+        },
+        {
+          "end_timestep_exclusive": 263,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 205
+        },
+        {
+          "end_timestep_exclusive": 320,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 263
+        },
+        {
+          "end_timestep_exclusive": 354,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 320
+        },
+        {
+          "end_timestep_exclusive": 456,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 354
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_M_S_2_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 45,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 100,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 45
+        },
+        {
+          "end_timestep_exclusive": 162,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 100
+        },
+        {
+          "end_timestep_exclusive": 194,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 162
+        },
+        {
+          "end_timestep_exclusive": 330,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 194
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_S_L_4_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 24,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 29,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 24
+        },
+        {
+          "end_timestep_exclusive": 106,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 29
+        },
+        {
+          "end_timestep_exclusive": 143,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 106
+        },
+        {
+          "end_timestep_exclusive": 193,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 143
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_S_L_4_vertical_n_5.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 106,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 143,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 106
+        },
+        {
+          "end_timestep_exclusive": 183,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 143
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_S_S_7_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 57,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 63,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 57
+        },
+        {
+          "end_timestep_exclusive": 123,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 63
+        },
+        {
+          "end_timestep_exclusive": 184,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 123
+        },
+        {
+          "end_timestep_exclusive": 349,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 184
+        },
+        {
+          "end_timestep_exclusive": 383,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 349
+        },
+        {
+          "end_timestep_exclusive": 418,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 383
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/6_S_S_7_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 65,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 97,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 65
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_L_L_3_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 43,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 102,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 43
+        },
+        {
+          "end_timestep_exclusive": 157,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 102
+        },
+        {
+          "end_timestep_exclusive": 189,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 157
+        },
+        {
+          "end_timestep_exclusive": 218,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 189
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_L_L_3_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 183,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 189,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 183
+        },
+        {
+          "end_timestep_exclusive": 250,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 189
+        },
+        {
+          "end_timestep_exclusive": 306,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 250
+        },
+        {
+          "end_timestep_exclusive": 339,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 306
+        },
+        {
+          "end_timestep_exclusive": 396,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 339
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_L_S_2_horizontal_n_4.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 82,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 88,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 82
+        },
+        {
+          "end_timestep_exclusive": 144,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 88
+        },
+        {
+          "end_timestep_exclusive": 202,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 144
+        },
+        {
+          "end_timestep_exclusive": 239,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 202
+        },
+        {
+          "end_timestep_exclusive": 283,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 239
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_L_S_2_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 25,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 31,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 25
+        },
+        {
+          "end_timestep_exclusive": 65,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 31
+        },
+        {
+          "end_timestep_exclusive": 124,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 65
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_M_L_4_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 43,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 50,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 43
+        },
+        {
+          "end_timestep_exclusive": 115,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 50
+        },
+        {
+          "end_timestep_exclusive": 176,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 115
+        },
+        {
+          "end_timestep_exclusive": 205,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 176
+        },
+        {
+          "end_timestep_exclusive": 278,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 205
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_M_L_4_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 72,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 143,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 72
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_M_S_8_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 46,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 106,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 46
+        },
+        {
+          "end_timestep_exclusive": 164,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 106
+        },
+        {
+          "end_timestep_exclusive": 285,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 164
+        },
+        {
+          "end_timestep_exclusive": 312,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 285
+        },
+        {
+          "end_timestep_exclusive": 359,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 312
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_M_S_8_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 21,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 128,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 21
+        },
+        {
+          "end_timestep_exclusive": 178,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 128
+        },
+        {
+          "end_timestep_exclusive": 228,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 178
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_S_L_6_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 41,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 69,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 41
+        },
+        {
+          "end_timestep_exclusive": 95,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 69
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_S_L_6_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 31,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 37,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 31
+        },
+        {
+          "end_timestep_exclusive": 68,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 37
+        },
+        {
+          "end_timestep_exclusive": 111,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 68
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_S_S_3_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 101,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 158,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 101
+        },
+        {
+          "end_timestep_exclusive": 190,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 158
+        },
+        {
+          "end_timestep_exclusive": 242,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 190
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/7_S_S_3_horizontal_n_1.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 41,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 99,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 41
+        },
+        {
+          "end_timestep_exclusive": 160,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 99
+        },
+        {
+          "end_timestep_exclusive": 196,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 160
+        },
+        {
+          "end_timestep_exclusive": 295,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 196
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_L_L_6_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 46,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 184,
+          "mistakes": [],
+          "note": "Continuous intended reorientation with no slip, drop, repeated attempt, or corrective reversal.",
+          "primitive": "rotate",
+          "quality": 5,
+          "start_timestep": 46
+        },
+        {
+          "end_timestep_exclusive": 190,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 184
+        },
+        {
+          "end_timestep_exclusive": 252,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 190
+        },
+        {
+          "end_timestep_exclusive": 309,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 252
+        },
+        {
+          "end_timestep_exclusive": 345,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 309
+        },
+        {
+          "end_timestep_exclusive": 412,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 345
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_L_L_6_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 50,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 57,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 50
+        },
+        {
+          "end_timestep_exclusive": 120,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 57
+        },
+        {
+          "end_timestep_exclusive": 176,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 120
+        },
+        {
+          "end_timestep_exclusive": 209,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 176
+        },
+        {
+          "end_timestep_exclusive": 264,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 209
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_L_S_4_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 50,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 56,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 50
+        },
+        {
+          "end_timestep_exclusive": 87,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 56
+        },
+        {
+          "end_timestep_exclusive": 165,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 87
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_L_S_4_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 30,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 30
+        },
+        {
+          "end_timestep_exclusive": 68,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 108,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 68
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_M_L_8_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 45,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 101,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 45
+        },
+        {
+          "end_timestep_exclusive": 161,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 101
+        },
+        {
+          "end_timestep_exclusive": 195,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 161
+        },
+        {
+          "end_timestep_exclusive": 266,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 195
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_M_L_8_vertical_y_6.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 43,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 49,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 43
+        },
+        {
+          "end_timestep_exclusive": 74,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 49
+        },
+        {
+          "end_timestep_exclusive": 141,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 74
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_M_S_3_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 55,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 61,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 55
+        },
+        {
+          "end_timestep_exclusive": 116,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 61
+        },
+        {
+          "end_timestep_exclusive": 177,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 116
+        },
+        {
+          "end_timestep_exclusive": 209,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 177
+        },
+        {
+          "end_timestep_exclusive": 253,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 209
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_M_S_3_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 26,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 61,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 26
+        },
+        {
+          "end_timestep_exclusive": 97,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 61
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_S_L_5_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 30,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 30
+        },
+        {
+          "end_timestep_exclusive": 62,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 141,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 62
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_S_L_5_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 27,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 27
+        },
+        {
+          "end_timestep_exclusive": 57,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 85,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 57
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_S_S_1_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 96,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 157,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 96
+        },
+        {
+          "end_timestep_exclusive": 195,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 157
+        },
+        {
+          "end_timestep_exclusive": 253,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 195
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/8_S_S_1_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 28,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 28
+        },
+        {
+          "end_timestep_exclusive": 69,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 145,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 69
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_L_L_4_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 42,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 103,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 42
+        },
+        {
+          "end_timestep_exclusive": 160,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 103
+        },
+        {
+          "end_timestep_exclusive": 194,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 160
+        },
+        {
+          "end_timestep_exclusive": 301,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 194
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_L_L_4_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 30,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 30
+        },
+        {
+          "end_timestep_exclusive": 65,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 113,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 65
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_L_S_1_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 41,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 98,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 41
+        },
+        {
+          "end_timestep_exclusive": 155,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 98
+        },
+        {
+          "end_timestep_exclusive": 191,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 155
+        },
+        {
+          "end_timestep_exclusive": 244,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 191
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_L_S_1_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 46,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 106,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 46
+        },
+        {
+          "end_timestep_exclusive": 168,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 106
+        },
+        {
+          "end_timestep_exclusive": 204,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 168
+        },
+        {
+          "end_timestep_exclusive": 280,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 204
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_M_L_8_vertical_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 29,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 29
+        },
+        {
+          "end_timestep_exclusive": 66,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 240,
+          "mistakes": [],
+          "note": "Dense metric-flagged second look confirms: continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 66
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_M_L_8_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 29,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 35,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 29
+        },
+        {
+          "end_timestep_exclusive": 61,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 35
+        },
+        {
+          "end_timestep_exclusive": 92,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 61
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_M_S_7_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 40,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 95,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 40
+        },
+        {
+          "end_timestep_exclusive": 153,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 95
+        },
+        {
+          "end_timestep_exclusive": 191,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 153
+        },
+        {
+          "end_timestep_exclusive": 248,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 191
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_M_S_7_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 45,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 110,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 45
+        },
+        {
+          "end_timestep_exclusive": 171,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 110
+        },
+        {
+          "end_timestep_exclusive": 202,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 171
+        },
+        {
+          "end_timestep_exclusive": 254,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 202
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_S_L_5_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 34,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 41,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 34
+        },
+        {
+          "end_timestep_exclusive": 99,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 41
+        },
+        {
+          "end_timestep_exclusive": 159,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 99
+        },
+        {
+          "end_timestep_exclusive": 189,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 159
+        },
+        {
+          "end_timestep_exclusive": 249,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 189
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_S_L_5_vertical_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 30,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 36,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 30
+        },
+        {
+          "end_timestep_exclusive": 68,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 36
+        },
+        {
+          "end_timestep_exclusive": 147,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 68
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_S_S_2_horizontal_n_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 33,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 39,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 33
+        },
+        {
+          "end_timestep_exclusive": 98,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 39
+        },
+        {
+          "end_timestep_exclusive": 159,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 98
+        },
+        {
+          "end_timestep_exclusive": 193,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 159
+        },
+        {
+          "end_timestep_exclusive": 242,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 193
+        }
+      ]
+    },
+    {
+      "source_path": "single_object_manipulation_dataset/9_S_S_2_horizontal_y_0.npy",
+      "subtasks": [
+        {
+          "end_timestep_exclusive": 32,
+          "mistakes": [],
+          "note": "Direct continuous approach and secure close with no visible correction, failed close, or target displacement.",
+          "primitive": "grasp",
+          "quality": 5,
+          "start_timestep": 0
+        },
+        {
+          "end_timestep_exclusive": 38,
+          "mistakes": [],
+          "note": "Direct controlled lift with the object retained and no visible slip, drop, or corrective reversal.",
+          "primitive": "move_up",
+          "quality": 5,
+          "start_timestep": 32
+        },
+        {
+          "end_timestep_exclusive": 95,
+          "mistakes": [],
+          "note": "Single continuous transfer and placement onto the fixture with no miss, retry, or visible correction.",
+          "primitive": "place_on_fixture",
+          "quality": 5,
+          "start_timestep": 38
+        },
+        {
+          "end_timestep_exclusive": 156,
+          "mistakes": [],
+          "note": "Direct return and secure regrasp from the fixture with no failed close or repeated attempt.",
+          "primitive": "regrasp",
+          "quality": 5,
+          "start_timestep": 95
+        },
+        {
+          "end_timestep_exclusive": 191,
+          "mistakes": [],
+          "note": "Continuous purposeful transfer to the board with no visible collision, target miss, or corrective reversal.",
+          "primitive": "go_to_board",
+          "quality": 5,
+          "start_timestep": 156
+        },
+        {
+          "end_timestep_exclusive": 229,
+          "mistakes": [],
+          "note": "Continuous alignment and insertion into the matching board opening with no miss, withdrawal, or retry.",
+          "primitive": "insert",
+          "quality": 5,
+          "start_timestep": 191
+        }
+      ]
+    }
+  ],
+  "review_provenance": {
+    "decision": "All 521 intervals were visually reviewed as direct executions under the ReBot rubric; no discrete visible failure event was observed. Metrics only selected dense-review candidates and never assigned labels. Quality distribution was not quota-forced or inferred from expert-source status.",
+    "evidence": [
+      "retained_side_1_side_2_wrist_1_rgb_contact_sheets_for_all_100_episodes",
+      "24_sample_dense_second_look_for_primitive_relative_p05_motion_efficiency_and_p95_duration_flags",
+      "source_native_primitive_boundaries_and_complete_action_lengths"
+    ],
+    "review_date": "2026-08-31",
+    "reviewer": "codex_assisted_visual_review"
+  },
+  "rubric": {
+    "golden_reference_datasets": [
+      "outputs/rebot_val-annotated-v3",
+      "outputs/rebot_shirts_bin-annotated-v2"
+    ],
+    "mistake_scope": "one row per discrete visible failure event; downstream boolean is true only within event spans",
+    "name": "ReBot quality and semantic mistake rubric",
+    "path": "lerobot/pi07_wiki/annotation_rubric.md",
+    "quality_scope": "one integer 1-5 constant over each unchanged source-native primitive interval",
+    "version": "2026-08-02"
+  }
+}
