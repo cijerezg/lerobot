@@ -37,6 +37,8 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.datasets.diverse_pilot import sample_action_chunk
+
 HISTORY_OFFSETS_S = np.asarray([-6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0])
 FUTURE_POINTS = 30
 FUTURE_FPS = 30.0
@@ -156,14 +158,14 @@ class DiverseCorpus:
         state = episode.state
         action = episode.action
         history_frames = np.asarray(row["history_frames"], dtype=np.int64)
-        targets = float(row["anchor_s"]) + np.arange(FUTURE_POINTS) / FUTURE_FPS
-        right = np.clip(np.searchsorted(timestamps, targets, side="left"), 0, len(timestamps) - 1)
-        left = np.clip(right - 1, 0, len(timestamps) - 1)
-        span = timestamps[right] - timestamps[left]
-        weight = np.divide(
-            targets - timestamps[left], span, out=np.zeros_like(targets), where=span != 0
+        # Share the packed view's chunk rule so a 30 Hz source keeps its exact native
+        # samples instead of being interpolated onto its own grid.
+        chunk = sample_action_chunk(
+            timestamps,
+            action,
+            float(row["anchor_s"]),
+            native_rate_hz=episode.native_rate_hz,
         )
-        future = action[left] + weight[:, None] * (action[right] - action[left])
         sample = {
             "episode_id": row["episode_id"],
             "split": row["split"],
@@ -172,10 +174,11 @@ class DiverseCorpus:
             "anchor_s": float(row["anchor_s"]),
             "observation.state": state[history_frames],
             "observation.timestamps": timestamps[history_frames],
-            "action": future,
-            "action.timestamps": targets,
-            "action.interpolated_mask": left != right,
-            "action.source_indices": np.stack([left, right], axis=1),
+            "action": chunk.values,
+            "action.timestamps": chunk.target_timestamps,
+            "action.interpolated_mask": chunk.interpolated_mask,
+            "action.source_indices": chunk.source_indices,
+            "action.source_timestamps": chunk.source_timestamps,
             "action_source": row["action_source"],
             "annotation.subtask": row["subtask"],
             "annotation.quality": row["quality"],

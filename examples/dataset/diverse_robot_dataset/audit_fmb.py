@@ -457,6 +457,9 @@ def action_summary(actions: np.ndarray, fps: float) -> dict[str, Any]:
     differences = np.abs(np.diff(actions.astype(np.float64), axis=0))
     result.update(
         {
+            # A faithful record of the raw release. Note the corpus does NOT train on
+            # this array: it is a normalized [-1, 1] delta with no published scale, so
+            # FMBCorpusEpisode reads the measured joints (q.npy) instead.
             "semantics": "source_commanded_cartesian_xyz_rpy_gripper",
             "native_samples": int(len(actions)),
             "nominal_rate_hz": fps,

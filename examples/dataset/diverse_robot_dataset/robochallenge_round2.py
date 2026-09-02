@@ -55,6 +55,7 @@ def finalize(
     round_root: Path,
     component_root: Path,
     embodiment: str,
+    provenance: Path | None = None,
 ) -> None:
     """Write annotations for the accepted episodes, convert them, and ingest the corpus."""
     slug = f"robochallenge-{embodiment.lower()}-{task.replace('_', '-')}"
@@ -66,6 +67,7 @@ def finalize(
             "--manifest", str(round_root / "candidates.json"),
             "--output-root", str(round_root),
             "--accepted", *[str(index) for index in accepted],
+            *(["--provenance", str(provenance)] if provenance else []),
         ]
     )
     run(
@@ -99,6 +101,11 @@ def main() -> None:
         nargs="+",
         help="Visually accepted episode indices; runs annotations, conversion, and corpus ingest.",
     )
+    parser.add_argument(
+        "--provenance",
+        type=Path,
+        help="JSON file recording who made the accept/reject call; travels into the corpus records.",
+    )
     args = parser.parse_args()
 
     tasks = {item["name"]: item for item in read_json(PRODUCTION_MANIFEST)["tasks"]}
@@ -119,6 +126,7 @@ def main() -> None:
             round_root,
             args.component_root,
             str(tasks[args.task]["embodiment"]),
+            args.provenance,
         )
         return
     exclude = reviewed_episode_indices(review_root)

@@ -30,6 +30,9 @@ class OfflineDatasetSourceConfig:
     weight: float = 1.0
     normalization_source: bool = False
     episodes: list[int] | None = None
+    # Overrides the root's meta/info.json robot_type for the prompt's embodiment clause.
+    # Leave unset unless that field is missing or wrong; see lerobot/datasets/embodiment.py.
+    embodiment: str | None = None
 
     def __post_init__(self) -> None:
         if not self.root:
@@ -66,6 +69,9 @@ class DatasetConfig:
     # Preferred offline-RL collection format. Sources stay as independent datasets and buffers.
     # Exactly one source may provide normalization stats; the first is used when none is marked.
     sources: list[OfflineDatasetSourceConfig] = field(default_factory=list)
+    # Embodiment override for the legacy single-root path; per-source overrides live on
+    # OfflineDatasetSourceConfig. Unset means read the root's meta/info.json robot_type.
+    embodiment: str | None = None
     # Paths to additional offline datasets to merge with the primary dataset
     # (legacy shorthand; use ``sources`` for weights and source-specific repo IDs).
     additional_offline_dataset_paths: list[str] = field(default_factory=list)

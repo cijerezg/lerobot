@@ -620,11 +620,20 @@ def rtc_inference_worker(
                 ):
                     # molmoact2: thread the anchor through the postprocessor so
                     # AnchorDecodeStep reconstructs the absolute action for the robot.
-                    from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY
-                    anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
-                    processed_actions = postprocessor(
-                        {ACTION: original_actions, ANCHOR_KEY: anchor_sq.to(original_actions.device)}
+                    from lerobot.policies.molmoact2.anchor_encoding import (
+                        ANCHOR_KEY,
+                        EMBODIMENT_INDEX_KEY,
                     )
+                    anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
+                    payload = {
+                        ACTION: original_actions,
+                        ANCHOR_KEY: anchor_sq.to(original_actions.device),
+                    }
+                    # Per-embodiment stats: the unnormalizer must gather the same row the
+                    # preprocessor used, else the robot receives another robot's scale.
+                    if EMBODIMENT_INDEX_KEY in processed_batch:
+                        payload[EMBODIMENT_INDEX_KEY] = processed_batch[EMBODIMENT_INDEX_KEY]
+                    processed_actions = postprocessor(payload)
                 else:
                     unnormalized_actions = (
                         postprocessor(original_actions)

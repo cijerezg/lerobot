@@ -172,6 +172,10 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     task_key = {"task": batch["task"]} if "task" in batch else {}
     subtask_key = {"subtask": batch["subtask"]} if "subtask" in batch else {}
     user_prompt_key = {"user_prompt": batch["user_prompt"]} if "user_prompt" in batch else {}
+    embodiment_key = {"embodiment": batch["embodiment"]} if "embodiment" in batch else {}
+    embodiment_index_key = (
+        {"embodiment_index": batch["embodiment_index"]} if "embodiment_index" in batch else {}
+    )
     index_key = {"index": batch["index"]} if "index" in batch else {}
     task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
     episode_index_key = {"episode_index": batch["episode_index"]} if "episode_index" in batch else {}
@@ -182,6 +186,8 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
         **task_key,
         **subtask_key,
         **user_prompt_key,
+        **embodiment_key,
+        **embodiment_index_key,
         **index_key,
         **task_index_key,
         **episode_index_key,

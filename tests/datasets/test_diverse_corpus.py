@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -229,6 +230,17 @@ def test_split_assignment_reserves_validation_and_test_episodes() -> None:
     assert set(four.values()) == {"train", "validation", "test"}
 
 
+def test_accepted_episode_detail_supports_legacy_mapping_and_current_list() -> None:
+    legacy = {"accepted": {"7": {"outcome": "success", "notes": "reviewed"}}}
+    assert build_corpus._accepted_episode_detail(legacy, 7) == {
+        "outcome": "success",
+        "notes": "reviewed",
+    }
+
+    current = {"accepted": [7, 11], "accepted_episode_indices": [7, 11]}
+    assert build_corpus._accepted_episode_detail(current, 7) == {}
+
+
 def test_critic_subsampling_keeps_the_endpoints_and_reports_padding(tmp_path: Path) -> None:
     annotations = _annotations([_keep(0.0, 16.0, "stack the blocks")], 16.0)
     record = _write_episode(tmp_path, "unit__test__ep000006", frames=481, fps=30.0, annotations=annotations)
@@ -291,3 +303,80 @@ def test_interior_source_excluded_span_still_truncates_the_interval(tmp_path: Pa
     rows = build_corpus.critic_intervals(record, tmp_path)
     assert rows[0]["critic_eligible"] is False
     assert rows[0]["critic_rejection_reason"] == "truncated_by_source_range"
+
+
+def test_declared_thirty_hertz_rate_keeps_native_actions_uninterpolated(tmp_path: Path) -> None:
+    from lerobot.datasets.diverse_pilot import sample_action_chunk
+
+    # Float32 timestamps quantize a 30 Hz stream, so the measured rate is 30.0000286 Hz.
+    frames = 481
+    quantized = np.arange(frames, dtype=np.float32) / np.float32(30.0)
+    timestamps = quantized.astype(np.float64)
+    actions = np.stack([timestamps, np.cos(timestamps)], axis=1)
+    measured = 1.0 / float(np.median(np.diff(timestamps)))
+    # The packer's exact-native branch is math.isclose(rate, 30.0, rel_tol=0, abs_tol=1e-6).
+    assert not math.isclose(measured, 30.0, rel_tol=0, abs_tol=1e-6)
+
+    declared = sample_action_chunk(timestamps, actions, 6.0, native_rate_hz=30.0)
+    assert not declared.interpolated_mask.any()
+    measured_chunk = sample_action_chunk(timestamps, actions, 6.0, native_rate_hz=measured)
+    assert measured_chunk.interpolated_mask.sum() == 14
+
+
+def _synthetic_source(path: Path, frames: int, fps: int) -> None:
+    """A moving test pattern: neighbouring frames differ, so an offset is detectable."""
+    import subprocess
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", f"testsrc=size=160x120:rate={fps}:duration={frames / fps}",
+            "-frames:v", str(frames), "-c:v", "libx264", "-crf", "18",
+            "-pix_fmt", "yuv420p", "-g", str(fps), str(path),
+        ],
+        check=True,
+    )
+
+
+def _alignment_record(episode_id: str, source: Path, frames: int, fps: int) -> dict:
+    return {
+        "episode_id": episode_id,
+        "frames": frames,
+        "native_rate_hz": float(fps),
+        "cameras": [
+            {
+                "name": "global",
+                "path": "videos/global.mp4",
+                "height": 120,
+                "width": 160,
+                "source": {"path": str(source), "start_s": 0.0},
+            }
+        ],
+    }
+
+
+def test_alignment_check_catches_a_one_frame_shift(tmp_path: Path, monkeypatch) -> None:
+    frames, fps = 90, 30
+    source = tmp_path / "source.mp4"
+    _synthetic_source(source, frames, fps)
+    monkeypatch.setattr(build_corpus, "DATASET_ROOT", Path("/"))
+
+    directory = tmp_path / "episodes/unit__test__ep000009"
+    good = build_corpus.encode_episode_video(
+        source, directory / "videos/global.mp4", start_s=0.0, frames=frames, fps=float(fps)
+    )
+    assert good["encoded"]["frames"] == frames
+    record = _alignment_record("unit__test__ep000009", source, frames, fps)
+    results = build_corpus.check_video_alignment(record, tmp_path, 3)
+    assert {item["verdict"] for item in results} == {"aligned"}
+
+    # Re-encode one frame late; every sampled frame should now accuse the same offset.
+    shifted = tmp_path / "episodes/unit__test__ep000010"
+    build_corpus.encode_episode_video(
+        source, shifted / "videos/global.mp4", start_s=1.0 / fps, frames=frames - 1, fps=float(fps)
+    )
+    record = _alignment_record("unit__test__ep000010", source, frames - 1, fps)
+    results = build_corpus.check_video_alignment(record, tmp_path, 3)
+    assert [item["verdict"] for item in results] == ["misaligned"] * len(results)
+    assert {item["best_offset"] for item in results} == {1}

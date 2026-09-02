@@ -254,8 +254,7 @@ def assign_splits(files: list[dict[str, Any]]) -> dict[str, str]:
 def summarize_selection(files: list[dict[str, Any]], split_by_path: dict[str, str]) -> dict[str, Any]:
     fields = ("shape", "size", "length", "color", "angle", "distractor")
     counts = {
-        field: dict(sorted(Counter(str(item["object"][field]) for item in files).items()))
-        for field in fields
+        field: dict(sorted(Counter(str(item["object"][field]) for item in files).items())) for field in fields
     }
     geometry_counts = Counter("|".join(geometry_key(item)) for item in files)
     return {
@@ -426,6 +425,101 @@ def actor_accounting(labels: list[str]) -> dict[str, Any]:
     return result
 
 
+def write_actor_views(output_root: Path) -> dict[str, Any]:
+    """Write 5 Hz and 10 Hz reference indexes without copying episode arrays."""
+    metadata_records = read_jsonl(output_root / "episodes.jsonl")
+    summaries = {}
+    for view_name, stride_s in {
+        "5hz": ANCHOR_STRIDES_S["proposed_5hz"],
+        "10hz": ANCHOR_STRIDES_S["proposed_10hz"],
+    }.items():
+        rows = []
+        for metadata in metadata_records:
+            identifier = metadata["episode_id"]
+            labels = labels_from(
+                np.load(output_root / "episodes" / identifier / "primitive.npy", mmap_mode="r")
+            )
+            intervals = metadata["primitive_intervals"]
+            for anchor_s in anchor_times(metadata["frame_count"], stride_s):
+                anchor = min(metadata["frame_count"] - 1, int(round(anchor_s * FPS)))
+                left, right = future_source_indices(float(anchor_s), metadata["frame_count"])
+                used = np.unique(np.concatenate([left, right]))
+                interval = next(
+                    item
+                    for item in intervals
+                    if item["start_timestep"] <= anchor < item["end_timestep_exclusive"]
+                )
+                rows.append(
+                    {
+                        "episode_id": identifier,
+                        "split": metadata["split"],
+                        "source": "fmb",
+                        "component": "single_object_manipulation",
+                        # A Franka, the same robot DROID records; the alias table
+                        # resolves this to "Franka Panda" where "FMB_source_robot"
+                        # resolved to unknown (-1).
+                        "embodiment": "Franka",
+                        "anchor_timestep": anchor,
+                        "anchor_s": float(anchor_s),
+                        "anchor_s_nominal": float(anchor_s),
+                        "history_frames": [
+                            int(round((anchor_s + offset_s) * FPS))
+                            for offset_s in (-6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0)
+                        ],
+                        "history_start_timestep": anchor - int(HISTORY_S * FPS),
+                        "future_end_s_nominal": float(anchor_s + FUTURE_END_S),
+                        "primitive": labels[anchor],
+                        "subtask": interval["normalized_description"],
+                        "quality": interval.get("quality"),
+                        "mistake": any(
+                            event["start_timestep"] <= anchor < event["end_timestep_exclusive"]
+                            for event in interval.get("mistake_events", [])
+                        ),
+                        "primitive_conditioned_future_supported": bool(
+                            labels[anchor] and all(labels[int(item)] == labels[anchor] for item in used)
+                        ),
+                        "retained": True,
+                        "rejection_reasons": [],
+                        # FMB's own commanded action is a normalized [-1, 1] Cartesian
+                        # delta with no recorded scale, so it is dropped in favour of the
+                        # measured joint trajectory; see FMBCorpusEpisode.state.
+                        "action_source": "copy_state",
+                        "source_arrays_reference": f"episodes/{identifier}",
+                        "views_copy_source_arrays": False,
+                        "interpolation_provenance": {
+                            "method": "linear",
+                            "source_rate_hz_nominal": FPS,
+                            "target_rate_hz": FUTURE_FPS,
+                            "target_points": FUTURE_POINTS,
+                            "source_index_rule": ("floor_and_ceil_of_target_time_times_nominal_fps"),
+                            "no_extrapolation": True,
+                        },
+                    }
+                )
+        filename = f"actor_anchors_{view_name}.jsonl"
+        write_jsonl(output_root / filename, rows)
+        summaries[view_name] = {
+            "stride_s": stride_s,
+            "rows": len(rows),
+            "path": filename,
+            "source_frames_duplicated": 0,
+        }
+
+    corpus_path = output_root / "corpus.json"
+    corpus = read_json(corpus_path)
+    derived = corpus["accounting"]["derived_training_rows"]
+    derived["stored_actor_anchor_views"] = summaries
+    derived["stored_actor_anchor_view"] = {
+        "stride": "proposed_10hz",
+        "rows": summaries["10hz"]["rows"],
+        "source_frames_duplicated": 0,
+    }
+    corpus["one_corpus_two_views"]["actor_views"] = {name: item["path"] for name, item in summaries.items()}
+    corpus["one_corpus_two_views"]["actor_view"] = summaries["10hz"]["path"]
+    write_json(corpus_path, corpus)
+    return summaries
+
+
 def load_review(review_root: Path | None, source_path: str) -> dict[tuple[int, int], dict[str, Any]]:
     if review_root is None:
         return {}
@@ -435,10 +529,7 @@ def load_review(review_root: Path | None, source_path: str) -> dict[tuple[int, i
     review = read_json(path)
     if review.get("review_status") != "complete" or review.get("source_path") != source_path:
         raise ValueError(f"Invalid production review artifact: {path}")
-    return {
-        (item["start_timestep"], item["end_timestep_exclusive"]): item
-        for item in review["subtasks"]
-    }
+    return {(item["start_timestep"], item["end_timestep_exclusive"]): item for item in review["subtasks"]}
 
 
 def save_array(path: Path, array: np.ndarray) -> dict[str, Any]:
@@ -473,7 +564,9 @@ def convert(
     critic_records = []
     actor_records = []
     aggregate_actor = {
-        name: Counter({"episode_level_candidate_anchors": 0, "primitive_conditioned_future_candidate_anchors": 0})
+        name: Counter(
+            {"episode_level_candidate_anchors": 0, "primitive_conditioned_future_candidate_anchors": 0}
+        )
         for name in ANCHOR_STRIDES_S
     }
     total_steps = 0
@@ -559,14 +652,10 @@ def convert(
             quality = interval.get("quality")
             if isinstance(quality, int):
                 quality_intervals[quality] += 1
-                quality_timesteps[quality] += (
-                    interval["end_timestep_exclusive"] - interval["start_timestep"]
-                )
+                quality_timesteps[quality] += interval["end_timestep_exclusive"] - interval["start_timestep"]
             for event in interval.get("mistake_events", []):
                 mistake_types[event["mistake_type"]] += 1
-                mistake_timesteps += (
-                    event["end_timestep_exclusive"] - event["start_timestep"]
-                )
+                mistake_timesteps += event["end_timestep_exclusive"] - event["start_timestep"]
             if interval["critic_eligible"]:
                 eligible_intervals += 1
             critic_records.append(
@@ -598,9 +687,7 @@ def convert(
         for name in ANCHOR_STRIDES_S:
             aggregate_actor[name].update(
                 {
-                    "episode_level_candidate_anchors": episode_actor[name][
-                        "episode_level_candidate_anchors"
-                    ],
+                    "episode_level_candidate_anchors": episode_actor[name]["episode_level_candidate_anchors"],
                     "primitive_conditioned_future_candidate_anchors": episode_actor[name][
                         "primitive_conditioned_future_candidate_anchors"
                     ],
@@ -758,15 +845,18 @@ def convert(
 def args_manifest_path_placeholder(output_root: Path) -> Path:
     path = output_root / "source_manifest.json"
     if not path.is_file():
-        raise FileNotFoundError(
-            f"Copy the exact production manifest to {path} before conversion"
-        )
+        raise FileNotFoundError(f"Copy the exact production manifest to {path} before conversion")
     return path
 
 
 def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dict[str, Any]:
     episodes = read_jsonl(output_root / "episodes.jsonl")
-    actor = read_jsonl(output_root / "actor_anchors_10hz.jsonl")
+    actor_views = {
+        "10hz": read_jsonl(output_root / "actor_anchors_10hz.jsonl"),
+    }
+    actor_5hz_path = output_root / "actor_anchors_5hz.jsonl"
+    if actor_5hz_path.is_file():
+        actor_views["5hz"] = read_jsonl(actor_5hz_path)
     critic = read_jsonl(output_root / "critic_intervals.jsonl")
     errors = []
     expected_files = {
@@ -855,22 +945,25 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
 
     if source_paths != set(manifest_by_path):
         errors.append("manifest_episode_set_mismatch")
-    actor_keys = set()
-    for row in actor:
-        key = (row["episode_id"], row["anchor_timestep"])
-        if key in actor_keys:
-            errors.append(f"duplicate_actor_anchor:{key}")
-        actor_keys.add(key)
-        metadata = episode_by_id.get(row["episode_id"])
-        if metadata is None:
-            errors.append(f"actor_unknown_episode:{row['episode_id']}")
-            continue
-        if row["split"] != metadata["split"]:
-            errors.append(f"actor_split_leakage:{row['episode_id']}")
-        try:
-            future_source_indices(float(row["anchor_s_nominal"]), metadata["frame_count"])
-        except ValueError:
-            errors.append(f"actor_extrapolation:{key}")
+    for view_name, actor_rows in actor_views.items():
+        actor_keys = set()
+        for row in actor_rows:
+            key = (row["episode_id"], row["anchor_timestep"])
+            if key in actor_keys:
+                errors.append(f"duplicate_actor_anchor:{view_name}:{key}")
+            actor_keys.add(key)
+            metadata = episode_by_id.get(row["episode_id"])
+            if metadata is None:
+                errors.append(f"actor_unknown_episode:{view_name}:{row['episode_id']}")
+                continue
+            if row["split"] != metadata["split"]:
+                errors.append(f"actor_split_leakage:{view_name}:{row['episode_id']}")
+            if row.get("views_copy_source_arrays") is not False and view_name == "5hz":
+                errors.append(f"actor_view_copy_contract:{view_name}:{row['episode_id']}")
+            try:
+                future_source_indices(float(row["anchor_s_nominal"]), metadata["frame_count"])
+            except ValueError:
+                errors.append(f"actor_extrapolation:{view_name}:{key}")
 
     critic_keys = set()
     for row in critic:
@@ -917,9 +1010,7 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
         if quality is not None and row.get("mistake_assessment") != expected_assessment:
             errors.append(f"critic_mistake_assessment:{key}")
 
-    splits_by_episode = {
-        identifier: metadata["split"] for identifier, metadata in episode_by_id.items()
-    }
+    splits_by_episode = {identifier: metadata["split"] for identifier, metadata in episode_by_id.items()}
     if len(splits_by_episode) != len(set(splits_by_episode)):
         errors.append("split_episode_identity_collision")
     corpus = read_json(output_root / "corpus.json")
@@ -929,8 +1020,12 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
     if accounting.get("unique_synchronized_timesteps_observed") != total_steps:
         errors.append("accounting_timestep_count")
     derived = accounting.get("derived_training_rows", {})
-    if derived.get("stored_actor_anchor_view", {}).get("rows") != len(actor):
+    if derived.get("stored_actor_anchor_view", {}).get("rows") != len(actor_views["10hz"]):
         errors.append("accounting_actor_row_count")
+    stored_views = derived.get("stored_actor_anchor_views", {})
+    for view_name, actor_rows in actor_views.items():
+        if stored_views and stored_views.get(view_name, {}).get("rows") != len(actor_rows):
+            errors.append(f"accounting_actor_row_count:{view_name}")
     if derived.get("candidate_critic_intervals") != len(critic):
         errors.append("accounting_critic_interval_count")
     report = {
@@ -938,7 +1033,8 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
         "errors": errors,
         "validated_episode_count": len(episodes),
         "validated_unique_synchronized_timesteps": total_steps,
-        "validated_actor_rows_10hz": len(actor),
+        "validated_actor_rows_10hz": len(actor_views["10hz"]),
+        "validated_actor_rows_by_view": {name: len(rows) for name, rows in sorted(actor_views.items())},
         "validated_critic_intervals": len(critic),
         "split_episode_counts": dict(sorted(Counter(splits_by_episode.values()).items())),
         "checks": {
@@ -954,12 +1050,9 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
             "counts": len(episodes) == len(manifest["files"])
             and not any(item.startswith("accounting_") for item in errors),
             "raw_to_production_traceability": not any(
-                item.startswith(("source_provenance", "raw_to_production_mismatch"))
-                for item in errors
+                item.startswith(("source_provenance", "raw_to_production_mismatch")) for item in errors
             ),
-            "dropped_modalities_absent": not any(
-                item.startswith("episode_file_schema") for item in errors
-            ),
+            "dropped_modalities_absent": not any(item.startswith("episode_file_schema") for item in errors),
         },
         "raw_to_production_traceability": raw_traceability,
         "raw_staging_removal_allowed": not errors and len(raw_traceability) == len(manifest["files"]),
@@ -985,10 +1078,7 @@ def write_production_audit(
     unreviewed_intervals = candidate_intervals - reviewed_intervals
     labels_path = Path(__file__).resolve().parent / "fmb_production_quality_mistakes.json"
     dense_manifest_path = (
-        output_root.parent
-        / "quality_mistake_review"
-        / "dense_metric_flags"
-        / "manifest.json"
+        output_root.parent / "quality_mistake_review" / "dense_metric_flags" / "manifest.json"
     )
     audit = {
         "status": validation["status"],
@@ -1024,6 +1114,7 @@ def write_production_audit(
                 "validated_episode_count",
                 "validated_unique_synchronized_timesteps",
                 "validated_actor_rows_10hz",
+                "validated_actor_rows_by_view",
                 "validated_critic_intervals",
                 "split_episode_counts",
                 "checks",
@@ -1036,7 +1127,8 @@ def write_production_audit(
             "corpus_sha256": sha256(output_root / "corpus.json"),
             "validation_report": str(output_root / "validation_report.json"),
             "validation_report_sha256": sha256(output_root / "validation_report.json"),
-            "actor_view": str(output_root / "actor_anchors_10hz.jsonl"),
+            "actor_view_5hz": str(output_root / "actor_anchors_5hz.jsonl"),
+            "actor_view_10hz": str(output_root / "actor_anchors_10hz.jsonl"),
             "critic_view": str(output_root / "critic_intervals.jsonl"),
             "production_review_root": str(review_root) if review_root is not None else None,
             "quality_mistake_labels": str(labels_path),
@@ -1054,9 +1146,7 @@ def build_parser() -> argparse.ArgumentParser:
     here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=here / "fmb_production.json")
-    parser.add_argument(
-        "--pilot-manifest", type=Path, default=here / "fmb_pilot.json"
-    )
+    parser.add_argument("--pilot-manifest", type=Path, default=here / "fmb_pilot.json")
     parser.add_argument(
         "--pilot-audit",
         type=Path,
@@ -1082,6 +1172,7 @@ def build_parser() -> argparse.ArgumentParser:
     select_parser.add_argument("--episode-count", type=int, default=100)
     commands.add_parser("acquire")
     commands.add_parser("convert")
+    commands.add_parser("views")
     commands.add_parser("validate")
     commands.add_parser("build")
     return parser
@@ -1093,6 +1184,9 @@ def main() -> None:
         manifest = select_manifest(args.pilot_manifest, args.manifest, args.episode_count)
         print(json.dumps(manifest["selection"], indent=2))
         return
+    if args.command == "views":
+        print(json.dumps(write_actor_views(args.output_root), indent=2))
+        return
     manifest = read_json(args.manifest)
     if args.command in {"acquire", "build"}:
         paths = acquire(manifest, args.raw_root)
@@ -1102,13 +1196,11 @@ def main() -> None:
     if args.command in {"convert", "build"}:
         args.output_root.mkdir(parents=True, exist_ok=True)
         shutil.copy2(args.manifest, args.output_root / "source_manifest.json")
-        converted = convert(
-            manifest, args.raw_root, args.output_root, args.pilot_audit, args.review_root
-        )
-        converted["corpus"]["source_manifest_sha256"] = sha256(
-            args.output_root / "source_manifest.json"
-        )
+        converted = convert(manifest, args.raw_root, args.output_root, args.pilot_audit, args.review_root)
+        converted["corpus"]["source_manifest_sha256"] = sha256(args.output_root / "source_manifest.json")
         write_json(args.output_root / "corpus.json", converted["corpus"])
+        write_actor_views(args.output_root)
+        converted["corpus"] = read_json(args.output_root / "corpus.json")
         print(json.dumps(converted["corpus"]["accounting"], indent=2))
         if args.command == "convert":
             return
@@ -1119,9 +1211,7 @@ def main() -> None:
         corpus["validation_status"] = report["status"]
         corpus["validation_report_sha256"] = sha256(args.output_root / "validation_report.json")
         write_json(corpus_path, corpus)
-        write_production_audit(
-            args.manifest, args.pilot_audit, args.output_root, args.review_root
-        )
+        write_production_audit(args.manifest, args.pilot_audit, args.output_root, args.review_root)
     print(json.dumps(report, indent=2))
     if report["status"] != "passed":
         raise SystemExit(1)

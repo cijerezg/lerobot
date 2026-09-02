@@ -139,7 +139,20 @@ class MolmoAct2RLConfig(MolmoAct2Config):
 
     # Path to precomputed encoded-action stats (.pt file with normalizer stats).
     # Required when action_encoding is "anchor" or "delta"; ignored for absolute.
+    # Mutually exclusive with embodiment_stats_path, which carries the same encoded
+    # action stats but one row per robot.
     action_encoding_stats_path: str | None = None
+
+    # Path to a compute_embodiment_stats.py artifact: state AND encoded-action stats
+    # with one row per embodiment, gathered per sample from the buffer's
+    # embodiment_index. Set this for any run mixing robots — a single pooled row makes
+    # q01/q99 span the union of their workspaces and squashes each robot's own motion.
+    embodiment_stats_path: str | None = None
+
+    # Which robot this policy is deployed on, for runs where no per-sample
+    # embodiment_index exists (rollout, single-robot eval). Names come from
+    # lerobot/datasets/embodiment.py.
+    embodiment: str | None = None
 
     # Per-joint [min, max] limits in degrees, applied after inference reconstruction.
     # None disables clamping.
@@ -153,12 +166,22 @@ class MolmoAct2RLConfig(MolmoAct2Config):
                 f"Unsupported action_encoding={self.action_encoding!r}. "
                 "Expected one of {'absolute', 'anchor', 'delta'}."
             )
-        if self.action_encoding in {"anchor", "delta"}:
+        if self.embodiment_stats_path is not None:
+            if not os.path.exists(os.path.expanduser(self.embodiment_stats_path)):
+                raise ValueError(
+                    f"embodiment_stats_path {self.embodiment_stats_path!r} does not exist."
+                )
+            if self.action_encoding_stats_path is not None:
+                raise ValueError(
+                    "Set embodiment_stats_path or action_encoding_stats_path, not both: the "
+                    "per-embodiment artifact already carries the encoded action stats."
+                )
+        elif self.action_encoding in {"anchor", "delta"}:
             stats_path = self.action_encoding_stats_path
             if not stats_path or not os.path.exists(os.path.expanduser(stats_path)):
                 raise ValueError(
                     f"action_encoding={self.action_encoding!r} requires an existing "
-                    f"action_encoding_stats_path, got {stats_path!r}."
+                    f"action_encoding_stats_path or embodiment_stats_path, got {stats_path!r}."
                 )
 
         if self.action_clamp_limits is not None:

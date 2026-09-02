@@ -274,7 +274,10 @@ class MolmoAct2Trainer(Trainer):
 
         action_stats_override = None
         action_encoding = getattr(cfg.policy, "action_encoding", "absolute")
-        if action_encoding in ("anchor", "delta"):
+        # A per-embodiment artifact carries the encoded action stats for every robot, so
+        # it replaces the single-row override rather than layering on top of it.
+        per_embodiment = bool(getattr(cfg.policy, "embodiment_stats_path", None))
+        if action_encoding in ("anchor", "delta") and not per_embodiment:
             stats_path = getattr(cfg.policy, "action_encoding_stats_path", None)
             if not stats_path or not os.path.exists(os.path.expanduser(stats_path)):
                 raise ValueError(
@@ -303,7 +306,12 @@ class MolmoAct2Trainer(Trainer):
                 result[1].to_transition = policy_action_with_anchor_to_transition
         else:
             if is_main_process:
-                if dataset_stats is not None:
+                if per_embodiment:
+                    logging.info(
+                        "MolmoAct2 stats source: per-embodiment artifact %s",
+                        cfg.policy.embodiment_stats_path,
+                    )
+                elif dataset_stats is not None:
                     logging.info("MolmoAct2 stats source: dataset stats")
                 elif str(getattr(cfg.policy, "norm_tag", "") or "").strip():
                     logging.info(f"MolmoAct2 stats source: norm_tag={cfg.policy.norm_tag!r}")
@@ -311,7 +319,7 @@ class MolmoAct2Trainer(Trainer):
                     logging.info("MolmoAct2 stats source: none")
             result = make_molmoact2_pre_post_processors(
                 config=cfg.policy,
-                dataset_stats=dataset_stats,
+                dataset_stats=None if per_embodiment else dataset_stats,
                 dataset_meta=dataset_meta,
                 action_stats_override=action_stats_override,
             )
@@ -514,12 +522,11 @@ class MolmoAct2Trainer(Trainer):
         TD target: r + γ * V_target(s') * (1 − done)
         Loss: cross-entropy between critic logits and HL-Gauss soft target.
         """
-        from lerobot.rl.buffer import concatenate_batch_transitions
+        from lerobot.rl.buffer import concatenate_variable_dim_batch_transitions
 
         preprocessor = kwargs["preprocessor"]
         grad_accum = int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
         clip_norm = float(getattr(cfg.policy, "optimizer_grad_clip_norm", 1.0))
-        action_dim = self._action_dim(cfg)
         discount = float(getattr(cfg.policy, "discount", 0.97))
 
         optimizers["critic"].zero_grad()
@@ -539,7 +546,7 @@ class MolmoAct2Trainer(Trainer):
             raw = next(online_iter)
             if offline_iter is not None:
                 raw_off = next(offline_iter)
-                raw = concatenate_batch_transitions(raw, raw_off, action_dim=action_dim)
+                raw = concatenate_variable_dim_batch_transitions(raw, raw_off)
             raw = move_transition_to_device(raw, device)
 
             observations = raw.get("state", {})
@@ -568,10 +575,17 @@ class MolmoAct2Trainer(Trainer):
             # semantic goal z; a terminal transition never bootstraps into z'.
             tasks = self._resolve_batch_tasks(raw, cfg.policy.task, rewards.shape[0])
             critic_input: dict[str, Any] = {"task": tasks}
-            if str(getattr(cfg.policy, "critic_reward_mode", "episode")) == "subtask":
-                from lerobot.types import TransitionKey
+            from lerobot.types import TransitionKey
 
-                subtask_index = (raw.get("complementary_info") or {}).get("subtask_index")
+            raw_comp = raw.get("complementary_info") or {}
+            critic_comp: dict[str, Any] = {}
+            # The embodiment clause is unconditional: V(s) must be told which robot it
+            # is valuing whatever the reward mode, or the critic reads a 6-DOF state
+            # through a 7-DOF prompt.
+            if "embodiment_index" in raw_comp:
+                critic_comp["embodiment_index"] = raw_comp["embodiment_index"]
+            if str(getattr(cfg.policy, "critic_reward_mode", "episode")) == "subtask":
+                subtask_index = raw_comp.get("subtask_index")
                 if subtask_index is None or torch.any(torch.as_tensor(subtask_index) < 0):
                     if not getattr(self, "_warned_missing_critic_subtask", False):
                         logging.warning(
@@ -580,7 +594,9 @@ class MolmoAct2Trainer(Trainer):
                         )
                         self._warned_missing_critic_subtask = True
                 else:
-                    critic_input[TransitionKey.COMPLEMENTARY_DATA] = {"subtask_index": subtask_index}
+                    critic_comp["subtask_index"] = subtask_index
+            if critic_comp:
+                critic_input[TransitionKey.COMPLEMENTARY_DATA] = critic_comp
             curr_batch = preprocessor({**observations, **critic_input})
             next_batch = preprocessor({**next_observations, **critic_input})
 
@@ -754,7 +770,13 @@ class MolmoAct2Trainer(Trainer):
         raw_comp = raw_batch.get("complementary_info") or {}
         comp = {
             key: raw_comp[key]
-            for key in ("subtask_index", "metadata_quality", "metadata_mistake", "metadata_speed")
+            for key in (
+                "subtask_index",
+                "embodiment_index",
+                "metadata_quality",
+                "metadata_mistake",
+                "metadata_speed",
+            )
             if key in raw_comp
         }
         if comp:
@@ -810,7 +832,7 @@ class MolmoAct2Trainer(Trainer):
 
         Handles gradient accumulation.  Only the "policy" optimizer is touched here.
         """
-        from lerobot.rl.buffer import concatenate_batch_transitions
+        from lerobot.rl.buffer import concatenate_variable_dim_batch_transitions
         from lerobot.rl.training_runtime import TrainingRuntime
 
         runtime = kwargs.get("training_runtime") or TrainingRuntime(device=device)
@@ -881,7 +903,7 @@ class MolmoAct2Trainer(Trainer):
             raw = next(online_iter)
             if offline_iter is not None:
                 raw_off = next(offline_iter)
-                raw = concatenate_batch_transitions(raw, raw_off, action_dim=action_dim)
+                raw = concatenate_variable_dim_batch_transitions(raw, raw_off)
             raw = move_transition_to_device(raw, device)
 
             observations = raw.get("state", {})
@@ -1194,6 +1216,11 @@ class MolmoAct2Trainer(Trainer):
         # rides as a string; the prompt seam renders it.
         if context.get("subtask"):
             complementary["subtask"] = [context["subtask"]]
+        # Rollouts have no dataset row to read an embodiment index from; the robot's
+        # own configured type is the only source. An unknown spelling renders no
+        # clause rather than a wrong one.
+        if context.get("robot_type"):
+            complementary["embodiment"] = [context["robot_type"]]
         if context.get("metadata") is not None:
             complementary["metadata"] = context["metadata"]
         if complementary:

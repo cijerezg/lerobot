@@ -14,6 +14,7 @@ from lerobot.policies.molmoact2.configuration_molmoact2 import (  # noqa: E402
 )
 from lerobot.policies.molmoact2.processor_molmoact2 import (  # noqa: E402
     MolmoAct2MaskedNormalizerProcessorStep,
+    MolmoAct2UnifiedLayoutProcessorStep,
     _build_robot_text,
 )
 from lerobot.processor.converters import create_transition  # noqa: E402
@@ -46,6 +47,47 @@ def test_legacy_prompt_is_byte_identical_when_memory_off():
 def test_current_subtask_clause():
     prompt = build(current_subtask="grab the far side")
     assert "The current step is grab the far side." in prompt
+
+
+def test_unified_layout_pads_state_history_and_action_without_reordering():
+    step = MolmoAct2UnifiedLayoutProcessorStep(
+state_dim=8, action_dim=8)
+    state = torch.arange(7, dtype=torch.float32)[None]
+    action = torch.arange(6, dtype=torch.float32)[None, None]
+    transition = create_transition(
+        observation={OBS_STATE: state},
+        action=action,
+        complementary_data={"history.observation.state": state[:, None].clone()},
+    )
+
+    packed = step(transition)
+    packed_state = packed[TransitionKey.OBSERVATION][OBS_STATE]
+    packed_action = packed[TransitionKey.ACTION]
+    complementary = packed[TransitionKey.COMPLEMENTARY_DATA]
+
+    assert packed_state.tolist() == [[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0]]
+    assert packed_action.tolist() == [[[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 0.0, 0.0]]]
+    assert complementary["history.observation.state"].tolist() == [
+        [[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0]]
+    ]
+    assert complementary["state_dim_is_pad"].tolist() == [[False] * 7 + [True]]
+    assert complementary["action_dim_is_pad"].tolist() == [[False] * 6 + [True, True]]
+
+
+def test_anchor_encoding_subtracts_state_from_action_in_matching_slots():
+    """Every packed source is joint-space, so the anchor is just the state prefix.
+
+    The old ee guard lived here; it is gone because FMB, its only trigger, now reads
+    measured joints instead of Cartesian deltas.
+    """
+    from lerobot.policies.molmoact2.anchor_encoding import AnchorEncodeStep
+
+    state = torch.arange(7, dtype=torch.float32)[None]
+    action = torch.arange(7, dtype=torch.float32)[None, None].repeat(1, 2, 1) + 3.0
+    transition = create_transition(observation={OBS_STATE: state}, action=action)
+
+    encoded = AnchorEncodeStep("anchor")(transition)[TransitionKey.ACTION]
+    assert encoded.tolist() == [[[3.0] * 7, [3.0] * 7]]
 
 
 def test_metadata_clause_partial_rendering():

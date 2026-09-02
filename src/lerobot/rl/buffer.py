@@ -31,7 +31,7 @@ import torchvision.transforms.functional as F_vision
 from tqdm import tqdm
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, REWARD
+from lerobot.utils.constants import ACTION, DONE, OBS_IMAGE, OBS_STATE, REWARD
 from lerobot.utils.transition import Transition
 
 logger = logging.getLogger(__name__)
@@ -1641,3 +1641,72 @@ def concatenate_batch_transitions(
              left_info[key] = torch.cat([left_val, padding], dim=0)
 
     return left_batch_transitions
+
+
+def concatenate_variable_dim_batch_transitions(
+    left_batch: BatchTransition,
+    right_batch: BatchTransition,
+) -> BatchTransition:
+    """Concatenate batches while preserving each sample's state/action DoF.
+
+    Low-dimensional vectors are right-padded to the largest width in this pair.
+    ``*_dim_is_pad`` is captured before padding, independently for state and action,
+    and later consumed by MolmoAct2's width-unifying layout step and action loss.
+    Values keep their source order throughout; only the width is made uniform.
+    """
+
+    def pad_last(tensor: torch.Tensor, width: int, value: float | bool = 0) -> torch.Tensor:
+        amount = width - int(tensor.shape[-1])
+        return tensor if amount == 0 else F.pad(tensor, (0, amount), value=value)
+
+    def info(batch: BatchTransition) -> dict:
+        existing = batch.get("complementary_info")
+        if existing is None:
+            existing = {}
+            batch["complementary_info"] = existing
+        return existing
+
+    def preserve_mask(batch: BatchTransition, key: str, width: int, native_width: int) -> None:
+        complementary = info(batch)
+        mask = complementary.get(key)
+        batch_size = int(batch["reward"].shape[0])
+        if mask is None:
+            mask = torch.zeros(
+                (batch_size, native_width), dtype=torch.bool, device=batch[ACTION].device
+            )
+        else:
+            mask = torch.as_tensor(mask, dtype=torch.bool)
+            if mask.ndim == 1:
+                mask = mask.unsqueeze(0)
+            if mask.shape[0] == 1 and batch_size > 1:
+                mask = mask.expand(batch_size, -1)
+            if tuple(mask.shape) != (batch_size, native_width):
+                raise ValueError(
+                    f"{key} shape {tuple(mask.shape)} does not match batch/native width "
+                    f"{(batch_size, native_width)}."
+                )
+        complementary[key] = pad_last(mask, width, value=True)
+
+    left_action_width = int(left_batch[ACTION].shape[-1])
+    right_action_width = int(right_batch[ACTION].shape[-1])
+    action_width = max(left_action_width, right_action_width)
+    preserve_mask(left_batch, "action_dim_is_pad", action_width, left_action_width)
+    preserve_mask(right_batch, "action_dim_is_pad", action_width, right_action_width)
+    left_batch[ACTION] = pad_last(left_batch[ACTION], action_width)
+    right_batch[ACTION] = pad_last(right_batch[ACTION], action_width)
+
+    if OBS_STATE in left_batch["state"] and OBS_STATE in right_batch["state"]:
+        left_state_width = int(left_batch["state"][OBS_STATE].shape[-1])
+        right_state_width = int(right_batch["state"][OBS_STATE].shape[-1])
+        state_width = max(left_state_width, right_state_width)
+        preserve_mask(left_batch, "state_dim_is_pad", state_width, left_state_width)
+        preserve_mask(right_batch, "state_dim_is_pad", state_width, right_state_width)
+        for batch in (left_batch, right_batch):
+            batch["state"][OBS_STATE] = pad_last(batch["state"][OBS_STATE], state_width)
+            batch["next_state"][OBS_STATE] = pad_last(batch["next_state"][OBS_STATE], state_width)
+            complementary = info(batch)
+            history_key = f"history.{OBS_STATE}"
+            if history_key in complementary:
+                complementary[history_key] = pad_last(complementary[history_key], state_width)
+
+    return concatenate_batch_transitions(left_batch, right_batch, action_dim=action_width)

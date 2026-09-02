@@ -4,7 +4,7 @@ import json
 import os
 import random
 import re
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +16,12 @@ from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.datasets.embodiment import (
+    EMBODIMENT_NAMES,
+    canonical_embodiment,
+    embodiment_article,
+    embodiment_name,
+)
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -40,13 +46,14 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.import_utils import require_package
 
-from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
+from .action_layout import require_prefix_valid_mask, trim_to_native, valid_dim_mask
 from .anchor_encoding import (
     ANCHOR_KEY,
     AnchorDecodeStep,
     AnchorEncodeStep,
     policy_action_with_anchor_to_transition,
 )
+from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
 
 _FAST_BIN_PROBE_LIMIT = 2048  # FAST bin values are c - min_token; nothing legitimate exceeds this
 
@@ -228,6 +235,7 @@ def _build_robot_text(
     task: str,
     discrete_state_string: str,
     num_images: int,
+    embodiment: str | None = None,
     current_subtask: str | None = None,
     metadata: dict[str, Any] | None = None,
     num_history_states: int = 0,
@@ -243,7 +251,18 @@ def _build_robot_text(
     num_depth_tokens: point-map depth tokens rendered as DEPTH_TOKEN placeholders,
     row-major like the encoder's patch grid. The clause sits immediately after the
     task so the depth span is as close as the prompt layout allows to the image
-    patches it describes."""
+    patches it describes.
+
+    embodiment: which robot recorded this sample. It leads the prompt because it
+    conditions how everything after it is read — the state tokens are a 6-DOF arm's
+    or a 7-DOF arm's, and every state vector pads to max_state_dim either way, so
+    the clause is the only thing distinguishing them. None omits it (byte-identical
+    legacy prompt). Unlike the subtask and metadata clauses it gets NO training
+    dropout: those describe things unavailable at inference, while the embodiment is
+    always known, so dropping it would only teach the model to ignore it."""
+    embodiment_clause = (
+        f"The robot is {embodiment_article(embodiment)} {embodiment}. " if embodiment else ""
+    )
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
@@ -268,7 +287,8 @@ def _build_robot_text(
         if "speed" in metadata:
             metadata_clause += f" The speed is {metadata['speed']}."
     prompt = (
-        f"The task is to {task}.{depth_clause}{subtask_clause}{state_clause}{history_clause}"
+        f"{embodiment_clause}The task is to {task}."
+        f"{depth_clause}{subtask_clause}{state_clause}{history_clause}"
         f"{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
     )
@@ -286,16 +306,20 @@ def _build_subtask_generation_text(
     task: str,
     discrete_state_string: str,
     num_images: int,
+    embodiment: str | None = None,
 ) -> str:
     """Generation prompt (two-prompt design): same visual/state context as the action
     prompt, but the question asks for the next step. The assistant's answer is the
     subtask alone; at training time the caller appends it (+eos) and puts CE labels
     on it."""
+    embodiment_clause = (
+        f"The robot is {embodiment_article(embodiment)} {embodiment}. " if embodiment else ""
+    )
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
     prompt = (
-        f"The task is to {task}.{state_clause} "
+        f"{embodiment_clause}The task is to {task}.{state_clause} "
         f"Given these, what step should the robot perform next?"
     )
     if num_images <= 0:
@@ -492,6 +516,58 @@ def _feature_names_from_meta(dataset_meta: Any | None, feature_key: str) -> list
     return None
 
 
+EMBODIMENT_STATS_FORMAT = "embodiment_stats_v2"
+EMBODIMENT_STATS_LAYOUT = "native_source_order_v1"
+
+
+def load_embodiment_stats(path: str, *, encoding: str, chunk_size: int) -> dict[str, Any]:
+    """Read a compute_embodiment_stats.py artifact, checking it describes this pipeline.
+
+    The stats must be for the SAME action encoding and horizon the pipeline runs: anchor
+    quantiles say nothing about absolute actions, and a 30-step artifact cannot normalize
+    a 50-step chunk. Both mismatches are silent at runtime, so they are errors here.
+    """
+    payload = torch.load(os.path.expanduser(path), map_location="cpu", weights_only=False)
+    if not isinstance(payload, dict) or payload.get("format") != EMBODIMENT_STATS_FORMAT:
+        raise ValueError(
+            f"{path} is not a {EMBODIMENT_STATS_FORMAT} artifact "
+            f"(got format={payload.get('format') if isinstance(payload, dict) else type(payload).__name__!r}). "
+            "Regenerate it with lerobot/src/lerobot/scripts/compute_embodiment_stats.py."
+        )
+    if str(payload.get("encoding")) != str(encoding):
+        raise ValueError(
+            f"{path} holds {payload.get('encoding')!r} stats but the policy runs "
+            f"action_encoding={encoding!r}."
+        )
+    if payload.get("layout") != EMBODIMENT_STATS_LAYOUT:
+        raise ValueError(
+            f"{path} has layout={payload.get('layout')!r}, expected {EMBODIMENT_STATS_LAYOUT!r}. "
+            "Regenerate it so state/action statistics are computed in source order."
+        )
+    if int(payload.get("action_width", 0)) < 1 or int(payload.get("state_width", 0)) < 1:
+        raise ValueError(f"{path} must declare positive action_width and state_width values.")
+    if int(payload.get("chunk_size", -1)) != int(chunk_size):
+        raise ValueError(
+            f"{path} holds chunk_size={payload.get('chunk_size')} but the policy runs "
+            f"chunk_size={chunk_size}."
+        )
+    names = list(payload.get("embodiments") or [])
+    if not names:
+        raise ValueError(f"{path} declares no embodiments.")
+    return payload
+
+
+def _stacked_stats_from_artifact(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Artifact -> the stats mapping the normalizer steps consume.
+
+    Tensors keep their leading embodiment axis; the mixin gathers a row per sample.
+    """
+    stats: dict[str, dict[str, Any]] = {}
+    for key, entries in (payload.get("stats") or {}).items():
+        stats[key] = dict(entries)
+    return stats
+
+
 def _add_gripper_masks_to_stats(
     dataset_stats: dict[str, dict[str, Any]] | None,
     dataset_meta: Any | None,
@@ -511,6 +587,14 @@ def _add_gripper_masks_to_stats(
         if dim is None:
             continue
 
+        # A per-embodiment artifact ships its own [E, D] mask marking each robot's real
+        # dims. Replacing it with a flat row here would un-mask every robot's padding.
+        existing = feature_stats.get("mask")
+        if torch.is_tensor(existing) and existing.ndim > 1:
+            continue
+        if isinstance(existing, list) and existing and isinstance(existing[0], (list, tuple)):
+            continue
+
         if normalize_gripper:
             feature_stats["mask"] = [True] * dim
             continue
@@ -528,28 +612,277 @@ def _add_gripper_masks_to_stats(
     return stats
 
 
+def _align_mask(mask: Tensor, tensor: Tensor) -> Tensor:
+    """Broadcast a [D] or [B, D] mask against `tensor`, aligning on the last axis.
+
+    A per-embodiment mask is per-sample ([B, D]), so its leading axis must stay on the
+    batch axis and the horizon axis gets inserted between them — unsqueezing at the
+    front like the shared [D] case would silently align the batch against the horizon.
+    """
+    if mask.ndim == 1:
+        while mask.ndim < tensor.ndim:
+            mask = mask.unsqueeze(0)
+        return mask
+    while mask.ndim < tensor.ndim:
+        mask = mask.unsqueeze(1)
+    return mask
+
+
+def _dimension_mask(
+    complementary: dict[str, Any], key: str, tensor: Tensor, batch_size: int
+) -> Tensor:
+    raw = complementary.get(key)
+    if raw is None:
+        return valid_dim_mask(batch_size, int(tensor.shape[-1]), int(tensor.shape[-1]), device=tensor.device)
+    mask = torch.as_tensor(raw, dtype=torch.bool, device=tensor.device)
+    if mask.ndim == 1:
+        mask = mask.unsqueeze(0)
+    if mask.shape[0] == 1 and batch_size > 1:
+        mask = mask.expand(batch_size, -1)
+    if tuple(mask.shape) != (batch_size, int(tensor.shape[-1])):
+        raise ValueError(
+            f"{key} must have shape {(batch_size, int(tensor.shape[-1]))}, got {tuple(mask.shape)}."
+        )
+    return mask
+
+
+def _pad_lowdim(tensor: Tensor, mask: Tensor, width: int | None, key: str) -> tuple[Tensor, Tensor]:
+    if width is None or int(tensor.shape[-1]) == width:
+        return tensor, mask
+    if int(tensor.shape[-1]) > width:
+        raise ValueError(f"{key} width {tensor.shape[-1]} exceeds configured canonical width {width}.")
+    padded = torch.zeros((*tensor.shape[:-1], width), dtype=tensor.dtype, device=tensor.device)
+    padded[..., : tensor.shape[-1]] = tensor
+    padded_mask = torch.ones((mask.shape[0], width), dtype=torch.bool, device=mask.device)
+    padded_mask[:, : mask.shape[-1]] = mask
+    return padded, padded_mask
+
+
+@ProcessorStepRegistry.register(name="molmoact2_unified_layout")
+@dataclass
+class MolmoAct2UnifiedLayoutProcessorStep(ProcessorStep):
+    """Give state, state history, and actions a shared width, not a shared order.
+
+    Values pass through in source order -- the gripper stays wherever its robot
+    records it. What is unified is the width: each vector is right-padded to the
+    configured canonical width and the fill is recorded in a prefix-valid
+    ``*_dim_is_pad`` mask. State and action masks remain separate because their
+    native widths need not be identical.
+    """
+
+    state_dim: int | None = None
+    action_dim: int | None = None
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        transition = transition.copy()
+        observation = transition.get(TransitionKey.OBSERVATION)
+        action = transition.get(TransitionKey.ACTION)
+        complementary = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+
+        reference = action
+        if reference is None and isinstance(observation, dict):
+            reference = observation.get(OBS_STATE)
+        if reference is None:
+            return transition
+        reference = torch.as_tensor(reference)
+        batch_size = int(reference.shape[0])
+
+        state_mask = None
+        if isinstance(observation, dict) and OBS_STATE in observation:
+            observation = observation.copy()
+            state = torch.as_tensor(observation[OBS_STATE])
+            state_mask = _dimension_mask(complementary, "state_dim_is_pad", state, batch_size)
+            state, state_mask = _pad_lowdim(state, state_mask, self.state_dim, OBS_STATE)
+            state_mask = require_prefix_valid_mask(state_mask, "state_dim_is_pad")
+            observation[OBS_STATE] = state
+            complementary["state_dim_is_pad"] = state_mask
+            transition[TransitionKey.OBSERVATION] = observation
+
+        history_key = f"history.{OBS_STATE}"
+        if history_key in complementary:
+            history = torch.as_tensor(complementary[history_key])
+            if state_mask is None:
+                state_mask = _dimension_mask(complementary, "state_dim_is_pad", history, batch_size)
+                history, state_mask = _pad_lowdim(
+                    history, state_mask, self.state_dim, history_key
+                )
+                state_mask = require_prefix_valid_mask(state_mask, "state_dim_is_pad")
+                complementary["state_dim_is_pad"] = state_mask
+            elif self.state_dim is not None and int(history.shape[-1]) != self.state_dim:
+                history, _ = _pad_lowdim(history, state_mask, self.state_dim, history_key)
+            if int(history.shape[-1]) != int(state_mask.shape[-1]):
+                raise ValueError(
+                    f"{history_key} width {history.shape[-1]} does not match state mask "
+                    f"width {state_mask.shape[-1]}."
+                )
+            complementary[history_key] = history
+
+        if action is not None:
+            action = torch.as_tensor(action)
+            action_mask = _dimension_mask(complementary, "action_dim_is_pad", action, batch_size)
+            action, action_mask = _pad_lowdim(action, action_mask, self.action_dim, ACTION)
+            action_mask = require_prefix_valid_mask(action_mask, "action_dim_is_pad")
+            transition[TransitionKey.ACTION] = action
+            complementary["action_dim_is_pad"] = action_mask
+
+        transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@ProcessorStepRegistry.register(name="molmoact2_restore_action_layout")
+@dataclass
+class MolmoAct2RestoreActionLayoutProcessorStep(ProcessorStep):
+    """Cut the policy's padded output back to the deployed robot's own width.
+
+    The policy emits values in the robot's source order, so this is a slice and not
+    an inverse permutation.
+    """
+
+    native_action_dim: int
+
+    def __post_init__(self) -> None:
+        if self.native_action_dim < 1:
+            raise ValueError(f"native_action_dim must be positive, got {self.native_action_dim}.")
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        transition = transition.copy()
+        action = transition.get(TransitionKey.ACTION)
+        if action is not None:
+            transition[TransitionKey.ACTION] = trim_to_native(
+                torch.as_tensor(action), native_dim=self.native_action_dim
+            )
+        return transition
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
 class _MolmoAct2MaskedNormalizationMixin:
+    """Masked normalization, optionally with one stats row per embodiment.
+
+    When ``embodiment_names`` is non-empty, every tensor in ``_tensor_stats`` carries a
+    leading embodiment axis (``[E, D]`` for state, ``[E, T, D]`` for an action chunk)
+    and the row for each sample is gathered from the ``embodiment_index`` the replay
+    buffer carries. Keeping the stacked stats inside ``_tensor_stats`` rather than a
+    parallel attribute is what makes them survive ``state_dict``/``load_state_dict``,
+    so a checkpoint reloads the per-embodiment stats it trained with.
+
+    Empty ``embodiment_names`` is the legacy path: one shared stats row, untouched.
+    """
+
+    # Set for the duration of one pipeline call by _with_embodiment_indices; the base
+    # class's _apply_transform signature has no room for per-sample context.
+    _active_embodiment_indices: Any = None
+
+    @contextmanager
+    def _with_embodiment_indices(self, transition: Any):
+        """Expose this transition's embodiment_index to _apply_transform."""
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) if transition else None
+        indices = complementary.get("embodiment_index") if isinstance(complementary, dict) else None
+        previous = self._active_embodiment_indices
+        self._active_embodiment_indices = indices
+        try:
+            yield
+        finally:
+            self._active_embodiment_indices = previous
+
+    def _embodiment_rows(self, tensor: Tensor) -> Tensor | None:
+        """Per-sample stats rows, or None on the legacy shared-stats path."""
+        if not getattr(self, "embodiment_names", None):
+            return None
+        batch_size = int(tensor.shape[0]) if tensor.ndim > 1 else 1
+        indices = self._active_embodiment_indices
+        if indices is None:
+            default = int(getattr(self, "default_embodiment_index", -1))
+            if default < 0:
+                raise ValueError(
+                    "Per-embodiment normalization is active but this batch carries no "
+                    "'embodiment_index'. Materialize it (materialize_dataset_labels), pass it "
+                    "through the postprocessor payload, or set default_embodiment_index for a "
+                    "single-robot deployment."
+                )
+            rows = torch.full((batch_size,), default, dtype=torch.long)
+        else:
+            rows = torch.as_tensor(indices).detach().reshape(-1).long()
+            if rows.numel() == 1 and batch_size > 1:
+                rows = rows.expand(batch_size)
+        if int(rows.min()) < 0:
+            unknown = sorted({int(v) for v in rows.tolist() if v < 0})
+            raise ValueError(
+                f"Per-embodiment normalization received unknown embodiment index/indices {unknown}. "
+                "Normalizing an unlabelled robot with another robot's stats is exactly the error "
+                "this path exists to prevent; label the source or add its robot to "
+                "lerobot/datasets/embodiment.py."
+            )
+        if int(rows.max()) >= len(self.embodiment_names):
+            raise ValueError(
+                f"embodiment_index {int(rows.max())} is outside this checkpoint's vocabulary of "
+                f"{len(self.embodiment_names)} embodiments ({self.embodiment_names}). The stats "
+                "artifact and the buffer labels disagree."
+            )
+        return rows.to(tensor.device)
+
     def _apply_transform(
         self, tensor: Tensor, key: str, feature_type: Any, *, inverse: bool = False
     ) -> Tensor:
-        transformed = super()._apply_transform(tensor, key, feature_type, inverse=inverse)
         stats = getattr(self, "_tensor_stats", {}).get(key, {})
+        rows = self._embodiment_rows(tensor) if isinstance(stats, dict) else None
+
+        if rows is not None and stats:
+            # Gather this batch's rows onto the tensor's device/dtype BEFORE calling the
+            # base transform: it re-runs self.to() whenever the stats device or dtype
+            # differs from the input, which would rebuild _tensor_stats from self.stats
+            # and undo the swap below.
+            gathered = {
+                name: value[rows].to(device=tensor.device, dtype=tensor.dtype)
+                if isinstance(value, Tensor) and value.shape[0] == len(self.embodiment_names)
+                else value
+                for name, value in stats.items()
+            }
+            saved = self._tensor_stats[key]
+            self._tensor_stats[key] = gathered
+            try:
+                transformed = super()._apply_transform(tensor, key, feature_type, inverse=inverse)
+            finally:
+                self._tensor_stats[key] = saved
+            stats = gathered
+        else:
+            transformed = super()._apply_transform(tensor, key, feature_type, inverse=inverse)
 
         mask = stats.get("mask") if isinstance(stats, dict) else None
         if mask is None:
             return transformed
         mask = mask.to(device=tensor.device, dtype=torch.bool)
-        if mask.ndim != 1 or tensor.shape[-1] != mask.shape[0]:
+        if tensor.shape[-1] != mask.shape[-1]:
             return transformed
-        while mask.ndim < tensor.ndim:
-            mask = mask.unsqueeze(0)
-        return torch.where(mask, transformed, tensor)
+        return torch.where(_align_mask(mask, tensor), transformed, tensor)
 
 
 @ProcessorStepRegistry.register(name="molmoact2_masked_normalizer")
 @dataclass
 class MolmoAct2MaskedNormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin, NormalizerProcessorStep):
+    # Non-empty => _tensor_stats carries a leading embodiment axis (see the mixin).
+    embodiment_names: list[str] = field(default_factory=list)
+    default_embodiment_index: int = -1
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
+        with self._with_embodiment_indices(transition):
+            return self._call_inner(transition)
+
+    def get_config(self) -> dict[str, Any]:
+        config = super().get_config()
+        config["embodiment_names"] = list(self.embodiment_names)
+        config["default_embodiment_index"] = int(self.default_embodiment_index)
+        return config
+
+    def _call_inner(self, transition: EnvTransition) -> EnvTransition:
         """The base normalizer only touches OBSERVATION/ACTION; the short-term-memory
         history window rides in COMPLEMENTARY_DATA (batch_to_transition routes any
         "history.*" key there), so without this it would reach the prompt as raw
@@ -601,19 +934,40 @@ class MolmoAct2MaskedNormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin,
 @ProcessorStepRegistry.register(name="molmoact2_masked_unnormalizer")
 @dataclass
 class MolmoAct2MaskedUnnormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin, UnnormalizerProcessorStep):
-    pass
+    """Inverse of the normalizer, and it must gather the SAME per-embodiment row.
+
+    The postprocessor runs on a PolicyAction, so the embodiment index only reaches here
+    if the caller puts it in the payload (policy_action_with_anchor_to_transition
+    forwards it) or default_embodiment_index is set for a single-robot deployment.
+    Unnormalizing with the wrong row returns actions at the wrong scale, silently.
+    """
+
+    embodiment_names: list[str] = field(default_factory=list)
+    default_embodiment_index: int = -1
+
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        with self._with_embodiment_indices(transition):
+            return super().__call__(transition)
+
+    def get_config(self) -> dict[str, Any]:
+        config = super().get_config()
+        config["embodiment_names"] = list(self.embodiment_names)
+        config["default_embodiment_index"] = int(self.default_embodiment_index)
+        return config
 
 
-def _masked_clamp(tensor: Tensor, mask: list[bool] | None) -> Tensor:
+def _masked_clamp(tensor: Tensor, mask: list[bool] | Tensor | None) -> Tensor:
     """Clamp to [-1, 1] only on dimensions where mask is True (normalized dims).
-    Dims where mask is False are in raw units (e.g. raw degrees) and must not be clamped."""
+    Dims where mask is False are in raw units (e.g. raw degrees) and must not be clamped.
+    A per-embodiment mask arrives already gathered, as [B, D]."""
     t = torch.as_tensor(tensor)
     if mask is None:
         return t.clamp(-1.0, 1.0)
-    m = torch.tensor(mask, dtype=torch.bool, device=t.device)
-    while m.ndim < t.ndim:
-        m = m.unsqueeze(0)
-    return torch.where(m, t.clamp(-1.0, 1.0), t)
+    m = mask if isinstance(mask, Tensor) else torch.tensor(mask, dtype=torch.bool)
+    m = m.to(device=t.device, dtype=torch.bool)
+    if t.shape[-1] != m.shape[-1]:
+        return t
+    return torch.where(_align_mask(m, t), t.clamp(-1.0, 1.0), t)
 
 
 @ProcessorStepRegistry.register(name="molmoact2_clamp_normalized")
@@ -625,22 +979,58 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
 
     action_mask: list[bool] | None = None
     state_mask: list[bool] | None = None
+    # Per-embodiment masks, one row per entry of embodiment_names. Robots differ in DOF,
+    # so the padded dims that must escape the [-1, 1] clamp differ per sample too — a
+    # single shared mask would clamp a 7-DOF robot's padding as if it were real.
+    action_masks: list[list[bool]] | None = None
+    state_masks: list[list[bool]] | None = None
+
+    def _rows(self, transition: EnvTransition, tensor: Any) -> Tensor | None:
+        if not self.action_masks and not self.state_masks:
+            return None
+        complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA)
+        indices = complementary.get("embodiment_index") if isinstance(complementary, dict) else None
+        if indices is None:
+            return None
+        rows = torch.as_tensor(indices).detach().cpu().reshape(-1).long()
+        batch_size = int(torch.as_tensor(tensor).shape[0])
+        if rows.numel() == 1 and batch_size > 1:
+            rows = rows.expand(batch_size)
+        return rows
+
+    @staticmethod
+    def _gather(
+        masks: list[list[bool]] | None, rows: Tensor | None, fallback: list[bool] | None
+    ) -> list[bool] | Tensor | None:
+        """Per-sample mask rows, falling back to the shared mask when unavailable."""
+        if masks is None or rows is None:
+            return fallback
+        table = torch.tensor(masks, dtype=torch.bool)
+        return table[rows.clamp(min=0)]
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
         observation = transition.get(TransitionKey.OBSERVATION)
         if isinstance(observation, dict) and OBS_STATE in observation:
             observation = observation.copy()
-            observation[OBS_STATE] = _masked_clamp(observation[OBS_STATE], self.state_mask)
+            rows = self._rows(transition, observation[OBS_STATE])
+            observation[OBS_STATE] = _masked_clamp(
+                observation[OBS_STATE], self._gather(self.state_masks, rows, self.state_mask)
+            )
             transition[TransitionKey.OBSERVATION] = observation
         action = transition.get(TransitionKey.ACTION)
         if action is not None:
-            transition[TransitionKey.ACTION] = _masked_clamp(action, self.action_mask)
+            rows = self._rows(transition, action)
+            transition[TransitionKey.ACTION] = _masked_clamp(
+                action, self._gather(self.action_masks, rows, self.action_mask)
+            )
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA)
         if isinstance(complementary, dict) and ACTION_HOLD_KEY in complementary:
+            hold = complementary[ACTION_HOLD_KEY]
+            rows = self._rows(transition, hold)
             complementary = dict(complementary)
             complementary[ACTION_HOLD_KEY] = _masked_clamp(
-                complementary[ACTION_HOLD_KEY], self.action_mask
+                hold, self._gather(self.action_masks, rows, self.action_mask)
             )
             transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
@@ -662,10 +1052,8 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     discrete_action_tokenizer: str = "allenai/MolmoAct2-FAST-Tokenizer"
     image_keys: list[str] = field(default_factory=list)
     normalize_language: bool = True
-    # Accepted and ignored: present in processor configs saved before the setup/control
-    # prompt clauses were removed (2026-07-22), and saved configs load as raw kwargs.
+    # setup_type remains parse-only compatibility.
     setup_type: str = ""
-    control_mode: str = ""
     add_setup_tokens: bool = True
     add_control_tokens: bool = True
     num_state_tokens: int = 256
@@ -681,6 +1069,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     subtask_names: list[str] = field(default_factory=list)
     subtask_dropout: float = 0.0
     metadata_dropout: float = 0.0
+    # Embodiment clause vocabulary: index → prompt name, pinned into the saved config
+    # so a checkpoint renders through the vocabulary it trained with even after
+    # lerobot/datasets/embodiment.py grows new robots. No dropout knob on purpose —
+    # the embodiment is known at inference, so hiding it only teaches the model to
+    # ignore it (see _build_robot_text).
+    embodiment_names: list[str] = field(default_factory=lambda: list(EMBODIMENT_NAMES))
     # Short-term memory (04_memory.md §2.4): state history becomes continuous
     # placeholder tokens, image history rides to the MEM video encoder as tensors
     # (complementary keys "history.{OBS_STATE}" / "history.{OBS_IMAGES}.{cam}").
@@ -752,6 +1146,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "max_action_dim": self.max_action_dim,
             "env_action_dim": self.env_action_dim,
             "subtask_names": list(self.subtask_names),
+            "embodiment_names": list(self.embodiment_names),
             "subtask_dropout": self.subtask_dropout,
             "metadata_dropout": self.metadata_dropout,
             "history_dropout": self.history_dropout,
@@ -838,7 +1233,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             raise ValueError(f"State batch size {state.shape[0]} does not match batch size {batch_size}.")
         return state
 
-    def _pad_action(self, action: Tensor, action_is_pad: Any | None) -> tuple[Tensor, Tensor, Tensor]:
+    def _pad_action(
+        self,
+        action: Tensor,
+        action_is_pad: Any | None,
+        action_dim_is_pad: Any | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor]:
         if action.ndim == 2:
             action = action.unsqueeze(1)
         if action.ndim != 3:
@@ -853,10 +1253,23 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             dtype=torch.float32,
         )
         padded[..., : action.shape[-1]] = action.to(dtype=torch.float32)
-        action_dim_is_pad = torch.ones(
+        padded_dim_is_pad = torch.ones(
             (action.shape[0], self.max_action_dim), device=action.device, dtype=torch.bool
         )
-        action_dim_is_pad[:, : action.shape[-1]] = False
+        if action_dim_is_pad is None:
+            padded_dim_is_pad[:, : action.shape[-1]] = False
+        else:
+            native_mask = torch.as_tensor(action_dim_is_pad, device=action.device, dtype=torch.bool)
+            if native_mask.ndim == 1:
+                native_mask = native_mask.unsqueeze(0)
+            if native_mask.shape[0] == 1 and action.shape[0] > 1:
+                native_mask = native_mask.expand(action.shape[0], -1)
+            if tuple(native_mask.shape) != (int(action.shape[0]), int(action.shape[-1])):
+                raise ValueError(
+                    "action_dim_is_pad must match the unpadded action dimensions: "
+                    f"got {tuple(native_mask.shape)} for action {tuple(action.shape)}."
+                )
+            padded_dim_is_pad[:, : action.shape[-1]] = native_mask
         if action_is_pad is None:
             action_horizon_is_pad = torch.zeros(action.shape[:2], device=action.device, dtype=torch.bool)
         else:
@@ -868,7 +1281,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                     "action_is_pad must match action horizon shape: "
                     f"got {tuple(action_horizon_is_pad.shape)} for action {tuple(action.shape)}."
                 )
-        return padded, action_horizon_is_pad, action_dim_is_pad
+        return padded, action_horizon_is_pad, padded_dim_is_pad
 
     def _build_labels(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
         labels = torch.full_like(input_ids, -100)
@@ -933,6 +1346,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         images_by_example = self._extract_images(observation, batch_size)
         tasks = self._extract_tasks(observation, complementary, batch_size)
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
+        embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
         history_stack = self._extract_history_image_stack(
             complementary, self._resolve_image_keys(observation), batch_size
         )
@@ -954,6 +1368,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                     state_np[batch_idx], self.num_state_tokens
                 ),
                 num_images=len(images),
+                embodiment=embodiment_texts[batch_idx],
             )
             prompts.append(prompt)
             fulls.append(f"{prompt}{name}{self._eos_token}" if name else prompt)
@@ -1006,6 +1421,23 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if len(flat) == 1:
             flat = flat * batch_size
         return [self.subtask_names[i] if 0 <= i < len(self.subtask_names) else None for i in flat]
+
+    def _extract_embodiment_texts(self, complementary: dict, batch_size: int) -> list[str | None]:
+        """Embodiment name per sample: an explicit "embodiment" string (rollout path,
+        where cfg.env.robot.type is the only source), else embodiment_index rendered
+        through the vocabulary (offline batches). Unknown (-1) omits the clause."""
+        texts = complementary.get("embodiment")
+        if texts is not None:
+            return [
+                canonical_embodiment(text) for text in _as_text_list(texts, batch_size)
+            ]
+        indices = complementary.get("embodiment_index")
+        if indices is None:
+            return [None] * batch_size
+        flat = torch.as_tensor(indices).detach().cpu().reshape(-1).long().tolist()
+        if len(flat) == 1:
+            flat = flat * batch_size
+        return [embodiment_name(index, self.embodiment_names) for index in flat]
 
     def _extract_history_states(self, complementary: dict, batch_size: int) -> Tensor | None:
         """Normalized past states for the short-term history window, read from
@@ -1122,7 +1554,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_is_pad = complementary.get("action_is_pad")
             if action_is_pad is None:
                 action_is_pad = complementary.get("action_horizon_is_pad")
-            action_padded, action_horizon_is_pad, action_dim_is_pad = self._pad_action(action, action_is_pad)
+            action_padded, action_horizon_is_pad, action_dim_is_pad = self._pad_action(
+                action, action_is_pad, complementary.get("action_dim_is_pad")
+            )
             if ACTION_HOLD_KEY in complementary:
                 hold = torch.as_tensor(complementary[ACTION_HOLD_KEY], dtype=torch.float32)
                 if tuple(hold.shape) != tuple(action.shape):
@@ -1130,12 +1564,15 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                         f"{ACTION_HOLD_KEY} must match action before padding: "
                         f"got {tuple(hold.shape)} and {tuple(action.shape)}."
                     )
-                complementary[ACTION_HOLD_KEY] = self._pad_action(hold, action_is_pad)[0]
-            real_action_dim = int(action.shape[-1])
+                complementary[ACTION_HOLD_KEY] = self._pad_action(
+                    hold, action_is_pad, complementary.get("action_dim_is_pad")
+                )[0]
+            real_action_dim = int((~action_dim_is_pad).sum(dim=-1).max())
         elif real_action_dim > 0:
             action_dim_is_pad[:, :real_action_dim] = False
 
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
+        embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
         metadata_list = self._extract_metadata(complementary, batch_size)
         history_states = self._extract_history_states(complementary, batch_size)
         image_keys = self._resolve_image_keys(observation)
@@ -1184,6 +1621,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 task=tasks[batch_idx],
                 discrete_state_string=discrete_state,
                 num_images=len(images),
+                embodiment=embodiment_texts[batch_idx],
                 num_history_states=(
                     int(history_states.shape[1])
                     if history_states is not None and history_on[batch_idx]
@@ -1311,6 +1749,10 @@ def make_molmoact2_pre_post_processors(
     env_action_dim = None
     if config.output_features and ACTION in config.output_features:
         env_action_dim = int(config.output_features[ACTION].shape[0])
+    canonical_action_dim = env_action_dim
+    canonical_state_dim = None
+    if config.input_features and OBS_STATE in config.input_features:
+        canonical_state_dim = int(config.input_features[OBS_STATE].shape[0])
 
     hf_metadata: dict[str, Any] = {}
     if dataset_stats is None and str(config.norm_tag or "").strip():
@@ -1322,16 +1764,41 @@ def make_molmoact2_pre_post_processors(
         )
 
     if action_stats_override is not None:
-        if dataset_stats is None:
-            dataset_stats = {}
-        else:
-            dataset_stats = deepcopy(dataset_stats)
+        dataset_stats = {} if dataset_stats is None else deepcopy(dataset_stats)
         dataset_stats[ACTION] = action_stats_override
 
     image_keys = list(config.image_keys)
     if not image_keys and isinstance(hf_metadata.get("camera_keys"), list):
         image_keys = [str(key) for key in hf_metadata["camera_keys"]]
     chunk_size = int(hf_metadata.get("action_horizon") or config.chunk_size)
+
+    action_encoding = getattr(config, "action_encoding", "absolute")
+    use_anchor = action_encoding in ("anchor", "delta")
+
+    # Per-embodiment stats replace the single pooled row entirely: pooling a Franka's
+    # joint ranges with an ARX5's makes q01/q99 span the union, so each robot's own
+    # motion is squashed into a sliver of [-1, 1] before the state discretization.
+    embodiment_names: list[str] = []
+    embodiment_masks: dict[str, list[list[bool]]] = {}
+    embodiment_stats_path = getattr(config, "embodiment_stats_path", None)
+    if embodiment_stats_path:
+        artifact = load_embodiment_stats(
+            embodiment_stats_path,
+            encoding=action_encoding,
+            chunk_size=int(hf_metadata.get("action_horizon") or config.chunk_size),
+        )
+        embodiment_names = list(artifact["embodiments"])
+        canonical_action_dim = int(artifact["action_width"])
+        canonical_state_dim = int(artifact["state_width"])
+        dataset_stats = _stacked_stats_from_artifact(artifact)
+        for key, entries in artifact["stats"].items():
+            embodiment_masks[key] = [[bool(v) for v in row] for row in entries["mask"].tolist()]
+        if action_stats_override is not None:
+            raise ValueError(
+                "embodiment_stats_path and action_encoding_stats_path both set. The "
+                "per-embodiment artifact already carries the encoded action stats; the "
+                "single-row override would silently replace every embodiment's row with one."
+            )
 
     masked_dataset_stats = _add_gripper_masks_to_stats(
         dataset_stats,
@@ -1345,13 +1812,18 @@ def make_molmoact2_pre_post_processors(
         m = stats.get("mask") if isinstance(stats, dict) else None
         if m is None:
             return None
-        return [bool(v) for v in (m.tolist() if hasattr(m, "tolist") else m)]
+        flat = m.tolist() if hasattr(m, "tolist") else m
+        if flat and isinstance(flat[0], list):  # per-embodiment table, not a shared row
+            return None
+        return [bool(v) for v in flat]
 
     action_mask = _mask_list(ACTION)
     state_mask = _mask_list(OBS_STATE)
-
-    action_encoding = getattr(config, "action_encoding", "absolute")
-    use_anchor = action_encoding in ("anchor", "delta")
+    default_embodiment_index = -1
+    if embodiment_names:
+        configured = canonical_embodiment(getattr(config, "embodiment", None))
+        if configured is not None and configured in embodiment_names:
+            default_embodiment_index = embodiment_names.index(configured)
 
     # MemoryConfig lives on the RL wrapper config (MolmoAct2RLConfig.memory), not on the
     # bare MolmoAct2Config used for BC/eval, hence the getattr default.
@@ -1368,13 +1840,24 @@ def make_molmoact2_pre_post_processors(
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
         AddBatchDimensionProcessorStep(),
+        MolmoAct2UnifiedLayoutProcessorStep(
+            state_dim=canonical_state_dim,
+            action_dim=canonical_action_dim,
+        ),
         *([AnchorEncodeStep(encoding=action_encoding)] if use_anchor else []),
         MolmoAct2MaskedNormalizerProcessorStep(
             features={**config.input_features, **config.output_features},
             norm_map=config.normalization_mapping,
             stats=masked_dataset_stats,
+            embodiment_names=embodiment_names,
+            default_embodiment_index=default_embodiment_index,
         ),
-        MolmoAct2ClampNormalizedProcessorStep(action_mask=action_mask, state_mask=state_mask),
+        MolmoAct2ClampNormalizedProcessorStep(
+            action_mask=action_mask,
+            state_mask=state_mask,
+            action_masks=embodiment_masks.get(ACTION),
+            state_masks=embodiment_masks.get(OBS_STATE),
+        ),
         MolmoAct2PackInputsProcessorStep(
             base_path=config.base_path,
             base_revision=config.base_revision,
@@ -1406,8 +1889,17 @@ def make_molmoact2_pre_post_processors(
             features=config.output_features,
             norm_map=config.normalization_mapping,
             stats=masked_dataset_stats,
+            embodiment_names=embodiment_names,
+            default_embodiment_index=default_embodiment_index,
         ),
         *([AnchorDecodeStep(encoding=action_encoding)] if use_anchor else []),
+        *(
+            [
+                MolmoAct2RestoreActionLayoutProcessorStep(native_action_dim=env_action_dim)
+            ]
+            if env_action_dim is not None
+            else []
+        ),
         DeviceProcessorStep(device="cpu"),
     ]
 

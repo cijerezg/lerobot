@@ -22,6 +22,10 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 ENCODINGS = ("anchor", "delta")
 
 ANCHOR_KEY = "anchor_state"
+# Rides the postprocessor payload beside the anchor so the unnormalizer can gather the
+# same per-embodiment stats row the normalizer used. Without it a mixed-robot policy
+# unnormalizes every action with whichever row happens to be the default.
+EMBODIMENT_INDEX_KEY = "embodiment_index"
 
 
 def _encode(action: torch.Tensor, anchor: torch.Tensor, encoding: str) -> torch.Tensor:
@@ -62,11 +66,16 @@ class AnchorEncodeStep(ProcessorStep):
         if action is None:
             return transition
 
+        # Anchor/delta encoding subtracts state from action elementwise, which is only
+        # meaningful when both live in the same space. Every packed source is joint-space
+        # (see action_layout), so there is no mode to check -- a future Cartesian corpus
+        # would have to re-establish that invariant before reaching this step.
+        comp = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
+
         action = torch.as_tensor(action)
         anchor = torch.as_tensor(observation[OBS_STATE])[..., : action.shape[-1]]
         encoded = _encode(action, anchor.to(action), self.encoding)
 
-        comp = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
         comp[ANCHOR_KEY] = anchor
 
         new = transition.copy()
@@ -145,9 +154,14 @@ def policy_action_with_anchor_to_transition(payload: Any) -> EnvTransition:
             raise ValueError(
                 f"postprocessor payload dict missing PolicyAction under {ACTION!r}/'action'"
             )
+        comp = {}
         anchor = payload.get(ANCHOR_KEY)
-        comp = {ANCHOR_KEY: anchor} if anchor is not None else None
-        return create_transition(action=action, complementary_data=comp)
+        if anchor is not None:
+            comp[ANCHOR_KEY] = anchor
+        embodiment_index = payload.get(EMBODIMENT_INDEX_KEY)
+        if embodiment_index is not None:
+            comp[EMBODIMENT_INDEX_KEY] = embodiment_index
+        return create_transition(action=action, complementary_data=comp or None)
     raise ValueError(
         f"postprocessor payload must be PolicyAction or dict, got {type(payload).__name__}"
     )

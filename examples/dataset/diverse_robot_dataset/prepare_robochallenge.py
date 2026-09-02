@@ -313,7 +313,11 @@ def make_proxies(task_root: Path, manifest_path: Path, output_root: Path) -> Non
 
 
 def write_annotations(
-    task_root: Path, manifest_path: Path, output_root: Path, accepted: list[int]
+    task_root: Path,
+    manifest_path: Path,
+    output_root: Path,
+    accepted: list[int],
+    provenance: dict | None = None,
 ) -> None:
     manifest = read_json(manifest_path)
     candidates = {int(item["episode_index"]): item for item in manifest["candidates"]}
@@ -321,6 +325,12 @@ def write_annotations(
     if unknown:
         raise ValueError(f"Accepted episodes are absent from the candidate manifest: {unknown}")
     prompt = str(manifest["prompt"])
+    # Who made the accept/reject call travels with the verdict. Without this a model
+    # screen would be indistinguishable from the human-reviewed DROID annotations and
+    # the ReBot-rubric FMB labels once the episodes are in the corpus.
+    provenance = provenance or {}
+    episode_provenance = provenance.get("episodes", {})
+    review_record = {key: value for key, value in provenance.items() if key != "episodes"}
     selection = {
         "source": manifest["source"],
         "task": manifest["task"],
@@ -329,6 +339,7 @@ def write_annotations(
         "accepted_episode_indices": accepted,
         "rejected_candidate_indices": sorted(candidates.keys() - set(accepted)),
         "review_basis": "side-by-side global/wrist proxy plus low-dimensional discontinuity screen",
+        **review_record,
     }
     write_json(output_root / "selection.json", selection)
     for episode_index in accepted:
@@ -368,6 +379,8 @@ def write_annotations(
             "segments": segments,
             "required_segment_fields": ["start_s", "end_s", "retention", "retention_reason"],
             "required_keep_segment_fields": ["subtask", "quality", "mistake_events"],
+            **review_record,
+            **episode_provenance.get(str(episode_index), {}),
         }
         write_json(output_root / f"episode_{episode_index:06d}.annotations.json", annotation)
 
@@ -395,13 +408,25 @@ def main() -> None:
     annotations.add_argument("--manifest", type=Path, required=True)
     annotations.add_argument("--output-root", type=Path, required=True)
     annotations.add_argument("--accepted", type=int, nargs="+", required=True)
+    annotations.add_argument(
+        "--provenance",
+        type=Path,
+        help=(
+            "JSON file recording who made the accept/reject call. Its top-level keys are "
+            "copied into selection.json and into every written annotation; an optional "
+            "'episodes' map adds per-episode keys such as reviewer_notes."
+        ),
+    )
     args = parser.parse_args()
     if args.command == "nominate":
         nominate(args.task_root, args.output, args.count, args.exclude)
     elif args.command == "proxies":
         make_proxies(args.task_root, args.manifest, args.output_root)
     else:
-        write_annotations(args.task_root, args.manifest, args.output_root, args.accepted)
+        provenance = read_json(args.provenance) if args.provenance else None
+        write_annotations(
+            args.task_root, args.manifest, args.output_root, args.accepted, provenance
+        )
 
 
 if __name__ == "__main__":

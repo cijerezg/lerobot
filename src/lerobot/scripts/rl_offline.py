@@ -813,6 +813,7 @@ def run_offline_training(
         require_depth_gripper_event_labels=bool(
             getattr(getattr(cfg.policy, "depth_gripper_event_loss", None), "enabled", False)
         ),
+        embodiment=normalization_source.embodiment,
     )
     if memory_cfg is not None and memory_cfg.metadata_enabled:
         offline_replay_buffer.materialize_metadata(*load_metadata_rows(offline_dataset.root))

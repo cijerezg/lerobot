@@ -24,7 +24,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY
+from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY, EMBODIMENT_INDEX_KEY
 from lerobot.policies.molmoact2.modeling_molmoact2 import (
     _MOLMOACT2_PROBING_CAPTURE,
     register_action_attention_probing,
@@ -187,7 +187,12 @@ class MolmoAct2Adapter(ProbablePolicy):
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if action_encoding in ("anchor", "delta"):
             anchor = obs[OBS_STATE].to(self._device)[..., : self.action_dim]
-            unnorm = self._postprocessor({ACTION: norm_actions, ANCHOR_KEY: anchor})
+            payload = {ACTION: norm_actions, ANCHOR_KEY: anchor}
+            # Per-embodiment stats: unnormalize with the SAME row the preprocessor
+            # normalized with, or the action comes back at another robot's scale.
+            if EMBODIMENT_INDEX_KEY in batch:
+                payload[EMBODIMENT_INDEX_KEY] = batch[EMBODIMENT_INDEX_KEY]
+            unnorm = self._postprocessor(payload)
         else:
             unnorm = self._postprocessor(norm_actions)
         pred_unnorm = unnorm.squeeze(0).float().cpu()
@@ -289,7 +294,10 @@ class MolmoAct2Adapter(ProbablePolicy):
             anchor = self._expand_to_batch(
                 obs[OBS_STATE].to(self._device), n
             )[..., : self.action_dim]
-            unnorm = self._postprocessor({ACTION: norm_actions, ANCHOR_KEY: anchor})
+            payload = {ACTION: norm_actions, ANCHOR_KEY: anchor}
+            if EMBODIMENT_INDEX_KEY in batch:
+                payload[EMBODIMENT_INDEX_KEY] = batch[EMBODIMENT_INDEX_KEY]
+            unnorm = self._postprocessor(payload)
         else:
             unnorm = self._postprocessor(norm_actions)
         return unnorm.float().cpu(), pred_norm

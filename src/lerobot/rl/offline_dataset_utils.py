@@ -7,8 +7,13 @@ from pathlib import Path
 
 import torch
 
+from lerobot.datasets.embodiment import (
+    UNKNOWN_EMBODIMENT_INDEX,
+    canonical_embodiment,
+    embodiment_index,
+)
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.rl.buffer import ReplayBuffer, concatenate_batch_transitions
+from lerobot.rl.buffer import ReplayBuffer, concatenate_variable_dim_batch_transitions
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.depth_gripper_events import load_depth_gripper_event_targets
 
@@ -23,6 +28,9 @@ class OfflineDatasetSource:
     weight: float
     normalization_source: bool = False
     episodes: list[int] | None = None
+    # Optional override for the prompt's embodiment clause. Only needed when a root's
+    # meta/info.json robot_type is missing or wrong; otherwise it is read from there.
+    embodiment: str | None = None
 
 
 def _source_field(source, name: str, default=None):
@@ -65,6 +73,7 @@ def get_offline_dataset_sources(cfg) -> list[OfflineDatasetSource]:
                     weight=weight,
                     normalization_source=i == 0,
                     episodes=_source_field(source, "episodes", None),
+                    embodiment=_source_field(source, "embodiment", None),
                 )
             )
         return resolved
@@ -78,6 +87,7 @@ def get_offline_dataset_sources(cfg) -> list[OfflineDatasetSource]:
             weight=1.0,
             normalization_source=True,
             episodes=getattr(dataset_cfg, "episodes", None),
+            embodiment=getattr(dataset_cfg, "embodiment", None),
         )
     ]
     sources.extend(
@@ -296,6 +306,78 @@ def _dataset_index_column(dataset, key: str) -> torch.Tensor | None:
     return torch.as_tensor(values, dtype=torch.long)
 
 
+def _dataset_string_column(dataset, key: str) -> list[str | None] | None:
+    """Read a per-row string column, tolerating the shape-[1] list encoding."""
+    hf_dataset = dataset.hf_dataset
+    if key not in hf_dataset.column_names:
+        return None
+    values = hf_dataset.data.column(key).to_pylist()
+    flattened: list[str | None] = []
+    for value in values:
+        while isinstance(value, (list, tuple)):
+            value = value[0] if value else None
+        flattened.append(None if value is None else str(value))
+    return flattened
+
+
+def resolve_dataset_embodiment(dataset, override: str | None = None) -> str | None:
+    """Dataset-level embodiment: explicit config override, else meta/info.json robot_type.
+
+    Returns the canonical prompt name, or None when the robot is unknown to
+    ``lerobot.datasets.embodiment`` — in which case the prompt's embodiment clause is
+    omitted rather than guessed.
+    """
+    if override:
+        name = canonical_embodiment(override)
+        if name is None:
+            raise ValueError(
+                f"Dataset source embodiment {override!r} is not a known robot. "
+                "Add it to EMBODIMENT_NAMES/EMBODIMENT_ALIASES in lerobot/datasets/embodiment.py."
+            )
+        return name
+    return canonical_embodiment(getattr(getattr(dataset, "meta", None), "robot_type", None))
+
+
+def _embodiment_indices_for_dataset(
+    dataset, num_frames: int, override: str | None = None, is_main_process: bool = False
+) -> tuple[torch.Tensor, str]:
+    """Per-row embodiment vocabulary indices, most specific source first.
+
+    Order: an already-canonical ``embodiment_index`` column, then a per-row
+    ``source.robot_type`` string column (what the packed corpus components carry),
+    then the dataset-level constant. A source that mixes embodiments — several
+    corpus components merged into one root — is only handled correctly by the first
+    two; the constant is right only while one root means one robot.
+    """
+    indices = _dataset_index_column(dataset, "embodiment_index")
+    if indices is not None:
+        return indices, "embodiment_index column"
+
+    raw_rows = _dataset_string_column(dataset, "source.robot_type")
+    if raw_rows is not None and len(raw_rows) == num_frames:
+        # Datasets repeat one robot for thousands of rows; resolve each spelling once.
+        cache: dict[str | None, int] = {}
+        resolved = []
+        for raw in raw_rows:
+            if raw not in cache:
+                cache[raw] = embodiment_index(raw)
+            resolved.append(cache[raw])
+        unknown = sorted({raw for raw in cache if cache[raw] == UNKNOWN_EMBODIMENT_INDEX and raw})
+        if unknown and is_main_process:
+            logging.warning(
+                "[OfflineCollection] %s has unknown robot_type values %s; "
+                "their embodiment clause will be omitted.",
+                dataset.root,
+                unknown,
+            )
+        return torch.tensor(resolved, dtype=torch.long), "source.robot_type column"
+
+    name = resolve_dataset_embodiment(dataset, override)
+    index = UNKNOWN_EMBODIMENT_INDEX if name is None else embodiment_index(name)
+    source = "config override" if override else "meta/info.json robot_type"
+    return torch.full((num_frames,), index, dtype=torch.long), source
+
+
 def _subtask_indices_from_windows(dataset, num_frames: int) -> torch.Tensor | None:
     """Materialize reviewed subtask windows when no frame-level column exists.
 
@@ -494,6 +576,7 @@ def materialize_dataset_labels(
     source_index: int,
     is_main_process: bool = False,
     require_depth_gripper_event_labels: bool = False,
+    embodiment: str | None = None,
 ) -> None:
     """Overlay current labels on heavy cache data without decoding video."""
     task_indices = _dataset_index_column(dataset, "task_index")
@@ -528,6 +611,20 @@ def materialize_dataset_labels(
         torch.full_like(task_indices, int(source_index)),
         fill_value=-1,
     )
+    embodiment_indices, embodiment_origin = _embodiment_indices_for_dataset(
+        dataset, len(task_indices), embodiment, is_main_process
+    )
+    _install_buffer_column(
+        buffer, "embodiment_index", embodiment_indices, fill_value=UNKNOWN_EMBODIMENT_INDEX
+    )
+    if is_main_process:
+        present = sorted({int(index) for index in embodiment_indices.unique().tolist()})
+        logging.info(
+            "[OfflineCollection] %s embodiment indices %s from %s",
+            Path(dataset.root).name,
+            present,
+            embodiment_origin,
+        )
     if require_depth_gripper_event_labels:
         for key, values in load_depth_gripper_event_targets(dataset).items():
             _install_buffer_column(buffer, key, values, fill_value=0)
@@ -637,6 +734,7 @@ def load_additional_offline_buffers(
             require_depth_gripper_event_labels=bool(
                 getattr(getattr(cfg.policy, "depth_gripper_event_loss", None), "enabled", False)
             ),
+            embodiment=source.embodiment,
         )
         buffer.dataset = dataset
         buffer.offline_source = source
@@ -695,6 +793,5 @@ def make_combined_offline_iterator(
     while True:
         batch = next(iterators[0])
         for iterator in iterators[1:]:
-            action_dim = batch[ACTION].shape[-1]
-            batch = concatenate_batch_transitions(batch, next(iterator), action_dim=action_dim)
+            batch = concatenate_variable_dim_batch_transitions(batch, next(iterator))
         yield batch

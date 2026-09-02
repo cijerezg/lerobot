@@ -39,7 +39,17 @@ Episode video is re-encoded at CRF 18 with a one-second GOP so that anchor decod
 stride stays cheap; the encoder command, the source path, and the source SHA-256 are
 recorded per camera. `validate` decodes sampled frames from both the corpus and the source
 and requires the corpus frame to match the source frame at the same index, which is what
-catches a seek that slipped by one.
+catches a seek that slipped by one. A shift moves the whole stream, so a camera is called
+misaligned only when at least two sampled frames agree on the same non-zero offset and each
+clears a tie threshold set by the encode noise floor and the local motion; a single frame's
+argmin during a still moment is recorded as `tie_inconclusive`, not a failure. As of
+2026-08-31 the corpus passes with zero failures across 204 episodes and 1,734 frame checks.
+
+Rates come from the source's declared fps, never from the stored timestamps: float32
+quantization reports a 30 Hz stream as 30.0000286 Hz, which would route RoboChallenge and
+UR7e through the interpolation branch and turn their audited same-timestamp `copy_state`
+actions into interpolated ones. `refresh-metadata` re-derives that field for episodes
+ingested before the rule existed.
 
 Read the corpus with `lerobot.datasets.diverse_corpus`:
 
@@ -117,6 +127,8 @@ train/validation/test splits at source-episode level.
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py \
   --review-root outputs/diverse_robot_dataset/fmb/production/review convert
 .venv/bin/python \
+  lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py views
+.venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py \
   --review-root outputs/diverse_robot_dataset/fmb/production/review validate
 ```
@@ -126,9 +138,10 @@ The validated corpus lives at
 directories are the single source-native collection. Each episode stores the
 complete native `actions`, primitive labels, original timestep indices,
 nominal-grid timestamps, low-dimensional observations, side-1/side-2/wrist-1
-RGB, and wrist-1 Z16 depth. `actor_anchors_10hz.jsonl` and
-`critic_intervals.jsonl` only reference those episode arrays; they do not copy
-sensor frames or actions into separate actor and critic datasets.
+RGB, and wrist-1 Z16 depth. `actor_anchors_5hz.jsonl`,
+`actor_anchors_10hz.jsonl`, and `critic_intervals.jsonl` only reference those
+episode arrays; they do not copy sensor frames or actions into separate actor
+and critic datasets.
 
 Measured validated production accounting:
 
@@ -171,6 +184,26 @@ permits removal only because every selected source hash and exact retained-array
 comparison passed, but raw staging has not been removed. The pilot
 `converted_validation/` output is a test fixture and is not an additional
 training corpus.
+
+Use the common and FMB stores as one logical corpus without copying either:
+
+```python
+from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
+
+corpus = FederatedDiverseCorpus(
+    "outputs/diverse_robot_dataset/corpus",
+    "outputs/diverse_robot_dataset/fmb/production/corpus",
+)
+actor_rows = corpus.actor_anchors(split="train")
+critic_rows = corpus.critic_intervals(split="train")
+```
+
+The refreshed unified ledger is
+`outputs/diverse_robot_dataset/unified_coverage_ledger.json`. At the comparable
+5 Hz stride it records 304 episodes, 247,067 unique synchronized timesteps,
+40,507 retained actor rows, and 843 critic-eligible intervals. FMB also retains
+its separate 14,892-row 10 Hz actor index. All indexes reference the original
+source-native episode arrays and duplicate zero sensor/action arrays.
 
 ## RoboChallenge
 

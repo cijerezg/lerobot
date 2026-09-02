@@ -112,9 +112,7 @@ def synthetic_source(frame_count: int) -> dict[str, np.ndarray]:
     source: dict[str, np.ndarray] = {}
     for camera in prepare_fmb.CAMERAS:
         source[f"obs/{camera}"] = np.zeros((frame_count, 256, 256, 3), dtype=np.uint8)
-        source[f"obs/{camera}_depth"] = np.full(
-            (frame_count, 256, 256), 2500, dtype=np.uint16
-        )
+        source[f"obs/{camera}_depth"] = np.full((frame_count, 256, 256), 2500, dtype=np.uint16)
     source.update(
         {
             "obs/tcp_pose": np.zeros((frame_count, 7), dtype=np.float64),
@@ -171,9 +169,25 @@ def test_converter_retains_only_approved_modalities_and_validates(tmp_path: Path
 
     converted = prepare_fmb.convert(manifest, raw_root, output_root, pilot_audit, None)
     prepare_fmb.write_json(output_root / "corpus.json", converted["corpus"])
+    views = prepare_fmb.write_actor_views(output_root)
     report = prepare_fmb.validate(manifest, raw_root, output_root)
 
+    assert views == {
+        "5hz": {
+            "stride_s": 0.2,
+            "rows": 0,
+            "path": "actor_anchors_5hz.jsonl",
+            "source_frames_duplicated": 0,
+        },
+        "10hz": {
+            "stride_s": 0.1,
+            "rows": 0,
+            "path": "actor_anchors_10hz.jsonl",
+            "source_frames_duplicated": 0,
+        },
+    }
     assert report["status"] == "passed"
+    assert report["validated_actor_rows_by_view"] == {"10hz": 0, "5hz": 0}
     episode_dir = next((output_root / "episodes").iterdir())
     names = {path.name for path in episode_dir.iterdir()}
     assert "side_1_rgb.npy" in names

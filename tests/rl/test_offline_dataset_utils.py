@@ -6,7 +6,10 @@ import torch
 from datasets import Dataset
 
 from lerobot.configs.default import DatasetConfig, OfflineDatasetSourceConfig
-from lerobot.rl.buffer import concatenate_batch_transitions
+from lerobot.rl.buffer import (
+    concatenate_batch_transitions,
+    concatenate_variable_dim_batch_transitions,
+)
 from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
 from lerobot.rl.offline_dataset_utils import (
     _weighted_batch_sizes,
@@ -71,6 +74,37 @@ def test_weighted_batch_sizes_are_exact_and_keep_every_source_present():
     assert _weighted_batch_sizes(96, [1, 1, 2]) == [24, 24, 48]
     with pytest.raises(ValueError, match="at least the number"):
         _weighted_batch_sizes(2, [1, 1, 1])
+
+
+def test_variable_dim_concat_pads_state_and_action_with_independent_masks():
+    def batch(state_dim, action_dim, offset):
+        state = torch.arange(state_dim, dtype=torch.float32)[None] + offset
+        action = torch.arange(action_dim, dtype=torch.float32)[None, None] + offset
+        return {
+            "state": {"observation.state": state.clone()},
+            "action": action,
+            "reward": torch.zeros(1),
+            "next_state": {"observation.state": state.clone()},
+            "done": torch.zeros(1, dtype=torch.bool),
+            "truncated": torch.zeros(1, dtype=torch.bool),
+            "complementary_info": {
+                "history.observation.state": state[:, None].clone(),
+            },
+        }
+
+    combined = concatenate_variable_dim_batch_transitions(batch(7, 6, 0), batch(8, 7, 10))
+
+    assert combined["state"]["observation.state"].shape == (2, 8)
+    assert combined["action"].shape == (2, 1, 7)
+    assert combined["complementary_info"]["state_dim_is_pad"].tolist() == [
+        [False] * 7 + [True],
+        [False] * 8,
+    ]
+    assert combined["complementary_info"]["action_dim_is_pad"].tolist() == [
+        [False] * 6 + [True],
+        [False] * 7,
+    ]
+    assert combined["complementary_info"]["history.observation.state"].shape == (2, 1, 8)
 
 
 def test_additional_cached_buffers_inherit_reward_configuration(monkeypatch):

@@ -199,9 +199,7 @@ def discover_components(source: str) -> list[Component]:
                 )
             )
             continue
-        spec_name = {"droid": "droid_failure", "droid_success": "droid_success", "ur7e": "ur7e_stack"}[
-            source
-        ]
+        spec_name = {"droid": "droid_failure", "droid_success": "droid_success", "ur7e": "ur7e_stack"}[source]
         config_name = {"droid": "droid_sources.json", "droid_success": "droid_sources.json"}.get(
             source, "ur7e_sources.json"
         )
@@ -266,14 +264,29 @@ def encode_episode_video(
     if start_s > 0:
         command += ["-ss", f"{start_s:.6f}"]
     command += [
-        "-i", str(source_path),
-        "-frames:v", str(frames),
-        "-an", "-sn", "-dn",
-        "-c:v", "libx264", "-crf", str(VIDEO_CRF), "-preset", VIDEO_PRESET,
-        "-pix_fmt", "yuv420p",
-        "-g", str(gop), "-keyint_min", str(gop),
-        "-x264-params", "scenecut=0:open_gop=0",
-        "-movflags", "+faststart",
+        "-i",
+        str(source_path),
+        "-frames:v",
+        str(frames),
+        "-an",
+        "-sn",
+        "-dn",
+        "-c:v",
+        "libx264",
+        "-crf",
+        str(VIDEO_CRF),
+        "-preset",
+        VIDEO_PRESET,
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        str(gop),
+        "-keyint_min",
+        str(gop),
+        "-x264-params",
+        "scenecut=0:open_gop=0",
+        "-movflags",
+        "+faststart",
         str(destination),
     ]
     subprocess.run(command, check=True)
@@ -306,11 +319,7 @@ def _camera_sources(
     )
     # Three RoboChallenge tasks had their raw extraction cleaned up after conversion. Their
     # converted staging shard is the remaining copy, so fall back to it rather than refusing.
-    if (
-        component.video_origin == "robochallenge_raw"
-        and raw_videos is not None
-        and raw_videos.is_dir()
-    ):
+    if component.video_origin == "robochallenge_raw" and raw_videos is not None and raw_videos.is_dir():
         mapping = {
             "observation.images.global": "cam_global_rgb.mp4",
             "observation.images.wrist": "cam_arm_rgb.mp4",
@@ -322,9 +331,7 @@ def _camera_sources(
                 raise FileNotFoundError(f"Missing raw camera file: {path}")
             probe = probe_video(path)
             if probe["frames"] != frames:
-                raise ValueError(
-                    f"{path}: raw video holds {probe['frames']} frames, timeline holds {frames}"
-                )
+                raise ValueError(f"{path}: raw video holds {probe['frames']} frames, timeline holds {frames}")
             sources[camera.rsplit(".", 1)[-1]] = {
                 "path": path,
                 "start_s": 0.0,
@@ -351,6 +358,20 @@ def _accepted_episodes(component: Component) -> list[int]:
     if "accepted_episode_indices" in selection:
         return sorted(int(index) for index in selection["accepted_episode_indices"])
     return sorted(int(index) for index in selection["accepted"])
+
+
+def _accepted_episode_detail(selection: dict[str, Any], episode_index: int) -> dict[str, Any]:
+    """Return optional legacy per-episode metadata from an accepted mapping.
+
+    Current RoboChallenge selections store ``accepted`` as a list and keep the
+    review metadata at the selection/annotation level. Older selections may use
+    an episode-indexed mapping instead.
+    """
+    accepted = selection.get("accepted", {})
+    if not isinstance(accepted, dict):
+        return {}
+    detail = accepted.get(str(episode_index), {})
+    return detail if isinstance(detail, dict) else {}
 
 
 def assign_splits(episode_indices: list[int]) -> dict[int, str]:
@@ -399,7 +420,16 @@ def ingest_episode(
     frames = int(len(relative))
     duration_s = float(relative[-1])
     intervals = np.diff(relative)
-    native_rate_hz = float(1.0 / np.median(intervals))
+    measured_rate_hz = float(1.0 / np.median(intervals))
+    # Use the source's declared rate, not the measured one. Float32 timestamps quantize a
+    # 30 Hz stream to 30.0000286 Hz, and the packer's exact-native branch keys off an exact
+    # 30.0, so a measured rate would silently interpolate the audited copy_state actions.
+    native_rate_hz = declared_rate_hz(component, measured_rate_hz)
+    if abs(native_rate_hz - measured_rate_hz) / native_rate_hz > 1e-3:
+        raise ValueError(
+            f"{episode_id(component, episode_index)}: declared {native_rate_hz} Hz disagrees "
+            f"with the measured {measured_rate_hz} Hz"
+        )
 
     annotations = read_json(component.annotations_path(episode_index))
     if annotations.get("review_status") != "validated":
@@ -446,24 +476,17 @@ def ingest_episode(
                     "sha256": hash_cache[source_path],
                     "start_s": float(source["start_s"]),
                 },
-                "encoding": {
-                    key: encoding[key]
-                    for key in ("ffmpeg_command", "gop_frames", "crf", "preset")
-                },
+                "encoding": {key: encoding[key] for key in ("ffmpeg_command", "gop_frames", "crf", "preset")},
             }
         )
 
     selection = component.selection
-    accepted_detail = selection.get("accepted", {}).get(str(episode_index), {})
+    accepted_detail = _accepted_episode_detail(selection, episode_index)
     keep_subtasks = [
-        str(segment["subtask"])
-        for segment in annotations["segments"]
-        if segment.get("retention") == "keep"
+        str(segment["subtask"]) for segment in annotations["segments"] if segment.get("retention") == "keep"
     ]
     task = (
-        annotations.get("task")
-        or accepted_detail.get("task")
-        or (keep_subtasks[0] if keep_subtasks else "")
+        annotations.get("task") or accepted_detail.get("task") or (keep_subtasks[0] if keep_subtasks else "")
     )
     record = {
         "episode_id": identifier,
@@ -483,6 +506,8 @@ def ingest_episode(
         "frames": frames,
         "duration_s": duration_s,
         "native_rate_hz": native_rate_hz,
+        "measured_rate_hz": measured_rate_hz,
+        "rate_provenance": "declared_by_the_source_dataset_info",
         "timestamp_provenance": "source native per-episode timestamps, rebased to a zero start",
         "state_dimension": int(arrays.states.shape[1]),
         "action_dimension": int(arrays.actions.shape[1]),
@@ -510,7 +535,18 @@ def ingest_episode(
             "quality_provenance": "human_reviewed"
             if component.source != "robochallenge"
             else "source_derived_automatic",
-            "review_provenance": "visual_review_of_production_component",
+            # Who made the accept/reject call. The annotation wins over the selection so a
+            # per-episode record cannot be silently upgraded by a task-level default, and a
+            # model screen stays distinguishable from the human-reviewed DROID annotations.
+            "review_provenance": (
+                annotations.get("review_provenance")
+                or selection.get("review_provenance")
+                or "visual_review_of_production_component"
+            ),
+            "reviewer_model": annotations.get("reviewer_model") or selection.get("reviewer_model"),
+            "review_date": annotations.get("review_date") or selection.get("review_date"),
+            "review_prompt": annotations.get("review_prompt") or selection.get("review_prompt"),
+            "selection_rule": selection.get("selection_rule"),
         },
         "source_tasks": list(arrays.tasks),
     }
@@ -545,6 +581,40 @@ def ingest(source: str, corpus_root: Path, *, components: list[str] | None, over
     refresh_episode_index(corpus_root)
     print(f"ingested {len(records)} episodes from {source}", flush=True)
 
+
+def declared_rate_hz(component: Component, fallback: float) -> float:
+    """The source dataset's declared fps, which is the rate the packed components used."""
+    info_path = component.metadata_root / "meta/info.json"
+    if info_path.is_file():
+        declared = read_json(info_path).get("fps")
+        if declared:
+            return float(declared)
+    return fallback
+
+
+def refresh_metadata(corpus_root: Path) -> int:
+    """Re-derive declared rates for episodes ingested before the rate provenance was fixed."""
+    declared: dict[tuple[str, str], float] = {}
+    for source in ("robochallenge", "droid", "droid_success", "ur7e"):
+        if not (DATASET_ROOT / source / "index.json").is_file():
+            continue
+        for component in discover_components(source):
+            rate = declared_rate_hz(component, 0.0)
+            if rate:
+                declared[(component.source, component.component)] = rate
+    updated = 0
+    for record_path in sorted((corpus_root / "episodes").glob("*/episode.json")):
+        record = read_json(record_path)
+        rate = declared.get((record["source"], record["component"]))
+        if not rate or record.get("rate_provenance") == "declared_by_the_source_dataset_info":
+            continue
+        record["measured_rate_hz"] = record["native_rate_hz"]
+        record["native_rate_hz"] = rate
+        record["rate_provenance"] = "declared_by_the_source_dataset_info"
+        write_json(record_path, record)
+        updated += 1
+    refresh_episode_index(corpus_root)
+    return updated
 
 
 def round_component(source: str, task: str, review_round: int) -> Component:
@@ -625,7 +695,6 @@ def refresh_episode_index(corpus_root: Path) -> list[dict[str, Any]]:
     return rows
 
 
-
 # --------------------------------------------------------------------------------------
 # Actor view
 # --------------------------------------------------------------------------------------
@@ -698,9 +767,7 @@ def actor_anchors(record: dict[str, Any], corpus_root: Path, stride_s: float) ->
                 "time_since_subtask_start_s": (
                     None if interval is None else anchor - float(interval["start_s"])
                 ),
-                "time_to_subtask_end_s": (
-                    None if interval is None else float(interval["end_s"]) - anchor
-                ),
+                "time_to_subtask_end_s": (None if interval is None else float(interval["end_s"]) - anchor),
                 "future_inside_subtask": (
                     None if interval is None else bool(future_end <= float(interval["end_s"]) + 1e-9)
                 ),
@@ -789,9 +856,7 @@ def critic_intervals(record: dict[str, Any], corpus_root: Path) -> list[dict[str
     episode_outcome = record["review"].get("outcome") or "unknown"
     merged = _merge_subtask_intervals(annotations)
     keep_ends = [
-        float(segment["end_s"])
-        for segment in annotations["segments"]
-        if segment.get("retention") == "keep"
+        float(segment["end_s"]) for segment in annotations["segments"] if segment.get("retention") == "keep"
     ]
     last_keep_end = max(keep_ends) if keep_ends else 0.0
     single_subtask_episode = len({item["subtask"] for item in merged}) == 1 and len(merged) == 1
@@ -848,9 +913,7 @@ def critic_intervals(record: dict[str, Any], corpus_root: Path) -> list[dict[str
         elif samples < 2 or duration_s < 1.0:
             rejection = "interval_shorter_than_one_second"
         subtask_outcome = (
-            episode_outcome
-            if single_subtask_episode and episode_outcome != "unknown"
-            else "unknown"
+            episode_outcome if single_subtask_episode and episode_outcome != "unknown" else "unknown"
         )
         rows.append(
             {
@@ -916,9 +979,7 @@ def critic_intervals(record: dict[str, Any], corpus_root: Path) -> list[dict[str
 
 
 def build_views(corpus_root: Path, stride_s: float) -> dict[str, Any]:
-    records = [
-        read_json(path) for path in sorted((corpus_root / "episodes").glob("*/episode.json"))
-    ]
+    records = [read_json(path) for path in sorted((corpus_root / "episodes").glob("*/episode.json"))]
     stride_name = f"{1.0 / stride_s:.0f}hz".replace(".", "_")
     actor_rows: list[dict[str, Any]] = []
     critic_rows: list[dict[str, Any]] = []
@@ -939,17 +1000,13 @@ def build_views(corpus_root: Path, stride_s: float) -> dict[str, Any]:
             "rejection_reasons": _count_reasons(actor_rows),
             "by_split": _count_by(retained, "split"),
             "by_source": _count_by(retained, "source"),
-            "retained_with_future_inside_subtask": sum(
-                1 for row in retained if row["future_inside_subtask"]
-            ),
+            "retained_with_future_inside_subtask": sum(1 for row in retained if row["future_inside_subtask"]),
         },
         "critic_view": {
             "path": "critic_intervals.jsonl",
             "candidate_intervals": len(critic_rows),
             "eligible_intervals": sum(1 for row in critic_rows if row["critic_eligible"]),
-            "eligible_duration_s": sum(
-                row["duration_s"] for row in critic_rows if row["critic_eligible"]
-            ),
+            "eligible_duration_s": sum(row["duration_s"] for row in critic_rows if row["critic_eligible"]),
             "eligible_native_actions": sum(
                 row["native_action_samples"] for row in critic_rows if row["critic_eligible"]
             ),
@@ -985,7 +1042,6 @@ def _count_reasons(rows: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-
 # --------------------------------------------------------------------------------------
 # Validation
 # --------------------------------------------------------------------------------------
@@ -994,24 +1050,17 @@ def _count_reasons(rows: list[dict[str, Any]]) -> dict[str, int]:
 def _decode(path: Path, timestamps: list[float], fps: float) -> np.ndarray:
     from lerobot.datasets.video_utils import decode_video_frames
 
-    frames = decode_video_frames(
-        path, timestamps, tolerance_s=0.51 / fps, backend="pyav", return_uint8=True
-    )
+    frames = decode_video_frames(path, timestamps, tolerance_s=0.51 / fps, backend="pyav", return_uint8=True)
     return frames.permute(0, 2, 3, 1).numpy().astype(np.int16)
 
 
-def check_video_alignment(
-    record: dict[str, Any], corpus_root: Path, samples: int
-) -> list[dict[str, Any]]:
+def check_video_alignment(record: dict[str, Any], corpus_root: Path, samples: int) -> list[dict[str, Any]]:
     """Confirm corpus frame k really is source frame k, not a seek that slipped by one."""
     directory = corpus_root / "episodes" / record["episode_id"]
     frames = int(record["frames"])
     fps = float(record["native_rate_hz"])
-    offsets = (-2, -1, 0, 1, 2)
-    positions = [
-        int(round(fraction * frames))
-        for fraction in np.linspace(0.2, 0.8, samples)
-    ]
+    offsets = [-2, -1, 0, 1, 2]
+    positions = [int(round(fraction * frames)) for fraction in np.linspace(0.2, 0.8, samples)]
     positions = [index for index in positions if 2 < index < frames - 3]
     results = []
     for camera in record["cameras"]:
@@ -1021,33 +1070,52 @@ def check_video_alignment(
             results.append({"camera": camera["name"], "verdict": "source_absent"})
             continue
         start_s = float(camera["source"]["start_s"])
-        corpus_frames = _decode(corpus_path, [index / fps for index in positions], fps)
-        source_frames = _decode(
-            source_path,
-            [start_s + (index + offset) / fps for index in positions for offset in offsets],
-            fps,
-        ).reshape(len(positions), len(offsets), *corpus_frames.shape[1:])
-        for position, corpus_frame, candidates in zip(positions, corpus_frames, source_frames, strict=True):
+        camera_results = []
+        for position in positions:
+            # Decode each comparison window on its own: five neighbouring timestamps cost one
+            # local seek, where a single call spanning the episode decodes most of the source.
+            corpus_frame = _decode(corpus_path, [position / fps], fps)[0]
+            candidates = _decode(
+                source_path, [start_s + (position + offset) / fps for offset in offsets], fps
+            )
             errors = np.abs(candidates - corpus_frame[None]).mean(axis=(1, 2, 3))
             spread = float(errors.max() - errors.min())
+            aligned_error = float(errors[offsets.index(0)])
             best = offsets[int(np.argmin(errors))]
+            margin = aligned_error - float(errors.min())
+            # Re-encoding leaves a noise floor, and a still moment makes neighbouring source
+            # frames indistinguishable. Only a margin above both is evidence of a shift.
+            tie_threshold = max(0.1 * spread, 0.25 * float(errors.min()), 0.05)
             verdict = (
                 "aligned"
                 if best == 0
-                else "static_window_inconclusive"
-                if spread < 1.0
-                else "misaligned"
+                else "tie_inconclusive"
+                if margin <= tie_threshold
+                else "offset_candidate"
             )
-            results.append(
+            camera_results.append(
                 {
                     "camera": camera["name"],
                     "frame": position,
                     "best_offset": best,
-                    "mean_abs_error": float(errors[len(offsets) // 2]),
+                    "mean_abs_error": aligned_error,
                     "offset_spread": spread,
+                    "margin": margin,
+                    "tie_threshold": tie_threshold,
                     "verdict": verdict,
                 }
             )
+        # A real off-by-one shifts the whole stream, so it must appear at more than one
+        # sampled frame. A lone dissenting frame is a tie, not evidence of a shift.
+        votes: dict[int, int] = {}
+        for item in camera_results:
+            if item["verdict"] == "offset_candidate":
+                votes[item["best_offset"]] = votes.get(item["best_offset"], 0) + 1
+        shifted = {offset for offset, count in votes.items() if count >= 2}
+        for item in camera_results:
+            if item["verdict"] == "offset_candidate":
+                item["verdict"] = "misaligned" if item["best_offset"] in shifted else "tie_inconclusive"
+        results.extend(camera_results)
     return results
 
 
@@ -1131,9 +1199,7 @@ def validate(corpus_root: Path, *, alignment_samples: int, check_hashes: bool) -
         for camera in record["cameras"]:
             key = camera["name"]
             bucket["rgb_images_by_camera"][key] = bucket["rgb_images_by_camera"].get(key, 0) + frames
-        bucket["embodiments"][record["embodiment"]] = (
-            bucket["embodiments"].get(record["embodiment"], 0) + 1
-        )
+        bucket["embodiments"][record["embodiment"]] = bucket["embodiments"].get(record["embodiment"], 0) + 1
         bucket["split_episode_counts"][record["split"]] = (
             bucket["split_episode_counts"].get(record["split"], 0) + 1
         )
@@ -1160,7 +1226,6 @@ def validate(corpus_root: Path, *, alignment_samples: int, check_hashes: bool) -
     return report
 
 
-
 # --------------------------------------------------------------------------------------
 # Packed actor components
 # --------------------------------------------------------------------------------------
@@ -1174,11 +1239,7 @@ def _decode_corpus_frames(
     """Decode the seven history frames for a batch of anchors from one corpus video."""
     from lerobot.datasets.video_utils import decode_video_frames
 
-    query = [
-        float(timestamp)
-        for anchor in anchors
-        for timestamp in anchor.observation_timestamps
-    ]
+    query = [float(timestamp) for anchor in anchors for timestamp in anchor.observation_timestamps]
     frames = decode_video_frames(
         directory / camera["path"], query, tolerance_s=0.51 / fps, backend="pyav", return_uint8=True
     )
@@ -1297,12 +1358,8 @@ def pack_component(
                     "observation.state": sample.observation_values[-1],
                     "observation.state_history": sample.observation_values[:-1],
                     "action": sample.action.values,
-                    "source.episode_index": np.asarray(
-                        [record["source_episode_index"]], dtype=np.int64
-                    ),
-                    "source.anchor_timestamp": np.asarray(
-                        [sample.anchor_timestamp], dtype=np.float64
-                    ),
+                    "source.episode_index": np.asarray([record["source_episode_index"]], dtype=np.int64),
+                    "source.anchor_timestamp": np.asarray([sample.anchor_timestamp], dtype=np.float64),
                     "source.observation_timestamps": sample.observation_timestamps,
                     "source.observation_frame_indices": sample.observation_frame_indices,
                     "source.observation_timing_error": sample.observation_timing_error,
@@ -1328,9 +1385,9 @@ def pack_component(
                 }
                 for camera in cameras:
                     for offset, label in enumerate(labels):
-                        frame[f"observation.images.{camera['name']}.{label}"] = decoded[
-                            camera["name"]
-                        ][position, offset]
+                        frame[f"observation.images.{camera['name']}.{label}"] = decoded[camera["name"]][
+                            position, offset
+                        ]
                 dataset.add_frame(frame)
         dataset.save_episode()
         episodes_report.append(
@@ -1345,8 +1402,7 @@ def pack_component(
             }
         )
         print(
-            f"  packed {record['episode_id']:52s} rows={len(retained):5d} "
-            f"candidates={len(candidates):5d}",
+            f"  packed {record['episode_id']:52s} rows={len(retained):5d} candidates={len(candidates):5d}",
             flush=True,
         )
 
@@ -1401,7 +1457,6 @@ def pack(
     print(f"packed {total} rows across {len(reports)} components", flush=True)
 
 
-
 # --------------------------------------------------------------------------------------
 # Unified accounting
 # --------------------------------------------------------------------------------------
@@ -1442,16 +1497,12 @@ def _accumulate(bucket: dict[str, Any], record: dict[str, Any]) -> None:
     bucket["split_episode_counts"][record["split"]] = (
         bucket["split_episode_counts"].get(record["split"], 0) + 1
     )
-    bucket["embodiments"][record["embodiment"]] = (
-        bucket["embodiments"].get(record["embodiment"], 0) + 1
-    )
+    bucket["embodiments"][record["embodiment"]] = bucket["embodiments"].get(record["embodiment"], 0) + 1
 
 
 def _finish(bucket: dict[str, Any]) -> dict[str, Any]:
     timesteps = bucket["unique_synchronized_timesteps"]
-    bucket["row_to_unique_timestep_ratio"] = (
-        bucket["retained_actor_rows"] / timesteps if timesteps else 0.0
-    )
+    bucket["row_to_unique_timestep_ratio"] = bucket["retained_actor_rows"] / timesteps if timesteps else 0.0
     bucket["accepted_span_duration_s"] = round(bucket["accepted_span_duration_s"], 3)
     bucket["critic_eligible_duration_s"] = round(bucket["critic_eligible_duration_s"], 3)
     return bucket
@@ -1522,6 +1573,13 @@ def ledger(corpus_root: Path, actor_view: str) -> dict[str, Any]:
     external: dict[str, Any] = {}
     if (FMB_CORPUS / "corpus.json").is_file():
         fmb = read_json(FMB_CORPUS / "corpus.json")["accounting"]
+        derived = fmb["derived_training_rows"]
+        stored_views = derived.get("stored_actor_anchor_views", {})
+        actor_5hz = stored_views.get("5hz", {}).get(
+            "rows",
+            derived["actor_anchor_accounting"]["proposed_5hz"]["episode_level_candidate_anchors"],
+        )
+        actor_10hz = stored_views.get("10hz", {}).get("rows", derived["stored_actor_anchor_view"]["rows"])
         external["fmb"] = {
             "path": str(FMB_CORPUS.relative_to(DATASET_ROOT)),
             "accepted_episodes": fmb["accepted_source_episodes"],
@@ -1530,16 +1588,14 @@ def ledger(corpus_root: Path, actor_view: str) -> dict[str, Any]:
             "accepted_span_duration_s": fmb["accepted_continuous_span_duration_s_nominal"],
             "rgb_images_by_camera": fmb["production_retained_sensor_counts"]["rgb_images_by_camera"],
             "depth_maps_by_camera": fmb["production_retained_sensor_counts"]["depth_maps_by_camera"],
-            "retained_actor_rows_10hz": fmb["derived_training_rows"]["stored_actor_anchor_view"]["rows"],
-            "retained_actor_rows_5hz_candidates": fmb["derived_training_rows"][
-                "actor_anchor_accounting"
-            ]["proposed_5hz"]["episode_level_candidate_anchors"],
-            "candidate_critic_intervals": fmb["derived_training_rows"]["candidate_critic_intervals"],
-            "critic_eligible_intervals": fmb["derived_training_rows"]["critic_eligible_intervals"],
+            "retained_actor_rows_5hz": actor_5hz,
+            "retained_actor_rows_10hz": actor_10hz,
+            "candidate_critic_intervals": derived["candidate_critic_intervals"],
+            "critic_eligible_intervals": derived["critic_eligible_intervals"],
             "split_episode_counts": fmb["split_episode_counts"],
             "note": (
-                "FMB keeps its own source-native corpus with wrist depth; it is referenced here "
-                "rather than copied, and its actor view is stored at 10 Hz."
+                "FMB remains in its source-native store with wrist depth. The federated "
+                "loader joins its indexes with the common corpus without copying source arrays."
             ),
         }
 
@@ -1555,14 +1611,21 @@ def ledger(corpus_root: Path, actor_view: str) -> dict[str, Any]:
         "totals": _finish(totals),
         "external_corpora": external,
         "combined_with_external": {
+            "actor_stride_hz": 5.0,
             "accepted_episodes": totals["accepted_episodes"]
             + sum(item["accepted_episodes"] for item in external.values()),
             "unique_synchronized_timesteps": totals["unique_synchronized_timesteps"]
             + sum(item["unique_synchronized_timesteps"] for item in external.values()),
             "retained_actor_rows": totals["retained_actor_rows"]
-            + sum(item.get("retained_actor_rows_10hz", 0) for item in external.values()),
+            + sum(item.get("retained_actor_rows_5hz", 0) for item in external.values()),
             "critic_eligible_intervals": totals["critic_eligible_intervals"]
             + sum(item.get("critic_eligible_intervals", 0) for item in external.values()),
+        },
+        "federation": {
+            "loader": "lerobot.datasets.fmb_corpus.FederatedDiverseCorpus",
+            "common_root": str(corpus_root.relative_to(DATASET_ROOT)),
+            "fmb_root": str(FMB_CORPUS.relative_to(DATASET_ROOT)),
+            "views_copy_source_arrays": False,
         },
         "accounting_provenance": {
             "episode_camera_and_timestep_counts": "observed_directly_from_converted_corpus_arrays",
@@ -1594,6 +1657,7 @@ def main() -> None:
     round_parser.add_argument("--overwrite", action="store_true")
 
     subparsers.add_parser("index")
+    subparsers.add_parser("refresh-metadata")
 
     views_parser = subparsers.add_parser("views")
     views_parser.add_argument("--stride-hz", type=float, default=5.0)
@@ -1616,6 +1680,8 @@ def main() -> None:
         ingest(args.source, args.corpus_root, components=args.component, overwrite=args.overwrite)
     elif args.command == "ingest-round":
         ingest_round(args.source, args.task, args.round, args.corpus_root, overwrite=args.overwrite)
+    elif args.command == "refresh-metadata":
+        print(f"{refresh_metadata(args.corpus_root)} episode records updated")
     elif args.command == "index":
         rows = refresh_episode_index(args.corpus_root)
         print(f"{len(rows)} episodes indexed")
