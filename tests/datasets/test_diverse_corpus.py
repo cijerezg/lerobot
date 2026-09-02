@@ -380,3 +380,79 @@ def test_alignment_check_catches_a_one_frame_shift(tmp_path: Path, monkeypatch) 
     results = build_corpus.check_video_alignment(record, tmp_path, 3)
     assert [item["verdict"] for item in results] == ["misaligned"] * len(results)
     assert {item["best_offset"] for item in results} == {1}
+
+
+# --------------------------------------------------------------------------------------
+# Federated row-schema parity.
+#
+# The common corpus and FMB are separate source-native stores joined at read time. Their
+# on-disk anchor records use different field vocabularies, so `FMBCorpus._actor_row` and
+# `_critic_row` normalize FMB onto the common contract. If that normalization drifts, a
+# federated training loop starts raising KeyError on FMB rows only -- which is easy to
+# miss because every common-corpus row still works. These tests guard the real corpora
+# and skip when the data is not present.
+# --------------------------------------------------------------------------------------
+
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset"
+
+
+def _federated():
+    common, fmb = DATA_ROOT / "corpus", DATA_ROOT / "fmb"
+    if not (common / "episodes.jsonl").is_file() or not (fmb / "episodes.jsonl").is_file():
+        pytest.skip("federated corpora not present")
+    from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
+
+    return FederatedDiverseCorpus(common_root=common, fmb_root=fmb)
+
+
+def test_every_fmb_actor_row_carries_the_common_actor_contract() -> None:
+    rows = _federated().actor_anchors()
+    common = next(row for row in rows if row["source"] != "fmb")
+    fmb = [row for row in rows if row["source"] == "fmb"]
+    assert fmb, "no FMB rows in the federated actor view"
+
+    required = set(common)
+    missing = {key for key in required if not all(key in row for row in fmb)}
+    assert not missing, f"FMB actor rows are missing common keys: {sorted(missing)}"
+
+
+def test_every_fmb_critic_row_carries_the_common_critic_contract() -> None:
+    intervals = _federated().critic_intervals()
+    common = next(row for row in intervals if row["source"] != "fmb")
+    fmb = [row for row in intervals if row["source"] == "fmb"]
+    assert fmb, "no FMB intervals in the federated critic view"
+
+    missing = {key for key in set(common) if not all(key in row for row in fmb)}
+    assert not missing, f"FMB critic rows are missing common keys: {sorted(missing)}"
+
+
+def test_fmb_actor_rows_are_filterable_on_the_future_contract() -> None:
+    """The boundary filter a primitive-conditioned actor uses must work on both stores."""
+    rows = _federated().actor_anchors()
+    inside = [row for row in rows if row["future_inside_subtask"]]
+    assert any(row["source"] == "fmb" for row in inside)
+    assert any(row["source"] != "fmb" for row in inside)
+
+
+def test_fmb_derived_actor_fields_are_internally_consistent() -> None:
+    fmb = [row for row in _federated().actor_anchors() if row["source"] == "fmb"]
+    for row in fmb:
+        assert row["time_since_subtask_start_s"] >= -1e-9
+        assert row["time_to_subtask_end_s"] > -1e-9
+        assert row["anchor_frame"] == int(row["anchor_timestep"])
+        assert row["native_rate_hz"] > 0
+        assert row["future_points"] > 0 and row["future_rate_hz"] > 0
+    # FMB sits on a derived nominal grid, so history frames land exactly on the request.
+    assert max(row["max_observation_timing_error_s"] for row in fmb) < 1e-9
+
+
+def test_fmb_keeps_its_own_label_provenance_rather_than_borrowing_the_common_vocabulary() -> None:
+    """Model/rubric provenance must stay distinguishable after normalization."""
+    federated = _federated()
+    fmb = [row for row in federated.actor_anchors() if row["source"] == "fmb"]
+    assert {row["quality_provenance"] for row in fmb} == {"human_reviewed_rebot_rubric"}
+
+    intervals = [row for row in federated.critic_intervals() if row["source"] == "fmb"]
+    # FMB boundaries are source-native primitive runs, not reviewed subtask transitions.
+    assert {row["start_boundary"] for row in intervals} <= {"episode_start", "primitive_transition"}
+    assert {row["outcome_provenance"] for row in intervals} == {"unknown"}

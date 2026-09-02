@@ -526,17 +526,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--corpus-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/production/corpus"),
+        default=Path("outputs/diverse_robot_dataset/fmb"),
     )
     parser.add_argument(
         "--review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/pilot/review"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/review"),
     )
     parser.add_argument(
         "--sheet-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/pilot/quality_mistake_review"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/quality_mistake_review"),
     )
     parser.add_argument(
         "--labels",
@@ -548,12 +548,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pilot-review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/pilot/review"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/review"),
     )
     parser.add_argument(
         "--production-review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/production/review"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/production/review"),
     )
     parser.add_argument(
         "--production-labels",
@@ -566,7 +566,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dense-manifest",
         type=Path,
         default=Path(
-            "outputs/diverse_robot_dataset/fmb/production/quality_mistake_review/"
+            "outputs/diverse_robot_dataset_build/fmb/production/quality_mistake_review/"
             "dense_metric_flags/manifest.json"
         ),
     )

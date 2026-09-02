@@ -30,6 +30,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from lerobot.utils.gripper_event_targets import future_event_targets as _future_event_targets
+
 RUBRIC_VERSION = "depth-gripper-event-labels-v1"
 EXPECTED_FPS = 30.0
 GRIPPER_FEATURE = "gripper.pos"
@@ -264,25 +266,12 @@ def build_events(
 
 def future_event_targets(length: int, event_frames: Sequence[int]) -> tuple[np.ndarray, np.ndarray]:
     """Compute cutoff next-event deltas and exponential targets in one backward pass."""
-    event_mask = np.zeros(length, dtype=bool)
-    event_array = np.asarray(event_frames, dtype=np.int64)
-    if event_array.size:
-        if event_array.min() < 0 or event_array.max() >= length or len(np.unique(event_array)) != len(event_array):
-            raise ValueError("Event frames must be unique and inside the episode")
-        event_mask[event_array] = True
-
-    deltas = np.full(length, -1, dtype=np.int16)
-    next_event = -1
-    for frame in range(length - 1, -1, -1):
-        if event_mask[frame]:
-            next_event = frame
-        if next_event >= 0 and next_event - frame <= CUTOFF_FRAMES:
-            deltas[frame] = next_event - frame
-
-    targets = np.zeros(length, dtype=np.float32)
-    valid = deltas >= 0
-    targets[valid] = np.exp2(-deltas[valid].astype(np.float32) / HALF_LIFE_FRAMES).astype(np.float32)
-    return deltas, targets
+    return _future_event_targets(
+        length,
+        event_frames,
+        half_life_frames=HALF_LIFE_FRAMES,
+        cutoff_frames=CUTOFF_FRAMES,
+    )
 
 
 def build_labels(

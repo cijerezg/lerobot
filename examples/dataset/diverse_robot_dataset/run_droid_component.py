@@ -39,8 +39,8 @@ PREPARE = Path(__file__).with_name("prepare_droid.py")
 SOURCE_CONFIG = Path(__file__).with_name("droid_sources.json")
 DEFAULT_SOURCE = "droid_failure"
 DEFAULT_COMPONENT_ROOTS = {
-    "droid_failure": "outputs/diverse_robot_dataset/droid",
-    "droid_success": "outputs/diverse_robot_dataset/droid_success",
+    "droid_failure": "outputs/diverse_robot_dataset_build/droid",
+    "droid_success": "outputs/diverse_robot_dataset_build/droid_success",
 }
 # Plan Section 1.6 selects droid_success for recovery, so its nomination requires at least
 # two gripper close events. droid_failure was selected for failures and does not screen on it.

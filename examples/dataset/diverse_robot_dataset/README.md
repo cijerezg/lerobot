@@ -1,7 +1,9 @@
 # Diverse real-robot production dataset
 
-Production outputs live under `outputs/diverse_robot_dataset/`. Pilot outputs
-are evidence and test fixtures only; they are not part of the training set.
+Training data lives under `outputs/diverse_robot_dataset/` — `corpus/` and `fmb/`, data only.
+Staging, review, logs, and provenance live under `outputs/diverse_robot_dataset_build/`. Pilot
+outputs are evidence and test fixtures only; they are not part of the training set.
+The plan of record is `DIVERSE_ROBOT_DATASET.md` at the workspace root.
 
 ## Unified source-native corpus
 
@@ -83,7 +85,7 @@ uv run --no-project --python .venv/bin/python \
   --task press_the_button --accepted <ten episode indices>
 ```
 
-The validated two-second components under each source's `datasets/` are left untouched.
+The old two-second packed components under each source's `datasets/` were deleted on 2026-09-01; the source-native corpus supersedes them.
 
 ## FMB production corpus
 
@@ -112,7 +114,7 @@ train/validation/test splits at source-episode level.
 # Validate the production-wide ReBot-compatible quality/mistake artifact.
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/annotate_fmb_critic.py \
-  --review-root outputs/diverse_robot_dataset/fmb/production/review \
+  --review-root outputs/diverse_robot_dataset_build/fmb/production/review \
   --labels lerobot/examples/dataset/diverse_robot_dataset/fmb_production_quality_mistakes.json \
   validate
 
@@ -125,16 +127,18 @@ train/validation/test splits at source-episode level.
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py acquire
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py \
-  --review-root outputs/diverse_robot_dataset/fmb/production/review convert
+  --review-root outputs/diverse_robot_dataset_build/fmb/production/review convert
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py views
 .venv/bin/python \
+  lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py annotate-depth-events
+.venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py \
-  --review-root outputs/diverse_robot_dataset/fmb/production/review validate
+  --review-root outputs/diverse_robot_dataset_build/fmb/production/review validate
 ```
 
 The validated corpus lives at
-`outputs/diverse_robot_dataset/fmb/production/corpus/`. Its `episodes/`
+`outputs/diverse_robot_dataset/fmb/`. Its `episodes/`
 directories are the single source-native collection. Each episode stores the
 complete native `actions`, primitive labels, original timestep indices,
 nominal-grid timestamps, low-dimensional observations, side-1/side-2/wrist-1
@@ -142,6 +146,16 @@ RGB, and wrist-1 Z16 depth. `actor_anchors_5hz.jsonl`,
 `actor_anchors_10hz.jsonl`, and `critic_intervals.jsonl` only reference those
 episode arrays; they do not copy sensor frames or actions into separate actor
 and critic datasets.
+
+Depth-event supervision follows the ReBot `depth-gripper-event-labels-v1`
+contract in seconds. It is derived only from FMB's source-native binary
+commanded gripper channel (`actions[:, -1]`, 0 open and 1 closed), with 0.5 s
+closed-state persistence, a one-second exponential half-life, a five-second
+cutoff, and no invented episode-boundary events. Four dense per-episode arrays
+store close/open targets and integer deltas. The FMB actor loader exposes
+`depth_gripper_close_target` and `depth_gripper_open_target` under the exact
+keys consumed by the existing depth auxiliary loss. Conversion writes them
+automatically; `annotate-depth-events` backfills an existing converted corpus.
 
 Measured validated production accounting:
 
@@ -168,7 +182,7 @@ never assigned labels. The flagged executions were geometry-dependent or slow
 but direct; no correction, retry, failed close, slip, drop, knock, or wrong
 target was visible. The production label artifact is
 `fmb_production_quality_mistakes.json`, and the 100 applied review files are in
-`outputs/diverse_robot_dataset/fmb/production/review/`.
+`outputs/diverse_robot_dataset_build/fmb/production/review/`.
 
 Depth remains source-native D405 Z16 `uint16`. Zero and 65,535 are invalid.
 Metric interpretation is 0.1 mm per valid level with provenance
@@ -192,14 +206,14 @@ from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
 
 corpus = FederatedDiverseCorpus(
     "outputs/diverse_robot_dataset/corpus",
-    "outputs/diverse_robot_dataset/fmb/production/corpus",
+    "outputs/diverse_robot_dataset/fmb",
 )
 actor_rows = corpus.actor_anchors(split="train")
 critic_rows = corpus.critic_intervals(split="train")
 ```
 
 The refreshed unified ledger is
-`outputs/diverse_robot_dataset/unified_coverage_ledger.json`. At the comparable
+`outputs/diverse_robot_dataset_build/provenance/unified_coverage_ledger.json`. At the comparable
 5 Hz stride it records 304 episodes, 247,067 unique synchronized timesteps,
 40,507 retained actor rows, and 843 critic-eligible intervals. FMB also retains
 its separate 14,892-row 10 Hz actor index. All indexes reference the original
@@ -226,8 +240,8 @@ Run one task component end to end. Acquisition is the only networked step:
 uv run --no-project --python .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/acquire_robochallenge.py \
   --task item_classification \
-  --downloads-root outputs/diverse_robot_dataset/robochallenge/staging/downloads \
-  --raw-root outputs/diverse_robot_dataset/robochallenge/staging/raw
+  --downloads-root outputs/diverse_robot_dataset_build/robochallenge/staging/downloads \
+  --raw-root outputs/diverse_robot_dataset_build/robochallenge/staging/raw
 
 # Steps 3-4: nominate 15 candidates and render review proxies.
 uv run --no-project --python .venv/bin/python \
@@ -247,9 +261,9 @@ quota; the realized balance is recorded under `robot_balance` in
 `candidates.json`. `finalize` refuses to attach metadata or touch the index
 unless the validation report passes.
 
-Validated annotation JSON files feed the existing packed-v3 converter and
-extractor. Final components are written under
-`outputs/diverse_robot_dataset/robochallenge/datasets/<embodiment>/<task>/`.
+Validated annotation JSON files feed the converter and extractor. Accepted episodes are
+ingested into the source-native corpus at `outputs/diverse_robot_dataset/corpus/`. The old
+packed per-task components under `robochallenge/datasets/` were deleted on 2026-09-01.
 
 ## DROID Failure and DROID Success
 
@@ -273,14 +287,14 @@ component is therefore roughly 10-12 GB.
 # summarize all 13,747 source episodes against their commanded-action traces.
 uv run --no-project --python .venv/bin/python -m lerobot.scripts.lerobot_diverse_pilot \
   --config lerobot/examples/dataset/diverse_robot_dataset/droid_sources.json \
-  --metadata-root outputs/diverse_robot_dataset/droid/metadata \
-  --output-root outputs/diverse_robot_dataset/droid audit
+  --metadata-root outputs/diverse_robot_dataset_build/droid/metadata \
+  --output-root outputs/diverse_robot_dataset_build/droid audit
 
 uv run --no-project --python .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/prepare_droid.py scan \
-  --metadata-root outputs/diverse_robot_dataset/droid/metadata/droid_failure \
-  --staging-root outputs/diverse_robot_dataset/droid/staging \
-  --output outputs/diverse_robot_dataset/droid/review/episode_scan.json
+  --metadata-root outputs/diverse_robot_dataset_build/droid/metadata/droid_failure \
+  --staging-root outputs/diverse_robot_dataset_build/droid/staging \
+  --output outputs/diverse_robot_dataset_build/droid/review/episode_scan.json
 
 # Per component: nominate 24, download only their payload, render review sheets.
 uv run --no-project --python .venv/bin/python \
@@ -340,14 +354,7 @@ uv run --no-project --python .venv/bin/python \
   --source droid_success --lab TRI review
 ```
 
-`coverage_ledger.py` takes a repeatable `--component-root`, so one ledger can span
-sources whose components have different shapes:
-
-```bash
-uv run --no-project --python .venv/bin/python \
-  lerobot/examples/dataset/diverse_robot_dataset/coverage_ledger.py \
-  --component-root outputs/diverse_robot_dataset/robochallenge \
-  --component-root outputs/diverse_robot_dataset/droid \
-  --component-root outputs/diverse_robot_dataset/droid_success \
-  --output outputs/diverse_robot_dataset/coverage_ledger.json
-```
+Cross-source coverage accounting is `build_corpus.py ledger`, which writes
+`outputs/diverse_robot_dataset_build/provenance/unified_coverage_ledger.json`. The older
+per-component `coverage_ledger.py` was removed on 2026-09-01: it read the packed
+`datasets/` components that no longer exist, and its output was superseded.

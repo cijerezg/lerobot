@@ -26,8 +26,18 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.datasets.diverse_corpus import HISTORY_OFFSETS_S, DiverseCorpus, time_stratified_indices
+from lerobot.datasets.diverse_corpus import (
+    FUTURE_FPS,
+    FUTURE_POINTS,
+    HISTORY_OFFSETS_S,
+    DiverseCorpus,
+    time_stratified_indices,
+)
 from lerobot.datasets.diverse_pilot import sample_action_chunk
+from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
+
+# Last point of the future chunk, matching build_corpus.FUTURE_END_S.
+FUTURE_END_S = (FUTURE_POINTS - 1) / FUTURE_FPS
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -91,6 +101,18 @@ class FMBCorpusEpisode:
         raw = np.asarray(self.array("wrist_1_depth_z16.npy")[np.asarray(indices)])
         return raw, (raw != 0) & (raw != 65_535)
 
+    def depth_gripper_event_targets(self, index: int) -> dict[str, np.float32]:
+        targets = {}
+        for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS:
+            values = self.array(f"{key}.npy")
+            if values.shape != (int(self.record["frame_count"]),) or values.dtype != np.float32:
+                raise ValueError(f"Invalid FMB {key} array in {self.root}")
+            value = np.float32(values[index])
+            if not np.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError(f"Invalid FMB {key} value at timestep {index} in {self.root}")
+            targets[key] = value
+        return targets
+
 
 class FMBCorpus:
     """Actor and critic indexes over one non-duplicated FMB production store."""
@@ -114,30 +136,84 @@ class FMBCorpus:
             if int(item["start_timestep"]) <= timestep < int(item["end_timestep_exclusive"])
         )
 
-    def _actor_row(self, source_row: dict[str, Any]) -> dict[str, Any]:
+    def _actor_row(self, source_row: dict[str, Any], *, anchor_index: int = 0) -> dict[str, Any]:
+        """Normalize one FMB anchor onto the common corpus actor-row contract.
+
+        Every field the common builder writes is supplied here, derived from FMB's own
+        record rather than asserted, so a federated training loop can read one key set
+        across both stores. Fields whose FMB meaning genuinely differs keep an
+        FMB-specific value rather than borrowing the common vocabulary.
+        """
         row = dict(source_row)
+        episode_id = str(row["episode_id"])
         anchor = int(row["anchor_timestep"])
         anchor_s = float(row["anchor_s_nominal"])
-        interval = self._interval_at(str(row["episode_id"]), anchor)
+        record = self._records[episode_id]
+        fps = float(record["nominal_fps"])
+        intervals = record["primitive_intervals"]
+        interval_index, interval = next(
+            (position, item)
+            for position, item in enumerate(intervals)
+            if int(item["start_timestep"]) <= anchor < int(item["end_timestep_exclusive"])
+        )
         mistakes = interval.get("mistake_events", [])
+        recoveries = interval.get("recovery_events", [])
+
+        def _spans(events: list[dict[str, Any]]) -> bool:
+            return any(
+                int(event["start_timestep"]) <= anchor < int(event["end_timestep_exclusive"])
+                for event in events
+            )
+
+        in_mistake = row.get("mistake", _spans(mistakes))
+        history_frames = row.get(
+            "history_frames",
+            [int(round((anchor_s + offset) * fps)) for offset in HISTORY_OFFSETS_S],
+        )
+        # FMB has no source timestamps; frames sit on the derived nominal grid, so the
+        # error between a requested history offset and the frame actually used is exact.
+        timing_error = max(
+            abs(float(frame) / fps - (anchor_s + float(offset)))
+            for frame, offset in zip(history_frames, HISTORY_OFFSETS_S, strict=True)
+        )
+        interpolation = row.get("interpolation_provenance") or {}
+        future_points = int(interpolation.get("target_points", FUTURE_POINTS))
+        future_rate_hz = float(interpolation.get("target_rate_hz", FUTURE_FPS))
+        start_s = float(interval["start_s_nominal"])
+        end_s = float(interval["end_s_nominal_exclusive"])
+        # Nominal-grid fields are optional: derive them when a store predates them.
+        future_end_s = float(row.get("future_end_s_nominal", anchor_s + FUTURE_END_S))
+
         row.update(
             corpus_key="fmb",
             source="fmb",
             component="single_object_manipulation",
             embodiment="Franka",
             anchor_s=anchor_s,
-            history_frames=row.get(
-                "history_frames",
-                [int(round((anchor_s + offset) * 10.0)) for offset in HISTORY_OFFSETS_S],
+            anchor_index=anchor_index,
+            anchor_frame=anchor,
+            history_frames=history_frames,
+            max_observation_timing_error_s=timing_error,
+            native_rate_hz=fps,
+            future_points=future_points,
+            future_rate_hz=future_rate_hz,
+            future_end_s=future_end_s,
+            future_inside_subtask=bool(
+                row.get("primitive_conditioned_future_supported", future_end_s <= end_s + 1e-9)
             ),
+            subtask_interval_index=interval_index,
+            time_since_subtask_start_s=anchor_s - start_s,
+            time_to_subtask_end_s=end_s - anchor_s,
             subtask=row.get("subtask", interval["normalized_description"]),
             quality=row.get("quality", interval.get("quality")),
-            mistake=row.get(
-                "mistake",
-                any(
-                    int(event["start_timestep"]) <= anchor < int(event["end_timestep_exclusive"])
-                    for event in mistakes
-                ),
+            quality_provenance=interval.get("quality_provenance"),
+            mistake=in_mistake,
+            retention_reason=(
+                "informative_mistake"
+                if in_mistake
+                else "recovery"
+                if _spans(recoveries)
+                else "useful_motion"
             ),
             retained=row.get("retained", True),
             rejection_reasons=row.get("rejection_reasons", []),
@@ -150,9 +226,14 @@ class FMBCorpus:
         self, *, split: str | None = None, source: str | None = None, retained_only: bool = True
     ) -> list[dict[str, Any]]:
         if self._actor_rows is None:
-            self._actor_rows = [
-                self._actor_row(row) for row in _read_jsonl(self.root / self._actor_view_name)
-            ]
+            counters: dict[str, int] = {}
+            built = []
+            for row in _read_jsonl(self.root / self._actor_view_name):
+                episode_id = str(row["episode_id"])
+                index = counters.get(episode_id, 0)
+                counters[episode_id] = index + 1
+                built.append(self._actor_row(row, anchor_index=index))
+            self._actor_rows = built
         rows = self._actor_rows
         if retained_only:
             rows = [row for row in rows if row["retained"]]
@@ -162,9 +243,14 @@ class FMBCorpus:
             rows = [row for row in rows if row["source"] == source]
         return rows
 
-    @staticmethod
-    def _critic_row(source_row: dict[str, Any]) -> dict[str, Any]:
+    def _critic_row(self, source_row: dict[str, Any]) -> dict[str, Any]:
+        """Normalize one FMB primitive interval onto the common critic-row contract."""
         row = dict(source_row)
+        record = self._records[str(row["episode_id"])]
+        fps = float(record["nominal_fps"])
+        frame_count = int(record["frame_count"])
+        start_timestep = int(row["start_timestep"])
+        end_timestep = int(row["end_timestep_exclusive"])
         row.update(
             corpus_key="fmb",
             source="fmb",
@@ -173,8 +259,19 @@ class FMBCorpus:
             duration_s=float(row["duration_s_nominal"]),
             start_s=float(row["start_s_nominal"]),
             end_s=float(row["end_s_nominal_exclusive"]),
+            end_s_exclusive=float(row["end_s_nominal_exclusive"]),
+            native_rate_hz=fps,
+            action_source="copy_state",
+            # FMB boundaries are source-native primitive runs, not reviewed subtask
+            # transitions, so they keep their own vocabulary rather than borrowing the
+            # common corpus's "subtask_transition".
+            start_boundary=("episode_start" if start_timestep == 0 else "primitive_transition"),
+            end_boundary=("episode_end" if end_timestep >= frame_count else "primitive_transition"),
+            end_boundary_provenance=row.get("boundary_provenance"),
+            quality_values=[row["quality"]] if row.get("quality") is not None else [],
             pause_events=row.get("pause_events", []),
             episode_outcome="unknown",
+            outcome_provenance="unknown",
             views_copy_source_arrays=False,
         )
         return row
@@ -223,6 +320,7 @@ class FMBCorpus:
             "annotation.quality": row["quality"],
             "annotation.mistake": row["mistake"],
             "views_copy_source_arrays": False,
+            **episode.depth_gripper_event_targets(int(row["anchor_timestep"])),
         }
         if cameras:
             sample["observation.images"] = {

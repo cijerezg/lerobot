@@ -264,9 +264,9 @@ def proxies(candidates_path: Path, metadata_root: Path, staging_root: Path, repo
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--metadata-root", type=Path,
-                        default=Path("outputs/diverse_robot_dataset/ur7e/metadata/ur7e_stack"))
+                        default=Path("outputs/diverse_robot_dataset_build/ur7e/metadata/ur7e_stack"))
     parser.add_argument("--staging-root", type=Path,
-                        default=Path("outputs/diverse_robot_dataset/ur7e/staging"))
+                        default=Path("outputs/diverse_robot_dataset_build/ur7e/staging"))
     parser.add_argument("--repo-id", default="Cache-SCA/UR7e-CaP-Stack_Block-100epi")
     sub = parser.add_subparsers(dest="command", required=True)
     scanner = sub.add_parser("scan")

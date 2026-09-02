@@ -18,6 +18,14 @@ from typing import Any
 import numpy as np
 from huggingface_hub import HfApi, hf_hub_download
 
+from lerobot.utils.gripper_event_targets import (
+    MIN_CLOSED_DURATION_S,
+    TARGET_CUTOFF_S,
+    TARGET_HALF_LIFE_S,
+    depth_gripper_event_labels_from_closed_mask,
+    frames_for_duration,
+)
+
 SOURCE_REPO_ID = "charlesxu0124/functional-manipulation-benchmark"
 SOURCE_REVISION = "f99fd55c072eea5573523c96aa527aed3c665690"
 SOURCE_PREFIX = "single_object_manipulation_dataset/"
@@ -76,6 +84,15 @@ EXPECTED_LOW_DIMENSIONAL_TAILS = {
     "primitive": (),
 }
 DERIVED_FILES = {"timestamp_s": "timestamp_s.npy", "source_timestep": "source_timestep.npy"}
+DEPTH_GRIPPER_EVENT_FILES = {
+    "depth_gripper_close_target": "depth_gripper_close_target.npy",
+    "depth_gripper_open_target": "depth_gripper_open_target.npy",
+    "depth_gripper_close_delta": "depth_gripper_close_delta.npy",
+    "depth_gripper_open_delta": "depth_gripper_open_delta.npy",
+}
+DEPTH_GRIPPER_EVENT_RUBRIC_VERSION = "depth-gripper-event-labels-v1"
+FMB_GRIPPER_OPEN = 0
+FMB_GRIPPER_CLOSED = 1
 PRIMITIVE_DESCRIPTIONS = {
     "grasp": "grasp the object",
     "move_up": "lift the object",
@@ -544,6 +561,74 @@ def save_array(path: Path, array: np.ndarray) -> dict[str, Any]:
     }
 
 
+def fmb_depth_gripper_event_labels(
+    gripper_action: np.ndarray,
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    """Derive REBOT-compatible targets from FMB's binary commanded gripper action."""
+    gripper = np.asarray(gripper_action)
+    if gripper.ndim != 1 or not np.isfinite(gripper).all():
+        raise ValueError("FMB gripper action must be a finite one-dimensional array")
+    values = np.unique(gripper)
+    if not np.all(np.isin(values, [FMB_GRIPPER_OPEN, FMB_GRIPPER_CLOSED])):
+        raise ValueError(f"FMB gripper action must be binary 0=open, 1=closed; found {values.tolist()}")
+
+    labels, intervals = depth_gripper_event_labels_from_closed_mask(
+        gripper == FMB_GRIPPER_CLOSED,
+        fps=FPS,
+    )
+    close_events = [start for start, _ in intervals if start > 0]
+    open_events = [stop for _, stop in intervals if stop < len(gripper)]
+    info = {
+        "rubric_version": DEPTH_GRIPPER_EVENT_RUBRIC_VERSION,
+        "source_signal": "source-native commanded actions[:, -1]",
+        "source_semantics": {"open": FMB_GRIPPER_OPEN, "closed": FMB_GRIPPER_CLOSED},
+        "fps": FPS,
+        "persistence": {
+            "frames": frames_for_duration(MIN_CLOSED_DURATION_S, FPS),
+            "seconds": MIN_CLOSED_DURATION_S,
+        },
+        "target_half_life": {
+            "frames": frames_for_duration(TARGET_HALF_LIFE_S, FPS),
+            "seconds": TARGET_HALF_LIFE_S,
+        },
+        "target_cutoff": {
+            "frames": frames_for_duration(TARGET_CUTOFF_S, FPS),
+            "seconds": TARGET_CUTOFF_S,
+        },
+        "frame_label_rows": len(gripper),
+        "retained_closed_intervals": len(intervals),
+        "close_events": len(close_events),
+        "open_events": len(open_events),
+        "boundary_rule": "initial close and terminal open are unobservable and not invented",
+    }
+    return labels, info
+
+
+def write_fmb_depth_gripper_event_labels(
+    episode_root: Path,
+    gripper_action: np.ndarray,
+    arrays: dict[str, Any],
+) -> dict[str, Any]:
+    labels, info = fmb_depth_gripper_event_labels(gripper_action)
+    for key, filename in DEPTH_GRIPPER_EVENT_FILES.items():
+        arrays[key] = save_array(episode_root / filename, labels[key])
+    return info
+
+
+def _depth_gripper_event_accounting(metadata_records: list[dict[str, Any]]) -> dict[str, Any]:
+    infos = [item["depth_gripper_event_labels"] for item in metadata_records]
+    return {
+        "rubric_version": DEPTH_GRIPPER_EVENT_RUBRIC_VERSION,
+        "source": "FMB source-native commanded binary gripper action",
+        "episode_count": len(infos),
+        "frame_label_rows": sum(int(item["frame_label_rows"]) for item in infos),
+        "retained_closed_intervals": sum(int(item["retained_closed_intervals"]) for item in infos),
+        "close_events": sum(int(item["close_events"]) for item in infos),
+        "open_events": sum(int(item["open_events"]) for item in infos),
+        "target_keys": ["depth_gripper_close_target", "depth_gripper_open_target"],
+    }
+
+
 def episode_id(index: int, source_path: str) -> str:
     return f"episode_{index:06d}_{Path(source_path).stem}"
 
@@ -619,6 +704,11 @@ def convert(
         arrays["timestamp_s"] = save_array(destination / DERIVED_FILES["timestamp_s"], timestamps)
         arrays["source_timestep"] = save_array(
             destination / DERIVED_FILES["source_timestep"], np.arange(frame_count, dtype=np.int64)
+        )
+        depth_gripper_event_info = write_fmb_depth_gripper_event_labels(
+            destination,
+            np.asarray(raw["actions"])[:, -1],
+            arrays,
         )
 
         reviews = load_review(review_root, file_spec["path"])
@@ -768,6 +858,7 @@ def convert(
                 "depth_scale_provenance": DEPTH_SCALE_PROVENANCE,
                 "metric_conversion": "depth_mm = raw_z16_level * 0.1 for valid pixels",
             },
+            "depth_gripper_event_labels": depth_gripper_event_info,
             "primitive_intervals": intervals,
             "actor_anchor_accounting": episode_actor,
         }
@@ -821,6 +912,7 @@ def convert(
                 "mistake_timesteps": mistake_timesteps,
                 "recovery_labels_used": False,
             },
+            "depth_gripper_event_labels": _depth_gripper_event_accounting(metadata_records),
         },
         "split_episode_counts": dict(sorted(Counter(item["split"] for item in metadata_records).items())),
         "raw_staging_removed": False,
@@ -863,6 +955,7 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
         *RETAINED_SENSOR_FILES.values(),
         *LOW_DIMENSIONAL_KEYS.values(),
         *DERIVED_FILES.values(),
+        *DEPTH_GRIPPER_EVENT_FILES.values(),
         "episode.json",
     }
     manifest_by_path = {item["path"]: item for item in manifest["files"]}
@@ -925,6 +1018,19 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
             errors.append(f"source_timestep:{identifier}")
         if not np.isfinite(np.load(directory / "actions.npy", allow_pickle=False)).all():
             errors.append(f"actions_nonfinite:{identifier}")
+        try:
+            expected_event_labels, expected_event_info = fmb_depth_gripper_event_labels(
+                np.load(directory / "actions.npy", allow_pickle=False)[:, -1]
+            )
+        except ValueError as exc:
+            errors.append(f"depth_gripper_event_source:{identifier}:{exc}")
+        else:
+            for key, filename in DEPTH_GRIPPER_EVENT_FILES.items():
+                actual = np.load(directory / filename, allow_pickle=False)
+                if not np.array_equal(actual, expected_event_labels[key]):
+                    errors.append(f"depth_gripper_event_values:{identifier}:{key}")
+            if metadata.get("depth_gripper_event_labels") != expected_event_info:
+                errors.append(f"depth_gripper_event_metadata:{identifier}")
         intervals = metadata["primitive_intervals"]
         if not intervals or intervals[0]["start_timestep"] != 0:
             errors.append(f"primitive_start:{identifier}")
@@ -1043,6 +1149,9 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
                 item.startswith(("timestamp_grid", "source_timestep")) for item in errors
             ),
             "depth_handling": not any(item.startswith("depth_") for item in errors),
+            "depth_gripper_event_labels": not any(
+                item.startswith("depth_gripper_event_") for item in errors
+            ),
             "action_continuity_and_finiteness": not any(item.startswith("actions_") for item in errors),
             "primitive_boundaries": not any(item.startswith("primitive_") for item in errors),
             "critic_labels": not any(item.startswith("critic_") for item in errors),
@@ -1142,6 +1251,34 @@ def write_production_audit(
     return output
 
 
+def annotate_depth_gripper_events(output_root: Path) -> dict[str, Any]:
+    """Backfill deterministic event arrays into an already converted FMB corpus."""
+    metadata_records = read_jsonl(output_root / "episodes.jsonl")
+    if not metadata_records:
+        raise ValueError(f"No FMB episodes found in {output_root}")
+    for metadata in metadata_records:
+        directory = output_root / "episodes" / metadata["episode_id"]
+        gripper_action = np.load(directory / "actions.npy", allow_pickle=False)[:, -1]
+        if len(gripper_action) != int(metadata["frame_count"]):
+            raise ValueError(f"Gripper action length mismatch in {directory}")
+        arrays = metadata.setdefault("arrays", {})
+        metadata["depth_gripper_event_labels"] = write_fmb_depth_gripper_event_labels(
+            directory, gripper_action, arrays
+        )
+        episode_payload = {key: value for key, value in metadata.items() if key != "metadata_sha256"}
+        write_json(directory / "episode.json", episode_payload)
+        metadata["metadata_sha256"] = sha256(directory / "episode.json")
+    write_jsonl(output_root / "episodes.jsonl", metadata_records)
+
+    accounting = _depth_gripper_event_accounting(metadata_records)
+    corpus_path = output_root / "corpus.json"
+    if corpus_path.is_file():
+        corpus = read_json(corpus_path)
+        corpus["accounting"]["derived_training_rows"]["depth_gripper_event_labels"] = accounting
+        write_json(corpus_path, corpus)
+    return accounting
+
+
 def build_parser() -> argparse.ArgumentParser:
     here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1150,22 +1287,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--pilot-audit",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/pilot/fmb_pilot_audit.json"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/fmb_pilot_audit.json"),
     )
     parser.add_argument(
         "--review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/pilot/review"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/review"),
     )
     parser.add_argument(
         "--raw-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/production/raw"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/production/raw"),
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/production/corpus"),
+        default=Path("outputs/diverse_robot_dataset/fmb"),
     )
     commands = parser.add_subparsers(dest="command", required=True)
     select_parser = commands.add_parser("select")
@@ -1173,6 +1310,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("acquire")
     commands.add_parser("convert")
     commands.add_parser("views")
+    commands.add_parser("annotate-depth-events")
     commands.add_parser("validate")
     commands.add_parser("build")
     return parser
@@ -1186,6 +1324,9 @@ def main() -> None:
         return
     if args.command == "views":
         print(json.dumps(write_actor_views(args.output_root), indent=2))
+        return
+    if args.command == "annotate-depth-events":
+        print(json.dumps(annotate_depth_gripper_events(args.output_root), indent=2))
         return
     manifest = read_json(args.manifest)
     if args.command in {"acquire", "build"}:

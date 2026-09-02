@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus, FMBCorpus
+from lerobot.utils.gripper_event_targets import depth_gripper_event_labels_from_closed_mask
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -25,9 +26,16 @@ def _synthetic_fmb(root: Path) -> None:
     # `q` is what state and action both read; the other two are retained by the
     # converter but deliberately unused (see FMBCorpusEpisode.state).
     np.save(episode_root / "q.npy", joints)
-    np.save(episode_root / "actions.npy", np.zeros((frames, 7), dtype=np.float64))
+    gripper = np.zeros(frames, dtype=np.int64)
+    gripper[65:75] = 1
+    source_actions = np.zeros((frames, 7), dtype=np.float64)
+    source_actions[:, -1] = gripper
+    np.save(episode_root / "actions.npy", source_actions)
     np.save(episode_root / "tcp_pose.npy", np.zeros((frames, 7), dtype=np.float64))
-    np.save(episode_root / "gripper_pose.npy", np.arange(frames, dtype=np.float64))
+    np.save(episode_root / "gripper_pose.npy", gripper)
+    event_labels, _ = depth_gripper_event_labels_from_closed_mask(gripper == 1, fps=10.0)
+    for key, values in event_labels.items():
+        np.save(episode_root / f"{key}.npy", values)
     for camera in ("side_1", "side_2", "wrist_1"):
         np.save(episode_root / f"{camera}_rgb.npy", np.zeros((frames, 2, 2, 3), dtype=np.uint8))
     depth = np.full((frames, 2, 2), 2500, dtype=np.uint16)
@@ -103,6 +111,10 @@ def test_fmb_actor_and_critic_views_keep_native_arrays_and_depth_contract(tmp_pa
     assert not actor["observation.depth.wrist_1_valid_mask"][0, 0, :2].any()
     assert actor["observation.depth.units_mm_per_level"] == 0.1
     assert actor["observation.depth.scale_provenance"] == "user_authorized_same_D405_model_assumption"
+    assert actor["depth_gripper_close_target"] == np.float32(2.0**-0.5)
+    assert actor["depth_gripper_open_target"] == np.float32(2.0**-1.5)
+    assert actor["depth_gripper_close_target"].dtype == np.float32
+    assert actor["depth_gripper_open_target"].dtype == np.float32
 
     critic_row = corpus.critic_intervals()[0]
     critic = corpus.critic_sample(critic_row, action_points=16, observation_frames=3)

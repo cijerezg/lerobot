@@ -284,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--audit",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/pilot/fmb_pilot_audit.json"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/fmb_pilot_audit.json"),
     )
     parser.add_argument(
         "--spec",
@@ -294,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--review-root",
         type=Path,
-        default=Path("outputs/diverse_robot_dataset/fmb/pilot/review"),
+        default=Path("outputs/diverse_robot_dataset_build/fmb/pilot/review"),
     )
     parser.add_argument(
         "--critic-labels",

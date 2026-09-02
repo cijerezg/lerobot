@@ -22,7 +22,7 @@ PREPARE = Path(__file__).with_name("prepare_robochallenge.py")
 BUILD_CORPUS = Path(__file__).with_name("build_corpus.py")
 CONVERT = REPO_ROOT / "lerobot/examples/dataset/diverse_robot_pilot/convert_robochallenge.py"
 PRODUCTION_MANIFEST = Path(__file__).with_name("robochallenge_production.json")
-DEFAULT_COMPONENT_ROOT = REPO_ROOT / "outputs/diverse_robot_dataset/robochallenge"
+DEFAULT_COMPONENT_ROOT = REPO_ROOT / "outputs/diverse_robot_dataset_build/robochallenge"
 CANDIDATE_COUNT = 15
 
 

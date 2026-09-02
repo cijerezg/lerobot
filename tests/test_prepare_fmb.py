@@ -73,6 +73,25 @@ def test_actor_accounting_matches_audited_window_contract() -> None:
     assert result["proposed_10hz"]["primitive_conditioned_future_candidate_anchors"] == 10
 
 
+def test_depth_gripper_targets_match_rebot_timing_and_boundary_rules() -> None:
+    gripper = np.zeros(80, dtype=np.float32)
+    gripper[:5] = 1  # Initial interval: open event only.
+    gripper[10:14] = 1  # Shorter than 0.5 s: ignored.
+    gripper[20:35] = 1  # Interior interval: close and open.
+    gripper[50:] = 1  # Terminal interval: close event only.
+    labels, info = prepare_fmb.fmb_depth_gripper_event_labels(gripper)
+
+    assert info["retained_closed_intervals"] == 3
+    assert info["close_events"] == 2
+    assert info["open_events"] == 2
+    assert labels["depth_gripper_close_delta"][20] == 0
+    assert labels["depth_gripper_open_delta"][35] == 0
+    assert labels["depth_gripper_close_target"][10] == np.float32(0.5)
+    assert labels["depth_gripper_open_target"][25] == np.float32(0.5)
+    assert labels["depth_gripper_close_target"].dtype == np.float32
+    assert labels["depth_gripper_close_delta"].dtype == np.int16
+
+
 def test_critic_intervals_reference_every_native_action() -> None:
     labels = ["grasp"] * 3 + ["insert"] * 4
     intervals = prepare_fmb.primitive_intervals(labels)
@@ -194,6 +213,12 @@ def test_converter_retains_only_approved_modalities_and_validates(tmp_path: Path
     assert "side_2_rgb.npy" in names
     assert "wrist_1_rgb.npy" in names
     assert "wrist_1_depth_z16.npy" in names
+    assert set(prepare_fmb.DEPTH_GRIPPER_EVENT_FILES.values()) <= names
+    episode_metadata = prepare_fmb.read_json(episode_dir / "episode.json")
+    assert episode_metadata["depth_gripper_event_labels"]["source_signal"] == (
+        "source-native commanded actions[:, -1]"
+    )
+    assert set(prepare_fmb.DEPTH_GRIPPER_EVENT_FILES) <= set(episode_metadata["arrays"])
     assert "wrist_2_rgb.npy" not in names
     assert "side_1_depth.npy" not in names
     critic = prepare_fmb.read_jsonl(output_root / "critic_intervals.jsonl")

@@ -49,6 +49,7 @@ from lerobot.datasets.diverse_pilot import (  # noqa: E402
 CORPUS_FORMAT = "diverse_robot_source_native_actor_critic_corpus_v1"
 BUILDER_VERSION = 1
 DATASET_ROOT = REPO_ROOT / "outputs/diverse_robot_dataset"
+BUILD_ROOT = REPO_ROOT / "outputs/diverse_robot_dataset_build"
 CORPUS_ROOT = DATASET_ROOT / "corpus"
 CONFIG_DIR = Path(__file__).parent
 
@@ -171,7 +172,7 @@ def _robochallenge_spec(dataset_root: Path, embodiment: str) -> SourceSpec:
 
 
 def discover_components(source: str) -> list[Component]:
-    source_root = DATASET_ROOT / source
+    source_root = BUILD_ROOT / source
     index = read_json(source_root / "index.json")
     components: list[Component] = []
     for entry in index["components"]:
@@ -336,7 +337,7 @@ def _camera_sources(
                 "path": path,
                 "start_s": 0.0,
                 "origin": "robochallenge_raw_episode_file",
-                "source_relative": str(path.relative_to(DATASET_ROOT)),
+                "source_relative": str(path.relative_to(BUILD_ROOT)),
             }
         return sources
     staged_root = component.staging_root / component.manifest["repo_id"].replace("/", "__")
@@ -348,7 +349,7 @@ def _camera_sources(
             "path": path,
             "start_s": float(video["from_timestamp"]),
             "origin": "staged_lerobot_v3_shard",
-            "source_relative": str(path.relative_to(DATASET_ROOT)),
+            "source_relative": str(path.relative_to(BUILD_ROOT)),
         }
     return sources
 
@@ -501,7 +502,6 @@ def ingest_episode(
         "source_revision": manifest.get("revision", component.spec.revision),
         "source_episode_index": episode_index,
         "staged_episode_index": staged_index,
-        "packed_component_root": str(component.dataset_root.relative_to(DATASET_ROOT)),
         "review_round": component.review_round,
         "frames": frames,
         "duration_s": duration_s,
@@ -596,7 +596,7 @@ def refresh_metadata(corpus_root: Path) -> int:
     """Re-derive declared rates for episodes ingested before the rate provenance was fixed."""
     declared: dict[tuple[str, str], float] = {}
     for source in ("robochallenge", "droid", "droid_success", "ur7e"):
-        if not (DATASET_ROOT / source / "index.json").is_file():
+        if not (BUILD_ROOT / source / "index.json").is_file():
             continue
         for component in discover_components(source):
             rate = declared_rate_hz(component, 0.0)
@@ -622,7 +622,7 @@ def round_component(source: str, task: str, review_round: int) -> Component:
     if source != "robochallenge":
         raise ValueError(f"Review rounds are implemented for robochallenge, not {source!r}")
     base = next(item for item in discover_components(source) if item.component == task)
-    source_root = DATASET_ROOT / source
+    source_root = BUILD_ROOT / source
     review_root = source_root / "review" / task / f"round{review_round}"
     slug = f"robochallenge-{base.embodiment.lower()}-{task.replace('_', '-')}"
     staged_root = source_root / "staging" / f"local__{slug}-round{review_round}-source"
@@ -1065,7 +1065,7 @@ def check_video_alignment(record: dict[str, Any], corpus_root: Path, samples: in
     results = []
     for camera in record["cameras"]:
         corpus_path = directory / camera["path"]
-        source_path = DATASET_ROOT / camera["source"]["path"]
+        source_path = BUILD_ROOT / camera["source"]["path"]
         if not source_path.is_file() or not positions:
             results.append({"camera": camera["name"], "verdict": "source_absent"})
             continue
@@ -1461,7 +1461,7 @@ def pack(
 # Unified accounting
 # --------------------------------------------------------------------------------------
 
-FMB_CORPUS = DATASET_ROOT / "fmb/production/corpus"
+FMB_CORPUS = DATASET_ROOT / "fmb"
 
 
 def _blank_bucket() -> dict[str, Any]:
@@ -1634,7 +1634,7 @@ def ledger(corpus_root: Path, actor_view: str) -> dict[str, Any]:
             "external_corpora": "read_from_that_corpus_own_validated_accounting",
         },
     }
-    write_json(DATASET_ROOT / "unified_coverage_ledger.json", report)
+    write_json(BUILD_ROOT / "provenance" / "unified_coverage_ledger.json", report)
     return report
 
 

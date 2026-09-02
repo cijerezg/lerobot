@@ -817,7 +817,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     here = Path(__file__).resolve().parent
     parser.add_argument("--manifest", type=Path, default=here / "fmb_pilot.json")
-    parser.add_argument("--work-root", type=Path, default=Path("outputs/diverse_robot_dataset/fmb/pilot"))
+    parser.add_argument("--work-root", type=Path, default=Path("outputs/diverse_robot_dataset_build/fmb/pilot"))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("verify", help="verify pinned metadata without downloading payloads")
     commands.add_parser("acquire", help="download only the twelve pinned raw trajectories")

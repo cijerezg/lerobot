@@ -199,7 +199,7 @@ def main() -> None:
     parser.add_argument(
         "--component-root",
         type=Path,
-        default=REPO_ROOT / "outputs/diverse_robot_dataset/robochallenge",
+        default=REPO_ROOT / "outputs/diverse_robot_dataset_build/robochallenge",
     )
     parser.add_argument(
         "--production-manifest",
