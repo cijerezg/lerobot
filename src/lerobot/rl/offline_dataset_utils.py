@@ -136,6 +136,23 @@ def get_offline_dataset_weights(cfg) -> list[float]:
     return [source.weight for source in get_offline_dataset_sources(cfg)]
 
 
+def buffer_state_keys(cfg) -> list[str]:
+    """State keys for the LeRobot buffers of this run.
+
+    Normally the policy's own `input_features`. In a mixed run those have been renamed
+    onto canonical camera roles, while the ReBot caches on disk were fingerprinted (and
+    their columns written) under ReBot's spelling -- so the lookup and the load ask under
+    the old names, and `RoleAlignedBuffer` renames the columns afterwards.
+    """
+    keys = list(cfg.policy.input_features.keys())
+    diverse = getattr(cfg, "diverse", None)
+    if diverse is None or not getattr(diverse, "enabled", False):
+        return keys
+    from lerobot.rl.data_sources.rebot_role_adapter import rebot_state_keys
+
+    return rebot_state_keys(keys)
+
+
 def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
     """Replace the normalization source's action/state stats with pooled ones.
 
@@ -661,7 +678,7 @@ def load_additional_offline_buffers(
     sources = get_offline_dataset_sources(cfg)[1:]
     if not sources:
         return []
-    state_keys = list(cfg.policy.input_features.keys())
+    state_keys = buffer_state_keys(cfg)
     cache_dir = getattr(cfg, "buffer_cache_dir", None)
     cache_policy = getattr(cfg, "cache_policy", "fallback")
     image_storage_dtype = getattr(cfg.policy, "image_storage_dtype", "bfloat16")

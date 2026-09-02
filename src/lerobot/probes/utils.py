@@ -451,11 +451,9 @@ def probe_frame_inputs(
 
 
 def history_offsets(memory_cfg, fps: float) -> list[int]:
-    """Lookback distances in frames, oldest → newest (buffer.py
-    `_normalize_history_offsets`: sorted descending, deduplicated)."""
-    n = memory_cfg.history_num_samples
-    stride = memory_cfg.history_window_seconds * fps / n
-    return sorted({round(stride * i) for i in range(1, n + 1)}, reverse=True)
+    """Lookback distances in frames, oldest → newest — the same slots the buffer
+    gathers (`MemoryConfig.history_offsets_frames`, already sorted descending)."""
+    return memory_cfg.history_offsets_frames(fps)
 
 
 def assemble_frame_history(

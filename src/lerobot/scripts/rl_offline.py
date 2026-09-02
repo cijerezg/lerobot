@@ -72,6 +72,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.offline_dataset_utils import (
+    buffer_state_keys,
     get_offline_dataset_sources,
     get_offline_dataset_weights,
     load_additional_offline_buffers,
@@ -762,7 +763,10 @@ def run_offline_training(
     memory_cfg = getattr(cfg.policy, "memory", None)
     history_offsets = memory_cfg.history_offsets(fps) if memory_cfg is not None else None
     if history_offsets is not None:
-        logging.info(f"[RL_OFFLINE] History lookback (steps @ {fps} fps): {history_offsets}")
+        window = ", ".join(f"-{t:g}s" for t in memory_cfg.history_times_seconds())
+        logging.info(
+            f"[RL_OFFLINE] History lookback {window} (steps @ {fps} fps): {history_offsets}"
+        )
 
     if getattr(cfg, "cache_policy", "fallback") == "require":
         cache_dir = getattr(cfg, "buffer_cache_dir", None)
@@ -772,7 +776,7 @@ def run_offline_training(
             else ReplayBuffer.find_cache(
                 offline_dataset,
                 cache_dir,
-                state_keys=cfg.policy.input_features.keys(),
+                state_keys=buffer_state_keys(cfg),
                 image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
                 image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
                 image_stride=getattr(cfg.policy, "image_stride", 1),
@@ -789,7 +793,7 @@ def run_offline_training(
         lambda: ReplayBuffer.from_lerobot_dataset(
             offline_dataset,
             device=device,
-            state_keys=cfg.policy.input_features.keys(),
+            state_keys=buffer_state_keys(cfg),
             storage_device=storage_device,
             optimize_memory=True,
             capacity=cfg.policy.offline_buffer_capacity,
@@ -878,16 +882,100 @@ def run_offline_training(
     logging.info(colored("=" * 70, "yellow", attrs=["bold"]))
 
     # ── Iterator ─────────────────────────────────────────────────────────────
-    buf_iter = make_combined_offline_iterator(
-        buffers=offline_buffers,
-        batch_size=cfg.batch_size,
-        async_prefetch=async_prefetch,
-        queue_size=2,
-        action_chunk_size=cfg.policy.n_action_steps,
-        weights=get_offline_dataset_weights(cfg),
-    )
+    diverse_cfg = getattr(cfg, "diverse", None)
+    if diverse_cfg is not None and diverse_cfg.enabled:
+        from lerobot.rl.data_sources.diverse_integration import (
+            align_rebot_buffers,
+            build_diverse_buffer,
+            build_mixture_groups,
+            probe_rebot_caches,
+            sample_spec_from_config,
+        )
+        from lerobot.rl.data_sources.diverse_mixture import (
+            MixtureTelemetry,
+            make_hierarchical_offline_iterator,
+            observed,
+        )
+
+        spec = sample_spec_from_config(cfg)
+        if diverse_cfg.probe_rebot_caches:
+            # Reuse or rebuild is decided here, before anything expensive: a ReBot cache
+            # whose stride cannot address the -6 s lookback would otherwise train on
+            # silently wrong history rows.
+            cache_dirs = [
+                buffer.cache_dir
+                for buffer in offline_buffers
+                if getattr(buffer, "cache_dir", None) is not None
+            ]
+            if cache_dirs:
+                probe_rebot_caches(
+                    cache_dirs,
+                    history_offsets_frames=(
+                        memory_cfg.history_offsets_frames(fps) if memory_cfg is not None else []
+                    ),
+                    depth_role=spec.depth_role,
+                )
+        diverse_buffer = _build_on_each_process_main_first(
+            runtime,
+            lambda: build_diverse_buffer(
+                cfg,
+                diverse_cfg,
+                main_dataset=offline_dataset,
+                device=device,
+                seed=int(cfg.seed or 0),
+                rank=runtime.process_index,
+                world_size=runtime.num_processes,
+                is_main_process=runtime.is_main_process,
+            ),
+        )
+        # The diverse strings joined the master vocabulary; re-pin the prompt's copy.
+        trainer.sync_subtask_vocabulary(
+            preprocessor, offline_dataset, is_main_process=runtime.is_main_process
+        )
+        groups = build_mixture_groups(
+            diverse_cfg,
+            align_rebot_buffers(
+                offline_buffers, diverse_cfg, spec, is_main_process=runtime.is_main_process
+            ),
+            diverse_buffer,
+            rebot_weights=get_offline_dataset_weights(cfg),
+        )
+        mixture_telemetry = MixtureTelemetry()
+        buf_iter = observed(
+            make_hierarchical_offline_iterator(
+                groups,
+                batch_size=cfg.batch_size,
+                async_prefetch=False,  # the diverse half reads memmaps on this thread
+                queue_size=2,
+                action_chunk_size=cfg.policy.n_action_steps,
+            ),
+            mixture_telemetry,
+            depth_key=f"depth.{spec.depth_role}.depth",
+        )
+        logging.info(
+            "[RL_OFFLINE] Mixed collection: %d ReBot buffers + %d diverse anchors "
+            "(outer weights rebot=%.2f diverse=%.2f, inner=%s)",
+            len(offline_buffers),
+            len(diverse_buffer),
+            diverse_cfg.rebot_weight,
+            diverse_cfg.weight,
+            diverse_cfg.group_weight,
+        )
+    else:
+        mixture_telemetry = None
+        buf_iter = make_combined_offline_iterator(
+            buffers=offline_buffers,
+            batch_size=cfg.batch_size,
+            async_prefetch=async_prefetch,
+            queue_size=2,
+            action_chunk_size=cfg.policy.n_action_steps,
+            weights=get_offline_dataset_weights(cfg),
+        )
 
     # ── Validation dataset (used by probes) ───────────────────────────────────
+    # Deliberately ReBot-only. This run trains on every accepted diverse episode, so
+    # there is no held-out diverse split to load; corpus and unit diagnostics cover it
+    # instead. A split-shaped object sitting here is how that decision gets reversed.
     val_dataset = (
         _load_val_dataset(cfg, fallback_dataset=offline_dataset)
         if runtime.is_main_process
@@ -1056,6 +1144,18 @@ def run_offline_training(
         # ── Logging ───────────────────────────────────────────────────────────
         if optimization_step % log_freq == 0:
             training_infos["offline_buffer_size"] = sum(len(b) for b in offline_buffers)
+            if mixture_telemetry is not None and mixture_telemetry.samples:
+                # What the sampler actually produced, not what it was asked for.
+                for name, counter in (
+                    ("source", mixture_telemetry.source),
+                    ("layout", mixture_telemetry.layout),
+                    ("cameras", mixture_telemetry.camera_count),
+                ):
+                    for key, share in mixture_telemetry.proportions(counter).items():
+                        training_infos[f"mixture/{name}_{key}"] = share
+                depth_share = mixture_telemetry.proportions(mixture_telemetry.depth)
+                training_infos["mixture/depth_present"] = depth_share.get(True, 0.0)
+                training_infos["mixture/episodes_seen"] = len(mixture_telemetry.episode)
             for group_name, scheduler in schedulers.items():
                 training_infos[f"lr/{group_name}"] = scheduler.get_last_lr()[0]
             training_infos["Optimization step"] = optimization_step

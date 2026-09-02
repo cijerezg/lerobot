@@ -1,16 +1,34 @@
 # =============================================================================
-# rebot B601 RL training config  —  MolmoAct2
+# Mixed ReBot + diverse-corpus RL training config  —  MolmoAct2
 # =============================================================================
 # Used by:
-#   - lerobot/src/lerobot/rl/rl_offline.py   (offline BC / offline RL)
-#   - lerobot/src/lerobot/rl/rl_learner.py   (online distributed learner)
-#   - lerobot/src/lerobot/rl/inference_async.py  (online distributed actor)
+#   - lerobot/src/lerobot/scripts/rl_offline.py   (offline BC / offline RL)
+#   - lerobot/src/lerobot/rl/rl_learner.py        (online distributed learner)
+#   - lerobot/src/lerobot/rl/inference_async.py   (online distributed actor)
 #
 # Schema: TrainRLServerPipelineConfig in lerobot/src/lerobot/configs/train.py
 #
 # rl_offline.py strips policy fields that do not belong to the active
 # policy.type, so a section for another policy could coexist here. The legacy
-# PI05 / SO-101 section was removed 2026-07-30 — this robot is 7-DOF rebot only.
+# PI05 / SO-101 section was removed 2026-07-30.
+#
+# 2026-09-02: this config now trains on the ReBot corpus AND the source-native
+# diverse corpus, 50/50 by group. What that changed, and why:
+#   * cameras are canonical roles (external_0 / external_1 / wrist_0), because the
+#     two halves are concatenated key by key and must share one vocabulary. ReBot's
+#     "top" -> external_0 and "wrist" -> wrist_0 are renamed at load; ReBot has no
+#     external_1, so that slot arrives absent and its patch span leaves the
+#     attention mask (it is NOT a black frame).
+#   * state/action widths are 8, the widest layout in the mixture. A 7-DoF row is
+#     right-padded and its padding carries a mask; no dimension is ever truncated.
+#   * normalization is per ACTION LAYOUT, not per robot — ReBot's joints are in
+#     degrees and the corpus is in radians, so one pooled row would have squashed
+#     every diverse robot into ~1% of [-1, 1].
+#   * the `diverse:` block below is off by default in the schema; set enabled:false
+#     to get exactly the old ReBot-only behaviour back.
+#
+# Design record: DIVERSE_ROBOT_TRAINING_INTEGRATION_PLAN.md (workspace root).
+# The previous ReBot-only config is kept at config_rl.yaml.bak-pre-diverse-2026-09-02.
 #
 # =============================================================================
 
@@ -18,7 +36,7 @@
 # -----------------------------------------------------------------------------
 # Hot knobs (changed often)
 # -----------------------------------------------------------------------------
-offline_output_dir: outputs/molmoact2_offline_rebot_all-v1-5
+offline_output_dir: outputs/molmoact2_probes_critic_v2
 batch_size: 32
 
 # -----------------------------------------------------------------------------
@@ -70,9 +88,31 @@ buffer_cache_dir: outputs/buffer_cache-rebot-annot-v2  # one dir; each source ge
 cache_policy: require   # a cache miss is a hard error — 180k frames of video decode is not a fallback
 
 # -----------------------------------------------------------------------------
+# Diverse corpus (DIVERSE_ROBOT_TRAINING_INTEGRATION_PLAN.md)
+# -----------------------------------------------------------------------------
+diverse:
+  enabled: true
+  root: outputs/diverse_robot_dataset
+  cache_dir: outputs/buffer_cache-diverse
+  # 50/50 by group: equal expected gradient mass for the established and the new
+  # distributions. Row counts would have given ReBot ~3:1 by arithmetic alone.
+  rebot_weight: 1.0
+  weight: 1.0
+  # Inside the diverse half: p(source) proportional to sqrt(episodes) — between
+  # row-proportional (RoboChallenge 67%) and source-uniform (UR7e 20%).
+  group_weight: sqrt_episodes
+  group_weight_overrides: {}
+  # RoboChallenge quality is source-derived, not reviewed. Withheld from the prompt;
+  # set true to render it anyway (see plan phase G).
+  render_automatic_quality: false
+  rebot_layout: rebot_b601_joint7_commanded
+  rebot_depth_intrinsics: [394.9832, 394.9832, 322.5604, 238.6966]
+  probe_rebot_caches: true
+
+# -----------------------------------------------------------------------------
 # RL flags (shared)
 # -----------------------------------------------------------------------------
-skip_critic: false   # Train the MolmoAct2 distributional critic alongside the actor.
+skip_critic: true    # Skip critic if not interested in RECAP. It also saves VRAM and training is faster.
 
 # -----------------------------------------------------------------------------
 # Validation (shared)
@@ -81,14 +121,14 @@ skip_critic: false   # Train the MolmoAct2 distributional critic alongside the a
 # retaining coverage of the socks-basket, shirts-bin, and two-container families.
 val_dataset_path: outputs/rebot_val-annotated-v3
 val_split: 0.0    # If you don't have a separate val set, split your main set using this param.
-val_freq: 400    # matches offline_save_freq, so every probe pass lands on a saved checkpoint
-val_on_start: true   # Runs validation at start. This is useful as a baseline, but it takes time.
+val_freq: 0               # probes are ReBot-shaped; the smoke run keeps corpus/unit diagnostics instead
+val_on_start: false   # probe-only run: generate the suite at step 0
 # Held-out flow + FAST CE, logged every log_freq next to the train losses. One
 # effective batch (batch_size 32 x grad_accum 4), packed once at startup, so a call
 # is 4 no-grad forwards. Replaces the modality ablation deltas (removed 2026-08-08:
 # they estimated conditional MI on memorised training frames, which is 0 by
 # construction, and read 0.12% of the CE they sat on).
-val_loss_frames: 128
+val_loss_frames: 0  # modified-probes-only run; skip the separate validation-loss pass
 
 # =============================================================================
 # Policy: MolmoAct2  (active when policy.type: molmoact2_rl)
@@ -100,7 +140,7 @@ policy:
   # Fallback prompt + cfg.env.task for online rollouts only: offline batches take
   # their task string per-sample from task_index, so all four task strings are used.
   task: "Put sock in brown basket and shirts in bin"
-  pretrained_path: null   # v6's last checkpoint (run killed at 1647)
+  pretrained_path: null   # SCRATCH BASELINE: base Molmo + fresh depth/expert modules, no RL fine-tune
   base_path: outputs/MolmoAct2 # Multi-embodiment foundation checkpoint. Download using: hf download allenai/MolmoAct2 --local-dir outputs/MolmoAct2
 
   # ---- Training mode --------------------------------------------------------
@@ -111,7 +151,7 @@ policy:
   # to the original "freeze VLM, train action expert only" recipe.
   action_mode: both
   inference_action_mode: continuous
-  discrete_action_tokenizer: /home/user/Documents/Research/RL/LeRobot/outputs/MolmoAct-FAST-tokenizer  # Download tokenizer using hf download allenai/MolmoAct2-FAST-tokenizer
+  discrete_action_tokenizer: outputs/MolmoAct-FAST-tokenizer  # Download using: hf download allenai/MolmoAct2-FAST-tokenizer --local-dir outputs/MolmoAct-FAST-tokenizer
   knowledge_insulation: true  
   train_action_expert_only: false  # If limited VRAM, go with this, but training parts of VLM too produces better
   freeze_embedding: true                # we never train token embeddings
@@ -125,10 +165,12 @@ policy:
   #   • RGB patch_embedding + positional_embedding always stay frozen
   #   • language_from_layer set → final layer norm (ln_f) + lm_head train too
   #   • action expert is always trained
-  # The hybrid critic owns and trains its complete fusion trunk; actor schedules do not gate it.
+  # Critic_* knobs are ignored when skip_critic: true.
   trainable_params:
     vision_from_layer: 16
     language_from_layer: 18
+    critic_vision_from_layer: 16
+    critic_language_from_layer: 4
     # Optional depth-only diagnostic: true freezes everything except the independent
     # point-map CNN, copied depth visual path, and marker. Joint training is the default.
     depth_warmup: false
@@ -140,12 +182,34 @@ policy:
   optimizer_grad_clip_norm: 1.0
   optimizer_weight_decay: 0.1
 
+  # ---- LR schedule (linear warmup -> cosine) --------------------------------
+  # Shape follows allenai/molmoact's train_multitask_model.py defaults
+  # (lr_scheduler=cosine_with_warmup, warmup=200, alpha_f=0.1).
+  # Every scheduler counts its OWN optimizer's steps, so critic_warmup_steps
+  # does not eat the actor's warmup and policy_update_freq / utd_ratio do not
+  # skew either curve. Groups listed here but inactive this run (no depth
+  # params, skip_critic: true, or zero actor steps) are skipped with a log line.
+  scheduler_groups: [policy, critic, depth]
+  scheduler_warmup_steps: 100
+  scheduler_decay_steps: null   # null = decay across this run's steps for that group
+  # NOTE: this is read as the RATIO scheduler_decay_lr / optimizer_lr, then applied
+  # to each group's own LR -- it is not an absolute floor. At 5.0e-6 the ratio is
+  # 0.1 (MolmoAct's alpha_f), so each group decays to 10% of its OWN peak:
+  # policy/depth 5.0e-5 -> 5.0e-6, critic 1.0e-4 -> 1.0e-5.
+  # Set this equal to optimizer_lr for warmup-then-flat (the openpi pi0.5 shape).
+  scheduler_decay_lr: 5.0e-6
+
   # ---- Reward shaping -------------------------------------------------------
-  # Per-step reward is -1.0 before normalization; dividing by 10 gives -0.1/step,
-  # which keeps the TD value mid-support. At 1.0 the -1.0/step penalty pins V at
-  # the value_support_min floor (-2) after a single bootstrap step.
-  reward_normalization_constant: 10.0
-  terminal_failure_reward: -10.0           # /10 → -1.0, inside [value_support_min, 0]
+  # The subtask critic sees one 30-frame / one-second action horizon per TD step.
+  # Twelve keeps even the longest reviewed subtask (~35 steps) inside [-2, 0].
+  reward_normalization_constant: 12.0
+  terminal_failure_reward: -10.0           # retained for future explicit failure terminals
+  # `release ...` windows fold into the `move ...` before them: the critic sees one
+  # move-through-release segment, while subtask_index still conditions the policy on
+  # the release separately. See "Subtask critic: release folds into move" in
+  # src/lerobot/rl/RL_NOTES.md (measurements + how to revert).
+  critic_reward_mode: subtask               # semantic subtask boundaries are critic terminals
+  critic_mistake_penalty: 5.0               # one-time raw cost at entry to a reviewed mistake span
 
   # ---- Periodic merge toward pretrained weights (see RETAIN paper) ------
   pretrained_merge_alpha: 0.2
@@ -153,14 +217,7 @@ policy:
   pretrained_merge_targets: [policy, critic]        # molmo optimizer group names
 
   # ---- Distributional critic (online RL; skip_critic: true → ignored) -------
-  # Hybrid critic-owned fusion trunk. Policy modality features are detached before it.
-  critic_llm_depth: 4
-  critic_input_hidden_size: 2560
-  critic_hidden_size: 768
-  critic_num_attention_heads: 12
-  critic_mlp_ratio: 4.0
-  critic_dropout: 0.0
-  critic_max_tokens: 2048
+  critic_llm_depth: 12
   num_value_bins: 201
   value_support_min: -2.0
   value_support_max: 0.0
@@ -179,11 +236,11 @@ policy:
   # ~= 21.2 epochs over the 181,398 train frames. Two earlier versions of this note said
   # "grad_accum 2 = 64/step" and quoted half these figures; grad_accum has been 4.
   # Drop grad_accum to 2 for ~10.6 epochs, or to 1 for ~5.3, at the same LR.
-  offline_steps: 30000
+  offline_steps: 200   # first smoke run; raise once the gate-J telemetry looks right
   policy_update_freq: 1
-  critic_warmup_steps: 0
+  critic_warmup_steps: 2000
   utd_ratio: 1
-  async_prefetch: true    # 4 offline buffers are sampled per batch; set false only to attach pdb
+  async_prefetch: false    # 4 offline buffers are sampled per batch; set false only to attach pdb
   storage_device: cpu
   # Offline cache stores image/depth rows every N-th frame (30Hz -> 10Hz at 3); low-dim
   # stays dense so action chunks are exact. Must divide chunk_size. Cache must be built
@@ -191,6 +248,9 @@ policy:
   # Depth is now recorded sparse at this same rate (--dataset.depth_stride=3), so the
   # PNG16s on disk are exactly the rows the cache reads.
   image_stride: 3
+  # Explicit rather than sorted-by-accident: this list is the camera order the prompt,
+  # the MEM video encoder and the per-camera attention masking all index by.
+  image_keys: [observation.images.external_0, observation.images.external_1, observation.images.wrist_0]
 
   # ---- Inference -----------------------------------------------------------
   torch_compile: false                    # off for the first depth run (rule out compile/graph-break noise); re-enable once healthy. Helps meet 30Hz run goal
@@ -221,13 +281,19 @@ policy:
   memory:
     metadata_enabled: true                # quality/mistake loaded from dataset meta; hard-errors until metadata_annotate.py finalize has run
     history_dropout: 0.0                  # keep the full state/RGB/depth history block on every training sample
-    # Short-term memory (MEM shape): 5s/5-sample lookback (defaults → offsets 30/60/90/120/150,
-    # all multiples of image_stride 3). Consumed: image history through the MEM video encoder
-    # (temporal attention in the ViT, zero extra LLM tokens), state history as continuous
-    # tokens (one position per past state), depth window fused inside the patch CNN
-    # by same-pixel temporal attention (fine grid stays 768; pooled prefix stays 192; pi07_wiki/
+    # Short-term memory (MEM shape): three lookbacks at -6/-4/-2 s (→ offsets 180/120/60
+    # @ 30 fps, all multiples of image_stride 3). Replaces the -5/-4/-3/-2/-1 ladder
+    # 2026-09-01: -1 s was near-identical to t=0 on most frames, so it bought little for
+    # its two ViT time slices per camera, and reaching to -6 s costs nothing now that the
+    # corpus packs that far back. 3 slots instead of 5 is also ~40% less temporal
+    # attention and 2 fewer state-history positions per sample.
+    # Consumed: image history through the MEM video encoder (temporal attention in the
+    # ViT, zero extra LLM tokens), state history as continuous tokens (one position per
+    # past state), depth window fused inside the patch CNN by same-pixel temporal
+    # attention (fine grid stays 768; pooled prefix stays 192; pi07_wiki/
     # depth_history_design.md). Design: pi07_wiki/04_memory.md §2.4.
-    history_keys: [observation.state, observation.images.top, observation.images.wrist, depth.wrist.depth]
+    history_offsets_seconds: [-6.0, -4.0, -2.0]   # source of truth for the window shape; window/count are derived from it
+    history_keys: [observation.state, observation.images.external_0, observation.images.external_1, observation.images.wrist_0, depth.wrist_0.depth]
   rtc_config:                             # real-time chunking
     enabled: true
     execution_horizon: 5          # queue low-water mark ABOVE the auto-measured p95 latency, and the RTC frozen-prefix length; unrelated to image_stride
@@ -240,7 +306,7 @@ policy:
   chunk_size: 30                        # 1.0s at 30Hz (pi0's horizon in wall-clock); divisors 1,2,3,5,6,10,15,30 keep every useful image_stride legal
   n_action_steps: 30
   num_inference_steps: 5                # flow-matching denoising steps
-  gradient_accumulation_steps: 4        # effective batch = batch_size * grad_accum = 32 * 4 = 128
+  gradient_accumulation_steps: 2        # effective batch = batch_size * grad_accum = 32 * 4 = 128
   dtype: bfloat16
 
   # ---- Back-projected point-map depth (depth_pointmap_design.md) -------------
@@ -254,7 +320,7 @@ policy:
   # both are disabled for training: depth guides the gripper and wrist RGB refines
   # alignment once the object is visible.
   pointmap_config:
-    depth_key: wrist
+    depth_key: wrist_0
     depth_units_mm: 0.1
     intrinsics: [394.9832, 394.9832, 322.5604, 238.6966]
     image_size: [480, 640]
@@ -294,55 +360,38 @@ policy:
   # or make_processors hard-errors). Regenerate whenever dataset.sources changes:
   #   python lerobot/src/lerobot/scripts/compute_delta_stats.py --encoding anchor --chunk-size 30 \
   #     --name rebot-annot-v3 --root <every root listed in dataset.sources>
-  action_encoding_stats_path: outputs/stats/action_stats_anchor_rebot-annot-v3.pt
+  # One stats row per ACTION LAYOUT, not per robot: DROID and FMB are both a Franka
+  # Panda but do not share an action convention, and ReBot's joints are in degrees
+  # while the corpus is in radians (its anchor-delta span is ~60x the others'). Built
+  # over the actual training selection by compute_diverse_stats.py.
+  action_encoding_stats_path: null
+  embodiment_stats_path: outputs/stats/action_stats_anchor_diverse-rebot-v1.pt
 
   # ---- Fixed temporal-band auxiliary on the flow residual ------------------
-  # Ordinary flow MSE remains unchanged and covers all k=0..29. This adds a second
-  # fixed quadratic metric directly on r = v_theta - u; no clean-action
-  # reconstruction, target-dependent denominator, threshold, or ODE solve.
+  # Ordinary flow MSE remains unchanged and covers all k=0..29. This adds a fixed
+  # quadratic metric directly on r = v_theta - u. The six bands cover k=0..20;
+  # k=21..29 is excluded from this auxiliary but remains penalized by ordinary MSE.
   #
-  # The six declared bands cover k=0..20. The k=21..29 (>10 Hz) untrusted tail is
-  # absent from this auxiliary but remains penalized by ordinary flow MSE, so it is
-  # not an unconstrained output subspace. Tail-padded chunks skip only the auxiliary.
-  #
-  # beta_b(gamma) is the normalized geometric interpolation between the MSE-width
-  # budget |B_b|/T and the inverse corpus-power budget 1/P_b. gamma=0 is MSE-shaped
-  # over the selected signal coefficients; gamma=1 equalizes their expected target-
-  # energy contribution; gamma=1/4 applies one quarter of that log-space correction.
-  # beta sums to one, so on a temporally white residual the unscaled auxiliary has
-  # the same magnitude as MSE. `weight` is the explicit additive coefficient.
-  #
-  # band_powers are mean squared DCT coefficients in hold-relative model space from
-  # outputs/probe/action_spectrum/action_spectrum.json (507 full validation chunks).
-  # Recompute them if action normalization, chunk size, encoding, or dataset changes.
+  # beta_b(gamma) interpolates between the MSE-width budget and inverse corpus-power
+  # weighting. gamma=0.25 applies one quarter of the log-space correction. The fixed
+  # powers below were measured by the action-spectrum probe over 507 full validation
+  # chunks and must be recomputed if the dataset, normalization, encoding, chunk size,
+  # or control rate changes.
   action_auxiliary_loss:
     enabled: true
-    weight: 1.0
+    weight: 0.2
     gamma: 0.25
     band_spec: "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20"
     band_powers: [1.0086008381, 0.0411540009, 0.0067903467, 0.0012663327, 0.0001327078, 0.0000066883]
 
-  # ---- Optional FAST-token ordinal auxiliary loss -------------------------
-  # The existing autoregressive FAST BPE CE is unchanged. This zero-parameter term is
-  # added to it and reads the discrete head's teacher-forced logits.
-  #
-  # Ground-truth tokens pin each BPE boundary. At each DCT coefficient slot, candidate
-  # token logits are grouped by the ordered coefficient value that token places there;
-  # candidates too short to reach the slot are conditioned away. Cumulative-threshold
-  # binary CE gives one ordinal score per coefficient slot.
-  #
-  # Reduction is mean over dimensions and coefficients within a band, then mean over
-  # the six bands. Each band therefore receives exactly 1/6 of the ordinal auxiliary
-  # budget regardless of width. k=21..29 is excluded from this auxiliary as the
-  # untrusted tail; base token CE still supervises every ground-truth BPE token.
-  #
-  # ordinal_weight is the explicit coefficient against base token CE. There are no
-  # coefficient-mean path or shape losses and no per-example power normalization.
-  # Logged as loss_discrete_aux, val_loss_discrete_aux, ordinal_ce, and each band's
-  # ordinal CE. The component calculation remains a per-example Python loop.
+  # ---- FAST-token band-balanced ordinal auxiliary loss --------------------
+  # Ordinary autoregressive FAST token CE remains unchanged. The ordinal score is
+  # averaged within each trusted band and then equally across the six bands, giving
+  # every band total weight 1/6. k=21..29 is excluded from this auxiliary only; token
+  # CE still supervises every ground-truth BPE token.
   discrete_action_auxiliary_loss:
     enabled: true
-    ordinal_weight: 5.0e-1
+    ordinal_weight: 0.2
     band_spec: "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20"
 
   # ---- Feature schema -------------------------------------------------------
@@ -350,20 +399,26 @@ policy:
     VISUAL: IDENTITY
     STATE: QUANTILES
     ACTION: QUANTILES
+  # Canonical camera roles, shared by both halves of the mixture. ReBot records
+  # external_0 (its "top") and wrist_0; it has no external_1, which arrives as an
+  # explicitly absent slot whose patch span leaves the attention mask.
   input_features:
-    observation.images.wrist:
+    observation.images.external_0:
       type: VISUAL
       shape: [3, 480, 640]
-    observation.images.top:
+    observation.images.external_1:
+      type: VISUAL
+      shape: [3, 480, 640]
+    observation.images.wrist_0:
       type: VISUAL
       shape: [3, 480, 640]
     observation.state:
       type: STATE
-      shape: [7]
+      shape: [8]              # widest layout in the mixture (Franka); 7-DoF rows are masked padding
   output_features:
     action:
       type: ACTION
-      shape: [7]
+      shape: [8]
 
   # ---- Devices --------------------------------------------------------------
   device: cuda
@@ -388,7 +443,7 @@ policy:
 # Run identity & I/O
 # -----------------------------------------------------------------------------
 output_dir: null
-job_name: rebot_molmoact2_bc
+job_name: diverse_molmoact2_bc
 resume: false
 seed: 42
 
@@ -396,9 +451,9 @@ seed: 42
 # -----------------------------------------------------------------------------
 # Logging / checkpointing
 # -----------------------------------------------------------------------------
-log_freq: 20
-save_checkpoint: true
-save_freq: 1000                # online checkpoint cadence (optimizer steps)
+log_freq: 40
+save_checkpoint: true  # smoke: avoid writing a full checkpoint
+save_freq: 200                # online checkpoint cadence (optimizer steps)
 # Nothing prunes old checkpoints and each one is ~21 GB of weights plus optimizer
 # state. At 2000 the 30000-step run writes 15 of them; 200 (the old value, sized
 # for a 10000-step run) would have written 150 and filled the disk.
@@ -424,7 +479,7 @@ num_workers: 4
 # Aim experiment tracking
 # -----------------------------------------------------------------------------
 aim:
-  enable: true
+  enable: true  # local probe capture only
   repo: ./aim
   experiment: rebot_online-v1
   offline_experiment: rebot_offline-v1
@@ -434,7 +489,7 @@ aim:
 # =============================================================================
 # Probes (run periodically inside rl_offline.py at val_freq)
 # =============================================================================
-# All probes enabled for validation diagnostics.
+# Probe-only capture: corrected memory counterfactuals and matched-depth counterfactual.
 # Note: critic probes still skip themselves when skip_critic=true / no critic is present.
 # Every probe forward now runs the DEPLOYMENT REGIME (probes/utils.py
 # probe_frame_inputs): subtask clause + metadata clause + short-term history + the wrist
@@ -447,38 +502,31 @@ aim:
 #     loss, which is exactly what used to arm them.
 probe_parameters:
   # ---- Enable flags ---------------------------------------------------------
-  # NOTE: every flag below is currently true. The 2026-08-07 note that used to sit here
-  # ("everything off but the objective") no longer describes this file — the suite was
-  # turned back on after the probes were reworked, and several per-probe "Off <date>"
-  # comments below are likewise leftovers from that pass. Read the flag, not the comment.
-  # The standard from that post-mortem still holds and is what to judge output by: a
-  # probe earns its slot only if it reports its own noise floor alongside its effect,
-  # since the v6 suite reported effects below their floor and so could not come out bad.
-  enable_objective: true                 # flow + FAST loss on val vs a matched training sample
-  enable_actions: true
-  # Dataset-only and checkpoint-invariant: enable for a deliberate validation pass or
-  # run standalone when choosing temporal bands; leaving it on every val step repeats
-  # the same corpus measurement.
-  enable_action_spectrum: false
+  # Only probes modified in the counterfactual audit are enabled. This keeps one model
+  # load and writes all four corrected artifacts under the same validation step.
+  enable_objective: false
+  enable_actions: false
   # Stale "off" note (2026-07-31), kept for the caveat: this probe mean-pools the whole
   # sequence of one layer, so its by_subtask separation may just be the subtask string
   # sitting in the prompt rather than anything the policy learned.
   # Re-enable only with per-token-group pooling and a decodability metric.
   enable_representations: false
-  enable_attention: true
-  enable_spatial_memorization: true
+  enable_attention: false
+  enable_spatial_memorization: false
   enable_action_drift_jacobian: false       # grouped action-output gradients by subtask
   enable_spatial_memorization_jacobian: false  # legacy attention-edge flow-loss attribution
-  enable_critic_values_distribution: true
-  enable_mem_history_influence: true     # MEM: history's effect on the action chunk (04_memory §2.4)
-  enable_mem_history_regime: true        # MEM: helped/hurt split, vs a wrong-window and a reseed null
-  enable_mem_temporal_attention: true    # MEM: temporal-read distributions + spatial examples
-  enable_action_trace: true             # action inspector: 3D + wrist/gripper + safety fan + the normalized-MSE headline
-  enable_metadata_steering: true         # quality/mistake clause: seed floor, q1-q5 dose, conditionality + direction, 2x2
-  enable_depth_modality: true            # matched foreign/stale depth; null depth is sensor-loss stress only
-  enable_attention_budget: true          # how the action tokens' attention budget shifts over frames
-  enable_subtask_sweep: true             # does the subtask clause move actions (gates the memory chain)
-  enable_task_sweep: true                # does the high-level task string beat the flow-seed floor?
+  enable_critic_values_distribution: false  # skip_critic is true and val_freq is 0
+  enable_mem_history_influence: false     # MEM: history's effect on the action chunk (04_memory §2.4)
+  enable_mem_history_regime: false        # MEM: helped/hurt split, vs a wrong-window and a reseed null
+  enable_mem_temporal_attention: false    # MEM: temporal-read distributions + spatial examples
+  enable_action_trace: false
+  enable_metadata_steering: false
+  enable_depth_modality: false            # matched foreign/stale depth; null depth is stress only
+  enable_attention_budget: false
+  enable_subtask_sweep: false
+  enable_task_sweep: false
+  mem_temporal_positional_control: false
+  depth_stale_seconds: 2.0
 
   # ---- Common ---------------------------------------------------------------
   # REAL-RUN SETTINGS. n_frames_per_episode is the one knob that moves the total: it
@@ -487,20 +535,46 @@ probe_parameters:
   # Cut this first if the step-0 pass comes in slower than you want.
   output_dir: outputs/probe
   mode: all
-  max_episodes: 3               # action sensitivity treats episodes as independent replicates
+  max_episodes: 2               # all 4 episodes
   # Sets the attention / drift-jacobian video length, the representation-manifold point
   # count, and 64x4=256 forwards per episode for each of mem_history_influence and
   # mem_history_regime (the latter also decodes a second history window per frame for its
   # stale control). Every sampler stretches its
   # stride to span the whole episode, so 64 frames = one frame every ~2 s across 120 s.
-  n_frames_per_episode: 64
+  n_frames_per_episode: 32
+  # The one dial. Nothing overrides it per-probe (see spatial_n_frames), so what is
+  # written here is what every sampler uses. Total frames = this x max_episodes.
+  #
+  # MEASURED on one GB10, 2026-08-22, MolmoAct2 5.64B at ~1.05 s/forward:
+  #   suite = ~7 min frame-independent + ~0.80 min per total frame
+  #     8/ep  =  32 frames -> ~33 min   (measured end to end)
+  #    16/ep  =  64 frames -> ~58 min
+  #    32/ep  = 128 frames -> ~109 min  (~100 with the batched sweeps)
+  # The sweeps cost 10 forwards/frame against 1-2 for the rest, so they set the slope.
+  # 128/ep was ~7.4 h and is what blew up on 2026-08-22. Redo the arithmetic before
+  # raising this; the per-frame figure above is the number to multiply.
   random_seed: 42
   timestep: 0.5
   # Inherited by every intervention probe (subtask sweep, task sweep, metadata steering).
-  n_seeds: 3                    # flow draws behind each probe's own noise floor
-  max_labels: 24                 # the relabelled corpus pools 36 subtask labels
-  action_sensitivity_frames_per_subtask: 6  # evenly spread within each episode/subtask
-  action_sensitivity_projections: 4         # VJPs per proximal-arm / wrist / gripper map
+  n_seeds: 2                    # flow draws behind each probe's own noise floor (2 is the code floor)
+  max_labels: 8                 # subtask_sweep costs max_labels + n_seeds forwards PER FRAME
+  # Swept vocabulary, named rather than sliced. meta/subtasks.parquet holds 19 labels
+  # in sorted order (6 grasp, 6 move, 6 release, return to home), so a max_labels cap
+  # takes six grasps and two moves and never sees `release` at all — the sweep then
+  # only varies the OBJECT, and separation reads low for reasons that are about the
+  # label set, not the policy. These 8 span every verb and still contrast objects
+  # within a verb (black sock / white sock / red shirt). Set 2026-08-22.
+  subtask_sweep_labels:
+    - "grasp the black sock"
+    - "grasp the white sock"
+    - "grasp the red shirt"
+    - "move the black sock to the basket"
+    - "move the red shirt to the bin"
+    - "release the black sock in the basket"
+    - "release the red shirt in the bin"
+    - "return to home"
+  action_sensitivity_frames_per_subtask: 4
+  action_sensitivity_projections: 1
 
   # ---- Actions / representations --------------------------------------------
   # The reference action manifold, fit on the GT of every source in dataset.sources —
@@ -510,17 +584,18 @@ probe_parameters:
   # validation/action_manifold.pt and reused by every validation step of the run, so the
   # cost is one PCA + two UMAP fits per run. Keep it wide: eval frames are judged against
   # this set, and a thin manifold puts all of them "outside" by construction.
-  ref_max_episodes: 40          # per source; a ceiling, not a choice — takes every episode
+  # A ceiling, not a choice: 40 >= every source's episode count, so this takes them all.
+  # 46 training episodes x 256 = ~11.8k reference points, which is what action_nn_state_k
+  # below is sized against. At the old 8 x 32 the manifold held ~1k points and k=256 was
+  # a quarter of the entire set — "nearest neighbour" then meant "most of the corpus",
+  # and every eval frame scored as matched. Parquet reads only, no forwards, and the fit
+  # is cached in validation/action_manifold.pt for the whole run.
+  ref_max_episodes: 40
   ref_n_frames_per_episode: 256
   action_pca_dims: 50           # the space every action metric is measured in
   # Reference frames a prediction may match against once pose-matched. ~2.5% of a 10k
   # reference set: tight enough to mean "from a similar pose", wide enough not to be noise.
   action_nn_state_k: 256
-  # Candidate DCT partition for the action-spectrum diagnostic. These labels do not
-  # choose beta: the probe compares MSE-width, equal-band, and corpus-equalising beta.
-  action_spectrum_bands: "dc=0;k1=1;k2=2;k3=3;detail=4-9;high=10-20;untrusted_tail=21-"
-  action_spectrum_n_frames_per_episode: 256
-  action_spectrum_max_episodes: null  # null = every validation episode
   repr_pca_dims: 48             # representations has 64 samples to fit
   umap_n_neighbors: 15          # must stay below the 64-sample representation set
 
@@ -528,24 +603,27 @@ probe_parameters:
   # where in the stack it changed.
   spatial_layers: "0,14,28"
   attn_eval_subsample: 3        # floor only; max_frames widens the stride to span the episode
-  # 32 frames spread over the four val episodes (8 each). This is the sample count
-  # the mean/std memorization maps are computed over.
-  spatial_n_frames: 32
+  # TOTAL frames, not per-episode: sample_spread_over_episodes() spreads this many
+  # across all episodes, so it is a different unit from n_frames_per_episode and cannot
+  # track that dial (null is not even a legal value — the field is a plain int). Set to
+  # 128 to match the 32 x 4 total every other probe now samples. It was 4 under a
+  # comment claiming 32; the comment described the dataclass default, not the value.
+  spatial_n_frames: 128
 
   # Ignored while skip_critic: true; kept small so the flip to false stays cheap.
-  critic_adv_frames: 32         # full: 1000
-  critic_grad_frames: 8         # full: 200
+  critic_adv_frames: 4
+  critic_grad_frames: 2
 
   # ---- Attention budget ------------------------------------------------------
   # Attention mass says the action tokens READ a source; it does not say the read is
   # load-bearing. The FD series answers that at two extra forwards per frame.
-  budget_fd_sensitivity: true
+  budget_fd_sensitivity: false
   # 16 x 3 episodes = 48 frames. Unlike the other probes, this one PLOTS the frame axis:
   # the shared 64 gave 192 points of frame-to-frame wiggle in the compositional-shift
   # panel, which is a hairball rather than a series. 48 still spans each episode (the
   # sampler stretches its stride) and is plenty for the clr std and the depth/distance
   # Spearman, which are the numbers anything is concluded from.
-  budget_n_frames_per_episode: 16
+  budget_n_frames_per_episode: 12
 
   # ---- Intervention sweeps and the objective ---------------------------------
   # Nothing here sets its own frame count any more. objective, subtask_sweep, task_sweep,
@@ -554,12 +632,11 @@ probe_parameters:
   # labels. Per-probe overrides still exist in ProbeConfig (all default to null = inherit)
   # but a probe pinned to its own number stops tracking the common dial, which is how the
   # objective ended up reporting a gap off two val frames — so pin one only with a reason.
-  depth_stale_seconds: 2.0
   #
   # What the dial costs, per frame, per episode:
   #   objective        1 forward   (per split, so x2)
   #   attention budget 1 forward   (+2 with budget_fd_sensitivity)
-  #   depth modality   ~8 forwards  (real + foreign + stale + 3 stress cells + 2 FD)
+  #   depth modality   ~6 forwards
   #   metadata steering ~11 forwards  (8 clauses + gt + n_seeds - 1)
   #   subtask / task sweep  max_labels + n_seeds forwards  — the expensive ones
 
@@ -576,10 +653,15 @@ probe_parameters:
   # trace_episodes is a no-op on the 3-episode val set the training loop hands the probe.
   # It exists for the standalone CLI, which has no val set to fall back on and loads
   # dataset.sources[0] instead — 15 episodes, i.e. ~180 anchors, if left unpinned.
-  trace_episodes: "0,1,2"
-  trace_anchor_stride_s: 30.0
-  trace_max_anchors_per_episode: 6
-  trace_n_samples: 4            # the fan; below ~4 draws the spread is noise
+  # Anchors are placed at a fixed TIME stride from frame 0 and stop at max_anchors, so the
+  # stride must be near episode_length / max_anchors or the probe only ever sees the opening
+  # seconds. Val episodes run ~132 s, so 8 s x 16 anchors spans one end to end. At 60 s /
+  # 2 anchors this probe reported its headline off two frames of episode 0.
+  # 4 eps x 16 anchors x 4 draws = 256 forwards.
+  trace_episodes: null          # null = every val episode, not just episode 0
+  trace_anchor_stride_s: 8.0
+  trace_max_anchors_per_episode: 16
+  trace_n_samples: 4            # the multimodality fan; 2 draws cannot show a fan
   trace_table_z: 0.0            # table plane (m) in the arm's base frame; 0 = mounting plane
   trace_clearance_warn_m: 0.01  # anchors below this are dashed in the figure and logged as WARNING
 

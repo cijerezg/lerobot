@@ -532,9 +532,15 @@ def ingest_episode(
             "notes": annotations.get("reviewer_notes", accepted_detail.get("notes", "")),
             "uuid": accepted_detail.get("uuid"),
             "scene_family": accepted_detail.get("scene_family"),
-            "quality_provenance": "human_reviewed"
-            if component.source != "robochallenge"
-            else "source_derived_automatic",
+            "quality_provenance": annotations.get("quality_provenance")
+            or (
+                "human_reviewed"
+                if component.source != "robochallenge"
+                else "source_derived_automatic"
+            ),
+            "quality_mistake_review_provenance": annotations.get(
+                "quality_mistake_review_provenance"
+            ),
             # Who made the accept/reject call. The annotation wins over the selection so a
             # per-episode record cannot be silently upgraded by a task-level default, and a
             # model screen stays distinguishable from the human-reviewed DROID annotations.

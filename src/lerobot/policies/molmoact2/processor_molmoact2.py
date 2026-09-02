@@ -230,6 +230,28 @@ def _build_discrete_state_string(state: np.ndarray, num_state_tokens: int) -> st
     return f"{STATE_START_TOKEN}{''.join(f'{STATE_TOKEN_PREFIX}{int(token_id)}>' for token_id in token_ids)}{STATE_END_TOKEN}"
 
 
+def _history_time_stamps(
+    times_seconds: list[float] | None, stride_seconds: float, num_slots: int
+) -> Tensor:
+    """Slot ages in seconds before now, oldest → newest — the sinusoidal e(t) stamps.
+
+    The configured instants when they are known: they need not be evenly spaced, and
+    the -6/-4/-2 window is NOT three frames at a 6 s stride. Falls back to the uniform
+    ladder off ``history_stride_seconds`` for checkpoints predating the explicit list.
+    """
+    if times_seconds is not None:
+        if len(times_seconds) != num_slots:
+            raise ValueError(
+                f"history_times_seconds has {len(times_seconds)} entries but the gathered "
+                f"window has {num_slots} slots — memory.history_offsets_seconds and the "
+                f"buffer's history offsets have drifted apart."
+            )
+        return torch.tensor([abs(float(t)) for t in times_seconds], dtype=torch.float32)
+    return torch.tensor(
+        [stride_seconds * (num_slots - j) for j in range(num_slots)], dtype=torch.float32
+    )
+
+
 def _build_robot_text(
     *,
     task: str,
@@ -551,9 +573,17 @@ def load_embodiment_stats(path: str, *, encoding: str, chunk_size: int) -> dict[
             f"{path} holds chunk_size={payload.get('chunk_size')} but the policy runs "
             f"chunk_size={chunk_size}."
         )
-    names = list(payload.get("embodiments") or [])
+    index_key = str(payload.get("stats_index_key") or "embodiment_index")
+    if index_key not in {"embodiment_index", "action_layout_id"}:
+        raise ValueError(
+            f"{path} declares stats_index_key={index_key!r}; expected 'embodiment_index' or "
+            "'action_layout_id'."
+        )
+    names = list(payload.get("row_names") or payload.get("embodiments") or [])
     if not names:
-        raise ValueError(f"{path} declares no embodiments.")
+        raise ValueError(f"{path} declares no stats rows (embodiments / row_names).")
+    payload["row_names"] = names
+    payload["stats_index_key"] = index_key
     return payload
 
 
@@ -610,6 +640,18 @@ def _add_gripper_masks_to_stats(
             continue
         feature_stats["mask"] = ["gripper" not in name.lower() for name in names]
     return stats
+
+
+def _align_rows(rows: Tensor, tensor: Tensor) -> Tensor:
+    """Broadcast per-sample stats rows against `tensor`, aligning on the last axis.
+
+    A gathered row is [B, D] for state and [B, T, D] for an action chunk. The state row
+    also has to normalize the state HISTORY window, which is [B, T_h, D] -- so the extra
+    axes go between the batch and the feature axis, never in front of the batch.
+    """
+    while rows.ndim < tensor.ndim:
+        rows = rows.unsqueeze(1)
+    return rows
 
 
 def _align_mask(mask: Tensor, tensor: Tensor) -> Tensor:
@@ -781,11 +823,25 @@ class _MolmoAct2MaskedNormalizationMixin:
     # class's _apply_transform signature has no room for per-sample context.
     _active_embodiment_indices: Any = None
 
+    @property
+    def _stats_index_key(self) -> str:
+        """The batch column that selects a stats row.
+
+        Default "embodiment_index": one row per robot. A mixture where one robot appears
+        under two action conventions needs "action_layout_id" instead -- DROID and FMB are
+        both a Franka Panda, but one commands joints and the other copies measured ones,
+        and pooling their quantiles would squash both. The prompt's embodiment clause is
+        unaffected: it reads its own vocabulary on the pack step.
+        """
+        return str(getattr(self, "stats_index_key", "embodiment_index") or "embodiment_index")
+
     @contextmanager
     def _with_embodiment_indices(self, transition: Any):
-        """Expose this transition's embodiment_index to _apply_transform."""
+        """Expose this transition's stats-row index to _apply_transform."""
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA) if transition else None
-        indices = complementary.get("embodiment_index") if isinstance(complementary, dict) else None
+        indices = (
+            complementary.get(self._stats_index_key) if isinstance(complementary, dict) else None
+        )
         previous = self._active_embodiment_indices
         self._active_embodiment_indices = indices
         try:
@@ -803,10 +859,10 @@ class _MolmoAct2MaskedNormalizationMixin:
             default = int(getattr(self, "default_embodiment_index", -1))
             if default < 0:
                 raise ValueError(
-                    "Per-embodiment normalization is active but this batch carries no "
-                    "'embodiment_index'. Materialize it (materialize_dataset_labels), pass it "
-                    "through the postprocessor payload, or set default_embodiment_index for a "
-                    "single-robot deployment."
+                    f"Per-row normalization is active but this batch carries no "
+                    f"{self._stats_index_key!r}. Materialize it (materialize_dataset_labels or the "
+                    "diverse buffer's identity columns), pass it through the postprocessor "
+                    "payload, or set default_embodiment_index for a single-robot deployment."
                 )
             rows = torch.full((batch_size,), default, dtype=torch.long)
         else:
@@ -816,16 +872,16 @@ class _MolmoAct2MaskedNormalizationMixin:
         if int(rows.min()) < 0:
             unknown = sorted({int(v) for v in rows.tolist() if v < 0})
             raise ValueError(
-                f"Per-embodiment normalization received unknown embodiment index/indices {unknown}. "
+                f"Per-row normalization received unknown {self._stats_index_key} value(s) {unknown}. "
                 "Normalizing an unlabelled robot with another robot's stats is exactly the error "
                 "this path exists to prevent; label the source or add its robot to "
                 "lerobot/datasets/embodiment.py."
             )
         if int(rows.max()) >= len(self.embodiment_names):
             raise ValueError(
-                f"embodiment_index {int(rows.max())} is outside this checkpoint's vocabulary of "
-                f"{len(self.embodiment_names)} embodiments ({self.embodiment_names}). The stats "
-                "artifact and the buffer labels disagree."
+                f"{self._stats_index_key} {int(rows.max())} is outside this checkpoint's stats "
+                f"vocabulary of {len(self.embodiment_names)} rows ({self.embodiment_names}). The "
+                "stats artifact and the buffer labels disagree."
             )
         return rows.to(tensor.device)
 
@@ -841,7 +897,7 @@ class _MolmoAct2MaskedNormalizationMixin:
             # differs from the input, which would rebuild _tensor_stats from self.stats
             # and undo the swap below.
             gathered = {
-                name: value[rows].to(device=tensor.device, dtype=tensor.dtype)
+                name: _align_rows(value[rows].to(device=tensor.device, dtype=tensor.dtype), tensor)
                 if isinstance(value, Tensor) and value.shape[0] == len(self.embodiment_names)
                 else value
                 for name, value in stats.items()
@@ -868,9 +924,12 @@ class _MolmoAct2MaskedNormalizationMixin:
 @ProcessorStepRegistry.register(name="molmoact2_masked_normalizer")
 @dataclass
 class MolmoAct2MaskedNormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin, NormalizerProcessorStep):
-    # Non-empty => _tensor_stats carries a leading embodiment axis (see the mixin).
+    # Non-empty => _tensor_stats carries a leading stats-row axis (see the mixin).
     embodiment_names: list[str] = field(default_factory=list)
     default_embodiment_index: int = -1
+    # Which batch column picks a row: "embodiment_index" (one row per robot) or
+    # "action_layout_id" (one row per action convention).
+    stats_index_key: str = "embodiment_index"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         with self._with_embodiment_indices(transition):
@@ -880,6 +939,7 @@ class MolmoAct2MaskedNormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixin,
         config = super().get_config()
         config["embodiment_names"] = list(self.embodiment_names)
         config["default_embodiment_index"] = int(self.default_embodiment_index)
+        config["stats_index_key"] = self._stats_index_key
         return config
 
     def _call_inner(self, transition: EnvTransition) -> EnvTransition:
@@ -944,6 +1004,7 @@ class MolmoAct2MaskedUnnormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixi
 
     embodiment_names: list[str] = field(default_factory=list)
     default_embodiment_index: int = -1
+    stats_index_key: str = "embodiment_index"
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         with self._with_embodiment_indices(transition):
@@ -953,6 +1014,7 @@ class MolmoAct2MaskedUnnormalizerProcessorStep(_MolmoAct2MaskedNormalizationMixi
         config = super().get_config()
         config["embodiment_names"] = list(self.embodiment_names)
         config["default_embodiment_index"] = int(self.default_embodiment_index)
+        config["stats_index_key"] = self._stats_index_key
         return config
 
 
@@ -984,12 +1046,17 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
     # single shared mask would clamp a 7-DOF robot's padding as if it were real.
     action_masks: list[list[bool]] | None = None
     state_masks: list[list[bool]] | None = None
+    # Must be the SAME column the normalizer gathered its stats row with, or the clamp
+    # protects one robot's padding while normalizing another's.
+    stats_index_key: str = "embodiment_index"
 
     def _rows(self, transition: EnvTransition, tensor: Any) -> Tensor | None:
         if not self.action_masks and not self.state_masks:
             return None
         complementary = transition.get(TransitionKey.COMPLEMENTARY_DATA)
-        indices = complementary.get("embodiment_index") if isinstance(complementary, dict) else None
+        indices = (
+            complementary.get(self.stats_index_key) if isinstance(complementary, dict) else None
+        )
         if indices is None:
             return None
         rows = torch.as_tensor(indices).detach().cpu().reshape(-1).long()
@@ -1080,9 +1147,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     # (complementary keys "history.{OBS_STATE}" / "history.{OBS_IMAGES}.{cam}").
     # Absent keys = clause/tensors off (byte-identical legacy prompt); one dropout
     # flip removes the WHOLE block (states + frames) for training text only.
-    # history_stride_seconds parameterizes the e(t) time stamps.
+    # history_times_seconds holds the slot ages in seconds before now, oldest →
+    # newest, and parameterizes the e(t) time stamps; history_stride_seconds is the
+    # uniform fallback for checkpoints predating it (see MolmoAct2Config).
     history_dropout: float = 0.0
     history_stride_seconds: float = 1.0
+    history_times_seconds: list[float] | None = None
     # Anti-laziness RGB dropout (depth_redesign_options.md §4.3): mask ONE camera's
     # <im_patch> span out of the attention mask (the depth camera's), so the sample
     # is solvable only through depth — nothing attends the span, no gradient flows
@@ -1151,6 +1221,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "metadata_dropout": self.metadata_dropout,
             "history_dropout": self.history_dropout,
             "history_stride_seconds": self.history_stride_seconds,
+            "history_times_seconds": self.history_times_seconds,
             "rgb_dropout": self.rgb_dropout,
             "rgb_dropout_key": self.rgb_dropout_key,
             "num_depth_tokens": self.num_depth_tokens,
@@ -1439,6 +1510,33 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             flat = flat * batch_size
         return [embodiment_name(index, self.embodiment_names) for index in flat]
 
+    @staticmethod
+    def _extract_camera_presence(
+        complementary: dict, image_keys: list[str], batch_size: int
+    ) -> Tensor:
+        """(B, cams) True where that camera was actually recorded for that sample.
+
+        Read per key ("camera_is_present.{image_key}"), never by column order: the
+        batch's role order and the policy's image_keys order are set in different
+        places, and silently pairing them by position would mask the wrong camera.
+        A key with no presence column is treated as present, which is what every
+        single-source run has always been.
+        """
+        present = torch.ones((batch_size, len(image_keys)), dtype=torch.bool)
+        for index, key in enumerate(image_keys):
+            column = complementary.get(f"camera_is_present.{key}")
+            if column is None:
+                continue
+            flags = torch.as_tensor(column).detach().cpu().reshape(-1).bool()
+            if flags.numel() == 1:
+                flags = flags.expand(batch_size)
+            if int(flags.shape[0]) != batch_size:
+                raise ValueError(
+                    f"camera_is_present.{key} has {int(flags.shape[0])} rows, expected {batch_size}."
+                )
+            present[:, index] = flags
+        return present
+
     def _extract_history_states(self, complementary: dict, batch_size: int) -> Tensor | None:
         """Normalized past states for the short-term history window, read from
         complementary key "history.{OBS_STATE}" (the ReplayBuffer.sample()/
@@ -1499,10 +1597,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 f"{batch_size * len(image_keys) * num_slots} history frames."
             )
         frames = pixel_values.view(batch_size, len(image_keys), num_slots, *pixel_values.shape[1:])
-        times = torch.tensor(
-            [self.history_stride_seconds * (num_slots - j) for j in range(num_slots)],
-            dtype=torch.float32,
-        )
+        times = _history_time_stamps(self.history_times_seconds, self.history_stride_seconds, num_slots)
         return frames, times
 
     @staticmethod
@@ -1522,8 +1617,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         speed = complementary.get("metadata_speed")
         if speed is not None:
             speed = torch.as_tensor(speed).detach().cpu().float().reshape(-1)
+        # A negative quality is the "unknown" sentinel materialize_metadata fills for
+        # frames no episode row covers, and the value the diverse buffer writes when a
+        # sample's quality was derived automatically rather than reviewed. Omit the
+        # clause for those rather than rendering "The quality is -1 of 5."
         return [
-            {"quality": int(quality[i]), "mistake": bool(mistake[i] > 0.5)}
+            ({"quality": int(quality[i])} if float(quality[i]) >= 0 else {})
+            | {"mistake": bool(mistake[i] > 0.5)}
             | ({"speed": int(speed[i])} if speed is not None else {})
             for i in range(batch_size)
         ]
@@ -1577,6 +1677,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         history_states = self._extract_history_states(complementary, batch_size)
         image_keys = self._resolve_image_keys(observation)
         history_stack = self._extract_history_image_stack(complementary, image_keys, batch_size)
+        camera_present = self._extract_camera_presence(complementary, image_keys, batch_size)
 
         prompt_texts: list[str] = []
         full_texts: list[str] = []
@@ -1635,8 +1736,17 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             if build_action_labels:
                 if self.action_processor is None:
                     raise ValueError("Discrete MolmoAct2 training requires an action tokenizer.")
+                # Each row is tokenized at ITS OWN native width. FAST runs a DCT over
+                # time and then flattens (horizon, dim), so a padded eighth column of
+                # zeros does not merely add tokens -- it changes the flattened bin
+                # string, and with it every BPE token of a 7-DoF robot's target. The
+                # width mask is prefix-valid (require_prefix_valid_mask), so the row's
+                # real dimensions are exactly its leading ones. Sequences are padded by
+                # the tokenizer AFTER this, never before.
+                native_width = int((~action_dim_is_pad[batch_idx]).sum())
+                row_action = action[batch_idx, ..., :native_width]
                 answer = _build_discrete_action_string(
-                    action[batch_idx].detach().cpu().numpy(), self.action_processor
+                    row_action.detach().cpu().numpy(), self.action_processor
                 )
                 full_texts.append(f"{prompt}{answer}{self._eos_token}")
             else:
@@ -1667,6 +1777,28 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         if build_action_labels:
             inputs["labels"] = self._build_labels(inputs["input_ids"], inputs["attention_mask"])
+
+        # An absent camera is not a black frame. Its <im_patch> span leaves the attention
+        # mask entirely, so nothing attends it and no gradient reaches the vision tower
+        # through it -- the same mechanism training-time RGB dropout uses, applied from
+        # a recorded fact instead of a coin flip. The token layout stays uniform across
+        # the batch (that is why the placeholder tensor exists at all); the ViT still
+        # runs on the placeholder, which is wasted compute, not a wrong forward.
+        if not bool(camera_present.all()):
+            from lerobot.policies.depth_pointmap.modeling_stream import mask_camera_patch_span
+
+            for cam_index in range(len(image_keys)):
+                rows = (~camera_present[:, cam_index]).nonzero(as_tuple=True)[0]
+                if rows.numel() == 0:
+                    continue
+                inputs["attention_mask"] = mask_camera_patch_span(
+                    inputs["attention_mask"],
+                    inputs["input_ids"],
+                    image_patch_id=self._image_patch_id,
+                    num_images=max_num_images,
+                    cam_index=cam_index,
+                    rows=rows,
+                )
 
         if rgb_drop_cam is not None and bool(rgb_dropped.any()):
             # RGB dropout = attention masking (depth_redesign_options.md §4.3): the
@@ -1699,7 +1831,15 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             frames, times = history_stack
             complementary["history_images"] = frames
             complementary["history_image_times"] = times
-            complementary["history_images_mask"] = history_on
+            # (B, cams): the history-dropout flip is per sample, camera presence is per
+            # sample and camera. An absent camera's history is a zero placeholder, so its
+            # temporal attention is switched to self-only rather than allowed to read it.
+            complementary["history_images_mask"] = history_on[:, None] & camera_present
+        if self.num_depth_tokens > 0:
+            # Depth's own history switch. It is (B,) because depth is one modality, not
+            # one per camera: only the shared history-dropout flip applies to it. The
+            # depth encoder gates presence separately, per sample.
+            complementary["history_depth_mask"] = history_on
         if action_horizon_is_pad is not None:
             complementary["action_horizon_is_pad"] = action_horizon_is_pad
 
@@ -1780,6 +1920,9 @@ def make_molmoact2_pre_post_processors(
     # motion is squashed into a sliver of [-1, 1] before the state discretization.
     embodiment_names: list[str] = []
     embodiment_masks: dict[str, list[list[bool]]] = {}
+    # Which batch column picks the stats row. An artifact built per action layout says
+    # so itself, so a run cannot pair layout-keyed statistics with embodiment indices.
+    stats_index_key = "embodiment_index"
     embodiment_stats_path = getattr(config, "embodiment_stats_path", None)
     if embodiment_stats_path:
         artifact = load_embodiment_stats(
@@ -1787,7 +1930,8 @@ def make_molmoact2_pre_post_processors(
             encoding=action_encoding,
             chunk_size=int(hf_metadata.get("action_horizon") or config.chunk_size),
         )
-        embodiment_names = list(artifact["embodiments"])
+        embodiment_names = list(artifact["row_names"])
+        stats_index_key = str(artifact["stats_index_key"])
         canonical_action_dim = int(artifact["action_width"])
         canonical_state_dim = int(artifact["state_width"])
         dataset_stats = _stacked_stats_from_artifact(artifact)
@@ -1851,12 +1995,14 @@ def make_molmoact2_pre_post_processors(
             stats=masked_dataset_stats,
             embodiment_names=embodiment_names,
             default_embodiment_index=default_embodiment_index,
+            stats_index_key=stats_index_key,
         ),
         MolmoAct2ClampNormalizedProcessorStep(
             action_mask=action_mask,
             state_mask=state_mask,
             action_masks=embodiment_masks.get(ACTION),
             state_masks=embodiment_masks.get(OBS_STATE),
+            stats_index_key=stats_index_key,
         ),
         MolmoAct2PackInputsProcessorStep(
             base_path=config.base_path,
@@ -1876,6 +2022,7 @@ def make_molmoact2_pre_post_processors(
             metadata_dropout=config.metadata_dropout,
             history_dropout=history_dropout,
             history_stride_seconds=config.history_stride_seconds,
+            history_times_seconds=config.history_times_seconds,
             rgb_dropout=rgb_dropout,
             rgb_dropout_key=rgb_dropout_key,
             num_depth_tokens=num_depth_tokens,
@@ -1891,6 +2038,7 @@ def make_molmoact2_pre_post_processors(
             stats=masked_dataset_stats,
             embodiment_names=embodiment_names,
             default_embodiment_index=default_embodiment_index,
+            stats_index_key=stats_index_key,
         ),
         *([AnchorDecodeStep(encoding=action_encoding)] if use_anchor else []),
         *(

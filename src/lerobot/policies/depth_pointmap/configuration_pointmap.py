@@ -111,12 +111,16 @@ class DepthPointmapConfig:
     # patch CNN and are fused into the current frame by same-pixel temporal attention
     # after every CNN block; past rows are dropped before pooling, so the encoder
     # always emits N tokens (0 = current frame only, no fusion modules built).
-    # Synced from memory.history_num_samples / history_window_seconds by
-    # MolmoAct2RLConfig.__post_init__ when the depth key is in memory.history_keys.
-    # Past frames are NOT re-projected into the current camera frame (the wrist
-    # moves) — frames are told apart by the sinusoidal e(Δt) stamp only.
+    # Synced from memory.history_offsets_seconds / history_num_samples /
+    # history_window_seconds by MolmoAct2RLConfig.__post_init__ when the depth key is
+    # in memory.history_keys. Past frames are NOT re-projected into the current camera
+    # frame (the wrist moves) — frames are told apart by the sinusoidal e(Δt) stamp
+    # only, so the stamps must carry the real slot ages: history_times_seconds when
+    # set (oldest → newest, e.g. [6.0, 4.0, 2.0]), else the uniform ladder derived
+    # from the window/count pair.
     history_num_samples: int = 0
     history_window_seconds: float = 5.0
+    history_times_seconds: list[float] | None = None
 
     def __post_init__(self) -> None:
         if not self.depth_key:
@@ -169,6 +173,13 @@ class DepthPointmapConfig:
             raise ValueError(f"history_num_samples must be >= 0, got {self.history_num_samples}.")
         if self.history_window_seconds <= 0:
             raise ValueError(f"history_window_seconds must be > 0, got {self.history_window_seconds}.")
+        if self.history_times_seconds is not None:
+            self.history_times_seconds = [abs(float(t)) for t in self.history_times_seconds]
+            if len(self.history_times_seconds) != self.history_num_samples:
+                raise ValueError(
+                    f"history_times_seconds has {len(self.history_times_seconds)} entries but "
+                    f"history_num_samples is {self.history_num_samples}."
+                )
         if self.token_width <= 0 or self.token_width % self.stream_num_heads:
             raise ValueError(
                 f"token_width {self.token_width} must be > 0 and divisible by "

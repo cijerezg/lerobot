@@ -87,20 +87,45 @@ Configured by the shared, model-agnostic `MemoryConfig`
 `memory:` on the policy RL config:
 
 ```python
-history_keys: list[str] = []        # empty = disabled (zero behavior change)
-history_window_seconds: float = 5.0
-history_num_samples: int = 5        # 5 s @ 30 fps → offsets [30, 60, 90, 120, 150]
+history_keys: list[str] = []                       # empty = disabled (zero behavior change)
+history_offsets_seconds: list[float] | None = None # THE window shape when set: [-6, -4, -2]
+history_window_seconds: float = 6.0                # uniform fallback / derived span
+history_num_samples: int = 3                       # uniform fallback / derived count
 history_dropout: float = 0.0
 ```
 
-(Widened 4→5 past frames 2026-07-22 to match MEM's pretraining setup — 5 past +
-current, 1 s stride. The sinusoidal e(t) in §2.4 is parameterized in real seconds,
-so stride/count can be stretched at inference without retraining — MEM shows
-6-frame training generalizing to 18 frames / 54 s.)
+`history_offsets_seconds` names the lookback instants directly (sign-agnostic,
+normalized to magnitudes sorted oldest → newest) and is the source of truth when
+set; `history_window_seconds` / `history_num_samples` are then recomputed from it as
+its span and count, so the probes' "stale" lag and the prompt token budget stay
+consistent. Left `None` it falls back to the uniform ladder those two generate —
+which is how every checkpoint written before 2026-09-01 loads, since none of them
+carries the list. The defaults spell the same window either way (6 s / 3 → 2 s
+stride → -6, -4, -2); `config_rl.yaml` states the list explicitly so the choice is
+legible in the saved checkpoint config rather than implied by two numbers.
 
-`history_offsets(fps)` converts once to per-key step offsets. Valid keys: any
-observation key, `action` (executed actions), and the canonical depth key
-`depth.{cam}.depth`.
+(History: 4→5 past frames 2026-07-22 to match MEM's pretraining setup — 5 past +
+current, 1 s stride. Narrowed to **3 frames at -6, -4, -2 s** 2026-09-01: at 30 fps
+the -1 s frame is usually a near-duplicate of the current one, so it bought little
+for its ViT time slice per camera, and the -6 s reach is free now that the corpus
+packs that far back. 3 slots instead of 5 is ~40% less temporal attention and 2
+fewer state-history positions per sample. The sinusoidal e(t) in §2.4 is
+parameterized in real seconds, so spacing/count can be changed — or stretched at
+inference — without touching a parameter shape; MEM shows 6-frame training
+generalizing to 18 frames / 54 s.)
+
+Because e(t) reads real seconds, the *instants* must reach it. They do:
+`MolmoAct2RLConfig.__post_init__` syncs `history_times_seconds` onto the policy
+config and the point-map config. Before 2026-09-01 nothing synced them and the MEM
+video encoder stamped frames off `history_stride_seconds`, whose default 1.0 was
+correct only because the window happened to be 5 s / 5 samples — any other spacing
+was silently mis-stamped.
+
+`history_offsets(fps)` converts once to per-key step offsets ([180, 120, 60] at
+30 fps). Every offset on an image or depth key must be a multiple of `image_stride`
+(those rows are the only ones the cache stores); 180/120/60 clear the stride-3 grid.
+Valid keys: any observation key, `action` (executed actions), and the canonical
+depth key `depth.{cam}.depth`.
 
 ### 2.1 Learner side — `ReplayBuffer._gather_history` ([rl/buffer.py:518](../src/lerobot/rl/buffer.py#L518))
 
@@ -147,8 +172,10 @@ observation before `build_inference_batch`.
   e(Δt), MLP) fuses the past into the current frame; past rows are dropped
   before pooling, so the stream always sees `N = 192` tokens. The shared
   `history_images_mask` dropout draw masks the past keys (≡ missing window ≡
-  cold deque). `DepthPointmapConfig.history_num_samples` (0 = no new params)
-  and `history_window_seconds` sync from `memory.*`. v1 does **not** re-project
+  cold deque). `DepthPointmapConfig.history_num_samples` (0 = no new params),
+  `history_window_seconds` and `history_times_seconds` sync from `memory.*`; the
+  e(Δt) buffer is non-persistent and no parameter is sized by $T_h$ (here or in the
+  ViT), so changing the window does not invalidate a checkpoint. v1 does **not** re-project
   past frames into the current camera frame (the wrist moves) — frames carry
   only the e(Δt) stamp; FK re-projection stays the fallback.
 - **Action history** — plumbed through the buffers but not consumed; whether past
@@ -166,8 +193,9 @@ observation before `build_inference_batch`.
 > [mem_temporal_attention_analysis.md](mem_temporal_attention_analysis.md).
 
 From PI's MEM paper (arXiv 2603.03596). Decisions: encoder path is THE image
-history path (prompt path deleted); continuous proprio-history tokens; 5 past +
-current @ 1 s; **no gate**; repeat-padding v1 (pad mask not threaded into ViT
+history path (prompt path deleted); continuous proprio-history tokens; 3 past
+frames at -6/-4/-2 s + current (5 past @ 1 s until 2026-09-01); **no gate**;
+repeat-padding v1 (pad mask not threaded into ViT
 attention; a repeated first frame at episode start is approximately truthful —
 masking is the contained fallback if early-episode telemetry looks off). The
 $e(0)=0$ identity story no longer implies a bit-exact single-frame path: the

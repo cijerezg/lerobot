@@ -130,6 +130,7 @@ def test_extract_history_image_stack_from_complementary():
     stub = SimpleNamespace(
         processor=SimpleNamespace(image_processor=fake_image_processor),
         history_stride_seconds=1.0,
+        history_times_seconds=None,
     )
     extract = MolmoAct2PackInputsProcessorStep._extract_history_image_stack
     frames = torch.randint(0, 255, (2, 3, 3, 8, 8), dtype=torch.uint8)  # (B, T_h, C, H, W)
@@ -148,6 +149,21 @@ def test_extract_history_image_stack_from_complementary():
     assert out[1, 1, 0, 0, 0].item() == 9.0
     # Times are seconds-before-now, oldest → newest.
     assert times.tolist() == [3.0, 2.0, 1.0]
+
+    # Configured instants win over the uniform ladder: the -6/-4/-2 window is not
+    # three frames at a 6 s stride, and only these stamps tell the ViT which is which.
+    stub.history_times_seconds = [-6.0, -4.0, -2.0]
+    stub.history_stride_seconds = 2.0
+    _, times = extract(stub, complementary, image_keys, 2)
+    assert times.tolist() == [6.0, 4.0, 2.0]
+
+    # A stamp list that does not match the gathered window is a config drift, not a
+    # window to silently re-stamp.
+    stub.history_times_seconds = [-6.0, -4.0]
+    with pytest.raises(ValueError, match="drifted apart"):
+        extract(stub, complementary, image_keys, 2)
+    stub.history_times_seconds = None
+    stub.history_stride_seconds = 1.0
 
     assert extract(stub, {}, image_keys, 2) is None
     # A camera subset is a config error, not a silent partial stack.

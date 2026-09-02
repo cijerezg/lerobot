@@ -932,7 +932,18 @@ def _patch_memory_efficient_vision_backbone(
             times_full = torch.cat([times.to(x.device), torch.zeros(1, device=x.device)])
             e_t = _sinusoidal_seconds_embedding(times_full, x.shape[-1])
             if mask is not None:
-                history_on = mask.to(x.device).repeat_interleave(cams)
+                # (B,) is one flip for the whole sample (history dropout); (B, cams) also
+                # carries per-camera presence. Rows are ordered b * cams + c, so the
+                # two-dimensional form flattens straight onto them.
+                mask = mask.to(x.device)
+                history_on = (
+                    mask.reshape(-1) if mask.ndim == 2 else mask.repeat_interleave(cams)
+                )
+                if int(history_on.shape[0]) != batch_size * cams:
+                    raise ValueError(
+                        f"history mask has {int(history_on.shape[0])} rows, expected "
+                        f"{batch_size * cams} (batch {batch_size} x cameras {cams})."
+                    )
 
         stride = max(int(self._lerobot_temporal_layer_stride), 1)
         num_layers = len(self.image_vit.transformer.resblocks)

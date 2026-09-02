@@ -234,10 +234,11 @@ def _provenance(rows: list[dict], dataset, cfg, memory_cfg, conditions: dict) ->
             ],
             [
                 "History window",
-                f"{memory_cfg.history_num_samples} past frames over "
-                f"{memory_cfg.history_window_seconds:g} s at {fps:g} fps — offsets "
+                f"{memory_cfg.history_num_samples} past frames at "
+                + ", ".join(f"-{t:g}" for t in memory_cfg.history_times_seconds())
+                + f" s ({fps:g} fps — offsets "
                 + ", ".join(str(o) for o in offsets)
-                + " frames back, oldest first, repeat-padded before the episode start",
+                + " frames back), oldest first, repeat-padded before the episode start",
             ],
             ["Channels toggled", channels],
             [

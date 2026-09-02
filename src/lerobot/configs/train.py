@@ -31,6 +31,7 @@ from lerobot.utils.sample_weighting import SampleWeightingConfig
 
 from . import parser
 from .default import AimConfig, DatasetConfig, EvalConfig, PeftConfig
+from .diverse import DiverseCollectionConfig
 from .policies import PreTrainedConfig
 from .rewards import RewardModelConfig
 
@@ -492,10 +493,15 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     # forwards. 0 disables.
     val_loss_frames: int = 0
     skip_critic: bool = False  # skip all critic training (forward+backward)
+    # Source-native diverse corpus, mixed against the LeRobot (ReBot) sources.
+    # Disabled by default, so an existing config behaves exactly as before.
+    diverse: DiverseCollectionConfig = field(default_factory=DiverseCollectionConfig)
 
     def validate(self) -> None:
         super().validate()
         if self.cache_policy not in {"fallback", "require"}:
             raise ValueError(f"cache_policy must be 'fallback' or 'require', got {self.cache_policy!r}.")
+        if self.diverse.enabled:
+            self.diverse.validate()
         if self.video_logging_cameras is None and self.policy is not None:
             self.video_logging_cameras = [k.split(".")[-1] for k in self.policy.image_features]

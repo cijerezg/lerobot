@@ -227,15 +227,30 @@ class MolmoAct2RLConfig(MolmoAct2Config):
         if self.num_value_bins < 2:
             raise ValueError("num_value_bins must be >= 2.")
 
-        # Depth history rides the pointmap path: the memory block is the single source
-        # of truth for the window shape, synced here so both encoder sites (policy +
-        # critic) see it.
+        # The memory block is the single source of truth for the window shape. Every
+        # consumer that stamps a frame with its age reads it from here, so the e(t) the
+        # model sees is the instant the buffer actually gathered.
+        #
+        # history_times_seconds used to be absent on the policy side, and the MEM video
+        # encoder fell back to history_stride_seconds=1.0 — right only because the old
+        # window happened to be 5 s / 5 samples. It is synced now: an uneven window, or
+        # any stride but 1 s, was silently mis-stamped before (fixed 2026-09-01).
+        history_times = self.memory.history_times_seconds() if self.memory.history_keys else None
+        if history_times:
+            self.history_times_seconds = list(history_times)
+            self.history_stride_seconds = (
+                self.memory.history_window_seconds / self.memory.history_num_samples
+            )
+
+        # Depth history rides the pointmap path, synced here so both encoder sites
+        # (policy + critic) see the same window.
         if (
             self.pointmap_config is not None
             and f"depth.{self.pointmap_config.depth_key}.depth" in self.memory.history_keys
         ):
             self.pointmap_config.history_num_samples = self.memory.history_num_samples
             self.pointmap_config.history_window_seconds = self.memory.history_window_seconds
+            self.pointmap_config.history_times_seconds = list(history_times)
 
 
 # ── Policy ─────────────────────────────────────────────────────────────────

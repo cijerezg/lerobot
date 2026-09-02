@@ -39,8 +39,8 @@ from .configuration_pointmap import DepthPointmapConfig
 def back_project(
     depth: Tensor,
     *,
-    intrinsics: tuple[float, float, float, float],
-    depth_units_mm: float,
+    intrinsics: tuple[float, float, float, float] | Tensor,
+    depth_units_mm: float | Tensor,
     z_min_mm: float,
     z_max_mm: float,
 ) -> Tensor:
@@ -48,8 +48,11 @@ def back_project(
 
     Args:
         depth: (H, W), (B, H, W) or (B, 1, H, W) raw depth; uint16 or float. 0 = hole.
-        intrinsics: (fx, fy, cx, cy) of the raw depth stream, in pixels.
-        depth_units_mm: raw value × this = mm.
+        intrinsics: (fx, fy, cx, cy) of the raw depth stream, in pixels. May instead be
+            a (B, 4) tensor, one row per sample: a mixed-corpus batch holds frames from
+            two cameras whose calibration and resize geometry differ, and one shared
+            tuple would back-project one of them into the wrong metric frame.
+        depth_units_mm: raw value × this = mm. Scalar, or (B,) for a mixed batch.
         z_min_mm, z_max_mm: valid-depth band; outside → mask 0 (near deadzone, far cutoff).
 
     Returns:
@@ -62,9 +65,22 @@ def back_project(
         depth = depth.squeeze(1)
     if depth.ndim != 3:
         raise ValueError(f"back_project expects (B, H, W) depth, got {tuple(depth.shape)}.")
-    z = depth.to(torch.float32) * depth_units_mm  # (B, H, W) mm
+    batch = depth.shape[0]
+    if isinstance(depth_units_mm, Tensor):
+        units = depth_units_mm.to(device=depth.device, dtype=torch.float32).reshape(-1, 1, 1)
+        if units.shape[0] not in (1, batch):
+            raise ValueError(f"depth_units_mm must be scalar or ({batch},), got {tuple(units.shape)}.")
+    else:
+        units = float(depth_units_mm)
+    z = depth.to(torch.float32) * units  # (B, H, W) mm
     _, height, width = z.shape
-    fx, fy, cx, cy = intrinsics
+    if isinstance(intrinsics, Tensor):
+        values = intrinsics.to(device=z.device, dtype=torch.float32).reshape(-1, 4)
+        if values.shape[0] not in (1, batch):
+            raise ValueError(f"intrinsics must be (4,) or ({batch}, 4), got {tuple(intrinsics.shape)}.")
+        fx, fy, cx, cy = (column.reshape(-1, 1, 1) for column in values.unbind(dim=-1))
+    else:
+        fx, fy, cx, cy = intrinsics
 
     m = (z >= z_min_mm) & (z <= z_max_mm)
     mf = m.to(torch.float32)
@@ -266,11 +282,18 @@ class DepthPointmapEncoder(nn.Module):
         # created when history is on, so historyless checkpoints load unchanged.
         self.temporal_fusions: nn.ModuleList | None = None
         if config.history_num_samples > 0:
-            stride_s = config.history_window_seconds / config.history_num_samples
-            times_s = torch.tensor(
-                [stride_s * (config.history_num_samples - i) for i in range(config.history_num_samples)]
-                + [0.0]
-            )  # seconds in the past, oldest → newest, current (0 s) last
+            # The configured instants when they are known (the -6/-4/-2 window is not
+            # an even ladder over its 6 s span), else the uniform fallback.
+            if config.history_times_seconds is not None:
+                past_s = [abs(float(t)) for t in config.history_times_seconds]
+            else:
+                stride_s = config.history_window_seconds / config.history_num_samples
+                past_s = [
+                    stride_s * (config.history_num_samples - i)
+                    for i in range(config.history_num_samples)
+                ]
+            times_s = torch.tensor(past_s + [0.0])
+            # seconds in the past, oldest → newest, current (0 s) last
             self.temporal_fusions = nn.ModuleList(
                 TemporalFusion(c, times_s) for c in self.cnn.out_channels
             )
@@ -447,11 +470,29 @@ class DepthPointmapEncoder(nn.Module):
         """
         cfg = self.config
         depth = batch.get(f"observation.depth.{cfg.depth_key}")
+        # Per-SAMPLE presence, not per-batch. A mixed corpus has depth on some rows and
+        # none on others (53,257 of the diverse anchors are RGB-only), so "the tensor is
+        # absent" is the wrong question: the tensor is present and some of its rows are
+        # placeholders. Those rows take the learned null bank, exactly as a
+        # modality-dropped row does, and are reported False in the returned valid mask so
+        # every downstream denominator counts only real depth.
+        present = batch.get(f"depth.{cfg.depth_key}.depth_is_present")
         depth_valid = torch.full((batch_size,), depth is not None, device=device, dtype=torch.bool)
+        if depth is not None and present is not None:
+            flags = torch.as_tensor(present).to(device=device, dtype=torch.bool).reshape(-1)
+            if flags.numel() == 1:
+                flags = flags.expand(batch_size)
+            if flags.shape[0] != batch_size:
+                raise ValueError(
+                    f"depth.{cfg.depth_key}.depth_is_present has {flags.shape[0]} rows, "
+                    f"expected {batch_size}."
+                )
+            depth_valid = flags
         if depth is None:
             memory = self.null_tokens.unsqueeze(0).expand(batch_size, -1, -1)
         else:
-            pointmap = self._backproject(torch.as_tensor(depth).to(device=device))
+            intrinsics = self._batch_intrinsics(batch, batch_size, device)
+            pointmap = self._backproject(torch.as_tensor(depth).to(device=device), intrinsics)
             history_pm = history_on = None
             if self.temporal_fusions is not None:
                 window = batch.get(f"history.depth.{cfg.depth_key}.depth")
@@ -462,13 +503,23 @@ class DepthPointmapEncoder(nn.Module):
                             f"depth history window has {window.shape[1]} frames, expected "
                             f"history_num_samples={cfg.history_num_samples}."
                         )
+                    history_intrinsics = (
+                        None
+                        if intrinsics is None
+                        else intrinsics.repeat_interleave(cfg.history_num_samples, dim=0)
+                    )
                     history_pm = self._backproject(
-                        window.reshape(batch_size * cfg.history_num_samples, *window.shape[2:])
+                        window.reshape(batch_size * cfg.history_num_samples, *window.shape[2:]),
+                        history_intrinsics,
                     ).reshape(batch_size, cfg.history_num_samples, *pointmap.shape[1:])
-                    mask = batch.get("history_images_mask")
-                    if mask is not None:
-                        history_on = torch.as_tensor(mask).to(device=device, dtype=torch.bool)
+                    history_on = self._history_switch(batch, batch_size, device)
             memory = self(pointmap, history_pm, history_on)
+            if not bool(depth_valid.all()):
+                memory = torch.where(
+                    depth_valid[:, None, None],
+                    memory,
+                    self.null_memory(batch_size).to(memory.dtype),
+                )
         if self.training and cfg.dropout_prob > 0:
             dropped = torch.rand(memory.shape[0], device=memory.device) < cfg.dropout_prob
             memory = torch.where(
@@ -479,12 +530,52 @@ class DepthPointmapEncoder(nn.Module):
             return memory, depth_valid
         return memory
 
-    def _backproject(self, depth: Tensor) -> Tensor:
+    def _history_switch(self, batch: dict, batch_size: int, device) -> Tensor | None:
+        """(B,) bool: may this sample's depth memory read its own past?
+
+        `history_depth_mask` is the depth modality's own switch. It falls back to
+        `history_images_mask`, which used to be the only one -- that mask is now
+        (B, cameras) because camera presence is per camera, so it is reduced with `all`:
+        the shared history-dropout flip is the part that applies to depth.
+        """
+        mask = batch.get("history_depth_mask")
+        if mask is None:
+            mask = batch.get("history_images_mask")
+        if mask is None:
+            return None
+        flags = torch.as_tensor(mask).to(device=device, dtype=torch.bool)
+        if flags.ndim == 2:
+            flags = flags.all(dim=1)
+        flags = flags.reshape(-1)
+        if flags.numel() == 1:
+            flags = flags.expand(batch_size)
+        return flags
+
+    def _backproject(self, depth: Tensor, intrinsics: Tensor | None = None) -> Tensor:
         cfg = self.config
         return back_project(
             depth,
-            intrinsics=tuple(cfg.intrinsics),
+            intrinsics=tuple(cfg.intrinsics) if intrinsics is None else intrinsics,
             depth_units_mm=cfg.depth_units_mm,
             z_min_mm=cfg.z_min_mm,
             z_max_mm=cfg.z_max_mm,
         )
+
+    def _batch_intrinsics(self, batch: dict, batch_size: int, device) -> Tensor | None:
+        """Per-sample (fx, fy, cx, cy), or None to use the configured camera.
+
+        A mixed run carries one row per sample because the sources' cameras and resize
+        geometries differ; a single-camera run carries nothing and keeps the config.
+        """
+        cfg = self.config
+        values = batch.get(f"depth.{cfg.depth_key}.intrinsics")
+        if values is None:
+            return None
+        tensor = torch.as_tensor(values).to(device=device, dtype=torch.float32).reshape(-1, 4)
+        if tensor.shape[0] == 1 and batch_size > 1:
+            tensor = tensor.expand(batch_size, -1)
+        if tensor.shape[0] != batch_size:
+            raise ValueError(
+                f"depth.{cfg.depth_key}.intrinsics has {tensor.shape[0]} rows, expected {batch_size}."
+            )
+        return tensor

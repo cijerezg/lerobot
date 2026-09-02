@@ -272,8 +272,8 @@ class ReplayBuffer:
                 raise ValueError(
                     f"history offsets {misaligned} on {key!r} are not multiples of "
                     f"image_stride={image_stride}: those rows are not stored. Adjust "
-                    f"memory.history_window_seconds / history_num_samples so every "
-                    f"offset lands on the stride grid."
+                    f"memory.history_offsets_seconds (or history_window_seconds / "
+                    f"history_num_samples) so every offset lands on the stride grid."
                 )
 
     def _prepare_image_for_storage(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -1011,6 +1011,10 @@ class ReplayBuffer:
             )
 
         replay_buffer.image_stride = image_stride
+        # Where this payload came from. A later startup probe (ReBot cache reuse) needs
+        # the directory, and rediscovering it by fingerprint would re-derive what is
+        # already known here.
+        replay_buffer.cache_dir = cache_dir
         replay_buffer.size = num_transitions
         replay_buffer.position = num_transitions % replay_buffer.capacity
         replay_buffer.initialized = True
@@ -1118,6 +1122,7 @@ class ReplayBuffer:
         image_storage_size: tuple[int, int] | None = (224, 224),
         image_stride: int = 1,
         history_offsets: dict[str, list[int]] | None = None,
+        chunked_actions: str = "reject",
     ) -> "ReplayBuffer":
         """
         Convert a LeRobotDataset into a ReplayBuffer.
@@ -1133,6 +1138,9 @@ class ReplayBuffer:
             use_drq (bool): Whether to use DrQ image augmentation when sampling.
             storage_device (str): Device for storing tensor data. Using "cpu" saves GPU memory.
             optimize_memory (bool): If True, reduces memory usage by not duplicating state data.
+            chunked_actions: "reject" (default) refuses a pre-chunked action column rather
+                than silently keeping only its first timestep; "first" restores the old
+                truncating behaviour.
 
         Returns:
             ReplayBuffer: The replay buffer with dataset transitions.
@@ -1199,6 +1207,7 @@ class ReplayBuffer:
             dataset=lerobot_dataset,
             state_keys=state_keys,
             inject_complementary_info=inject_complementary_info,
+            chunked_actions=chunked_actions,
         )
 
         # Get first transition for initialization
@@ -1340,6 +1349,7 @@ class ReplayBuffer:
         dataset: LeRobotDataset,
         state_keys: Sequence[str] | None = None,
         inject_complementary_info: dict | None = None,
+        chunked_actions: str = "reject",
     ):
         """
         Generator version that yields RL transitions one at a time to save memory.
@@ -1347,12 +1357,17 @@ class ReplayBuffer:
         Args:
             dataset (LeRobotDataset): The dataset to convert.
             state_keys (Sequence[str] | None): The dataset keys to include in 'state' and 'next_state'.
+            chunked_actions: what to do with a pre-chunked action column. "reject" (default)
+                raises; "first" keeps action[0] and discards the rest, the historical
+                behaviour, which must now be opted into.
 
         Yields:
             Transition: One transition at a time.
         """
         if state_keys is None:
             raise ValueError("State keys must be provided when converting LeRobotDataset to Transitions.")
+        if chunked_actions not in {"reject", "first"}:
+            raise ValueError(f"chunked_actions must be 'reject' or 'first', got {chunked_actions!r}.")
 
         num_frames = len(dataset)
         if num_frames == 0:
@@ -1400,11 +1415,21 @@ class ReplayBuffer:
             # ----- 2) Action -----
             action = current_sample[ACTION]
 
-            # CRITICAL FIX: Handle pre-chunked actions from dataset
-            # If the dataset was loaded with delta_indices (e.g., [0, 1, ..., 49]),
-            # actions will be shape [50, 6] instead of [6]
-            # We only want the FIRST action to keep buffer storage simple and consistent
+            # Pre-chunked actions from a dataset loaded with delta_indices arrive as
+            # [chunk_size, action_dim]. This buffer stores one action per frame and
+            # rebuilds a chunk at sample time, so the only way to store such a row is
+            # to keep its first timestep and drop the rest -- silently discarding
+            # (chunk_size - 1)/chunk_size of every target. That has to be asked for.
             if action.ndim == 2:  # Shape is [chunk_size, action_dim]
+                if chunked_actions != "first":
+                    raise ValueError(
+                        f"Dataset action is pre-chunked {tuple(action.shape)}. Storing it here "
+                        f"keeps only action[0] and drops the other {int(action.shape[0]) - 1} "
+                        "points of every chunk. Clear the dataset's delta_timestamps/"
+                        "delta_indices so the buffer chunks at sample time, use a corpus "
+                        "adapter that preserves whole chunks (DiverseActorBuffer), or pass "
+                        'chunked_actions="first" to accept the truncation deliberately.'
+                    )
                 action = action[0]  # Extract first timestep only  → shape [action_dim]
 
             action = action.unsqueeze(0)  # Add batch dimension → shape [1, action_dim]
@@ -1643,6 +1668,35 @@ def concatenate_batch_transitions(
     return left_batch_transitions
 
 
+def _promote_shared_dtypes(left_batch: BatchTransition, right_batch: BatchTransition) -> None:
+    """Cast keys present in both batches to their common dtype, in place.
+
+    Two sources can store the same quantity at different precision -- a cached ReBot
+    buffer keeps low-dimensional columns in bfloat16, while the source-native diverse
+    buffer keeps float32 so a 30-point anchor delta is not rounded to 8 mantissa bits.
+    torch.cat refuses mixed dtypes outright, so promote to the wider one (never the
+    narrower: that would silently round the accurate side down to the other's storage).
+    """
+    for section in ("state", "next_state", "complementary_info"):
+        left = left_batch.get(section) or {}
+        right = right_batch.get(section) or {}
+        for key in set(left) & set(right):
+            left_value, right_value = left[key], right[key]
+            if not (torch.is_tensor(left_value) and torch.is_tensor(right_value)):
+                continue
+            if left_value.dtype == right_value.dtype:
+                continue
+            common = torch.promote_types(left_value.dtype, right_value.dtype)
+            left[key] = left_value.to(common)
+            right[key] = right_value.to(common)
+
+    left_action, right_action = left_batch.get(ACTION), right_batch.get(ACTION)
+    if torch.is_tensor(left_action) and torch.is_tensor(right_action):
+        common = torch.promote_types(left_action.dtype, right_action.dtype)
+        left_batch[ACTION] = left_action.to(common)
+        right_batch[ACTION] = right_action.to(common)
+
+
 def concatenate_variable_dim_batch_transitions(
     left_batch: BatchTransition,
     right_batch: BatchTransition,
@@ -1687,6 +1741,8 @@ def concatenate_variable_dim_batch_transitions(
                 )
         complementary[key] = pad_last(mask, width, value=True)
 
+    _promote_shared_dtypes(left_batch, right_batch)
+
     left_action_width = int(left_batch[ACTION].shape[-1])
     right_action_width = int(right_batch[ACTION].shape[-1])
     action_width = max(left_action_width, right_action_width)
@@ -1701,11 +1757,20 @@ def concatenate_variable_dim_batch_transitions(
         state_width = max(left_state_width, right_state_width)
         preserve_mask(left_batch, "state_dim_is_pad", state_width, left_state_width)
         preserve_mask(right_batch, "state_dim_is_pad", state_width, right_state_width)
+        history_key = f"history.{OBS_STATE}"
         for batch in (left_batch, right_batch):
             batch["state"][OBS_STATE] = pad_last(batch["state"][OBS_STATE], state_width)
             batch["next_state"][OBS_STATE] = pad_last(batch["next_state"][OBS_STATE], state_width)
+            # The state-history window is as wide as the state, so it needs the same
+            # padding -- and it can arrive in any of three places. ReplayBuffer.sample()
+            # puts it in "state" (and mirrors it into next_state); an actor-side batch
+            # puts it in complementary_info. Padding only one of them leaves a 7-wide
+            # history beside an 8-wide state and torch.cat fails on the concatenation.
+            for section in ("state", "next_state"):
+                container = batch.get(section) or {}
+                if history_key in container:
+                    container[history_key] = pad_last(container[history_key], state_width)
             complementary = info(batch)
-            history_key = f"history.{OBS_STATE}"
             if history_key in complementary:
                 complementary[history_key] = pad_last(complementary[history_key], state_width)
 

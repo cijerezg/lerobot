@@ -1171,16 +1171,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     control_rng = np.random.default_rng(p.random_seed)
     frame_meta: list[dict] = []
     camera_keys: list[str] | None = None
-    history_seconds = np.asarray(
-        [
-            memory_cfg.history_window_seconds
-            * (memory_cfg.history_num_samples - i)
-            / memory_cfg.history_num_samples
-            for i in range(memory_cfg.history_num_samples)
-        ],
-        dtype=np.float32,
-    )
-    history_offsets = np.rint(history_seconds * float(fps)).astype(np.int64)
+    # The configured slot instants, oldest → newest — not an assumed even ladder.
+    history_seconds = np.asarray(memory_cfg.history_times_seconds(), dtype=np.float32)
+    history_offsets = np.asarray(memory_cfg.history_offsets_frames(float(fps)), dtype=np.int64)
 
     adapter._set_probe_cuda_graph_enabled(False)
     try:

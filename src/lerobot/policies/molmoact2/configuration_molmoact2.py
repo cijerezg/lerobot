@@ -249,12 +249,17 @@ class MolmoAct2Config(PreTrainedConfig):
     # temporal_layer_stride-th resblock extends its attention keys with the
     # same-patch positions of strictly older frames (causal, one softmax), and
     # past-frame rows are dropped before the LLM — zero extra LLM tokens.
-    # history_stride_seconds parameterizes the sinusoidal e(t) time stamps
-    # (past frame k of T_h → k * stride seconds before now, current = 0);
-    # synced from memory.history_window_seconds / history_num_samples on the
-    # RL config.
+    # history_times_seconds carries the slot ages in seconds before now, oldest →
+    # newest ([6.0, 4.0, 2.0] for the -6/-4/-2 window), and parameterizes the
+    # sinusoidal e(t) time stamps. It is synced from memory.history_offsets_seconds
+    # by MolmoAct2RLConfig.__post_init__, so the encoder is stamped with the instants
+    # the buffer actually gathered rather than an assumed spacing.
+    # history_stride_seconds is the uniform fallback used when history_times_seconds
+    # is None (past frame k of T_h → k * stride seconds before now, current = 0); it
+    # is what pre-2026-09 checkpoints carry.
     temporal_layer_stride: int = 4
     history_stride_seconds: float = 1.0
+    history_times_seconds: list[float] | None = None
 
     # Training-time prompt deletion. Keep these explicit on the policy config so
     # the saved checkpoint and launch YAML, rather than pack-step implementation

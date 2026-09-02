@@ -173,6 +173,47 @@ def _override_action_stats(processors: tuple, action_stats: dict[str, Any]) -> t
     return processors
 
 
+# Columns the sampler produces that the preprocessor actually reads. Everything else
+# in complementary_info is buffer bookkeeping and must not be shipped into the prompt
+# pipeline. The width masks belong here: without them a mixed-DoF batch reaches the
+# padder with no idea which trailing dimensions are padding, and an 8-wide layout
+# silently supervises a 7-DoF robot on a zero eighth dimension.
+_FORWARDED_COMPLEMENTARY = (
+    "subtask_index",
+    "embodiment_index",
+    "metadata_quality",
+    "metadata_mistake",
+    "metadata_speed",
+    "state_dim_is_pad",
+    "action_dim_is_pad",
+    "action_layout_id",
+    "source_id",
+)
+
+
+def _forwarded_complementary_keys(complementary: dict, cfg) -> list[str]:
+    """Which sampler columns ride into the preprocessor for this configuration."""
+    keys = [key for key in _FORWARDED_COMPLEMENTARY if key in complementary]
+    # Per-camera presence: an absent view must reach the prompt step so its patch span
+    # can leave the attention mask.
+    keys.extend(key for key in complementary if key.startswith("camera_is_present."))
+    if getattr(cfg.policy, "pointmap_config", None) is not None:
+        # Depth presence and pixel validity are only meaningful with a depth encoder,
+        # and the history validity tensor is large enough that forwarding it into a
+        # depth-free run would be pure waste.
+        keys.extend(
+            key
+            for key in complementary
+            if key.startswith("depth.") and (key.endswith("_is_present") or key.endswith("_valid"))
+        )
+        keys.extend(
+            key
+            for key in complementary
+            if key.startswith("history.depth.") and (key.endswith("_is_present") or key.endswith("_valid"))
+        )
+    return sorted(set(keys))
+
+
 class MolmoAct2Trainer(Trainer):
     """Trainer for MolmoAct2RLPolicy. Supports actor-only and critic-trained modes."""
 
@@ -758,8 +799,7 @@ class MolmoAct2Trainer(Trainer):
         """
         from lerobot.types import TransitionKey
 
-        action_dim = self._action_dim(cfg)
-        actions = actions[..., :action_dim]
+        self._check_action_width(actions, cfg)
 
         tasks = self._resolve_batch_tasks(raw_batch, cfg.policy.task, actions.shape[0])
         pre_input: dict[str, Any] = {
@@ -768,17 +808,7 @@ class MolmoAct2Trainer(Trainer):
             "task": tasks,
         }
         raw_comp = raw_batch.get("complementary_info") or {}
-        comp = {
-            key: raw_comp[key]
-            for key in (
-                "subtask_index",
-                "embodiment_index",
-                "metadata_quality",
-                "metadata_mistake",
-                "metadata_speed",
-            )
-            if key in raw_comp
-        }
+        comp = {key: raw_comp[key] for key in _forwarded_complementary_keys(raw_comp, cfg)}
         if comp:
             pre_input[TransitionKey.COMPLEMENTARY_DATA] = comp
         batch = preprocessor(pre_input)
@@ -847,7 +877,6 @@ class MolmoAct2Trainer(Trainer):
 
         grad_accum = int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
         clip_norm = float(getattr(cfg.policy, "optimizer_grad_clip_norm", 1.0))
-        action_dim = self._action_dim(cfg)
 
         policy_opt = optimizers.get("policy") or next(iter(optimizers.values()))
         policy_opt.zero_grad()
@@ -907,7 +936,11 @@ class MolmoAct2Trainer(Trainer):
             raw = move_transition_to_device(raw, device)
 
             observations = raw.get("state", {})
-            actions = raw[ACTION][..., :action_dim]
+            # Full native width, never sliced to the configured layout width. A mixed-DoF
+            # batch is 8 wide with a per-sample action_dim_is_pad mask; slicing it here
+            # would delete Franka's eighth dimension from every target and gradient, and
+            # would do it silently. Width is checked, then padded by the layout step.
+            actions = raw[ACTION]
             if "reward" in raw:
                 reward_tensor = raw["reward"]
                 if not isinstance(reward_tensor, torch.Tensor):
@@ -1467,6 +1500,22 @@ class MolmoAct2Trainer(Trainer):
         super().log_metrics(aim_infos, step, aim_logger, _policy)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _check_action_width(self, actions: torch.Tensor, cfg) -> None:
+        """Refuse a batch wider than the model's layout instead of truncating it.
+
+        The layout step right-pads a narrower batch and records the padding, so narrower
+        is fine. Wider means the data has dimensions this policy cannot represent, which
+        used to be resolved by a silent slice.
+        """
+        width = int(actions.shape[-1])
+        layout_width = self._action_dim(cfg)
+        if width > layout_width:
+            raise ValueError(
+                f"batch action width {width} exceeds the policy's layout width {layout_width}. "
+                "Set policy.output_features.action.shape (and the state feature) to the widest "
+                "layout in the mixture -- truncating here would delete real dimensions."
+            )
 
     def _action_dim(self, cfg) -> int:
         """Resolve the active action dimension from config output_features."""

@@ -1,0 +1,3694 @@
+{
+  "episodes": [
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000007",
+      "subtasks": [
+        {
+          "end_s": 62.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 120.9,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 64.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000008",
+      "subtasks": [
+        {
+          "end_s": 101.8,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000098",
+      "subtasks": [
+        {
+          "end_s": 18.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 20.0
+        },
+        {
+          "end_s": 98.6,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 24.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000108",
+      "subtasks": [
+        {
+          "end_s": 62.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 66.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 64.0
+        },
+        {
+          "end_s": 92.5,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 68.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000121",
+      "subtasks": [
+        {
+          "end_s": 74.56666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000340",
+      "subtasks": [
+        {
+          "end_s": 118.7,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000375",
+      "subtasks": [
+        {
+          "end_s": 67.93333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000439",
+      "subtasks": [
+        {
+          "end_s": 66.43333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000536",
+      "subtasks": [
+        {
+          "end_s": 77.36666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000569",
+      "subtasks": [
+        {
+          "end_s": 78.46666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000583",
+      "subtasks": [
+        {
+          "end_s": 65.2,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000598",
+      "subtasks": [
+        {
+          "end_s": 65.33333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000654",
+      "subtasks": [
+        {
+          "end_s": 60.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 88.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 62.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000689",
+      "subtasks": [
+        {
+          "end_s": 44.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 81.36666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 46.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000774",
+      "subtasks": [
+        {
+          "end_s": 82.03333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000968",
+      "subtasks": [
+        {
+          "end_s": 34.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 110.86666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 36.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep000985",
+      "subtasks": [
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 36.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 28.0
+        },
+        {
+          "end_s": 60.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 38.0
+        },
+        {
+          "end_s": 68.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 7,
+          "start_s": 62.0
+        },
+        {
+          "end_s": 126.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 9,
+          "start_s": 70.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep001003",
+      "subtasks": [
+        {
+          "end_s": 112.7,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep001008",
+      "subtasks": [
+        {
+          "end_s": 120.03333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_flowers__ep001038",
+      "subtasks": [
+        {
+          "end_s": 98.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000009",
+      "subtasks": [
+        {
+          "end_s": 80.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000011",
+      "subtasks": [
+        {
+          "end_s": 90.8,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000020",
+      "subtasks": [
+        {
+          "end_s": 96.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 99.6,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 98.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000029",
+      "subtasks": [
+        {
+          "end_s": 50.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 8.0
+        },
+        {
+          "end_s": 64.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 52.0
+        },
+        {
+          "end_s": 102.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 66.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000151",
+      "subtasks": [
+        {
+          "end_s": 56.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 108.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 58.0
+        },
+        {
+          "end_s": 111.9,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 110.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000160",
+      "subtasks": [
+        {
+          "end_s": 102.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000305",
+      "subtasks": [
+        {
+          "end_s": 105.3,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000425",
+      "subtasks": [
+        {
+          "end_s": 108.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000479",
+      "subtasks": [
+        {
+          "end_s": 117.2,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000487",
+      "subtasks": [
+        {
+          "end_s": 50.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 96.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 52.0
+        },
+        {
+          "end_s": 111.93333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 98.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000618",
+      "subtasks": [
+        {
+          "end_s": 93.76666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 8.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000643",
+      "subtasks": [
+        {
+          "end_s": 84.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 86.96666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 86.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000650",
+      "subtasks": [
+        {
+          "end_s": 90.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000662",
+      "subtasks": [
+        {
+          "end_s": 34.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 88.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 38.0
+        },
+        {
+          "end_s": 91.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 90.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000663",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 32.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        },
+        {
+          "end_s": 82.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 34.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000749",
+      "subtasks": [
+        {
+          "end_s": 44.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 92.26666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 46.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000830",
+      "subtasks": [
+        {
+          "end_s": 50.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 90.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 52.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000855",
+      "subtasks": [
+        {
+          "end_s": 16.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 52.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 18.0
+        },
+        {
+          "end_s": 82.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 54.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000856",
+      "subtasks": [
+        {
+          "end_s": 112.13333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__arrange_fruits__ep000862",
+      "subtasks": [
+        {
+          "end_s": 44.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 104.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 46.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000002",
+      "subtasks": [
+        {
+          "end_s": 22.566666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000003",
+      "subtasks": [
+        {
+          "end_s": 25.4,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000148",
+      "subtasks": [
+        {
+          "end_s": 27.6,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000177",
+      "subtasks": [
+        {
+          "end_s": 14.766666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000205",
+      "subtasks": [
+        {
+          "end_s": 20.833333333333332,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000282",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        },
+        {
+          "end_s": 31.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 28.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000388",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000403",
+      "subtasks": [
+        {
+          "end_s": 18.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000452",
+      "subtasks": [
+        {
+          "end_s": 21.266666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000513",
+      "subtasks": [
+        {
+          "end_s": 17.966666666666665,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000517",
+      "subtasks": [
+        {
+          "end_s": 20.233333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000616",
+      "subtasks": [
+        {
+          "end_s": 20.2,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000639",
+      "subtasks": [
+        {
+          "end_s": 18.133333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000872",
+      "subtasks": [
+        {
+          "end_s": 21.066666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000905",
+      "subtasks": [
+        {
+          "end_s": 12.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 40.36666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 14.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000952",
+      "subtasks": [
+        {
+          "end_s": 34.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 40.333333333333336,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 36.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000970",
+      "subtasks": [
+        {
+          "end_s": 31.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep000985",
+      "subtasks": [
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 50.8,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 24.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep001017",
+      "subtasks": [
+        {
+          "end_s": 8.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 28.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 10.0
+        },
+        {
+          "end_s": 36.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 30.0
+        },
+        {
+          "end_s": 41.333333333333336,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 7,
+          "start_s": 38.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__hang_the_cup__ep001040",
+      "subtasks": [
+        {
+          "end_s": 29.333333333333332,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000000",
+      "subtasks": [
+        {
+          "end_s": 72.76666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000007",
+      "subtasks": [
+        {
+          "end_s": 90.43333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000152",
+      "subtasks": [
+        {
+          "end_s": 50.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 54.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 52.0
+        },
+        {
+          "end_s": 66.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 56.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000201",
+      "subtasks": [
+        {
+          "end_s": 30.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 72.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 32.0
+        },
+        {
+          "end_s": 94.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 74.0
+        },
+        {
+          "end_s": 97.16666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 7,
+          "start_s": 96.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000210",
+      "subtasks": [
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 76.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 24.0
+        },
+        {
+          "end_s": 80.73333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 78.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000220",
+      "subtasks": [
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 44.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 28.0
+        },
+        {
+          "end_s": 86.83333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 46.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000232",
+      "subtasks": [
+        {
+          "end_s": 8.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 34.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 14.0
+        },
+        {
+          "end_s": 79.26666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 36.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000239",
+      "subtasks": [
+        {
+          "end_s": 74.4,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000269",
+      "subtasks": [
+        {
+          "end_s": 24.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 72.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 26.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000378",
+      "subtasks": [
+        {
+          "end_s": 60.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 63.5,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 62.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000561",
+      "subtasks": [
+        {
+          "end_s": 34.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 84.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 36.0
+        },
+        {
+          "end_s": 96.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 86.0
+        },
+        {
+          "end_s": 99.3,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 7,
+          "start_s": 98.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000708",
+      "subtasks": [
+        {
+          "end_s": 74.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 84.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 78.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000807",
+      "subtasks": [
+        {
+          "end_s": 10.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 30.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 12.0
+        },
+        {
+          "end_s": 82.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 32.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000849",
+      "subtasks": [
+        {
+          "end_s": 12.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 90.3,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 16.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000872",
+      "subtasks": [
+        {
+          "end_s": 28.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 78.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 30.0
+        },
+        {
+          "end_s": 95.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 82.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000932",
+      "subtasks": [
+        {
+          "end_s": 14.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 34.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 16.0
+        },
+        {
+          "end_s": 80.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 38.0
+        },
+        {
+          "end_s": 90.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 7,
+          "start_s": 82.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000940",
+      "subtasks": [
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 68.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 28.0
+        },
+        {
+          "end_s": 80.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 70.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000943",
+      "subtasks": [
+        {
+          "end_s": 10.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 24.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 12.0
+        },
+        {
+          "end_s": 72.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 26.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep000975",
+      "subtasks": [
+        {
+          "end_s": 74.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 88.73333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 78.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__item_classification__ep001014",
+      "subtasks": [
+        {
+          "end_s": 12.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 8.0
+        },
+        {
+          "end_s": 32.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 14.0
+        },
+        {
+          "end_s": 86.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 34.0
+        },
+        {
+          "end_s": 91.63333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 7,
+          "start_s": 90.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000002",
+      "subtasks": [
+        {
+          "end_s": 8.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 61.63333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 10.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000003",
+      "subtasks": [
+        {
+          "end_s": 51.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000077",
+      "subtasks": [
+        {
+          "end_s": 34.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 44.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 36.0
+        },
+        {
+          "end_s": 58.03333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 46.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000166",
+      "subtasks": [
+        {
+          "end_s": 45.03333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000199",
+      "subtasks": [
+        {
+          "end_s": 46.766666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000254",
+      "subtasks": [
+        {
+          "end_s": 62.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000285",
+      "subtasks": [
+        {
+          "end_s": 36.166666666666664,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000650",
+      "subtasks": [
+        {
+          "end_s": 36.333333333333336,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000699",
+      "subtasks": [
+        {
+          "end_s": 55.666666666666664,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000753",
+      "subtasks": [
+        {
+          "end_s": 51.233333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000771",
+      "subtasks": [
+        {
+          "end_s": 45.4,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000785",
+      "subtasks": [
+        {
+          "end_s": 36.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 53.4,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 38.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000810",
+      "subtasks": [
+        {
+          "end_s": 38.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 42.53333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 40.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000844",
+      "subtasks": [
+        {
+          "end_s": 51.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000859",
+      "subtasks": [
+        {
+          "end_s": 14.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 30.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 16.0
+        },
+        {
+          "end_s": 44.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 32.0
+        },
+        {
+          "end_s": 56.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 7,
+          "start_s": 46.0
+        },
+        {
+          "end_s": 64.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 9,
+          "start_s": 58.0
+        },
+        {
+          "end_s": 72.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 11,
+          "start_s": 66.0
+        },
+        {
+          "end_s": 87.83333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 13,
+          "start_s": 74.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000868",
+      "subtasks": [
+        {
+          "end_s": 61.6,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000948",
+      "subtasks": [
+        {
+          "end_s": 42.7,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000956",
+      "subtasks": [
+        {
+          "end_s": 58.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 68.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 60.0
+        },
+        {
+          "end_s": 75.2,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 70.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000973",
+      "subtasks": [
+        {
+          "end_s": 66.23333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__pick_out_the_green_blocks__ep000997",
+      "subtasks": [
+        {
+          "end_s": 58.53333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000005",
+      "subtasks": [
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 40.266666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 24.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000006",
+      "subtasks": [
+        {
+          "end_s": 38.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 58.666666666666664,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 40.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000011",
+      "subtasks": [
+        {
+          "end_s": 39.63333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000059",
+      "subtasks": [
+        {
+          "end_s": 33.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000101",
+      "subtasks": [
+        {
+          "end_s": 21.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000154",
+      "subtasks": [
+        {
+          "end_s": 28.6,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000257",
+      "subtasks": [
+        {
+          "end_s": 26.033333333333335,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000277",
+      "subtasks": [
+        {
+          "end_s": 40.5,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000379",
+      "subtasks": [
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 30.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 28.0
+        },
+        {
+          "end_s": 33.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 32.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000404",
+      "subtasks": [
+        {
+          "end_s": 21.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000458",
+      "subtasks": [
+        {
+          "end_s": 22.333333333333332,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000524",
+      "subtasks": [
+        {
+          "end_s": 30.333333333333332,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000588",
+      "subtasks": [
+        {
+          "end_s": 29.366666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000645",
+      "subtasks": [
+        {
+          "end_s": 24.766666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000762",
+      "subtasks": [
+        {
+          "end_s": 20.966666666666665,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000900",
+      "subtasks": [
+        {
+          "end_s": 24.866666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000955",
+      "subtasks": [
+        {
+          "end_s": 27.666666666666668,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000969",
+      "subtasks": [
+        {
+          "end_s": 39.96666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000979",
+      "subtasks": [
+        {
+          "end_s": 41.9,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__press_the_button__ep000983",
+      "subtasks": [
+        {
+          "end_s": 43.2,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000075",
+      "subtasks": [
+        {
+          "end_s": 18.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 24.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 20.0
+        },
+        {
+          "end_s": 30.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 26.0
+        },
+        {
+          "end_s": 35.06666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 7,
+          "start_s": 34.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000135",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 23.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000178",
+      "subtasks": [
+        {
+          "end_s": 26.4,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000215",
+      "subtasks": [
+        {
+          "end_s": 18.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 20.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000219",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 27.533333333333335,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 24.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000311",
+      "subtasks": [
+        {
+          "end_s": 30.033333333333335,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000342",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 27.666666666666668,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 26.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000390",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 24.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        },
+        {
+          "end_s": 30.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 26.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000391",
+      "subtasks": [
+        {
+          "end_s": 14.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 18.0
+        },
+        {
+          "end_s": 24.966666666666665,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 22.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000497",
+      "subtasks": [
+        {
+          "end_s": 16.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 18.0
+        },
+        {
+          "end_s": 27.033333333333335,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 24.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000551",
+      "subtasks": [
+        {
+          "end_s": 24.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000554",
+      "subtasks": [
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000560",
+      "subtasks": [
+        {
+          "end_s": 34.03333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000610",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000813",
+      "subtasks": [
+        {
+          "end_s": 18.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 30.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 20.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000856",
+      "subtasks": [
+        {
+          "end_s": 28.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000901",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 34.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000977",
+      "subtasks": [
+        {
+          "end_s": 28.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 31.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 30.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep000984",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        },
+        {
+          "end_s": 29.2,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 28.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__shred_paper__ep001005",
+      "subtasks": [
+        {
+          "end_s": 18.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 21.266666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 20.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000000",
+      "subtasks": [
+        {
+          "end_s": 14.666666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000001",
+      "subtasks": [
+        {
+          "end_s": 12.3,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000059",
+      "subtasks": [
+        {
+          "end_s": 13.033333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000190",
+      "subtasks": [
+        {
+          "end_s": 11.9,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000231",
+      "subtasks": [
+        {
+          "end_s": 12.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000324",
+      "subtasks": [
+        {
+          "end_s": 8.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 19.833333333333332,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 10.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000347",
+      "subtasks": [
+        {
+          "end_s": 14.666666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000377",
+      "subtasks": [
+        {
+          "end_s": 14.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 8.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000382",
+      "subtasks": [
+        {
+          "end_s": 8.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 18.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 12.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000392",
+      "subtasks": [
+        {
+          "end_s": 12.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 19.066666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 14.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000454",
+      "subtasks": [
+        {
+          "end_s": 11.166666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000554",
+      "subtasks": [
+        {
+          "end_s": 14.3,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000723",
+      "subtasks": [
+        {
+          "end_s": 20.433333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000789",
+      "subtasks": [
+        {
+          "end_s": 8.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 21.5,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 10.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000810",
+      "subtasks": [
+        {
+          "end_s": 17.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000830",
+      "subtasks": [
+        {
+          "end_s": 12.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000861",
+      "subtasks": [
+        {
+          "end_s": 12.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 24.433333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 14.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000903",
+      "subtasks": [
+        {
+          "end_s": 19.466666666666665,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 8.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep000919",
+      "subtasks": [
+        {
+          "end_s": 12.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 20.433333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 14.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__turn_on_the_light_switch__ep001000",
+      "subtasks": [
+        {
+          "end_s": 21.033333333333335,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000016",
+      "subtasks": [
+        {
+          "end_s": 44.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 53.56666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 46.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000034",
+      "subtasks": [
+        {
+          "end_s": 29.3,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000041",
+      "subtasks": [
+        {
+          "end_s": 16.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 18.0
+        },
+        {
+          "end_s": 30.366666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 22.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000044",
+      "subtasks": [
+        {
+          "end_s": 31.066666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000055",
+      "subtasks": [
+        {
+          "end_s": 16.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 31.933333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000117",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 31.3,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000133",
+      "subtasks": [
+        {
+          "end_s": 32.96666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000226",
+      "subtasks": [
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 32.6,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 24.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000455",
+      "subtasks": [
+        {
+          "end_s": 30.166666666666668,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000601",
+      "subtasks": [
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 33.3,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 26.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000618",
+      "subtasks": [
+        {
+          "end_s": 36.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 50.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 38.0
+        },
+        {
+          "end_s": 54.5,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 52.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000656",
+      "subtasks": [
+        {
+          "end_s": 30.333333333333332,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000688",
+      "subtasks": [
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 30.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 28.0
+        },
+        {
+          "end_s": 39.6,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 32.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000736",
+      "subtasks": [
+        {
+          "end_s": 22.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 36.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 24.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000794",
+      "subtasks": [
+        {
+          "end_s": 16.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 29.166666666666668,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 18.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000841",
+      "subtasks": [
+        {
+          "end_s": 20.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 22.0
+        },
+        {
+          "end_s": 33.833333333333336,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 5,
+          "start_s": 28.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000890",
+      "subtasks": [
+        {
+          "end_s": 24.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 36.8,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 28.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000898",
+      "subtasks": [
+        {
+          "end_s": 16.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 26.933333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 18.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000958",
+      "subtasks": [
+        {
+          "end_s": 28.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 44.733333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 32.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__water_the_flowers__ep000991",
+      "subtasks": [
+        {
+          "end_s": 16.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 24.933333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 18.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000000",
+      "subtasks": [
+        {
+          "end_s": 23.2,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000001",
+      "subtasks": [
+        {
+          "end_s": 25.733333333333334,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000019",
+      "subtasks": [
+        {
+          "end_s": 28.033333333333335,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000026",
+      "subtasks": [
+        {
+          "end_s": 24.1,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000033",
+      "subtasks": [
+        {
+          "end_s": 24.366666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000299",
+      "subtasks": [
+        {
+          "end_s": 26.166666666666668,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000317",
+      "subtasks": [
+        {
+          "end_s": 26.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 30.4,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 28.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000437",
+      "subtasks": [
+        {
+          "end_s": 31.4,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000467",
+      "subtasks": [
+        {
+          "end_s": 30.566666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000469",
+      "subtasks": [
+        {
+          "end_s": 8.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        },
+        {
+          "end_s": 38.7,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 3,
+          "start_s": 10.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000477",
+      "subtasks": [
+        {
+          "end_s": 42.8,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000515",
+      "subtasks": [
+        {
+          "end_s": 38.0,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000533",
+      "subtasks": [
+        {
+          "end_s": 37.833333333333336,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000801",
+      "subtasks": [
+        {
+          "end_s": 30.166666666666668,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000885",
+      "subtasks": [
+        {
+          "end_s": 22.066666666666666,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000951",
+      "subtasks": [
+        {
+          "end_s": 24.9,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep000961",
+      "subtasks": [
+        {
+          "end_s": 33.8,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep001007",
+      "subtasks": [
+        {
+          "end_s": 45.6,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep001032",
+      "subtasks": [
+        {
+          "end_s": 35.93333333333333,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    },
+    {
+      "episode_id": "robochallenge__wipe_the_table__ep001073",
+      "subtasks": [
+        {
+          "end_s": 36.56666666666667,
+          "mistakes": [],
+          "note": "Timestamped review of all available camera views shows direct, purposeful motion throughout this retained segment, without visible correction or a discrete failure event.",
+          "quality": 5,
+          "segment_index": 1,
+          "start_s": 6.0
+        }
+      ]
+    }
+  ],
+  "review_provenance": {
+    "automatic_labels_used_as_verdicts": false,
+    "review_basis": [
+      "timestamped_global_side_wrist_contact_sheets_for_every_retained_segment",
+      "dense_followup_review_for_ambiguous_corrections_and_failure_events",
+      "source_native_state_and_gripper_traces_used_for_visual_triage_only"
+    ],
+    "reviewer": "codex_visual_review",
+    "review_date": "2026-09-02",
+    "review_completed": true
+  },
+  "rubric": {
+    "mistake_scope": "one discrete visible failure event per bounded time span",
+    "name": "ReBot quality and semantic mistake rubric",
+    "path": "lerobot/pi07_wiki/annotation_rubric.md",
+    "quality_scope": "one integer 1-5 constant over each retained RoboChallenge segment",
+    "version": "2026-08-02"
+  }
+}
