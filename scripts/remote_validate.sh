@@ -98,12 +98,27 @@ if [[ -d "$CKPT/pretrained_model" ]]; then MODEL="$CKPT/pretrained_model"; else 
 
 # Slug: <run>-<step> for .../<run>/checkpoints/<step>[/pretrained_model], else basename.
 step_dir="$MODEL"; [[ "$(basename "$MODEL")" == "pretrained_model" ]] && step_dir="$(dirname "$MODEL")"
+RUN_NAME=""; STEP_N=""
 if [[ "$(basename "$(dirname "$step_dir")")" == "checkpoints" ]]; then
-  SLUG="$(basename "$(dirname "$(dirname "$step_dir")")")-$(basename "$step_dir")"
+  RUN_NAME="$(basename "$(dirname "$(dirname "$step_dir")")")"
+  STEP_N="$(basename "$step_dir")"
+  SLUG="$RUN_NAME-$STEP_N"
 else
   SLUG="$(basename "$step_dir")"
 fi
 RUN_DIR="${RUN_DIR:-$WS/outputs/remote_val/$SLUG}"
+
+# Where the pulled artifacts land. The remote still works in its own RUN_DIR — that
+# directory holds the shipped checkpoint, so pulling it wholesale over the training run
+# would re-download 11G on top of live checkpoints. Only the probe output moves, and it
+# lands where a local run would have written it: <run>/validation/step_<step>. Probes
+# always run at step 0 here (offline_steps=0 + val_on_start), so the remote's
+# step_00000000 is renamed to the checkpoint's own step on the way in.
+if [[ -n "$RUN_NAME" && "$STEP_N" =~ ^[0-9]+$ ]]; then
+  RESULT_DIR="$WS/outputs/$RUN_NAME/validation/$(printf 'step_%08d' "$((10#$STEP_N))")"
+else
+  RESULT_DIR="$RUN_DIR/validation"
+fi
 STATE="$RUN_DIR/.remote_val"
 RLOG="$RUN_DIR/remote_val.log"          # remote log path (same string locally)
 LLOG="$RUN_DIR/remote_val.log"          # local mirror we append to while tailing
@@ -113,6 +128,7 @@ info "workspace  $WS"
 info "code       $SRC  (venv: $VENV)"
 info "checkpoint $MODEL"
 info "run dir    $RUN_DIR"
+info "results    $RESULT_DIR"
 
 sshx() { ssh "${SSH_OPTS[@]}" "$HOST" "$@"; }
 
@@ -127,7 +143,7 @@ else
     || die "cannot ssh to '$HOST' — add a 'Host $HOST' block to ~/.ssh/config, or pass --host"
 
   mapfile -t ASSETS < <(
-    grep -hoE '(^|[[:space:]])(root|val_dataset_path|buffer_cache_dir|base_path|discrete_action_tokenizer|action_encoding_stats_path):[[:space:]]*[^[:space:]#]+' "$CONFIG" \
+    grep -hoE '(^|[[:space:]])(root|val_dataset_path|buffer_cache_dir|base_path|discrete_action_tokenizer|action_encoding_stats_path|embodiment_stats_path):[[:space:]]*[^[:space:]#]+' "$CONFIG" \
       | sed -E 's/.*:[[:space:]]*//; s/^"//; s/"$//' | grep -v '^null$' | sort -u
   )
   missing=""
@@ -155,6 +171,9 @@ else
 
   # ── Sync checkpoint ───────────────────────────────────────────────────────────
   info "sync checkpoint ($(du -sh "$MODEL" | cut -f1))"
+  # rsync creates only the last component of the destination path, so a checkpoint from
+  # a run directory the DGX has never seen fails at mkdir before a byte moves.
+  run sshx "mkdir -p '$MODEL'" || die "cannot create $MODEL on $HOST"
   run rsync -a --partial --inplace --info=progress2 -e "ssh ${SSH_OPTS[*]}" \
       "$MODEL/" "$HOST:$MODEL/" || die "checkpoint rsync failed"
 
@@ -166,6 +185,9 @@ else
 #!/usr/bin/env bash
 set -o pipefail
 export PYTHONUNBUFFERED=1
+# setsid+nohup gives a non-interactive, non-login shell, which never sources the
+# profile that puts uv on PATH.
+export PATH="\$HOME/.local/bin:\$PATH"
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
 uv run --no-project --python '$VENV/bin/python' python -m lerobot.scripts.rl_offline \\
@@ -221,9 +243,18 @@ EXIT="$(sshx "cat '$STATE/exit_code' 2>/dev/null" || echo 1)"
 info "remote run exited $EXIT"
 
 # ── Pull results back ───────────────────────────────────────────────────────────
-info "pull results -> $RUN_DIR"
-rsync -a --info=stats1 --exclude='.remote_val/' -e "ssh ${SSH_OPTS[*]}" \
-    "$HOST:$RUN_DIR/" "$RUN_DIR/" || die "results rsync failed — remote data left in place"
+# The remote writes one step dir (step_00000000); take whichever it produced so this
+# does not silently pull nothing if that ever changes.
+remote_step="$(sshx "ls -d '$RUN_DIR'/validation/step_* 2>/dev/null | head -1" || true)"
+if [[ -n "$remote_step" ]]; then
+  info "pull results -> $RESULT_DIR"
+  mkdir -p "$RESULT_DIR"
+  rsync -a --info=stats1 -e "ssh ${SSH_OPTS[*]}" \
+      "$HOST:$remote_step/" "$RESULT_DIR/" || die "results rsync failed — remote data left in place"
+  cp -f "$LLOG" "$RESULT_DIR/remote_val.log" 2>/dev/null || true
+else
+  warn "no validation output on $HOST under $RUN_DIR — nothing to pull"
+fi
 
 # ── Delete the remote checkpoint copy ───────────────────────────────────────────
 if (( EXIT != 0 )); then
@@ -243,8 +274,9 @@ fi
 
 echo
 if (( EXIT == 0 )); then
-  info "done. results: $RUN_DIR/validation/step_00000000/"
-  info "view: uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes '$RUN_DIR'"
+  info "done. results: $RESULT_DIR/"
+  view_root="$RESULT_DIR"; [[ -n "$RUN_NAME" ]] && view_root="$WS/outputs/$RUN_NAME"
+  info "view: uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes '$view_root'"
 else
   info "log: $LLOG"
 fi

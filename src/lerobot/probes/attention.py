@@ -66,6 +66,7 @@ from lerobot.probes.utils import (
     load_probe_dataset,
     probe_frame_inputs,
     probe_image_stride,
+    register_config_choices,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -1024,8 +1025,9 @@ def _panel_how(filename: str) -> str:
 
 
 _PANEL_SOURCE = {
-    "img_top": "top camera",
-    "img_wrist": "wrist camera",
+    "img_external_0": "first external camera",
+    "img_external_1": "second external camera",
+    "img_wrist_0": "wrist camera",
     "depth": "depth map",
     "depth_nullbank": "depth null bank",
 }
@@ -1129,4 +1131,5 @@ def probe_cli(cfg: ProbeAttentionConfig):
 
 
 if __name__ == "__main__":
+    register_config_choices()
     probe_cli()

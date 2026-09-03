@@ -75,6 +75,7 @@ from lerobot.probes.utils import (
     makedirs,
     probe_frame_inputs,
     probe_image_stride,
+    register_config_choices,
     sample_episodes_evenly,
     trajectory_error_components,
 )
@@ -259,9 +260,11 @@ def _load_depth_window(dataset, cfg, global_idx: int, obs: dict, *, depth_obs_ke
     row = dataset.hf_dataset[global_idx]
     episode_idx = _scalar(row["episode_index"])
     frame_idx = _scalar(row["frame_index"])
+    from lerobot.probes.utils import depth_sidecar_key
+
     depth = load_depth_png(
         dataset.root,
-        f"{pointmap_cfg.depth_key}.depth",
+        f"{depth_sidecar_key(dataset.root, pointmap_cfg.depth_key)}.depth",
         episode_idx,
         frame_idx,
     )
@@ -839,4 +842,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    register_config_choices()
     main()

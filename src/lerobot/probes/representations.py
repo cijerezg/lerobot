@@ -58,13 +58,14 @@ from lerobot.probes.utils import (
     ax_style,
     build_episode_index,
     frame_colors_rgba,
-    probe_frame_inputs,
-    probe_image_stride,
     get_subtask_idx,
     load_extra_dataset,
     load_probe_dataset,
     makedirs,
     plotly_3d_layout,
+    probe_frame_inputs,
+    probe_image_stride,
+    register_config_choices,
     run_pca,
     run_umap,
     sample_episodes_evenly,
@@ -538,4 +539,5 @@ def probe_cli(cfg: ProbeRepresentationsConfig):
 
 
 if __name__ == "__main__":
+    register_config_choices()
     probe_cli()

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
 import os
 import queue
 import shutil
+import threading
 import time
 import traceback
-import threading
 from collections import deque
 from threading import Thread
 
@@ -20,11 +21,10 @@ from PIL import Image
 
 from lerobot.policies.rtc.action_queue import ActionQueue
 from lerobot.policies.rtc.configuration_rtc import RTCConfig
-from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
 from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.processor import TransitionKey
-from lerobot.rl.buffer import ReplayBuffer, assemble_history_windows
 from lerobot.rl.actor import push_transitions_to_transport_queue
+from lerobot.rl.buffer import ReplayBuffer, assemble_history_windows
 from lerobot.rl.gym_manipulator import (
     create_transition,
     make_processors,
@@ -32,17 +32,18 @@ from lerobot.rl.gym_manipulator import (
     step_env_and_process_transition,
 )
 from lerobot.rl.inference_utils import convert_env_obs_to_policy_format
-from lerobot.utils.action_smoothing import apply_butterworth_filter
-from lerobot.rl.utils import save_video_with_critic_overlay
 from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.subtask_console import make_subtask_console
+from lerobot.rl.utils import save_video_with_critic_overlay
+from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.transport.utils import bytes_to_state_dict, python_object_to_bytes
+from lerobot.utils.action_smoothing import apply_butterworth_filter
+from lerobot.utils.constants import ACTION
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.constants import ACTION
 from lerobot.utils.transition import Transition, move_state_dict_to_device, move_transition_to_device
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ def _action_dim(cfg) -> int:
 
 _JOINT_ORDER = [
     "shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos",
-    "wrist_flex.pos", "wrist_roll.pos", "gripper.pos",
+    "wrist_flex.pos", "wrist_yaw.pos", "wrist_roll.pos", "gripper.pos",
 ]
 
 
@@ -79,6 +80,52 @@ def _raw_joint_action(online_env, action_dim: int, device) -> torch.Tensor:
             vals.extend([0.0] * (action_dim - len(vals)))
         return torch.tensor(vals, dtype=torch.float32, device=device)
     return torch.zeros(action_dim, dtype=torch.float32, device=device)
+
+
+def _teleop_supports_feedback(teleop_device) -> bool:
+    """Whether a teleoperator can safely receive position targets."""
+    return (
+        teleop_device is not None
+        and bool(getattr(teleop_device, "feedback_features", {}))
+        and callable(getattr(teleop_device, "send_feedback", None))
+        and callable(getattr(teleop_device, "enable_torque", None))
+        and callable(getattr(teleop_device, "disable_torque", None))
+    )
+
+
+def _validate_inference_action_routing(online_env, teleop_device) -> None:
+    """Fail before episode startup unless follower actions can be routed to the leader exactly."""
+    if not _teleop_supports_feedback(teleop_device):
+        raise RuntimeError(
+            "inference_send_actions_to_robot=false requires an actuated teleoperator with "
+            "feedback_features, enable_torque(), and disable_torque()"
+        )
+    if not hasattr(online_env, "get_last_requested_joint_targets"):
+        raise RuntimeError(
+            "inference_send_actions_to_robot=false requires the real-robot RobotEnv action target path"
+        )
+
+    expected_keys = {f"{name}.pos" for name in online_env.robot.bus.motors}
+    feedback_keys = set(teleop_device.feedback_features)
+    if feedback_keys != expected_keys:
+        raise RuntimeError(
+            "leader feedback joints do not exactly match follower action joints: "
+            f"missing={sorted(expected_keys - feedback_keys)}, "
+            f"extra={sorted(feedback_keys - expected_keys)}"
+        )
+
+
+def _close_robot_hardware(online_env, teleop_device, log_prefix: str) -> None:
+    """Best-effort shutdown with the actuated teleoperator unloaded first."""
+    try:
+        if teleop_device is not None and getattr(teleop_device, "is_connected", False):
+            teleop_device.disconnect()
+    except Exception:
+        logger.error("[%s] Teleoperator disconnect failed:\n%s", log_prefix, traceback.format_exc())
+    try:
+        online_env.close()
+    except Exception:
+        logger.error("[%s] Robot environment close failed:\n%s", log_prefix, traceback.format_exc())
 
 
 def _obs_with_depth(policy_obs: dict, env_obs: dict, cfg) -> dict:
@@ -733,6 +780,7 @@ def rtc_env_worker(
         logger.info("[RTC_ENV] Thread started.")
         action_interval = 1.0 / cfg.env.fps
         action_dim = _action_dim(cfg)
+        teleop_feedback_supported = _teleop_supports_feedback(teleop_device)
 
         was_intervening = False
         sum_reward_episode = 0.0
@@ -745,12 +793,17 @@ def rtc_env_worker(
         episode_logging_freq = int(getattr(cfg, "episode_logging_freq", 0) or 0)
         shared_state.is_logging_episode = (episode_logging_freq > 0 and shared_state.episode_counter % episode_logging_freq == 0)
 
-        shared_state.policy_ready_event.wait()
+        while shared_state.running and not shared_state.policy_ready_event.wait(timeout=0.1):
+            pass
+        if not shared_state.running:
+            return
         logger.info("[ACTOR] Press '2' to start episode.")
         while shared_state.running:
             if teleop_device.get_teleop_events().get(TeleopEvents.START_EPISODE, False):
                 break
             time.sleep(0.1)
+        if not shared_state.running:
+            return
 
         obs, info = online_env.reset()
         env_processor.reset()
@@ -772,6 +825,8 @@ def rtc_env_worker(
                 if shared_state.params_loaded_event.wait(timeout=0.5):
                     break
             logger.info("[ACTOR] Params loaded. Starting episode.")
+        if teleop_feedback_supported:
+            teleop_device.enable_torque()
         shared_state.set_episode_active(True)
 
         while shared_state.running:
@@ -815,6 +870,8 @@ def rtc_env_worker(
                         if shared_state.params_loaded_event.wait(timeout=0.5):
                             break
                     logger.info("[ACTOR] Params loaded. Starting episode.")
+                if teleop_feedback_supported:
+                    teleop_device.enable_torque()
                 shared_state.set_episode_active(True)
 
             start_time = time.perf_counter()
@@ -889,11 +946,18 @@ def rtc_env_worker(
             if is_intervening:
                 episode_intervention_steps += 1
             else:
-                feedback = {}
-                for key, value in new_transition[TransitionKey.OBSERVATION].items():
-                    if key.endswith(".pos"):
-                        feedback[key] = value.item() if isinstance(value, torch.Tensor) else float(value)
-                if feedback:
+                if not getattr(online_env, "send_actions_to_robot", True):
+                    requested_targets = online_env.get_last_requested_joint_targets()
+                    feedback = {
+                        key: value.item() if isinstance(value, torch.Tensor) else float(value)
+                        for key, value in (requested_targets or {}).items()
+                    }
+                else:
+                    feedback = {}
+                    for key, value in new_transition[TransitionKey.OBSERVATION].items():
+                        if key.endswith(".pos"):
+                            feedback[key] = value.item() if isinstance(value, torch.Tensor) else float(value)
+                if feedback and teleop_feedback_supported:
                     teleop_device.send_feedback(feedback)
 
             with shared_state.lock:
@@ -1003,11 +1067,9 @@ def rtc_env_worker(
                     raw = online_env.get_raw_joint_positions()
                     obs_log.update({j_name: float(j_val) for j_name, j_val in raw.items()})
                 act_np = executed_action.detach().float().cpu().numpy().reshape(-1)[:action_dim]
-                act_log = {name: float(v) for name, v in zip(_JOINT_ORDER, act_np)}
-                try:
+                act_log = {name: float(v) for name, v in zip(_JOINT_ORDER, act_np, strict=False)}
+                with contextlib.suppress(queue.Full):
                     rerun_queue.put_nowait((interaction_step, obs_log, act_log))
-                except queue.Full:
-                    pass  # drop frame rather than block the env loop
             _t_rerun_end = time.perf_counter()
 
             shared_state.update_observation(
@@ -1024,6 +1086,8 @@ def rtc_env_worker(
                     interaction_step, sum_reward_episode, done, truncated, info_success, info_terminate,
                 )
                 shared_state.set_episode_active(False)
+                if teleop_feedback_supported:
+                    teleop_device.disable_torque()
 
                 if standalone:
                     if shared_state.is_logging_episode:
@@ -1089,6 +1153,12 @@ def rtc_env_worker(
     except Exception as exc:
         logger.error("[RTC_ENV] Fatal exception: %s", exc)
         logger.error(traceback.format_exc())
+    finally:
+        if _teleop_supports_feedback(teleop_device):
+            try:
+                teleop_device.disable_torque()
+            except Exception:
+                logger.error("[RTC_ENV] Failed to unload teleoperator:\n%s", traceback.format_exc())
 
 
 
@@ -1396,7 +1466,7 @@ def act_with_policy_rtc_inference(
         try:
             action_expert = policy._action_expert()
             action_expert.forward_with_context = torch.compile(
-                getattr(action_expert, "forward_with_context"),
+                action_expert.forward_with_context,
                 mode="reduce-overhead",
                 fullgraph=False,
             )
@@ -1407,55 +1477,96 @@ def act_with_policy_rtc_inference(
         raise RuntimeError("RTC inference requires policy.config.rtc_config.enabled=True")
 
     logger.info("[RTC_INFERENCE] Setting up environment...")
-    online_env, teleop_device = make_robot_env(cfg=cfg.env)
-    env_processor, action_processor = make_processors(
-        online_env, teleop_device, cfg.env, cfg.policy.device
+    send_actions_to_robot = bool(getattr(cfg, "inference_send_actions_to_robot", True))
+    if not send_actions_to_robot:
+        logger.warning(
+            "[RTC_INFERENCE] SAFETY MODE: follower actions are disabled; "
+            "observations are still read and requested actions are routed to teleoperator feedback."
+        )
+    online_env, teleop_device = make_robot_env(
+        cfg=cfg.env,
+        send_actions_to_robot=send_actions_to_robot,
     )
+    try:
+        if not send_actions_to_robot:
+            _validate_inference_action_routing(online_env, teleop_device)
+        env_processor, action_processor = make_processors(
+            online_env, teleop_device, cfg.env, cfg.policy.device
+        )
 
-    shared = RTCSharedState()
-    shared.running = not shutdown_event.is_set()
-    memory_cfg = getattr(cfg.policy, "memory", None)
-    history_offsets = ReplayBuffer._normalize_history_offsets(
-        memory_cfg.history_offsets(cfg.env.fps) if memory_cfg is not None else None
-    )
-    shared.configure_history(history_offsets)
-    shared.replay_buffer = ReplayBuffer(
-        capacity=cfg.policy.online_buffer_capacity,
-        device=str(device),
-        state_keys=cfg.policy.input_features.keys(),
-        storage_device=getattr(cfg.policy, "storage_device", "cpu"),
-        image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "uint8"),
-        image_storage_size=getattr(cfg.policy, "image_storage_size", None),
-        history_offsets=history_offsets,
-    )
-    action_queue = ActionQueue(policy.config.rtc_config)
+        shared = RTCSharedState()
+        shared.running = not shutdown_event.is_set()
+        memory_cfg = getattr(cfg.policy, "memory", None)
+        history_offsets = ReplayBuffer._normalize_history_offsets(
+            memory_cfg.history_offsets(cfg.env.fps) if memory_cfg is not None else None
+        )
+        shared.configure_history(history_offsets)
+        shared.replay_buffer = ReplayBuffer(
+            capacity=cfg.policy.online_buffer_capacity,
+            device=str(device),
+            state_keys=cfg.policy.input_features.keys(),
+            storage_device=getattr(cfg.policy, "storage_device", "cpu"),
+            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "uint8"),
+            image_storage_size=getattr(cfg.policy, "image_storage_size", None),
+            history_offsets=history_offsets,
+        )
+        action_queue = ActionQueue(policy.config.rtc_config)
 
-    # Operator subtask console: validated against the checkpoint vocabulary before
-    # any hardware moves, so a mistyped binding fails at startup, not mid-rollout.
-    subtask_console = make_subtask_console(cfg, trainer, preprocessor, shared)
-    if subtask_console is not None:
-        shared.set_default_subtask(*subtask_console.initial)
+        # Operator subtask console: validated against the checkpoint vocabulary before
+        # any hardware moves, so a mistyped binding fails at startup, not mid-rollout.
+        subtask_console = make_subtask_console(cfg, trainer, preprocessor, shared)
+        if subtask_console is not None:
+            shared.set_default_subtask(*subtask_console.initial)
 
-    post_inference_hook = None
-    if post_inference_hook_factory is not None:
-        post_inference_hook = post_inference_hook_factory(policy, preprocessor, postprocessor, device, cfg)
+        post_inference_hook = None
+        if post_inference_hook_factory is not None:
+            post_inference_hook = post_inference_hook_factory(
+                policy, preprocessor, postprocessor, device, cfg
+            )
 
-    inf_thread = Thread(
-        target=rtc_inference_worker,
-        args=(policy, trainer, preprocessor, postprocessor, shared, action_queue, None, device, cfg, post_inference_hook),
-        daemon=True,
-        name="rtc_inference",
-    )
-    env_thread = Thread(
-        target=rtc_env_worker,
-        args=(
-            online_env, env_processor, action_processor, action_queue, shared,
-            teleop_device, None, None, cfg, postprocessor,
-        ),
-        kwargs={"standalone": True, "policy": policy, "trainer": trainer, "rerun_queue": rerun_queue},
-        daemon=True,
-        name="rtc_env",
-    )
+        inf_thread = Thread(
+            target=rtc_inference_worker,
+            args=(
+                policy,
+                trainer,
+                preprocessor,
+                postprocessor,
+                shared,
+                action_queue,
+                None,
+                device,
+                cfg,
+                post_inference_hook,
+            ),
+            daemon=True,
+            name="rtc_inference",
+        )
+        env_thread = Thread(
+            target=rtc_env_worker,
+            args=(
+                online_env,
+                env_processor,
+                action_processor,
+                action_queue,
+                shared,
+                teleop_device,
+                None,
+                None,
+                cfg,
+                postprocessor,
+            ),
+            kwargs={
+                "standalone": True,
+                "policy": policy,
+                "trainer": trainer,
+                "rerun_queue": rerun_queue,
+            },
+            daemon=True,
+            name="rtc_env",
+        )
+    except Exception:
+        _close_robot_hardware(online_env, teleop_device, "RTC_INFERENCE_SETUP")
+        raise
 
     try:
         if subtask_console is not None:
@@ -1465,10 +1576,18 @@ def act_with_policy_rtc_inference(
         inf_thread.start()
 
         start_time = time.time()
+        next_metrics_time = time.monotonic() + 20.0
         logger.info("[RTC_INFERENCE] Threads running. Supervisor loop active.")
         while not shutdown_event.is_set():
-            if shutdown_event.wait(20):
+            if shutdown_event.wait(1.0):
                 break
+            if not env_thread.is_alive():
+                raise RuntimeError("RTC environment worker exited unexpectedly")
+            if not inf_thread.is_alive():
+                raise RuntimeError("RTC inference worker exited unexpectedly")
+            if time.monotonic() < next_metrics_time:
+                continue
+            next_metrics_time += 20.0
 
             q_size = action_queue.qsize()
             teleop_stat = "ON" if shared.is_intervening else "OFF"
@@ -1483,8 +1602,6 @@ def act_with_policy_rtc_inference(
             avg_obs_proc = metrics["env_obs_proc_time"] / env_steps
             avg_action_proc = metrics["env_action_proc_time"] / env_steps
             avg_post_step = metrics["env_post_step_time"] / env_steps
-            avg_move_cpu = metrics["env_move_cpu_time"] / env_steps
-            avg_rerun = metrics["env_rerun_time"] / env_steps
             avg_pre = metrics["inference_preprocess_time"] / inf_count
             avg_model = metrics["inference_model_time"] / inf_count
             avg_post = metrics["inference_postprocess_time"] / inf_count
@@ -1516,15 +1633,7 @@ def act_with_policy_rtc_inference(
             subtask_console.stop()
         for thread in (inf_thread, env_thread):
             thread.join(timeout=5.0)
-        try:
-            if teleop_device is not None and getattr(teleop_device, "is_connected", False):
-                teleop_device.disconnect()
-        except Exception:
-            logger.warning("[RTC_INFERENCE] Teleop disconnect failed:\n%s", traceback.format_exc())
-        try:
-            online_env.close()
-        except Exception:
-            pass
+        _close_robot_hardware(online_env, teleop_device, "RTC_INFERENCE")
         try:
             _merge_inference_chunks(cfg)
         except Exception:
@@ -1644,8 +1753,6 @@ def act_with_policy_rtc(
                 teleop_device.disconnect()
         except Exception:
             logger.warning("[RTC_ACTOR] Teleop disconnect failed:\n%s", traceback.format_exc())
-        try:
+        with contextlib.suppress(Exception):
             online_env.close()
-        except Exception:
-            pass
         logger.info("[RTC_ACTOR] Shutdown complete.")

@@ -182,7 +182,7 @@ _N_MOVERS = 6
 # that constraint over an OKLCH grid (lightness 0.44-0.76, chroma >= 0.10, contrast
 # >= 2.6 on white) and every one of its 55 coloured pairs clears both gates: worst
 # OKLab dE 8.5 under simulated protanopia/deuteranopia (target 8) and 17.7 under
-# normal vision (floor 15). The predecessor palette failed both — img_top vs state at
+# normal vision (floor 15). The predecessor palette failed both — img_external_0 vs state at
 # 3.2 under deuteranopia, and "depth clause" #fabed4 sat at contrast 1.57, i.e. barely
 # distinguishable from the page.
 #
@@ -190,8 +190,14 @@ _N_MOVERS = 6
 # scaffolding rather than a modality, and reading as "not one of the coloured streams"
 # is the point.
 _SEGMENT_COLORS = {
-    "img_top": "#2d3cc1",
-    "img_wrist": "#1ab192",
+    "img_external_0": "#2d3cc1",
+    "img_wrist_0": "#1ab192",
+    # No rig in the corpus records a second external camera, so this row is dropped by
+    # the mask filter above and has never actually been drawn. It was picked on the
+    # normal-vision gate only (min dE 17.7 against the other ten, i.e. it does not move
+    # the worst pair); the dichromat gate was NOT re-run. Re-search the whole set before
+    # trusting this colour on a rig that really has two external views.
+    "img_external_1": "#ff5109",
     "depth": "#7f3e00",
     # Mutually exclusive with ``depth`` — one frame yields one or the other — so the two
     # never share a panel and can share a colour.
@@ -239,6 +245,9 @@ def _segment_columns(result, encoder_len: int) -> dict[str, list[int]]:
     Padded columns are the one exception: the pad mask removes them from the softmax,
     so their mass is identically zero and the partition sums to 1 without them. Left in,
     they only add a permanently empty ``residual`` row to every segment-indexed panel.
+    The same holds for a whole segment: a camera this rig does not record is packed as
+    zeros and masked out, so it would occupy a row that reads 0.0 at every layer on
+    every panel. Dropping it costs nothing — the partition already sums to 1 without it.
     Camera crops are merged into their parent camera: they are the same physical
     view at a different resolution, and splitting them fragments the series.
     """
@@ -265,7 +274,8 @@ def _segment_columns(result, encoder_len: int) -> dict[str, list[int]]:
     claimed: set[int] = set()
     clean: dict[str, list[int]] = {}
     for name, indices in segments.items():
-        unique = sorted({i for i in indices if 0 <= i < encoder_len and i not in claimed})
+        unique = sorted({i for i in indices if 0 <= i < encoder_len and i not in claimed
+                         and (encoder_valid is None or bool(encoder_valid[i]))})
         if unique:
             clean[name] = unique
             claimed.update(unique)

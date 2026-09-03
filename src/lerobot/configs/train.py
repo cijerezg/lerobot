@@ -481,6 +481,13 @@ class TrainRLServerPipelineConfig(TrainPipelineConfig):
     )
     episode_logging_freq: int = 4
     episode_save_freq: int = 10
+    # Standalone inference safety switch. False keeps reading observations from
+    # the configured robot, suppresses Robot.send_action(), and routes requested
+    # actions through the existing teleoperator feedback/shadow path.
+    inference_send_actions_to_robot: bool = True
+    # Standalone inference refuses to create a policy unless this path (or the
+    # policy's standard pretrained_path) names a complete saved checkpoint.
+    inference_checkpoint_path: Path | None = None
     probe_parameters: ProbeConfig = field(default_factory=ProbeConfig)
 
     # Validation

@@ -99,6 +99,7 @@ from lerobot.probes.utils import (
     load_probe_dataset,
     probe_frame_inputs,
     probe_image_stride,
+    register_config_choices,
 )
 from lerobot.robots import rebot_b601_follower, so_follower  # noqa: F401 — CLI config registry
 from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — CLI config registry
@@ -828,4 +829,5 @@ def probe_cli(cfg: ProbeJacobianConfig):
 
 
 if __name__ == "__main__":
+    register_config_choices()
     probe_cli()

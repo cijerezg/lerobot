@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from ..config import TeleoperatorConfig
 
@@ -35,7 +34,9 @@ class RebotArm102LeaderConfig:
 
     # The original 102LD is encoder-only. Only the 102HD exposes position
     # feedback/shadowing so existing LD configurations remain read-only.
-    variant: Literal["102LD", "102HD"] = "102LD"
+    # Kept as str because the repository's pinned draccus cannot decode Literal
+    # fields from YAML; __post_init__ retains strict value validation.
+    variant: str = "102LD"
 
     # Hardware-verified 102HD sync-control settings. Commands are refreshed by
     # the rollout loop; the 100 ms interval is the vendor's smooth-control path.
@@ -107,6 +108,10 @@ class RebotArm102LeaderConfig:
             "gripper": [-270, 0],
         }
     )
+
+    def __post_init__(self) -> None:
+        if self.variant not in {"102LD", "102HD"}:
+            raise ValueError(f"variant must be '102LD' or '102HD', got {self.variant!r}")
 
 
 @TeleoperatorConfig.register_subclass("rebot_102_leader")

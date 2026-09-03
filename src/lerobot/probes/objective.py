@@ -54,6 +54,7 @@ from lerobot.probes.utils import (
     makedirs,
     probe_frame_inputs,
     probe_image_stride,
+    register_config_choices,
     sample_episodes_evenly,
 )
 from lerobot.utils.depth_gripper_events import (
@@ -1315,4 +1316,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    register_config_choices()
     main()

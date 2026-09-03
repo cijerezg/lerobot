@@ -26,7 +26,7 @@ from lerobot.utils.import_utils import _motorbridge_smart_servo_available, requi
 from ..teleoperator import Teleoperator
 from ..utils import TeleopEvents
 from .config_rebot_102_leader import RebotArm102LeaderTeleopConfig
-from .mapping import raw_to_position
+from .mapping import raw_to_position, unwrap_raw
 
 if TYPE_CHECKING:
     from .hd_controller import RebotArm102HDController
@@ -54,9 +54,11 @@ class RebotArm102Leader(Teleoperator):
     name = "rebot_102_leader"
 
     def __init__(self, config: RebotArm102LeaderTeleopConfig):
-        require_package("motorbridge-smart-servo", extra="rebot", import_name="motorbridge_smart_servo")
         super().__init__(config)
         self.config = config
+        self._hd_controller: RebotArm102HDController | None = None
+        if config.variant == "102LD":
+            require_package("motorbridge-smart-servo", extra="rebot", import_name="motorbridge_smart_servo")
         self.bus: FashionStarServo | None = None
         self.motor_names = list(config.joint_ids.keys())
         self._last_raw_positions: dict[str, float] = {}
@@ -67,15 +69,40 @@ class RebotArm102Leader(Teleoperator):
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        return {}
+        if self.config.variant != "102HD":
+            return {}
+        return {f"{motor}.pos": float for motor in self.motor_names}
 
     @property
     def is_connected(self) -> bool:
+        if self.config.variant == "102HD":
+            return self._hd_controller is not None and self._hd_controller.is_connected
         return self.bus is not None
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True) -> None:
         logger.info(f"Connecting {self} on {self.config.port}...")
+        if self.config.variant == "102HD":
+            require_package("fashionstar-uart-sdk", extra="rebot", import_name="fashionstar_uart_sdk")
+            from .hd_controller import RebotArm102HDController
+
+            controller = RebotArm102HDController(self.config)
+            try:
+                controller.connect()
+                self._hd_controller = controller
+                if not self.is_calibrated and calibrate:
+                    logger.info(
+                        "No calibration file found for the 102HD leader or its joint set changed"
+                    )
+                    self.calibrate()
+                self.configure()
+            except Exception:
+                controller.close()
+                self._hd_controller = None
+                raise
+            logger.info(f"{self} connected in actuated 102HD mode (torque unloaded).")
+            return
+
         bus = FashionStarServo(self.config.port, baudrate=self.config.baudrate)
         try:
             for motor_name, motor_id in self.config.joint_ids.items():
@@ -119,6 +146,24 @@ class RebotArm102Leader(Teleoperator):
             "Press ENTER when ready..."
         )
 
+        if self.config.variant == "102HD":
+            if self._hd_controller is None:
+                raise RuntimeError("102HD leader is not connected")
+            self._hd_controller.set_origin_points()
+            self.calibration = {
+                motor_name: MotorCalibration(
+                    id=motor_id,
+                    drive_mode=0,
+                    homing_offset=0,
+                    range_min=int(self.config.joint_ranges[motor_name][0]),
+                    range_max=int(self.config.joint_ranges[motor_name][1]),
+                )
+                for motor_name, motor_id in self.config.joint_ids.items()
+            }
+            self._save_calibration()
+            logger.info(f"Calibration saved to {self.calibration_fpath}")
+            return
+
         self.calibration = {}
         for motor_name, motor_id in self.config.joint_ids.items():
             self.bus.unlock(motor_id)
@@ -137,6 +182,11 @@ class RebotArm102Leader(Teleoperator):
         logger.info(f"Calibration saved to {self.calibration_fpath}")
 
     def configure(self) -> None:
+        if self.config.variant == "102HD":
+            if self._hd_controller is None:
+                raise RuntimeError("102HD leader is not connected")
+            self._hd_controller.configure()
+            return
         for motor_id in self.config.joint_ids.values():
             self.bus.unlock(motor_id)
             time.sleep(_SETTLE_SEC)
@@ -171,6 +221,13 @@ class RebotArm102Leader(Teleoperator):
     @check_if_not_connected
     def get_action(self) -> RobotAction:
         start = time.perf_counter()
+        if self.config.variant == "102HD":
+            positions = self._hd_controller.read_positions()
+            action_dict = {f"{name}.pos": value for name, value in positions.items()}
+            dt_ms = (time.perf_counter() - start) * 1e3
+            logger.debug(f"{self} read action: {dt_ms:.1f}ms")
+            return action_dict
+
         try:
             raw_positions = self._read_raw_positions()
             self._last_raw_positions = raw_positions
@@ -186,11 +243,9 @@ class RebotArm102Leader(Teleoperator):
         for motor_name in self.motor_names:
             range_min, range_max = self.config.joint_ranges[motor_name]
             direction = self.config.joint_directions[motor_name]
-            sign = 1.0 if direction >= 0 else -1.0
-            unwrapped, k = self._round_to_valid_range(
-                raw_positions[motor_name], range_min * sign, range_max * sign
-            )
-            position = unwrapped * direction
+            unwrapped = unwrap_raw(raw_positions[motor_name], [range_min, range_max], direction)
+            k = round(abs(raw_positions[motor_name] - unwrapped) / 360.0)
+            position = raw_to_position(raw_positions[motor_name], [range_min, range_max], direction)
             if k > 0:
                 logger.debug(
                     f"Servo {motor_name} (id={self.config.joint_ids[motor_name]}) wrapped {k} * 360°. "
@@ -203,10 +258,45 @@ class RebotArm102Leader(Teleoperator):
         return action_dict
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
-        raise NotImplementedError("Feedback is not implemented for the reBot Arm 102 leader.")
+        if self.config.variant != "102HD":
+            raise NotImplementedError("Feedback is only supported by the reBot Arm 102HD leader.")
+        if self._hd_controller is None or not self._hd_controller.is_connected:
+            raise RuntimeError("102HD leader is not connected")
+        self._hd_controller.send_positions(feedback)
+
+    def enable_torque(self) -> None:
+        if self.config.variant != "102HD":
+            raise NotImplementedError("Torque control is only supported by the reBot Arm 102HD leader.")
+        if self._hd_controller is None:
+            raise RuntimeError("102HD leader is not connected")
+        self._hd_controller.enable_torque()
+
+    def disable_torque(self) -> None:
+        if self.config.variant != "102HD":
+            raise NotImplementedError("Torque control is only supported by the reBot Arm 102HD leader.")
+        if self._hd_controller is not None:
+            self._hd_controller.disable_torque()
+
+    def get_teleop_events(self) -> dict[TeleopEvents, bool]:
+        if self.config.variant == "102HD":
+            if self._hd_controller is None:
+                raise RuntimeError("102HD leader is not connected")
+            return self._hd_controller.get_teleop_events()
+        return {
+            TeleopEvents.IS_INTERVENTION: False,
+            TeleopEvents.TERMINATE_EPISODE: False,
+            TeleopEvents.SUCCESS: False,
+            TeleopEvents.START_EPISODE: False,
+            TeleopEvents.RERECORD_EPISODE: False,
+        }
 
     @check_if_not_connected
     def disconnect(self) -> None:
+        if self.config.variant == "102HD":
+            self._hd_controller.close()
+            self._hd_controller = None
+            logger.info(f"{self} disconnected and unloaded.")
+            return
         self.bus.close()
         self.bus = None
         logger.info(f"{self} disconnected.")

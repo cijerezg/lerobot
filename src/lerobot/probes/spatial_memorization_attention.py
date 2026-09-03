@@ -56,6 +56,7 @@ from lerobot.probes.utils import (
     load_probe_dataset,
     probe_frame_inputs,
     probe_image_stride,
+    register_config_choices,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -603,4 +604,5 @@ def probe_cli(cfg: ProbeSpatialMemorizationConfig):
 
 
 if __name__ == "__main__":
+    register_config_choices()
     probe_cli()

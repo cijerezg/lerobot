@@ -49,6 +49,7 @@ from lerobot.probes.utils import (
     get_frame_data,
     load_probe_dataset,
     probe_frame_inputs,
+    register_config_choices,
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
@@ -713,4 +714,5 @@ def probe_cli(cfg: ProbeCriticConfig):
 
 
 if __name__ == "__main__":
+    register_config_choices()
     probe_cli()

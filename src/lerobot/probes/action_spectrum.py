@@ -94,10 +94,13 @@ from lerobot.probes.utils import (
     get_action_chunk_lowdim,
     get_subtask_idx,
     get_subtask_str,
+    identity_columns,
     joint_names_for_dim,
     load_extra_dataset,
     load_probe_dataset,
     makedirs,
+    pad_to_action_width,
+    register_config_choices,
     sample_episodes_evenly,
     subtask_group,
 )
@@ -143,13 +146,20 @@ class _NormalizerOnlyAdapter:
     def normalize_gt_actions(
         self, gt_actions: torch.Tensor, state: torch.Tensor | None
     ) -> torch.Tensor:
+        # ReBot's 7 raw dims meet an 8-wide stats table; pad both sides exactly as
+        # the preprocessor's unified-layout step does before the normalizer sees them.
+        width = int(self._cfg.policy.output_features[ACTION].shape[0])
         encoded = _encode_actions(
-            gt_actions,
-            state,
+            pad_to_action_width(gt_actions, width),
+            None if state is None else pad_to_action_width(state, width),
             str(getattr(self._cfg.policy, "action_encoding", "absolute")),
         )
         normalizer = find_normalizer_step(self._preprocessor)
-        batch = {TransitionKey.ACTION: encoded.unsqueeze(0).to(self._device)}
+        batch = {
+            TransitionKey.ACTION: encoded.unsqueeze(0).to(self._device),
+            # Called as a bare step, so nothing else supplies the per-row stats index.
+            TransitionKey.COMPLEMENTARY_DATA: identity_columns(self._cfg),
+        }
         return normalizer(batch)[TransitionKey.ACTION].squeeze(0).float().cpu()
 
 
@@ -281,6 +291,7 @@ def _collect(adapter, dataset, cfg) -> dict:
     p = cfg.probe_parameters
     horizon = int(adapter.chunk_size)
     encoding = str(getattr(cfg.policy, "action_encoding", "absolute"))
+    action_width = int(cfg.policy.output_features[ACTION].shape[0])
     n_per_episode = int(
         getattr(p, "action_spectrum_n_frames_per_episode", None) or p.n_frames_per_episode
     )
@@ -305,6 +316,12 @@ def _collect(adapter, dataset, cfg) -> dict:
         )
         if int(actual_episode) != int(episode_idx) or int(actual_frame) != int(frame_idx):
             raise RuntimeError("Spectrum sampler and low-dimensional chunk reader disagree.")
+        # ReBot's 7 raw dims live in an 8-wide action layout. Pad once here, as
+        # RoleAlignedBuffer does for the training batches, so the raw, target and zero
+        # chunks are all in the canonical width the stats table is indexed by.
+        actions = pad_to_action_width(actions, action_width)
+        if state is not None:
+            state = pad_to_action_width(state, action_width)
         raw = _encode_actions(actions, state, encoding)
         target = adapter.normalize_gt_actions(actions, state)
         zero_actions = _encoded_zero_actions(actions, state, encoding)
@@ -1263,4 +1280,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    register_config_choices()
     main()

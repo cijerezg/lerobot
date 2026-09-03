@@ -161,6 +161,13 @@ def policy_action_with_anchor_to_transition(payload: Any) -> EnvTransition:
         embodiment_index = payload.get(EMBODIMENT_INDEX_KEY)
         if embodiment_index is not None:
             comp[EMBODIMENT_INDEX_KEY] = embodiment_index
+        # Per-row normalization selects its stats row with a CONFIGURABLE column
+        # (stats_index_key, "action_layout_id" for a mixture keyed by action
+        # convention), so forwarding only the two names known here strands the
+        # unnormalizer with no row. Carry whatever the caller passed.
+        nested = payload.get(TransitionKey.COMPLEMENTARY_DATA)
+        if isinstance(nested, dict):
+            comp.update(nested)
         return create_transition(action=action, complementary_data=comp or None)
     raise ValueError(
         f"postprocessor payload must be PolicyAction or dict, got {type(payload).__name__}"

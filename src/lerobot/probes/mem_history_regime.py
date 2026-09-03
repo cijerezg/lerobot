@@ -101,6 +101,9 @@ _CONDITION_STYLE = {
     "full": ("#2A9D8F", "-"),
     "emptied": ("#E63946", "--"),
     "stale": ("#F4A261", "-."),
+    # The legacy no-history reference is drawn too -- the example figure plots every
+    # condition in ``acts`` -- but muted, since it is reported and never an origin.
+    "none": ("#9AA0A6", ":"),
 }
 
 _VERDICT_COLOR = {"helped": "#2A9D8F", "hurt": "#E63946", "indistinguishable": "#9AA0A6"}

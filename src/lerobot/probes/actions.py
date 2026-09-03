@@ -106,6 +106,7 @@ from lerobot.probes.utils import (
     panel_caption,
     probe_frame_inputs,
     probe_image_stride,
+    register_config_choices,
     run_pca,
     sample_episodes_evenly,
     subtask_group,
@@ -485,7 +486,7 @@ def _card_image(obs, max_px: int = 340):
     keys = sorted(k for k in obs if k.startswith("observation.images."))
     if not keys:
         return None, ""
-    key = next((k for k in keys if k.rsplit(".", 1)[-1] in ("top", "front", "scene")), keys[0])
+    key = next((k for k in keys if k.rsplit(".", 1)[-1] in ("top", "external_0", "front", "scene")), keys[0])
     # as_image only casts when the tensor is [0,1]; a [0,255] float comes back float.
     image = Image.fromarray(np.clip(as_image(obs[key]), 0, 255).astype(np.uint8))
     image.thumbnail((max_px, max_px), Image.Resampling.LANCZOS)
@@ -500,14 +501,24 @@ def _ee_trace(kin, state, chunk):
     anchor encoding puts on the manifold, and what makes two traces recorded in
     different corners of the table comparable side by side.
     """
-    q = np.concatenate([np.asarray(state, dtype=float)[None, :], np.asarray(chunk, dtype=float)])
+    state = np.asarray(state, dtype=float)
+    # A predicted chunk is the run's canonical action width; the state is the rig's own.
+    # Trailing columns are layout padding for a joint this arm does not have, so trim to
+    # the rig before the two are stacked.
+    chunk = np.asarray(chunk, dtype=float)[:, : state.shape[-1]]
+    q = np.concatenate([state[None, :], chunk])
     path = kin.ee_path(q)
     return (path - path[0]) * 100.0
 
 
 def _grip_delta(state, chunk) -> float:
-    """Commanded gripper travel over the chunk — the one axis FK cannot draw."""
-    return float(np.asarray(chunk)[-1, -1] - np.asarray(state)[-1])
+    """Commanded gripper travel over the chunk — the one axis FK cannot draw.
+
+    Indexed from the rig's width, not the chunk's: on a padded chunk the last column is
+    a joint this arm does not have, and reading it returns padding rather than a wrist.
+    """
+    state = np.asarray(state)
+    return float(np.asarray(chunk)[-1, state.shape[-1] - 1] - state[-1])
 
 
 def _region_cards(kin, adapter, manifold, datasets, cfg):
@@ -1510,4 +1521,5 @@ def probe_cli(cfg: ProbeActionsConfig):
 
 
 if __name__ == "__main__":
+    register_config_choices()
     probe_cli()

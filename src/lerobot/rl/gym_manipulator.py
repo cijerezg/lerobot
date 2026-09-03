@@ -133,6 +133,7 @@ class RobotEnv(gym.Env):
         display_cameras: bool = False,
         reset_pose: list[float] | None = None,
         reset_time_s: float = 5.0,
+        send_actions_to_robot: bool = True,
     ) -> None:
         """Initialize robot environment with configuration options.
 
@@ -142,6 +143,8 @@ class RobotEnv(gym.Env):
             display_cameras: Whether to show camera feeds during execution.
             reset_pose: Joint positions for environment reset.
             reset_time_s: Time to wait during reset.
+            send_actions_to_robot: If false, keep reading observations from the
+                robot but do not command it in :meth:`step`.
         """
         super().__init__()
 
@@ -161,6 +164,8 @@ class RobotEnv(gym.Env):
 
         self.reset_pose = reset_pose
         self.reset_time_s = reset_time_s
+        self.send_actions_to_robot = send_actions_to_robot
+        self._last_requested_joint_targets: dict[str, Any] | None = None
 
         self.use_gripper = use_gripper
 
@@ -262,7 +267,7 @@ class RobotEnv(gym.Env):
         # Reset the robot
         # self.robot.reset()
         start_time = time.perf_counter()
-        if self.reset_pose is not None:
+        if self.reset_pose is not None and self.send_actions_to_robot:
             log_say("Reset the environment.", play_sounds=True)
             reset_follower_position(self.robot, np.array(self.reset_pose))
             log_say("Reset the environment done.", play_sounds=True)
@@ -281,8 +286,10 @@ class RobotEnv(gym.Env):
     def step(self, action) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
         joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
+        self._last_requested_joint_targets = joint_targets_dict
 
-        self.robot.send_action(joint_targets_dict)
+        if self.send_actions_to_robot:
+            self.robot.send_action(joint_targets_dict)
 
         obs = self._get_observation()
 
@@ -326,12 +333,22 @@ class RobotEnv(gym.Env):
         """Get raw joint positions."""
         return self._raw_joint_positions
 
+    def get_last_requested_joint_targets(self) -> dict[str, Any] | None:
+        """Return the most recent step target, whether or not it was sent to the robot."""
+        if self._last_requested_joint_targets is None:
+            return None
+        return dict(self._last_requested_joint_targets)
 
-def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
+
+def make_robot_env(
+    cfg: HILSerlRobotEnvConfig, *, send_actions_to_robot: bool = True
+) -> tuple[gym.Env, Any]:
     """Create robot environment from configuration.
 
     Args:
         cfg: Environment configuration.
+        send_actions_to_robot: Whether the real-robot environment should send
+            step actions to the configured robot. Ignored by GymHIL.
 
     Returns:
         Tuple of (gym environment, teleoperator device).
@@ -371,12 +388,18 @@ def make_robot_env(cfg: HILSerlRobotEnvConfig) -> tuple[gym.Env, Any]:
     )
     reset_pose = cfg.processor.reset.fixed_reset_joint_positions if cfg.processor.reset is not None else None
 
-    env = RobotEnv(
-        robot=robot,
-        use_gripper=use_gripper,
-        display_cameras=display_cameras,
-        reset_pose=reset_pose,
-    )
+    try:
+        env = RobotEnv(
+            robot=robot,
+            use_gripper=use_gripper,
+            display_cameras=display_cameras,
+            reset_pose=reset_pose,
+            send_actions_to_robot=send_actions_to_robot,
+        )
+    except Exception:
+        if getattr(teleop_device, "is_connected", False):
+            teleop_device.disconnect()
+        raise
 
     return env, teleop_device
 

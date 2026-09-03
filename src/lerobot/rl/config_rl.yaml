@@ -467,6 +467,10 @@ use_rerun: true
 episode_logging_freq: 1        # log every Nth episode
 episode_save_freq: 2          # save buffer snapshot every Nth episode
 video_logging_cameras: [top, wrist]
+# Safety preflight: read observations from the follower, route requested actions
+# through the existing leader feedback path, and never command/reset the follower.
+inference_send_actions_to_robot: false
+inference_checkpoint_path: null  # required for inference_async; set to a complete pretrained_model directory
 
 
 # -----------------------------------------------------------------------------
@@ -701,8 +705,9 @@ env:
   # ---- Teleop ---------------------------------------------------------------
   teleop:
     type: rebot_102_leader
+    variant: 102HD
     port: /dev/ttyUSB0
-    id: rebot_leader_v1
+    id: rebot_leader_hd_v1
 
   # ---- Processor (gym wrapper) ----------------------------------------------
   processor:

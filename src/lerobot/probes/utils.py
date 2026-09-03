@@ -389,6 +389,165 @@ def get_action_chunk_lowdim(dataset, global_idx: int, chunk_size: int):
     return gt_actions, state, episode_idx, frame_idx
 
 
+def canonical_camera_obs(obs: dict, cfg) -> dict:
+    """Rename a ReBot dataset's camera columns onto the run's canonical roles.
+
+    ``RoleAlignedBuffer`` does this for the training buffers; probes read the dataset's
+    own columns, so without it every canonical image key is missing downstream. A run
+    with the mixture off keeps the raw names, which is what its ``input_features`` say.
+    """
+    diverse = getattr(cfg, "diverse", None)
+    if diverse is None or not getattr(diverse, "enabled", False):
+        return obs
+    from lerobot.datasets.diverse_actor_selection import CAMERA_ROLE_MAP
+
+    mapping = CAMERA_ROLE_MAP["rebot"]
+    renamed = {}
+    for key, value in obs.items():
+        name = str(key)
+        camera = name.rsplit(".", 1)[-1]
+        if name.startswith("observation.images.") and camera in mapping:
+            renamed[f"observation.images.{mapping[camera]}"] = value
+        else:
+            renamed[key] = value
+    return renamed
+
+
+_WARNED_MISSING_HISTORY_KEYS: set[str] = set()
+
+
+def pad_to_action_width(tensor, width: int):
+    """Right-pad a raw-width tensor to the policy's canonical action width.
+
+    A rig narrower than the run's action layout (ReBot is 7-DoF against an 8-wide
+    layout) must be padded before it meets the stats table, or normalization broadcasts
+    a 7-wide tensor against 8-wide quantiles. Zeros, matching the unified-layout step.
+    """
+    import torch
+
+    if tensor.shape[-1] >= width:
+        return tensor[..., :width]
+    padded = torch.zeros((*tensor.shape[:-1], width), dtype=tensor.dtype, device=tensor.device)
+    padded[..., : tensor.shape[-1]] = tensor
+    return padded
+
+
+def register_config_choices() -> None:
+    """Import the plugin modules that populate draccus' choice registries.
+
+    ``rl_offline`` does this before parsing; a probe started as ``python -m`` has no
+    such entry point, so ``policy.type``, ``env.robot`` and its cameras have no choice
+    class registered. draccus then silently drops every ``--policy.*`` option -- the
+    checkpoint flag comes back as "unrecognized arguments" -- or fails to decode the
+    config outright. Import side effects only; nothing here is referenced by name.
+
+    Call it from a probe's ``__main__`` block, never at import: ``rl.molmoact2``
+    imports ``probes.objective``, so importing this from module scope would re-enter a
+    half-initialised ``probes.utils``.
+    """
+    from lerobot.cameras import opencv, realsense  # noqa: F401 — registers camera configs
+    from lerobot.robots import rebot_b601_follower, so_follower  # noqa: F401 — robot configs
+    from lerobot.teleoperators import rebot_102_leader, so_leader  # noqa: F401 — teleop configs
+
+    import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 — registers MolmoAct2RLConfig
+    import lerobot.rl.pi05.rl_pi05  # noqa: F401 — registers PI05RLConfig
+
+
+def fill_absent_cameras(obs: dict, configured_keys) -> tuple[dict, dict]:
+    """Zeros plus a presence flag for every configured camera this rig lacks.
+
+    ReBot records no second external view. The pack step requires all image_keys to
+    exist, and reads ``camera_is_present.{key}`` to drop an absent camera's patch span
+    from the attention mask -- so the zeros are never attended to, exactly as
+    ``RoleAlignedBuffer`` arranges for the training batches.
+
+    Returns the observation to pack with, and the presence flags to put in the
+    batch's complementary data.
+    """
+    missing = [key for key in configured_keys if key not in obs]
+    if not missing:
+        return obs, {}
+    reference = next(
+        (v for k, v in obs.items() if str(k).startswith("observation.images.")), None
+    )
+    if reference is None:
+        return obs, {}
+    history_reference = next(
+        (
+            v
+            for k, v in obs.items()
+            if str(k).startswith("history.observation.images.") and not str(k).endswith("_is_pad")
+        ),
+        None,
+    )
+    obs = dict(obs)
+    flags = {}
+    for key in missing:
+        obs[key] = torch.zeros_like(reference)
+        flags[f"camera_is_present.{key}"] = False
+        # The video encoder wants one history slot per prompt camera, so an absent
+        # camera needs a padded window rather than no window at all.
+        if history_reference is not None:
+            obs[f"history.{key}"] = torch.zeros_like(history_reference)
+            obs[f"history.{key}_is_pad"] = torch.ones(
+                history_reference.shape[:2], dtype=torch.bool, device=history_reference.device
+            )
+    return obs, flags
+
+
+def identity_columns(cfg) -> dict:
+    """Identity columns per-embodiment normalization needs on every batch.
+
+    Probes read ReBot data, so the layout is fixed and known: the training path stamps
+    the same column from ``diverse.rebot_layout`` in ``RoleAlignedBuffer``. A scalar is
+    enough -- the normalizer and the clamp both expand a single row to the batch.
+    Without it, per-row normalization has no row to gather and raises.
+    """
+    diverse = getattr(cfg, "diverse", None)
+    if diverse is None or not getattr(diverse, "enabled", False):
+        return {}
+    from lerobot.datasets.diverse_actor_selection import action_layout_by_name
+
+    return {"action_layout_id": action_layout_by_name(diverse.rebot_layout).index}
+
+
+def dataset_camera_key(dataset, canonical_key: str) -> str:
+    """The column this dataset actually stores for a canonical image role."""
+    from lerobot.datasets.diverse_actor_selection import CAMERA_ROLE_MAP
+
+    name = str(canonical_key)
+    if not name.startswith("observation.images."):
+        return name
+    role = name.rsplit(".", 1)[-1]
+    columns = getattr(dataset, "features", None) or {}
+    for camera, mapped in CAMERA_ROLE_MAP["rebot"].items():
+        if mapped == role:
+            candidate = f"observation.images.{camera}"
+            if candidate in columns:
+                return candidate
+    return name
+
+
+def depth_sidecar_key(root, depth_role: str) -> str:
+    """The sidecar directory name on disk for this run's canonical depth role.
+
+    The rename onto canonical roles (wrist -> wrist_0) happens after loading, so a
+    ReBot dataset's sidecar still carries the camera's own name -- the same asymmetry
+    ``probe_rebot_caches`` documents for the memmap caches. Ask under the name the
+    data was written with, or a healthy dataset looks broken.
+    """
+    from pathlib import Path
+
+    if (Path(root) / "depth" / f"{depth_role}.depth").is_dir():
+        return depth_role
+    from lerobot.datasets.diverse_actor_selection import CAMERA_ROLE_MAP
+
+    for camera, role in CAMERA_ROLE_MAP["rebot"].items():
+        if role == depth_role and (Path(root) / "depth" / f"{camera}.depth").is_dir():
+            return camera
+    return depth_role
+
+
 def probe_frame_inputs(
     dataset,
     cfg,
@@ -420,7 +579,9 @@ def probe_frame_inputs(
 
     pointmap_cfg = getattr(cfg.policy, "pointmap_config", None)
     if with_depth and pointmap_cfg is not None:
-        depth = load_depth_png(dataset.root, f"{pointmap_cfg.depth_key}.depth", episode_idx, frame_idx)
+        # Disk name, which may be the camera's own; the obs key stays canonical.
+        sidecar = depth_sidecar_key(dataset.root, pointmap_cfg.depth_key)
+        depth = load_depth_png(dataset.root, f"{sidecar}.depth", episode_idx, frame_idx)
         obs[f"observation.depth.{pointmap_cfg.depth_key}"] = torch.from_numpy(
             depth.astype(np.float32)
         ).reshape(1, 1, *depth.shape)
@@ -431,6 +592,8 @@ def probe_frame_inputs(
         if not (with_depth and pointmap_cfg is not None):
             keys = [k for k in keys if not k.startswith("depth.")]
         obs.update(assemble_frame_history(dataset, global_idx, memory_cfg, cfg.env.fps, keys))
+
+    obs = canonical_camera_obs(obs, cfg)
 
     result = {
         "obs": obs,
@@ -493,17 +656,31 @@ def assemble_frame_history(
     if frame_keys:
         slot_frames = [dataset[max(global_idx - o, ep_start)] for o in offsets]
         for key in frame_keys:
-            if key not in slot_frames[0]:
-                logging.warning(f"[probe] history key {key!r} is not a dataset column — window omitted.")
+            # history_keys are canonical roles; the columns carry the camera's own name.
+            column = dataset_camera_key(dataset, key)
+            if column not in slot_frames[0]:
+                # Once per key, not once per frame: a rig that simply lacks one of the
+                # run's cameras (ReBot has no external_1) would otherwise emit this for
+                # every sampled frame and bury the failure you are actually reading for.
+                # The adapter fills the gap with zeros, a padded window and
+                # camera_is_present=False.
+                if key not in _WARNED_MISSING_HISTORY_KEYS:
+                    _WARNED_MISSING_HISTORY_KEYS.add(key)
+                    logging.warning(
+                        f"[probe] history key {key!r} is not a dataset column — window omitted."
+                    )
                 continue
-            out[f"history.{key}"] = torch.stack([f[key] for f in slot_frames]).unsqueeze(0)
+            out[f"history.{key}"] = torch.stack([f[column] for f in slot_frames]).unsqueeze(0)
 
+    root = depth_root if depth_root is not None else dataset.root
     for key in depth_keys:
-        sidecar = str(key)[len("depth."):]  # "depth.wrist.depth" -> "wrist.depth"
+        # "depth.wrist_0.depth" -> role "wrist_0" -> whatever this dataset calls it.
+        role = str(key)[len("depth."):].removesuffix(".depth")
+        sidecar = f"{depth_sidecar_key(root, role)}.depth"
         slots = [
             torch.from_numpy(
                 load_depth_png(
-                    depth_root if depth_root is not None else dataset.root,
+                    root,
                     sidecar,
                     episode_idx,
                     max(frame_idx - o, 0),

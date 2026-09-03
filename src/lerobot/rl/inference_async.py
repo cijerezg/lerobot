@@ -12,18 +12,54 @@ Usage:
 import logging
 import os
 import signal
+from pathlib import Path
 
+import lerobot.rl.gym_manipulator  # noqa: F401 - registers robot/camera/teleop config choices
+import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 - registers MolmoAct2RLConfig
+import lerobot.rl.pi05.rl_pi05  # noqa: F401 - registers PI05RLConfig
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.rl.rl_trainer import Trainer
-import lerobot.rl.gym_manipulator  # noqa: F401 - registers robot/camera/teleop config choices
 from lerobot.utils.process import ProcessSignalHandler
 from lerobot.utils.utils import init_logging
 
-import lerobot.rl.molmoact2.rl_molmoact2  # noqa: F401 - registers MolmoAct2RLConfig
-import lerobot.rl.pi05.rl_pi05  # noqa: F401 - registers PI05RLConfig
-
 logger = logging.getLogger(__name__)
+
+
+def _configure_inference_checkpoint(cfg) -> Path:
+    """Resolve and validate a complete policy checkpoint before hardware setup."""
+    configured_path = getattr(cfg, "inference_checkpoint_path", None)
+    if configured_path is None:
+        configured_path = getattr(cfg.policy, "pretrained_path", None)
+    if configured_path is None:
+        raise RuntimeError(
+            "Standalone inference requires inference_checkpoint_path or policy.pretrained_path; "
+            "refusing to run an untrained/foundation policy on hardware."
+        )
+
+    checkpoint_path = Path(configured_path).expanduser().resolve()
+    if not checkpoint_path.is_dir():
+        raise FileNotFoundError(f"Inference checkpoint directory does not exist: {checkpoint_path}")
+
+    required_files = {
+        "config.json",
+        "policy_preprocessor.json",
+        "policy_postprocessor.json",
+    }
+    missing = sorted(name for name in required_files if not (checkpoint_path / name).is_file())
+    has_weights = (checkpoint_path / "model.safetensors").is_file() or (
+        checkpoint_path / "model.safetensors.index.json"
+    ).is_file()
+    if not has_weights:
+        missing.append("model.safetensors[.index.json]")
+    if missing:
+        raise FileNotFoundError(
+            f"Inference checkpoint is incomplete at {checkpoint_path}; missing: {', '.join(missing)}"
+        )
+
+    cfg.policy.pretrained_path = checkpoint_path
+    logger.info("[INFERENCE] Loading policy and processors from checkpoint: %s", checkpoint_path)
+    return checkpoint_path
 
 
 def _configured_runtime(cfg) -> str:
@@ -54,6 +90,7 @@ def act_with_policy_async_vla(
 
     from lerobot.rl.rtc_actor_runtime import act_with_policy_rtc_inference
 
+    _configure_inference_checkpoint(cfg)
     trainer = Trainer.for_config(cfg)
     act_with_policy_rtc_inference(
         cfg=cfg,

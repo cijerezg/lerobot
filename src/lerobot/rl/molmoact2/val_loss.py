@@ -44,6 +44,9 @@ import torch
 from lerobot.probes.objective import flow_timestep_grid
 from lerobot.probes.utils import (
     build_episode_index,
+    fill_absent_cameras,
+    identity_columns,
+    pad_to_action_width,
     probe_frame_inputs,
     probe_image_stride,
     sample_episodes_evenly,
@@ -100,6 +103,9 @@ class ValLoss:
         if len(samples) > n_frames:
             samples = [samples[i] for i in np.linspace(0, len(samples) - 1, n_frames, dtype=int)]
 
+        identity = identity_columns(cfg)
+        image_keys = [str(k) for k in (getattr(cfg.policy, "image_keys", None) or [])]
+
         n_timesteps = max(1, int(cfg.policy.num_flow_timesteps))
         grid = torch.from_numpy(flow_timestep_grid(cfg.policy, n_timesteps)).float()
         generator = torch.Generator().manual_seed(seed)
@@ -113,7 +119,9 @@ class ValLoss:
                     probe_frame_inputs(val_dataset, cfg, global_idx, chunk_size)
                     for _, _, global_idx in samples[start : start + batch_size]
                 ]
-                batch = self._pack(group, preprocessor, chunk_size, action_dim)
+                batch = self._pack(
+                    group, preprocessor, chunk_size, action_dim, identity, image_keys
+                )
                 padded = batch[ACTION]
                 batch["_flow_timesteps"] = grid.expand(len(group), n_timesteps).clone()
                 batch["_flow_noise"] = torch.randn(
@@ -130,24 +138,41 @@ class ValLoss:
         )
 
     @staticmethod
-    def _pack(frames: list[dict], preprocessor, chunk_size: int, action_dim: int) -> dict:
+    def _pack(
+        frames: list[dict],
+        preprocessor,
+        chunk_size: int,
+        action_dim: int,
+        identity: dict,
+        image_keys,
+    ) -> dict:
         """One packed batch from N probe frames, on CPU.
 
         The pack step is already batched over subtask texts, metadata dicts and the
         history stack, so stacking the per-frame observation tensors on dim 0 and
         passing lists for the rest is all it takes.
+
+        The frames come from ``probe_frame_inputs``, which reads the dataset's own
+        columns, so this has to supply what ``RoleAlignedBuffer`` puts on a training
+        batch: a stand-in for any camera the rig lacks, and the identity column
+        per-embodiment normalization gathers its stats row with.
         """
         obs = {
             key: torch.cat([f["obs"][key] for f in frames], dim=0)
             for key in frames[0]["obs"]
         }
+        obs, presence = fill_absent_cameras(obs, image_keys)
         flat = {
             **obs,
             "task": [f["task"] for f in frames],
+            # Raw dataset actions are the rig's own width; the stats table is the
+            # canonical one, so pad before slicing rather than after.
             ACTION: torch.stack(
-                [f["gt_actions"][:chunk_size, :action_dim] for f in frames]
+                [pad_to_action_width(f["gt_actions"][:chunk_size], action_dim) for f in frames]
             ),
             TransitionKey.COMPLEMENTARY_DATA: {
+                **identity,
+                **presence,
                 "subtask": [f["subtask"] for f in frames],
                 "metadata": [f["metadata"] for f in frames],
             },

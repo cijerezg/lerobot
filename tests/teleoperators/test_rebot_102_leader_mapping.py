@@ -28,7 +28,6 @@ from lerobot.teleoperators.rebot_102_leader.mapping import (
     position_to_raw,
     raw_to_position,
 )
-from lerobot.teleoperators.rebot_102_leader.rebot_102_leader import RebotArm102Leader
 
 CONFIG = RebotArm102LeaderConfig(port="/dev/null")
 JOINTS = list(CONFIG.joint_ids)
@@ -39,12 +38,8 @@ def constants(motor_name):
 
 
 def get_action_position(raw_angle: float, joint_range: list[int], direction: int) -> float:
-    """The arithmetic of ``RebotArm102Leader.get_action``, verbatim."""
-    range_min, range_max = joint_range
-    sign = 1.0 if direction >= 0 else -1.0
-    unwrapped, _ = RebotArm102Leader._round_to_valid_range(raw_angle, range_min * sign, range_max * sign)
-    position = unwrapped * direction
-    return max(float(range_min), min(float(range_max), position))
+    """The corrected arithmetic of ``RebotArm102Leader.get_action``."""
+    return raw_to_position(raw_angle, joint_range, direction)
 
 
 def sample_positions(joint_range: list[int], n: int = 11) -> list[float]:
@@ -100,13 +95,8 @@ def test_gripper_open_maps_to_45_degrees_of_raw_travel():
     assert position_to_raw(0.0, joint_range, direction) == pytest.approx(0.0)
 
 
-def test_gripper_unwrap_window_diverges_from_driver_once_the_origin_shifts():
-    """Pins the §4.3 prerequisite bug: ``range * sign`` centres the gripper window on 135, not 22.5.
-
-    Track C does not fix it (that is track A/B stage 3); this records where the two disagree so
-    the fix has a test to flip. At raw 210 the correct window unwraps to -150 (gripper closed),
-    the driver's leaves it at 210 (gripper fully open) -- opposite ends of the travel.
-    """
+def test_gripper_shifted_origin_uses_the_correct_unwrap_window():
+    """The driver and shared mapping agree even after the gripper raw origin shifts."""
     joint_range, direction = constants("gripper")
     assert raw_to_position(210.0, joint_range, direction) == pytest.approx(0.0)
-    assert get_action_position(210.0, joint_range, direction) == pytest.approx(-270.0)
+    assert get_action_position(210.0, joint_range, direction) == pytest.approx(0.0)

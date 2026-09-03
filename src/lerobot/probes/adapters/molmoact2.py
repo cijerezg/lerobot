@@ -30,7 +30,13 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
     register_action_attention_probing,
 )
 from lerobot.probes.base import ActionSensitivityResult, AttentionCaptureResult, ProbablePolicy
-from lerobot.probes.utils import find_normalizer_step, suppress_pack_dropout
+from lerobot.probes.utils import (
+    fill_absent_cameras,
+    find_normalizer_step,
+    identity_columns,
+    pad_to_action_width,
+    suppress_pack_dropout,
+)
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
@@ -73,6 +79,39 @@ class MolmoAct2Adapter(ProbablePolicy):
     def _restore_probe_cuda_graph_enabled(self) -> None:
         self._set_probe_cuda_graph_enabled(not bool(getattr(self._policy, "training", False)))
 
+    @property
+    def _stats_index_keys(self) -> tuple[str, ...]:
+        """Identity columns the unnormalizer may gather its stats row with.
+
+        The default is "embodiment_index", but a mixture keyed by action convention uses
+        "action_layout_id" -- forwarding only the default silently strands the
+        postprocessor without a row.
+        """
+        keys = {EMBODIMENT_INDEX_KEY}
+        for step in getattr(self._postprocessor, "steps", []) or []:
+            key = getattr(step, "_stats_index_key", None)
+            if key:
+                keys.add(str(key))
+        return tuple(keys)
+
+    def _to_action_width(self, anchor: Tensor) -> Tensor:
+        """Right-pad a raw-width tensor to the policy's canonical action width.
+
+        The preprocessor pads state through MolmoAct2UnifiedLayoutProcessorStep, but the
+        postprocessor's anchor is built from the raw observation and skips that step, so
+        a 7-DoF rig would hand an 8-wide decode a 7-wide anchor. Zeros, like _pad_lowdim.
+        """
+        return pad_to_action_width(anchor, self.action_dim)
+
+    def _fill_absent_cameras(self, obs: dict) -> tuple[dict, dict]:
+        """Zeros plus a presence flag for every configured camera this rig lacks."""
+        return fill_absent_cameras(obs, self._configured_image_keys())
+
+    @property
+    def _identity_columns(self) -> dict:
+        """Identity columns per-embodiment normalization needs on every batch."""
+        return identity_columns(self._cfg)
+
     def _make_batch(
         self,
         obs: dict[str, Tensor],
@@ -84,11 +123,12 @@ class MolmoAct2Adapter(ProbablePolicy):
         """Build the preprocessor input for molmoact2 probe forwards."""
         device = self._device
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
+        obs_on_device, presence = self._fill_absent_cameras(obs_on_device)
         flat = {
             **obs_on_device,
             "task": task_str,
         }
-        complementary: dict = {}
+        complementary: dict = {**self._identity_columns, **presence}
         if subtask:
             complementary["subtask"] = [subtask]
         if metadata is not None:
@@ -106,10 +146,12 @@ class MolmoAct2Adapter(ProbablePolicy):
     @torch.no_grad()
     def normalize_gt_actions(self, gt_actions: Tensor, state: Tensor | None) -> Tensor:
         # Mirror the preprocessor pipeline: (anchor encode) → normalizer.
-        actions = gt_actions
+        # Raw dataset actions are the rig's own width; the stats table is the canonical
+        # one, so pad both sides exactly as the preprocessor's unified-layout step does.
+        actions = self._to_action_width(gt_actions)
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if state is not None and action_encoding in ("anchor", "delta"):
-            anchor = state[: actions.shape[-1]].unsqueeze(0).cpu()
+            anchor = self._to_action_width(state.cpu()).unsqueeze(0)
             if action_encoding == "anchor":
                 actions = actions - anchor
             elif actions.shape[0] > 1:
@@ -118,7 +160,11 @@ class MolmoAct2Adapter(ProbablePolicy):
                 actions = actions - anchor
 
         norm_step = find_normalizer_step(self._preprocessor)
-        batch = {TransitionKey.ACTION: actions.unsqueeze(0).to(self._device)}
+        batch = {
+            TransitionKey.ACTION: actions.unsqueeze(0).to(self._device),
+            # Called as a bare step, so nothing else supplies the per-row stats index.
+            TransitionKey.COMPLEMENTARY_DATA: dict(self._identity_columns),
+        }
         out = norm_step(batch)
         return out[TransitionKey.ACTION].squeeze(0).float().cpu()
 
@@ -186,12 +232,23 @@ class MolmoAct2Adapter(ProbablePolicy):
         pred_norm = norm_actions.squeeze(0).float().cpu()
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if action_encoding in ("anchor", "delta"):
-            anchor = obs[OBS_STATE].to(self._device)[..., : self.action_dim]
-            payload = {ACTION: norm_actions, ANCHOR_KEY: anchor}
+            anchor = self._to_action_width(obs[OBS_STATE].to(self._device))
+            # The preprocessor consumes the identity columns rather than passing them
+            # through, so seed from config and let a real batch column win if present.
             # Per-embodiment stats: unnormalize with the SAME row the preprocessor
             # normalized with, or the action comes back at another robot's scale.
-            if EMBODIMENT_INDEX_KEY in batch:
-                payload[EMBODIMENT_INDEX_KEY] = batch[EMBODIMENT_INDEX_KEY]
+            # It must ride in a nested COMPLEMENTARY_DATA dict: the anchor converter
+            # forwards that wholesale, but of the flat keys it only knows anchor_state
+            # and embodiment_index, so a flat action_layout_id is dropped.
+            identity = dict(self._identity_columns)
+            for index_key in self._stats_index_keys:
+                if index_key in batch:
+                    identity[index_key] = batch[index_key]
+            payload = {
+                ACTION: norm_actions,
+                ANCHOR_KEY: anchor,
+                TransitionKey.COMPLEMENTARY_DATA: identity,
+            }
             unnorm = self._postprocessor(payload)
         else:
             unnorm = self._postprocessor(norm_actions)
@@ -232,8 +289,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         n = len(subtasks)
         device = self._device
         obs_on_device = {k: self._expand_to_batch(v.to(device), n) for k, v in obs.items()}
+        obs_on_device, presence = self._fill_absent_cameras(obs_on_device)
         flat: dict = {**obs_on_device, "task": [task_str] * n}
-        complementary: dict = {"subtask": list(subtasks)}
+        complementary: dict = {**self._identity_columns, **presence, "subtask": list(subtasks)}
         if metadatas is not None:
             if len(metadatas) != n:
                 raise ValueError(f"metadatas must have length {n}, got {len(metadatas)}.")
@@ -291,12 +349,25 @@ class MolmoAct2Adapter(ProbablePolicy):
         pred_norm = norm_actions.float().cpu()
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if action_encoding in ("anchor", "delta"):
-            anchor = self._expand_to_batch(
-                obs[OBS_STATE].to(self._device), n
-            )[..., : self.action_dim]
-            payload = {ACTION: norm_actions, ANCHOR_KEY: anchor}
-            if EMBODIMENT_INDEX_KEY in batch:
-                payload[EMBODIMENT_INDEX_KEY] = batch[EMBODIMENT_INDEX_KEY]
+            anchor = self._to_action_width(
+                self._expand_to_batch(obs[OBS_STATE].to(self._device), n)
+            )
+            # The preprocessor consumes the identity columns rather than passing them
+            # through, so seed from config and let a real batch column win if present.
+            # Per-embodiment stats: unnormalize with the SAME row the preprocessor
+            # normalized with, or the action comes back at another robot's scale.
+            # It must ride in a nested COMPLEMENTARY_DATA dict: the anchor converter
+            # forwards that wholesale, but of the flat keys it only knows anchor_state
+            # and embodiment_index, so a flat action_layout_id is dropped.
+            identity = dict(self._identity_columns)
+            for index_key in self._stats_index_keys:
+                if index_key in batch:
+                    identity[index_key] = batch[index_key]
+            payload = {
+                ACTION: norm_actions,
+                ANCHOR_KEY: anchor,
+                TransitionKey.COMPLEMENTARY_DATA: identity,
+            }
             unnorm = self._postprocessor(payload)
         else:
             unnorm = self._postprocessor(norm_actions)
@@ -675,6 +746,9 @@ class MolmoAct2Adapter(ProbablePolicy):
             action_targets = gt_actions[:chunk_size, :action_dim].unsqueeze(0).to(device)
 
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
+        # Match what _make_batch packed: the absent-camera zeros are real encoder
+        # columns, and the metadata pass indexes this dict by the packed camera order.
+        obs_on_device, _ = self._fill_absent_cameras(obs_on_device)
         with suppress_pack_dropout(self._preprocessor):
             batch = self._make_batch(
                 obs, task_str, gt_actions=action_targets, subtask=subtask, metadata=metadata
@@ -795,8 +869,15 @@ class MolmoAct2Adapter(ProbablePolicy):
         return []
 
     def _image_keys_for_obs(self, obs: dict[str, Tensor]) -> list[str]:
+        """The camera order the pack step used — not the order this obs happens to hold.
+
+        Every batch goes through ``fill_absent_cameras``, so the configured list is
+        always the packed order even on a rig that records fewer cameras. Globbing the
+        observation instead drops the absent camera from the middle of the list and
+        shifts every later camera's label onto the wrong patch span.
+        """
         configured = self._configured_image_keys()
-        if configured and all(key in obs for key in configured):
+        if configured:
             return configured
         keys = [key for key in obs if str(key).startswith("observation.images.")]
         if not keys:

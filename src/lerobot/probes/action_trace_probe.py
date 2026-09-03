@@ -72,6 +72,7 @@ from lerobot.probes.utils import (
     load_probe_dataset,
     makedirs,
     probe_frame_inputs,
+    register_config_choices,
     sample_action_inspector_frames,
     trajectory_error_components,
 )
@@ -2142,4 +2143,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    register_config_choices()
     main()

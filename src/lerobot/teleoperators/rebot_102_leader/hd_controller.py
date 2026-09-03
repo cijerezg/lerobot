@@ -23,6 +23,7 @@ read path.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
@@ -32,6 +33,7 @@ import sys
 import termios
 import threading
 import time
+import traceback
 import tty
 from typing import TYPE_CHECKING
 
@@ -39,7 +41,7 @@ import fashionstar_uart_sdk as uservo
 import serial
 
 from ..utils import TeleopEvents
-from .mapping import position_to_raw, raw_to_position
+from .mapping import clamp_position, position_to_raw, raw_to_position
 
 if TYPE_CHECKING:
     from .config_rebot_102_leader import RebotArm102LeaderConfig
@@ -50,7 +52,7 @@ STOP_UNLOAD = 0x10
 SYNC_MULTITURN_BY_INTERVAL = 14
 
 
-class LeaderFeedbackFault(RuntimeError):
+class LeaderFeedbackError(RuntimeError):
     """Latched feedback fault that leaves the HD leader unloaded."""
 
 
@@ -119,11 +121,12 @@ class RebotArm102HDController:
             "feedback_watchdog_timeout_s": self.config.feedback_watchdog_timeout_s,
             "feedback_max_raw_error_deg": self.config.feedback_max_raw_error_deg,
             "feedback_error_timeout_s": self.config.feedback_error_timeout_s,
+            "feedback_max_current_ma": self.config.feedback_max_current_ma,
             "feedback_current_timeout_s": self.config.feedback_current_timeout_s,
         }.items():
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
-        powers = {name: self.config.feedback_power for name in self.motor_names}
+        powers = dict.fromkeys(self.motor_names, self.config.feedback_power)
         powers.update(self.config.feedback_joint_powers)
         unknown = set(powers) - set(self.motor_names)
         if unknown:
@@ -152,14 +155,13 @@ class RebotArm102HDController:
                 self.ctrl = ctrl
                 self._unload_locked()
             except Exception:
-                with suppress_serial_errors():
+                with contextlib.suppress(Exception):
                     ctrl.stop_on_control_mode(0xFF, STOP_UNLOAD, 0x00)
-                uart.close()
+                with contextlib.suppress(Exception):
+                    uart.close()
                 raise
 
         self._start_watchdog()
-        if self.config.enable_keyboard_handover:
-            self._start_key_listener()
 
     def configure(self) -> None:
         with self.io_lock:
@@ -168,6 +170,8 @@ class RebotArm102HDController:
             self.ctrl.reset_multi_turn_angle(0xFF)
             time.sleep(0.1)
             self._last_raw_positions = self._read_raw_locked()
+        if self.config.enable_keyboard_handover:
+            self._start_key_listener()
 
     def set_origin_points(self) -> None:
         with self.io_lock:
@@ -210,29 +214,46 @@ class RebotArm102HDController:
         return raw
 
     def send_positions(self, feedback: dict[str, float]) -> None:
-        requested: dict[str, float] = {}
-        for name in self.motor_names:
-            key = f"{name}.pos"
-            if key not in feedback:
-                raise ValueError(f"missing feedback position {key}")
-            value = float(feedback[key])
-            if not math.isfinite(value):
-                raise ValueError(f"feedback position {key} is not finite: {value}")
-            requested[name] = position_to_raw(
-                value, self.config.joint_ranges[name], self.config.joint_directions[name]
-            )
-
         with self.io_lock:
             self._require_connected()
             if self.is_intervening:
                 return
             if self._feedback_fault is not None:
-                raise LeaderFeedbackFault(
+                raise LeaderFeedbackError(
                     f"leader feedback is faulted and unloaded: {self._feedback_fault}; "
                     "call enable_torque() explicitly after resolving the cause"
                 )
             if not self._feedback_enabled:
-                self._enable_feedback_locked(send_hold=False)
+                raise RuntimeError(
+                    "leader feedback torque is disabled; call enable_torque() before send_feedback()"
+                )
+
+            requested: dict[str, float] = {}
+            for name in self.motor_names:
+                key = f"{name}.pos"
+                if key not in feedback:
+                    reason = f"missing feedback position {key}"
+                    self._trip_fault_locked(reason, raise_error=False)
+                    raise ValueError(reason)
+                value = float(feedback[key])
+                if not math.isfinite(value):
+                    reason = f"feedback position {key} is not finite: {value}"
+                    self._trip_fault_locked(reason, raise_error=False)
+                    raise ValueError(reason)
+                clamped_position = clamp_position(value, self.config.joint_ranges[name])
+                if clamped_position != value:
+                    logger.warning(
+                        "Leader feedback target %s=%.3f is outside %s; clamped to %.3f",
+                        key,
+                        value,
+                        self.config.joint_ranges[name],
+                        clamped_position,
+                    )
+                requested[name] = position_to_raw(
+                    clamped_position,
+                    self.config.joint_ranges[name],
+                    self.config.joint_directions[name],
+                )
 
             base = self._last_sent_raw
             if base is None:
@@ -242,7 +263,12 @@ class RebotArm102HDController:
                 name: base[name] + max(-step_limit, min(step_limit, requested[name] - base[name]))
                 for name in self.motor_names
             }
-            self._send_raw_locked(bounded)
+            try:
+                self._send_raw_locked(bounded)
+            except Exception as error:
+                reason = f"leader feedback command failed: {error}"
+                self._trip_fault_locked(reason, raise_error=False)
+                raise LeaderFeedbackError(reason) from error
             self._last_sent_raw = bounded
             self._last_feedback_time = time.monotonic()
 
@@ -262,7 +288,12 @@ class RebotArm102HDController:
         self._feedback_enabled = True
         self._last_feedback_time = time.monotonic()
         if send_hold:
-            self._send_raw_locked(raw)
+            try:
+                self._send_raw_locked(raw)
+            except Exception as error:
+                reason = f"leader hold command failed while enabling torque: {error}"
+                self._trip_fault_locked(reason, raise_error=False)
+                raise LeaderFeedbackError(reason) from error
 
     def disable_torque(self) -> None:
         with self.io_lock:
@@ -270,16 +301,18 @@ class RebotArm102HDController:
                 self._unload_locked()
 
     def _unload_locked(self) -> None:
-        if self.ctrl is not None:
-            self.ctrl.stop_on_control_mode(0xFF, STOP_UNLOAD, 0x00)
-        self._feedback_enabled = False
-        self._last_feedback_time = None
-        self._last_sent_raw = None
-        self._raw_error_since.clear()
-        self._current_since.clear()
+        try:
+            if self.ctrl is not None:
+                self.ctrl.stop_on_control_mode(0xFF, STOP_UNLOAD, 0x00)
+        finally:
+            self._feedback_enabled = False
+            self._last_feedback_time = None
+            self._last_sent_raw = None
+            self._raw_error_since.clear()
+            self._current_since.clear()
 
     def _send_raw_locked(self, raw: dict[str, float]) -> None:
-        powers = {name: self.config.feedback_power for name in self.motor_names}
+        powers = dict.fromkeys(self.motor_names, self.config.feedback_power)
         powers.update(self.config.feedback_joint_powers)
         payload = [
             struct.pack(
@@ -316,11 +349,13 @@ class RebotArm102HDController:
                 self._raw_error_since.pop(name, None)
 
             current = self._currents_ma.get(name, 0)
-            if current > self.config.feedback_max_current_ma:
+            current_magnitude = abs(current)
+            if current_magnitude > self.config.feedback_max_current_ma:
                 self._current_since.setdefault(name, now)
                 if now - self._current_since[name] >= self.config.feedback_current_timeout_s:
                     self._trip_fault_locked(
-                        f"{name} remained above {self.config.feedback_max_current_ma} mA "
+                        f"{name} remained at {current_magnitude} mA, above "
+                        f"{self.config.feedback_max_current_ma} mA, "
                         f"for {now - self._current_since[name]:.2f}s"
                     )
             else:
@@ -328,10 +363,13 @@ class RebotArm102HDController:
 
     def _trip_fault_locked(self, reason: str, *, raise_error: bool = True) -> None:
         self._feedback_fault = reason
-        self._unload_locked()
-        logger.error("Leader feedback fault; arm unloaded: %s", reason)
+        try:
+            self._unload_locked()
+        except Exception:
+            logger.error("Leader unload command failed while handling fault:\n%s", traceback.format_exc())
+        logger.error("Leader feedback fault; unload requested: %s", reason)
         if raise_error:
-            raise LeaderFeedbackFault(reason)
+            raise LeaderFeedbackError(reason)
 
     def _start_watchdog(self) -> None:
         self._watchdog_stop.clear()
@@ -397,6 +435,8 @@ class RebotArm102HDController:
             self._handle_key_char(char)
 
     def _start_key_listener(self) -> None:
+        if self.listener is not None or self._terminal_thread is not None:
+            return
         force_terminal = os.environ.get("LEROBOT_TELEOP_TERMINAL_KEYS", "").lower() in (
             "1",
             "true",
@@ -467,7 +507,7 @@ class RebotArm102HDController:
             self._terminal_fd = None
             self._terminal_old_settings = None
         if fd is not None and old_settings is not None:
-            with suppress_serial_errors():
+            with contextlib.suppress(Exception):
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     def _stop_background_threads(self) -> None:
@@ -487,24 +527,18 @@ class RebotArm102HDController:
     def close(self) -> None:
         self._stop_background_threads()
         with self.io_lock:
-            if self.ctrl is not None:
-                with suppress_serial_errors():
-                    self._unload_locked()
-            if self.uart is not None:
-                self.uart.close()
-            self.ctrl = None
-            self.uart = None
+            try:
+                if self.ctrl is not None:
+                    with contextlib.suppress(Exception):
+                        self._unload_locked()
+                if self.uart is not None:
+                    with contextlib.suppress(Exception):
+                        self.uart.close()
+            finally:
+                self._feedback_enabled = False
+                self.ctrl = None
+                self.uart = None
 
     def _require_connected(self) -> None:
         if not self.is_connected:
             raise RuntimeError("102HD leader is not connected")
-
-
-class suppress_serial_errors:
-    """Tiny local suppressor used only in shutdown/error paths."""
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, _exc_type, _exc, _tb) -> bool:
-        return True

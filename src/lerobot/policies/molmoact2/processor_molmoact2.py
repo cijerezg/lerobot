@@ -715,6 +715,14 @@ class MolmoAct2UnifiedLayoutProcessorStep(ProcessorStep):
     state_dim: int | None = None
     action_dim: int | None = None
 
+    def get_config(self) -> dict[str, Any]:
+        # Dropping these silently disables padding on reload: _pad_lowdim treats a
+        # None width as "leave the tensor alone".
+        return {
+            "state_dim": None if self.state_dim is None else int(self.state_dim),
+            "action_dim": None if self.action_dim is None else int(self.action_dim),
+        }
+
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
         observation = transition.get(TransitionKey.OBSERVATION)
@@ -790,6 +798,11 @@ class MolmoAct2RestoreActionLayoutProcessorStep(ProcessorStep):
     def __post_init__(self) -> None:
         if self.native_action_dim < 1:
             raise ValueError(f"native_action_dim must be positive, got {self.native_action_dim}.")
+
+    def get_config(self) -> dict[str, Any]:
+        # Without this the base returns {} and the field is dropped on save, so
+        # from_pretrained cannot rebuild the step at all.
+        return {"native_action_dim": int(self.native_action_dim)}
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()
@@ -1054,6 +1067,23 @@ class MolmoAct2ClampNormalizedProcessorStep(ProcessorStep):
     # Must be the SAME column the normalizer gathered its stats row with, or the clamp
     # protects one robot's padding while normalizing another's.
     stats_index_key: str = "embodiment_index"
+
+    def get_config(self) -> dict[str, Any]:
+        # stats_index_key in particular: the default is not the value the normalizer
+        # uses, so losing it points the clamp at a different column.
+        def _mask(mask):
+            return None if mask is None else [bool(v) for v in mask]
+
+        def _masks(masks):
+            return None if masks is None else [[bool(v) for v in row] for row in masks]
+
+        return {
+            "action_mask": _mask(self.action_mask),
+            "state_mask": _mask(self.state_mask),
+            "action_masks": _masks(self.action_masks),
+            "state_masks": _masks(self.state_masks),
+            "stats_index_key": self.stats_index_key,
+        }
 
     def _rows(self, transition: EnvTransition, tensor: Any) -> Tensor | None:
         if not self.action_masks and not self.state_masks:
@@ -1868,6 +1898,13 @@ class MolmoAct2ClampActionProcessorStep(ProcessorStep):
     action_mask marks which dims are normalized; unmasked (raw-unit) dims are skipped."""
 
     action_mask: list[bool] | None = None
+
+    def get_config(self) -> dict[str, Any]:
+        # A dropped mask is not a no-op: _masked_clamp treats None as "clamp every
+        # dimension", including the raw-unit dims the mask exists to protect.
+        return {
+            "action_mask": None if self.action_mask is None else [bool(v) for v in self.action_mask],
+        }
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         transition = transition.copy()

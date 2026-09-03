@@ -69,18 +69,10 @@ fingerprint — a mismatch is a hard error, not a silent fallback) and must divi
 
 ## Offline training (config: config_rl.yaml at repo root)
 
-Smoke test (few steps, no checkpoints, no Aim):
-
-uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offline \
-    --config_path=config_rl.yaml \
-    --policy.offline_steps=20 \
-    --val_freq=0 \
-    --save_checkpoint=false \
-    --aim.enable=false
 
 Full run:
 
-uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml
+uv run python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml
 
 ## Aim metrics UI
 
