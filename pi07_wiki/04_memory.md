@@ -251,8 +251,8 @@ rendered behind a text lead-in ("The recent states of the robot, oldest to
 newest, are:") as $T_h$ placeholder tokens whose embeddings are overwritten by
 the scatter mechanism image patches already use
 ([modeling_molmoact2.py:242](../src/lerobot/policies/molmoact2/modeling_molmoact2.py#L242)).
-Which timestep is which = sequence order. ~5 positions replace ~20–30 digit-string
-tokens per state, and the LLM gets full float precision instead of parsing
+Which timestep is which = sequence order. Three positions replace the digit-string
+rendering of the three historical states, and the LLM gets full float precision instead of parsing
 digits. $W$ is the **only new parameter in the whole build** → freeze-whitelist
 + optimizer-group entries required (the pointmap gate lesson). The current state
 stays a text clause (pretraining format); the generation prompt keeps its §1.2
@@ -269,11 +269,11 @@ The criterion the memory probes are judged against has not changed: **the robot 
 not redo what it just did**, and it should continue smoothly what it was doing. Not
 reconstruction fidelity, not attention mass.
 
-Live in the validation loop:
+Registered in the validation loop (each runs only when its enable flag is set):
 
 | probe | question | verdict shape |
 |---|---|---|
-| `mem_history_influence` | *which channel* — do image and state history move the chunk, and does the move help? | `full_rmse` (influence, at fixed flow noise) next to `full_gt_mse_improvement` (usefulness). Influence ~0 = the channel never reaches the output; improvement < 0 = used in the wrong direction |
+| `mem_history_influence` | *which channel* — is the model helped by the contents of image and state history, or only by history being present? | $3\times3$ real/constant/foreign factorial at fixed flow noise, paired against `real/real`. The `constant/constant` MSE penalty is what information beyond the present is worth; `foreign/foreign` asks whether it is *this* trajectory's history. RMSE/max$|\Delta|$ gate usefulness claims; dropped `none` is legacy OOD context only |
 | `mem_history_regime` | *how many frames* — does history help, does it hurt, and is either real? | $z$ on $\mathrm{MSE}(\mathrm{stale})-\mathrm{MSE}(\mathrm{full})$, the paired test against the same window taken $W$ s too early: below 2 the model reacted to *a* window rather than reading *this* one. Then helped/hurt fractions against $\tau=Q_{0.9}(\|\Delta\|)$ under a reseed alone. Exists because the usefulness bar above is a mean over a population that is half positive: on v6/1600, $+0.00067$ out of 47% helped and 53% hurt. The covariate ranking that used to answer *which* frames was removed 2026-08-10 — every $\rho$ sat at its own noise band and nothing was concluded from it |
 | `mem_temporal_attention` | when and where is history read? | past-attention mass against the uniform-over-time baseline $T/(T+1)$ of the temporal softmax; enrichment ~1 means no selective read survives |
 | `subtask_sweep` | does the subtask clause move the actions at all? | vocabulary spread over a same-clause seed floor; this was P3 of the plan doc, and it gates every claim that memory reaches behaviour |

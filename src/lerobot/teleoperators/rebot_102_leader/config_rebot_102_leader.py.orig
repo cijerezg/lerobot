@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from ..config import TeleoperatorConfig
 
@@ -32,39 +31,6 @@ class RebotArm102LeaderConfig:
     port: str
 
     baudrate: int = 1_000_000
-
-    # The original 102LD is encoder-only. Only the 102HD exposes position
-    # feedback/shadowing so existing LD configurations remain read-only.
-    variant: Literal["102LD", "102HD"] = "102LD"
-
-    # Hardware-verified 102HD sync-control settings. Commands are refreshed by
-    # the rollout loop; the 100 ms interval is the vendor's smooth-control path.
-    feedback_interval_ms: int = 100
-    feedback_acceleration_ms: int = 50
-    feedback_deceleration_ms: int = 50
-    feedback_power: int = 4095
-    feedback_joint_powers: dict[str, int] = field(
-        default_factory=lambda: {
-            "shoulder_lift": 12000,
-            "elbow_flex": 8000,
-        }
-    )
-
-    # Bound each freshly requested target relative to the last transmitted raw
-    # servo target. At 30 Hz, 5 deg/frame is a 150 deg/s hard ceiling.
-    feedback_max_raw_step_deg: float = 5.0
-
-    # A stale actor must not leave the leader rigid. Tracking/current faults are
-    # sustained thresholds, chosen above all values in the verified trajectories.
-    feedback_watchdog_timeout_s: float = 0.5
-    feedback_max_raw_error_deg: float = 20.0
-    feedback_error_timeout_s: float = 0.75
-    feedback_max_current_ma: int = 1500
-    feedback_current_timeout_s: float = 0.5
-
-    # Preserve the established HIL controls: 5 toggles handover, 1 success,
-    # 0 terminate/failure, and 2 starts an episode.
-    enable_keyboard_handover: bool = True
 
     # Servo id of each joint on the UART bus.
     joint_ids: dict[str, int] = field(

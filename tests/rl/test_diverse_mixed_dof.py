@@ -176,6 +176,53 @@ def test_a_mask_of_the_wrong_width_is_refused() -> None:
 # ── Per-layout statistics ────────────────────────────────────────────────────
 
 
+def test_a_collapsed_quantile_band_falls_back_to_min_max() -> None:
+    """A band of zero width carries no scale, and the normalizer only guards denom == 0.
+
+    FMB's gripper hit this: >99% of chunks have no gripper motion in the first ~200 ms,
+    so q01 == q99 == 0 at small k. Dividing by the eps then pushed every real motion past
+    the [-1, 1] clamp and "closing" normalized to the same -1 as "holding".
+    """
+    import numpy as np
+
+    from lerobot.scripts.compute_embodiment_stats import _stats_for
+
+    # 1000 chunks, 5 of which move the gripper one discrete level either way.
+    values = np.zeros((1000, 1), dtype=np.float32)
+    values[:3] = 1 / 3
+    values[3:5] = -1 / 3
+    stats = _stats_for(values, 1)
+    assert stats["q99"][0] > stats["q01"][0], "collapsed band was not widened"
+    assert stats["q01"][0] == pytest.approx(-1 / 3)
+    assert stats["q99"][0] == pytest.approx(1 / 3)
+
+
+def test_a_genuinely_constant_dimension_is_left_alone() -> None:
+    """A copy_state layout's k=0 anchor delta really is zero for every sample: max == min,
+    so there is no wider scale to fall back to and the eps path must still produce its
+    constant. Widening it would invent a range the data does not have."""
+    import numpy as np
+
+    from lerobot.scripts.compute_embodiment_stats import _stats_for
+
+    stats = _stats_for(np.zeros((100, 1), dtype=np.float32), 1)
+    assert stats["q01"][0] == 0.0
+    assert stats["q99"][0] == 0.0
+
+
+def test_a_narrow_but_real_band_is_not_widened() -> None:
+    """Near-frozen joints (RoboChallenge UR5's dim 4) have a tiny but genuine spread. The
+    fallback is for bands that carry no scale at all, not for rescaling quiet joints."""
+    import numpy as np
+
+    from lerobot.scripts.compute_embodiment_stats import _stats_for
+
+    values = np.random.default_rng(0).normal(0, 2e-4, (1000, 1)).astype(np.float32)
+    stats = _stats_for(values, 1)
+    assert stats["q01"][0] > values.min()
+    assert stats["q99"][0] < values.max()
+
+
 def _two_row_normalizer(stats_index_key: str):
     """Two stats rows with deliberately different scales, so a mis-gather is visible."""
     from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
@@ -226,6 +273,28 @@ def test_the_default_key_is_still_the_embodiment_index() -> None:
     )
     normalized = out[TransitionKey.OBSERVATION][OBS_STATE]
     assert not torch.allclose(normalized[0], normalized[1])
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+def test_stats_rows_are_gathered_when_the_batch_is_on_another_device() -> None:
+    """The gather indexes stats that stay on CPU, so the index must follow the stats.
+
+    Under Accelerate the batch arrives on CUDA while _tensor_stats stays where self.to()
+    last put it: this path restores the ungathered stats after every call, so it never
+    migrates. Sending the index to the batch's device instead raised "indices should be
+    either on cpu or on the same device as the indexed tensor".
+    """
+    step = _two_row_normalizer("embodiment_index")
+    out = step(
+        create_transition(
+            observation={OBS_STATE: torch.tensor([[1.0, 1.0], [1.0, 1.0]], device="cuda")},
+            complementary_data={"embodiment_index": torch.tensor([0, 1], device="cuda")},
+        )
+    )
+    normalized = out[TransitionKey.OBSERVATION][OBS_STATE]
+    # The same two rows the CPU test checks: scale 1 -> 1.0, scale 10 -> -0.8.
+    assert torch.allclose(normalized[0], torch.ones(2, device="cuda"))
+    assert torch.allclose(normalized[1], torch.full((2,), -0.8, device="cuda"))
 
 
 def test_a_missing_index_column_is_an_error_not_a_default_row() -> None:

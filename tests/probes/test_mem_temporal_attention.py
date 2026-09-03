@@ -18,11 +18,11 @@ from lerobot.probes.mem_temporal_attention import (
     _render_mistake_sequence,
 )
 
-# rebot ckpt400, layer-mean age shares over the five history frames, oldest → newest.
-RECENCY = [0.088, 0.111, 0.151, 0.228, 0.422]  # L3: strictly rising, no dip anywhere
-TROUGH = [0.284, 0.201, 0.145, 0.111, 0.259]  # L23: high at both ends, low in the middle
-FLAT = [0.2, 0.2, 0.2, 0.2, 0.2]
-SECONDS = np.array([5.0, 4.0, 3.0, 2.0, 1.0], dtype=np.float32)
+# Synthetic layer-mean age shares over the deployed three history frames, oldest → newest.
+RECENCY = [0.1, 0.25, 0.65]  # strictly rising, no dip anywhere
+TROUGH = [0.45, 0.1, 0.45]  # high at both ends, low in the middle
+FLAT = [1 / 3, 1 / 3, 1 / 3]
+SECONDS = np.array([6.0, 4.0, 2.0], dtype=np.float32)
 
 
 def _head_age(*profiles, n_frames: int = 3, n_cameras: int = 2, n_heads: int = 4) -> np.ndarray:
@@ -50,7 +50,7 @@ def test_interior_min_is_taken_per_head_not_on_the_head_mean():
     head_age = np.stack([rising, falling, rising, falling])[None, None, None]
 
     assert _interior_min_fraction(head_age)[0] == pytest.approx(0.0)
-    assert head_age.mean(axis=(0, 1, 2, 3)).argmin() not in (0, 4)
+    assert head_age.mean(axis=(0, 1, 2, 3)).argmin() == 1
 
 
 def test_interior_min_is_zero_when_there_is_no_interior():
@@ -77,19 +77,19 @@ def test_survival_is_nan_when_the_real_profile_has_no_shape_to_lose():
 
 
 def test_survival_is_nan_for_a_nearly_flat_profile_not_only_an_exactly_flat_one():
-    # rebot ckpt400 L15: deviation 0.021, no age preference to speak of. A guard that only
-    # catches exact flatness divides one small number by another and drew a 1.79 bar here.
-    nearly_flat = np.asarray([[0.208, 0.200, 0.197, 0.193, 0.202]], dtype=np.float32)
+    # A guard that catches only exact flatness divides one small number by another and can
+    # draw a large survival bar for a profile with no age preference to speak of.
+    nearly_flat = np.asarray([[0.336, 0.331, 0.333]], dtype=np.float32)
 
     assert np.isnan(_profile_survival(nearly_flat, nearly_flat * 1.1)[0])
     assert not np.isnan(_profile_survival(np.asarray([TROUGH], dtype=np.float32), nearly_flat)[0])
 
 
-def _batch(n_ages: int = 5) -> dict:
+def _batch(n_ages: int = 3) -> dict:
     frames = torch.arange(1 * 2 * n_ages * 4 * 3, dtype=torch.float32).reshape(1, 2, n_ages, 4, 3)
     return {
         "history_images": frames,
-        "history_image_times": torch.tensor([5.0, 4.0, 3.0, 2.0, 1.0][:n_ages]),
+        "history_image_times": torch.as_tensor(SECONDS[:n_ages]),
         "history_images_mask": torch.tensor([True]),
     }
 
@@ -142,7 +142,7 @@ def test_figure_renders_with_and_without_the_control_column(tmp_path, with_contr
         ["top", "wrist"],
         SECONDS,
         [{"episode_idx": i // 2, "frame_idx": i * 30, "global_idx": i} for i in range(4)],
-        5 / 6,
+        3 / 4,
         "test provenance",
         survival,
         None,
@@ -160,19 +160,19 @@ def test_age_shape_reports_the_dip_alongside_the_slope():
     assert shape["interior_min"][1] == pytest.approx(1.0)
 
 
-def _contribution(n_frames=3, n_layers=2, n_cameras=2, n_heads=4, n_keys=6) -> np.ndarray:
+def _contribution(n_frames=3, n_layers=2, n_cameras=2, n_heads=4, n_keys=4) -> np.ndarray:
     """w_k ||v_k|| per frame, layer, camera, head, key — history first, current last."""
     return np.ones((n_frames, n_layers, n_cameras, n_heads, n_keys), dtype=np.float32)
 
 
 def test_delivered_past_share_counts_every_key_but_the_current_frame():
-    # Five history keys and the current frame, all delivering equally: history's share of
-    # what left the block is 5/6, the same value an indifferent softmax puts on it.
+    # Three history keys and the current frame, all delivering equally: history's share of
+    # what left the block is 3/4, the same value an indifferent softmax puts on it.
     delivered = _delivered(_contribution())
 
     # (frames, layers), the same shape as temporal_mass so the two sit on one axis.
     assert delivered["past_share"].shape == (3, 2)
-    assert delivered["past_share"] == pytest.approx(5 / 6)
+    assert delivered["past_share"] == pytest.approx(3 / 4)
 
 
 def test_delivered_past_share_collapses_when_history_values_are_small():
@@ -180,7 +180,7 @@ def test_delivered_past_share_collapses_when_history_values_are_small():
     contribution = _contribution()
     contribution[..., :-1] *= 0.01
 
-    assert _delivered(contribution)["past_share"] == pytest.approx(0.05 / 1.05)
+    assert _delivered(contribution)["past_share"] == pytest.approx(0.03 / 1.03)
 
 
 def test_delivered_age_share_is_renormalised_over_history_alone():
@@ -199,7 +199,7 @@ def test_captured_contribution_is_the_weight_times_the_value_norm():
     # Guards the axis alignment in the capture: weights are (BC, heads, patches, q, k) and
     # v is (BC, k, patches, heads, dim), so the permute is the whole correctness argument.
     torch.manual_seed(0)
-    bc, frames, patches, heads, dim = 2, 6, 7, 4, 8
+    bc, frames, patches, heads, dim = 2, 4, 7, 4, 8
     weights = torch.rand(bc, heads, patches, frames, frames)
     v = torch.randn(bc, frames, patches, heads, dim)
 
@@ -221,33 +221,33 @@ def test_mistake_context_marks_current_and_exact_history_ages():
             "note": "test",
         }
     ]
-    offsets = np.asarray([150, 120, 90, 60, 30])
+    offsets = np.asarray([180, 120, 60])
 
     current = _mistake_context(0, 170, spans, offsets)
     recovery = _mistake_context(0, 230, spans, offsets)
 
     assert current["mistake_current"] is True
-    assert current["mistake_history_age_mask"] == [False, False, False, True, True]
+    assert current["mistake_history_age_mask"] == [False, False, True]
     assert recovery["mistake_current"] is False
     assert recovery["mistake_in_history"] is True
-    assert recovery["mistake_history_age_mask"] == [False, True, True, True, False]
+    assert recovery["mistake_history_age_mask"] == [False, True, True]
     assert recovery["mistake_types"] == ["failed_close"]
 
 
 def test_mistake_age_enrichment_removes_the_number_of_labelled_slots():
-    head_age = np.ones((2, 3, 2, 4, 5), dtype=np.float32)
-    masks = np.asarray([[False, False, False, True, True], [False, True, True, True, False]], dtype=bool)
+    head_age = np.ones((2, 3, 2, 4, 3), dtype=np.float32)
+    masks = np.asarray([[False, False, True], [False, True, True]], dtype=bool)
 
     share, enrichment = _mistake_age_enrichment(head_age, masks)
 
-    assert share[0] == pytest.approx(np.full(3, 2 / 5))
-    assert share[1] == pytest.approx(np.full(3, 3 / 5))
+    assert share[0] == pytest.approx(np.full(3, 1 / 3))
+    assert share[1] == pytest.approx(np.full(3, 2 / 3))
     assert enrichment == pytest.approx(np.ones((2, 3)))
 
 
 def test_mistake_age_enrichment_is_nan_without_a_labelled_history_age():
     _share, enrichment = _mistake_age_enrichment(
-        np.ones((1, 2, 1, 1, 5), dtype=np.float32), np.zeros((1, 5), dtype=bool)
+        np.ones((1, 2, 1, 1, 3), dtype=np.float32), np.zeros((1, 3), dtype=bool)
     )
 
     assert np.isnan(enrichment).all()
@@ -295,8 +295,8 @@ def test_mistake_sequence_renders_every_history_age(tmp_path, monkeypatch):
         "observation.images.wrist": torch.ones(1, 3, 27, 27),
     }
     history = {
-        "history.observation.images.top": torch.rand(1, 5, 3, 27, 27),
-        "history.observation.images.wrist": torch.rand(1, 5, 3, 27, 27),
+        "history.observation.images.top": torch.rand(1, 3, 3, 27, 27),
+        "history.observation.images.wrist": torch.rand(1, 3, 3, 27, 27),
     }
     monkeypatch.setattr(
         temporal,
@@ -312,15 +312,15 @@ def test_mistake_sequence_renders_every_history_age(tmp_path, monkeypatch):
         "global_idx": 117,
         "camera_keys": ["observation.images.top", "observation.images.wrist"],
         "history_seconds": SECONDS,
-        "head_age": np.full((2, 2, 4, 5), 0.1, dtype=np.float32),
-        "patch_age": np.linspace(0.05, 0.25, 2 * 2 * 9 * 5, dtype=np.float32).reshape(2, 2, 9, 5),
+        "head_age": np.full((2, 2, 4, 3), 0.1, dtype=np.float32),
+        "patch_age": np.linspace(0.05, 0.25, 2 * 2 * 9 * 3, dtype=np.float32).reshape(2, 2, 9, 3),
         "mistake_current": True,
-        "mistake_history_age_mask": [False, False, False, True, True],
+        "mistake_history_age_mask": [False, False, True],
         "mistake_types": ["failed_close"],
     }
     output = tmp_path / "mistake.png"
 
-    _render_mistake_sequence(object(), object(), 30.0, diagnostic, 1 / 6, (0.05, 0.25), str(output))
+    _render_mistake_sequence(object(), object(), 30.0, diagnostic, 1 / 4, (0.05, 0.25), str(output))
 
     assert output.is_file() and output.stat().st_size > 0
 
@@ -338,7 +338,7 @@ def test_figure_renders_the_delivery_panel(tmp_path):
         ["top", "wrist"],
         SECONDS,
         [{"episode_idx": i // 2, "frame_idx": i * 30, "global_idx": i} for i in range(4)],
-        5 / 6,
+        3 / 4,
         "test provenance",
         {},
         _delivered(contribution),

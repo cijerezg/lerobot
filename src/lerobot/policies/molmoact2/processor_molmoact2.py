@@ -883,7 +883,10 @@ class _MolmoAct2MaskedNormalizationMixin:
                 f"vocabulary of {len(self.embodiment_names)} rows ({self.embodiment_names}). The "
                 "stats artifact and the buffer labels disagree."
             )
-        return rows.to(tensor.device)
+        # Deliberately NOT moved onto tensor.device: on this path _tensor_stats stays
+        # wherever self.to() last put it (CPU), because _apply_transform restores the
+        # ungathered stats afterwards. The index has to follow the stats it indexes.
+        return rows
 
     def _apply_transform(
         self, tensor: Tensor, key: str, feature_type: Any, *, inverse: bool = False
@@ -897,7 +900,9 @@ class _MolmoAct2MaskedNormalizationMixin:
             # differs from the input, which would rebuild _tensor_stats from self.stats
             # and undo the swap below.
             gathered = {
-                name: _align_rows(value[rows].to(device=tensor.device, dtype=tensor.dtype), tensor)
+                name: _align_rows(
+                    value[rows.to(value.device)].to(device=tensor.device, dtype=tensor.dtype), tensor
+                )
                 if isinstance(value, Tensor) and value.shape[0] == len(self.embodiment_names)
                 else value
                 for name, value in stats.items()

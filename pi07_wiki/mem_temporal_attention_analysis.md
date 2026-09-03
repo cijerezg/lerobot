@@ -7,6 +7,12 @@
 > the bug looked like. Unit tests:
 > `tests/policies/test_molmoact2_mem_encoder.py` (11 passing, including a regression test
 > that past mass is independent of the patch count).
+>
+> **Topology note (2026-09-01):** the deployed window later changed from five past
+> frames at $-5/-4/-3/-2/-1$ s to three at $-6/-4/-2$ s. The prose, equations, and
+> measurements below intentionally retain the old topology because they document the
+> 2026-08-03 pre-fix experiment. Current probes derive their ages and the
+> $T/(T+1)=3/4$ null from `memory.history_offsets_seconds`.
 
 **Verdict (2026-08-03): our video encoder deviated from MEM in one place, and it was the
 place that mattered.** MEM runs spatial and temporal attention as *two separate attention
@@ -199,9 +205,10 @@ Three readings, and note all three were taken under the broken normalizer:
    the $e(t)^\top M e(t')$ term above and nothing else. The content-conditioned terms of
    §3 never developed, which is exactly what the gradient argument predicts.
 
-## 5. Where we already match π0.7
+## 5. Where the 2026-08-03 setup already matched π0.7
 
-Verified against p. 6. Nothing here needs changing.
+Verified against p. 6 at the time of the recorded experiment. The history-window rows
+below are historical; see the topology note at the top for the current deployment.
 
 | detail | π0.7 | ours |
 |---|---|---|

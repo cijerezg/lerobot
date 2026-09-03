@@ -10,7 +10,7 @@ import torch
 
 from lerobot.probes.mem_history_regime import _emptied_observation, _variant_observation
 
-N_SLOTS = 5
+N_SLOTS = 3
 STATE_KEY = "history.observation.state"
 IMAGE_KEY = "history.observation.images.top"
 DEPTH_KEY = "history.depth.wrist.depth"

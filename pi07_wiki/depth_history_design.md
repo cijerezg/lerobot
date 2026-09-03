@@ -24,7 +24,7 @@ layers, past frames dropped before the output:
 | encoder | ViT, 27 attention layers | per-patch CNN, 3 conv blocks |
 | frames ride | shared ViT weights as time slices | shared CNN weights as extra batch rows |
 | history enters | temporal attention, every 4th layer | temporal attention, after each block |
-| temporal keys | same patch of older frames, one union softmax with spatial keys | same patch, same pixel: past frames + current frame in one softmax |
+| temporal keys | same patch across past + current frames, time-only softmax before spatial attention | same patch, same pixel: past frames + current frame in one softmax |
 | time signal | sinusoidal $e(\Delta t)$ at each temporal layer input | same |
 | past rows | dropped after last temporal layer | dropped after last fusion, before pooling |
 | output | $n$ tokens — unchanged | 192 tokens — unchanged |
@@ -35,22 +35,22 @@ Per-frame pipeline (unchanged): back-project → patchify → recenter → CNN b
 (channels 5→32→64→512, resolution 40→20→10→5) → average-pool → + PE + modality
 embed → token.
 
-The 5 past frames run through the identical per-frame pipeline up to the CNN, as
+The three past frames at $-6/-4/-2$ s run through the identical per-frame pipeline up to the CNN, as
 extra batch rows through the **same** conv weights (weight sharing across time,
 as the ViT is shared across frames).
 
 **Temporal attention after block $k$.** Feature maps $F_k^{(s)}$ of shape
-$(C_k, H_k, W_k)$ for the same patch, $s = 0$ (current) and $s = -1..-5$ (1–5 s
-ago). First each frame's age is stamped on its features (sinusoidal, no
+$(C_k, H_k, W_k)$ for the same patch, $s \in \{0,-2,-4,-6\}$ seconds. First each
+frame's age is stamped on its features (sinusoidal, no
 parameters, broadcast over pixels — attention is permutation-invariant, so
 unlike a fixed conv it must be told which frame is which):
 
 $$x^{(s)} = F_k^{(s)} + e(\Delta t_s), \qquad e = \text{sin/cos ladder in } \mathbb R^{C_k}$$
 
 Then, independently at every pixel $(u,v)$ of every patch, the current frame
-queries all six frames at that same pixel:
+queries all four frames at that same pixel:
 
-$$q = W_q\, x^{(0)}(u,v), \qquad k_s = W_k\, x^{(s)}(u,v), \qquad v_s = W_v\, x^{(s)}(u,v), \qquad s = 0, -1, \dots, -5$$
+$$q = W_q\, x^{(0)}(u,v), \qquad k_s = W_k\, x^{(s)}(u,v), \qquad v_s = W_v\, x^{(s)}(u,v), \qquad s \in \{0,-2,-4,-6\}$$
 
 $$w_s = \frac{\exp\!\big(q \cdot k_s / \sqrt{d_h}\big)}{\sum_{s'} \exp\!\big(q \cdot k_{s'} / \sqrt{d_h}\big)}, \qquad
 F_k^{(0)}(u,v) \;\leftarrow\; F_k^{(0)}(u,v) + W_o \sum_s w_s\, v_s$$
@@ -64,11 +64,11 @@ with $W_q, W_k, W_v, W_o \in \mathbb R^{C_k \times C_k}$, fresh per fusion
 point, standard init, split into $C_k/64$ heads of $d_h = 64$.
 
 - **Content-dependent frame weighting** — the point of attention over a fixed
-  conv: which past frame matters (the 1 s-ago one, the 4 s-ago one, none)
+  conv: which past frame matters (the 2 s-ago one, the 4 s-ago one, the 6 s-ago one, none)
   varies per sample and per location, and $w_s$ is computed from the features
   themselves.
-- **The current frame sits in the key set** — the analog of the RGB union
-  softmax, where temporal keys compete with spatial keys in one softmax. When
+- **The current frame sits in the key set** — the analog of the RGB time-only
+  softmax, where history competes with the current timestep. When
   no past frame is informative, mass parks on $s{=}0$ and the update degrades
   to a self-projection instead of force-feeding history.
 - **Same patch, same pixel across time** — the CNN version of the RGB temporal
@@ -83,7 +83,7 @@ point, standard init, split into $C_k/64$ heads of $d_h = 64$.
   to the newest valid historical centroid. The null bank is used only when history
   is masked/missing or that patch is empty in every frame.
 
-The softmax is over 6 keys — this is cheap attention by construction.
+The softmax is over 4 keys — this is cheap attention by construction.
 
 ## 3. Parameters and cost (as built)
 
@@ -101,7 +101,7 @@ point):
 | CNN trunk (widened) | | | | 4.75M |
 | **encoder total** | | | | **≈ 9.0M** |
 
-Compute: the CNN runs at batch ×6; the attention is 6 keys per pixel — both
+Compute: the CNN runs at batch ×4; the attention is 4 keys per pixel — both
 negligible. Downstream cost returns to the 192-token baseline (the 1152-token
 stream input disappears). Further depth capacity belongs to the α/stream
 revision (where width × depth actually multiplies), not to more history params.
@@ -110,7 +110,7 @@ revision (where width × depth actually multiplies), not to more history params.
 
 - **Episode start**: buffer clamp repeat-pads the oldest frame (already the
   case). No `is_pad` masking — same "repeat-pad v1" rule as the video encoder.
-- **History dropout** (the one shared draw per sample): mask the five past keys
+- **History dropout** (the one shared draw per sample): mask the three past keys
   → the softmax collapses onto $s{=}0$, the sample computes a history-free op —
   the same masking trick the video encoder uses.
 - **Missing history window** (plain offline eval, cold RTC deque): same
@@ -139,7 +139,7 @@ revision (where width × depth actually multiplies), not to more history params.
 1. **Fusion points**: all three blocks — block 3 is where features are abstract
    enough to tolerate retinal drift, the analog of RGB fusing into its deepest
    layers.
-2. **Key neighborhood**: same pixel only (6 keys). A 3×3 neighborhood in the
-   past frames (54 keys, same params) stays the fallback if inter-frame drift
+2. **Key neighborhood**: same pixel only (4 keys). A 3×3 neighborhood in the
+   past frames (28 keys including the current pixel, same params) stays the fallback if inter-frame drift
    proves to matter.
 3. **Heads**: multi-head everywhere, $C_k/64$ heads of dim 64 (2/4/8).

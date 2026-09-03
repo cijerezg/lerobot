@@ -19,7 +19,7 @@ from lerobot.probes.mem_history_influence import (
     cell_name,
 )
 
-N_SLOTS = 5
+N_SLOTS = 3
 STATE_KEY = "history.observation.state"
 IMAGE_KEY = "history.observation.images.top"
 DEPTH_KEY = "history.depth.wrist.depth"

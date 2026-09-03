@@ -45,9 +45,9 @@ _SETTLE_SEC = 0.01
 class RebotArm102Leader(Teleoperator):
     """Seeed Studio StarArm102 / reBot Arm 102 leader arm.
 
-    The encoder-only 102LD keeps the motorbridge read path. The actuated 102HD uses
-    the vendor SDK because its working sync-with-power command is not exposed by
-    motorbridge-smart-servo.
+    A 7-joint (incl. gripper) leader built on FashionStar UART smart servos. Servo
+    communication is handled by the ``motorbridge-smart-servo`` package; this class
+    only reads joint angles, so it produces actions but accepts no feedback.
     """
 
     config_class = RebotArm102LeaderTeleopConfig

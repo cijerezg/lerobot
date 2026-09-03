@@ -158,6 +158,7 @@ pynput-dep = ["pynput>=1.7.8,<1.9.0"]
 pyzmq-dep = ["pyzmq>=26.2.1,<28.0.0"]
 motorbridge-dep = ["motorbridge>=0.3.2,<0.4.0"]
 motorbridge-smart-servo-dep = ["motorbridge-smart-servo>=0.0.4,<0.1.0"]
+fashionstar-uart-sdk-dep = ["fashionstar-uart-sdk>=1.3.12,<2.0.0"]
 
 # Motors
 feetech = ["feetech-servo-sdk>=1.0.0,<2.0.0", "lerobot[pyserial-dep]", "lerobot[deepdiff-dep]"]
@@ -168,8 +169,8 @@ robstride = ["lerobot[can-dep]"]
 # Robots
 openarms = ["lerobot[damiao]"]
 # Seeed Studio reBot B601-DM follower (motorbridge / CAN) + StarArm102 / reBot Arm 102
-# leader (motorbridge-smart-servo / FashionStar UART servos).
-rebot = ["lerobot[motorbridge-dep]", "lerobot[motorbridge-smart-servo-dep]"]
+# leader (vendor FashionStar UART SDK; required for sync commands with power).
+rebot = ["lerobot[motorbridge-dep]", "lerobot[fashionstar-uart-sdk-dep]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]
 lekiwi = ["lerobot[feetech]", "lerobot[pyzmq-dep]"]

@@ -1105,10 +1105,9 @@ def _control_batches(batch: dict, rng: np.random.Generator) -> dict[str, dict]:
     age and the wrist view at another, which breaks temporal alignment across views rather
     than testing it.
 
-    Known weakness of ``shuffled``: only the identity is rejected, not fixed points, and a
-    uniform permutation has one fixed point in expectation at every length — so about one
-    slot in five keeps its own frame and that survival is partly the real condition. Use a
-    derangement if this control ever has to carry a claim on its own. It does not here:
+    Known weakness of ``shuffled``: only the identity is rejected, not fixed points, so
+    some slots can keep their own frame and that survival is partly the real condition.
+    Use a derangement if this control ever has to carry a claim on its own. It does not here:
     ``constant`` puts one frame in every slot and has no such loophole, and on rebot
     ckpt400 the two agree (0.98 and 1.00 at L23).
     """

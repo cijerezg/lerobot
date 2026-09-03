@@ -75,6 +75,9 @@ ENCODINGS = ("absolute", "anchor", "delta")
 # Matches lerobot.datasets.compute_stats.DEFAULT_QUANTILES so a per-embodiment artifact
 # is a drop-in for the pooled stats it replaces.
 QUANTILES = (0.01, 0.10, 0.50, 0.90, 0.99)
+# The (low, high) pairs a normalizer divides by: QUANTILES mode uses q01/q99,
+# QUANTILE10 uses q10/q90. Both need the degenerate-band fallback in _stats_for.
+_QUANTILE_BANDS = (("q01", "q99"), ("q10", "q90"))
 
 
 def _read_info(root: Path) -> dict[str, Any]:
@@ -253,6 +256,22 @@ def _stats_for(values: np.ndarray, width: int) -> dict[str, np.ndarray]:
         # q01/q99 straddle 0..1 on padded dims so their denominator is 1, not 0.
         fill = 0.0 if q < 0.5 else 1.0
         stats[f"q{int(round(q * 100)):02d}"] = pad(np.quantile(values, q, axis=0), fill)
+
+    # A quantile band that is zero, or numerically indistinguishable from it, carries no
+    # scale. The normalizer only guards denom == 0 exactly, so such a band divides by its
+    # eps and pushes every real sample past the [-1, 1] clamp, collapsing distinct actions
+    # onto one target. FMB's gripper did this: >99% of chunks have no gripper motion in the
+    # first ~200 ms, so q01 == q99 == 0 at small k, and "closing" normalized to the same -1
+    # as "holding". min/max is then the only scale left. Where the data really is constant
+    # -- a copy_state layout's k=0 anchor delta, or a padded dim -- max == min and this is
+    # a no-op, leaving the existing eps path to produce its constant.
+    extent = stats["max"] - stats["min"]
+    for lo, hi in _QUANTILE_BANDS:
+        if lo not in stats or hi not in stats:
+            continue
+        collapsed = (stats[hi] - stats[lo] <= 1e-9 * extent) & (extent > 0)
+        stats[lo] = np.where(collapsed, stats["min"], stats[lo])
+        stats[hi] = np.where(collapsed, stats["max"], stats[hi])
     return stats
 
 
