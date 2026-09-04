@@ -313,6 +313,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         metadatas: list[dict] | None = None,
         noise: Tensor | None = None,
         generator: torch.Generator | None = None,
+        inference_action_mode: str | None = None,
     ) -> tuple[Tensor, Tensor]:
         """One forward over N prompt variants of a single frame.
 
@@ -322,12 +323,16 @@ class MolmoAct2Adapter(ProbablePolicy):
         contrast prompts, so letting each row take its own slice of a generator's
         stream would fold noise into the contrast. See modeling_molmoact2.py's
         _generate_actions_from_inputs_with_rtc. Added 2026-08-22.
+
+        *inference_action_mode* overrides the config's decoder choice; a probe whose
+        readout is the flow output (a seed floor is meaningless under FAST decoding)
+        passes ``"continuous"`` explicitly.
         """
         n = len(subtasks)
         if n == 0:
             raise ValueError("subtasks must be non-empty.")
         batch = self._make_batch_multi(obs, task_str, subtasks, metadatas)
-        inference_action_mode = self._inference_action_mode()
+        inference_action_mode = inference_action_mode or self._inference_action_mode()
         rtc_config = getattr(self._policy.config, "rtc_config", None)
         restore_rtc = bool(
             inference_action_mode == "discrete"

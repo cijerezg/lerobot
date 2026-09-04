@@ -154,9 +154,15 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # lerobot/datasets/embodiment.py.
     embodiment: str | None = None
 
-    # Per-joint [min, max] limits in degrees, applied after inference reconstruction.
-    # None disables clamping.
+    # Per-joint bounds on the decoded chunk, in degrees, applied after the Butterworth
+    # by utils/action_smoothing.bound_action_chunk in the order excursion, absolute,
+    # rate. s_0 is the observed state the chunk was inferred from. None disables a stage.
+    #   action_delta_limits: |a_t - s_0| <= limit            (reach within one horizon)
+    #   action_clamp_limits: [min, max] on a_t                (task workspace)
+    #   action_step_limits:  |a_t - a_{t-1}| <= limit, a_{-1} = s_0  (change per tick)
+    action_delta_limits: list[float] | None = None
     action_clamp_limits: list[list[float]] | None = None
+    action_step_limits: list[float] | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -184,28 +190,31 @@ class MolmoAct2RLConfig(MolmoAct2Config):
                     f"action_encoding_stats_path or embodiment_stats_path, got {stats_path!r}."
                 )
 
-        if self.action_clamp_limits is not None:
-            action_dim = None
-            action_feature = (
-                self.output_features.get("action") if isinstance(self.output_features, dict) else None
-            )
-            if action_feature is not None:
-                shape = getattr(action_feature, "shape", None)
-                if shape is None and isinstance(action_feature, dict):
-                    shape = action_feature.get("shape")
-                if shape:
-                    action_dim = int(shape[0])
+        action_dim = None
+        action_feature = (
+            self.output_features.get("action") if isinstance(self.output_features, dict) else None
+        )
+        if action_feature is not None:
+            shape = getattr(action_feature, "shape", None)
+            if shape is None and isinstance(action_feature, dict):
+                shape = action_feature.get("shape")
+            if shape:
+                action_dim = int(shape[0])
 
-            if action_dim is not None and len(self.action_clamp_limits) != action_dim:
-                raise ValueError(
-                    f"action_clamp_limits must have {action_dim} [min, max] pairs, "
-                    f"got {len(self.action_clamp_limits)}."
-                )
-            for idx, limits in enumerate(self.action_clamp_limits):
-                if not isinstance(limits, (list, tuple)) or len(limits) != 2:
-                    raise ValueError(f"action_clamp_limits[{idx}] must be a [min, max] pair, got {limits!r}.")
-                if float(limits[0]) > float(limits[1]):
-                    raise ValueError(f"action_clamp_limits[{idx}] min must be <= max, got {limits!r}.")
+        for name in ("action_delta_limits", "action_clamp_limits", "action_step_limits"):
+            limits = getattr(self, name)
+            if limits is None:
+                continue
+            if action_dim is not None and len(limits) != action_dim:
+                raise ValueError(f"{name} must have {action_dim} entries, got {len(limits)}.")
+            for idx, limit in enumerate(limits):
+                if name == "action_clamp_limits":
+                    if not isinstance(limit, (list, tuple)) or len(limit) != 2:
+                        raise ValueError(f"{name}[{idx}] must be a [min, max] pair, got {limit!r}.")
+                    if float(limit[0]) > float(limit[1]):
+                        raise ValueError(f"{name}[{idx}] min must be <= max, got {limit!r}.")
+                elif float(limit) < 0:
+                    raise ValueError(f"{name}[{idx}] must be >= 0, got {limit!r}.")
 
         if self.critic_llm_depth < 1:
             raise ValueError("critic_llm_depth must be >= 1.")

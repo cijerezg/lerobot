@@ -261,6 +261,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 fmt=2,
                 baseline=1.0,
                 primary=True,
+                trend=True,
                 note="S_task=1 means task replacement and flow reseeding move the chunk equally far.",
             ),
             Metric("gt_rank_mean", "mean rank of true task", good="low", fmt=2),

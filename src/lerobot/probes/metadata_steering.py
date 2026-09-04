@@ -120,7 +120,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from lerobot.probes.manifest import Panel, write_index
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.utils.action_metrics import TRAJECTORY_RELATIVE_KEYS, trajectory_error_components
 from lerobot.probes.utils import (
     frame_metadata_lookup,
@@ -1069,8 +1069,20 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         see_also=["subtask_sweep", "mem_history_influence", "objective"],
         # Each readout is titled onto its own figure next to the null it has to beat —
         # the seed floor, the uniform column, zero improvement. The values stay in
-        # metadata_steering.json.
-        metrics=[],
+        # metadata_steering.json; only the verdict ratio is declared, so it can be
+        # followed across checkpoints.
+        metrics=[
+            Metric(
+                "separation_median",
+                "quality / flow-noise separation",
+                good="high",
+                fmt=2,
+                baseline=1.0,
+                primary=True,
+                trend=True,
+                note="Quality-range RMSE (q1 to q5) over the seed floor. 1 means the quality clause moves the chunk no further than reseeding does.",
+            ),
+        ],
         panels=panels,
         extra={"provenance": summary["data"]},
     )

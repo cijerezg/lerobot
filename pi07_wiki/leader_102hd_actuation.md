@@ -4,7 +4,7 @@ Plan of record for making the second leader arm (a **Star Arm 102HD**, acquired 
 drive, and for the three features that unlocks. The original leader is a **102LD** and is
 encoder-only; both arms must keep working from the same driver.
 
-Status: **measurements complete, implementation not started.**
+Status: **track C built (C1-C2 standalone 2026-09-02, C3 inside the RTC runtime 2026-09-03), track A/B stage 3 driver built; nothing has run the RTC path on hardware yet.** See §5.4.
 
 ---
 
@@ -235,6 +235,30 @@ The arm executes a policy that has never been validated. On top of §4.4:
   ceiling rather than commanding it; a wild action should stop playback, not be executed fast.
 - **Abort key.** Playback must be interruptible mid-chunk, unloading on the way out.
 - Clear space around the arm before playback. The leader has no collision awareness.
+
+### 5.4 As built (2026-09-03)
+
+C3 is a mode of the RTC runtime, not the one-shot script of §5.1: `inference_send_actions_to_robot:
+false` on the standalone inference config makes `RobotEnv.step` skip `send_action` and keep the
+requested targets, and `rtc_env_worker` sends those targets to `teleop.send_feedback` every step.
+The follower is read-only. The observation is therefore frozen and RTC keeps re-inferring against
+it, so only the first chunk is the policy's own trajectory; accepted, because the purpose is to see
+that the policy does not go wild, not to watch it act.
+
+Per-step ceiling (`feedback_max_raw_step_deg`, raw servo degrees) is a **fault, not a clip**: a
+target further than the ceiling from the last one unloads the arm and raises. Set at 8 from the
+corpus: over the four training roots (46 episodes, 181k steps) no demo step exceeds 6.1 raw deg and
+p99.9 is 1.1-2.7 per joint. In safety mode the runtime catches the fault, ends the episode and waits
+for the next start key; in the online actor it stays fatal.
+
+The initial gap is closed by `_approach_leader` in `rtc_actor_runtime.py`: after `enable_torque`
+at episode start, and again when an intervention ends, the leader is interpolated onto the
+follower's pose at 20 deg/s, one `send_feedback` per tick, minimum one second. When
+`fixed_reset_joint_positions` is set and actions are enabled, the follower has already moved to
+that pose, so the leader lands on the same start.
+
+Operator keys: the leader owns 0/1/2/5 (terminate/success/start/intervention) globally through
+pynput; `eval_subtasks` therefore binds letters (q w e r t y u).
 
 ---
 

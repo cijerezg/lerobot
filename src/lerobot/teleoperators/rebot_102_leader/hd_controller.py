@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING
 import fashionstar_uart_sdk as uservo
 import serial
 
-from ..utils import TeleopEvents
+from ..utils import TeleopEvents, TeleopFeedbackError
 from .mapping import clamp_position, position_to_raw, raw_to_position
 
 if TYPE_CHECKING:
@@ -52,7 +52,7 @@ STOP_UNLOAD = 0x10
 SYNC_MULTITURN_BY_INTERVAL = 14
 
 
-class LeaderFeedbackError(RuntimeError):
+class LeaderFeedbackError(TeleopFeedbackError):
     """Latched feedback fault that leaves the HD leader unloaded."""
 
 
@@ -256,20 +256,20 @@ class RebotArm102HDController:
                 )
 
             base = self._last_sent_raw
-            if base is None:
-                base = self._last_raw_positions or self._read_raw_locked()
-            step_limit = self.config.feedback_max_raw_step_deg
-            bounded = {
-                name: base[name] + max(-step_limit, min(step_limit, requested[name] - base[name]))
-                for name in self.motor_names
-            }
+            ceiling = self.config.feedback_max_raw_step_deg
+            for name in self.motor_names:
+                jump = requested[name] - base[name]
+                if abs(jump) > ceiling:
+                    self._trip_fault_locked(
+                        f"{name} asked to move {jump:+.1f} raw deg in one step, ceiling {ceiling:.1f}"
+                    )
             try:
-                self._send_raw_locked(bounded)
+                self._send_raw_locked(requested)
             except Exception as error:
                 reason = f"leader feedback command failed: {error}"
                 self._trip_fault_locked(reason, raise_error=False)
                 raise LeaderFeedbackError(reason) from error
-            self._last_sent_raw = bounded
+            self._last_sent_raw = requested
             self._last_feedback_time = time.monotonic()
 
     def enable_torque(self) -> None:

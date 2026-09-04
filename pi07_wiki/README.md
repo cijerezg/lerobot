@@ -35,7 +35,7 @@ Standalone documents that sit alongside the numbered pages.
 | [Depth short-term history](depth_history_design.md) | Built 2026-07-25 — temporal attention inside the patch CNN |
 | [Depth read redesign](depth_redesign_options.md) | Decided + built 2026-07-26 — decision record; `03_depth.md` §B.3 is the as-built reference |
 | [MEM temporal attention](mem_temporal_attention_analysis.md) | Built 2026-08-03 — spec, our deviation, measurements |
-| [reBot 102HD leader actuation](leader_102hd_actuation.md) | **Plan of record 2026-09-02, not started** — the new leader drives; staged plan for shadow mirroring, grab-to-takeover, and policy preview on the leader |
+| [reBot 102HD leader actuation](leader_102hd_actuation.md) | **Built 2026-09-03, not yet run on hardware** — HD driver with fault-not-clip ceiling, policy preview as an RTC safety mode with a linear leader approach; grab-to-takeover still planned |
 
 ## Where the code lives
 

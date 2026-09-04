@@ -81,7 +81,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from lerobot.probes.manifest import Panel, write_index
+from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     REBOT_JOINT_NAMES,
     makedirs,
@@ -435,8 +435,20 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         summary=summary,
         see_also=["metadata_steering", "mem_history_influence", "action_trace"],
         # Both readouts are titled onto subtask_sweep.png with their own null lines, and
-        # the docstring says how to read them. The values stay in subtask_sweep.json.
-        metrics=[],
+        # the docstring says how to read them. The values stay in subtask_sweep.json; only
+        # the verdict ratio is declared, so it can be followed across checkpoints.
+        metrics=[
+            Metric(
+                "separation_median",
+                "subtask / flow-noise separation",
+                good="high",
+                fmt=2,
+                baseline=1.0,
+                primary=True,
+                trend=True,
+                note="$S$: vocabulary spread over the same-clause seed floor. 1 means swapping the subtask moves the chunk no further than reseeding does.",
+            ),
+        ],
         panels=[
             Panel(
                 "subtask_sweep.png",

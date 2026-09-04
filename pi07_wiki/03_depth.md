@@ -356,6 +356,38 @@ from the depth telemetry is `depth_token_rms_ratio` and
 $2.8\times10^{-2}$, i.e. the adapter is emitting *louder* tokens that change the
 answer *less* — the path is alive and the model is routing around it.
 
+### B.3.3 Event-conditioned depth probe (2026-09-04)
+
+`probes/depth_event_probe.py` (`enable_depth_event`). The matched-depth
+counterfactual samples frames evenly, so its number is the depth read averaged over
+carrying, retreating and waiting. This probe chooses frames by the commanded gripper
+through the auxiliary head's own sidecars (`depth_gripper_events.parquet`, the dense
+`close_delta` / `open_delta`; §depth_gripper_event_labels.md) and reports per stratum:
+`pre_close_{L}s`, `pre_open_{L}s` at each lead $L$ (the labels must agree that event is
+the next of its type), and `carry` / `free` controls with no event within
+$L_{\max}+1$ s and a 1 s settle, sized per episode to that episode's event frames.
+Val v3 gives 29 closes / 31 opens over 4 episodes; at leads $\{1, 2\}$ s that is 120
+event frames and 124 controls, all on the stride grid.
+
+Conditions act on the wrist depth window only (current + history slots), RGB and the
+top camera untouched: `shift_{D}s` (same-episode window from $D$ s earlier — on an
+approach the object reads farther than in RGB, so the sign is known in advance),
+`cross_phase` (same-stratum window from another episode, nearest by standardized
+state), `z_offset` (every valid pixel $+\Delta z$ mm; back-projection scales $X, Y$
+with it), and `no_depth` kept as the untrained-shape reference.
+
+Readouts are paired against the same frame's deployment chunk, never the
+demonstration: displacement
+$\mathrm{path\_relative}(a_c, a_{\text{dep}}, \text{hold})$ with a reseed floor per
+stratum; the terminal gripper command shift $(g_T - g_{now})_c - (g_T - g_{now})_{\text{dep}}$
+in degrees; and the depth-only head's $\sigma(\text{logit})$ read off the same forward
+(`_depth_gripper_event_logits`, populated by `_stash_depth_inputs` on every path).
+The Trends rows are the pre-close/free displacement ratio and the pre-close gripper
+shift under the first `shift`. Ratio $\approx 1$ across strata means depth is a global
+bias, not a grasp cue. Chunk is 1 s, so at lead 1 s the commanded close sits at the
+chunk's end and the first-crossing step is censored for most frames; the terminal
+delta is the uncensored readout.
+
 ### B.4 HISTORICAL — the α-gate soft deadlock (retired 2026-07-26)
 
 The 2026-06→07 read was $o = \mathrm{SDPA}(q, K_{ctx}, V_{ctx}) +
@@ -443,4 +475,5 @@ Flamingo (per-layer tanh gate precedent); also PointACT 2605.21414, GST-VLA
       (masking lives in the encoder), `depth_units_mm = 0.1`
 - [ ] First copied-visual-path training run: watch `depth_rgb_rms_ratio`,
       `depth_late_early_rms_ratio`, the component pre-clip gradient norms, and the
-      2×2 probe's mse(rgb_only) − mse(rgb+depth)
+      depth probe's foreign-depth penalty. Its mse(no_depth) − mse(deployment) is an
+      untrained-shape stress number (depth dropout is 0), not evidence for depth

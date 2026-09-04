@@ -1086,6 +1086,7 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 note="$\\mathbb{E}_{t,\\varepsilon}\\|v_\\theta(x_t) - (a - \\varepsilon)\\|^2$ "
                 "on held-out frames. Large irreducible floor, so read the ratio "
                 "and $z$, not this level.",
+                trend=True,
             ),
             Metric(
                 "loss_flow.z",
@@ -1098,6 +1099,7 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 primary=True,
                 note="$(\\bar{\\mathcal{L}}_{val} - \\bar{\\mathcal{L}}_{train}) / "
                 "\\sqrt{\\mathrm{SEM}^2_{val} + \\mathrm{SEM}^2_{train}}$." + provisional,
+                trend=True,
             ),
             Metric(
                 "loss_flow.ratio",
@@ -1154,6 +1156,7 @@ def _write_index(summary: dict, output_dir: str) -> None:
                 primary=True,
                 note="$-\\frac{1}{N}\\sum_j \\log p(y_j \\mid y_{<j}, c)$ over the action-token "
                 "span, token-weighted as the trainer weights it.",
+                trend=True,
             ),
             Metric(
                 "loss_discrete_ce.z",
@@ -1180,6 +1183,7 @@ def _write_index(summary: dict, output_dir: str) -> None:
                     if chance
                     else "No action-token vocabulary size in config."
                 ),
+                trend=True,
             ),
             Metric(
                 "discrete.val.perplexity",

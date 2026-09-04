@@ -31,13 +31,13 @@ from lerobot.rl.gym_manipulator import (
     make_robot_env,
     step_env_and_process_transition,
 )
-from lerobot.rl.inference_utils import convert_env_obs_to_policy_format
+from lerobot.rl.inference_utils import bound_policy_actions, convert_env_obs_to_policy_format
 from lerobot.rl.queue import get_last_item_from_queue
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.subtask_console import make_subtask_console
 from lerobot.rl.utils import save_video_with_critic_overlay
 from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
-from lerobot.teleoperators.utils import TeleopEvents
+from lerobot.teleoperators.utils import TeleopEvents, TeleopFeedbackError
 from lerobot.transport.utils import bytes_to_state_dict, python_object_to_bytes
 from lerobot.utils.action_smoothing import apply_butterworth_filter
 from lerobot.utils.constants import ACTION
@@ -105,7 +105,7 @@ def _validate_inference_action_routing(online_env, teleop_device) -> None:
             "inference_send_actions_to_robot=false requires the real-robot RobotEnv action target path"
         )
 
-    expected_keys = {f"{name}.pos" for name in online_env.robot.bus.motors}
+    expected_keys = set(online_env.robot.action_features)
     feedback_keys = set(teleop_device.feedback_features)
     if feedback_keys != expected_keys:
         raise RuntimeError(
@@ -126,6 +126,23 @@ def _close_robot_hardware(online_env, teleop_device, log_prefix: str) -> None:
         online_env.close()
     except Exception:
         logger.error("[%s] Robot environment close failed:\n%s", log_prefix, traceback.format_exc())
+
+
+def _approach_leader(teleop_device, online_env, fps: float, deg_per_s: float = 20.0) -> None:
+    """Move the actuated leader onto the follower's pose before it follows anything.
+
+    Linear, one send_feedback per control tick, so the initial gap never reaches the
+    driver's per-step ceiling (a fault, not a clip). Call after enable_torque().
+    """
+    target = {k: float(v) for k, v in online_env.get_raw_joint_positions().items()}
+    current = {k: float(v) for k, v in teleop_device.get_action().items() if k in target}
+    gap = max(abs(target[k] - current[k]) for k in current)
+    steps = max(int(fps), math.ceil(fps * gap / deg_per_s))
+    logger.info("[RTC_ENV] Leader approach: largest gap %.1f deg, %.1f s", gap, steps / fps)
+    for step in range(1, steps + 1):
+        t = step / steps
+        teleop_device.send_feedback({k: current[k] + (target[k] - current[k]) * t for k in current})
+        precise_sleep(1.0 / fps)
 
 
 def _obs_with_depth(policy_obs: dict, env_obs: dict, cfg) -> dict:
@@ -698,21 +715,7 @@ def rtc_inference_worker(
 
                 processed_actions = apply_butterworth_filter(processed_actions)
 
-                clamp_limits = getattr(policy.config, "action_clamp_limits", None)
-                if clamp_limits is not None:
-                    limits = torch.tensor(clamp_limits, dtype=processed_actions.dtype, device=processed_actions.device)
-                    exceeded = (processed_actions < limits[:, 0]) | (processed_actions > limits[:, 1])
-                    if exceeded.any():
-                        joints = exceeded.any(dim=0).nonzero(as_tuple=True)[0].tolist()
-                        raw_min = processed_actions[:, joints].min(dim=0).values.tolist()
-                        raw_max = processed_actions[:, joints].max(dim=0).values.tolist()
-                        logger.warning(
-                            "[CLAMP] Action exceeded limits on joints %s — raw range min=%s max=%s. Clamping.",
-                            joints,
-                            [f"{v:.1f}" for v in raw_min],
-                            [f"{v:.1f}" for v in raw_max],
-                        )
-                    processed_actions = torch.clamp(processed_actions, min=limits[:, 0], max=limits[:, 1])
+                processed_actions = bound_policy_actions(processed_actions, latest_obs, policy)
 
             new_latency = time.perf_counter() - current_time
             new_delay = math.ceil(new_latency / time_per_chunk)
@@ -827,6 +830,7 @@ def rtc_env_worker(
             logger.info("[ACTOR] Params loaded. Starting episode.")
         if teleop_feedback_supported:
             teleop_device.enable_torque()
+            _approach_leader(teleop_device, online_env, cfg.env.fps)
         shared_state.set_episode_active(True)
 
         while shared_state.running:
@@ -872,6 +876,7 @@ def rtc_env_worker(
                     logger.info("[ACTOR] Params loaded. Starting episode.")
                 if teleop_feedback_supported:
                     teleop_device.enable_torque()
+                    _approach_leader(teleop_device, online_env, cfg.env.fps)
                 shared_state.set_episode_active(True)
 
             start_time = time.perf_counter()
@@ -880,6 +885,8 @@ def rtc_env_worker(
                 logger.info("[RTC_ENV] Teleop state changed (intervening=%s), resetting policy/queue", shared_state.is_intervening)
                 shared_state.request_reset()
                 action_queue.clear()
+                if was_intervening and teleop_feedback_supported:
+                    _approach_leader(teleop_device, online_env, cfg.env.fps)
             was_intervening = shared_state.is_intervening
 
             _t_action_start = time.perf_counter()
@@ -958,7 +965,13 @@ def rtc_env_worker(
                         if key.endswith(".pos"):
                             feedback[key] = value.item() if isinstance(value, torch.Tensor) else float(value)
                 if feedback and teleop_feedback_supported:
-                    teleop_device.send_feedback(feedback)
+                    try:
+                        teleop_device.send_feedback(feedback)
+                    except TeleopFeedbackError as error:
+                        if getattr(online_env, "send_actions_to_robot", True):
+                            raise
+                        logger.error("[RTC_ENV] Leader stopped and unloaded; ending the episode: %s", error)
+                        truncated = True
 
             with shared_state.lock:
                 cached_tokens = shared_state.cached_subtask_tokens

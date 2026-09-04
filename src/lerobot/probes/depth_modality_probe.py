@@ -1,12 +1,23 @@
-"""Matched-depth counterfactuals + sensor-loss stress tests for the joint depth read.
+"""Matched-depth counterfactuals + untrained-shape stress tests for the wrist depth read.
 
 Runs predict_action_chunk on the same frame(s) with IDENTICAL fixed-seed flow noise.
-The primary counterfactual replaces the complete current-plus-history depth window with
-real depth from a different episode, matched by task/subtask when possible and then by
-robot state and episode progress. A same-episode stale window is a secondary control.
-The old all-null depth condition remains only as a missing-sensor stress test; because
-training uses ``pointmap_config.dropout_prob: 0.0``, it is not evidence for the value of
-depth content.
+Every condition intervenes on the WRIST slot only; the top camera is present throughout.
+
+  ``deployment``     wrist RGB + wrist depth, the prompt a rollout issues
+  ``foreign_depth``  the complete current-plus-history depth window replaced by real
+                     depth from a different episode, matched by task/subtask when
+                     possible and then by robot state and episode progress (primary)
+  ``stale_depth``    the same window taken from an earlier point in the same episode
+  ``no_depth``       depth window removed; the encoder emits its learned null bank
+  ``no_wrist_rgb``   the wrist camera's image-patch span masked out of attention
+  ``wrist_off``      both of the above
+
+The two swaps keep the prompt shape training produced and vary only content, so they
+measure whether depth CONTENT is read. The three removals are shapes training never
+produced — ``pointmap_config.dropout_prob`` and ``rgb_dropout_prob`` are both 0.0, and
+no rig in the diverse mixture lacks a wrist camera — so their penalty mixes lost
+information with distribution shift and is NOT evidence for the value of depth. They
+are kept, tagged ``untrained shape`` in the JSON and hatched in the figure.
 
 The probe reports:
 
@@ -28,10 +39,10 @@ scale, while the MSE conditions and finite-difference sensitivity measure whethe
 actually affects and improves the action.
 
 Conditions are produced within one policy build. Foreign/stale treatments swap all
-``observation.depth.*`` and ``history.depth.*`` tensors together. Null depth removes
-those keys (learned null bank), while RGB− applies the wrist-patch attention mask and
-triggers the model-side bridge kill. Rebuild-to-rebuild nondeterminism (~1e-1, from-
-scratch norm buffers) would swamp the comparisons.
+``observation.depth.*`` and ``history.depth.*`` tensors together. ``no_depth`` removes
+those keys (learned null bank), while ``no_wrist_rgb`` applies the wrist-patch attention
+mask and triggers the model-side bridge kill. Rebuild-to-rebuild nondeterminism (~1e-1,
+from-scratch norm buffers) would swamp the comparisons.
 
 Outputs under ``<output_dir>/``:
   depth_modality.json   every number below, plus per-frame rows
@@ -61,6 +72,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from matplotlib.patches import Patch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
@@ -82,13 +94,22 @@ from lerobot.probes.utils import (
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
-REAL = "rgb+depth"
+DEPLOYMENT = "deployment"
 FOREIGN = "foreign_depth"
 STALE = "stale_depth"
-NULL = "rgb_only"
-DEPTH_ONLY = "depth_only"
-NEITHER = "neither"
-CONDITIONS = (REAL, FOREIGN, STALE, NULL, DEPTH_ONLY, NEITHER)
+NO_DEPTH = "no_depth"
+NO_WRIST_RGB = "no_wrist_rgb"
+WRIST_OFF = "wrist_off"
+CONDITIONS = (DEPLOYMENT, FOREIGN, STALE, NO_DEPTH, NO_WRIST_RGB, WRIST_OFF)
+# Prompt shapes training never produced (both pointmap dropouts are 0.0): their penalty
+# mixes lost information with distribution shift and is not evidence about depth content.
+UNTRAINED_SHAPES = (NO_DEPTH, NO_WRIST_RGB, WRIST_OFF)
+CONDITION_KIND = {
+    DEPLOYMENT: "deployment",
+    FOREIGN: "counterfactual",
+    STALE: "counterfactual",
+    **{c: "untrained shape" for c in UNTRAINED_SHAPES},
+}
 CONDITION_PAIRS = tuple(combinations(CONDITIONS, 2))
 
 
@@ -99,7 +120,7 @@ class DepthModalityProbeConfig(TrainRLServerPipelineConfig):
 
 
 def _drop_depth(obs: dict, *, depth_obs_key: str) -> dict:
-    """Remove the complete depth window, retaining the legacy sensor-loss stress test."""
+    """Remove the complete depth window: the ``no_depth`` untrained-shape condition."""
     out = {k: (v.clone() if torch.is_tensor(v) else v) for k, v in obs.items()}
     out.pop(depth_obs_key, None)
     for key in [k for k in out if str(k).startswith("history.depth.")]:
@@ -279,7 +300,7 @@ def _load_depth_window(dataset, cfg, global_idx: int, obs: dict, *, depth_obs_ke
 
 
 def _write_manifest(output_dir: str, summary: dict) -> dict:
-    """Describe the matched depth counterfactual and legacy stress tests."""
+    """Describe the matched depth counterfactuals and the untrained-shape stress tests."""
     trajectory_keys = [
         "trajectory_counterfactual_penalty.foreign_depth.path_mse",
         "trajectory_counterfactual_penalty.foreign_depth.shape_mse",
@@ -302,10 +323,11 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                 baseline=0.0,
                 warn=0.0,
                 primary=True,
+                trend=True,
                 note="$\\mathrm{mse}(\\text{foreign depth}) - \\mathrm{mse}(\\text{real depth})$ at identical flow noise. The donor comes from another episode and swaps current plus historical depth together. Positive means scene-aligned depth improves the demonstrated path.",
             ),
             Metric(
-                "max_abs_delta.rgb+depth vs foreign_depth",
+                f"max_abs_delta.{DEPLOYMENT} vs {FOREIGN}",
                 "Action shift under foreign depth",
                 good="none",
                 fmt=4,
@@ -322,11 +344,11 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
             ),
             Metric(
                 "missing_depth_penalty",
-                "Missing-depth stress penalty",
+                "No-depth penalty (untrained shape)",
                 good="none",
                 fmt=5,
                 baseline=0.0,
-                note="Legacy all-null depth contrast. Training used depth dropout 0, so this measures sensor-loss robustness, not the value of depth content.",
+                note="Path MSE(no_depth) − path MSE(deployment). Depth dropout was 0 in training, so a depth-less prompt is a shape the model never saw: this mixes lost information with distribution shift and says nothing about the value of depth content.",
             ),
             Metric(
                 "fd_sensitivity.ratio",
@@ -384,11 +406,14 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                 "Matched depth counterfactuals and local sensitivity",
                 how=(
                     "**Left** — normalized MSE against the demonstrated chunk, all at "
-                    "identical flow noise. ``rgb+depth`` is deployment. ``foreign_depth`` "
-                    "swaps current plus historical depth with a matched real window from a "
-                    "different episode; this is the primary counterfactual. ``stale_depth`` "
-                    "uses an earlier same-episode window. ``rgb_only`` and ``neither`` route "
-                    "through the all-null bank and are sensor-loss stress tests only.\n\n"
+                    "identical flow noise; the top camera is present in every bar. "
+                    "``deployment`` is the rollout prompt. ``foreign_depth`` swaps current plus "
+                    "historical depth with a matched real window from a different episode; "
+                    "this is the primary counterfactual. ``stale_depth`` uses an earlier "
+                    "same-episode window. The hatched bars are prompt shapes training never "
+                    "produced: ``no_depth`` routes through the null bank, ``no_wrist_rgb`` masks "
+                    "the wrist camera's patches, ``wrist_off`` does both. Their height mixes "
+                    "lost information with distribution shift.\n\n"
                     "**Right** — the existing finite-difference sensitivity to 1%-of-std raw "
                     "depth and wrist-RGB perturbations. It is secondary to the matched real-"
                     "depth comparison."
@@ -421,14 +446,24 @@ def _render(summary: dict, per_frame: list[dict], output_path: str) -> None:
     conditions = summary["conditions"]
     mse = [summary["mse_norm"][c] for c in conditions]
     colors = {
-        REAL: "#264653",
+        DEPLOYMENT: "#264653",
         FOREIGN: "#E76F51",
         STALE: "#F4A261",
-        NULL: "#9D4EDD",
-        DEPTH_ONLY: "#2A9D8F",
-        NEITHER: "#6C757D",
+        NO_DEPTH: "#9D4EDD",
+        NO_WRIST_RGB: "#2A9D8F",
+        WRIST_OFF: "#6C757D",
     }
-    axes[0].bar(np.arange(len(conditions)), mse, color=[colors[c] for c in conditions])
+    bars = axes[0].bar(np.arange(len(conditions)), mse, color=[colors[c] for c in conditions])
+    for bar, condition in zip(bars, conditions):
+        if condition in UNTRAINED_SHAPES:
+            bar.set_hatch("///")
+            bar.set_edgecolor("#333333")
+            bar.set_alpha(0.55)
+    axes[0].legend(
+        handles=[Patch(facecolor="white", edgecolor="#333333", hatch="///", label="untrained shape (never in training)")],
+        fontsize=8,
+        loc="upper left",
+    )
     axes[0].set_xticks(np.arange(len(conditions)), conditions, rotation=20, ha="right")
     axes[0].set_ylabel("normalized MSE vs GT")
     axes[0].set_title(
@@ -450,7 +485,7 @@ def _render(summary: dict, per_frame: list[dict], output_path: str) -> None:
 
     fd = summary["fd_sensitivity"]
     fig.suptitle(
-        f"Point-map depth read — n={summary['n_frames']} frames  |  "
+        f"Wrist depth read (top camera always on) — n={summary['n_frames']} frames  |  "
         f"FD sensitivity depth={fd['depth']:.3e} rgb={fd['rgb']:.3e} "
         f"(ratio {fd['ratio']:.3f})",
         fontsize=13,
@@ -597,11 +632,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 dataset, cfg, donor["global_idx"], obs, depth_obs_key=depth_obs_key
             )
             condition_obs = {
-                REAL: obs,
+                DEPLOYMENT: obs,
                 FOREIGN: _replace_depth_window(obs, foreign_window, depth_obs_key=depth_obs_key),
-                NULL: _drop_depth(obs, depth_obs_key=depth_obs_key),
-                DEPTH_ONLY: obs,
-                NEITHER: _drop_depth(obs, depth_obs_key=depth_obs_key),
+                NO_DEPTH: _drop_depth(obs, depth_obs_key=depth_obs_key),
+                NO_WRIST_RGB: obs,
+                WRIST_OFF: _drop_depth(obs, depth_obs_key=depth_obs_key),
             }
             stale = _stale_depth_index(
                 global_idx,
@@ -621,11 +656,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 actions[condition] = predict(
                     condition_obs[condition],
                     frame,
-                    rgb_on=condition not in (DEPTH_ONLY, NEITHER),
+                    rgb_on=condition not in (NO_WRIST_RGB, WRIST_OFF),
                 )
                 # Capture only the real RGB+depth condition. Reading after a donor or
                 # null condition would report the treatment's token scale instead.
-                if condition == REAL:
+                if condition == DEPLOYMENT:
                     capture_rgb_depth_scale()
 
             if not n_context:
@@ -634,7 +669,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 )
                 n_context = int(probe_batch["input_ids"].shape[-1])
 
-            horizon = min(actions[REAL].shape[0], gt_norm.shape[0])
+            horizon = min(actions[DEPLOYMENT].shape[0], gt_norm.shape[0])
             row = {
                 "global_idx": int(global_idx),
                 "episode_idx": int(frame["episode_idx"]),
@@ -668,7 +703,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                     if value is not None:
                         by_condition = trajectory_by_condition.setdefault(key, {c: [] for c in CONDITIONS})
                         by_condition[condition].append(value)
-                logging.info(f"  mse_norm[{condition:>9s}] = {mse:.5f}")
+                logging.info(f"  mse_norm[{condition:>12s}] = {mse:.5f}")
             for left, right in CONDITION_PAIRS:
                 if left not in actions or right not in actions:
                     continue
@@ -682,14 +717,14 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             depth_raw = obs[depth_obs_key]
             pert = torch.randn_like(depth_raw) * depth_raw.float().std() * eps
             sens_depth = (
-                (predict({**obs, depth_obs_key: depth_raw + pert}, frame) - actions[REAL]).norm().item()
+                (predict({**obs, depth_obs_key: depth_raw + pert}, frame) - actions[DEPLOYMENT]).norm().item()
             )
             rgb_raw = obs[rgb_obs_key].float()
             pert = torch.randn_like(rgb_raw) * rgb_raw.std() * eps
             sens_rgb = (
                 (
                     predict({**obs, rgb_obs_key: (rgb_raw + pert).to(obs[rgb_obs_key].dtype)}, frame)
-                    - actions[REAL]
+                    - actions[DEPLOYMENT]
                 )
                 .norm()
                 .item()
@@ -720,12 +755,12 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         condition: {
             key: (
                 None
-                if values[REAL] is None or values[condition] is None
-                else values[condition] - values[REAL]
+                if values[DEPLOYMENT] is None or values[condition] is None
+                else values[condition] - values[DEPLOYMENT]
             )
             for key, values in trajectory.items()
         }
-        for condition in (FOREIGN, STALE, NULL)
+        for condition in (FOREIGN, STALE, NO_DEPTH)
     }
     match_tier_counts = dict(sorted(Counter(row["foreign_donor"]["tier"] for row in per_frame).items()))
     state_distances = [
@@ -737,6 +772,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "n_frames": n,
         "frame_indices": [int(i) for i in frame_indices],
         "conditions": active_conditions,
+        "condition_kind": {condition: CONDITION_KIND[condition] for condition in active_conditions},
         "mse_norm": {
             condition: float(np.mean(mse_by_condition[condition])) for condition in active_conditions
         },
@@ -747,7 +783,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         },
         "foreign_depth_penalty": trajectory_counterfactual_penalty[FOREIGN]["path_mse"],
         "stale_depth_penalty": trajectory_counterfactual_penalty[STALE]["path_mse"],
-        "missing_depth_penalty": trajectory_counterfactual_penalty[NULL]["path_mse"],
+        "missing_depth_penalty": trajectory_counterfactual_penalty[NO_DEPTH]["path_mse"],
         "trajectory": trajectory,
         "trajectory_counterfactual_penalty": trajectory_counterfactual_penalty,
         "foreign_matching": {
@@ -808,8 +844,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             f"({summary['n_stale_frames']} frames)"
         )
     logging.info(
-        f"missing-depth penalty = {summary['missing_depth_penalty']:+.5f} "
-        "(unsupported sensor-loss stress test)"
+        f"no-depth penalty = {summary['missing_depth_penalty']:+.5f} "
+        "(untrained shape: not evidence about depth content)"
     )
     logging.info(f"mean fd sensitivity: depth={mean_depth:.4e} rgb={mean_rgb:.4e}")
     logging.info(f"wrote {os.path.join(output_dir, 'depth_modality.json')} and .png")

@@ -16,6 +16,8 @@ python -m lerobot.scripts.view_probes "path/to/output_dir"
 
 It serves a browser UI on `http://127.0.0.1:7870` and re-scans `<run>/validation/step_*/<probe>/` on every request, so a checkpoint that lands mid-session appears on refresh. Each probe describes itself to the viewer through the `index.json` it writes (`probes/manifest.py`), so its documentation, headline numbers, and per-figure captions live next to the code that produces them.
 
+The **Trends** entry at the top of the probe list is one table of the verdict numbers across every step: each probe declares at most one or two metrics with `trend=True` (the flow loss and its val/train gap, the FAST cross-entropy and top-1, the subtask/task/quality separations, the foreign-depth penalty, the history content-gain z). Nothing reaches Aim; the table is read from the same `index.json` files.
+
 The following sections detail what each probe computes and the specific questions it addresses.
 
 

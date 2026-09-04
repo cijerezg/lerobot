@@ -72,7 +72,7 @@ class Metric:
 
     Args:
         key: where to find it in the probe's summary dict. Dotted for nested
-            values, e.g. ``"mse_norm.rgb_only"``.
+            values, e.g. ``"mse_norm.no_depth"``.
         label: plain-words name shown in the viewer.
         good: ``"high"``, ``"low"``, or ``"none"`` when the value is descriptive
             rather than better-or-worse (a layer index, a frame count).
@@ -90,6 +90,10 @@ class Metric:
         primary: this is one of the numbers the probe is read for. The viewer lists
             every metric in one table and sorts these to the top of it; the one shown
             beside the probe in the sidebar is the first of them.
+        trend: one of the few numbers worth following across checkpoints. The viewer's
+            Trends page is exactly these rows, every probe together, one column per
+            step. Declare it on the verdict number of a probe, not on its supporting
+            readouts — the page is only useful while it fits on one screen.
     """
 
     key: str
@@ -103,6 +107,7 @@ class Metric:
     baseline: float | None = None
     refs: list[str] = field(default_factory=list)
     primary: bool = False
+    trend: bool = False
 
     def status(self, value: float | None) -> str:
         if value is None or self.good == "none" or (self.warn is None and self.bad is None):
@@ -240,6 +245,7 @@ def write_index(
                 "bad": metric.bad,
                 "refs": list(metric.refs),
                 "primary": metric.primary,
+                "trend": metric.trend,
                 "status": metric.status(value),
             }
         )

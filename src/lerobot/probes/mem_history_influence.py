@@ -304,7 +304,7 @@ def _contrast_panel(ax, summary) -> None:
         (cell_name("foreign", "foreign"), "both foreign\n(is it *this* history?)"),
         (cell_name("foreign", "real"), "image foreign"),
         (cell_name("real", "foreign"), "state foreign"),
-        ("none", "none — OFF-DISTRIBUTION\n(legacy origin)"),
+        ("none", "none — UNTRAINED SHAPE\n(history keys removed)"),
     ]
     values = [summary[f"{name}_gt_mse_penalty"] for name, _ in contrasts]
     errors = [1.96 * summary[f"{name}_gt_mse_penalty_sem"] for name, _ in contrasts]
@@ -547,5 +547,5 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         f"[mem_history_influence] n={len(rows)}  penalty vs {reference_name} (95% CI; "
         f"positive = the real window helped):  both emptied={headline(cell_name('constant', 'constant'))}  "
         f"both foreign={headline(cell_name('foreign', 'foreign'))}  "
-        f"none[OOD]={headline('none')}"
+        f"none[untrained shape]={headline('none')}"
     )

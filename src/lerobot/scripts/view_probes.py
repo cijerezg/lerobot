@@ -235,6 +235,7 @@ def build_index(val_dir: Path) -> dict:
                         "warn": metric.get("warn"), "bad": metric.get("bad"),
                         "note": "", "values": {}, "statuses": {},
                         "primary": metric.get("primary", False),
+                        "trend": metric.get("trend", False),
                         "refs": list(metric.get("refs", [])),
                     }
                     probe["metrics"].append(row)
@@ -242,6 +243,7 @@ def build_index(val_dir: Path) -> dict:
                 row["values"][str(step_num)] = metric["value"]
                 row["statuses"][str(step_num)] = metric.get("status", "info")
                 row["primary"] = row.get("primary", False) or metric.get("primary", False)
+                row["trend"] = row.get("trend", False) or metric.get("trend", False)
                 if metric.get("refs"):
                     row["refs"] = list(metric["refs"])
                 if metric.get("note"):
@@ -484,6 +486,20 @@ kbd{background:var(--panel);border:1px solid var(--line);border-bottom-width:2px
 .metriccell .val{font:650 15px ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
 .metriccell .spark{margin-left:auto}
 
+/* ── trends: the declared verdict numbers, every probe, one column per step ── */
+.trendwrap{margin:14px 20px;overflow-x:auto}
+table.trend{border-collapse:collapse;font-size:12px;min-width:100%}
+.trend th,.trend td{padding:6px 9px;border-bottom:1px solid var(--line);text-align:right;
+ font-variant-numeric:tabular-nums;white-space:nowrap}
+.trend th{color:var(--muted);font-weight:600;font-size:10.5px;letter-spacing:.04em}
+.trend th.lbl,.trend td.lbl{text-align:left}
+.trend td.lbl .probe{display:block;font-size:10.5px;color:var(--muted)}
+.trend td.now,.trend th.now{background:var(--panel)}
+.trend td.val{font-family:ui-monospace,Menlo,monospace}
+.trend td.good{color:var(--good)}.trend td.warn{color:var(--warn)}.trend td.bad{color:var(--bad)}
+.trend .sparkwide{width:150px;height:30px;flex:none}
+.trend td.sp{padding-top:3px;padding-bottom:3px}
+
 /* ── data provenance ────────────────────────────────────────────────────── */
 .prov{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 12px;font-size:12px}
 .prov dt{color:var(--muted)}
@@ -621,6 +637,7 @@ let DATA = null, si = 0, cur = null, pick = null, facet = [], zoom = "auto";
 const FACET_THRESHOLD = 12;
 let refreshTimer = null, railUserSet = false;
 const KEYS = "__keys__";          // dropdown option: every key figure, stacked
+const TRENDS = "__trends__";      // rail entry: the declared trend metrics across steps
 const ANY  = "✱any";              // facet option: don't filter on this axis
 // Downscaling past this makes axis labels and annotations illegible, so a figure
 // that would shrink further opens at 100% in a scrollable viewport instead.
@@ -1034,10 +1051,17 @@ function shownPanels(plan){
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────
+function trendRows(){
+  return DATA.probes.flatMap(p => p.metrics.filter(m => m.trend).map(m => ({p, m})));
+}
 function drawList(){
   const q = document.getElementById("filter").value.toLowerCase();
   const here = probesAt();
-  document.getElementById("list").innerHTML = DATA.groups.map(g => {
+  const trends = trendRows().length && !q ? `<button type="button" class="item ${cur===TRENDS?"on":""}"
+    onclick="sel(TRENDS)" title="Declared verdict numbers, every probe, one column per step"
+    aria-current="${cur===TRENDS?"true":"false"}"><span class="dot none"></span>
+    <span class="nm">Trends</span><span class="num">${DATA.steps.length} steps</span></button>` : "";
+  document.getElementById("list").innerHTML = trends + DATA.groups.map(g => {
     const items = here.filter(p => p.group === g &&
       (!q || (p.title + p.id + p.claim).toLowerCase().includes(q)));
     if(!items.length) return "";
@@ -1098,8 +1122,45 @@ function fitImage(img){
     (scale < 1 ? " · double-click for full size" : "");
 }
 
+// Wider than the inline sparkline, with the baseline drawn, since here the shape IS the reading.
+function trendSpark(m){
+  const idx = presentSteps(m);
+  if(idx.length < 2) return `<svg class="sparkwide" viewBox="0 0 150 30"></svg>`;
+  const vals = idx.map(i => m.values[stepKey(i)]);
+  const extra = (m.baseline === null || m.baseline === undefined) ? [] : [m.baseline];
+  const lo = Math.min(...vals, ...extra), hi = Math.max(...vals, ...extra), rg = (hi - lo) || 1;
+  const W = 150, H = 30, X = i => (i/(idx.length-1))*(W-8)+4, Y = v => H-4-((v-lo)/rg)*(H-10);
+  const d = vals.map((v, i) => (i?"L":"M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" ");
+  const at = idx.indexOf(idx.filter(i => i <= si).pop());
+  const base = extra.length ? `<line x1="0" y1="${Y(m.baseline).toFixed(1)}" x2="${W}"
+    y2="${Y(m.baseline).toFixed(1)}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>` : "";
+  const head = at >= 0 ? `<circle cx="${X(at).toFixed(1)}" cy="${Y(vals[at]).toFixed(1)}" r="2.8" fill="var(--accent)"/>` : "";
+  return `<svg class="sparkwide" viewBox="0 0 ${W} ${H}">${base}<path d="${d}" fill="none"
+    stroke="var(--fg)" stroke-width="1.5"/>${head}</svg>`;
+}
+function drawTrends(main){
+  const rows = trendRows();
+  const head = DATA.steps.map((s, i) => `<th class="${i===si?"now":""}">${s.step.toLocaleString()}</th>`).join("");
+  const body = rows.map(({p, m}) => `<tr>
+    <td class="lbl">${esc(m.label)}<span class="probe">${esc(p.title)} · ${esc(dirLabel(m))}</span></td>
+    <td class="sp">${trendSpark(m)}</td>
+    ${DATA.steps.map((s, i) => { const v = m.values[stepKey(i)];
+      const status = m.statuses ? (m.statuses[stepKey(i)] || "info") : "info";
+      return `<td class="val ${status} ${i===si?"now":""}">${fmt(v, m.fmt)}</td>`; }).join("")}
+  </tr>`).join("");
+  main.innerHTML = `
+    <div class="probehead"><h2>Trends</h2>
+      <p class="claim">The number each probe is read for, every checkpoint side by side. A probe
+      declares one with <code>trend=True</code>; the dashed line is its baseline, the dot is the
+      selected step.</p></div>
+    <div class="trendwrap"><table class="trend">
+      <thead><tr><th class="lbl">metric</th><th></th>${head}</tr></thead>
+      <tbody>${body || `<tr><td class="lbl">no probe declares a trend metric</td></tr>`}</tbody>
+    </table></div>`;
+}
 function drawMain(){
   const main = document.getElementById("main"), p = probe();
+  if(cur === TRENDS){ drawTrends(main); return; }
   if(!p){ main.innerHTML = `<div class="empty">select a probe</div>`; return; }
   const view = viewerOptions(p);
 
@@ -1283,7 +1344,7 @@ async function reload(){
     }
     range.value = si;
     const here = probesAt();
-    cur = (keep && here.some(p => p.id === keep)) ? keep : (here[0] ? here[0].id : null);
+    cur = (keep === TRENDS || (keep && here.some(p => p.id === keep))) ? keep : (here[0] ? here[0].id : null);
     pick = null; draw();
     const added = previous ? Math.max(0, DATA.steps.length - previous.steps.length) : 0;
     flashRefresh(added ? `${added} new step${added === 1 ? "" : "s"}` : (previous ? "Up to date" : ""));

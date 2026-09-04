@@ -29,6 +29,32 @@ Episode restart clears history, subtask, and summary; **intervention clears
 nothing** (training buffers keep contiguous frames across takeover; teleop action
 = executed action).
 
+### Action bounds (both runtimes, after the Butterworth)
+
+`utils/action_smoothing.bound_action_chunk`, called through
+`rl/inference_utils.bound_policy_actions` from the RTC and non-RTC inference
+workers. Bounds the decoded chunk in follower degrees relative to $s_0$, the
+observed state the chunk was inferred from, in this order:
+
+1. excursion: $a_t \leftarrow s_0 + \mathrm{clip}(a_t - s_0, -D_j, D_j)$ — `action_delta_limits`
+2. absolute: $a_t \leftarrow \mathrm{clip}(a_t, lo_j, hi_j)$ — `action_clamp_limits`
+3. rate: $a_t \leftarrow a_{t-1} + \mathrm{clip}(a_t - a_{t-1}, -r_j, r_j)$, $a_{-1} = s_0$ — `action_step_limits`
+
+Invariants: the absolute clamp is a contraction so it cannot undo the excursion
+bound; the rate stage runs last in tracking form, so an $s_0$ outside the workspace
+walks to the box edge at $r_j$ per tick instead of jumping. The RTC leftover tensor
+(normalized, fed back as guidance) is not bounded, as with the filter. Fires log one
+`[BOUND]` warning per chunk with the max shift per joint. The probes must not apply
+these bounds. Values are 8 wide (padding column = 0, pinned) and come from
+`migration/measure_action_bounds.py` over the training roots: $D_j$ = 1.5 x the
+anchor-delta q01/q99 envelope over the horizon, workspace = action q0.1/q99.9 -/+ 5 deg
+capped by the driver's `joint_limits`, $r_j$ = 1.25 x the max per-tick delta in the
+demos. The driver's own `joint_limits` clip and the 60 deg/s `pos_vel_velocity` cap
+stay as the outer layer. The reset move (`fixed_reset_joint_positions`,
+`reset_follower_position`) goes through `send_action` at 20 deg/s, so it passes the
+same driver layer; `RobotEnv` reads joint names from `robot.action_features`, not from
+a Feetech-style `bus.motors` (the rebot bus has none).
+
 ## 2. Depth at inference
 
 The D405 delivers raw uint16 z16 (0.1 mm/level, spatial + hole-fill filters OFF —

@@ -330,6 +330,7 @@ class ProbeConfig:
     )
     enable_metadata_steering: bool = False  # quality/mistake clause: steering range + usefulness
     enable_depth_modality: bool = False  # matched foreign/stale depth + null sensor-loss stress
+    enable_depth_event: bool = False  # depth read at pre-grasp frames against far-from-event controls
     enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
@@ -389,6 +390,16 @@ class ProbeConfig:
     # legacy RGB/depth sensor-loss stress cells, plus FD sensitivity.
     depth_modality_n_frames: int | None = None
     depth_stale_seconds: float = 2.0
+
+    # Depth at gripper events: frames chosen by the commanded gripper through the auxiliary
+    # head's own label sidecars, every readout per stratum. Leads are seconds before a
+    # commanded close/open at which a frame is placed; shifts are how far back in the same
+    # episode the depth window is taken while RGB stays put; the z offset pushes every
+    # valid pixel farther by that many millimetres. Controls are sized to the event frames
+    # per episode, and n_seeds supplies the reseed floor.
+    depth_event_leads_s: str = "1.0,2.0"
+    depth_event_shift_s: str = "1.0,2.0"
+    depth_event_z_offset_mm: float = 30.0
 
     # Attention budget. Reuses spatial_layers, and n_frames_per_episode unless
     # budget_n_frames_per_episode overrides it (one capture per frame covers every

@@ -88,13 +88,13 @@ def test_feedback_requires_explicit_torque_enable() -> None:
     assert ctrl.sync_commands == []
 
 
-def test_feedback_uses_sync_packet_mapping_step_limit_and_power_overrides() -> None:
-    controller, ctrl, _ = _controller(feedback_max_raw_step_deg=5.0)
+def test_feedback_uses_sync_packet_mapping_and_power_overrides() -> None:
+    controller, ctrl, _ = _controller()
     controller.enable_torque()
     ctrl.sync_commands.clear()  # discard the explicit hold command
 
     controller.send_positions(
-        _feedback(controller.config, shoulder_pan=100.0, shoulder_lift=-100.0, gripper=-270.0)
+        _feedback(controller.config, shoulder_pan=5.0, shoulder_lift=-5.0, gripper=-30.0)
     )
 
     decoded = _decoded_payload(controller, ctrl)
@@ -107,6 +107,33 @@ def test_feedback_uses_sync_packet_mapping_step_limit_and_power_overrides() -> N
     assert pan[3:5] == (50, 50)
     assert pan[5] == controller.config.feedback_power
     assert lift[5] == controller.config.feedback_joint_powers["shoulder_lift"]
+
+
+def test_feedback_step_at_ceiling_is_sent_exactly() -> None:
+    controller, ctrl, _ = _controller(feedback_max_raw_step_deg=8.0)
+    controller.enable_torque()
+    ctrl.sync_commands.clear()
+
+    controller.send_positions(_feedback(controller.config, shoulder_pan=8.0))
+
+    assert _decoded_payload(controller, ctrl)["shoulder_pan"][1] == -80
+    assert controller.feedback_enabled is True
+
+
+def test_feedback_step_beyond_ceiling_trips_fault_and_unloads_without_sending() -> None:
+    controller, ctrl, _ = _controller(feedback_max_raw_step_deg=8.0)
+    controller.enable_torque()
+    ctrl.sync_commands.clear()
+
+    with pytest.raises(LeaderFeedbackError, match="shoulder_pan asked to move -8.1 raw deg"):
+        controller.send_positions(_feedback(controller.config, shoulder_pan=8.1))
+
+    assert ctrl.sync_commands == []
+    assert controller.feedback_enabled is False
+    assert controller.feedback_fault is not None
+    assert ctrl.stop_commands[-1] == (0xFF, STOP_UNLOAD, 0x00)
+    with pytest.raises(LeaderFeedbackError, match="faulted and unloaded"):
+        controller.send_positions(_feedback(controller.config))
 
 
 def test_feedback_clamps_to_declared_joint_ranges_before_mapping() -> None:
@@ -158,7 +185,7 @@ def test_uart_send_failure_latches_fault_and_immediately_requests_unload() -> No
     ctrl.fail_send = True
 
     with pytest.raises(LeaderFeedbackError, match="UART write failed"):
-        controller.send_positions(_feedback(controller.config, wrist_roll=10.0))
+        controller.send_positions(_feedback(controller.config, wrist_roll=5.0))
 
     assert controller.feedback_enabled is False
     assert controller.feedback_fault is not None

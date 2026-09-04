@@ -15,7 +15,7 @@ import cv2
 from tqdm import tqdm
 
 import torch
-from lerobot.utils.action_smoothing import apply_butterworth_filter
+from lerobot.utils.action_smoothing import apply_butterworth_filter, bound_action_chunk
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.processor import TransitionKey
 from lerobot.teleoperators.utils import TeleopEvents
@@ -23,6 +23,37 @@ from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.rl.utils import save_video_with_critic_overlay
 
 logger = logging.getLogger(__name__)
+
+
+def bound_policy_actions(actions: torch.Tensor, latest_obs: dict, policy) -> torch.Tensor:
+    """Apply the policy config's per-joint bounds to a decoded [T, D] chunk, relative
+    to the observed state it was inferred from. Policies without the fields pass through.
+    """
+    limits = {
+        name: getattr(policy.config, name, None)
+        for name in ("action_delta_limits", "action_clamp_limits", "action_step_limits")
+    }
+    if all(limit is None for limit in limits.values()):
+        return actions
+    from lerobot.utils.constants import OBS_STATE
+
+    anchor = latest_obs[OBS_STATE].reshape(-1)
+    bounded = bound_action_chunk(
+        actions,
+        anchor,
+        delta_limits=limits["action_delta_limits"],
+        clamp_limits=limits["action_clamp_limits"],
+        step_limits=limits["action_step_limits"],
+    )
+    moved = (bounded - actions).abs().amax(dim=0)
+    joints = (moved > 1e-3).nonzero(as_tuple=True)[0].tolist()
+    if joints:
+        logger.warning(
+            "[BOUND] chunk moved on joints %s by up to %s deg",
+            joints,
+            [f"{moved[j].item():.1f}" for j in joints],
+        )
+    return bounded
 
 
 def align_prev_actions(
@@ -505,21 +536,8 @@ def get_actions_worker(policy, shared_state: SharedState, action_queue, cfg):
                 # --- Zero-phase Butterworth low-pass filter ---
                 processed_actions = apply_butterworth_filter(processed_actions)
 
-                # --- Per-joint safety clamp ---
-                clamp_limits = getattr(policy.config, "action_clamp_limits", None)
-                if clamp_limits is not None:
-                    limits = torch.tensor(clamp_limits, dtype=processed_actions.dtype, device=processed_actions.device)
-                    exceeded = (processed_actions < limits[:, 0]) | (processed_actions > limits[:, 1])
-                    if exceeded.any():
-                        joints_exceeded = exceeded.any(dim=0).nonzero(as_tuple=True)[0].tolist()
-                        raw_min = processed_actions[:, joints_exceeded].min(dim=0).values.tolist()
-                        raw_max = processed_actions[:, joints_exceeded].max(dim=0).values.tolist()
-                        logger.warning(
-                            f"[CLAMP] Action exceeded limits on joints {joints_exceeded} — "
-                            f"raw range: min={[f'{v:.1f}' for v in raw_min]}, max={[f'{v:.1f}' for v in raw_max]}. "
-                            f"Clamping to safe limits."
-                        )
-                    processed_actions = torch.clamp(processed_actions, min=limits[:, 0], max=limits[:, 1])
+                # --- Per-joint safety bounds ---
+                processed_actions = bound_policy_actions(processed_actions, latest_obs, policy)
 
                 if not hasattr(policy, '_chunk_plot_counter'):
                     policy._chunk_plot_counter = 0
@@ -755,8 +773,10 @@ def env_interaction_worker(
                 obs, info = online_env.reset()
 
                 # Smoothly bring the leader arm to neutral alongside the follower.
-                # reset_follower_position only needs .bus with sync_read/sync_write,
-                # which SOLeader satisfies via duck typing.
+                # reset_follower_position goes through get_observation/send_action (the
+                # Robot API); a Teleoperator has neither, so this only works for a leader
+                # that also implements them. The rebot path is RTC (rtc_actor_runtime),
+                # where _approach_leader moves the actuated leader instead.
                 reset_pose = (
                     cfg.env.processor.reset.fixed_reset_joint_positions
                     if getattr(cfg.env, "processor", None) is not None

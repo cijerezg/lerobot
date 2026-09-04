@@ -23,6 +23,10 @@ if TYPE_CHECKING:
     from .teleoperator import Teleoperator
 
 
+class TeleopFeedbackError(RuntimeError):
+    """An actuated teleoperator refused or lost a feedback command and has unloaded itself."""
+
+
 class TeleopEvents(Enum):
     """Shared constants for teleoperator events across teleoperators."""
 

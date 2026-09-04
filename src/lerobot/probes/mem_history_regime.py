@@ -14,7 +14,7 @@ the lookback window and the flow seed move:
   full        the real window at this frame               0
   stale       that window as it stood $W$ s earlier       0
   emptied'    present, every slot holding the present     1
-  none        dropped — legacy reference, never an origin 0
+  none        dropped: an untrained shape, reference only   0
 
 ``emptied`` is the origin, not ``none``. This policy trains at
 ``memory.history_dropout: 0.0``, so a prompt with the history keys *removed* is a shape the
@@ -533,7 +533,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         metrics=[
             Metric(
                 "content_gain_z", "Content evidence (z on MSE(stale) − MSE(full))", good="high",
-                fmt=2, baseline=0.0, warn=2.0, bad=0.0, primary=True,
+                fmt=2, baseline=0.0, warn=2.0, bad=0.0, primary=True, trend=True,
                 note="Paired within frame over the frames whose stale window cleared the full lag. "
                      "Below 2 there is no evidence the model read this window rather than any window; "
                      "below 0 a wrong window fit the demonstration better.",
@@ -615,7 +615,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     )
     logging.info(
         f"[mem_history_regime] origin check: Delta(full) vs emptied="
-        f"{summary['delta_full_mean']:+.5f}  vs dropped[OOD legacy]="
+        f"{summary['delta_full_mean']:+.5f}  vs dropped[untrained shape]="
         f"{summary['delta_full_mean_vs_none_legacy']:+.5f}"
         + (f"  ({inflation:.1f}x inflated by the old origin)" if inflation else "")
     )

@@ -16,6 +16,7 @@
 
 import copy
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -108,19 +109,16 @@ class GymManipulatorConfig:
     device: str = "cpu"
 
 
-def reset_follower_position(robot_arm: Robot, target_position: np.ndarray) -> None:
-    """Reset robot arm to target position using smooth trajectory."""
-    current_position_dict = robot_arm.bus.sync_read("Present_Position")
-    current_position = np.array(
-        [current_position_dict[name] for name in current_position_dict], dtype=np.float32
-    )
-    trajectory = torch.from_numpy(
-        np.linspace(current_position, target_position, 50)
-    )  # NOTE: 30 is just an arbitrary number
-    for pose in trajectory:
-        action_dict = dict(zip(current_position_dict, pose, strict=False))
-        robot_arm.bus.sync_write("Goal_Position", action_dict)
-        precise_sleep(0.015)
+def reset_follower_position(robot_arm: Robot, target_position: np.ndarray, fps: float = 30.0, deg_per_s: float = 20.0) -> None:
+    """Move the arm to target_position through its own send_action, linearly at deg_per_s."""
+    joint_keys = list(robot_arm.action_features)
+    observation = robot_arm.get_observation()
+    current_position = np.array([observation[key] for key in joint_keys], dtype=np.float32)
+    gap = float(np.abs(target_position - current_position).max())
+    steps = max(int(fps), math.ceil(fps * gap / deg_per_s))
+    for pose in np.linspace(current_position, target_position, steps + 1)[1:]:
+        robot_arm.send_action(dict(zip(joint_keys, pose.tolist(), strict=True)))
+        precise_sleep(1.0 / fps)
 
 
 class RobotEnv(gym.Env):
@@ -159,7 +157,6 @@ class RobotEnv(gym.Env):
         self.current_step = 0
         self.episode_data = None
 
-        self._joint_names = [f"{key}.pos" for key in self.robot.bus.motors]
         self._image_keys = self.robot.cameras.keys()
 
         self.reset_pose = reset_pose
@@ -169,7 +166,7 @@ class RobotEnv(gym.Env):
 
         self.use_gripper = use_gripper
 
-        self._joint_names = list(self.robot.bus.motors.keys())
+        self._joint_names = [key.removesuffix(".pos") for key in self.robot.action_features]
         self._raw_joint_positions = None
 
         self._setup_spaces()
@@ -285,7 +282,7 @@ class RobotEnv(gym.Env):
 
     def step(self, action) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
         """Execute one environment step with given action."""
-        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self.robot.bus.motors.keys())}
+        joint_targets_dict = {f"{key}.pos": action[i] for i, key in enumerate(self._joint_names)}
         self._last_requested_joint_targets = joint_targets_dict
 
         if self.send_actions_to_robot:
@@ -457,7 +454,7 @@ def make_processors(
 
     # Full processor pipeline for real robot environment
     # Get robot and motor information for kinematics
-    motor_names = list(env.robot.bus.motors.keys())
+    motor_names = [key.removesuffix(".pos") for key in env.robot.action_features]
 
     # Set up kinematics solver if inverse kinematics is configured
     kinematics_solver = None

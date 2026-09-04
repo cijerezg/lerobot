@@ -8,9 +8,10 @@ because importing those pulls in matplotlib, OpenCV and the whole rollout stack.
 
 Order matters. The filter is linear and runs on the *absolute* chunk, after
 anchor/delta reconstruction — under delta encoding, filtering the increments and
-then integrating is a different trajectory. The per-joint safety clamp comes after
-it and is deliberately not part of this module: it is a guard on the robot, and
-folding it into a measurement would hide the very violations a probe reports.
+then integrating is a different trajectory. The safety bounds (`bound_action_chunk`)
+come after it. They live here so both runtimes share one implementation, but the
+probes must not apply them: they are a guard on the robot, and folding them into a
+measurement would hide the very violations a probe reports.
 """
 
 import numpy as np
@@ -36,3 +37,41 @@ def apply_butterworth_filter(actions: torch.Tensor | np.ndarray) -> torch.Tensor
         smoothed = filtfilt(_BUTTER_B, _BUTTER_A, arr, axis=0)
         return torch.as_tensor(smoothed.copy(), dtype=actions.dtype, device=actions.device)
     return np.ascontiguousarray(filtfilt(_BUTTER_B, _BUTTER_A, actions, axis=0))
+
+
+def bound_action_chunk(
+    actions: torch.Tensor,
+    anchor: torch.Tensor,
+    delta_limits=None,
+    clamp_limits=None,
+    step_limits=None,
+) -> torch.Tensor:
+    """Bound an absolute [T, D] chunk in robot units, relative to ``anchor`` (the
+    observed state the chunk was inferred from, shape [D]). Three stages, each skipped
+    when its limit is None:
+
+    1. excursion: |a_t - anchor| <= delta_limits[j]
+    2. absolute:  clamp_limits[j][0] <= a_t <= clamp_limits[j][1]
+    3. rate:      a_t <- a_{t-1} + clip(a_t - a_{t-1}, -step_limits[j], step_limits[j]),
+                  with a_{-1} = anchor
+
+    The absolute clamp is a contraction, so it cannot undo the excursion bound. The
+    rate stage runs last and in tracking form, so an anchor outside the workspace
+    walks to the box edge at step_limits per tick instead of jumping to it.
+    """
+    anchor = anchor.to(actions)
+    if delta_limits is not None:
+        limit = torch.as_tensor(delta_limits, dtype=actions.dtype, device=actions.device)
+        actions = anchor + (actions - anchor).clamp(-limit, limit)
+    if clamp_limits is not None:
+        limit = torch.as_tensor(clamp_limits, dtype=actions.dtype, device=actions.device)
+        actions = actions.clamp(limit[:, 0], limit[:, 1])
+    if step_limits is not None:
+        limit = torch.as_tensor(step_limits, dtype=actions.dtype, device=actions.device)
+        bounded = torch.empty_like(actions)
+        previous = anchor
+        for t in range(actions.shape[0]):
+            previous = previous + (actions[t] - previous).clamp(-limit, limit)
+            bounded[t] = previous
+        actions = bounded
+    return actions

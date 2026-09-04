@@ -51,9 +51,12 @@ class RebotArm102LeaderConfig:
         }
     )
 
-    # Bound each freshly requested target relative to the last transmitted raw
-    # servo target. At 30 Hz, 5 deg/frame is a 150 deg/s hard ceiling.
-    feedback_max_raw_step_deg: float = 5.0
+    # A target further than this (raw servo degrees) from the last transmitted one trips
+    # a fault and unloads the arm; it is never clipped and executed. Measured 2026-09-03
+    # over the four training roots (46 episodes, 181k steps): no demo step exceeds 6.1 raw
+    # deg and p99.9 is 1.1-2.7 per joint, so 8 (240 deg/s at 30 Hz) is only reached by a
+    # discontinuity. The initial gap is closed by the runtime's linear approach, not here.
+    feedback_max_raw_step_deg: float = 8.0
 
     # A stale actor must not leave the leader rigid. Tracking/current faults are
     # sustained thresholds, chosen above all values in the verified trajectories.
