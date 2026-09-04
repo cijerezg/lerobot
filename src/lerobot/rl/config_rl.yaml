@@ -270,14 +270,15 @@ policy:
   # pooled subtask vocabulary — startup hard-errors and prints the vocabulary on a miss.
   # First entry is the episode default (and what a reset falls back to). Empty = decode.
   # Latency: a press lands on the next chunk build, so press ~0.5s ahead of the transition.
+  # Letters, not digits: the 102HD leader's handover keys are 0/1/2/5 and both listeners are global.
   eval_subtasks:
-    "1": "grasp the black sock"
-    "2": "move the black sock to the basket"
-    "3": "release the black sock in the basket"
-    "4": "grasp the red shirt"
-    "5": "move the red shirt to the bin"
-    "6": "release the red shirt in the bin"
-    "7": "return to home"
+    "q": "grasp the black sock"
+    "w": "move the black sock to the basket"
+    "e": "release the black sock in the basket"
+    "r": "grasp the red shirt"
+    "t": "move the red shirt to the bin"
+    "y": "release the red shirt in the bin"
+    "u": "return to home"
   memory:
     metadata_enabled: true                # quality/mistake loaded from dataset meta; hard-errors until metadata_annotate.py finalize has run
     history_dropout: 0.0                  # keep the full state/RGB/depth history block on every training sample
