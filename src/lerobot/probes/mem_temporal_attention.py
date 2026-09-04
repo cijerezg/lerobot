@@ -130,6 +130,7 @@ from lerobot.probes.utils import (
     as_image,
     assemble_frame_history,
     build_episode_index,
+    dataset_camera_key,
     dataset_display_name,
     get_frame_data,
     makedirs,
@@ -918,7 +919,7 @@ def _render_spatial_example(
         )
         axes[camera_idx, 0].axis("off")
 
-        current = as_image(obs[key])
+        current = as_image(obs[dataset_camera_key(dataset, key)])
         axes[camera_idx, 1].imshow(current)
         axes[camera_idx, 1].set_title(f"{key.split('.')[-1]} current")
         axes[camera_idx, 1].axis("off")
@@ -1028,7 +1029,7 @@ def _render_mistake_sequence(
             )
             axes[camera_idx, age_idx].axis("off")
 
-        current = as_image(obs[key])
+        current = as_image(obs[dataset_camera_key(dataset, key)])
         axes[camera_idx, -1].imshow(current)
         current_label = "  MISTAKE NOW" if diagnostic["mistake_current"] else ""
         axes[camera_idx, -1].set_title(
