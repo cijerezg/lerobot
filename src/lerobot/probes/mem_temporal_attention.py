@@ -892,6 +892,10 @@ def _render_spatial_example(
     )
     camera_keys = diagnostic["camera_keys"]
     history = assemble_frame_history(dataset, diagnostic["global_idx"], memory_cfg, fps, camera_keys)
+    # A rig without one of the run's cameras (ReBot has no external_1) has no history
+    # window and no obs column for it; its capture row is the adapter's zero fill. Render
+    # the cameras that exist, indexing the capture arrays by their configured slot.
+    present = [(idx, key) for idx, key in enumerate(camera_keys) if f"history.{key}" in history]
     head_age = diagnostic["head_age"]
     patch_mass = diagnostic["patch_mass"].mean(axis=0)
     age_by_camera = head_age.mean(axis=(0, 2))
@@ -908,21 +912,21 @@ def _render_spatial_example(
         vmax=max(high, uniform_mass + 1e-3),
     )
 
-    fig, axes = plt.subplots(len(camera_keys), 3, figsize=(15, 4.2 * len(camera_keys)), squeeze=False)
+    fig, axes = plt.subplots(len(present), 3, figsize=(15, 4.2 * len(present)), squeeze=False)
     overlay_images = []
-    for camera_idx, key in enumerate(camera_keys):
+    for row, (camera_idx, key) in enumerate(present):
         history_tensor = history[f"history.{key}"].squeeze(0)
         age_index = int(np.argmax(age_by_camera[camera_idx]))
-        axes[camera_idx, 0].imshow(as_image(history_tensor[age_index]))
-        axes[camera_idx, 0].set_title(
+        axes[row, 0].imshow(as_image(history_tensor[age_index]))
+        axes[row, 0].set_title(
             f"{key.split('.')[-1]} most-read history (-{diagnostic['history_seconds'][age_index]:g}s)"
         )
-        axes[camera_idx, 0].axis("off")
+        axes[row, 0].axis("off")
 
         current = as_image(obs[dataset_camera_key(dataset, key)])
-        axes[camera_idx, 1].imshow(current)
-        axes[camera_idx, 1].set_title(f"{key.split('.')[-1]} current")
-        axes[camera_idx, 1].axis("off")
+        axes[row, 1].imshow(current)
+        axes[row, 1].set_title(f"{key.split('.')[-1]} current")
+        axes[row, 1].axis("off")
 
         n_patches = patch_mass.shape[-1]
         side = round(n_patches**0.5)
@@ -932,11 +936,11 @@ def _render_spatial_example(
         heat = functional.interpolate(heat, size=current.shape[:2], mode="bilinear", align_corners=False)[
             0, 0
         ].numpy()
-        axes[camera_idx, 2].imshow(current)
-        overlay = axes[camera_idx, 2].imshow(heat, cmap="RdBu_r", alpha=0.62, norm=norm)
+        axes[row, 2].imshow(current)
+        overlay = axes[row, 2].imshow(heat, cmap="RdBu_r", alpha=0.62, norm=norm)
         overlay_images.append(overlay)
-        axes[camera_idx, 2].set_title("current-frame patches reading history")
-        axes[camera_idx, 2].axis("off")
+        axes[row, 2].set_title("current-frame patches reading history")
+        axes[row, 2].axis("off")
 
     score = float(diagnostic["temporal_mass"].mean())
     bar = fig.colorbar(
@@ -978,6 +982,10 @@ def _render_mistake_sequence(
     )
     camera_keys = diagnostic["camera_keys"]
     history = assemble_frame_history(dataset, diagnostic["global_idx"], memory_cfg, fps, camera_keys)
+    # A rig without one of the run's cameras (ReBot has no external_1) has no history
+    # window and no obs column for it; its capture row is the adapter's zero fill. Render
+    # the cameras that exist, indexing the capture arrays by their configured slot.
+    present = [(idx, key) for idx, key in enumerate(camera_keys) if f"history.{key}" in history]
     # Captured as (layers, cameras, query patches, ages); the picture is deliberately
     # the layer mean, matching the existing history-summed spatial examples.
     patch_age = diagnostic["patch_age"].mean(axis=0)
@@ -996,13 +1004,13 @@ def _render_mistake_sequence(
     )
     n_ages = len(diagnostic["history_seconds"])
     fig, axes = plt.subplots(
-        len(camera_keys),
+        len(present),
         n_ages + 1,
-        figsize=(3.4 * (n_ages + 1), 3.6 * len(camera_keys)),
+        figsize=(3.4 * (n_ages + 1), 3.6 * len(present)),
         squeeze=False,
     )
     overlays = []
-    for camera_idx, key in enumerate(camera_keys):
+    for row, (camera_idx, key) in enumerate(present):
         history_tensor = history[f"history.{key}"].squeeze(0)
         for age_idx, seconds in enumerate(diagnostic["history_seconds"]):
             image = as_image(history_tensor[age_idx])
@@ -1016,29 +1024,29 @@ def _render_mistake_sequence(
             heat = functional.interpolate(heat, size=image.shape[:2], mode="bilinear", align_corners=False)[
                 0, 0
             ].numpy()
-            axes[camera_idx, age_idx].imshow(image)
-            overlay = axes[camera_idx, age_idx].imshow(heat, cmap="RdBu_r", alpha=0.58, norm=norm)
+            axes[row, age_idx].imshow(image)
+            overlay = axes[row, age_idx].imshow(heat, cmap="RdBu_r", alpha=0.58, norm=norm)
             overlays.append(overlay)
             label = "  MISTAKE" if mistake_mask[age_idx] else ""
-            axes[camera_idx, age_idx].set_title(
+            axes[row, age_idx].set_title(
                 f"{key.split('.')[-1]}  -{float(seconds):g}s{label}\n"
                 f"past-age share={age_share_by_camera[camera_idx, age_idx]:.3f}",
                 color="#C1121F" if mistake_mask[age_idx] else "#222222",
                 fontweight="bold" if mistake_mask[age_idx] else "normal",
                 fontsize=9,
             )
-            axes[camera_idx, age_idx].axis("off")
+            axes[row, age_idx].axis("off")
 
         current = as_image(obs[dataset_camera_key(dataset, key)])
-        axes[camera_idx, -1].imshow(current)
+        axes[row, -1].imshow(current)
         current_label = "  MISTAKE NOW" if diagnostic["mistake_current"] else ""
-        axes[camera_idx, -1].set_title(
+        axes[row, -1].set_title(
             f"{key.split('.')[-1]}  current{current_label}",
             color="#C1121F" if diagnostic["mistake_current"] else "#222222",
             fontweight="bold" if diagnostic["mistake_current"] else "normal",
             fontsize=9,
         )
-        axes[camera_idx, -1].axis("off")
+        axes[row, -1].axis("off")
 
     if overlays:
         bar = fig.colorbar(
