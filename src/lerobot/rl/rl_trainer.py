@@ -80,9 +80,9 @@ class Trainer(ABC):
     def subtask_vocabulary(self, preprocessor) -> list[str]:
         """Subtask strings the prompt seam can render, in vocabulary-index order.
 
-        Empty by default; policies carrying a subtask vocabulary override. Used by
-        the eval subtask console to validate operator bindings against the strings
-        the checkpoint was actually trained on.
+        Empty by default; policies carrying a subtask vocabulary override. The eval
+        subtask console uses it to attach a ``subtask_index`` to operator bindings
+        that match a vocabulary string; unmatched bindings still run, indexed -1.
         """
         return []
 

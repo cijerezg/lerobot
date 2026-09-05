@@ -32,6 +32,8 @@ from .config_rebot_b601_follower import RebotB601FollowerRobotConfig
 
 if TYPE_CHECKING or _motorbridge_available:
     from motorbridge import Controller as MotorBridgeController, Mode as MotorBridgeMode
+    from motorbridge.damiao_registers import RID_MST_ID
+    from motorbridge.errors import CallError
 else:
     MotorBridgeController = None
     MotorBridgeMode = None
@@ -53,6 +55,12 @@ MOTOR_MODELS = {
 _ENSURE_MODE_RETRIES = 9
 _SETTLE_SEC = 0.01
 _ZERO_SETTLE_SEC = 0.1
+_PARK_FPS = 30.0
+_PARK_SETTLE_MAX_SEC = 5.0  # arrival is re-checked every _PARK_SETTLE_CHECK_SEC up to this
+_PARK_SETTLE_CHECK_SEC = 0.5
+_PING_TIMEOUT_MS = 20  # synchronous register read; get_state() only returns the cached frame
+_ENABLE_CONFIRM_ROUNDS = 5  # feedback refreshes after enable_all before the status check
+_STATUS_ENABLED = 1  # Damiao feedback ERR nibble: 0 disabled, 1 enabled, 8..E faults
 
 
 class RebotB601Follower(Robot):
@@ -71,6 +79,8 @@ class RebotB601Follower(Robot):
         self.config = config
         self.bus: MotorBridgeController | None = None
         self.motors: dict = {}
+        self._torque_enabled = False
+        self._check_index = 0  # get_observation() pings one motor per call, round-robin
         self.motor_names = list(config.motor_can_ids.keys())
         self.cameras = make_cameras_from_configs(config.cameras)
 
@@ -113,6 +123,8 @@ class RebotB601Follower(Robot):
 
         for motor_name, (send_id, recv_id) in self.config.motor_can_ids.items():
             self.motors[motor_name] = self.bus.add_damiao_motor(send_id, recv_id, MOTOR_MODELS[motor_name])
+        for motor_name in self.motor_names:
+            self._check_motor(motor_name)
 
         if not self.is_calibrated and calibrate:
             logger.info(
@@ -170,6 +182,7 @@ class RebotB601Follower(Robot):
 
     def configure(self) -> None:
         self.bus.enable_all()
+        self._torque_enabled = True
         for motor_name, motor in self.motors.items():
             target_mode = (
                 MotorBridgeMode.FORCE_POS if motor_name == GRIPPER_MOTOR else MotorBridgeMode.POS_VEL
@@ -183,12 +196,38 @@ class RebotB601Follower(Robot):
                         raise
                     time.sleep(_SETTLE_SEC)
             logger.debug(f"{motor_name} mode set to {target_mode}")
+        for _ in range(_ENABLE_CONFIRM_ROUNDS):
+            self._present_pos()
+            time.sleep(_SETTLE_SEC)
+        self._check_status()
 
     @check_if_not_connected
     def disable_torque(self) -> None:
         """Disable motor torque so the arm can be moved by hand (read-only debugging)."""
         self.bus.disable_all()
+        self._torque_enabled = False
         logger.info(f"{self} torque disabled.")
+
+    def _check_motor(self, motor_name: str) -> None:
+        """Raise if the motor does not answer a synchronous register read. A motor that
+        drops off the chain keeps returning its cached state, so this is the only way to
+        tell a frozen joint from a still one."""
+        try:
+            self.motors[motor_name].damiao_get_param_u32(RID_MST_ID, timeout_ms=_PING_TIMEOUT_MS)
+        except CallError as error:
+            raise RuntimeError(f"{self} {motor_name} stopped answering on CAN ({error}). Stopping.") from error
+
+    def _check_status(self) -> None:
+        """Raise if a motor's last feedback frame says anything but enabled. A motor that
+        rebooted (brownout) or latched a fault keeps answering CAN with fresh positions
+        while ignoring every position command, which the ping cannot see."""
+        for motor_name, motor in self.motors.items():
+            state = motor.get_state()
+            if state is not None and state.status_code != _STATUS_ENABLED:
+                raise RuntimeError(
+                    f"{self} {motor_name} reports status 0x{state.status_code:X}, not enabled "
+                    f"(0 = disabled, 8..E = Damiao fault). Stopping."
+                )
 
     def _present_pos(self) -> dict[str, float]:
         """Read present joint positions in degrees."""
@@ -208,7 +247,10 @@ class RebotB601Follower(Robot):
     @check_if_not_connected
     def get_observation(self) -> RobotObservation:
         start = time.perf_counter()
+        self._check_motor(self.motor_names[self._check_index])
+        self._check_index = (self._check_index + 1) % len(self.motor_names)
         obs_dict = {f"{motor}.pos": pos for motor, pos in self._present_pos().items()}
+        self._check_status()
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
@@ -276,11 +318,66 @@ class RebotB601Follower(Robot):
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     @check_if_not_connected
+    def park(self, on_step=None) -> None:
+        """Freeze, descend to config.park_pose at config.park_deg_per_s, verify arrival.
+
+        `on_step`, when given, receives each ramp target ({joint}.pos -> deg) right after it
+        is sent, so a mirrored device (the actuated leader) rides the same descent.
+        Raises RuntimeError, with torque still on, if any joint ends farther than
+        config.park_tolerance_deg from the park pose.
+        """
+        present = self._present_pos()
+        self.send_action({f"{name}.pos": pos for name, pos in present.items()})
+        target = self.config.park_pose
+        gap = max(abs(target[name] - present[name]) for name in target)
+        steps = max(int(_PARK_FPS), math.ceil(_PARK_FPS * gap / self.config.park_deg_per_s))
+        logger.info(f"{self} parking: largest gap {gap:.1f} deg, {steps / _PARK_FPS:.1f} s")
+        for step in range(1, steps + 1):
+            t = step / steps
+            step_target = {f"{name}.pos": present[name] + (target[name] - present[name]) * t for name in target}
+            self.send_action(step_target)
+            if on_step is not None:
+                on_step(step_target)
+            time.sleep(1.0 / _PARK_FPS)
+        # Settle: the motors lag the ramp (elbow 13 deg after a 134 deg descent on 2026-09-04,
+        # closed on its own later), so re-check arrival every _PARK_SETTLE_CHECK_SEC up to
+        # _PARK_SETTLE_MAX_SEC. A mirrored leader keeps getting its target meanwhile (its
+        # feedback watchdog is 0.5 s).
+        for check in range(1, int(_PARK_SETTLE_MAX_SEC / _PARK_SETTLE_CHECK_SEC) + 1):
+            for _ in range(int(_PARK_FPS * _PARK_SETTLE_CHECK_SEC)):
+                if on_step is not None:
+                    on_step(step_target)
+                time.sleep(1.0 / _PARK_FPS)
+            present = self._present_pos()
+            error = {name: abs(present[name] - target[name]) for name in target}
+            worst = max(error, key=error.get)
+            if error[worst] <= self.config.park_tolerance_deg:
+                break
+        if error[worst] > self.config.park_tolerance_deg:
+            raise RuntimeError(
+                f"{self} did not reach the park pose: {worst} is {error[worst]:.1f} deg off "
+                f"(tolerance {self.config.park_tolerance_deg}) after {_PARK_SETTLE_MAX_SEC:.0f} s; present "
+                + ", ".join(f"{name}={present[name]:.1f}" for name in target)
+                + ". Torque stays ON; support the arm and rerun park."
+            )
+        logger.info(
+            f"{self} parked after {check * _PARK_SETTLE_CHECK_SEC:.1f} s settle "
+            f"(worst joint {worst}, {error[worst]:.1f} deg off)."
+        )
+
+    @check_if_not_connected
     def disconnect(self) -> None:
+        release = not self._torque_enabled
+        if self._torque_enabled:
+            try:
+                self.park()
+                release = True
+            except Exception:
+                logger.error(f"{self} park failed; leaving torque ON. Support the arm and run park_rebot.py.", exc_info=True)
         for motor in self.motors.values():
-            if self.config.disable_torque_on_disconnect:
+            if release:
                 motor.disable()
-            motor.clear_error()
+                motor.clear_error()
             motor.close()
 
         self.bus.close()

@@ -6,7 +6,7 @@ import logging
 import math
 import os
 import queue
-import shutil
+from pathlib import Path
 import threading
 import time
 import traceback
@@ -25,6 +25,7 @@ from lerobot.policies.rtc.latency_tracker import LatencyTracker
 from lerobot.processor import TransitionKey
 from lerobot.rl.actor import push_transitions_to_transport_queue
 from lerobot.rl.buffer import ReplayBuffer, assemble_history_windows
+from lerobot.rl.online_recorder import OnlineEpisodeRecorder
 from lerobot.rl.gym_manipulator import (
     create_transition,
     make_processors,
@@ -40,7 +41,7 @@ from lerobot.rollout.inference.rtc import _normalize_prev_actions_length
 from lerobot.teleoperators.utils import TeleopEvents, TeleopFeedbackError
 from lerobot.transport.utils import bytes_to_state_dict, python_object_to_bytes
 from lerobot.utils.action_smoothing import apply_butterworth_filter
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_IMAGES
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.robot_utils import precise_sleep
@@ -80,6 +81,18 @@ def _raw_joint_action(online_env, action_dim: int, device) -> torch.Tensor:
             vals.extend([0.0] * (action_dim - len(vals)))
         return torch.tensor(vals, dtype=torch.float32, device=device)
     return torch.zeros(action_dim, dtype=torch.float32, device=device)
+
+
+def _wait_for_first_chunk(action_queue, shared_state, fps: float, timeout_s: float = 5.0) -> None:
+    """Hold the executor until the inference thread has landed a chunk. Otherwise an
+    episode start, or a return from intervention, opens with one chunk latency of
+    starvation steps (11 of the first 92 steps on 2026-09-04), each snapping the target
+    to the raw pose."""
+    deadline = time.perf_counter() + timeout_s
+    while shared_state.running and action_queue.empty() and time.perf_counter() < deadline:
+        time.sleep(1.0 / fps)
+    if action_queue.empty():
+        logger.warning("[RTC_ENV] No chunk within %.1fs; stepping with the starvation fallback.", timeout_s)
 
 
 def _teleop_supports_feedback(teleop_device) -> bool:
@@ -128,21 +141,59 @@ def _close_robot_hardware(online_env, teleop_device, log_prefix: str) -> None:
         logger.error("[%s] Robot environment close failed:\n%s", log_prefix, traceback.format_exc())
 
 
-def _approach_leader(teleop_device, online_env, fps: float, deg_per_s: float = 20.0) -> None:
-    """Move the actuated leader onto the follower's pose before it follows anything.
+def _ramp_leader(teleop_device, target: dict[str, float], fps: float, deg_per_s: float = 20.0) -> None:
+    """Move the actuated leader onto `target` ({joint}.pos -> follower degrees).
 
-    Linear, one send_feedback per control tick, so the initial gap never reaches the
-    driver's per-step ceiling (a fault, not a clip). Call after enable_torque().
+    Linear, one send_feedback per control tick, so the gap never reaches the driver's
+    per-step ceiling (a fault, not a clip). Call after enable_torque(). Approaches the
+    follower's pose before an episode; descends to the park pose after it in safety mode.
     """
-    target = {k: float(v) for k, v in online_env.get_raw_joint_positions().items()}
+    target = {k: float(v) for k, v in target.items()}
     current = {k: float(v) for k, v in teleop_device.get_action().items() if k in target}
     gap = max(abs(target[k] - current[k]) for k in current)
     steps = max(int(fps), math.ceil(fps * gap / deg_per_s))
-    logger.info("[RTC_ENV] Leader approach: largest gap %.1f deg, %.1f s", gap, steps / fps)
+    logger.info("[RTC_ENV] Leader ramp: largest gap %.1f deg, %.1f s", gap, steps / fps)
     for step in range(1, steps + 1):
         t = step / steps
         teleop_device.send_feedback({k: current[k] + (target[k] - current[k]) * t for k in current})
         precise_sleep(1.0 / fps)
+
+
+def _return_to_rest(online_env, teleop_device, fps: float, leader_torqued: bool) -> None:
+    """Both arms to the follower's park pose; the leader is released there.
+
+    Follower: `park()` (freeze, descent at park_deg_per_s, arrival check); torque stays on,
+    so it holds the rest pose until the next episode. The leader rides the same ramp
+    through park's per-tick hook, which also keeps its feedback watchdog fed. In safety
+    mode (follower not commanded) only the leader ramps. A leader that faults during the
+    descent stays where the fault unloaded it; the follower still parks.
+    """
+    robot = online_env.robot
+    leader_alive = leader_torqued
+
+    def feed_leader(target: dict[str, float]) -> None:
+        nonlocal leader_alive
+        if not leader_alive:
+            return
+        try:
+            teleop_device.send_feedback(target)
+        except TeleopFeedbackError as error:
+            leader_alive = False
+            logger.error("[RTC_ENV] Leader dropped out of the descent: %s", error)
+
+    if online_env.send_actions_to_robot:
+        try:
+            robot.park(on_step=feed_leader)
+        except RuntimeError:
+            logger.error("[RTC_ENV] Follower did not reach the rest pose; torque stays on:\n%s", traceback.format_exc())
+    elif leader_alive:
+        park_pose = {f"{name}.pos": pos for name, pos in robot.config.park_pose.items()}
+        try:
+            _ramp_leader(teleop_device, park_pose, fps)
+        except TeleopFeedbackError as error:
+            logger.error("[RTC_ENV] Leader dropped out of the descent: %s", error)
+    if leader_torqued:
+        teleop_device.disable_torque()
 
 
 def _obs_with_depth(policy_obs: dict, env_obs: dict, cfg) -> dict:
@@ -160,6 +211,24 @@ def _obs_with_depth(policy_obs: dict, env_obs: dict, cfg) -> dict:
         if isinstance(key, str) and key.endswith(".depth")
     }
     return {**policy_obs, **depth} if depth else policy_obs
+
+
+def _rig_history_offsets(history_offsets: dict[str, list[int]] | None, cfg) -> dict[str, list[int]] | None:
+    """history_keys name every canonical role; keep the ones this rig serves (the prune
+    align_rebot_buffer applies to the replay). The policy side pads the absent roles."""
+    if history_offsets is None:
+        return None
+    env = cfg.env
+    served = {env.features_map.get(key, key) for key in env.features} | {ACTION}
+    for cam, camera in getattr(env.robot, "cameras", {}).items():
+        if getattr(camera, "use_depth", False):
+            image_key = f"{OBS_IMAGES}.{cam}"
+            served.add(f"depth.{env.features_map.get(image_key, image_key).rsplit('.', 1)[-1]}.depth")
+    kept = {key: offsets for key, offsets in history_offsets.items() if key in served}
+    dropped = sorted(set(history_offsets) - set(kept))
+    if dropped:
+        logger.info("[RTC] no rig column for history keys %s; skipped", dropped)
+    return kept or None
 
 
 class RTCSharedState:
@@ -205,7 +274,6 @@ class RTCSharedState:
         self.current_subtask_text = ""
         self.episode_counter = 0
         self.is_logging_episode = False
-        self.replay_buffer: ReplayBuffer | None = None
         self.params_loaded_event = threading.Event()
         self.params_loaded_event.set()
         self.policy_ready_event = threading.Event()
@@ -441,7 +509,9 @@ def align_prev_actions(
 
     right_padded = torch.zeros(chunk_size, action_dim, device=prev_actions.device, dtype=prev_actions.dtype)
     right_padded[offset:] = prev_actions
-    d_abs = normalizer._normalize_action(right_padded, inverse=True)
+    # Batched [1, T, D] through the normalizer: per-row stats read the batch axis from
+    # dim 0, and a bare [T, D] chunk would be gathered as T samples.
+    d_abs = normalizer._normalize_action(right_padded[None], inverse=True)[0]
 
     dev = d_abs.device
     delta_s = anchor_old.squeeze(0).to(dev) - anchor_now.squeeze(0).to(dev)
@@ -452,7 +522,7 @@ def align_prev_actions(
 
     left_padded = torch.zeros(chunk_size, action_dim, device=dev, dtype=d_abs.dtype)
     left_padded[:n_left] = d_abs[offset:]
-    return normalizer._normalize_action(left_padded, inverse=False)[:n_left]
+    return normalizer._normalize_action(left_padded[None], inverse=False)[0][:n_left]
 
 
 def _resolve_prev_actions_and_anchor(
@@ -461,6 +531,7 @@ def _resolve_prev_actions_and_anchor(
     action_queue: ActionQueue,
     latest_obs: dict,
     policy,
+    stats_rows: dict | None = None,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
     """Return (prev_actions, anchor_now) ready for the next RTC inference call.
 
@@ -479,7 +550,11 @@ def _resolve_prev_actions_and_anchor(
     if OBS_STATE not in latest_obs:
         return prev_actions, anchor_now
 
+    # The chunk is the policy's padded width, the state is the rig's own; zero-fill the
+    # pad columns, what the unified layout step padded the training anchor with.
     anchor_now = latest_obs[OBS_STATE]
+    width = int(policy.config.output_features[ACTION].shape[-1])
+    anchor_now = torch.nn.functional.pad(anchor_now, (0, width - anchor_now.shape[-1]))
     if prev_actions is None or action_queue.anchor_state is None:
         return prev_actions, anchor_now
 
@@ -498,14 +573,23 @@ def _resolve_prev_actions_and_anchor(
         "[RTC] Alignment offset: %.3f",
         (anchor_old.to(anchor_now.device) - anchor_now).norm().item(),
     )
-    return align_prev_actions(
-        prev_actions=prev_actions,
-        anchor_old=anchor_old,
-        anchor_now=anchor_now,
-        action_encoding=action_encoding,
-        chunk_size=policy.config.chunk_size,
-        normalizer=normalizer,
-    ), anchor_now
+    # Per-row stats: the leftover is unnormalized and renormalized with the row the
+    # batch was normalized with (stats_rows = the batch's index columns).
+    context = getattr(normalizer, "_with_embodiment_indices", None)
+    with (
+        context({TransitionKey.COMPLEMENTARY_DATA: stats_rows})
+        if context is not None and stats_rows
+        else contextlib.nullcontext()
+    ):
+        aligned = align_prev_actions(
+            prev_actions=prev_actions,
+            anchor_old=anchor_old,
+            anchor_now=anchor_now,
+            action_encoding=action_encoding,
+            chunk_size=policy.config.chunk_size,
+            normalizer=normalizer,
+        )
+    return aligned, anchor_now
 
 
 def rtc_inference_worker(
@@ -529,8 +613,7 @@ def rtc_inference_worker(
     """
     try:
         logger.info("[RTC_INFERENCE] Thread started.")
-        if getattr(cfg.policy, "torch_compile", False):
-            _warmup_compiled_policy(policy, trainer, preprocessor, cfg, device)
+        _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state)
         shared_state.policy_ready_event.set()
         latency_tracker = LatencyTracker()
         inference_step = 0
@@ -645,6 +728,11 @@ def rtc_inference_worker(
                     action_queue=action_queue,
                     latest_obs=latest_obs,
                     policy=policy,
+                    stats_rows={
+                        k: processed_batch[k]
+                        for k in ("embodiment_index", "action_layout_id")
+                        if k in processed_batch
+                    },
                 )
                 if prev_actions is not None:
                     prev_actions = _normalize_prev_actions_length(prev_actions, target_steps=execution_horizon)
@@ -689,15 +777,23 @@ def rtc_inference_worker(
                         EMBODIMENT_INDEX_KEY,
                     )
                     anchor_sq = anchor_now.squeeze(0) if anchor_now.dim() > 1 else anchor_now
+                    # Batched [1, T, D]: per-row stats read the batch axis from dim 0, and a
+                    # bare [T, D] chunk would be gathered as T samples.
                     payload = {
-                        ACTION: original_actions,
+                        ACTION: original_actions.unsqueeze(0),
                         ANCHOR_KEY: anchor_sq.to(original_actions.device),
                     }
                     # Per-embodiment stats: the unnormalizer must gather the same row the
                     # preprocessor used, else the robot receives another robot's scale.
                     if EMBODIMENT_INDEX_KEY in processed_batch:
                         payload[EMBODIMENT_INDEX_KEY] = processed_batch[EMBODIMENT_INDEX_KEY]
-                    processed_actions = postprocessor(payload)
+                    # A layout-keyed stats artifact selects its row by action_layout_id instead;
+                    # the adapter carries the nested complementary dict through verbatim.
+                    if "action_layout_id" in processed_batch:
+                        payload[TransitionKey.COMPLEMENTARY_DATA] = {
+                            "action_layout_id": processed_batch["action_layout_id"]
+                        }
+                    processed_actions = postprocessor(payload).squeeze(0)
                 else:
                     unnormalized_actions = (
                         postprocessor(original_actions)
@@ -776,9 +872,11 @@ def rtc_env_worker(
     policy: nn.Module | None = None,
     trainer: Trainer | None = None,
     rerun_queue=None,
+    recorder: OnlineEpisodeRecorder | None = None,
 ) -> None:
     """Environment interaction worker copied from the tested PI05 RTC path."""
     _ = postprocessor  # queued actions are already postprocessed in rtc_inference_worker
+    leader_torqued = False  # our own enable/release bookkeeping; the leader unloads itself on faults
     try:
         logger.info("[RTC_ENV] Thread started.")
         action_interval = 1.0 / cfg.env.fps
@@ -793,6 +891,7 @@ def rtc_env_worker(
         interaction_step = 0
         video_logging_cameras = list(getattr(cfg, "video_logging_cameras", ["top", "side"]))
         episode_log_buffer: list[dict] = []
+        last_action: torch.Tensor | None = None
         episode_logging_freq = int(getattr(cfg, "episode_logging_freq", 0) or 0)
         shared_state.is_logging_episode = (episode_logging_freq > 0 and shared_state.episode_counter % episode_logging_freq == 0)
 
@@ -812,6 +911,7 @@ def rtc_env_worker(
         env_processor.reset()
         action_processor.reset()
 
+        raw_obs = obs
         transition = create_transition(observation=obs, info=info)
         transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
         transition = env_processor(transition)
@@ -828,10 +928,14 @@ def rtc_env_worker(
                 if shared_state.params_loaded_event.wait(timeout=0.5):
                     break
             logger.info("[ACTOR] Params loaded. Starting episode.")
+        # Same ordering as the in-loop episode start: active before the approach so the
+        # first chunk computes during it, then hold until it has landed.
+        shared_state.set_episode_active(True)
         if teleop_feedback_supported:
             teleop_device.enable_torque()
-            _approach_leader(teleop_device, online_env, cfg.env.fps)
-        shared_state.set_episode_active(True)
+            leader_torqued = True
+            _ramp_leader(teleop_device, online_env.get_raw_joint_positions(), cfg.env.fps)
+        _wait_for_first_chunk(action_queue, shared_state, cfg.env.fps)
 
         while shared_state.running:
             if not shared_state.episode_active:
@@ -858,8 +962,10 @@ def rtc_env_worker(
                 if not standalone:
                     shared_state.request_parameter_update()
                 was_intervening = False
+                last_action = None
                 episode_log_buffer = []
 
+                raw_obs = obs
                 transition = create_transition(observation=obs, info=info)
                 transition[TransitionKey.COMPLEMENTARY_DATA] = {"subtask": [""] * (len(obs) if isinstance(obs, list) else 1)}
                 transition = env_processor(transition)
@@ -874,10 +980,15 @@ def rtc_env_worker(
                         if shared_state.params_loaded_event.wait(timeout=0.5):
                             break
                     logger.info("[ACTOR] Params loaded. Starting episode.")
+                # Active BEFORE the leader approach: the observation is already published and
+                # the follower does not move during the approach, so the first chunk computes
+                # during that second instead of after it.
+                shared_state.set_episode_active(True)
                 if teleop_feedback_supported:
                     teleop_device.enable_torque()
-                    _approach_leader(teleop_device, online_env, cfg.env.fps)
-                shared_state.set_episode_active(True)
+                    leader_torqued = True
+                    _ramp_leader(teleop_device, online_env.get_raw_joint_positions(), cfg.env.fps)
+                _wait_for_first_chunk(action_queue, shared_state, cfg.env.fps)
 
             start_time = time.perf_counter()
 
@@ -886,7 +997,9 @@ def rtc_env_worker(
                 shared_state.request_reset()
                 action_queue.clear()
                 if was_intervening and teleop_feedback_supported:
-                    _approach_leader(teleop_device, online_env, cfg.env.fps)
+                    _ramp_leader(teleop_device, online_env.get_raw_joint_positions(), cfg.env.fps)
+                if was_intervening:
+                    _wait_for_first_chunk(action_queue, shared_state, cfg.env.fps)
             was_intervening = shared_state.is_intervening
 
             _t_action_start = time.perf_counter()
@@ -898,7 +1011,10 @@ def rtc_env_worker(
                     action = action[..., :action_dim]
                 else:
                     shared_state.add_queue_starvation()
-                    action = _raw_joint_action(online_env, action_dim, "cpu")
+                    # Hold the last executed target rather than snapping to the raw pose: with
+                    # a frozen follower (safety mode) the raw pose is the episode-start pose,
+                    # and the snap is a >8 raw-deg step that trips the leader's ceiling.
+                    action = last_action if last_action is not None else _raw_joint_action(online_env, action_dim, "cpu")
             _t_action_end = time.perf_counter()
 
             _t_step_start = time.perf_counter()
@@ -929,6 +1045,10 @@ def rtc_env_worker(
                 )
 
             executed_action = new_transition[TransitionKey.COMPLEMENTARY_DATA].get("teleop_action", action)
+            # A teleop override is the rig's own width; the policy's chunk (and the buffer's
+            # action column) is the padded layout width. Zero-fill the pad columns.
+            executed_action = torch.nn.functional.pad(executed_action, (0, action_dim - executed_action.shape[-1]))
+            last_action = executed_action
             reward = new_transition[TransitionKey.REWARD]
             done = new_transition.get(TransitionKey.DONE, False)
             truncated = new_transition.get(TransitionKey.TRUNCATED, False)
@@ -986,7 +1106,7 @@ def rtc_env_worker(
 
             # The generated subtask rides the buffer's canonical column so online
             # transitions look exactly like annotated offline frames to the learner.
-            _, subtask_idx_now = shared_state.subtask_snapshot()
+            subtask_name_now, subtask_idx_now = shared_state.subtask_snapshot()
             complementary_info = {
                 "discrete_penalty": torch.tensor([
                     new_transition[TransitionKey.COMPLEMENTARY_DATA].get("discrete_penalty", 0.0)
@@ -1047,8 +1167,12 @@ def rtc_env_worker(
             if not standalone:
                 transitions_to_send.append(transition_cpu)
 
-            if standalone and shared_state.replay_buffer is not None:
-                _add_transition_to_replay_buffer(shared_state.replay_buffer, transition_cpu, action_dim)
+            if recorder is not None:
+                recorder.add_frame(
+                    raw_obs, executed_action,
+                    is_intervention=is_intervening, subtask_index=subtask_idx_now, subtask=subtask_name_now or "",
+                )
+                raw_obs = online_env.get_raw_observation()
 
             next_policy_fmt_obs = next_observation
             if standalone and shared_state.is_logging_episode:
@@ -1099,8 +1223,10 @@ def rtc_env_worker(
                     interaction_step, sum_reward_episode, done, truncated, info_success, info_terminate,
                 )
                 shared_state.set_episode_active(False)
-                if teleop_feedback_supported:
-                    teleop_device.disable_torque()
+                _return_to_rest(online_env, teleop_device, cfg.env.fps, leader_torqued)
+                leader_torqued = False
+                if recorder is not None:
+                    recorder.save_episode()
 
                 if standalone:
                     if shared_state.is_logging_episode:
@@ -1121,7 +1247,6 @@ def rtc_env_worker(
                         episode_log_buffer = []
 
                     shared_state.episode_counter += 1
-                    _flush_episode_buffer(shared_state, cfg)
                     shared_state.is_logging_episode = (
                         episode_logging_freq > 0
                         and shared_state.episode_counter % episode_logging_freq == 0
@@ -1167,36 +1292,16 @@ def rtc_env_worker(
         logger.error("[RTC_ENV] Fatal exception: %s", exc)
         logger.error(traceback.format_exc())
     finally:
-        if _teleop_supports_feedback(teleop_device):
+        if shared_state.episode_active:
             try:
-                teleop_device.disable_torque()
+                _return_to_rest(online_env, teleop_device, cfg.env.fps, leader_torqued)
             except Exception:
-                logger.error("[RTC_ENV] Failed to unload teleoperator:\n%s", traceback.format_exc())
+                logger.error("[RTC_ENV] Return to rest failed:\n%s", traceback.format_exc())
+            shared_state.set_episode_active(False)
+        if recorder is not None:
+            recorder.finalize()
 
 
-
-def _as_bool(value) -> bool:
-    if isinstance(value, torch.Tensor):
-        return bool(value.detach().cpu().flatten()[0].item())
-    return bool(value)
-
-
-def _add_transition_to_replay_buffer(replay_buffer: ReplayBuffer, transition: Transition, action_dim: int) -> None:
-    action = transition[ACTION]
-    if not isinstance(action, torch.Tensor):
-        action = torch.tensor(action, dtype=torch.float32)
-    action = action.detach().cpu()[..., :action_dim]
-    if action.ndim == 1:
-        action = action.unsqueeze(0)
-    replay_buffer.add(
-        state=transition["state"],
-        action=action,
-        reward=float(transition["reward"]),
-        next_state=transition["next_state"],
-        done=_as_bool(transition["done"]),
-        truncated=_as_bool(transition.get("truncated", False)),
-        complementary_info=transition.get("complementary_info", {}),
-    )
 
 
 def _save_log_image(value: torch.Tensor, path: str) -> None:
@@ -1310,121 +1415,68 @@ def _finalize_rtc_inference_log(
         logger.error("[RTC_INFERENCE] Failed to generate video: %s", exc)
 
 
-def _flush_episode_buffer(shared_state: RTCSharedState, cfg) -> None:
-    if shared_state.replay_buffer is None or shared_state.replay_buffer.size == 0:
-        return
-    episode_idx = shared_state.episode_counter - 1
-    output_dir = cfg.output_dir or "outputs"
-    chunk_root = os.path.join(output_dir, "inference_chunks", f"chunk_{episode_idx:04d}")
-    logger.info(
-        "[RTC_INFERENCE] Saving episode %d to %s (%d transitions).",
-        episode_idx, chunk_root, shared_state.replay_buffer.size,
-    )
-    try:
-        shared_state.replay_buffer.to_lerobot_dataset(
-            repo_id="inference_recorded",
-            fps=cfg.env.fps,
-            root=chunk_root,
-            task_name=cfg.policy.task,
-        )
-        shared_state.replay_buffer.reset()
-        logger.info("[RTC_INFERENCE] Episode %d saved. Buffer cleared.", episode_idx)
-    except Exception as exc:
-        logger.error("[RTC_INFERENCE] Failed to save episode %d: %s", episode_idx, exc)
+
+def _warmup_observation(cfg, history_offsets: dict[str, list[int]] | None, action_dim: int) -> dict:
+    """A deployment-shaped observation: this rig's cameras and state under their canonical
+    names (roles the rig lacks stay absent), raw depth where the policy reads it, and the
+    history windows of an episode start. The prompt, presence masks and history stack then
+    match the live batch, so the kernels warmed are the ones the episode runs."""
+    env = cfg.env
+    obs = {}
+    for key, feature in env.features.items():
+        name = env.features_map.get(key, key)
+        if name in cfg.policy.input_features:
+            obs[name] = torch.zeros(1, *feature.shape, dtype=torch.float32)
+    if getattr(cfg.policy, "pointmap_config", None) is not None:
+        for cam, camera in getattr(env.robot, "cameras", {}).items():
+            if getattr(camera, "use_depth", False):
+                image_key = f"{OBS_IMAGES}.{cam}"
+                role = env.features_map.get(image_key, image_key).rsplit(".", 1)[-1]
+                obs[f"observation.depth.{role}"] = torch.zeros(camera.height, camera.width, dtype=torch.uint16)
+    if history_offsets is not None:
+        current = dict(obs)
+        for key, value in obs.items():
+            if key.startswith("observation.depth."):
+                current[f"depth.{key.removeprefix('observation.depth.')}.depth"] = value.unsqueeze(0)
+        obs.update(assemble_history_windows([], history_offsets, current, action_dim))
+    return obs
 
 
-def _merge_inference_chunks(cfg) -> None:
-    """Merge per-episode chunks written by _flush_episode_buffer into a single dataset."""
-    from pathlib import Path
-    output_dir = cfg.output_dir or "outputs"
-    chunks_dir = Path(output_dir) / "inference_chunks"
-    final_dir = Path(output_dir) / "inference_dataset"
-
-    if not chunks_dir.exists():
-        logger.warning("[RTC_INFERENCE] No inference_chunks directory found — nothing to merge.")
-        return
-
-    chunk_paths = sorted(p for p in chunks_dir.iterdir() if p.is_dir() and p.name.startswith("chunk_"))
-    if not chunk_paths:
-        logger.warning("[RTC_INFERENCE] No episode chunks found — nothing to merge.")
-        return
-
-    if final_dir.exists():
-        raise RuntimeError(
-            f"Inference dataset already exists at {final_dir}. "
-            "Remove it before running inference again."
-        )
-
-    logger.info("[RTC_INFERENCE] Merging %d episode chunks into %s...", len(chunk_paths), final_dir)
-
-    if len(chunk_paths) == 1:
-        shutil.move(str(chunk_paths[0]), str(final_dir))
-        shutil.rmtree(str(chunks_dir), ignore_errors=True)
-        logger.info("[RTC_INFERENCE] Single episode chunk moved to %s.", final_dir)
-    else:
-        from lerobot.datasets.aggregate import aggregate_datasets
-        aggregate_datasets(
-            repo_ids=["inference_recorded"] * len(chunk_paths),
-            aggr_repo_id="inference_recorded",
-            roots=chunk_paths,
-            aggr_root=final_dir,
-        )
-        shutil.rmtree(str(chunks_dir))
-        logger.info("[RTC_INFERENCE] %d episodes merged and chunks cleaned up.", len(chunk_paths))
-
-    logger.info("[RTC_INFERENCE] Inference dataset ready at %s.", final_dir)
-
-
-def _warmup_compiled_policy(
-    policy, trainer, preprocessor, cfg, device, n_calls: int = 3
-) -> None:
-    logger.info("[RTC_INFERENCE] Warming up compiled policy (%d calls) — please wait...", n_calls)
-    task_str = cfg.policy.task
+def _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state: RTCSharedState, n_calls: int = 2) -> None:
+    """First forwards on a deployment-shaped batch before the operator can start an
+    episode: lazy CUDA init, cudnn autotune and (when enabled) compile/graph capture land
+    here instead of in the first chunk, where they starve the queue. A failure here is the
+    failure the first chunk would have hit, so it raises before any episode starts."""
+    logger.info("[RTC_INFERENCE] Warming up policy (%d calls) - please wait...", n_calls + 1)
     execution_horizon = policy.config.rtc_config.execution_horizon
     action_dim = _action_dim(cfg)
-    robot_type = cfg.env.robot.type if hasattr(cfg.env, "robot") else ""
-    try:
-        dummy_obs = {
-            key: np.zeros(feature.shape, dtype=np.float32)
-            for key, feature in cfg.policy.input_features.items()
-        }
-        dummy_batch = trainer.build_inference_batch(
-            dummy_obs, task_str, cfg, preprocessor=preprocessor, robot_type=robot_type
-        )
-        dummy_prev = torch.zeros(execution_horizon, action_dim, device=device, dtype=torch.float32)
-        with torch.no_grad():
-            # Pre-capture None-branch graph (first call of each episode).
-            for i in range(n_calls):
-                if device.type == "cuda":
-                    torch.cuda.synchronize()
-                torch.compiler.cudagraph_mark_step_begin()
-                policy.predict_action_chunk(
-                    dummy_batch,
-                    inference_delay=0,
-                    prev_chunk_left_over=None,
-                    execution_horizon=execution_horizon,
-                )
-                if device.type == "cuda":
-                    torch.cuda.synchronize()
-                logger.info("[RTC_INFERENCE] Warmup call %d/%d (no-prefix) complete.", i + 1, n_calls)
-            # Pre-capture non-None branch graph (all calls after first, once padding is applied).
+    memory_cfg = getattr(cfg.policy, "memory", None)
+    subtask, _ = shared_state.subtask_snapshot()
+    batch = trainer.build_inference_batch(
+        _warmup_observation(cfg, shared_state.history_offsets, action_dim),
+        cfg.policy.task,
+        cfg,
+        preprocessor=preprocessor,
+        robot_type=cfg.env.robot.type if hasattr(cfg.env, "robot") else "",
+        subtask=subtask,
+        metadata={"quality": 5, "mistake": False} if memory_cfg is not None and memory_cfg.metadata_enabled else None,
+    )
+    dummy_prev = torch.zeros(execution_horizon, action_dim, device=device, dtype=torch.float32)
+    with torch.no_grad():
+        # No-prefix calls (first chunk of an episode), then one with a leftover prefix.
+        for i, prev in enumerate([None] * n_calls + [dummy_prev]):
             if device.type == "cuda":
                 torch.cuda.synchronize()
             torch.compiler.cudagraph_mark_step_begin()
             policy.predict_action_chunk(
-                dummy_batch,
-                inference_delay=0,
-                prev_chunk_left_over=dummy_prev,
-                execution_horizon=execution_horizon,
+                batch, inference_delay=0, prev_chunk_left_over=prev, execution_horizon=execution_horizon
             )
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            logger.info("[RTC_INFERENCE] Warmup call (with-prefix) complete.")
-        if hasattr(policy, "reset"):
-            policy.reset()
-        logger.info("[RTC_INFERENCE] Warmup done. Policy is ready.")
-    except Exception as e:
-        logger.warning("[RTC_INFERENCE] Warmup failed (%s); first inference call will be slow.", e)
+            logger.info("[RTC_INFERENCE] Warmup call %d/%d complete.", i + 1, n_calls + 1)
+    if hasattr(policy, "reset"):
+        policy.reset()
+    logger.info("[RTC_INFERENCE] Warmup done. Policy is ready.")
 
 
 def act_with_policy_rtc_inference(
@@ -1510,23 +1562,25 @@ def act_with_policy_rtc_inference(
         shared = RTCSharedState()
         shared.running = not shutdown_event.is_set()
         memory_cfg = getattr(cfg.policy, "memory", None)
-        history_offsets = ReplayBuffer._normalize_history_offsets(
-            memory_cfg.history_offsets(cfg.env.fps) if memory_cfg is not None else None
+        history_offsets = _rig_history_offsets(
+            ReplayBuffer._normalize_history_offsets(
+                memory_cfg.history_offsets(cfg.env.fps) if memory_cfg is not None else None
+            ),
+            cfg,
         )
         shared.configure_history(history_offsets)
-        shared.replay_buffer = ReplayBuffer(
-            capacity=cfg.policy.online_buffer_capacity,
-            device=str(device),
-            state_keys=cfg.policy.input_features.keys(),
-            storage_device=getattr(cfg.policy, "storage_device", "cpu"),
-            image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "uint8"),
-            image_storage_size=getattr(cfg.policy, "image_storage_size", None),
-            history_offsets=history_offsets,
+        recorder = OnlineEpisodeRecorder(
+            online_env.robot,
+            root=Path(cfg.output_dir) / "inference_dataset",
+            fps=cfg.env.fps,
+            task=cfg.policy.task,
+            # Depth PNGs land on the cache's read grid; a policy without a stride gets every frame.
+            depth_stride=getattr(cfg.policy, "image_stride", 1),
         )
         action_queue = ActionQueue(policy.config.rtc_config)
 
-        # Operator subtask console: validated against the checkpoint vocabulary before
-        # any hardware moves, so a mistyped binding fails at startup, not mid-rollout.
+        # Operator subtask console: free-text bindings, indexed against the checkpoint
+        # vocabulary where they match (else -1) for the buffer's subtask_index column.
         subtask_console = make_subtask_console(cfg, trainer, preprocessor, shared)
         if subtask_console is not None:
             shared.set_default_subtask(*subtask_console.initial)
@@ -1573,6 +1627,7 @@ def act_with_policy_rtc_inference(
                 "policy": policy,
                 "trainer": trainer,
                 "rerun_queue": rerun_queue,
+                "recorder": recorder,
             },
             daemon=True,
             name="rtc_env",
@@ -1644,13 +1699,14 @@ def act_with_policy_rtc_inference(
         shared.running = False
         if subtask_console is not None:
             subtask_console.stop()
-        for thread in (inf_thread, env_thread):
-            thread.join(timeout=5.0)
+        inf_thread.join(timeout=5.0)
+        while env_thread.is_alive():
+            # The env worker may be returning the arms to rest or saving the episode; the
+            # hardware close below must not race it. Ctrl-\ twice forces an exit.
+            env_thread.join(timeout=10.0)
+            if env_thread.is_alive():
+                logger.info("[RTC_INFERENCE] Waiting for the env worker (return to rest / episode save)...")
         _close_robot_hardware(online_env, teleop_device, "RTC_INFERENCE")
-        try:
-            _merge_inference_chunks(cfg)
-        except Exception:
-            logger.error("[RTC_INFERENCE] Failed to merge inference chunks:\n%s", traceback.format_exc())
         logger.info("[RTC_INFERENCE] Shutdown complete.")
 
 def act_with_policy_rtc(
@@ -1707,8 +1763,11 @@ def act_with_policy_rtc(
     shared.running = not shutdown_event.is_set()
     memory_cfg = getattr(cfg.policy, "memory", None)
     shared.configure_history(
-        ReplayBuffer._normalize_history_offsets(
-            memory_cfg.history_offsets(cfg.env.fps) if memory_cfg is not None else None
+        _rig_history_offsets(
+            ReplayBuffer._normalize_history_offsets(
+                memory_cfg.history_offsets(cfg.env.fps) if memory_cfg is not None else None
+            ),
+            cfg,
         )
     )
     action_queue = ActionQueue(policy.config.rtc_config)

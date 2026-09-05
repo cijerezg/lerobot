@@ -55,8 +55,9 @@ class MolmoAct2RLConfig(MolmoAct2Config):
 
     # ── Operator subtask console (eval only) ─────────────────────────────────
     # keyboard key -> subtask string. Non-empty REPLACES generation at rollout:
-    # the operator latches the current step live. Strings must appear verbatim in
-    # the checkpoint's subtask vocabulary; the first entry is the episode default.
+    # the operator latches the current step live. Any string is allowed; ones that
+    # match the checkpoint vocabulary log its index, others log -1. The first
+    # entry is the episode default.
     eval_subtasks: dict[str, str] = field(default_factory=dict)
 
     # ── Replay buffer ──────────────────────────────────────────────────────

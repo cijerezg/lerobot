@@ -15,10 +15,11 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --robot.type=rebot_b601_follower \
     --robot.port=/dev/ttyACM0 \
     --robot.id=rebot_follower_v1 \
-    --robot.cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30}}" \
+    --robot.cameras="{ wrist: {type: intelrealsense, serial_number_or_name: \"427622270837\", width: 640, height: 480, fps: 30, use_depth: true, depth_filters: true, log_path: outputs/logs/realsense_wrist.log, log_severity: info}, top: {type: opencv, index_or_path: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._onn_USB_2.0_webcam_SN0001-video-index0, width: 640, height: 480, fps: 30}}" \
     --teleop.type=rebot_102_leader \
+    --teleop.variant=102HD \
     --teleop.port=/dev/ttyUSB0 \
-    --teleop.id=rebot_leader_v1 \
+    --teleop.id=rebot_leader_hd_v1 \
     --display_data=true
 
 ## Record
@@ -149,3 +150,8 @@ reads their paths out of config_rl.yaml and fails fast if any is missing on the 
 Other flags: `--dry-run` (prints the plan, needs no DGX), `--keep-checkpoint`,
 `--out DIR`, `--config PATH`, and a leading code-tree argument to ship a different
 checkout, e.g. `remote_validate.sh lerobot-tinypi outputs/.../checkpoints/000400`.
+
+
+
+# probe motors
+.venv/bin/python probe_rebot_motors.py

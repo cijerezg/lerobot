@@ -47,7 +47,7 @@ class RebotArm102LeaderConfig:
     feedback_joint_powers: dict[str, int] = field(
         default_factory=lambda: {
             "shoulder_lift": 12000,
-            "elbow_flex": 8000,
+            "elbow_flex": 12000,  # 2026-09-05: was 8000; elbow lagged a policy-driven follower by 22 raw deg
         }
     )
 
@@ -60,8 +60,11 @@ class RebotArm102LeaderConfig:
 
     # A stale actor must not leave the leader rigid. Tracking/current faults are
     # sustained thresholds, chosen above all values in the verified trajectories.
+    # 2026-09-05: raw error raised 20 -> 40. With the follower policy-driven the leader
+    # only shadows it, and the 102HD elbow lags a follower moving at the rate ceiling
+    # (tripped at 22.2 raw deg / 0.77 s); a lagging shadow is not a fault worth an unload.
     feedback_watchdog_timeout_s: float = 0.5
-    feedback_max_raw_error_deg: float = 20.0
+    feedback_max_raw_error_deg: float = 40.0
     feedback_error_timeout_s: float = 0.75
     feedback_max_current_ma: int = 1500
     feedback_current_timeout_s: float = 0.5

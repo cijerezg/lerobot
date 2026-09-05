@@ -59,6 +59,10 @@ class RealSenseCameraConfig(CameraConfig):
     depth_filters: bool = False  # apply spatial + hole-filling to depth (no temporal; safe under camera motion)
     rotation: Cv2Rotation = Cv2Rotation.NO_ROTATION
     warmup_s: int = 1
+    # librealsense's own log (process-global): the only place a "processing block" error
+    # states its cause. None = off. Severity is an rs.log_severity name: debug/info/warn/error.
+    log_path: str | None = None
+    log_severity: str = "info"
 
     def __post_init__(self) -> None:
         self.color_mode = ColorMode(self.color_mode)

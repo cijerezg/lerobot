@@ -1239,12 +1239,17 @@ class MolmoAct2Trainer(Trainer):
 
         context kwargs: preprocessor (required), robot_type, subtask, metadata.
         """
+        from lerobot.probes.utils import fill_absent_cameras, identity_columns
         from lerobot.types import TransitionKey
 
         preprocessor = context["preprocessor"]
         device = getattr(cfg.policy, "device", "cpu")
-        pre_input: dict[str, Any] = {**observation, "task": task_str}
-        complementary: dict[str, Any] = {}
+        # Roles this rig lacks (ReBot has no external_1): zeros plus camera_is_present=False
+        # and a padded history window, the absent slot RoleAlignedBuffer gives training batches.
+        pre_input, presence = fill_absent_cameras({**observation, "task": task_str}, cfg.policy.image_keys)
+        # action_layout_id: the stats row per-embodiment normalization gathers, stamped from
+        # diverse.rebot_layout exactly as the training buffer stamps it.
+        complementary: dict[str, Any] = {**presence, **identity_columns(cfg)}
         # Memory prompt context (two-prompt design): the current generated subtask
         # rides as a string; the prompt seam renders it.
         if context.get("subtask"):

@@ -17,6 +17,7 @@ Provides the RealSenseCamera class for capturing frames from Intel RealSense cam
 """
 
 import logging
+import os
 import sys
 import time
 from threading import Event, Lock, Thread
@@ -189,6 +190,12 @@ class RealSenseCamera(Camera):
             ConnectionError: If the camera is found but fails to start the pipeline or no RealSense devices are detected at all.
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
+
+        if self.config.log_path is not None:
+            # Process-global librealsense log; must be armed before the pipeline starts.
+            os.makedirs(os.path.dirname(os.path.abspath(self.config.log_path)), exist_ok=True)
+            rs.log_to_file(getattr(rs.log_severity, self.config.log_severity), self.config.log_path)
+            logger.info(f"{self} librealsense log ({self.config.log_severity}) -> {self.config.log_path}")
 
         self.rs_pipeline = rs.pipeline()
         rs_config = rs.config()
@@ -500,7 +507,12 @@ class RealSenseCamera(Camera):
                     depth_frame_raw = frame.get_depth_frame()
                     for f in self.depth_filters:
                         depth_frame_raw = f.process(depth_frame_raw)
-                    depth_frame = np.asanyarray(depth_frame_raw.get_data())
+                    # Copy out of librealsense's buffer: a bare view pins the frame (and, through
+                    # the filter chain, one frame on every synthetic stream) for as long as any
+                    # consumer holds the array. The pools are 16 deep, so a 180-step history
+                    # deque of depth views exhausted them within a second of the first episode
+                    # ("Out of frame resources!" from rs2_allocate_synthetic_video_frame).
+                    depth_frame = np.asanyarray(depth_frame_raw.get_data()).copy()
                     processed_depth_frame = self._postprocess_image(depth_frame, depth_frame=True)
 
                 capture_time = time.perf_counter()

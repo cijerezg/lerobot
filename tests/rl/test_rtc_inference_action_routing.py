@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from lerobot.rl.rtc_actor_runtime import (
-    _approach_leader,
+    _ramp_leader,
     _close_robot_hardware,
     _raw_joint_action,
     _teleop_supports_feedback,
@@ -29,7 +29,7 @@ class _FeedbackTeleop:
 
 def _env(*motors: str):
     return SimpleNamespace(
-        robot=SimpleNamespace(bus=SimpleNamespace(motors={name: object() for name in motors})),
+        robot=SimpleNamespace(action_features={f"{name}.pos": float for name in motors}),
         get_last_requested_joint_targets=lambda: None,
     )
 
@@ -127,7 +127,7 @@ def test_leader_approach_is_linear_to_the_follower_pose_and_under_the_ceiling(mo
     )
     env = SimpleNamespace(get_raw_joint_positions=lambda: {"shoulder_pan.pos": 30.0, "gripper.pos": -10.0})
 
-    _approach_leader(teleop, env, fps=30, deg_per_s=20.0)
+    _ramp_leader(teleop, env.get_raw_joint_positions(), fps=30, deg_per_s=20.0)
 
     assert len(sent) == 45  # 30 deg at 20 deg/s = 1.5 s at 30 Hz
     assert sent[-1] == {"shoulder_pan.pos": 30.0, "gripper.pos": -10.0}
@@ -142,7 +142,7 @@ def test_leader_approach_takes_at_least_one_second_for_a_tiny_gap(monkeypatch) -
     teleop = SimpleNamespace(get_action=lambda: {"j.pos": 0.0}, send_feedback=sent.append)
     env = SimpleNamespace(get_raw_joint_positions=lambda: {"j.pos": 0.5})
 
-    _approach_leader(teleop, env, fps=30, deg_per_s=20.0)
+    _ramp_leader(teleop, env.get_raw_joint_positions(), fps=30, deg_per_s=20.0)
 
     assert len(sent) == 30
     assert sent[-1] == {"j.pos": 0.5}

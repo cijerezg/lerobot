@@ -10,11 +10,10 @@ renders it as the prompt's "The current step is ..." clause on its next cycle.
 The listener is a global hook (no terminal focus required) and fires on its own
 thread, so neither the 30Hz executor nor the inference thread polls for input.
 
-Bindings are resolved against the checkpoint's subtask vocabulary at startup: an
-unmatched string would render a prompt the model never saw during training, so it
-is a hard error rather than a warning. The resolved vocabulary index rides the
-buffer's canonical ``subtask_index`` column, keeping logged rollouts consistent
-with offline data.
+Bindings are free text: the operator may prompt any step, in or out of the
+checkpoint's subtask vocabulary. A binding that matches a vocabulary string logs
+its index on the buffer's canonical ``subtask_index`` column; anything else logs
+-1, the same value the generation path uses when a decoded step misses the vocab.
 """
 import logging
 
@@ -30,20 +29,10 @@ class SubtaskConsole:
         self.entries: dict[str, tuple[str, int]] = {}
 
         for key, text in bindings.items():
-            if vocabulary and text not in vocabulary:
-                raise ValueError(
-                    f"eval_subtasks[{key!r}] = {text!r} is not in the checkpoint's subtask "
-                    f"vocabulary, so it would render a prompt the model never saw in training. "
-                    f"Known subtasks:\n  " + "\n  ".join(vocabulary)
-                )
-            index = vocabulary.index(text) if vocabulary else -1
+            index = vocabulary.index(text) if text in vocabulary else -1
             self.entries[str(key)] = (text, index)
-
-        if not vocabulary:
-            logger.warning(
-                "[SUBTASK] Checkpoint exposes no subtask vocabulary; bindings are unvalidated "
-                "and log with subtask_index -1."
-            )
+            if index < 0:
+                logger.info("[SUBTASK] %r is not in the checkpoint vocabulary; logs subtask_index -1.", text)
 
     @property
     def initial(self) -> tuple[str, int]:

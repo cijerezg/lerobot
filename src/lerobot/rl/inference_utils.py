@@ -38,21 +38,32 @@ def bound_policy_actions(actions: torch.Tensor, latest_obs: dict, policy) -> tor
     from lerobot.utils.constants import OBS_STATE
 
     anchor = latest_obs[OBS_STATE].reshape(-1)
-    bounded = bound_action_chunk(
-        actions,
-        anchor,
-        delta_limits=limits["action_delta_limits"],
-        clamp_limits=limits["action_clamp_limits"],
-        step_limits=limits["action_step_limits"],
+    width = anchor.shape[-1]
+    # The chunk is the policy's padded width, the state is the rig's own; the pad
+    # columns carry zero limits, so a zero anchor there is exact (zeroing the pad is
+    # by design, so the warning below skips those columns).
+    anchor = torch.nn.functional.pad(anchor, (0, actions.shape[-1] - width))
+    # One stage at a time, so the log names the binding stage and the tick it bit at.
+    # The queue executes a chunk from its inference delay onward: a clip confined to
+    # the ticks before that never reaches the robot.
+    stages = (
+        ("excursion", {"delta_limits": limits["action_delta_limits"]}),
+        ("absolute", {"clamp_limits": limits["action_clamp_limits"]}),
+        ("rate", {"step_limits": limits["action_step_limits"]}),
     )
-    moved = (bounded - actions).abs().amax(dim=0)
-    joints = (moved > 1e-3).nonzero(as_tuple=True)[0].tolist()
-    if joints:
-        logger.warning(
-            "[BOUND] chunk moved on joints %s by up to %s deg",
-            joints,
-            [f"{moved[j].item():.1f}" for j in joints],
-        )
+    bounded = actions
+    for stage, limit in stages:
+        before = bounded
+        bounded = bound_action_chunk(before, anchor, **limit)
+        moved, at = (bounded - before).abs()[:, :width].max(dim=0)
+        joints = (moved > 1e-3).nonzero(as_tuple=True)[0].tolist()
+        if joints:
+            logger.warning(
+                "[BOUND] %s stage moved joints %s by up to %s deg@tick",
+                stage,
+                joints,
+                [f"{moved[j].item():.1f}@{at[j].item()}" for j in joints],
+            )
     return bounded
 
 
@@ -105,7 +116,9 @@ def align_prev_actions(
     # stats: stats[offset+i] is used to unnorm prev_actions[i].
     right_padded = torch.zeros(chunk_size, action_dim, device=prev_actions.device, dtype=prev_actions.dtype)
     right_padded[offset:] = prev_actions
-    d_abs = postprocessor(right_padded)
+    # Batched [1, T, D] through the (un)normalizer: per-row stats read the batch axis
+    # from dim 0, and a bare [T, D] chunk would be gathered as T samples.
+    d_abs = postprocessor(right_padded[None])[0]
 
     dev = d_abs.device
     delta_s = anchor_old.squeeze(0).to(dev) - anchor_now.squeeze(0).to(dev)
@@ -119,7 +132,7 @@ def align_prev_actions(
     # Left-align for renorm: the model receives prev_chunk_left_over at positions 0..n_left-1.
     left_padded = torch.zeros(chunk_size, action_dim, device=dev, dtype=d_abs.dtype)
     left_padded[:n_left] = d_abs[offset:]
-    return normalizer._normalize_action(left_padded, inverse=False)[:n_left]
+    return normalizer._normalize_action(left_padded[None], inverse=False)[0][:n_left]
 
 
 class SharedState:
@@ -776,7 +789,7 @@ def env_interaction_worker(
                 # reset_follower_position goes through get_observation/send_action (the
                 # Robot API); a Teleoperator has neither, so this only works for a leader
                 # that also implements them. The rebot path is RTC (rtc_actor_runtime),
-                # where _approach_leader moves the actuated leader instead.
+                # where _ramp_leader moves the actuated leader instead.
                 reset_pose = (
                     cfg.env.processor.reset.fixed_reset_joint_positions
                     if getattr(cfg.env, "processor", None) is not None

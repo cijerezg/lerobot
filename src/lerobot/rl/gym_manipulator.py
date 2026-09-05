@@ -44,6 +44,7 @@ from lerobot.processor import (
     MapDeltaActionToRobotActionStep,
     MapTensorToDeltaActionDictStep,
     Numpy2TorchActionProcessorStep,
+    RenameObservationsProcessorStep,
     RewardClassifierProcessorStep,
     RobotActionToPolicyActionProcessorStep,
     RobotObservation,
@@ -168,6 +169,7 @@ class RobotEnv(gym.Env):
 
         self._joint_names = [key.removesuffix(".pos") for key in self.robot.action_features]
         self._raw_joint_positions = None
+        self._raw_observation = None
 
         self._setup_spaces()
 
@@ -278,6 +280,7 @@ class RobotEnv(gym.Env):
         self.episode_data = None
         obs = self._get_observation()
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
+        self._raw_observation = obs
         return obs, {TeleopEvents.IS_INTERVENTION: False}
 
     def step(self, action) -> tuple[RobotObservation, float, bool, bool, dict[str, Any]]:
@@ -291,6 +294,7 @@ class RobotEnv(gym.Env):
         obs = self._get_observation()
 
         self._raw_joint_positions = {f"{key}.pos": obs[f"{key}.pos"] for key in self._joint_names}
+        self._raw_observation = obs
 
         if self.display_cameras:
             self.render()
@@ -329,6 +333,10 @@ class RobotEnv(gym.Env):
     def get_raw_joint_positions(self) -> dict[str, float]:
         """Get raw joint positions."""
         return self._raw_joint_positions
+
+    def get_raw_observation(self) -> RobotObservation:
+        """The unprocessed observation of the last reset/step (the robot's own keys and dtypes)."""
+        return self._raw_observation
 
     def get_last_requested_joint_targets(self) -> dict[str, Any] | None:
         """Return the most recent step target, whether or not it was sent to the robot."""
@@ -525,6 +533,16 @@ def make_processors(
                 terminate_on_success=terminate_on_success,
             )
         )
+
+    # This rig's feature names -> the policy's canonical ones (cfg.features_map, the same
+    # rename the ReBot replay gets at load). Depth follows its camera ({cam}.depth ->
+    # {role}.depth) so every observation.depth.* / depth.*.depth key downstream is canonical.
+    rename_map = {old: new for old, new in cfg.features_map.items() if old != new}
+    for old, new in list(rename_map.items()):
+        if old.startswith(f"{OBS_IMAGES}."):
+            rename_map[f"{old.rsplit('.', 1)[-1]}.depth"] = f"{new.rsplit('.', 1)[-1]}.depth"
+    if rename_map:
+        env_pipeline_steps.append(RenameObservationsProcessorStep(rename_map=rename_map))
 
     env_pipeline_steps.append(AddBatchDimensionProcessorStep())
 

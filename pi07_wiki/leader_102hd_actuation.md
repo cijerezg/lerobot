@@ -251,11 +251,24 @@ corpus: over the four training roots (46 episodes, 181k steps) no demo step exce
 p99.9 is 1.1-2.7 per joint. In safety mode the runtime catches the fault, ends the episode and waits
 for the next start key; in the online actor it stays fatal.
 
-The initial gap is closed by `_approach_leader` in `rtc_actor_runtime.py`: after `enable_torque`
+The initial gap is closed by `_ramp_leader` in `rtc_actor_runtime.py`: after `enable_torque`
 at episode start, and again when an intervention ends, the leader is interpolated onto the
 follower's pose at 20 deg/s, one `send_feedback` per tick, minimum one second. When
 `fixed_reset_joint_positions` is set and actions are enabled, the follower has already moved to
 that pose, so the leader lands on the same start.
+
+Intervention (key 5) is **delta on the arm joints, absolute on the gripper** (2026-09-05,
+`InterventionActionProcessorStep`). The shadowing leader lags the follower (22 raw deg on the
+elbow on 2026-09-05, which tripped the 20 deg tracking fault), and under absolute mapping that lag
+became a one-tick follower jump at the keypress. Now the first intervening step captures
+`offset = leader - follower` from the leader's `get_action()` and the follower's raw `{joint}.pos`
+(the action pipeline's observation) and every intervening step sends `leader - offset`; the offset
+is cleared when the intervention ends and the return ramp re-aligns the arms. The follower never
+moves on its own at handover, so `feedback_max_raw_error_deg` (raised 20 -> 40 the same day) no
+longer bounds anything on the follower side. Costs: the leader sits `offset` away from the
+follower for the intervention, and the follower loses `offset` degrees of range at the leader's
+stop. The leader is still unloaded at the keypress, so any sag before the grip is a delta the
+follower follows; damping at the handover (stop mode 0x12 instead of 0x10) is the untested fix.
 
 Operator keys: the leader owns 0/1/2/5 (terminate/success/start/intervention) globally through
 pynput; `eval_subtasks` therefore binds letters (q w e r t y u).

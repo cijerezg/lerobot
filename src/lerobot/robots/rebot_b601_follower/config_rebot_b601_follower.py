@@ -42,7 +42,24 @@ class RebotB601FollowerConfig:
     # Baud rate for the Damiao serial bridge (only used when can_adapter="damiao").
     dm_serial_baud: int = 921600
 
-    disable_torque_on_disconnect: bool = True
+    # disconnect() parks before it releases torque: freeze (present position re-sent
+    # as the target, cancelling any in-flight sweep), descend to park_pose linearly at
+    # park_deg_per_s, then release only if every joint is within park_tolerance_deg.
+    # Otherwise torque stays ON and the arm holds; run park_rebot.py to retry.
+    # The default park pose is the calibration zero (the sit-down position, gripper closed).
+    park_pose: dict[str, float] = field(
+        default_factory=lambda: {
+            "shoulder_pan": 0.0,
+            "shoulder_lift": 0.0,
+            "elbow_flex": 0.0,
+            "wrist_flex": 0.0,
+            "wrist_yaw": 0.0,
+            "wrist_roll": 0.0,
+            "gripper": 0.0,
+        }
+    )
+    park_deg_per_s: float = 20.0
+    park_tolerance_deg: float = 10.0
 
     # `max_relative_target` limits the magnitude of the relative positional target
     # vector for safety purposes (in degrees). Set to a positive scalar to apply the
