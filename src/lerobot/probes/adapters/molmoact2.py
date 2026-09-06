@@ -332,6 +332,64 @@ class MolmoAct2Adapter(ProbablePolicy):
         if n == 0:
             raise ValueError("subtasks must be non-empty.")
         batch = self._make_batch_multi(obs, task_str, subtasks, metadatas)
+        anchor = self._expand_to_batch(obs[OBS_STATE].to(self._device), n)
+        return self._decode_batch(
+            batch, anchor, noise=noise, generator=generator, inference_action_mode=inference_action_mode
+        )
+
+    @torch.no_grad()
+    def predict_action_chunk_stacked(
+        self,
+        observations: list[dict[str, Tensor]],
+        task_str: str,
+        *,
+        subtask: str | None = None,
+        metadata: dict | None = None,
+        noise: Tensor | None = None,
+        inference_action_mode: str | None = None,
+    ) -> tuple[Tensor, Tensor]:
+        """One forward over N DIFFERENT observations under one prompt.
+
+        The counterpart of ``predict_action_chunk_batch``: that one varies the prompt
+        over a fixed frame, this one varies the frame under a fixed prompt. Every
+        observation carries the same keys with a leading batch of 1 and they are
+        concatenated along it; the pack step tokenizes state per row and the
+        postprocessor de-anchors per row, so rows are independent apart from sharing
+        the forward. Pass *noise* (``flow_noise_like``) to hold the flow draw identical
+        across rows. Added 2026-09-05 for ``probes.input_swap``.
+
+        Returns (unnormalized, normalized) chunks, each [N, chunk, action_dim].
+        """
+        n = len(observations)
+        if n == 0:
+            raise ValueError("observations must be non-empty.")
+        device = self._device
+        stacked = {
+            key: torch.cat([o[key].to(device) for o in observations], dim=0) for key in observations[0]
+        }
+        stacked, presence = self._fill_absent_cameras(stacked)
+        flat: dict = {**stacked, "task": [task_str] * n}
+        complementary: dict = {**self._identity_columns, **presence}
+        if subtask:
+            complementary["subtask"] = [subtask] * n
+        if metadata is not None:
+            complementary["metadata"] = [dict(metadata) for _ in range(n)]
+        flat[TransitionKey.COMPLEMENTARY_DATA] = complementary
+        batch = self._preprocessor(flat)
+        batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+        anchor = stacked[OBS_STATE]
+        return self._decode_batch(batch, anchor, noise=noise, inference_action_mode=inference_action_mode)
+
+    def _decode_batch(
+        self,
+        batch: dict,
+        anchor: Tensor,
+        *,
+        noise: Tensor | None = None,
+        generator: torch.Generator | None = None,
+        inference_action_mode: str | None = None,
+    ) -> tuple[Tensor, Tensor]:
+        """Run the decoder on a packed batch and de-anchor each row with its own *anchor*."""
         inference_action_mode = inference_action_mode or self._inference_action_mode()
         rtc_config = getattr(self._policy.config, "rtc_config", None)
         restore_rtc = bool(
@@ -354,9 +412,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         pred_norm = norm_actions.float().cpu()
         action_encoding = getattr(self._cfg.policy, "action_encoding", "absolute")
         if action_encoding in ("anchor", "delta"):
-            anchor = self._to_action_width(
-                self._expand_to_batch(obs[OBS_STATE].to(self._device), n)
-            )
+            anchor = self._to_action_width(anchor.to(self._device))
             # The preprocessor consumes the identity columns rather than passing them
             # through, so seed from config and let a real batch column win if present.
             # Per-embodiment stats: unnormalize with the SAME row the preprocessor

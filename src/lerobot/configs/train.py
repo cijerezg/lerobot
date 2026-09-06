@@ -335,6 +335,7 @@ class ProbeConfig:
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
+    enable_input_swap: bool = False  # inject another frame's state / images(+history) / state history: 2^3 cube per anchor
 
     # Common
     output_dir: str = "outputs/probe"
@@ -418,6 +419,11 @@ class ProbeConfig:
     # train-side episode budget, not per source; on the val side it is the episode cap.
     objective_n_frames_per_episode: int | None = None
     objective_max_episodes: int | None = None
+
+    # Input swap. Anchors are n_frames_per_episode evenly spaced per episode unless
+    # overridden; every anchor gets three donors (same_episode / matched / random) and 8
+    # cells each, in one stacked forward per donor, so the cost is anchors x 3 forwards.
+    input_swap_n_frames_per_episode: int | None = None
     # Deterministic generated-vs-GT 3-D action traces at each of p5 / p50 / p95.
     objective_exemplars_per_band: int = 3
 

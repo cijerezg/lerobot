@@ -1019,14 +1019,26 @@ def rtc_env_worker(
 
             _t_step_start = time.perf_counter()
             _step_timings: dict = {}
-            new_transition = step_env_and_process_transition(
-                env=online_env,
-                transition=transition,
-                action=action,
-                env_processor=env_processor,
-                action_processor=action_processor,
-                timings=_step_timings,
-            )
+            leader_fault: TeleopFeedbackError | None = None
+            try:
+                new_transition = step_env_and_process_transition(
+                    env=online_env,
+                    transition=transition,
+                    action=action,
+                    env_processor=env_processor,
+                    action_processor=action_processor,
+                    timings=_step_timings,
+                )
+            except TeleopFeedbackError as error:
+                # The leader read raised inside the action pipeline, before env.step: the
+                # follower did not move. Close the episode on the current state.
+                leader_fault = error
+                new_transition = transition.copy()
+                new_transition[TransitionKey.REWARD] = 0.0
+                new_transition[TransitionKey.DONE] = False
+                new_transition[TransitionKey.TRUNCATED] = True
+                new_transition[TransitionKey.INFO] = {}
+                new_transition[TransitionKey.COMPLEMENTARY_DATA] = {}
             _t_step_end = time.perf_counter()
             shared_state.add_env_step_detail(
                 robot_step=_step_timings.get("robot_step", 0.0),
@@ -1084,14 +1096,18 @@ def rtc_env_worker(
                     for key, value in new_transition[TransitionKey.OBSERVATION].items():
                         if key.endswith(".pos"):
                             feedback[key] = value.item() if isinstance(value, torch.Tensor) else float(value)
-                if feedback and teleop_feedback_supported:
+                if feedback and teleop_feedback_supported and leader_fault is None:
                     try:
                         teleop_device.send_feedback(feedback)
                     except TeleopFeedbackError as error:
-                        if getattr(online_env, "send_actions_to_robot", True):
-                            raise
-                        logger.error("[RTC_ENV] Leader stopped and unloaded; ending the episode: %s", error)
-                        truncated = True
+                        leader_fault = error
+            if leader_fault is not None:
+                # The fault already unloaded the leader. End the episode cleanly (frames kept,
+                # follower parks) instead of killing the worker; the next episode start's
+                # enable_torque() re-raises if the leader is still dead.
+                logger.error("[RTC_ENV] Leader faulted and unloaded; ending the episode: %s", leader_fault)
+                truncated = True
+                leader_torqued = False
 
             with shared_state.lock:
                 cached_tokens = shared_state.cached_subtask_tokens

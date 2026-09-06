@@ -52,6 +52,9 @@ STOP_UNLOAD = 0x10
 SYNC_MULTITURN_BY_INTERVAL = 14
 
 
+_MONITOR_READ_ATTEMPTS = 3
+
+
 class LeaderFeedbackError(TeleopFeedbackError):
     """Latched feedback fault that leaves the HD leader unloaded."""
 
@@ -195,21 +198,24 @@ class RebotArm102HDController:
 
     def _read_raw_locked(self) -> dict[str, float]:
         self._require_connected()
-        result = self.ctrl.send_sync_servo_monitor(self.ids, realtime=True)
+        # One sync-monitor request waits 100 ms for seven reply frames; a USB stall past that
+        # returns every servo empty (2026-09-05, all seven missing once in ~450 reads). Retry
+        # before tripping, so only a bus that stays silent unloads the arm.
+        for attempt in range(1, _MONITOR_READ_ATTEMPTS + 1):
+            result = self.ctrl.send_sync_servo_monitor(self.ids, realtime=True)
+            missing = [name for name in self.motor_names if result[self.config.joint_ids[name]].angle_monitor is None]
+            if not missing:
+                break
+            logger.warning("Leader monitor read %d/%d: no reply from %s", attempt, _MONITOR_READ_ATTEMPTS, ", ".join(missing))
+        if missing:
+            self._trip_fault_locked(f"no monitor reply from {', '.join(missing)} in {_MONITOR_READ_ATTEMPTS} reads")
         raw: dict[str, float] = {}
-        missing: list[str] = []
         currents: dict[str, int] = {}
         for name in self.motor_names:
             servo = result[self.config.joint_ids[name]]
-            angle = servo.angle_monitor
-            if angle is None:
-                missing.append(name)
-                continue
-            raw[name] = float(angle)
+            raw[name] = float(servo.angle_monitor)
             if servo.current is not None:
                 currents[name] = int(servo.current)
-        if missing:
-            self._trip_fault_locked(f"no monitor reply from {', '.join(missing)}")
         self._currents_ma = currents
         return raw
 

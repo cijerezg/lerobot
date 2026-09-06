@@ -168,6 +168,27 @@ class ProbablePolicy(ABC):
                   policies that don't generate subtasks.
         """
 
+    def predict_action_chunk_stacked(
+        self,
+        observations: list[dict[str, Tensor]],
+        task_str: str,
+        *,
+        subtask: str | None = None,
+        metadata: dict | None = None,
+        noise: Tensor | None = None,
+        inference_action_mode: str | None = None,
+    ) -> tuple[Tensor, Tensor]:
+        """One forward over N different observations under one prompt and one noise draw.
+
+        Returns ``(pred_unnorm, pred_norm)``, each ``[N, chunk_size, action_dim]``, row
+        ``i`` de-anchored with observation ``i``'s own state. Probes that inject one
+        frame's inputs into another (``probes.input_swap``) build their factorial cells
+        with this so every cell shares a forward and the flow draw.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement predict_action_chunk_stacked."
+        )
+
     # ── Training objective ───────────────────────────────────────────────────
 
     def training_losses(

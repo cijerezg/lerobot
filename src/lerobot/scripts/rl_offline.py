@@ -264,6 +264,7 @@ _VALIDATION_PROBES = (
     _ValidationProbeSpec("enable_attention_budget", "lerobot.probes.attention_budget", "attention_budget"),
     _ValidationProbeSpec("enable_subtask_sweep", "lerobot.probes.subtask_sweep", "subtask_sweep"),
     _ValidationProbeSpec("enable_task_sweep", "lerobot.probes.task_sweep", "task_sweep"),
+    _ValidationProbeSpec("enable_input_swap", "lerobot.probes.input_swap", "input_swap"),
 )
 
 

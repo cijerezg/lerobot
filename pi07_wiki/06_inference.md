@@ -93,6 +93,18 @@ duplicated the anchors and the sample-0 seed the inspector already owned.
 against the real checkpoint (replaced the gate-0 bit-identity probe 2026-07-26 —
 no gate exists under the joint softmax read;
 `uv run python -m lerobot.probes.depth_modality_probe --config config_rl.yaml`).
+`probes/input_swap.py` (2026-09-05) asks which input stream the chunk actually
+follows: for each anchor frame it injects a donor frame's state, images (+history) and
+state history in every one of the $2^3$ combinations — depth, subtask and metadata stay
+the anchor's — all 8 cells in one stacked forward (`adapter.predict_action_chunk_stacked`)
+at one flow seed. Three donors per anchor: a same-episode frame at least 4 s away, the
+state-matched frame of another episode (the scene intervention) and a random other-episode
+frame. Standalone on the val set, one `output_dir` for every checkpoint so the viewer's
+Trends page lines them up:
+`.venv/bin/python -m lerobot.probes.input_swap --config config_rl.yaml
+--policy.pretrained_path=<ckpt>/pretrained_model --val_dataset_path=outputs/rebot_val-annotated-v3
+--probe_parameters.output_dir=outputs/probe_runs/<name>` (omit `pretrained_path` for the
+untrained init; it lands in `step_00000000`).
 
 ## 5. Latency notes
 

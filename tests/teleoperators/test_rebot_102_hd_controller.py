@@ -278,3 +278,36 @@ def test_invalid_safety_thresholds_are_rejected(field: str, value: float) -> Non
                 **{field: value},
             )
         )
+
+
+def test_monitor_read_retries_a_stalled_reply_without_faulting() -> None:
+    controller, ctrl, _ = _controller()
+    empty = {servo_id: _FakeServo() for servo_id in ctrl.servos}
+    for servo in empty.values():
+        servo.angle_monitor = None
+    calls: list[int] = []
+
+    def monitor(ids, realtime=True):
+        calls.append(1)
+        source = empty if len(calls) == 1 else ctrl.servos
+        return {servo_id: source[servo_id] for servo_id in ids}
+
+    ctrl.send_sync_servo_monitor = monitor
+    positions = controller.read_positions()
+
+    assert len(calls) == 2
+    assert set(positions) == set(controller.motor_names)
+    assert controller.feedback_fault is None
+    assert ctrl.stop_commands == []
+
+
+def test_monitor_read_silent_bus_trips_fault_after_retries() -> None:
+    controller, ctrl, _ = _controller()
+    for servo in ctrl.servos.values():
+        servo.angle_monitor = None
+
+    with pytest.raises(LeaderFeedbackError, match="in 3 reads"):
+        controller.read_positions()
+
+    assert controller.feedback_fault is not None
+    assert ctrl.stop_commands[-1] == (0xFF, STOP_UNLOAD, 0x00)

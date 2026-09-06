@@ -248,8 +248,13 @@ that the policy does not go wild, not to watch it act.
 Per-step ceiling (`feedback_max_raw_step_deg`, raw servo degrees) is a **fault, not a clip**: a
 target further than the ceiling from the last one unloads the arm and raises. Set at 8 from the
 corpus: over the four training roots (46 episodes, 181k steps) no demo step exceeds 6.1 raw deg and
-p99.9 is 1.1-2.7 per joint. In safety mode the runtime catches the fault, ends the episode and waits
-for the next start key; in the online actor it stays fatal.
+p99.9 is 1.1-2.7 per joint. Since 2026-09-05 every leader fault (ceiling, tracking, current,
+silent bus) ends the episode in both modes: `rtc_env_worker` catches `TeleopFeedbackError` from
+the leader read (inside the action pipeline, before `env.step`, so the follower has not moved)
+and from `send_feedback`, truncates the episode with its frames kept, parks the follower, and the
+next start's `enable_torque()` re-raises if the leader is still dead. The sync-monitor read
+retries 3 times (100 ms window each) before tripping: one stalled read in ~450 killed the 14:46
+run with "no monitor reply" from all seven servos at once, which is a USB stall, not a motor.
 
 The initial gap is closed by `_ramp_leader` in `rtc_actor_runtime.py`: after `enable_torque`
 at episode start, and again when an intervention ends, the leader is interpolated onto the
