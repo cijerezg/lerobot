@@ -57,13 +57,23 @@ class RebotArm102LeaderConfig:
     # deg and p99.9 is 1.1-2.7 per joint, so 8 (240 deg/s at 30 Hz) is only reached by a
     # discontinuity. The initial gap is closed by the runtime's linear approach, not here.
     feedback_max_raw_step_deg: float = 8.0
+    # 2026-09-06: the ceiling is per command, but a stalled leader read (834 ms, twice in one
+    # episode) freezes the loop while the follower keeps closing its command lead (up to 19 raw
+    # deg observed), so the next observed pose is a legitimate 12 deg away. The ceiling therefore
+    # scales with the time since the last command, one ceiling per control tick, capped so a real
+    # discontinuity after a stall is still rejected.
+    feedback_step_period_s: float = 1 / 30
+    feedback_max_step_stretch: float = 4.0
 
     # A stale actor must not leave the leader rigid. Tracking/current faults are
     # sustained thresholds, chosen above all values in the verified trajectories.
     # 2026-09-05: raw error raised 20 -> 40. With the follower policy-driven the leader
     # only shadows it, and the 102HD elbow lags a follower moving at the rate ceiling
     # (tripped at 22.2 raw deg / 0.77 s); a lagging shadow is not a fault worth an unload.
-    feedback_watchdog_timeout_s: float = 0.5
+    # 2026-09-06: watchdog raised 0.5 -> 2.0. A leader USB stall (all seven servos empty on
+    # one monitor read) holds the io_lock through the retry and blocks feedback for 0.8 s;
+    # the bus recovered, so a stall shorter than a hung actor must not unload the arm.
+    feedback_watchdog_timeout_s: float = 2.0
     feedback_max_raw_error_deg: float = 40.0
     feedback_error_timeout_s: float = 0.75
     feedback_max_current_ma: int = 1500

@@ -2977,7 +2977,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
         attention_bias = make_attention_bias(model_inputs, static_cache)
         return static_cache, attention_bias
 
-    def _decode_discrete_action_chunk(self, generated_token_ids: Tensor, *, action_dim: int) -> Tensor:
+    def _decode_discrete_action_chunk(
+        self, generated_token_ids: Tensor, *, action_dim: int, native_widths: Tensor
+    ) -> Tensor:
         if (
             getattr(self.model.config, "action_start_token_id", None) is None
             or getattr(self.model.config, "action_end_token_id", None) is None
@@ -2998,7 +3000,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
             raise ValueError(f"Unexpected generated token tensor shape {tuple(generated_token_ids.shape)}.")
 
         chunks: list[Tensor] = []
-        for token_row in generated_token_ids:
+        # FAST speaks each row's native width: the pack step tokenized the target that
+        # way (a padded zero column would change every BPE token), so the trained span
+        # is horizon x native width, never horizon x the canonical width. The decoded
+        # row is right-padded to the model's width like every other padded dimension.
+        for token_row, native_width in zip(generated_token_ids, native_widths.tolist()):
+            native_width = int(native_width)
             generated_ids = [int(token_id) for token_id in token_row.detach().cpu().tolist()]
             discrete_token_ids = self._extract_discrete_token_bins(
                 generated_ids,
@@ -3015,17 +3022,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # coefficients here so a short action span fails loudly instead.
             horizon = self._generation_action_horizon()
             num_coefficients = len(action_tokenizer.bpe_tokenizer.decode(discrete_token_ids))
-            if num_coefficients != horizon * int(action_dim):
+            if num_coefficients != horizon * native_width:
                 raise RuntimeError(
                     f"Model generated {num_coefficients} DCT coefficients, expected "
-                    f"{horizon * int(action_dim)} ({horizon} steps x {action_dim} dims). "
-                    "The discrete head has not learned this chunk format."
+                    f"{horizon * native_width} ({horizon} steps x {native_width} native dims)."
                 )
             try:
                 decoded = action_tokenizer.decode(
                     [discrete_token_ids],
                     time_horizon=horizon,
-                    action_dim=int(action_dim),
+                    action_dim=native_width,
                 )
             except TypeError:
                 decoded = action_tokenizer.decode([discrete_token_ids])
@@ -3041,7 +3047,11 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 action_chunk = action_chunk.reshape(action_chunk.shape[-2], action_chunk.shape[-1])
             if action_chunk.ndim != 2:
                 raise RuntimeError(f"Decoded action chunk has unexpected shape {action_chunk.shape}.")
-            chunks.append(torch.as_tensor(action_chunk, device=token_row.device, dtype=torch.float32))
+            chunk = torch.zeros(
+                (int(action_chunk.shape[0]), int(action_dim)), device=token_row.device, dtype=torch.float32
+            )
+            chunk[:, :native_width] = torch.as_tensor(action_chunk, device=token_row.device)
+            chunks.append(chunk)
         return torch.stack(chunks, dim=0)
 
     @torch.no_grad()
@@ -3078,6 +3088,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         *,
         model_inputs: dict[str, Tensor],
         action_dim: int,
+        native_widths: Tensor,
     ) -> Tensor:
         model_inputs = self._drop_trivial_attention_mask(model_inputs)
         max_steps = self._discrete_generation_max_steps()
@@ -3103,7 +3114,9 @@ class MolmoAct2Policy(PreTrainedPolicy):
             max_steps=max_steps,
             attention_bias=attention_bias,
         )
-        return self._decode_discrete_action_chunk(generated_token_ids, action_dim=action_dim)
+        return self._decode_discrete_action_chunk(
+            generated_token_ids, action_dim=action_dim, native_widths=native_widths
+        )
 
     def _generate_actions_from_inputs_with_rtc(
         self,
@@ -3435,9 +3448,16 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if inference_action_mode == "discrete":
                 if self._rtc_enabled():
                     raise ValueError("RTC is only supported for continuous MolmoAct2 inference.")
+                action_dim_is_pad = batch.get("action_dim_is_pad")
+                native_widths = (
+                    (~action_dim_is_pad.to(dtype=torch.bool)).sum(dim=-1)
+                    if action_dim_is_pad is not None
+                    else torch.full((batch_size,), int(action_dim))
+                )
                 actions = self._generate_discrete_actions_from_inputs(
                     model_inputs=model_inputs,
                     action_dim=action_dim,
+                    native_widths=native_widths,
                 )
             elif self._rtc_enabled():
                 actions = self._generate_actions_from_inputs_with_rtc(

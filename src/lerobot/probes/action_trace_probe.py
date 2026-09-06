@@ -1544,8 +1544,18 @@ def _write_dashboard_html(
         "Amber, when present, is the greedy FAST decode. "
         "The pose panel holds fixed axes across anchors."
     ),
+    warning: tuple[str, str] = (
+        "POSSIBLE FOLLOWER LAG",
+        "Magenta: measured pose → first demonstrated target. Dotted spokes: the same gap per sample. Not an interpolated timestep.",
+    ),
+    contexts: list[dict] | None = None,
 ) -> None:
-    """Write a responsive action-inspector shell around the Plotly figure."""
+    """Write a responsive action-inspector shell around the Plotly figure.
+
+    ``contexts`` replaces the per-step rail built from ``records`` — ``label``,
+    ``subtask``, ``cameras``, an optional ``notes`` block and optional ``trajectory``
+    metrics — for a probe whose slider steps are not action-inspector records.
+    """
     plot_html = fig.to_html(
         full_html=False,
         include_plotlyjs="cdn",
@@ -1553,7 +1563,9 @@ def _write_dashboard_html(
         div_id="action-inspector-plot",
         config={"responsive": True, "displaylogo": False, "scrollZoom": True},
     )
-    payload = json.dumps([_dashboard_context(record) for record in records]).replace("</", "<\\/")
+    payload = json.dumps(
+        contexts if contexts is not None else [_dashboard_context(record) for record in records]
+    ).replace("</", "<\\/")
     template = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -1595,6 +1607,7 @@ button:hover { background:#f0f0f1; }
 .metric-range { display:flex; justify-content:space-between; color:var(--muted); font:9px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .metric-help { color:var(--muted); font-size:10px; line-height:1.35; margin-top:7px; }
 .legend-note { color:var(--muted); font-size:11px; margin-top:10px; }
+.notes { font:10.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre; overflow-x:auto; margin:0; background:#fafafa; border:1px solid var(--line); border-radius:9px; padding:8px; }
 @media (max-width:1100px) { .layout { grid-template-columns:1fr; } .context { position:static; } .cameras { grid-template-columns:1fr 1fr; } }
 </style>
 </head>
@@ -1607,11 +1620,12 @@ button:hover { background:#f0f0f1; }
   <div class="layout">
     <main class="card plot-card">__PLOT__</main>
     <aside class="card context">
-      <div class="warning"><strong>POSSIBLE FOLLOWER LAG</strong><p>Magenta: measured pose → first demonstrated target. Dotted spokes: the same gap per sample. Not an interpolated timestep.</p></div>
+      <div class="warning"><strong>__WARNING_TITLE__</strong><p>__WARNING__</p></div>
       <div class="controls"><button id="prev">← Previous</button><button id="next">Next →</button></div>
       <div class="section-label">Conditioning</div><div class="subtask" id="subtask"></div>
-      <div class="section-label">Trajectory fit · sample 0</div><div class="metric-list" id="trajectory-metrics"></div>
-      <div class="metric-help">Dots are the distribution across anchors; magenta is the action currently drawn. Every value is lower-is-better and scale-free, so anchors are comparable to each other however far the demonstration travels. The first three divide by the error of holding the arm still: 1 means the prediction is worth no more than freezing, above 1 means worth less. Final direction loss is 0 aligned, 1 perpendicular or no predicted displacement, and 2 opposite; displacement length is ignored. The auxiliary loss still gates on the raw MSEs, whose p75s are in action_metrics.json.</div>
+      <div id="notes-section" hidden><div class="section-label">Numbers</div><pre class="notes" id="notes"></pre></div>
+      <div id="fit-section"><div class="section-label">Trajectory fit · sample 0</div><div class="metric-list" id="trajectory-metrics"></div>
+      <div class="metric-help">Dots are the distribution across anchors; magenta is the action currently drawn. Every value is lower-is-better and scale-free, so anchors are comparable to each other however far the demonstration travels. The first three divide by the error of holding the arm still: 1 means the prediction is worth no more than freezing, above 1 means worth less. Final direction loss is 0 aligned, 1 perpendicular or no predicted displacement, and 2 opposite; displacement length is ignored. The auxiliary loss still gates on the raw MSEs, whose p75s are in action_metrics.json.</div></div>
       <div class="section-label">Observation</div><div class="cameras" id="cameras"></div>
       <div class="legend-note">__LEGEND_NOTE__</div>
     </aside>
@@ -1633,6 +1647,8 @@ button:hover { background:#f0f0f1; }
     {key:'terminal_direction_loss', label:'Final direction loss', fixed:[0,2]}
   ];
   let active = 0;
+  const hasFit = contexts.some(c => c.trajectory && Object.values(c.trajectory).some(Number.isFinite));
+  document.getElementById('fit-section').hidden = !hasFit;
   // Temporal shape MSE lives two to three decades below the other three: it is measured
   // on adjacent-target differences, which are ~1/T of the excursion the other metrics
   // see. Three decimals would print its value, its p75 and both ends of its range as
@@ -1675,7 +1691,9 @@ button:hover { background:#f0f0f1; }
     const context = contexts[active];
     document.getElementById('anchor-pill').textContent = context.label;
     document.getElementById('subtask').textContent = context.subtask;
-    renderMetrics(active);
+    document.getElementById('notes-section').hidden = !context.notes;
+    document.getElementById('notes').textContent = context.notes || '';
+    if(hasFit) renderMetrics(active);
     const cameras = document.getElementById('cameras'); cameras.replaceChildren();
     context.cameras.forEach(camera => {
       const figure=document.createElement('figure'); figure.className='camera';
@@ -1705,6 +1723,8 @@ button:hover { background:#f0f0f1; }
         .replace("__SUBTITLE__", html.escape(subtitle))
         .replace("__PLOT__", plot_html)
         .replace("__LEGEND_NOTE__", html.escape(legend_note))
+        .replace("__WARNING_TITLE__", html.escape(warning[0]))
+        .replace("__WARNING__", html.escape(warning[1]))
         .replace("__CONTEXTS__", payload)
     )
     with open(html_path, "w", encoding="utf-8") as handle:

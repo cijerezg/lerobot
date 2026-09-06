@@ -46,6 +46,14 @@ $$\mathcal L = \underbrace{\mathcal L_{flow} + \mathcal L_{aux}}_{\text{action e
 - **Discrete CE** — FAST action tokens with `action_mode: both` and knowledge
   insulation; logged as `loss_discrete_ce`. The z-loss remains active as a
   logit-scale regularizer but is not a separate dashboard series.
+  FAST targets are tokenized at each row's **native** width (ReBot 7, Franka 8):
+  a padded zero column would change every BPE token, so a ReBot chunk is
+  30 × 7 = 210 coefficients, never 240. The width is `action_dim_is_pad`, which the
+  layout step derives from the stats artifact's `native_action_dims` by
+  `action_layout_id` — training, `val_loss`, probes and inference alike, with or
+  without an action tensor in the batch. The greedy decode speaks the same width
+  and right-pads the chunk to the canonical 8. A span of exactly horizon × native
+  width is the trained format; any other count is a generation failure.
 - **Generation CE** — separate forward on the generation prompt for annotated
   samples, separate backward accumulating into the same grads, weight
   `subtask_loss_weight`. **Currently 0.0, i.e. off**; the forward still runs and

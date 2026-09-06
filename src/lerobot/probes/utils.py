@@ -393,13 +393,13 @@ def canonical_camera_obs(obs: dict, cfg) -> dict:
     """Rename a ReBot dataset's camera columns onto the run's canonical roles.
 
     ``RoleAlignedBuffer`` does this for the training buffers; probes read the dataset's
-    own columns, so without it every canonical image key is missing downstream. A run
-    with the mixture off keeps the raw names, which is what its ``input_features`` say.
+    own columns, so without it every canonical image key is missing downstream. A
+    rig-shaped policy keeps the raw names, which is what its ``input_features`` say.
     """
-    diverse = getattr(cfg, "diverse", None)
-    if diverse is None or not getattr(diverse, "enabled", False):
+    from lerobot.datasets.diverse_actor_selection import CAMERA_ROLE_MAP, on_canonical_roles
+
+    if not on_canonical_roles(cfg.policy.input_features):
         return obs
-    from lerobot.datasets.diverse_actor_selection import CAMERA_ROLE_MAP
 
     mapping = CAMERA_ROLE_MAP["rebot"]
     renamed = {}
@@ -503,12 +503,11 @@ def identity_columns(cfg) -> dict:
     enough -- the normalizer and the clamp both expand a single row to the batch.
     Without it, per-row normalization has no row to gather and raises.
     """
-    diverse = getattr(cfg, "diverse", None)
-    if diverse is None or not getattr(diverse, "enabled", False):
-        return {}
-    from lerobot.datasets.diverse_actor_selection import action_layout_by_name
+    from lerobot.datasets.diverse_actor_selection import action_layout_by_name, on_canonical_roles
 
-    return {"action_layout_id": action_layout_by_name(diverse.rebot_layout).index}
+    if not on_canonical_roles(cfg.policy.input_features):
+        return {}
+    return {"action_layout_id": action_layout_by_name(cfg.diverse.rebot_layout).index}
 
 
 def dataset_camera_key(dataset, canonical_key: str) -> str:

@@ -139,14 +139,15 @@ def get_offline_dataset_weights(cfg) -> list[float]:
 def buffer_state_keys(cfg) -> list[str]:
     """State keys for the LeRobot buffers of this run.
 
-    Normally the policy's own `input_features`. In a mixed run those have been renamed
+    Normally the policy's own `input_features`. A role-shaped policy has them renamed
     onto canonical camera roles, while the ReBot caches on disk were fingerprinted (and
     their columns written) under ReBot's spelling -- so the lookup and the load ask under
     the old names, and `RoleAlignedBuffer` renames the columns afterwards.
     """
+    from lerobot.datasets.diverse_actor_selection import on_canonical_roles
+
     keys = list(cfg.policy.input_features.keys())
-    diverse = getattr(cfg, "diverse", None)
-    if diverse is None or not getattr(diverse, "enabled", False):
+    if not on_canonical_roles(keys):
         return keys
     from lerobot.rl.data_sources.rebot_role_adapter import rebot_state_keys
 

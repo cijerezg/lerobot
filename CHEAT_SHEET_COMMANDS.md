@@ -107,6 +107,18 @@ To use a different metrics directory, pass the same location to both training
 (--aim.repo=PATH) and the UI (aim up --repo PATH). Do not delete ./aim unless you intend to
 delete all locally stored run history.
 
+## Inference (standalone, RTC)
+
+Run the checkpoint on the real robot, no learner or gRPC:
+
+uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
+
+The checkpoint is `inference_checkpoint_path` in config_rl.yaml (falls back to
+`policy.pretrained_path`); it must be a complete `checkpoints/<step>/pretrained_model`
+dir. `inference_send_actions_to_robot: false` is the safety preflight: the follower is
+read but never commanded, actions go out through the leader feedback path. Subtasks are
+fed by keypress from `policy.eval_subtasks`.
+
 ## Probe viewer
 
 Browser UI over a run's validation probes (serves on http://127.0.0.1:7870):

@@ -71,6 +71,7 @@ from lerobot.common.train_utils import (
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.rl.buffer import ReplayBuffer
+from lerobot.datasets.diverse_actor_selection import on_canonical_roles
 from lerobot.rl.offline_dataset_utils import (
     buffer_state_keys,
     get_offline_dataset_sources,
@@ -965,6 +966,22 @@ def run_offline_training(
         )
     else:
         mixture_telemetry = None
+        # The ReBot cache spells its views top/wrist and carries no action_layout_id. A
+        # role-shaped policy (per-layout stats, absent external_1) needs the same
+        # alignment the mixture applies to its ReBot half; a rig-shaped policy
+        # (top/wrist keys) keeps the raw buffers.
+        if on_canonical_roles(cfg.policy.input_features):
+            from lerobot.rl.data_sources.diverse_integration import (
+                align_rebot_buffers,
+                sample_spec_from_config,
+            )
+
+            offline_buffers = align_rebot_buffers(
+                offline_buffers,
+                diverse_cfg,
+                sample_spec_from_config(cfg),
+                is_main_process=runtime.is_main_process,
+            )
         buf_iter = make_combined_offline_iterator(
             buffers=offline_buffers,
             batch_size=cfg.batch_size,

@@ -10,6 +10,9 @@ masking helpers -- on tensors small enough to check by hand.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import numpy as np
 import pytest
 import torch
 
@@ -306,3 +309,108 @@ def test_a_missing_index_column_is_an_error_not_a_default_row() -> None:
                 complementary_data={"embodiment_index": torch.tensor([0])},
             )
         )
+
+
+# ── Native width by layout (FAST speaks 7 for ReBot, 8 for Franka) ───────────
+
+
+def _layout_step():
+    """Row 0 is layout 0 (8 wide), row 1 is layout 1 (7 wide)."""
+    return MolmoAct2UnifiedLayoutProcessorStep(
+        state_dim=8, action_dim=8, native_action_dims=[8, 7], stats_index_key="action_layout_id"
+    )
+
+
+def test_a_row_prepadded_by_its_caller_is_still_masked_by_its_layout() -> None:
+    """Width comes from who the row is, not from how wide its tensor arrived."""
+    state, action, is_pad = _mixed_batch()
+    out = _layout_step()(
+        create_transition(
+            observation={OBS_STATE: state},
+            action=action,
+            complementary_data={"action_layout_id": torch.tensor([0, 1])},
+        )
+    )
+    assert torch.equal(out[TransitionKey.COMPLEMENTARY_DATA]["action_dim_is_pad"], is_pad)
+
+
+def test_the_layout_supplies_the_action_mask_when_the_batch_carries_no_action() -> None:
+    """Inference has no action tensor to measure; the mask still has to say 7."""
+    state, _, is_pad = _mixed_batch()
+    out = _layout_step()(
+        create_transition(
+            observation={OBS_STATE: state},
+            complementary_data={"action_layout_id": torch.tensor([0, 1])},
+        )
+    )
+    assert torch.equal(out[TransitionKey.COMPLEMENTARY_DATA]["action_dim_is_pad"], is_pad)
+
+
+def test_a_scalar_identity_column_covers_the_whole_batch() -> None:
+    state, action, _ = _mixed_batch()
+    out = _layout_step()(
+        create_transition(
+            observation={OBS_STATE: state},
+            action=action,
+            complementary_data={"action_layout_id": 1},
+        )
+    )
+    assert out[TransitionKey.COMPLEMENTARY_DATA]["action_dim_is_pad"][:, 7].all()
+
+
+def test_an_explicit_mask_that_contradicts_the_layout_is_refused() -> None:
+    state, action, _ = _mixed_batch()
+    with pytest.raises(ValueError, match="disagrees"):
+        _layout_step()(
+            create_transition(
+                observation={OBS_STATE: state},
+                action=action,
+                complementary_data={
+                    "action_layout_id": torch.tensor([0, 1]),
+                    "action_dim_is_pad": torch.zeros(2, 8, dtype=torch.bool),
+                },
+            )
+        )
+
+
+def test_a_row_narrower_than_its_layout_is_refused() -> None:
+    state, action, _ = _mixed_batch()
+    with pytest.raises(ValueError, match="narrower"):
+        _layout_step()(
+            create_transition(
+                observation={OBS_STATE: state},
+                action=action[:, :, :6],
+                complementary_data={"action_layout_id": torch.tensor([0, 1])},
+            )
+        )
+
+
+def _decode_with_fake_fast(num_coefficients: int, *, action_dim: int, native_widths):
+    """Run the policy's decode with a FAST stand-in that holds `num_coefficients` slots."""
+    fake_fast = SimpleNamespace(
+        bpe_tokenizer=SimpleNamespace(decode=lambda ids: list(range(num_coefficients))),
+        decode=lambda ids, time_horizon, action_dim: np.ones((time_horizon, action_dim), np.float32),
+    )
+    shell = SimpleNamespace(
+        model=SimpleNamespace(config=SimpleNamespace(action_start_token_id=1, action_end_token_id=2)),
+        _action_token_id_to_bin=lambda: {10: 0, 11: 1},
+        _load_discrete_action_tokenizer=lambda: fake_fast,
+        _extract_discrete_token_bins=MolmoAct2Policy._extract_discrete_token_bins,
+        _generation_action_horizon=lambda: HORIZON,
+    )
+    return MolmoAct2Policy._decode_discrete_action_chunk(
+        shell, torch.tensor([[1, 10, 11, 10, 2]]), action_dim=action_dim, native_widths=native_widths
+    )
+
+
+def test_fast_decodes_a_row_at_its_native_width_and_returns_the_canonical_one() -> None:
+    chunk = _decode_with_fake_fast(HORIZON * 7, action_dim=8, native_widths=torch.tensor([7]))
+    assert chunk.shape == (1, HORIZON, 8)
+    assert torch.equal(chunk[0, :, :7], torch.ones(HORIZON, 7))
+    assert not chunk[0, :, 7].any()
+
+
+def test_fast_refuses_a_span_of_another_width() -> None:
+    """The bug in reverse: 8 dims of coefficients for a 7-DoF row is not a decode."""
+    with pytest.raises(RuntimeError, match=r"expected 28 \(4 steps x 7 native dims\)"):
+        _decode_with_fake_fast(HORIZON * 8, action_dim=8, native_widths=torch.tensor([7]))

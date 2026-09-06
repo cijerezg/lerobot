@@ -1593,6 +1593,8 @@ def act_with_policy_rtc_inference(
             # Depth PNGs land on the cache's read grid; a policy without a stride gets every frame.
             depth_stride=getattr(cfg.policy, "image_stride", 1),
         )
+        if _teleop_supports_feedback(teleop_device):
+            teleop_device.start_trace(Path(cfg.output_dir) / "leader_trace.csv")
         action_queue = ActionQueue(policy.config.rtc_config)
 
         # Operator subtask console: free-text bindings, indexed against the checkpoint

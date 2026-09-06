@@ -18,6 +18,10 @@ class _FakeServo:
     def __init__(self, angle: float = 0.0, current: int = 30) -> None:
         self.angle_monitor = angle
         self.current = current
+        self.power = 360
+        self.voltage = 12000
+        self.temp = 31.5
+        self.status = 0
 
 
 class _FakeUART:
@@ -311,3 +315,67 @@ def test_monitor_read_silent_bus_trips_fault_after_retries() -> None:
 
     assert controller.feedback_fault is not None
     assert ctrl.stop_commands[-1] == (0xFF, STOP_UNLOAD, 0x00)
+
+
+def test_trace_records_reads_and_tracking_fault_dumps_the_last_second(tmp_path, caplog) -> None:
+    controller, ctrl, _ = _controller(
+        feedback_max_raw_error_deg=10.0,
+        feedback_error_timeout_s=0.2,
+    )
+    controller.start_trace(tmp_path / "leader_trace.csv")
+    controller._feedback_enabled = True
+    controller._last_sent_raw = dict.fromkeys(controller.motor_names, 0.0)
+    elbow = ctrl.servos[controller.config.joint_ids["elbow_flex"]]
+    elbow.angle_monitor = 20.0
+    elbow.current = 250
+    elbow.status = 0x04  # stall error bit
+
+    caplog.set_level("WARNING")
+    controller.read_positions()
+    time.sleep(0.25)
+    with pytest.raises(LeaderFeedbackError, match="elbow_flex remained 20.0"):
+        controller.read_positions()
+
+    lines = (tmp_path / "leader_trace.csv").read_text().splitlines()
+    header = lines[0].split(",")
+    assert header[:3] == ["time", "torqued", "intervening"]
+    assert header[3:10] == [
+        "shoulder_pan_target", "shoulder_pan_raw", "shoulder_pan_ma", "shoulder_pan_mv",
+        "shoulder_pan_mw", "shoulder_pan_c", "shoulder_pan_status",
+    ]
+    assert len(lines) == 3
+    last = dict(zip(header, lines[-1].split(","), strict=True))
+    assert last["torqued"] == "1"
+    assert (last["elbow_flex_target"], last["elbow_flex_raw"]) == ("0.0", "20.0")
+    assert (last["elbow_flex_ma"], last["elbow_flex_mv"], last["elbow_flex_mw"], last["elbow_flex_c"]) == (
+        "250", "12000", "360", "31.5"
+    )
+    assert last["elbow_flex_status"] == "4"
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Leader elbow_flex status: stall" in messages
+    assert sum("status: stall" in m for m in messages) == 1  # once per transition, not per read
+    dump = next(m for m in messages if m.startswith("Leader elbow_flex, last 1.0 s"))
+    rows = dump.splitlines()[1:]
+    assert len(rows) == 2
+    assert rows[-1].endswith("| stall")
+    assert "|     0.0 |    20.0 |  -20.0 |  250 | 12000 |   360 |  31.5 |" in rows[-1]
+
+    controller.close()
+
+
+def test_feedback_ceiling_stretches_with_time_since_the_last_command() -> None:
+    controller, ctrl, _ = _controller()
+    controller.enable_torque()
+    ctrl.sync_commands.clear()
+
+    # Three ticks since the last command: 3 x 8 = 24 raw deg allowed, 20 is sent.
+    controller._last_feedback_time = time.monotonic() - 3 * controller.config.feedback_step_period_s
+    controller.send_positions(_feedback(controller.config, shoulder_pan=-20.0))
+    assert _decoded_payload(controller, ctrl)["shoulder_pan"][1] == 200
+
+    # A full second since the last command: capped at 4 x 8 = 32, so 33 more trips.
+    controller._last_feedback_time = time.monotonic() - 1.0
+    with pytest.raises(LeaderFeedbackError, match=r"shoulder_pan asked to move \+33.0 raw deg .*ceiling 32.0"):
+        controller.send_positions(_feedback(controller.config, shoulder_pan=-53.0))
+    assert controller.feedback_enabled is False

@@ -277,6 +277,13 @@ class RebotArm102Leader(Teleoperator):
         if self._hd_controller is not None:
             self._hd_controller.disable_torque()
 
+    def start_trace(self, path) -> None:
+        if self.config.variant != "102HD":
+            raise NotImplementedError("Tracing is only supported by the reBot Arm 102HD leader.")
+        if self._hd_controller is None:
+            raise RuntimeError("102HD leader is not connected")
+        self._hd_controller.start_trace(path)
+
     def get_teleop_events(self) -> dict[TeleopEvents, bool]:
         if self.config.variant == "102HD":
             if self._hd_controller is None:

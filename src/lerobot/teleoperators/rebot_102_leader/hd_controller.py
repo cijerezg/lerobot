@@ -24,6 +24,7 @@ read path.
 from __future__ import annotations
 
 import contextlib
+import csv
 import logging
 import math
 import os
@@ -35,6 +36,8 @@ import threading
 import time
 import traceback
 import tty
+from collections import deque
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import fashionstar_uart_sdk as uservo
@@ -53,6 +56,26 @@ SYNC_MULTITURN_BY_INTERVAL = 14
 
 
 _MONITOR_READ_ATTEMPTS = 3
+
+# Servo status byte (SDK query_status legend): bit 0 is "executing", bits 1-7 are errors the
+# servo clears itself once the condition ends. A stalled or protected servo says so here.
+_STATUS_NAMES = (
+    "executing",
+    "command_error",
+    "stall",
+    "overvoltage",
+    "undervoltage",
+    "current_error",
+    "power_error",
+    "temperature_error",
+)
+_STATUS_ERROR_MASK = 0xFE
+_TRACE_DUMP_S = 1.0
+
+
+def _status_names(status: int) -> str:
+    names = [name for bit, name in enumerate(_STATUS_NAMES) if status & (1 << bit)]
+    return "|".join(names) if names else "-"
 
 
 class LeaderFeedbackError(TeleopFeedbackError):
@@ -82,6 +105,16 @@ class RebotArm102HDController:
         self._last_raw_positions: dict[str, float] = {}
         self._last_sent_raw: dict[str, float] | None = None
         self._currents_ma: dict[str, int] = {}
+        self._power_mw: dict[str, int] = {}
+        self._voltage_mv: dict[str, int] = {}
+        self._temp_c: dict[str, float] = {}
+        self._status: dict[str, int] = {}
+        self._status_flagged: dict[str, int] = {}
+        # Per-read rows (wall time, target raw, measured raw, mA, mV, mW, degC, status) for the
+        # fault dump; the CSV trace, when started, gets the same rows.
+        self._recent_rows: deque[tuple] = deque(maxlen=90)
+        self._trace_file = None
+        self._trace_writer = None
         self._raw_error_since: dict[str, float] = {}
         self._current_since: dict[str, float] = {}
 
@@ -126,6 +159,8 @@ class RebotArm102HDController:
             "feedback_error_timeout_s": self.config.feedback_error_timeout_s,
             "feedback_max_current_ma": self.config.feedback_max_current_ma,
             "feedback_current_timeout_s": self.config.feedback_current_timeout_s,
+            "feedback_step_period_s": self.config.feedback_step_period_s,
+            "feedback_max_step_stretch": self.config.feedback_max_step_stretch,
         }.items():
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -188,6 +223,7 @@ class RebotArm102HDController:
         with self.io_lock:
             raw = self._read_raw_locked()
             self._last_raw_positions = raw
+            self._record_trace_locked(raw)
             self._evaluate_feedback_health_locked(raw, time.monotonic())
             return {
                 name: raw_to_position(
@@ -211,13 +247,85 @@ class RebotArm102HDController:
             self._trip_fault_locked(f"no monitor reply from {', '.join(missing)} in {_MONITOR_READ_ATTEMPTS} reads")
         raw: dict[str, float] = {}
         currents: dict[str, int] = {}
+        power_mw: dict[str, int] = {}
+        voltage_mv: dict[str, int] = {}
+        temp_c: dict[str, float] = {}
+        status: dict[str, int] = {}
         for name in self.motor_names:
             servo = result[self.config.joint_ids[name]]
             raw[name] = float(servo.angle_monitor)
             if servo.current is not None:
                 currents[name] = int(servo.current)
+                power_mw[name] = int(servo.power)
+                voltage_mv[name] = int(servo.voltage)
+                temp_c[name] = float(servo.temp)
+                status[name] = int(servo.status)
         self._currents_ma = currents
+        self._power_mw = power_mw
+        self._voltage_mv = voltage_mv
+        self._temp_c = temp_c
+        self._status = status
+        for name, value in status.items():
+            flags = value & _STATUS_ERROR_MASK
+            if flags != self._status_flagged.get(name, 0):
+                logger.warning("Leader %s status: %s", name, _status_names(flags))
+                self._status_flagged[name] = flags
         return raw
+
+    def start_trace(self, path: str | os.PathLike) -> None:
+        """Append every monitor read (targets, measured raw, mA, mV, mW, degC, status) to a CSV."""
+        with self.io_lock:
+            path = Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._trace_file = open(path, "w", buffering=1, newline="")
+            self._trace_writer = csv.writer(self._trace_file)
+            header = ["time", "torqued", "intervening"]
+            for name in self.motor_names:
+                header += [f"{name}_{field}" for field in ("target", "raw", "ma", "mv", "mw", "c", "status")]
+            self._trace_writer.writerow(header)
+            logger.info("Leader trace: %s", path)
+
+    def _record_trace_locked(self, raw: dict[str, float]) -> None:
+        now = time.time()
+        target = self._last_sent_raw
+        self._recent_rows.append(
+            (now, target, raw, self._currents_ma, self._voltage_mv, self._power_mw, self._temp_c, self._status)
+        )
+        if self._trace_writer is None:
+            return
+        row: list = [f"{now:.3f}", int(self._feedback_enabled), int(self.is_intervening)]
+        for name in self.motor_names:
+            row += [
+                "" if target is None else f"{target[name]:.1f}",
+                f"{raw[name]:.1f}",
+                self._currents_ma.get(name, ""),
+                self._voltage_mv.get(name, ""),
+                self._power_mw.get(name, ""),
+                "" if name not in self._temp_c else f"{self._temp_c[name]:.1f}",
+                self._status.get(name, ""),
+            ]
+        self._trace_writer.writerow(row)
+
+    def _log_recent_locked(self, name: str) -> None:
+        if not self._recent_rows:
+            return
+        t_end = self._recent_rows[-1][0]
+        lines = [
+            f"Leader {name}, last {_TRACE_DUMP_S:.1f} s before the fault "
+            "(dt s | target raw | measured raw | error | mA | mV | mW | degC | status):"
+        ]
+        for now, target, raw, currents, voltage_mv, power_mw, temp_c, status in self._recent_rows:
+            if t_end - now > _TRACE_DUMP_S:
+                continue
+            target_deg = float("nan") if target is None else target[name]
+            lines.append(
+                f"{now - t_end:6.2f} | {target_deg:7.1f} | {raw[name]:7.1f} | "
+                f"{target_deg - raw[name]:6.1f} | {currents.get(name, 0):4d} | "
+                f"{voltage_mv.get(name, 0):5d} | {power_mw.get(name, 0):5d} | "
+                f"{temp_c.get(name, float('nan')):5.1f} | "
+                f"{_status_names(status.get(name, 0))}"
+            )
+        logger.error("\n".join(lines))
 
     def send_positions(self, feedback: dict[str, float]) -> None:
         with self.io_lock:
@@ -262,12 +370,16 @@ class RebotArm102HDController:
                 )
 
             base = self._last_sent_raw
-            ceiling = self.config.feedback_max_raw_step_deg
+            now = time.monotonic()
+            elapsed = now - self._last_feedback_time
+            stretch = min(self.config.feedback_max_step_stretch, max(1.0, elapsed / self.config.feedback_step_period_s))
+            ceiling = self.config.feedback_max_raw_step_deg * stretch
             for name in self.motor_names:
                 jump = requested[name] - base[name]
                 if abs(jump) > ceiling:
                     self._trip_fault_locked(
-                        f"{name} asked to move {jump:+.1f} raw deg in one step, ceiling {ceiling:.1f}"
+                        f"{name} asked to move {jump:+.1f} raw deg in one step "
+                        f"({elapsed * 1000:.0f} ms since the last), ceiling {ceiling:.1f}"
                     )
             try:
                 self._send_raw_locked(requested)
@@ -276,7 +388,7 @@ class RebotArm102HDController:
                 self._trip_fault_locked(reason, raise_error=False)
                 raise LeaderFeedbackError(reason) from error
             self._last_sent_raw = requested
-            self._last_feedback_time = time.monotonic()
+            self._last_feedback_time = now
 
     def enable_torque(self) -> None:
         with self.io_lock:
@@ -347,6 +459,7 @@ class RebotArm102HDController:
             if error > self.config.feedback_max_raw_error_deg:
                 self._raw_error_since.setdefault(name, now)
                 if now - self._raw_error_since[name] >= self.config.feedback_error_timeout_s:
+                    self._log_recent_locked(name)
                     self._trip_fault_locked(
                         f"{name} remained {error:.1f} raw deg from its target for "
                         f"{now - self._raw_error_since[name]:.2f}s"
@@ -359,6 +472,7 @@ class RebotArm102HDController:
             if current_magnitude > self.config.feedback_max_current_ma:
                 self._current_since.setdefault(name, now)
                 if now - self._current_since[name] >= self.config.feedback_current_timeout_s:
+                    self._log_recent_locked(name)
                     self._trip_fault_locked(
                         f"{name} remained at {current_magnitude} mA, above "
                         f"{self.config.feedback_max_current_ma} mA, "
@@ -544,6 +658,10 @@ class RebotArm102HDController:
                 self._feedback_enabled = False
                 self.ctrl = None
                 self.uart = None
+                if self._trace_file is not None:
+                    self._trace_file.close()
+                    self._trace_file = None
+                    self._trace_writer = None
 
     def _require_connected(self) -> None:
         if not self.is_connected:

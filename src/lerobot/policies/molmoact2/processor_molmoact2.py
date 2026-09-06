@@ -700,6 +700,44 @@ def _pad_lowdim(tensor: Tensor, mask: Tensor, width: int | None, key: str) -> tu
     return padded, padded_mask
 
 
+def stats_row_indices(
+    indices: Any | None, batch_size: int, *, index_key: str, default_index: int, num_rows: int
+) -> Tensor:
+    """The stats row of every sample, read from the batch's identity column.
+
+    Everything that is per-robot gathers with this: the normalizer's stats row and the
+    layout step's native width, so an unlabelled row or one outside the artifact fails
+    the same way in both places.
+    """
+    if indices is None:
+        if default_index < 0:
+            raise ValueError(
+                f"Per-row normalization is active but this batch carries no {index_key!r}. "
+                "Materialize it (materialize_dataset_labels or the diverse buffer's identity "
+                "columns), pass it through the postprocessor payload, or set "
+                "default_embodiment_index for a single-robot deployment."
+            )
+        rows = torch.full((batch_size,), default_index, dtype=torch.long)
+    else:
+        rows = torch.as_tensor(indices).detach().reshape(-1).long()
+        if rows.numel() == 1 and batch_size > 1:
+            rows = rows.expand(batch_size)
+    if int(rows.min()) < 0:
+        unknown = sorted({int(v) for v in rows.tolist() if v < 0})
+        raise ValueError(
+            f"Per-row normalization received unknown {index_key} value(s) {unknown}. "
+            "Normalizing an unlabelled robot with another robot's stats is exactly the error "
+            "this path exists to prevent; label the source or add its robot to "
+            "lerobot/datasets/embodiment.py."
+        )
+    if int(rows.max()) >= num_rows:
+        raise ValueError(
+            f"{index_key} {int(rows.max())} is outside this checkpoint's stats vocabulary of "
+            f"{num_rows} rows. The stats artifact and the buffer labels disagree."
+        )
+    return rows
+
+
 @ProcessorStepRegistry.register(name="molmoact2_unified_layout")
 @dataclass
 class MolmoAct2UnifiedLayoutProcessorStep(ProcessorStep):
@@ -714,6 +752,14 @@ class MolmoAct2UnifiedLayoutProcessorStep(ProcessorStep):
 
     state_dim: int | None = None
     action_dim: int | None = None
+    # Per stats row, the robot's own action width (the artifact's native_action_dims),
+    # gathered with the identity column the normalizer gathers its stats row with. The
+    # action mask then says who the row IS, not how wide its tensor happened to arrive:
+    # a 7-DoF chunk a caller pre-padded to 8 is still 7 wide, and a batch with no action
+    # at all (inference) still gets the mask the FAST decode reads its width from.
+    native_action_dims: list[int] | None = None
+    stats_index_key: str = "embodiment_index"
+    default_embodiment_index: int = -1
 
     def get_config(self) -> dict[str, Any]:
         # Dropping these silently disables padding on reload: _pad_lowdim treats a
@@ -721,6 +767,9 @@ class MolmoAct2UnifiedLayoutProcessorStep(ProcessorStep):
         return {
             "state_dim": None if self.state_dim is None else int(self.state_dim),
             "action_dim": None if self.action_dim is None else int(self.action_dim),
+            "native_action_dims": self.native_action_dims,
+            "stats_index_key": self.stats_index_key,
+            "default_embodiment_index": int(self.default_embodiment_index),
         }
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
@@ -736,6 +785,18 @@ class MolmoAct2UnifiedLayoutProcessorStep(ProcessorStep):
             return transition
         reference = torch.as_tensor(reference)
         batch_size = int(reference.shape[0])
+
+        layout_mask = None
+        if self.native_action_dims is not None:
+            rows = stats_row_indices(
+                complementary.get(self.stats_index_key),
+                batch_size,
+                index_key=self.stats_index_key,
+                default_index=self.default_embodiment_index,
+                num_rows=len(self.native_action_dims),
+            )
+            widths = torch.as_tensor(self.native_action_dims, dtype=torch.long)[rows]
+            layout_mask = (torch.arange(self.action_dim)[None] >= widths[:, None]).to(reference.device)
 
         state_mask = None
         if isinstance(observation, dict) and OBS_STATE in observation:
@@ -769,11 +830,30 @@ class MolmoAct2UnifiedLayoutProcessorStep(ProcessorStep):
 
         if action is not None:
             action = torch.as_tensor(action)
+            raw_width = int(action.shape[-1])
+            explicit_mask = complementary.get("action_dim_is_pad") is not None
             action_mask = _dimension_mask(complementary, "action_dim_is_pad", action, batch_size)
             action, action_mask = _pad_lowdim(action, action_mask, self.action_dim, ACTION)
             action_mask = require_prefix_valid_mask(action_mask, "action_dim_is_pad")
+            if layout_mask is not None:
+                # A caller's explicit mask must agree with the layout. A width read off
+                # the tensor may only be wider: a chunk pre-padded to the canonical width
+                # (val_loss, probes) still belongs to a 7-DoF robot.
+                if explicit_mask and not torch.equal(action_mask, layout_mask):
+                    raise ValueError(
+                        "action_dim_is_pad disagrees with the rows' action layouts "
+                        f"(native widths {(~layout_mask).sum(-1).tolist()})."
+                    )
+                if bool(((~action_mask).sum(-1) < (~layout_mask).sum(-1)).any()):
+                    raise ValueError(
+                        f"{ACTION} width {raw_width} is narrower than a row's native width "
+                        f"({(~layout_mask).sum(-1).tolist()}); a missing dimension is not padding."
+                    )
+                action_mask = layout_mask
             transition[TransitionKey.ACTION] = action
             complementary["action_dim_is_pad"] = action_mask
+        elif layout_mask is not None:
+            complementary["action_dim_is_pad"] = layout_mask
 
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
@@ -867,39 +947,16 @@ class _MolmoAct2MaskedNormalizationMixin:
         if not getattr(self, "embodiment_names", None):
             return None
         batch_size = int(tensor.shape[0]) if tensor.ndim > 1 else 1
-        indices = self._active_embodiment_indices
-        if indices is None:
-            default = int(getattr(self, "default_embodiment_index", -1))
-            if default < 0:
-                raise ValueError(
-                    f"Per-row normalization is active but this batch carries no "
-                    f"{self._stats_index_key!r}. Materialize it (materialize_dataset_labels or the "
-                    "diverse buffer's identity columns), pass it through the postprocessor "
-                    "payload, or set default_embodiment_index for a single-robot deployment."
-                )
-            rows = torch.full((batch_size,), default, dtype=torch.long)
-        else:
-            rows = torch.as_tensor(indices).detach().reshape(-1).long()
-            if rows.numel() == 1 and batch_size > 1:
-                rows = rows.expand(batch_size)
-        if int(rows.min()) < 0:
-            unknown = sorted({int(v) for v in rows.tolist() if v < 0})
-            raise ValueError(
-                f"Per-row normalization received unknown {self._stats_index_key} value(s) {unknown}. "
-                "Normalizing an unlabelled robot with another robot's stats is exactly the error "
-                "this path exists to prevent; label the source or add its robot to "
-                "lerobot/datasets/embodiment.py."
-            )
-        if int(rows.max()) >= len(self.embodiment_names):
-            raise ValueError(
-                f"{self._stats_index_key} {int(rows.max())} is outside this checkpoint's stats "
-                f"vocabulary of {len(self.embodiment_names)} rows ({self.embodiment_names}). The "
-                "stats artifact and the buffer labels disagree."
-            )
         # Deliberately NOT moved onto tensor.device: on this path _tensor_stats stays
         # wherever self.to() last put it (CPU), because _apply_transform restores the
         # ungathered stats afterwards. The index has to follow the stats it indexes.
-        return rows
+        return stats_row_indices(
+            self._active_embodiment_indices,
+            batch_size,
+            index_key=self._stats_index_key,
+            default_index=int(getattr(self, "default_embodiment_index", -1)),
+            num_rows=len(self.embodiment_names),
+        )
 
     def _apply_transform(
         self, tensor: Tensor, key: str, feature_type: Any, *, inverse: bool = False
@@ -1703,6 +1760,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                     hold, action_is_pad, complementary.get("action_dim_is_pad")
                 )[0]
             real_action_dim = int((~action_dim_is_pad).sum(dim=-1).max())
+        elif complementary.get("action_dim_is_pad") is not None:
+            # The layout step already knows each row's width; env_action_dim is the
+            # widest layout in the mixture, not this robot's.
+            native_mask = torch.as_tensor(complementary["action_dim_is_pad"], dtype=torch.bool)
+            action_dim_is_pad[:, : native_mask.shape[-1]] = native_mask
+            real_action_dim = int((~action_dim_is_pad).sum(dim=-1).max())
         elif real_action_dim > 0:
             action_dim_is_pad[:, :real_action_dim] = False
 
@@ -1965,6 +2028,7 @@ def make_molmoact2_pre_post_processors(
     # Which batch column picks the stats row. An artifact built per action layout says
     # so itself, so a run cannot pair layout-keyed statistics with embodiment indices.
     stats_index_key = "embodiment_index"
+    native_action_dims = None
     embodiment_stats_path = getattr(config, "embodiment_stats_path", None)
     if embodiment_stats_path:
         artifact = load_embodiment_stats(
@@ -1976,6 +2040,7 @@ def make_molmoact2_pre_post_processors(
         stats_index_key = str(artifact["stats_index_key"])
         canonical_action_dim = int(artifact["action_width"])
         canonical_state_dim = int(artifact["state_width"])
+        native_action_dims = [int(v) for v in artifact["native_action_dims"]]
         dataset_stats = _stacked_stats_from_artifact(artifact)
         for key, entries in artifact["stats"].items():
             embodiment_masks[key] = [[bool(v) for v in row] for row in entries["mask"].tolist()]
@@ -2029,6 +2094,9 @@ def make_molmoact2_pre_post_processors(
         MolmoAct2UnifiedLayoutProcessorStep(
             state_dim=canonical_state_dim,
             action_dim=canonical_action_dim,
+            native_action_dims=native_action_dims,
+            stats_index_key=stats_index_key,
+            default_embodiment_index=default_embodiment_index,
         ),
         *([AnchorEncodeStep(encoding=action_encoding)] if use_anchor else []),
         MolmoAct2MaskedNormalizerProcessorStep(

@@ -248,13 +248,54 @@ that the policy does not go wild, not to watch it act.
 Per-step ceiling (`feedback_max_raw_step_deg`, raw servo degrees) is a **fault, not a clip**: a
 target further than the ceiling from the last one unloads the arm and raises. Set at 8 from the
 corpus: over the four training roots (46 episodes, 181k steps) no demo step exceeds 6.1 raw deg and
-p99.9 is 1.1-2.7 per joint. Since 2026-09-05 every leader fault (ceiling, tracking, current,
+p99.9 is 1.1-2.7 per joint. Since 2026-09-06 the ceiling scales with the time since the last
+command, one ceiling per `feedback_step_period_s` tick (1/30 s), capped at
+`feedback_max_step_stretch` = 4x (32 raw deg), so a stalled leader read does not turn the
+follower's catch-up into a "discontinuity" (see the stall paragraph below). Since 2026-09-05 every leader fault (ceiling, tracking, current,
 silent bus) ends the episode in both modes: `rtc_env_worker` catches `TeleopFeedbackError` from
 the leader read (inside the action pipeline, before `env.step`, so the follower has not moved)
 and from `send_feedback`, truncates the episode with its frames kept, parks the follower, and the
 next start's `enable_torque()` re-raises if the leader is still dead. The sync-monitor read
 retries 3 times (100 ms window each) before tripping: one stalled read in ~450 killed the 14:46
 run with "no monitor reply" from all seven servos at once, which is a USB stall, not a motor.
+The feedback watchdog is 2.0 s (2026-09-06, was 0.5): that same stall holds `io_lock` through
+the retry, so no command can be sent while it lasts and a 0.5 s watchdog tripped on a bus that
+had already recovered.
+
+Telemetry (2026-09-06). The sync-monitor reply also carries voltage, current, power,
+temperature and a status byte (bit 1 command error, 2 stall, 3/4 over/under-voltage, 5 current,
+6 power, 7 temperature; the servo clears them itself). The controller now keeps all of it:
+a status change logs `Leader <joint> status: <flags>` once per transition; every read is
+appended to `{output_dir}/leader_trace.csv` (`start_trace(path)`, called by `rtc_actor_runtime`
+next to the online recorder: `time, torqued, intervening`, then per joint `target, raw, ma,
+mv, mw, c, status`, target and raw in raw servo degrees); and a tracking or current trip logs the
+joint's last second (target, measured, error, mA, mV, mW, degC, status) before the unload. Built
+after three tracking trips (elbow 22 and 41 raw deg, shoulder_lift 48) where the recorded
+follower moved at ~7 deg/s, i.e. the leader joint was stationary, not slow, and nothing said why.
+
+Overvoltage protection (2026-09-06, root cause of the tracking trips). The 102-HD is built from
+12 V-class UART servos (vendor: "RP8-U45H-M all high-torque"; the RX8-U45H-M page gives working
+voltage 9.0-12.6 V, standby < 40 mA). Vendor text on voltage protection: outside the set high/low
+range the servo "automatically releases its lock force, outputs no torque, enters a free state;
+recovery requires re-powering with the voltage back in range". The status bit (BIT3) clears on its
+own once the voltage is normal; the torque release does not. The 10:47 trace matched this exactly:
+shoulder_lift BIT3 set at t=11.9 s while at rest at 33 mA, then raw frozen at 0.0 / 30 mA ignoring
+a 47 deg ramp. The "fixed 12 V" 10 A adapter reads 12.40-12.61 V at the servos at idle (each
+servo's own ADC), i.e. inside the scatter of the 12.6 V limit, so any servo can trip at rest and
+a back-driven joint (regen) trips it under load. The thresholds are per-servo parameters in the
+protocol's user area: data_id 39 low-voltage protection (mV), 40 high-voltage protection (mV),
+37 stall-protection mode, 38 stall power cap (mW), 42 power protection (mW), 43 current (mA);
+`ctrl.read_data(id, 40)` / `write_data` reach them (2-byte little-endian). The web config tool
+exposes only teleop parameters, not these. The vendor guide says leave the high threshold at
+factory default; the fix is a supply that sits at or below 12.0 V at the servos.
+
+Ceiling after a bus stall (2026-09-06 11:28 run, the first with the raised limit: 54 s, no status
+bits, bus peak 12679 mV at 14 s, i.e. above the old 12600 limit, shoulder_lift up to 819 mA and
+18 deg tracking error while shadowing). It ended on the per-step ceiling: a monitor read stalled
+834 ms (second stall of the episode), during which the follower kept closing its command lead
+(action minus observed state was 18.8 deg on shoulder_lift, 23.7 on the elbow in the fast return
+phase), so the next observed position was 12.1 raw deg from the last sent target. The ceiling is
+per command, not per unit time, so a stall converts a legitimate move into a "discontinuity".
 
 The initial gap is closed by `_ramp_leader` in `rtc_actor_runtime.py`: after `enable_torque`
 at episode start, and again when an intervention ends, the leader is interpolated onto the

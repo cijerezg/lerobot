@@ -105,6 +105,18 @@ Trends page lines them up:
 --policy.pretrained_path=<ckpt>/pretrained_model --val_dataset_path=outputs/rebot_val-annotated-v3
 --probe_parameters.output_dir=outputs/probe_runs/<name>` (omit `pretrained_path` for the
 untrained init; it lands in `step_00000000`).
+Hand-picked mode (2026-09-05): `--pairs=anchor:donor,...` runs the cube on chosen frames
+only and writes `input_swap_pairs/trace.html`, an action-inspector dashboard of every pair
+(the 8 end-effector paths and both demonstrations in one scene, both arms, wrist-roll and
+gripper timelines, both frames' cameras); the full run writes the same for its nine example
+pairs at `examples/trace.html`. A pair worth picking is two frames at nearly the same pose
+whose demonstrations go somewhere different — reach starts (every reach leaves the same
+container pose), episode starts across tasks, carries; pre-close frames are the wrong place,
+since the arm is at the object and poses only match when the objects coincide.
+`migration/pick_input_swap_pairs.py` searches a dataset for them. Val pairs in use:
+`834:4206` (ep0 white-sock reach, four socks vs one), `7344:6960` (ep1 red-shirt vs
+dark-shirt reach), `8998:9` (ep2 shirt reach vs ep0 socks at the rest pose), `8100:11485`
+(carry to the bin, red vs pink shirt).
 
 ## 5. Latency notes
 
@@ -157,7 +169,7 @@ untrained init; it lands in `step_00000000`).
   done/truncated) parks the follower through the same `park()` (torque stays on: it holds
   the rest pose until the next "2"), and the actuated leader rides the identical ramp
   through `park(on_step=send_feedback)`, 0.67 deg/tick at 20 deg/s (far under the 8
-  raw-deg fault ceiling; keeps the 0.5 s feedback watchdog fed), then is released AT REST
+  raw-deg fault ceiling; keeps the 2.0 s feedback watchdog fed), then is released AT REST
   instead of dropped. Safety mode: only the leader ramps. The env worker's exit path does
   the same for an interrupted episode (Ctrl-C mid-episode, fatal exception), so the
   follower never holds mid-air waiting for Ctrl-C. Order at episode end: rest -> recorder

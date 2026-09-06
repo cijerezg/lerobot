@@ -122,6 +122,18 @@ def packed_history_slots(ages_s: list[float]) -> list[int]:
 # is carried as a mask, never as a copied or black-filled view.
 CANONICAL_CAMERA_ROLES: tuple[str, ...] = ("external_0", "external_1", "wrist_0")
 
+
+def on_canonical_roles(keys) -> bool:
+    """True when every image key names a canonical camera role: a role-shaped policy.
+
+    This, not ``diverse.enabled``, is what decides whether the ReBot data has to be
+    aligned (cache lookup under ReBot's spelling, camera rename, absent-role slots,
+    the action_layout_id column): a ReBot-only run on the role-shaped policy needs
+    all of it, and a rig-shaped policy (top/wrist keys) needs none.
+    """
+    roles = [str(k).rsplit(".", 1)[-1] for k in keys if str(k).startswith("observation.images.")]
+    return bool(roles) and all(role in CANONICAL_CAMERA_ROLES for role in roles)
+
 # Recorded camera name → canonical role, per source. One map per source covers both
 # RoboChallenge embodiments: UR5 simply has no "side" camera.
 CAMERA_ROLE_MAP: dict[str, dict[str, str]] = {
