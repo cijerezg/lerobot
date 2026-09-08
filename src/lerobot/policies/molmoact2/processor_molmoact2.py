@@ -795,8 +795,14 @@ class MolmoAct2UnifiedLayoutProcessorStep(ProcessorStep):
                 default_index=self.default_embodiment_index,
                 num_rows=len(self.native_action_dims),
             )
-            widths = torch.as_tensor(self.native_action_dims, dtype=torch.long)[rows]
-            layout_mask = (torch.arange(self.action_dim)[None] >= widths[:, None]).to(reference.device)
+            # Replay identities can already be on CUDA, while deployment callers
+            # may supply CPU/scalar identities. Gather and build the mask on the
+            # observation/action device in either case.
+            width_table = torch.as_tensor(
+                self.native_action_dims, dtype=torch.long, device=reference.device
+            )
+            widths = width_table[rows.to(reference.device)]
+            layout_mask = torch.arange(self.action_dim, device=reference.device)[None] >= widths[:, None]
 
         state_mask = None
         if isinstance(observation, dict) and OBS_STATE in observation:
@@ -1917,6 +1923,34 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 cam_index=rgb_drop_cam,
                 rows=rows,
             )
+
+        if "future_visual_valid" in complementary:
+            future_keys = [f"future.{key}" for key in image_keys]
+            if any(key not in complementary for key in future_keys):
+                raise KeyError("Future visual targets must include every configured prompt camera.")
+            flat_future = [
+                _normalize_image(complementary[f"future.{key}"][row])
+                for row in range(batch_size) for key in image_keys
+            ]
+            pixels = self.processor.image_processor(images=flat_future)["pixel_values"]
+            pixels = torch.as_tensor(np.asarray(pixels)).to(torch.bfloat16)
+            if pixels.shape[0] != batch_size * len(image_keys):
+                raise ValueError("Future visual prediction requires one resize crop per camera.")
+            complementary["future_images"] = pixels.view(
+                batch_size, len(image_keys), *pixels.shape[1:]
+            )
+            future_present = camera_present.clone()
+            for camera, key in enumerate(image_keys):
+                presence = complementary.get(
+                    f"future.camera_is_present.{key}"
+                )
+                if presence is not None:
+                    future_present[:, camera] &= torch.as_tensor(presence).cpu().bool().reshape(-1)
+            complementary["future_visual_cameras"] = future_present
+            # Transport-only raw images must not survive alongside the patchified copy.
+            for key in list(complementary):
+                if key.startswith("future."):
+                    del complementary[key]
 
         complementary.update(dict(inputs))
         complementary["action_dim_is_pad"] = action_dim_is_pad

@@ -984,6 +984,9 @@ def _patch_memory_efficient_vision_backbone(
         if self.num_prefix_tokens > 0:
             image_features = image_features[:, 1:]
         image_features = image_features.view(batch_size, num_crops, num_patches, -1)
+        if getattr(self, "_lerobot_capture_future_features", False):
+            self._lerobot_future_features = image_features
+            self._lerobot_capture_future_features = False
 
         return image_features
 
@@ -1696,7 +1699,44 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 device=device, dtype=torch.float32
             )
 
+        self.future_visual = None
+        if self.config.future_visual_loss.enabled:
+            from .future_visual import FutureVisualObjective
+
+            self.future_visual = FutureVisualObjective(
+                backbone.vision_backbone,
+                len(self.config.image_keys) or len(self.config.image_features),
+                self.config.future_visual_loss,
+            )
+            # The target and calibration reservoir are not part of the action
+            # model. DDP must not broadcast hundreds of MB of frozen buffers at
+            # every microbatch; PCA state is synchronized explicitly on refresh.
+            self._ddp_params_and_buffers_to_ignore = {
+                f"future_visual.{name}" for name, _ in self.future_visual.named_buffers()
+            }
         self.train(self.training)
+
+    @classmethod
+    def _filter_load_keys(cls, model, missing_keys, unexpected_keys):
+        # Enabling on an old checkpoint initializes the entire auxiliary afresh.
+        # Disabling an auxiliary checkpoint intentionally omits all its modules.
+        if getattr(model, "future_visual", None) is None:
+            unexpected_keys = [key for key in unexpected_keys if not key.startswith("future_visual.")]
+        else:
+            auxiliary_keys = {f"future_visual.{key}" for key in model.future_visual.state_dict()}
+            if auxiliary_keys.issubset(missing_keys):
+                missing_keys = [key for key in missing_keys if not key.startswith("future_visual.")]
+        return missing_keys, unexpected_keys
+
+    def prepare_future_visual(self, batch: dict[str, Tensor]) -> None:
+        if self.future_visual is None:
+            return
+        self.future_visual.prepare(
+            self._backbone().vision_backbone.image_vit,
+            batch["pixel_values"].reshape_as(batch["future_images"]),
+            batch["future_images"], batch["future_visual_valid"],
+            batch["future_visual_cameras"],
+        )
 
     def reset(self) -> None:
         self._action_queues = defaultdict(deque)
@@ -3266,6 +3306,10 @@ class MolmoAct2Policy(PreTrainedPolicy):
         """
         if reduction not in {"mean", "none"}:
             raise ValueError(f"Unsupported reduction={reduction!r}. Expected 'mean' or 'none'.")
+        future_active = getattr(self, "future_visual", None) is not None and "future_images" in batch
+        vision = self._backbone().vision_backbone
+        vision._lerobot_future_features = None
+        vision._lerobot_capture_future_features = future_active
         model_inputs = self._model_inputs(batch)
         losses: list[Tensor] = []
         metrics: dict[str, Any] = {}
@@ -3403,6 +3447,20 @@ class MolmoAct2Policy(PreTrainedPolicy):
             metrics["depth_gripper_close_bce"] = depth_event_head_bce[0].detach().float().item()
             metrics["depth_gripper_open_bce"] = depth_event_head_bce[1].detach().float().item()
 
+        if future_active:
+            features = vision._lerobot_future_features
+            vision._lerobot_future_features = None
+            if features is None:
+                raise RuntimeError("Future visual loss did not capture the online ViT output.")
+            future_loss, future_metrics = self.future_visual(
+                features, batch["future_images"], batch["future_visual_valid"],
+                batch["future_visual_cameras"], batch["future_visual_mistake"], reduction,
+                current_images=(
+                    batch["pixel_values"].reshape_as(batch["future_images"]) if not self.training else None
+                ),
+            )
+            losses.append(future_loss)
+            metrics.update(future_metrics)
         loss = torch.stack(losses).sum(dim=0)
         metrics["loss"] = loss.detach().float().mean().item()
         if reduction == "none" and return_diagnostics:

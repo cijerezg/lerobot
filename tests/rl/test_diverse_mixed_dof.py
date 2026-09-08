@@ -414,3 +414,31 @@ def test_fast_refuses_a_span_of_another_width() -> None:
     """The bug in reverse: 8 dims of coefficients for a 7-DoF row is not a decode."""
     with pytest.raises(RuntimeError, match=r"expected 28 \(4 steps x 7 native dims\)"):
         _decode_with_fake_fast(HORIZON * 8, action_dim=8, native_widths=torch.tensor([7]))
+
+
+@pytest.mark.parametrize("data_device", ["cpu", "cuda"])
+@pytest.mark.parametrize("index_device", ["cpu", "cuda"])
+@pytest.mark.parametrize("with_action", [True, False])
+@pytest.mark.parametrize("scalar_index", [True, False])
+def test_native_width_lookup_accepts_cpu_and_gpu_identity_indices(
+    data_device, index_device, with_action, scalar_index
+):
+    if "cuda" in (data_device, index_device) and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    state, action, _ = _mixed_batch()
+    state, action = state.to(data_device), action.to(data_device)
+    indices = torch.tensor(1 if scalar_index else [0, 1], device=index_device)
+    transition = create_transition(
+        observation={OBS_STATE: state},
+        action=action if with_action else None,
+        complementary_data={"action_layout_id": indices},
+    )
+    result = _layout_step()(transition)
+    mask = result[TransitionKey.COMPLEMENTARY_DATA]["action_dim_is_pad"]
+    expected = torch.zeros(2, 8, dtype=torch.bool, device=data_device)
+    expected[:, 7] = torch.tensor([scalar_index, True], device=data_device)
+    assert mask.device == state.device
+    torch.testing.assert_close(mask, expected)
+    torch.testing.assert_close(result[TransitionKey.OBSERVATION][OBS_STATE], state)
+    if with_action:
+        torch.testing.assert_close(result[TransitionKey.ACTION], action)

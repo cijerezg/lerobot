@@ -325,6 +325,8 @@ class ProbeConfig:
     )
     enable_mem_history_regime: bool = False  # MEM: helped/hurt split, against a wrong-window null
     enable_mem_temporal_attention: bool = False  # MEM: temporal-read distributions + spatial examples
+    enable_future_visual_cases: bool = False  # fixed mistake/clean cases: future features and temporal read
+    future_visual_case_episode: int = 3  # recorded episode ID, zero-based
     enable_action_trace: bool = (
         False  # interactive action inspector: 3D, wrist/gripper, safety, multimodality
     )
@@ -393,12 +395,12 @@ class ProbeConfig:
     depth_stale_seconds: float = 2.0
 
     # Depth at gripper events: frames chosen by the commanded gripper through the auxiliary
-    # head's own label sidecars, every readout per stratum. Leads are seconds before a
-    # commanded close/open at which a frame is placed; shifts are how far back in the same
-    # episode the depth window is taken while RGB stays put; the z offset pushes every
-    # valid pixel farther by that many millimetres. Controls are sized to the event frames
-    # per episode, and n_seeds supplies the reseed floor.
-    depth_event_leads_s: str = "1.0,2.0"
+    # head's own label sidecars; every readout is the gripper command only. Leads are seconds
+    # before a commanded close/open at which a frame is placed (the chunk is 1 s, so leads under
+    # 1 s put the event inside the chunk); shifts are how far back in the same episode the depth
+    # window is taken while RGB stays put; the z offset pushes every valid pixel farther by that
+    # many millimetres (the headline condition). Controls get two frames per event per episode.
+    depth_event_leads_s: str = "0.25,0.5,0.75,1,1.5,2,3,4"
     depth_event_shift_s: str = "1.0,2.0"
     depth_event_z_offset_mm: float = 30.0
 

@@ -117,7 +117,8 @@ The checkpoint is `inference_checkpoint_path` in config_rl.yaml (falls back to
 `policy.pretrained_path`); it must be a complete `checkpoints/<step>/pretrained_model`
 dir. `inference_send_actions_to_robot: false` is the safety preflight: the follower is
 read but never commanded, actions go out through the leader feedback path. Subtasks are
-fed by keypress from `policy.eval_subtasks`.
+fed by keypress from `policy.eval_subtasks`: press a verb key (q w e r) then an object key
+(a s d f); the object press renders the verb's template and sends it. r (return to home) sends alone.
 
 ## Probe viewer
 
@@ -155,7 +156,7 @@ the tail, and `--attach <ckpt>` picks it back up. The checkpoint is kept on fail
 never deleted if it already existed on the DGX before the run (`--force-delete` overrides).
 
 Needs a `Host dgx` block in `~/.ssh/config` with key auth (or `--host` / `$DGX_HOST`).
-Static assets — the four dataset roots, `outputs/rebot_val-annotated-v3`, `outputs/MolmoAct2`,
+Static assets — the five dataset roots, `outputs/rebot_val-annotated-v4`, `outputs/MolmoAct2`,
 the FAST tokenizer, `outputs/stats/`, the buffer cache — are NOT synced by this script; it
 reads their paths out of config_rl.yaml and fails fast if any is missing on the DGX.
 
@@ -167,3 +168,20 @@ checkout, e.g. `remote_validate.sh lerobot-tinypi outputs/.../checkpoints/000400
 
 # probe motors
 .venv/bin/python probe_rebot_motors.py
+
+# leader USB port check (after any re-plug). In `lsusb -t` the ch341 must hang under Bus 003 or 005
+# (CPU controller); Bus 001 (chipset, incl. the PC-case port) drops bytes. Must print 200/200 clean.
+.venv/bin/python migration/leader_bus_capture.py burst --trials 200 --spacing 0.033 --window 0.025
+
+# follower (rebot B601) motor order, CAN ids as probe_rebot_motors.py prints them.
+# Chain is in this order, base first: a contiguous dead tail = broken cable just upstream of the first dead motor;
+# one dead motor with live ones after it = that motor's own connector/board.
+#   #  joint          send  recv
+#   1  shoulder_pan      1    17
+#   2  shoulder_lift     2    18
+#   3  elbow_flex        3    19
+#   4  wrist_flex        4    20
+#   5  wrist_yaw         5    21
+#   6  wrist_roll        6    22
+#   7  gripper           7    23
+# Leader (102HD, ttyUSB0) uses ids 0-6 in the same joint order; id 7 is the button board.

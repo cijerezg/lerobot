@@ -303,6 +303,14 @@ follower's pose at 20 deg/s, one `send_feedback` per tick, minimum one second. W
 `fixed_reset_joint_positions` is set and actions are enabled, the follower has already moved to
 that pose, so the leader lands on the same start.
 
+The intervention-end ramp runs at the top of the env-loop iteration that detects the state
+change, but the release keypress lands mid-iteration: the key thread re-torques the leader with a
+hold at its own pose, the step in flight already reads the events as not-intervening, and the
+per-tick feedback at the bottom of that same iteration sent the follower's pose as one command
+(2026-09-06 20:44: elbow 8.3 raw deg, ceiling 8.0, episode ended). Releases had only worked while
+the gap at the keypress was under the ceiling. Since 2026-09-06 that release tick sends no
+feedback (`elif not was_intervening`); the ramp on the next iteration closes the gap.
+
 Intervention (key 5) is **delta on the arm joints, absolute on the gripper** (2026-09-05,
 `InterventionActionProcessorStep`). The shadowing leader lags the follower (22 raw deg on the
 elbow on 2026-09-05, which tripped the 20 deg tracking fault), and under absolute mapping that lag
@@ -317,7 +325,7 @@ stop. The leader is still unloaded at the keypress, so any sag before the grip i
 follower follows; damping at the handover (stop mode 0x12 instead of 0x10) is the untested fix.
 
 Operator keys: the leader owns 0/1/2/5 (terminate/success/start/intervention) globally through
-pynput; `eval_subtasks` therefore binds letters (q w e r t y u).
+pynput; `eval_subtasks` therefore binds letters (verbs q w e r, objects a s d f).
 
 ---
 

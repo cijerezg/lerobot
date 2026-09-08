@@ -1,68 +1,85 @@
-"""Depth read at gripper events: does depth content move the chunk where a grasp is
-about to happen, and not where nothing is?
+"""Depth read at gripper events: does the wrist depth move the gripper command where a
+grasp or a release is about to happen, and nowhere else?
 
-The matched-depth counterfactual (``depth_modality_probe``) samples frames evenly and so
-measures the depth read averaged over a whole episode, most of which is carrying,
-retreating or waiting. This probe picks its frames by the commanded gripper instead and
-reports every readout per stratum, so the question becomes a contrast: pre-grasp against
-frames far from any gripper event, on the same checkpoint, at identical flow noise.
+The matched-depth counterfactual (``depth_modality_probe``) samples frames evenly and
+scores the whole chunk over every joint, so it averages the depth read over carrying,
+retreating and waiting, and a gripper-only change is diluted by the arm. Depth's job in
+this task is the last stretch of an approach and the timing of the gripper, so this probe
+picks its frames by the commanded gripper and reads only the gripper.
 
-Frames come from ``meta/depth_gripper_events.parquet`` and the dense
-``depth_gripper_event_labels.parquet`` deltas — the locked rubric the auxiliary head is
-trained on (commanded ``gripper.pos``, closed above $-60^\\circ$, open below
-$-90^\\circ$, 0.5 s persistence). Nothing here reads observation.state or a semantic
-annotation to choose a frame.
+Frame selection
+---------------
+``meta/depth_gripper_events.parquet`` and the dense ``depth_gripper_event_labels.parquet``
+deltas are the locked rubric the auxiliary head is trained on: commanded ``gripper.pos``,
+closed once above -60 deg, open once below -90 deg, 0.5 s persistence. Nothing here reads
+observation.state or a semantic annotation to choose a frame. Every anchor is snapped onto
+the image/depth stride grid.
 
-Strata, every anchor snapped onto the image/depth stride grid:
+  pre_close_{L}s   L seconds before a commanded close, and the labels agree that close is
+                   the next one
+  pre_open_{L}s    the same before a commanded open
+  carry            gripper closed, no open within max(L)+1 s, at least 1 s after the close
+  free             gripper open, no close within max(L)+1 s, at least 1 s after the open
 
-  ``pre_close_{L}s``  $L$ seconds before a commanded close, and that close is the next one
-  ``pre_open_{L}s``   the same before a commanded open
-  ``carry``           gripper closed, no open within $L_{max}+1$ s, at least 1 s after the close
-  ``free``            gripper open, no close within $L_{max}+1$ s, at least 1 s after the open
+Controls get two frames per event of the commoner type in each episode, spread evenly
+over that episode's candidates.
 
-Controls are sized per episode to that episode's event frames, so $n$ is matched where
-the contrast is read.
+Conditions
+----------
+Each condition replaces the wrist depth window (current frame plus history slots) and
+leaves the top camera, the wrist RGB, the state and the prompt untouched. Chunks are
+decoded with the flow decoder under one fixed noise draw, so two conditions differ only
+through depth.
 
-Conditions intervene on the wrist depth window (current frame plus history slots); the
-top camera and the wrist RGB are present throughout:
+  deployment    the rollout prompt as is
+  z_offset      every valid depth pixel (reading > 0) gets +dz mm; zeros stay zero. The
+                back-projection scales X and Y with Z, so the whole scene sits dz farther
+                from the wrist camera. Headline condition: same frame, only the metric
+                scale moves, and the sign is known in advance.
+  shift_{D}s    the depth window from D s earlier in the same episode, RGB left at t. On an
+                approach the object reads farther than RGB shows.
+  cross_phase   the depth window of a same-stratum frame from another episode, nearest by
+                standardized joint state: same phase, different scene. The paired null:
+                depth that reads the same distance should give the same gripper.
+  no_depth      window removed (learned null bank). Depth dropout is 0 in training, so this
+                is an untrained input shape; kept as the reference the older probe reports.
 
-  ``deployment``   the rollout prompt
-  ``shift_{D}s``   the depth window taken $D$ seconds earlier in the same episode, RGB left
-                   at $t$. On an approach the object is farther in depth than in RGB, so
-                   the sign of the effect is known before the run.
-  ``cross_phase``  the depth window of a same-stratum frame from another episode, nearest
-                   by standardized joint state — same phase, different scene
-  ``z_offset``     every valid pixel pushed $\\Delta z$ mm farther; the pinhole
-                   back-projection scales $X$ and $Y$ with it, and pixels pushed past
-                   ``z_max_mm`` drop out of the valid mask
-  ``no_depth``     window removed (learned null bank). Untrained shape: depth dropout is
-                   0 in training, so its penalty mixes lost information with shift. Kept
-                   as the reference the older probe reports, hatched in the figure.
+Readouts, all on the gripper dimension in the dataset's own degrees
+-------------------------------------------------------------------
+  g_c[t]          gripper command at chunk step t under condition c, t = 1..T (T = 30 = 1 s)
+  g_now           the dataset's commanded gripper at the frame
+  terminal delta  g_c[T] - g_now: how far the chunk itself closes (positive) or opens by its
+                  last step
+  terminal shift  g_c[T] - g_dep[T]: the treated chunk's last gripper command minus the
+                  deployment chunk's. g_now cancels. Negative = ends less closed.
+  mean shift      (1/T) * sum_t (g_c[t] - g_dep[t]), the same over the whole chunk
+  less closed     terminal shift < -5 deg; more closed: > +5 deg; moved: either. On a close
+                  approach "less closed" is the chunk delaying or cancelling the close; on an
+                  open approach "more closed" is the same for the release. Fractions of
+                  frames, so one runaway chunk cannot carry a mean.
+  fire step       the first t at which the labels' hysteresis rule (close: g > -60; open:
+                  g < -90) trips from the frame's own state; None when the chunk never gets
+                  there. Observable only when the event lands inside the chunk (lead < 1 s).
+                  step shift = fire step treated - fire step deployment, on frames where
+                  both fire.
+  p_close, p_open sigmoid of the depth-only auxiliary head's two logits,
+                  head(mean over the depth tokens of LayerNorm(token)), read off the same
+                  forward. The head sees only the depth tokens, so this is the depth path's
+                  own opinion of the event, before the action expert.
+  target          2^(-lead / 1 s), the label the head was trained toward at that lead
+                  (1 s half-life, zero past 5 s)
 
-Readouts per frame and condition, all paired against the same frame's deployment chunk
-and never against the demonstration:
-
-  - displacement: ``trajectory_error_components(chunk_c, chunk_{dep}, hold)`` — path,
-    shape and terminal error of the treated chunk from the deployment chunk, each over the
-    deployment chunk's own excursion from ``hold``. 1 means the treatment moved the chunk
-    as far as the chunk itself moves.
-  - seed floor: the same displacement for the deployment prompt under the other flow
-    seeds. An effect that does not clear it is noise.
-  - gripper timing, in the dataset's own degrees from the unnormalized chunk: the terminal
-    delta $g_T - g_{now}$ (positive is toward closed) and the first step at which the
-    labels' hysteresis rule fires from the frame's current state.
-  - the auxiliary head: $\\sigma(\\mathrm{logit})$ for close and open, read off the same
-    forward. The head sees only the depth tokens, so this is the depth path's own opinion
-    of the event, before the action expert.
-
-The claim under test: under ``shift`` and ``z_offset`` the pre-close strata move more
-than ``free``, the terminal gripper delta falls (the chunk closes less when the object
-reads farther) and the head's $p_{close}$ falls with it. A displacement that is flat
-across strata means depth acts as a global bias, not as a grasp cue.
+What a working depth read looks like: under z_offset the pre-close fraction "less closed"
+rises toward the event and sits at the control rate on free and carry; cross_phase stays
+at the control rate everywhere; p_close under deployment rises toward the event along the
+target curve and drops under z_offset. A shift that is flat across strata means depth acts
+as a global bias, not as a grasp cue.
 
 Outputs under ``<output_dir>/``:
-  depth_event.json   summary, per-stratum tables, per-frame rows with donor provenance
-  depth_event.png    displacement, terminal gripper shift and head $p_{close}$ by stratum
+  depth_event.json   summary, per-stratum tables, per-frame rows with donor provenance and
+                     the full gripper trajectory per condition
+  depth_event.png    close row / open row: head p vs lead, terminal shift vs lead, fraction
+                     less (more) closed vs lead, mean gripper trajectory at two leads
 
 Runs inside rl_offline's validation loop when ``probe_parameters.enable_depth_event`` is
 set, or standalone against ``val_dataset_path``:
@@ -86,7 +103,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from matplotlib.patches import Patch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
@@ -106,7 +122,6 @@ from lerobot.probes.utils import (
     probe_image_stride,
     register_config_choices,
 )
-from lerobot.utils.action_metrics import trajectory_error_components
 from lerobot.utils.depth_gripper_events import (
     DEPTH_GRIPPER_CLOSE_TARGET,
     DEPTH_GRIPPER_EVENT_LABEL_FILENAME,
@@ -123,8 +138,15 @@ NO_DEPTH = "no_depth"
 CARRY = "carry"
 FREE = "free"
 EVENT_TYPES = ("close", "open")
-RELATIVE_KEYS = ("path_relative", "shape_relative", "terminal_relative")
 TARGET_KEYS = {"close": DEPTH_GRIPPER_CLOSE_TARGET, "open": DEPTH_GRIPPER_OPEN_TARGET}
+DEFAULT_LEADS_S = "0.25,0.5,0.75,1,1.5,2,3,4"
+# A terminal shift past this counts as the chunk having moved; the rig's gripper swings
+# 100-200 deg between open and closed.
+SHIFT_THRESHOLD_DEG = 5.0
+# The chunk is 1 s, so this lead puts the commanded event at the chunk's last step.
+HEADLINE_LEAD_S = 1.0
+# The trajectory panel draws these two leads (nearest configured).
+TRAJECTORY_LEADS_S = (0.5, 1.0)
 
 
 def shift_condition(seconds: float) -> str:
@@ -139,12 +161,23 @@ def _seconds(text: str) -> list[float]:
     return [float(s) for s in str(text).split(",") if s.strip()]
 
 
-def _mean_sem(values: list[float]) -> dict:
+def _stats(values: list[float]) -> dict:
     if not values:
-        return {"mean": None, "sem": None, "n": 0}
+        return {"mean": None, "sem": None, "median": None, "q25": None, "q75": None, "n": 0}
     array = np.asarray(values, dtype=np.float64)
     sem = float(array.std(ddof=1) / np.sqrt(array.size)) if array.size > 1 else None
-    return {"mean": float(array.mean()), "sem": sem, "n": int(array.size)}
+    return {
+        "mean": float(array.mean()),
+        "sem": sem,
+        "median": float(np.median(array)),
+        "q25": float(np.percentile(array, 25)),
+        "q75": float(np.percentile(array, 75)),
+        "n": int(array.size),
+    }
+
+
+def _fraction(flags: list[bool]) -> float | None:
+    return float(np.mean(flags)) if flags else None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -184,13 +217,14 @@ def select_frames(
     max_episodes: int | None,
     seed: int,
 ) -> list[dict]:
-    """Event-relative anchors plus matched far-from-event controls, per episode.
+    """Event-relative anchors plus far-from-event controls, per episode.
 
     A pre-event anchor is kept only when the labels agree that the event it was placed
     before is the next one of its type (``delta == event - frame``): a nearer event, or a
     lead beyond the labels' 5 s cutoff, drops it. Controls need no event within
     ``max(lead) + 1`` s and a 1 s settle after the last transition, so the carry and free
-    strata never overlap a pre-event window.
+    strata never overlap a pre-event window; each gets two frames per event of the
+    episode's commoner type.
     """
     by_episode = build_episode_index(dataset)
     episodes = sorted(by_episode)
@@ -222,7 +256,6 @@ def select_frames(
         def containing(frame: int) -> tuple[int, int] | None:
             return next(((a, b) for a, b in intervals if a <= frame < b), None)
 
-        counts: Counter = Counter()
         for event in episode_events.itertuples():
             event_type = str(event.event_type)
             event_frame = int(event.frame_index)
@@ -244,6 +277,7 @@ def select_frames(
                         "stratum": event_stratum(event_type, lead_s),
                         "event_type": event_type,
                         "event_frame": event_frame,
+                        "lead_s": lead_s,
                         "lead_frames": event_frame - frame,
                         "episode_idx": int(episode_idx),
                         "frame_idx": int(frame),
@@ -251,7 +285,6 @@ def select_frames(
                         "closed_now": containing(frame) is not None,
                     }
                 )
-                counts[event_type] += 1
 
         carry: list[int] = []
         free: list[int] = []
@@ -266,7 +299,8 @@ def select_frames(
                 settled = previous_open is None or frame - previous_open >= settle
                 if settled and not (0 <= close_delta[global_idx] <= far):
                     free.append(global_idx)
-        n_control = max(counts.values(), default=0)
+        n_events = Counter(str(t) for t in episode_events["event_type"])
+        n_control = 2 * max(n_events.values(), default=0)
         for name, candidates in ((CARRY, carry), (FREE, free)):
             n = min(n_control, len(candidates))
             positions = sorted(set(np.linspace(0, len(candidates) - 1, n, dtype=int).tolist())) if n else []
@@ -277,6 +311,7 @@ def select_frames(
                         "stratum": name,
                         "event_type": None,
                         "event_frame": None,
+                        "lead_s": None,
                         "lead_frames": None,
                         "episode_idx": int(episode_idx),
                         "frame_idx": int(global_idx - episode_start),
@@ -352,257 +387,327 @@ def gripper_transitions(
     return close_step, open_step
 
 
-def _relative(prediction: torch.Tensor, reference: torch.Tensor, hold: torch.Tensor) -> dict:
-    components = trajectory_error_components(prediction, reference, hold)
-    return {key: float(components[key]) for key in RELATIVE_KEYS}
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Summary, figure, manifest
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def summarize(per_frame: list[dict], strata: list[str], conditions: list[str]) -> dict:
-    treatments = conditions[1:]
+def summarize(
+    per_frame: list[dict], strata: list[str], conditions: list[str], *, leads_s: list[float], fps: int,
+    headline_condition: str,
+) -> dict:
     by_stratum: dict[str, dict] = {}
     for name in strata:
         rows = [r for r in per_frame if r["stratum"] == name]
+        leads = [r["lead_frames"] / fps for r in rows if r["lead_frames"] is not None]
         entry = {
             "n": len(rows),
             "n_by_episode": dict(sorted(Counter(r["episode_idx"] for r in rows).items())),
-            "seed_floor": _mean_sem([r["seed_floor"]["path_relative"] for r in rows]),
-            "target_close_mean": _mean_sem(
-                [r["targets"]["close"] for r in rows if r["targets"]["close"] is not None]
-            )["mean"],
-            "target_open_mean": _mean_sem(
-                [r["targets"]["open"] for r in rows if r["targets"]["open"] is not None]
-            )["mean"],
+            "event_type": rows[0]["event_type"] if rows else None,
+            "lead_s": rows[0]["lead_s"] if rows else None,
+            "lead_s_actual": float(np.mean(leads)) if leads else None,
+            "target_close": _stats([r["targets"]["close"] for r in rows if r["targets"]["close"] is not None])["mean"],
+            "target_open": _stats([r["targets"]["open"] for r in rows if r["targets"]["open"] is not None])["mean"],
             "conditions": {},
         }
         for condition in conditions:
-            present = [r for r in rows if condition in r["gripper"]]
+            present = [r for r in rows if condition in r["conditions"]]
+            own = [r["conditions"][condition] for r in present]
             cond: dict = {"n": len(present)}
-            if condition != DEPLOYMENT:
-                for key in RELATIVE_KEYS:
-                    cond[key] = _mean_sem([r["displacement"][condition][key] for r in present])
-                cond["terminal_delta_shift_deg"] = _mean_sem(
-                    [
-                        r["gripper"][condition]["terminal_delta"] - r["gripper"][DEPLOYMENT]["terminal_delta"]
-                        for r in present
-                    ]
-                )
-                paired_heads = [
-                    (r["head"][DEPLOYMENT], r["head"][condition])
-                    for r in present
-                    if r["head"][DEPLOYMENT] is not None and r["head"][condition] is not None
-                ]
-                cond["p_close_drop"] = _mean_sem([d["p_close"] - c["p_close"] for d, c in paired_heads])
-                cond["p_open_drop"] = _mean_sem([d["p_open"] - c["p_open"] for d, c in paired_heads])
-            cond["terminal_delta_deg"] = _mean_sem([r["gripper"][condition]["terminal_delta"] for r in present])
-            for transition in ("close", "open"):
-                steps = [r["gripper"][condition][f"{transition}_step"] for r in present]
+            for head in EVENT_TYPES:
+                cond[f"p_{head}"] = _stats([o[f"p_{head}"] for o in own if o[f"p_{head}"] is not None])
+            cond["terminal_delta_deg"] = _stats([o["terminal_delta"] for o in own])
+            cond["mean_delta_deg"] = _stats([o["mean_delta"] for o in own])
+            for transition in EVENT_TYPES:
+                steps = [o[f"{transition}_step"] for o in own]
                 fired = [s for s in steps if s is not None]
-                cond[f"{transition}_fraction"] = float(len(fired) / len(steps)) if steps else None
+                cond[f"{transition}_fire_fraction"] = float(len(fired) / len(steps)) if steps else None
                 cond[f"{transition}_step_mean"] = float(np.mean(fired)) if fired else None
-            heads = [r["head"][condition] for r in present if r["head"][condition] is not None]
-            cond["p_close"] = _mean_sem([h["p_close"] for h in heads])
-            cond["p_open"] = _mean_sem([h["p_open"] for h in heads])
+            cond["trajectory_mean"] = (
+                np.mean([np.asarray(o["gripper"]) - r["g_now"] for r, o in zip(present, own)], axis=0).tolist()
+                if own
+                else None
+            )
+            if condition != DEPLOYMENT:
+                pairs = [(r["conditions"][DEPLOYMENT], o) for r, o in zip(present, own)]
+                shifts = [o["gripper"][-1] - d["gripper"][-1] for d, o in pairs]
+                cond["terminal_shift_deg"] = _stats(shifts)
+                cond["mean_shift_deg"] = _stats(
+                    [float(np.mean(o["gripper"]) - np.mean(d["gripper"])) for d, o in pairs]
+                )
+                cond["fraction_less_closed"] = _fraction([s < -SHIFT_THRESHOLD_DEG for s in shifts])
+                cond["fraction_more_closed"] = _fraction([s > SHIFT_THRESHOLD_DEG for s in shifts])
+                cond["fraction_moved"] = _fraction([abs(s) > SHIFT_THRESHOLD_DEG for s in shifts])
+                for transition in EVENT_TYPES:
+                    key = f"{transition}_step"
+                    cond[f"{transition}_step_shift"] = _stats(
+                        [o[key] - d[key] for d, o in pairs if d[key] is not None and o[key] is not None]
+                    )
+                for head in EVENT_TYPES:
+                    key = f"p_{head}"
+                    cond[f"{key}_drop"] = _stats(
+                        [d[key] - o[key] for d, o in pairs if d[key] is not None and o[key] is not None]
+                    )
             entry["conditions"][condition] = cond
         by_stratum[name] = entry
 
-    pre_close = [name for name in strata if name.startswith("pre_close_")]
-    contrast: dict[str, dict] = {}
-    for condition in treatments:
-        pre_rows = [r for r in per_frame if r["stratum"] in pre_close and condition in r["displacement"]]
-        free_rows = [r for r in per_frame if r["stratum"] == FREE and condition in r["displacement"]]
+    def node(name: str, condition: str) -> dict:
+        return by_stratum.get(name, {}).get("conditions", {}).get(condition, {})
 
-        def block(rows: list[dict]) -> dict:
-            displacement = _mean_sem([r["displacement"][condition]["path_relative"] for r in rows])["mean"]
-            floor = _mean_sem([r["seed_floor"]["path_relative"] for r in rows])["mean"]
-            heads = [
-                r["head"][DEPLOYMENT]["p_close"] - r["head"][condition]["p_close"]
-                for r in rows
-                if r["head"][DEPLOYMENT] is not None and r["head"][condition] is not None
-            ]
-            return {
-                "n": len(rows),
-                "path_relative": displacement,
-                "seed_floor": floor,
-                "over_floor": None if displacement is None or not floor else displacement / floor,
-                "terminal_delta_shift_deg": _mean_sem(
-                    [
-                        r["gripper"][condition]["terminal_delta"] - r["gripper"][DEPLOYMENT]["terminal_delta"]
-                        for r in rows
-                    ]
-                )["mean"],
-                "p_close_drop": _mean_sem(heads)["mean"],
-            }
-
-        pre, free = block(pre_rows), block(free_rows)
-        contrast[condition] = {
-            "pre_close": pre,
-            "free": free,
-            "ratio": (
-                None
-                if pre["path_relative"] is None or not free["path_relative"]
-                else pre["path_relative"] / free["path_relative"]
-            ),
+    lead = min(leads_s, key=lambda value: abs(value - HEADLINE_LEAD_S))
+    headline: dict = {"condition": headline_condition, "lead_s": lead}
+    for event_type in EVENT_TYPES:
+        name = event_stratum(event_type, lead)
+        treated, deployment = node(name, headline_condition), node(name, DEPLOYMENT)
+        headline[f"pre_{event_type}"] = {
+            "stratum": name,
+            "n": treated.get("n", 0),
+            "terminal_shift_median_deg": (treated.get("terminal_shift_deg") or {}).get("median"),
+            "terminal_shift_mean_deg": (treated.get("terminal_shift_deg") or {}).get("mean"),
+            "fraction_less_closed": treated.get("fraction_less_closed"),
+            "fraction_more_closed": treated.get("fraction_more_closed"),
+            f"p_{event_type}": (deployment.get(f"p_{event_type}") or {}).get("mean"),
+            f"p_{event_type}_target": by_stratum.get(name, {}).get(f"target_{event_type}"),
+            f"p_{event_type}_drop": (treated.get(f"p_{event_type}_drop") or {}).get("mean"),
         }
-    return {"by_stratum": by_stratum, "contrast": contrast}
+    for name in (FREE, CARRY):
+        treated = node(name, headline_condition)
+        headline[name] = {
+            "n": treated.get("n", 0),
+            "terminal_shift_median_deg": (treated.get("terminal_shift_deg") or {}).get("median"),
+            "fraction_moved": treated.get("fraction_moved"),
+        }
+    return {"by_stratum": by_stratum, "headline": headline}
 
 
 def _render(summary: dict, output_path: str) -> None:
-    strata = summary["strata"]
     conditions = summary["conditions"]
     treatments = conditions[1:]
     by_stratum = summary["by_stratum"]
+    leads = summary["leads_s"]
+    fps = summary["fps"]
+    chunk_size = summary["chunk_size"]
+    headline = summary["headline_condition"]
     palette = ["#E76F51", "#F4A261", "#2A9D8F", "#457B9D", "#9D4EDD", "#6C757D"]
     colors = {condition: palette[i % len(palette)] for i, condition in enumerate(treatments)}
     colors[DEPLOYMENT] = "#264653"
+    line_style = {condition: {"ls": "-", "alpha": 1.0} for condition in conditions}
+    line_style[NO_DEPTH] = {"ls": ":", "alpha": 0.6}
+    line_style[DEPLOYMENT] = {"ls": "-", "alpha": 1.0, "lw": 2.0}
 
-    def series(condition: str, *path: str) -> tuple[np.ndarray, np.ndarray]:
-        values, errors = [], []
-        for name in strata:
-            node = by_stratum[name]["conditions"].get(condition, {})
-            for part in path:
-                node = node.get(part, {}) if isinstance(node, dict) else {}
-            values.append(np.nan if not isinstance(node, dict) or node.get("mean") is None else node["mean"])
-            errors.append(0.0 if not isinstance(node, dict) or node.get("sem") is None else node["sem"])
-        return np.asarray(values), np.asarray(errors)
+    def value(name: str, condition: str, *path: str) -> float:
+        node = by_stratum.get(name, {}).get("conditions", {}).get(condition, {})
+        for part in path:
+            node = node.get(part) if isinstance(node, dict) else None
+        return np.nan if node is None else float(node)
 
-    def grouped(ax, members: list[str], *path: str) -> None:
-        width = 0.8 / max(len(members), 1)
-        x = np.arange(len(strata))
-        for i, condition in enumerate(members):
-            values, errors = series(condition, *path)
-            bars = ax.bar(
-                x + (i - (len(members) - 1) / 2) * width, values, width, yerr=errors,
-                color=colors[condition], label=condition, error_kw={"lw": 0.8},
+    def per_lead(event_type: str, condition: str, *path: str) -> np.ndarray:
+        return np.asarray([value(event_stratum(event_type, lead), condition, *path) for lead in leads])
+
+    def lead_axis(ax, event_type: str) -> None:
+        ax.set_xscale("log")
+        ax.set_xticks(leads)
+        ax.set_xticklabels([f"{lead:g}" for lead in leads], fontsize=8)
+        ax.minorticks_off()
+        ax.invert_xaxis()
+        ax.set_xlabel(f"seconds before the commanded {event_type}")
+
+    fig, axes = plt.subplots(2, 4, figsize=(23, 9.5))
+    for row, event_type in enumerate(EVENT_TYPES):
+        p_key = f"p_{event_type}"
+        fraction_key = "fraction_less_closed" if event_type == "close" else "fraction_more_closed"
+        against = "less closed" if event_type == "close" else "more closed"
+        delayed = "negative = ends less closed, close delayed" if event_type == "close" else "positive = ends more closed, release delayed"
+
+        ax = axes[row, 0]
+        target = [np.nan if (t := by_stratum.get(event_stratum(event_type, lead), {}).get(f"target_{event_type}")) is None else t for lead in leads]
+        ax.plot(leads, target, color="black", ls="--", lw=1.0, label="label target 2^(-lead)")
+        for condition in conditions:
+            ax.errorbar(
+                leads, per_lead(event_type, condition, p_key, "mean"), yerr=per_lead(event_type, condition, p_key, "sem"),
+                color=colors[condition], marker="o", ms=3, capsize=2, label=condition, **line_style[condition],
             )
-            if condition == NO_DEPTH:
-                for bar in bars:
-                    bar.set_hatch("///")
-                    bar.set_alpha(0.55)
-        ax.set_xticks(x, strata, rotation=25, ha="right", fontsize=8)
+        for name, shade in ((CARRY, "#8D99AE"), (FREE, "#CBD5E1")):
+            mean, sem = value(name, DEPLOYMENT, p_key, "mean"), value(name, DEPLOYMENT, p_key, "sem")
+            if not np.isnan(mean):
+                sem = 0.0 if np.isnan(sem) else sem
+                ax.axhspan(mean - sem, mean + sem, color=shade, alpha=0.6, label=f"{name}, deployment")
+        lead_axis(ax, event_type)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_ylabel(f"head p_{event_type}")
+        ax.set_title(f"Depth-only head: p_{event_type} approaching a {event_type}", fontsize=10)
+        ax.legend(fontsize=7)
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    x = np.arange(len(strata))
+        ax = axes[row, 1]
+        for condition in treatments:
+            median = per_lead(event_type, condition, "terminal_shift_deg", "median")
+            ax.plot(leads, median, color=colors[condition], marker="o", ms=3, label=condition, **line_style[condition])
+            ax.fill_between(
+                leads, per_lead(event_type, condition, "terminal_shift_deg", "q25"),
+                per_lead(event_type, condition, "terminal_shift_deg", "q75"), color=colors[condition], alpha=0.10,
+            )
+        ax.plot(
+            leads, per_lead(event_type, DEPLOYMENT, "terminal_delta_deg", "median"), color="black", ls=":",
+            marker="_", ms=10, label="deployment g[T] - g_now",
+        )
+        ax.axhline(0.0, color="#333333", lw=0.8)
+        lead_axis(ax, event_type)
+        ax.set_ylabel("last-step gripper shift vs deployment (deg)")
+        ax.set_title(f"g_c[T] - g_dep[T], median with IQR; {delayed}", fontsize=10)
+        ax.legend(fontsize=7)
 
-    grouped(axes[0], treatments, "path_relative")
-    floor = [by_stratum[name]["seed_floor"]["mean"] or np.nan for name in strata]
-    axes[0].scatter(x, floor, marker="_", s=500, color="black", zorder=3, label="seed floor")
-    axes[0].set_yscale("log")
-    axes[0].set_ylabel("path displacement / deployment excursion")
-    axes[0].set_title("How far the treated chunk moves, per stratum", fontsize=10)
-    axes[0].legend(fontsize=7)
+        ax = axes[row, 2]
+        for condition in treatments:
+            ax.plot(leads, per_lead(event_type, condition, fraction_key), color=colors[condition], marker="o", ms=3, label=condition, **line_style[condition])
+        control = value(FREE, headline, "fraction_moved")
+        if not np.isnan(control):
+            ax.axhline(control, color="#6C757D", ls="--", lw=1.0, label=f"free, moved either way ({headline})")
+        lead_axis(ax, event_type)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_ylabel(f"fraction of chunks ending >{SHIFT_THRESHOLD_DEG:g} deg {against}")
+        ax.set_title(f"How often the treated chunk ends {against} than deployment", fontsize=10)
+        ax.legend(fontsize=7)
 
-    grouped(axes[1], treatments, "terminal_delta_shift_deg")
-    deployment_delta = [
-        by_stratum[name]["conditions"][DEPLOYMENT]["terminal_delta_deg"]["mean"] or np.nan for name in strata
-    ]
-    axes[1].scatter(x, deployment_delta, marker="_", s=500, color="black", zorder=3, label="deployment $g_T-g_{now}$")
-    axes[1].axhline(0.0, color="#333333", lw=0.8)
-    axes[1].set_ylabel("terminal gripper shift vs deployment (deg)")
-    axes[1].set_title("Does the chunk close less when depth reads farther?", fontsize=10)
-    axes[1].legend(fontsize=7)
+        ax = axes[row, 3]
+        picks = sorted({min(leads, key=lambda lead, want=want: abs(lead - want)) for want in TRAJECTORY_LEADS_S})
+        shades = ["#F4A261", "#264653"] if len(picks) > 1 else ["#264653"]
+        steps = np.arange(1, chunk_size + 1) / fps
+        for lead, shade in zip(picks, shades):
+            name = event_stratum(event_type, lead)
+            for condition, ls in ((DEPLOYMENT, "-"), (headline, "--")):
+                trajectory = by_stratum.get(name, {}).get("conditions", {}).get(condition, {}).get("trajectory_mean")
+                if trajectory is not None:
+                    ax.plot(steps, trajectory, color=shade, ls=ls, label=f"{condition}, {lead:g} s before")
+        ax.axhline(0.0, color="#333333", lw=0.8)
+        ax.set_xlabel("chunk step (s)")
+        ax.set_ylabel("mean g[t] - g_now (deg)")
+        ax.set_title(f"Gripper trajectory over the chunk, deployment vs {headline}", fontsize=10)
+        ax.legend(fontsize=7)
 
-    grouped(axes[2], conditions, "p_close")
-    targets = [by_stratum[name]["target_close_mean"] for name in strata]
-    axes[2].scatter(
-        x, [np.nan if t is None else t for t in targets], marker="_", s=500, color="black", zorder=3,
-        label="label target",
-    )
-    axes[2].set_ylim(0.0, 1.0)
-    axes[2].set_ylabel("head $p_{close}$")
-    axes[2].set_title("The depth-only head's own read of the event", fontsize=10)
-    handles, labels = axes[2].get_legend_handles_labels()
-    handles.append(Patch(facecolor="white", edgecolor="#333333", hatch="///", label="untrained shape"))
-    axes[2].legend(handles=handles, fontsize=7)
-
-    headline = summary["headline_condition"]
-    contrast = summary["contrast"].get(headline, {})
+    head = summary["headline"]
+    pre_close, free = head["pre_close"], head[FREE]
     fig.suptitle(
         f"Depth at gripper events — n={summary['n_frames']} frames, "
         f"{summary['n_events']['close']} closes / {summary['n_events']['open']} opens  |  "
-        f"{headline}: pre-close/free displacement {contrast.get('ratio') or float('nan'):.2f}x, "
-        f"terminal gripper shift {(contrast.get('pre_close') or {}).get('terminal_delta_shift_deg') or float('nan'):+.1f} deg",
+        f"{headline}, {head['lead_s']:g} s before a close: last-step gripper shift median "
+        f"{pre_close['terminal_shift_median_deg'] if pre_close['terminal_shift_median_deg'] is not None else float('nan'):+.1f} deg, "
+        f"{(pre_close['fraction_less_closed'] or 0.0):.0%} of chunks less closed (free moved {(free['fraction_moved'] or 0.0):.0%})",
         fontsize=12,
         fontweight="bold",
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(output_path, bbox_inches="tight", dpi=120)
     plt.close(fig)
 
 
 def _write_manifest(output_dir: str, summary: dict) -> dict:
     headline = summary["headline_condition"]
+    head = summary["headline"]
+    lead = head["lead_s"]
     conditions = summary["conditions"]
+    close_name, open_name = head["pre_close"]["stratum"], head["pre_open"]["stratum"]
 
-    def contrast_metrics(condition: str, *, primary: bool, trend: bool) -> list[Metric]:
+    def condition_metrics(condition: str) -> list[Metric]:
         tag = " (untrained shape)" if condition == NO_DEPTH else ""
+        prefix_close = f"by_stratum.{close_name}.conditions.{condition}"
+        prefix_open = f"by_stratum.{open_name}.conditions.{condition}"
         return [
             Metric(
-                f"contrast.{condition}.ratio",
-                f"{condition}: pre-close over free displacement{tag}",
-                good="none",
-                fmt=2,
-                baseline=1.0,
-                primary=primary,
-                trend=trend,
-                note=(
-                    "Mean path displacement of the treated chunk from the deployment chunk, over "
-                    "the deployment chunk's own excursion, pre-close strata pooled, divided by the "
-                    "same number on frames far from any gripper event. 1 means depth moves the "
-                    "chunk the same everywhere — a global bias, not a grasp cue."
-                ),
+                f"{prefix_close}.terminal_shift_deg.median",
+                f"{condition}: pre-close {lead:g} s last-step gripper shift, median (deg){tag}",
+                good="none", fmt=1, baseline=0.0,
             ),
             Metric(
-                f"contrast.{condition}.pre_close.terminal_delta_shift_deg",
-                f"{condition}: pre-close terminal gripper shift (deg){tag}",
-                good="none",
-                fmt=2,
-                baseline=0.0,
-                primary=primary,
-                trend=trend,
-                note=(
-                    "$\\left(g_T - g_{now}\\right)_{treated} - \\left(g_T - g_{now}\\right)_{deployment}$ "
-                    "on pre-close frames, in the dataset's degrees (closed is near 0, open is "
-                    "negative). Negative means the chunk closes less when the object reads farther."
-                ),
+                f"{prefix_close}.fraction_less_closed",
+                f"{condition}: pre-close {lead:g} s chunks ending less closed{tag}",
+                good="none", fmt=2, baseline=0.0,
             ),
             Metric(
-                f"contrast.{condition}.pre_close.p_close_drop",
-                f"{condition}: pre-close head p_close drop{tag}",
-                good="none",
-                fmt=3,
-                baseline=0.0,
-                primary=primary,
-                note=(
-                    "$p_{close}(\\text{deployment}) - p_{close}(\\text{treated})$ from the depth-only "
-                    "auxiliary head on pre-close frames. Positive means the head reads the treated "
-                    "depth as farther from a close."
-                ),
+                f"{prefix_close}.p_close_drop.mean",
+                f"{condition}: pre-close {lead:g} s head p_close drop{tag}",
+                good="none", fmt=3, baseline=0.0,
             ),
             Metric(
-                f"contrast.{condition}.pre_close.over_floor",
-                f"{condition}: pre-close displacement over seed floor",
-                good="none",
-                fmt=2,
-                baseline=1.0,
-                note="Pre-close displacement divided by the reseed displacement on the same frames. Near 1 is noise.",
+                f"{prefix_open}.terminal_shift_deg.median",
+                f"{condition}: pre-open {lead:g} s last-step gripper shift, median (deg){tag}",
+                good="none", fmt=1, baseline=0.0,
             ),
             Metric(
-                f"contrast.{condition}.free.over_floor",
-                f"{condition}: free displacement over seed floor",
-                good="none",
-                fmt=2,
-                baseline=1.0,
+                f"{prefix_open}.fraction_more_closed",
+                f"{condition}: pre-open {lead:g} s chunks ending more closed{tag}",
+                good="none", fmt=2, baseline=0.0,
+            ),
+            Metric(
+                f"by_stratum.{FREE}.conditions.{condition}.fraction_moved",
+                f"{condition}: free chunks moved either way{tag}",
+                good="none", fmt=2, baseline=0.0,
             ),
         ]
 
     metrics = [
-        *contrast_metrics(headline, primary=True, trend=True),
-        *[m for c in conditions[1:] if c != headline for m in contrast_metrics(c, primary=False, trend=False)],
+        Metric(
+            "headline.pre_close.terminal_shift_median_deg",
+            f"{headline}: pre-close {lead:g} s last-step gripper shift, median (deg)",
+            good="none", fmt=1, baseline=0.0, primary=True, trend=True,
+            note=(
+                "g_c[T] - g_dep[T]: the treated chunk's last gripper command minus the deployment "
+                "chunk's, in the dataset's degrees (closed near 0, open negative), on frames "
+                f"{lead:g} s before a commanded close. Negative means the chunk ends less closed "
+                "when the scene reads farther. Median over frames."
+            ),
+        ),
+        Metric(
+            "headline.pre_close.fraction_less_closed",
+            f"{headline}: pre-close {lead:g} s chunks ending less closed",
+            good="none", fmt=2, baseline=0.0, primary=True, trend=True,
+            note=(
+                f"Fraction of pre-close frames whose treated chunk ends more than {SHIFT_THRESHOLD_DEG:g} deg "
+                "less closed than the deployment chunk. Read against the free rate below: the "
+                "difference is the grasp cue."
+            ),
+        ),
+        Metric(
+            "headline.free.fraction_moved",
+            f"{headline}: free chunks moved either way",
+            good="none", fmt=2, baseline=0.0, primary=True,
+            note=(
+                f"Fraction of free frames (open gripper, no close within reach) whose last gripper "
+                f"command moved more than {SHIFT_THRESHOLD_DEG:g} deg in either direction under the same "
+                "treatment. The null rate."
+            ),
+        ),
+        Metric(
+            "headline.pre_close.p_close",
+            f"deployment head p_close {lead:g} s before a close",
+            good="none", fmt=3, baseline=head["pre_close"]["p_close_target"], primary=True, trend=True,
+            note=(
+                "Sigmoid of the depth-only head's close logit under the real depth, mean over "
+                "pre-close frames. The baseline is the label target 2^(-lead) at this lead."
+            ),
+        ),
+        Metric(
+            "headline.pre_close.p_close_drop",
+            f"{headline}: pre-close {lead:g} s head p_close drop",
+            good="none", fmt=3, baseline=0.0, primary=True,
+            note="p_close(deployment) - p_close(treated). Positive means the head reads the treated depth as farther from a close.",
+        ),
+        Metric(
+            "headline.pre_open.terminal_shift_median_deg",
+            f"{headline}: pre-open {lead:g} s last-step gripper shift, median (deg)",
+            good="none", fmt=1, baseline=0.0, primary=True,
+            note="The same shift on frames before a commanded open. Positive means the chunk ends more closed, the release delayed.",
+        ),
+        Metric(
+            "headline.pre_open.fraction_more_closed",
+            f"{headline}: pre-open {lead:g} s chunks ending more closed",
+            good="none", fmt=2, baseline=0.0, primary=True,
+        ),
+        Metric(
+            "headline.pre_open.p_open",
+            f"deployment head p_open {lead:g} s before an open",
+            good="none", fmt=3, baseline=head["pre_open"]["p_open_target"], primary=True, trend=True,
+        ),
+        *[m for condition in conditions[1:] if condition != headline for m in condition_metrics(condition)],
         Metric("n_frames", "Frames probed", good="none", fmt=0),
         Metric("n_events.close", "Close events in the probed episodes", good="none", fmt=0),
         Metric("n_events.open", "Open events in the probed episodes", good="none", fmt=0),
@@ -612,31 +717,42 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
         sys.modules[__name__],
         title="Depth at Gripper Events",
         group="Depth",
-        claim="Does depth content move the chunk where a grasp is imminent, and not where nothing is?",
+        claim="Does the wrist depth move the gripper command where a grasp or release is imminent, and nowhere else?",
         summary=summary,
         metrics=metrics,
         panels=[
             Panel(
                 "depth_event.png",
-                "Displacement, terminal gripper shift and head $p_{close}$, by stratum and condition",
+                "Top row closes, bottom row opens; x is seconds before the commanded event, the event at the right edge",
                 how=(
-                    "**Left** — path displacement of each treated chunk from the deployment chunk, "
-                    "over the deployment chunk's own motion, log scale; the black tick is the "
-                    "reseed floor for that stratum. The claim is a pre-close bar above its free "
-                    "bar, both above the tick.\n\n"
-                    "**Middle** — the terminal gripper command shift against deployment, in degrees; "
-                    "the black tick is deployment's own $g_T - g_{now}$. Pre-close bars below zero "
-                    "under ``shift`` and ``z_offset`` mean the chunk closes less when the object "
-                    "reads farther.\n\n"
-                    "**Right** — the depth-only head's $p_{close}$ per condition; the black tick is "
-                    "the label target the head was trained toward at that lead."
+                    "**Column 1** — the depth-only head's probability under each condition, with the "
+                    "label target $2^{-\\text{lead}}$ dashed and the carry / free deployment levels as "
+                    "bands. A head that sees the approach rises along the target as the event nears "
+                    "and drops under ``z_offset``.\n\n"
+                    "**Column 2** — last-step gripper shift $g_c[T] - g_{dep}[T]$ in degrees, median "
+                    "with the interquartile band; the dotted black line is deployment's own "
+                    "$g[T] - g_{now}$, how far the untouched chunk closes by its end. Below zero on "
+                    "the close row means the chunk ends less closed when the scene reads farther.\n\n"
+                    "**Column 3** — the fraction of frames whose chunk ends more than "
+                    f"{SHIFT_THRESHOLD_DEG:g} deg less closed (close row) or more closed (open row) "
+                    "than deployment; the grey dashed line is the same treatment's rate on free "
+                    "frames, moved either way. The gap between a line and the grey is the grasp cue; "
+                    "``cross_phase`` should sit on the grey everywhere.\n\n"
+                    "**Column 4** — the mean gripper trajectory $g[t] - g_{now}$ over the 30 chunk "
+                    "steps at two leads, deployment solid against the headline condition dashed, so "
+                    "the delay is seen rather than summarised."
                 ),
                 primary=True,
             ),
             Panel(
                 "depth_event.json",
                 "Per-stratum tables and per-frame rows",
-                how="Each row records the stratum, the event and lead it was placed before, donor provenance per condition, the paired displacements, gripper timing and head probabilities.",
+                how=(
+                    "Each row records the stratum, the event and lead it was placed before, donor "
+                    "provenance per condition, and per condition the full gripper trajectory, its "
+                    "terminal and mean delta from g_now, the first-crossing steps and the head "
+                    "probabilities."
+                ),
             ),
         ],
         see_also=["depth_modality", "objective"],
@@ -644,16 +760,33 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
             "viewer": {
                 "metric_groups": [
                     {
-                        "title": f"{condition}",
+                        "title": f"{headline} (headline)",
                         "keys": [
-                            f"contrast.{condition}.ratio",
-                            f"contrast.{condition}.pre_close.terminal_delta_shift_deg",
-                            f"contrast.{condition}.pre_close.p_close_drop",
-                            f"contrast.{condition}.pre_close.over_floor",
-                            f"contrast.{condition}.free.over_floor",
+                            "headline.pre_close.terminal_shift_median_deg",
+                            "headline.pre_close.fraction_less_closed",
+                            "headline.free.fraction_moved",
+                            "headline.pre_close.p_close",
+                            "headline.pre_close.p_close_drop",
+                            "headline.pre_open.terminal_shift_median_deg",
+                            "headline.pre_open.fraction_more_closed",
+                            "headline.pre_open.p_open",
                         ],
-                    }
-                    for condition in conditions[1:]
+                    },
+                    *[
+                        {
+                            "title": condition,
+                            "keys": [
+                                f"by_stratum.{close_name}.conditions.{condition}.terminal_shift_deg.median",
+                                f"by_stratum.{close_name}.conditions.{condition}.fraction_less_closed",
+                                f"by_stratum.{close_name}.conditions.{condition}.p_close_drop.mean",
+                                f"by_stratum.{open_name}.conditions.{condition}.terminal_shift_deg.median",
+                                f"by_stratum.{open_name}.conditions.{condition}.fraction_more_closed",
+                                f"by_stratum.{FREE}.conditions.{condition}.fraction_moved",
+                            ],
+                        }
+                        for condition in conditions[1:]
+                        if condition != headline
+                    ],
                 ]
             }
         },
@@ -688,11 +821,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     if int(round(labels["label_fps"])) != fps:
         raise ValueError(f"labels were built at {labels['label_fps']} fps, the run is at {fps}.")
 
-    leads_s = _seconds(getattr(p, "depth_event_leads_s", "1.0,2.0"))
+    leads_s = _seconds(getattr(p, "depth_event_leads_s", DEFAULT_LEADS_S))
     shifts_s = _seconds(getattr(p, "depth_event_shift_s", "1.0,2.0"))
     z_offset_mm = float(getattr(p, "depth_event_z_offset_mm", 30.0))
     z_offset_levels = z_offset_mm / float(pointmap_config.depth_units_mm)
-    n_seeds = max(int(p.n_seeds), 2)
     depth_obs_key = f"observation.depth.{pointmap_config.depth_key}"
     gripper_dim = labels["gripper_dim"]
 
@@ -713,38 +845,33 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     }
     for name in strata:
         by_episode = Counter(r["episode_idx"] for r in rows if r["stratum"] == name)
-        logging.info(f"[depth_event] {name:>14s}: {sum(by_episode.values())} frames {dict(sorted(by_episode.items()))}")
+        logging.info(f"[depth_event] {name:>16s}: {sum(by_episode.values())} frames {dict(sorted(by_episode.items()))}")
     logging.info(
-        f"[depth_event] {len(rows)} frames x ({len(conditions)} conditions + 1 batched floor of "
-        f"{n_seeds - 1} seeds) forwards; cross-phase donors for {len(donors)} frames"
+        f"[depth_event] {len(rows)} frames x {len(conditions)} conditions forwards; "
+        f"cross-phase donors for {len(donors)} frames"
     )
 
     adapter._set_probe_cuda_graph_enabled(False)
-    noise_seed0 = adapter.flow_noise_like(1, 0)
-    floor_noise = torch.cat([adapter.flow_noise_like(1, seed) for seed in range(1, n_seeds)], dim=0)
+    noise = adapter.flow_noise_like(1, 0)
 
-    def predict(obs: dict, frame: dict, noise: torch.Tensor):
-        n = int(noise.shape[0])
-        unnorm, norm = adapter.predict_action_chunk_batch(
+    def predict(obs: dict, frame: dict):
+        unnorm, _ = adapter.predict_action_chunk_batch(
             obs,
             frame["task"],
-            [frame["subtask"]] * n,
-            metadatas=[frame["metadata"]] * n,
+            [frame["subtask"]],
+            metadatas=[frame["metadata"]],
             noise=noise,
             inference_action_mode="continuous",
         )
         logits = policy._depth_gripper_event_logits
-        probs = None if logits is None else torch.sigmoid(logits.detach().float()).cpu()
-        return unnorm, norm, probs
+        probs = None if logits is None else torch.sigmoid(logits.detach().float()).cpu()[0]
+        return unnorm[0], probs
 
     per_frame: list[dict] = []
     try:
         for row in rows:
             frame = probe_frame_inputs(dataset, cfg, row["global_idx"], chunk_size)
             obs = frame["obs"]
-            width = frame["gt_actions"].shape[-1]
-            hold_raw = frame["state"][:width].unsqueeze(0).repeat(chunk_size, 1)
-            hold_norm = adapter.normalize_gt_actions(hold_raw, frame["state"]).float()
             g_now = float(frame["gt_actions"][0, gripper_dim])
 
             condition_obs = {
@@ -769,34 +896,20 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
                 condition_obs[CROSS_PHASE] = _replace_depth_window(obs, window, depth_obs_key=depth_obs_key)
                 provenance[CROSS_PHASE] = donor
 
-            chunks: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
-            probs: dict[str, torch.Tensor | None] = {}
-            for condition in conditions:
-                if condition not in condition_obs:
-                    continue
-                unnorm, norm, prob = predict(condition_obs[condition], frame, noise_seed0)
-                chunks[condition] = (unnorm[0], norm[0])
-                probs[condition] = None if prob is None else prob[0]
-            _, floor_norm, _ = predict(obs, frame, floor_noise)
-
-            _, deployment_norm = chunks[DEPLOYMENT]
             record = {
                 **row,
                 "g_now": g_now,
                 "provenance": provenance,
-                "displacement": {},
-                "gripper": {},
-                "head": {},
-                "seed_floor": {
-                    key: float(np.mean([_relative(floor_norm[i], deployment_norm, hold_norm)[key] for i in range(floor_norm.shape[0])]))
-                    for key in RELATIVE_KEYS
-                },
                 "targets": {
                     head: (float(frame[key]) if frame.get(key) is not None else None)
                     for head, key in TARGET_KEYS.items()
                 },
+                "conditions": {},
             }
-            for condition, (unnorm, norm) in chunks.items():
+            for condition in conditions:
+                if condition not in condition_obs:
+                    continue
+                unnorm, prob = predict(condition_obs[condition], frame)
                 gripper = unnorm[:, gripper_dim].numpy()
                 close_step, open_step = gripper_transitions(
                     gripper,
@@ -804,29 +917,27 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
                     close_threshold=labels["close_threshold"],
                     open_threshold=labels["open_threshold"],
                 )
-                record["gripper"][condition] = {
+                record["conditions"][condition] = {
+                    "gripper": [round(float(g), 2) for g in gripper],
                     "terminal_delta": float(gripper[-1] - g_now),
                     "mean_delta": float(gripper.mean() - g_now),
                     "close_step": close_step,
                     "open_step": open_step,
+                    "p_close": None if prob is None else float(prob[0]),
+                    "p_open": None if prob is None else float(prob[1]),
                 }
-                prob = probs[condition]
-                record["head"][condition] = (
-                    None if prob is None else {"p_close": float(prob[0]), "p_open": float(prob[1])}
-                )
-                if condition != DEPLOYMENT:
-                    record["displacement"][condition] = _relative(norm, deployment_norm, hold_norm)
             per_frame.append(record)
 
+            deployment = record["conditions"][DEPLOYMENT]
             shown = " ".join(
-                f"{condition}={record['displacement'][condition]['path_relative']:.3f}"
+                f"{condition}={record['conditions'][condition]['gripper'][-1] - deployment['gripper'][-1]:+.1f}"
                 for condition in conditions[1:]
-                if condition in record["displacement"]
+                if condition in record["conditions"]
             )
             logging.info(
                 f"[depth_event] {row['stratum']} ep{row['episode_idx']} fr{row['frame_idx']}: "
-                f"floor={record['seed_floor']['path_relative']:.3f} {shown} "
-                f"g_T-g_now={record['gripper'][DEPLOYMENT]['terminal_delta']:+.1f}"
+                f"g_T-g_now={deployment['terminal_delta']:+.1f} shift {shown} "
+                f"p_close={deployment['p_close'] if deployment['p_close'] is not None else float('nan'):.3f}"
             )
     finally:
         adapter._restore_probe_cuda_graph_enabled()
@@ -838,7 +949,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         "leads_s": leads_s,
         "shifts_s": shifts_s,
         "z_offset_mm": z_offset_mm,
-        "n_seeds": n_seeds,
+        "shift_threshold_deg": SHIFT_THRESHOLD_DEG,
+        "fps": fps,
+        "chunk_size": chunk_size,
         "rubric": labels["rubric"],
         "gripper_dim": gripper_dim,
         "conditions": conditions,
@@ -847,9 +960,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
             **{condition: "counterfactual" for condition in conditions[1:] if condition != NO_DEPTH},
             NO_DEPTH: "untrained shape",
         },
-        "headline_condition": conditions[1],
+        "headline_condition": Z_OFFSET,
         "strata": strata,
-        **summarize(per_frame, strata, conditions),
+        **summarize(per_frame, strata, conditions, leads_s=leads_s, fps=fps, headline_condition=Z_OFFSET),
     }
 
     with open(os.path.join(output_dir, "depth_event.json"), "w") as f:
@@ -858,19 +971,16 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     _render(summary, os.path.join(output_dir, "depth_event.png"))
     _write_manifest(output_dir, summary)
 
-    logging.info("── depth_event: pre-close over free, per condition ──")
-    for condition, entry in summary["contrast"].items():
-        pre, free = entry["pre_close"], entry["free"]
-        ratio = entry["ratio"]
-        logging.info(
-            f"{condition:>12s}: pre-close {pre['path_relative'] if pre['path_relative'] is not None else float('nan'):.3f} "
-            f"(x{pre['over_floor'] if pre['over_floor'] is not None else float('nan'):.1f} floor, n={pre['n']})  "
-            f"free {free['path_relative'] if free['path_relative'] is not None else float('nan'):.3f} "
-            f"(x{free['over_floor'] if free['over_floor'] is not None else float('nan'):.1f} floor, n={free['n']})  "
-            f"ratio {ratio if ratio is not None else float('nan'):.2f}  "
-            f"gripper shift {pre['terminal_delta_shift_deg'] if pre['terminal_delta_shift_deg'] is not None else float('nan'):+.2f} deg  "
-            f"p_close drop {pre['p_close_drop'] if pre['p_close_drop'] is not None else float('nan'):+.3f}"
+    head = summary["headline"]
+    logging.info(f"── depth_event: {head['condition']} at {head['lead_s']:g} s before the event ──")
+    for name in ("pre_close", "pre_open", FREE, CARRY):
+        entry = head[name]
+        fields = " ".join(
+            f"{key}={value:+.3f}" if isinstance(value, float) else f"{key}={value}"
+            for key, value in entry.items()
+            if key != "stratum"
         )
+        logging.info(f"{name:>10s}: {fields}")
     logging.info(f"wrote {os.path.join(output_dir, 'depth_event.json')} and .png")
     return summary
 

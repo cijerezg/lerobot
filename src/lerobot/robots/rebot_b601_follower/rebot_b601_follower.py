@@ -59,6 +59,7 @@ _PARK_FPS = 30.0
 _PARK_SETTLE_MAX_SEC = 5.0  # arrival is re-checked every _PARK_SETTLE_CHECK_SEC up to this
 _PARK_SETTLE_CHECK_SEC = 0.5
 _PING_TIMEOUT_MS = 20  # synchronous register read; get_state() only returns the cached frame
+_PING_ATTEMPTS = 3  # 3 x 20 ms: a motor gets 60 ms of silence before the run stops
 _ENABLE_CONFIRM_ROUNDS = 5  # feedback refreshes after enable_all before the status check
 _STATUS_ENABLED = 1  # Damiao feedback ERR nibble: 0 disabled, 1 enabled, 8..E faults
 
@@ -209,13 +210,21 @@ class RebotB601Follower(Robot):
         logger.info(f"{self} torque disabled.")
 
     def _check_motor(self, motor_name: str) -> None:
-        """Raise if the motor does not answer a synchronous register read. A motor that
-        drops off the chain keeps returning its cached state, so this is the only way to
-        tell a frozen joint from a still one."""
-        try:
-            self.motors[motor_name].damiao_get_param_u32(RID_MST_ID, timeout_ms=_PING_TIMEOUT_MS)
-        except CallError as error:
-            raise RuntimeError(f"{self} {motor_name} stopped answering on CAN ({error}). Stopping.") from error
+        """Raise if the motor does not answer a synchronous register read within
+        _PING_ATTEMPTS tries. A motor that drops off the chain keeps returning its cached
+        state, so this is the only way to tell a frozen joint from a still one. A single
+        miss is tolerated (flaky cable, adapter hiccup) and logged so the miss rate is visible."""
+        for attempt in range(1, _PING_ATTEMPTS + 1):
+            try:
+                self.motors[motor_name].damiao_get_param_u32(RID_MST_ID, timeout_ms=_PING_TIMEOUT_MS)
+                return
+            except CallError as error:
+                if attempt == _PING_ATTEMPTS:
+                    raise RuntimeError(
+                        f"{self} {motor_name} stopped answering on CAN "
+                        f"({_PING_ATTEMPTS} x {_PING_TIMEOUT_MS} ms, {error}). Stopping."
+                    ) from error
+                logger.warning(f"{self} {motor_name} missed ping {attempt}/{_PING_ATTEMPTS}: {error}")
 
     def _check_status(self) -> None:
         """Raise if a motor's last feedback frame says anything but enabled. A motor that

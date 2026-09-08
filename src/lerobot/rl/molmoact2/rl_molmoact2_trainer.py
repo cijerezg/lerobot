@@ -194,6 +194,10 @@ _FORWARDED_COMPLEMENTARY = (
 def _forwarded_complementary_keys(complementary: dict, cfg) -> list[str]:
     """Which sampler columns ride into the preprocessor for this configuration."""
     keys = [key for key in _FORWARDED_COMPLEMENTARY if key in complementary]
+    if getattr(getattr(cfg.policy, "future_visual_loss", None), "enabled", False):
+        keys.extend(key for key in complementary if key.startswith("future."))
+        if "future_visual_valid" in complementary:
+            keys.append("future_visual_valid")
     # Per-camera presence: an absent view must reach the prompt step so its patch span
     # can leave the attention mask.
     keys.extend(key for key in complementary if key.startswith("camera_is_present."))
@@ -241,6 +245,16 @@ class MolmoAct2Trainer(Trainer):
             "val_loss_discrete_aux",
             "loss_depth_event",
             "val_loss_depth_event",
+            "future_visual_loss",
+            "val_loss_future_visual",
+            "val_loss_future_visual_persistence",
+            "val_loss_future_visual_zero",
+            "future_visual_ready",
+            "future_visual_valid_fraction",
+            "future_visual_temporal_energy",
+            "future_visual_pca_retained_energy",
+            "future_visual_target_update_step",
+            "future_visual_target_std",
             "depth_event/close_bce",
             "depth_event/open_bce",
             "loss_subtask_ce",
@@ -434,6 +448,10 @@ class MolmoAct2Trainer(Trainer):
             if name.startswith("critic.") or name.startswith("critic_target."):
                 continue  # critic handled separately
 
+            if name.startswith("future_visual."):
+                param.requires_grad = name.startswith("future_visual.predictor.") and not tp.depth_warmup
+                continue
+
             if tp.depth_warmup:
                 # Optional diagnostic: only the independent depth path moves.
                 # Everything else — trunk, RGB ViT, action expert, lm_head — is frozen,
@@ -514,7 +532,7 @@ class MolmoAct2Trainer(Trainer):
     @staticmethod
     def _split_depth_group(policy: nn.Module, cfg, groups: list[dict]) -> list[dict]:
         """Move independent depth params (CNN/visual path/marker, plus the MEM
-        state_history_projector) out of the policy group into their own
+        state_history_projector and future predictor) out of the policy group into their own
         "depth" group. Its LR defaults exactly to optimizer_lr; the separate group
         name exists to keep these parameters out of
         pretrained_merge_targets (the checkpoint has none of these weights, so a
@@ -523,6 +541,7 @@ class MolmoAct2Trainer(Trainer):
             id(p)
             for name, p in policy.named_parameters()
             if _is_actor_depth_parameter(name) or "state_history_projector" in name
+            or name.startswith("future_visual.predictor.")
         }
         policy_group = next(g for g in groups if g["name"] == "policy")
         depth_params = [p for p in policy_group["params"] if id(p) in depth_ids]
@@ -823,6 +842,12 @@ class MolmoAct2Trainer(Trainer):
                 )
             for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS:
                 batch[key] = raw_comp[key].float()
+        if getattr(getattr(cfg.policy, "future_visual_loss", None), "enabled", False):
+            if "future_images" not in batch or "future_visual_valid" not in batch:
+                raise KeyError("Future visual loss enabled but replay/preprocessor supplied no future images.")
+            if "metadata_mistake" not in raw_comp:
+                raise KeyError("Future visual loss requires the recorded metadata_mistake labels.")
+            batch["future_visual_mistake"] = raw_comp["metadata_mistake"].float().reshape(-1)
         return batch
 
     def actor_forward(
@@ -976,6 +1001,9 @@ class MolmoAct2Trainer(Trainer):
                 cfg=cfg,
             )
 
+            if getattr(raw_policy, "future_visual", None) is not None:
+                raw_policy.prepare_future_visual(fwd_batch)
+
             with runtime.no_sync(policy, accum_idx, grad_accum):
                 # Calling the wrapper enters DDP's reducer for this microbatch.
                 loss, metrics = policy(fwd_batch, reduction="none", return_diagnostics=True)
@@ -1040,6 +1068,9 @@ class MolmoAct2Trainer(Trainer):
                 float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
             )
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
+            for key, value in metrics.items():
+                if key.startswith("future_visual_"):
+                    accum[key] = accum.get(key, 0.0) + float(value) / grad_accum
             accum["loss_action_aux"] += float(metrics.get("action_auxiliary_loss", 0.0)) / grad_accum
             accum["loss_discrete_ce"] += float(metrics.get("discrete_ce_loss", 0.0)) / grad_accum
             accum["loss_discrete_aux"] += float(metrics.get("discrete_auxiliary_loss", 0.0)) / grad_accum
@@ -1131,6 +1162,9 @@ class MolmoAct2Trainer(Trainer):
         policy_opt.step()
         if depth_opt is not None:
             depth_opt.step()
+        if getattr(raw_policy, "future_visual", None) is not None:
+            if not getattr(policy_opt, "step_was_skipped", False):
+                raw_policy.future_visual.optimizer_step(raw_policy._backbone().vision_backbone.image_vit)
 
         accum["actor_grad_norm"] = actor_grad_norm
         # depth_token_rms_ratio is captured inside the micro-batch loop, right after the
@@ -1482,6 +1516,8 @@ class MolmoAct2Trainer(Trainer):
             "val_loss_discrete_aux",
             "loss_depth_event",
             "val_loss_depth_event",
+            "future_visual_loss",
+            "val_loss_future_visual",
             "depth_event/close_bce",
             "depth_event/open_bce",
             "loss_subtask_ce",

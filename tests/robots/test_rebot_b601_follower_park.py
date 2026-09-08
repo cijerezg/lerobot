@@ -126,9 +126,11 @@ def test_park_on_step_receives_every_ramp_target(monkeypatch):
 
 
 class _PingMotor(_FakeMotor):
-    """A motor that answers the liveness register read unless it is in `dead`."""
+    """A motor that answers the liveness register read unless it is in `dead`; a motor in
+    `flaky` misses one ping and answers the retry."""
 
     dead: set[str] = set()
+    flaky: set[str] = set()
 
     def __init__(self, name: str) -> None:
         super().__init__(START[name], moves=True)
@@ -138,6 +140,9 @@ class _PingMotor(_FakeMotor):
     def damiao_get_param_u32(self, rid, timeout_ms):
         self.pings += 1
         if self.name in self.dead:
+            raise module.CallError("get_register_u32 failed: timeout")
+        if self.name in self.flaky:
+            self.flaky.discard(self.name)
             raise module.CallError("get_register_u32 failed: timeout")
         return 1
 
@@ -161,6 +166,18 @@ def test_get_observation_names_the_motor_that_stops_answering(monkeypatch):
     robot.get_observation()  # wrist_flex still answers
     with pytest.raises(RuntimeError, match="wrist_yaw stopped answering"):
         robot.get_observation()
+
+
+def test_get_observation_tolerates_a_single_missed_ping(monkeypatch):
+    robot = _robot(monkeypatch, moves=True)
+    _PingMotor.dead = set()
+    _PingMotor.flaky = {"shoulder_pan"}
+    robot.motors = {name: _PingMotor(name) for name in robot.motor_names}
+    robot.get_observation()  # pan misses once, answers the retry
+    assert robot.motors["shoulder_pan"].pings == 2
+    assert [m.pings for m in list(robot.motors.values())[1:]] == [0] * (len(robot.motor_names) - 1)
+    robot.get_observation()  # round robin moved on to lift
+    assert robot.motors["shoulder_lift"].pings == 1
 
 
 def test_connect_names_the_silent_motor(monkeypatch):

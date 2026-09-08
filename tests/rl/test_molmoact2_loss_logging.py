@@ -232,3 +232,36 @@ def test_actor_freeze_trains_late_visual_path_but_not_rgb_stem() -> None:
     assert any("action_expert" in name for name in trainable)
     assert any("pointmap_encoder" in name for name in trainable)
     assert any("depth_gripper_event_head" in name for name in trainable)
+
+
+def test_future_validation_uses_valid_mistake_weights_across_batches() -> None:
+    class FuturePolicy(_FakePolicy):
+        def forward(self, batch, **kwargs):
+            loss, metrics = super().forward(batch, **kwargs)
+            marker = float(batch["marker"])
+            metrics.update(
+                future_visual_loss=marker,
+                future_visual_persistence_loss=2 * marker,
+                future_visual_zero_loss=3 * marker,
+                future_visual_weight_sum=1.5 if marker == 1 else 4.0,
+            )
+            return loss, metrics
+
+    metrics = _val_loss()(FuturePolicy())
+    expected = (1.5 + 4 * 4) / 5.5
+    assert metrics["val_loss_future_visual"] == expected
+    assert metrics["val_loss_future_visual_persistence"] == 2 * expected
+    assert metrics["val_loss_future_visual_zero"] == 3 * expected
+
+
+def test_future_prediction_diagnostics_reach_aim():
+    from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
+
+    keys = (
+        "future_visual_loss", "val_loss_future_visual", "val_loss_future_visual_persistence",
+        "val_loss_future_visual_zero", "future_visual_ready", "future_visual_valid_fraction",
+        "future_visual_temporal_energy", "future_visual_pca_retained_energy",
+        "future_visual_target_update_step", "future_visual_target_std",
+    )
+    expected = {key: 1.0 for key in keys}
+    assert MolmoAct2Trainer._aim_metrics(expected) == expected

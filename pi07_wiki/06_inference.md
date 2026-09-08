@@ -102,7 +102,7 @@ state-matched frame of another episode (the scene intervention) and a random oth
 frame. Standalone on the val set, one `output_dir` for every checkpoint so the viewer's
 Trends page lines them up:
 `.venv/bin/python -m lerobot.probes.input_swap --config config_rl.yaml
---policy.pretrained_path=<ckpt>/pretrained_model --val_dataset_path=outputs/rebot_val-annotated-v3
+--policy.pretrained_path=<ckpt>/pretrained_model --val_dataset_path=outputs/rebot_val-annotated-v4
 --probe_parameters.output_dir=outputs/probe_runs/<name>` (omit `pretrained_path` for the
 untrained init; it lands in `step_00000000`).
 Hand-picked mode (2026-09-05): `--pairs=anchor:donor,...` runs the cube on chosen frames
@@ -137,8 +137,10 @@ dark-shirt reach), `8998:9` (ep2 shirt reach vs ep0 socks at the rest pose), `81
   frame, so a motor that drops off the chain mid-episode reads as a plausible frozen
   value, not as an error (15:06 episode: wrist_yaw / wrist_roll / gripper flat for 12 s
   while the policy commanded the gripper open). `RebotB601Follower._check_motor` does a
-  synchronous register read (`RID_MST_ID`, 20 ms timeout) and raises `RuntimeError`
-  naming the motor. `connect()` checks all seven before configure (replaces the nameless
+  synchronous register read (`RID_MST_ID`, 20 ms timeout, 3 attempts = 60 ms of silence
+  since 2026-09-06 after wrist_roll false-tripped once mid-episode; each miss logs
+  `<motor> missed ping i/3`) and raises `RuntimeError` naming the motor on the third miss.
+  `connect()` checks all seven before configure (replaces the nameless
   "register 10 not received"); `get_observation()` checks one motor per call, round-robin,
   so every joint is verified every 7 steps (~0.23 s at 30 Hz, ~1 ms per step). The raise
   propagates unchanged: env worker logs it as fatal, the supervisor sees the dead thread

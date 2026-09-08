@@ -1084,7 +1084,10 @@ def rtc_env_worker(
 
             if is_intervening:
                 episode_intervention_steps += 1
-            else:
+            elif not was_intervening:
+                # Skipped on the release tick: key 5 already re-torqued the leader holding its own
+                # pose, and the follower can sit past the per-step ceiling. The next iteration's
+                # _ramp_leader closes that gap; one tick of feedback here asks for it in one step.
                 if not getattr(online_env, "send_actions_to_robot", True):
                     requested_targets = online_env.get_last_requested_joint_targets()
                     feedback = {

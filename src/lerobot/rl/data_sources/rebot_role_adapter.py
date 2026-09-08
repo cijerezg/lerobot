@@ -223,6 +223,8 @@ def align_rebot_buffer(buffer, *, depth_role: str = "wrist") -> dict[str, str]:
     # optimize_memory makes next_states the same object; refresh the reference either way.
     buffer.next_states = buffer.states
     buffer.state_keys = [renames.get(key, key) for key in buffer.state_keys]
+    if getattr(buffer, "future_image_keys", ()):
+        buffer.future_image_keys = tuple(renames.get(key, key) for key in buffer.future_image_keys)
 
     # The run's history_offsets name every canonical role, including ones ReBot never
     # recorded. _gather_history indexes storage directly, so an offset on an absent
@@ -322,6 +324,12 @@ class RoleAlignedBuffer:
         info["camera_is_present"] = present[None].expand(size, -1).contiguous()
         for index, role in enumerate(self.camera_roles):
             info[f"camera_is_present.{OBS_IMAGES}.{role}"] = present[index].expand(size).contiguous()
+        if "future_visual_valid" in info:
+            for index, role in enumerate(self.camera_roles):
+                key = f"{OBS_IMAGES}.{role}"
+                if role in self.absent_roles:
+                    info[f"future.{key}"] = torch.zeros_like(batch["state"][key])
+                info[f"future.camera_is_present.{key}"] = present[index].expand(size).contiguous()
         if history_slots:
             info["history.camera_is_present"] = (
                 present[None, :, None].expand(size, len(self.camera_roles), history_slots).contiguous()

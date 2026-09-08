@@ -90,6 +90,22 @@ def random_shift(images: torch.Tensor, pad: int = 4):
     return random_crop_vectorized(images=images, output_size=(h, w))
 
 
+def shift_with_offsets(images: torch.Tensor, offsets: torch.Tensor, pad: int = 4) -> torch.Tensor:
+    """Apply the same DrQ crop to every temporal slice of each sample."""
+    shape = images.shape
+    batch, channels, height, width = shape[0], *shape[-3:]
+    slices = images.numel() // (batch * channels * height * width)
+    flat = images.reshape(batch * slices, channels, height, width)
+    if not flat.is_floating_point():
+        flat = flat.float() / 255.0
+    flat = F.pad(flat, (pad, pad, pad, pad), mode="replicate").permute(0, 2, 3, 1)
+    offsets = offsets.repeat_interleave(slices, dim=0)
+    rows = torch.arange(height, device=images.device)[None, :, None] + offsets[:, 0, None, None]
+    cols = torch.arange(width, device=images.device)[None, None, :] + offsets[:, 1, None, None]
+    indices = torch.arange(batch * slices, device=images.device)[:, None, None]
+    return flat[indices, rows, cols].permute(0, 3, 1, 2).reshape(shape)
+
+
 def assemble_history_windows(
     entries: Sequence[dict[str, torch.Tensor]],
     history_offsets: dict[str, list[int]],
@@ -190,6 +206,8 @@ class ReplayBuffer:
         # Low-dim arrays stay dense, so action chunks / dones / history are unaffected.
         self.image_stride = 1
         self.history_offsets = self._normalize_history_offsets(history_offsets)
+        self.future_image_offset = 0
+        self.future_image_keys: tuple[str, ...] = ()
         self._lock = threading.Lock()
 
         # Track episode boundaries for memory optimization
@@ -199,6 +217,7 @@ class ReplayBuffer:
         self.state_keys = state_keys if state_keys is not None else []
 
         self.image_augmentation_function = image_augmentation_function
+        self._custom_image_augmentation = image_augmentation_function is not None
 
         if image_augmentation_function is None:
             base_function = functools.partial(random_shift, pad=4)
@@ -531,6 +550,39 @@ class ReplayBuffer:
             pad[key] = offs.unsqueeze(0) > reach.unsqueeze(1)
         return history, pad
 
+    def configure_future_images(self, offset: int, keys: list[str]) -> None:
+        """Enable auxiliary-only future RGB sampling without changing the cache."""
+        if offset < 1 or offset % self.image_stride:
+            raise ValueError("Future image offset must be positive and aligned to image_stride.")
+        missing = [key for key in keys if key not in self.states]
+        if missing or not keys:
+            raise ValueError(f"Future image keys must name stored cameras; missing={missing}.")
+        if self.use_drq and self._custom_image_augmentation:
+            raise ValueError("Future visual loss supports default DrQ or use_drq=False, not custom augmentation.")
+        self.future_image_offset = int(offset)
+        self.future_image_keys = tuple(keys)
+
+    def _gather_future_images(self, idx: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Mask physical episode boundaries and the circular buffer's newest row."""
+        offset = self.future_image_offset
+        steps = torch.arange(offset, device=idx.device)
+        path = (idx[:, None] + steps[None]) % self.capacity
+        valid = ~(self.dones[path] | self.truncateds[path]).any(dim=1)
+        remaining = (
+            self.size - 1 - idx if self.size < self.capacity
+            else (self.position - 1 - idx) % self.capacity
+        )
+        valid &= offset <= remaining
+        # Invalid targets carry the anchor, never a frame from another episode.
+        endpoint = torch.where(valid, (idx + offset) % self.capacity, idx)
+        result = {"future_visual_valid": valid.to(self.device)}
+        for key in self.future_image_keys:
+            result[f"future.{key}"] = self.states[key][endpoint // self.image_stride].to(self.device)
+            presence_key = f"camera_is_present.{key}"
+            if presence_key in self.complementary_info:
+                result[f"future.{presence_key}"] = self.complementary_info[presence_key][endpoint].to(self.device)
+        return result
+
     def sample(self, batch_size: int, action_chunk_size: int = 50) -> BatchTransition:
         """Sample a random batch of transitions and collate them into batched tensors."""
         if not self.initialized:
@@ -683,9 +735,24 @@ class ReplayBuffer:
                             depth_next_idx // stride
                         ].to(self.device)
 
+            if self.future_image_offset:
+                if batch_complementary_info is None:
+                    batch_complementary_info = {}
+                batch_complementary_info.update(self._gather_future_images(idx))
+
         # Image augmentation operates only on local batch_state/batch_next_state
         # tensors -- safe to do outside the lock.
-        if self.use_drq and image_keys:
+        if self.use_drq and image_keys and self.future_image_offset:
+            for key in image_keys:
+                offsets = torch.randint(9, (batch_size, 2), device=batch_state[key].device)
+                for container, field in (
+                    (batch_state, key), (batch_next_state, key),
+                    (batch_state, f"history.{key}"), (batch_next_state, f"history.{key}"),
+                    (batch_complementary_info, f"future.{key}"),
+                ):
+                    if container is not None and field in container:
+                        container[field] = shift_with_offsets(container[field], offsets)
+        elif self.use_drq and image_keys:
             all_images = []
             for key in image_keys:
                 all_images.append(batch_state[key])

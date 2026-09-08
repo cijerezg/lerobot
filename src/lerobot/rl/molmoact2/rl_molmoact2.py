@@ -54,11 +54,13 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     subtask_loss_weight: float = 0.0  # CE weight on generation answers; 0 = no subtask training
 
     # ── Operator subtask console (eval only) ─────────────────────────────────
-    # keyboard key -> subtask string. Non-empty REPLACES generation at rollout:
-    # the operator latches the current step live. Any string is allowed; ones that
-    # match the checkpoint vocabulary log its index, others log -1. The first
-    # entry is the episode default.
-    eval_subtasks: dict[str, str] = field(default_factory=dict)
+    # {"verbs": key -> step template, "objects": key -> object name, "containers":
+    # object name -> container (optional)}. Non-empty REPLACES generation at rollout:
+    # a chord is a verb key THEN an object key; the object press renders the verb's
+    # template ({object}, {container}) and latches it. Rendered strings that match
+    # the checkpoint vocabulary log its index, others log -1. First verb x first
+    # object is the episode default.
+    eval_subtasks: dict[str, dict[str, str]] = field(default_factory=dict)
 
     # ── Replay buffer ──────────────────────────────────────────────────────
     storage_device: str = "cpu"

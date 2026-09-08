@@ -104,7 +104,10 @@ class OnlineEpisodeRecorder:
             return
         episode_buffer = self.dataset.writer.episode_buffer
         episode_index, num_frames = episode_buffer["episode_index"], episode_buffer["size"]
-        self.dataset.save_episode()
+        # Sequential in-thread encoding: parallel_encoding forks a process pool out of the
+        # live runtime (CUDA, cameras, rerun, pynput, ~100 threads); a forked worker
+        # deadlocked at exit on 2026-09-06 and hung the env worker before the next episode.
+        self.dataset.save_episode(parallel_encoding=False)
         self._labels.extend(self._episode_labels)
         self._episode_labels = []
         pq.write_table(pa.Table.from_pylist(self._labels), self.root / LABELS_FILE)

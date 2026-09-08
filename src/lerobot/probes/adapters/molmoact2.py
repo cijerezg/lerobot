@@ -343,7 +343,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         observations: list[dict[str, Tensor]],
         task_str: str,
         *,
-        subtask: str | None = None,
+        subtask: str | list[str | None] | None = None,
         metadata: dict | None = None,
         noise: Tensor | None = None,
         inference_action_mode: str | None = None,
@@ -358,6 +358,12 @@ class MolmoAct2Adapter(ProbablePolicy):
         the forward. Pass *noise* (``flow_noise_like``) to hold the flow draw identical
         across rows. Added 2026-09-05 for ``probes.input_swap``.
 
+        *subtask* is one string for every row, or a list with one entry per
+        observation (``None`` / empty = no clause on that row): the pack step renders
+        each row's prompt from its own entry, so a probe that swaps the subtask text
+        alongside the observation streams keeps every cell in this one batch
+        (input_swap's T switch, 2026-09-06).
+
         Returns (unnormalized, normalized) chunks, each [N, chunk, action_dim].
         """
         n = len(observations)
@@ -370,7 +376,11 @@ class MolmoAct2Adapter(ProbablePolicy):
         stacked, presence = self._fill_absent_cameras(stacked)
         flat: dict = {**stacked, "task": [task_str] * n}
         complementary: dict = {**self._identity_columns, **presence}
-        if subtask:
+        if isinstance(subtask, (list, tuple)):
+            if len(subtask) != n:
+                raise ValueError(f"subtask list must have length {n}, got {len(subtask)}.")
+            complementary["subtask"] = [s or None for s in subtask]
+        elif subtask:
             complementary["subtask"] = [subtask] * n
         if metadata is not None:
             complementary["metadata"] = [dict(metadata) for _ in range(n)]

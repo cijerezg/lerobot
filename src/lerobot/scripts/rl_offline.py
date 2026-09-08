@@ -259,6 +259,7 @@ _VALIDATION_PROBES = (
     _ValidationProbeSpec(
         "enable_mem_temporal_attention", "lerobot.probes.mem_temporal_attention", "mem_temporal_attention"
     ),
+    _ValidationProbeSpec("enable_future_visual_cases", "lerobot.probes.future_visual_cases", "future_visual_cases"),
     _ValidationProbeSpec("enable_metadata_steering", "lerobot.probes.metadata_steering", "metadata_steering"),
     _ValidationProbeSpec("enable_depth_modality", "lerobot.probes.depth_modality_probe", "depth_modality"),
     _ValidationProbeSpec("enable_depth_event", "lerobot.probes.depth_event_probe", "depth_event"),
@@ -548,6 +549,15 @@ def offline_train(
 
     cfg.validate()
     cfg.env.task = cfg.policy.task
+    future_cfg = getattr(cfg.policy, "future_visual_loss", None)
+    if future_cfg is not None and future_cfg.enabled:
+        if getattr(getattr(cfg, "diverse", None), "enabled", False):
+            raise ValueError(
+                "future_visual_loss currently supports LeRobot replay datasets; "
+                "the source-native diverse actor cache does not supply future RGB targets."
+            )
+        if not getattr(getattr(cfg.policy, "memory", None), "metadata_enabled", False):
+            raise ValueError("future_visual_loss requires memory.metadata_enabled for mistake weights.")
 
     if accelerator is None:
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
@@ -662,6 +672,7 @@ def run_offline_training(
     save_freq = getattr(cfg, "offline_save_freq", None) or cfg.save_freq
     saving_checkpoint = cfg.save_checkpoint
     fps = cfg.env.fps
+    future_cfg = getattr(cfg.policy, "future_visual_loss", None)
 
     cast_to_bf16_fn = cast_to_bf16 if getattr(cfg.policy, "dtype", None) == "bfloat16" else None
 
@@ -844,6 +855,15 @@ def run_offline_training(
     critic_mistake_penalty = float(getattr(cfg.policy, "critic_mistake_penalty", 0.0))
     for buffer in offline_buffers:
         buffer.configure_critic_rewards(critic_reward_mode, critic_mistake_penalty)
+        if future_cfg is not None and future_cfg.enabled:
+            source_fps = float(getattr(buffer.dataset, "fps", fps))
+            offset_float = future_cfg.horizon_seconds * source_fps
+            offset = round(offset_float)
+            if abs(offset_float - offset) > 1e-6:
+                raise ValueError("future_visual_loss horizon must land on an exact dataset frame.")
+            buffer.configure_future_images(
+                offset, [key for key in buffer.states if key.startswith("observation.images.")]
+            )
     if critic_reward_mode == "subtask":
         logging.info(
             "[RL_OFFLINE] Critic reward mode: subtask "

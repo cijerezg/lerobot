@@ -356,37 +356,78 @@ from the depth telemetry is `depth_token_rms_ratio` and
 $2.8\times10^{-2}$, i.e. the adapter is emitting *louder* tokens that change the
 answer *less* — the path is alive and the model is routing around it.
 
-### B.3.3 Event-conditioned depth probe (2026-09-04)
+### B.3.3 Event-conditioned depth probe (2026-09-04, gripper-only readouts 2026-09-07)
 
-`probes/depth_event_probe.py` (`enable_depth_event`). The matched-depth
-counterfactual samples frames evenly, so its number is the depth read averaged over
-carrying, retreating and waiting. This probe chooses frames by the commanded gripper
-through the auxiliary head's own sidecars (`depth_gripper_events.parquet`, the dense
-`close_delta` / `open_delta`; §depth_gripper_event_labels.md) and reports per stratum:
-`pre_close_{L}s`, `pre_open_{L}s` at each lead $L$ (the labels must agree that event is
-the next of its type), and `carry` / `free` controls with no event within
-$L_{\max}+1$ s and a 1 s settle, sized per episode to that episode's event frames.
-Val v3 gives 29 closes / 31 opens over 4 episodes; at leads $\{1, 2\}$ s that is 120
-event frames and 124 controls, all on the stride grid.
+`probes/depth_event_probe.py` (`enable_depth_event`). The matched-depth counterfactual
+samples frames evenly and scores the whole chunk over every joint, so its number is the
+depth read averaged over carrying, retreating and waiting, and a gripper-only change is
+diluted by the arm. Depth's job here is the last stretch of an approach and the timing of
+the gripper, so this probe chooses frames by the commanded gripper and reads only the
+gripper.
 
-Conditions act on the wrist depth window only (current + history slots), RGB and the
-top camera untouched: `shift_{D}s` (same-episode window from $D$ s earlier — on an
-approach the object reads farther than in RGB, so the sign is known in advance),
-`cross_phase` (same-stratum window from another episode, nearest by standardized
-state), `z_offset` (every valid pixel $+\Delta z$ mm; back-projection scales $X, Y$
-with it), and `no_depth` kept as the untrained-shape reference.
+**Frames.** Chosen through the auxiliary head's own sidecars
+(`depth_gripper_events.parquet`, the dense `close_delta` / `open_delta`;
+§depth_gripper_event_labels.md): `pre_close_{L}s` and `pre_open_{L}s` at each lead
+$L \in \{0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4\}$ s (the labels must agree that event is the
+next of its type), plus `carry` / `free` controls with no event within $L_{\max}+1$ s and
+a 1 s settle, two per event per episode. Val v3 gives 29 closes / 31 opens over 4
+episodes, so ~480 event frames and ~120 controls, all on the stride grid. The chunk is
+1 s, so leads under 1 s put the commanded event inside the chunk.
 
-Readouts are paired against the same frame's deployment chunk, never the
-demonstration: displacement
-$\mathrm{path\_relative}(a_c, a_{\text{dep}}, \text{hold})$ with a reseed floor per
-stratum; the terminal gripper command shift $(g_T - g_{now})_c - (g_T - g_{now})_{\text{dep}}$
-in degrees; and the depth-only head's $\sigma(\text{logit})$ read off the same forward
-(`_depth_gripper_event_logits`, populated by `_stash_depth_inputs` on every path).
-The Trends rows are the pre-close/free displacement ratio and the pre-close gripper
-shift under the first `shift`. Ratio $\approx 1$ across strata means depth is a global
-bias, not a grasp cue. Chunk is 1 s, so at lead 1 s the commanded close sits at the
-chunk's end and the first-crossing step is censored for most frames; the terminal
-delta is the uncensored readout.
+**Conditions.** Each replaces the wrist depth window (current + history slots) and leaves
+RGB, the top camera, the state and the prompt untouched; every chunk is decoded with the
+flow decoder under one fixed noise draw, so two conditions differ only through depth.
+
+- `z_offset` (headline): every valid pixel gets $+30$ mm, zeros stay zero; the
+  back-projection scales $X, Y$ with $Z$, so the whole scene sits 30 mm farther from the
+  wrist camera. Same frame, only the metric scale moves, sign known in advance.
+- `shift_{D}s`: the same-episode depth window from $D$ s earlier, RGB left at $t$. On an
+  approach the object reads farther than RGB shows.
+- `cross_phase`: the same-stratum depth window from another episode, nearest by
+  standardized state. Same phase, different scene: the paired null.
+- `no_depth`: window removed. Untrained input shape (depth dropout is 0 in training).
+
+**Readouts**, all on the gripper dimension in the dataset's degrees (closed near 0, open
+at $-150$ to $-250$ on this rig; label thresholds $-60$ close, $-90$ open). With
+$g_c[t]$ the gripper command at chunk step $t = 1..T$ under condition $c$ and $g_{now}$ the
+dataset's commanded gripper at the frame:
+
+- terminal delta $g_c[T] - g_{now}$: how far the chunk itself closes (positive) or opens
+  by its last step;
+- terminal shift $g_c[T] - g_{dep}[T]$: the treated chunk's last gripper command minus the
+  deployment chunk's ($g_{now}$ cancels). Negative = ends less closed. Reported as the
+  median with IQR, and as the fraction of frames past $\pm 5$ deg ("less closed" /
+  "more closed" / "moved"), so one runaway chunk cannot carry a mean;
+- mean shift $\frac{1}{T}\sum_t (g_c[t] - g_{dep}[t])$, the same over the whole chunk;
+- fire step: the first $t$ at which the labels' hysteresis rule trips from the frame's
+  own state, None when the chunk never gets there; observable only at leads under 1 s.
+  Step shift = treated minus deployment on frames where both fire;
+- $p_{close}, p_{open}$: sigmoid of the depth-only head's two logits,
+  $\mathrm{head}\big(\tfrac{1}{M}\sum_m \mathrm{LN}(z_m)\big)$ over the $M = 192$ depth
+  tokens, read off the same forward (`_depth_gripper_event_logits`), against the label
+  target $2^{-L}$ at that lead.
+
+The all-joint path/shape/terminal displacement and the reseed floor were removed
+2026-09-07: the displacement divided a gripper change by the arm's whole motion, and the
+floor was a between-seed spread, not a null for a same-noise paired shift. The null is
+the same treatment on `free` / `carry` frames, and `cross_phase` everywhere.
+
+**Figure.** Two rows (close, open) by four columns, $x$ = seconds before the commanded
+event with the event at the right edge: head $p$ per condition with the $2^{-L}$ target
+and the carry / free levels; terminal shift median with IQR and deployment's own
+$g[T]-g_{now}$; fraction less (more) closed against the free rate; the mean gripper
+trajectory $g[t]-g_{now}$ over the 30 steps at 0.5 s and 1 s, deployment against
+`z_offset`. Trends rows: pre-close 1 s terminal-shift median and fraction less closed
+under `z_offset`, deployment $p_{close}$ at 1 s, $p_{open}$ at 1 s.
+
+**What the two-lead run said (nohistory v1, ckpt 1200, val).** Under `z_offset` at 1 s
+before a close the last-step gripper shift was $-23$ deg mean / $-12$ median and 86% of
+chunks ended more than 5 deg less closed; `shift_1s` 69%; `cross_phase` 31% either way;
+free and carry 0% under every counterfactual. The action expert reads depth as a distance
+cue at the gripper and nowhere else. The head's $p_{close}$ was 0.26 at 1 s (target 0.49),
+0.19 at 2 s (0.24), 0.03 on free: it discriminates but hedges the amplitude, and its val
+BCE captured 0.48-0.49 of the learnable range at every checkpoint from step 200. That
+flat loss is the head's, not the expert's.
 
 ### B.4 HISTORICAL — the α-gate soft deadlock (retired 2026-07-26)
 

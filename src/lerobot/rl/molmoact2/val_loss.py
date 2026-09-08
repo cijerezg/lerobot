@@ -45,6 +45,7 @@ from lerobot.probes.objective import flow_timestep_grid
 from lerobot.probes.utils import (
     build_episode_index,
     fill_absent_cameras,
+    frame_metadata_lookup,
     identity_columns,
     pad_to_action_width,
     probe_frame_inputs,
@@ -94,6 +95,17 @@ class ValLoss:
         seed = int(getattr(cfg.probe_parameters, "random_seed", 0))
         stride = probe_image_stride(cfg)
 
+        future_cfg = getattr(cfg.policy, "future_visual_loss", None)
+        future_on = bool(future_cfg is not None and future_cfg.enabled)
+        future_offset = 0
+        mistake_lookup = {}
+        if future_on:
+            offset = future_cfg.horizon_seconds * float(val_dataset.fps)
+            future_offset = round(offset)
+            if abs(offset - future_offset) > 1e-6 or future_offset % stride:
+                raise ValueError("Future validation horizon must align with dataset frames and image_stride.")
+            mistake_lookup = frame_metadata_lookup(val_dataset)
+
         n_episodes = max(len(build_episode_index(val_dataset)), 1)
         samples = sample_episodes_evenly(
             val_dataset, -(-n_frames // n_episodes), None, seed, stride
@@ -119,6 +131,23 @@ class ValLoss:
                     probe_frame_inputs(val_dataset, cfg, global_idx, chunk_size)
                     for _, _, global_idx in samples[start : start + batch_size]
                 ]
+                if future_on:
+                    for frame in group:
+                        anchor = frame["global_idx"]
+                        endpoint = anchor + future_offset
+                        valid = (
+                            endpoint < len(val_dataset)
+                            and int(val_dataset.hf_dataset[endpoint]["episode_index"]) == frame["episode_idx"]
+                        )
+                        if anchor not in mistake_lookup:
+                            raise ValueError("Future visual validation requires recorded mistake metadata.")
+                        frame["future_visual_valid"] = valid
+                        frame["future_visual_mistake"] = float(mistake_lookup[anchor]["mistake"])
+                        frame["future_obs"] = (
+                            probe_frame_inputs(
+                                val_dataset, cfg, endpoint, 1, with_depth=False, with_history=False
+                            )["obs"] if valid else frame["obs"]
+                        )
                 batch = self._pack(
                     group, preprocessor, chunk_size, action_dim, identity, image_keys
                 )
@@ -177,6 +206,17 @@ class ValLoss:
                 "metadata": [f["metadata"] for f in frames],
             },
         }
+        if "future_obs" in frames[0]:
+            future_obs = {
+                key: torch.cat([frame["future_obs"][key] for frame in frames], dim=0)
+                for key in frames[0]["future_obs"] if key.startswith("observation.images.")
+            }
+            future_obs, future_presence = fill_absent_cameras(future_obs, image_keys)
+            comp = flat[TransitionKey.COMPLEMENTARY_DATA]
+            comp.update({f"future.{key}": value for key, value in future_obs.items()})
+            comp.update({f"future.{key}": value for key, value in future_presence.items()})
+            comp["future_visual_valid"] = torch.tensor([f["future_visual_valid"] for f in frames])
+            comp["future_visual_mistake"] = torch.tensor([f["future_visual_mistake"] for f in frames])
         packed = {
             k: (v.cpu() if isinstance(v, torch.Tensor) else v)
             for k, v in preprocessor(flat).items()
@@ -212,14 +252,21 @@ class ValLoss:
                     "discrete_ce_loss": "val_loss_discrete_ce",
                     "discrete_auxiliary_loss": "val_loss_discrete_aux",
                     "depth_gripper_event_loss": "val_loss_depth_event",
+                    "future_visual_loss": "val_loss_future_visual",
+                    "future_visual_persistence_loss": "val_loss_future_visual_persistence",
+                    "future_visual_zero_loss": "val_loss_future_visual_zero",
                 }
                 for source, destination in metric_keys.items():
                     if source not in metrics:
                         continue
                     totals.setdefault(destination, 0.0)
                     counts.setdefault(destination, 0)
-                    totals[destination] += float(metrics[source]) * count
-                    counts[destination] += count
+                    metric_count = (
+                        float(metrics["future_visual_weight_sum"])
+                        if source.startswith("future_visual_") else count
+                    )
+                    totals[destination] += float(metrics[source]) * metric_count
+                    counts[destination] += metric_count
         finally:
             policy.train(was_training)
 

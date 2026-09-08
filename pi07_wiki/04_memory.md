@@ -15,6 +15,10 @@ recurrent LLM-annotated summary memory; 5 past frames @ 1 s pretrain, stretches
 to 18 @ inference); HAMLET (arXiv 2510.00695 —
 causal-confusion caution: window/stride/dropout must be ablatable).
 
+The optional [future visual prediction auxiliary](future_visual_prediction.md)
+trains the existing RGB temporal path with aligned temporal-PCA targets. It is
+disabled by default and is independent of the history enable switch.
+
 ## 1. Prompt anatomy
 
 ### 1.1 Action prompt (`_build_robot_text`, [processor_molmoact2.py:236](../src/lerobot/policies/molmoact2/processor_molmoact2.py#L236))

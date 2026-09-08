@@ -215,6 +215,44 @@ class DepthGripperEventLossConfig:
             )
 
 
+@dataclass
+class FutureVisualLossConfig:
+    """Optional temporal-PCA future-feature prediction, absent from action inference."""
+
+    enabled: bool = False
+    weight: float = 0.1
+    horizon_seconds: float = 4.0
+    target_update_steps: int = 100
+    latent_dim: int = 128
+    predictor_width: int = 256
+    predictor_layers: int = 2
+    predictor_heads: int = 4
+    mistake_weight: float = 1.5
+    calibration_pairs: int = 16
+    calibration_patches_per_camera: int = 64
+    target_encode_batch_size: int = 2
+    eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        for name in ("weight", "horizon_seconds", "eps"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"future_visual_loss.{name} must be finite and positive.")
+        if not math.isfinite(self.mistake_weight) or self.mistake_weight < 1:
+            raise ValueError("future_visual_loss.mistake_weight must be finite and >= 1.")
+        for name in (
+            "target_update_steps", "latent_dim", "predictor_width", "predictor_layers",
+            "predictor_heads", "calibration_pairs", "calibration_patches_per_camera",
+            "target_encode_batch_size",
+        ):
+            if getattr(self, name) < 1:
+                raise ValueError(f"future_visual_loss.{name} must be positive.")
+        if self.latent_dim < 2:
+            raise ValueError("future_visual_loss.latent_dim must be >= 2 for normalized L1.")
+        if self.predictor_width % self.predictor_heads:
+            raise ValueError("future_visual_loss.predictor_width must divide evenly into predictor_heads.")
+
+
 @PreTrainedConfig.register_subclass("molmoact2")
 @dataclass
 class MolmoAct2Config(PreTrainedConfig):
@@ -258,6 +296,7 @@ class MolmoAct2Config(PreTrainedConfig):
     # is None (past frame k of T_h → k * stride seconds before now, current = 0); it
     # is what pre-2026-09 checkpoints carry.
     temporal_layer_stride: int = 4
+    future_visual_loss: FutureVisualLossConfig = field(default_factory=FutureVisualLossConfig)
     history_stride_seconds: float = 1.0
     history_times_seconds: list[float] | None = None
 
@@ -428,6 +467,12 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError("action_auxiliary_loss requires a continuous action expert.")
         if self.discrete_action_auxiliary_loss.enabled and self.action_mode == "continuous":
             raise ValueError("discrete_action_auxiliary_loss requires action_mode='discrete' or 'both'.")
+        if self.future_visual_loss.enabled:
+            if self.train_action_expert_only or self.enable_lora_vlm:
+                raise ValueError("future_visual_loss requires ordinary trainable RGB ViT weights.")
+            tp = self.trainable_params
+            if tp is not None and (tp.depth_warmup or tp.vision_from_layer is None):
+                raise ValueError("future_visual_loss requires trainable vision layers, without depth_warmup.")
         if self.depth_gripper_event_loss.enabled and self.pointmap_config is None:
             raise ValueError("depth_gripper_event_loss requires pointmap_config.")
 
