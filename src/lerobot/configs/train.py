@@ -400,8 +400,8 @@ class ProbeConfig:
     # 1 s put the event inside the chunk); shifts are how far back in the same episode the depth
     # window is taken while RGB stays put; the z offset pushes every valid pixel farther by that
     # many millimetres (the headline condition). Controls get two frames per event per episode.
-    depth_event_leads_s: str = "0.25,0.5,0.75,1,1.5,2,3,4"
-    depth_event_shift_s: str = "1.0,2.0"
+    depth_event_leads_s: str = "0.5,1,2,3"
+    depth_event_shift_s: str = "1.0"
     depth_event_z_offset_mm: float = 30.0
 
     # Attention budget. Reuses spatial_layers, and n_frames_per_episode unless

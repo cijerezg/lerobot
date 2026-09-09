@@ -27,9 +27,10 @@ over that episode's candidates.
 Conditions
 ----------
 Each condition replaces the wrist depth window (current frame plus history slots) and
-leaves the top camera, the wrist RGB, the state and the prompt untouched. Chunks are
-decoded with the flow decoder under one fixed noise draw, so two conditions differ only
-through depth.
+leaves the top camera, the wrist RGB, the state and the prompt untouched. All conditions
+of a frame run in ONE stacked forward (``predict_action_chunk_stacked``, the input_swap
+path) under one fixed noise draw, so two conditions differ only through depth and the
+prefix work is shared; the stacked-vs-single max |delta| is logged once.
 
   deployment    the rollout prompt as is
   z_offset      every valid depth pixel (reading > 0) gets +dz mm; zeros stay zero. The
@@ -41,8 +42,9 @@ through depth.
   cross_phase   the depth window of a same-stratum frame from another episode, nearest by
                 standardized joint state: same phase, different scene. The paired null:
                 depth that reads the same distance should give the same gripper.
-  no_depth      window removed (learned null bank). Depth dropout is 0 in training, so this
-                is an untrained input shape; kept as the reference the older probe reports.
+
+The untrained ``no_depth`` shape (window removed) is not here: stacked rows share keys,
+and ``depth_modality_probe`` still reports it on evenly sampled frames.
 
 Readouts, all on the gripper dimension in the dataset's own degrees
 -------------------------------------------------------------------
@@ -108,7 +110,6 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.depth_modality_probe import (
-    _drop_depth,
     _load_depth_window,
     _replace_depth_window,
     _stale_depth_index,
@@ -134,12 +135,15 @@ from lerobot.utils.utils import init_logging
 DEPLOYMENT = "deployment"
 CROSS_PHASE = "cross_phase"
 Z_OFFSET = "z_offset"
-NO_DEPTH = "no_depth"
 CARRY = "carry"
 FREE = "free"
 EVENT_TYPES = ("close", "open")
 TARGET_KEYS = {"close": DEPTH_GRIPPER_CLOSE_TARGET, "open": DEPTH_GRIPPER_OPEN_TARGET}
-DEFAULT_LEADS_S = "0.25,0.5,0.75,1,1.5,2,3,4"
+# 0.5 s puts the event at chunk step 15 (fire step observable), 1 s is the headline, 2 and
+# 3 s show the decay. 0.25 s leaves the chunk no room before the event, 4 s (target 0.06)
+# pushes the control exclusion window out to 5 s; 8 leads x 6 single forwards ran 80 min.
+DEFAULT_LEADS_S = "0.5,1,2,3"
+DEFAULT_SHIFTS_S = "1.0"
 # A terminal shift past this counts as the chunk having moved; the rig's gripper swings
 # 100-200 deg between open and closed.
 SHIFT_THRESHOLD_DEG = 5.0
@@ -492,7 +496,6 @@ def _render(summary: dict, output_path: str) -> None:
     colors = {condition: palette[i % len(palette)] for i, condition in enumerate(treatments)}
     colors[DEPLOYMENT] = "#264653"
     line_style = {condition: {"ls": "-", "alpha": 1.0} for condition in conditions}
-    line_style[NO_DEPTH] = {"ls": ":", "alpha": 0.6}
     line_style[DEPLOYMENT] = {"ls": "-", "alpha": 1.0, "lw": 2.0}
 
     def value(name: str, condition: str, *path: str) -> float:
@@ -608,38 +611,37 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
     close_name, open_name = head["pre_close"]["stratum"], head["pre_open"]["stratum"]
 
     def condition_metrics(condition: str) -> list[Metric]:
-        tag = " (untrained shape)" if condition == NO_DEPTH else ""
         prefix_close = f"by_stratum.{close_name}.conditions.{condition}"
         prefix_open = f"by_stratum.{open_name}.conditions.{condition}"
         return [
             Metric(
                 f"{prefix_close}.terminal_shift_deg.median",
-                f"{condition}: pre-close {lead:g} s last-step gripper shift, median (deg){tag}",
+                f"{condition}: pre-close {lead:g} s last-step gripper shift, median (deg)",
                 good="none", fmt=1, baseline=0.0,
             ),
             Metric(
                 f"{prefix_close}.fraction_less_closed",
-                f"{condition}: pre-close {lead:g} s chunks ending less closed{tag}",
+                f"{condition}: pre-close {lead:g} s chunks ending less closed",
                 good="none", fmt=2, baseline=0.0,
             ),
             Metric(
                 f"{prefix_close}.p_close_drop.mean",
-                f"{condition}: pre-close {lead:g} s head p_close drop{tag}",
+                f"{condition}: pre-close {lead:g} s head p_close drop",
                 good="none", fmt=3, baseline=0.0,
             ),
             Metric(
                 f"{prefix_open}.terminal_shift_deg.median",
-                f"{condition}: pre-open {lead:g} s last-step gripper shift, median (deg){tag}",
+                f"{condition}: pre-open {lead:g} s last-step gripper shift, median (deg)",
                 good="none", fmt=1, baseline=0.0,
             ),
             Metric(
                 f"{prefix_open}.fraction_more_closed",
-                f"{condition}: pre-open {lead:g} s chunks ending more closed{tag}",
+                f"{condition}: pre-open {lead:g} s chunks ending more closed",
                 good="none", fmt=2, baseline=0.0,
             ),
             Metric(
                 f"by_stratum.{FREE}.conditions.{condition}.fraction_moved",
-                f"{condition}: free chunks moved either way{tag}",
+                f"{condition}: free chunks moved either way",
                 good="none", fmt=2, baseline=0.0,
             ),
         ]
@@ -822,7 +824,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         raise ValueError(f"labels were built at {labels['label_fps']} fps, the run is at {fps}.")
 
     leads_s = _seconds(getattr(p, "depth_event_leads_s", DEFAULT_LEADS_S))
-    shifts_s = _seconds(getattr(p, "depth_event_shift_s", "1.0,2.0"))
+    shifts_s = _seconds(getattr(p, "depth_event_shift_s", DEFAULT_SHIFTS_S))
     z_offset_mm = float(getattr(p, "depth_event_z_offset_mm", 30.0))
     z_offset_levels = z_offset_mm / float(pointmap_config.depth_units_mm)
     depth_obs_key = f"observation.depth.{pointmap_config.depth_key}"
@@ -835,7 +837,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         logging.warning("[depth_event] no frames selected.")
         return None
     donors = match_cross_phase_donors(dataset, rows)
-    conditions = [DEPLOYMENT, *[shift_condition(s) for s in shifts_s], CROSS_PHASE, Z_OFFSET, NO_DEPTH]
+    conditions = [DEPLOYMENT, *[shift_condition(s) for s in shifts_s], CROSS_PHASE, Z_OFFSET]
     strata = [event_stratum(t, lead) for t in EVENT_TYPES for lead in leads_s] + [CARRY, FREE]
     episodes = sorted({row["episode_idx"] for row in rows})
     events = labels["events"]
@@ -847,25 +849,12 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         by_episode = Counter(r["episode_idx"] for r in rows if r["stratum"] == name)
         logging.info(f"[depth_event] {name:>16s}: {sum(by_episode.values())} frames {dict(sorted(by_episode.items()))}")
     logging.info(
-        f"[depth_event] {len(rows)} frames x {len(conditions)} conditions forwards; "
+        f"[depth_event] {len(rows)} frames, one stacked forward of up to {len(conditions)} conditions each; "
         f"cross-phase donors for {len(donors)} frames"
     )
 
     adapter._set_probe_cuda_graph_enabled(False)
-    noise = adapter.flow_noise_like(1, 0)
-
-    def predict(obs: dict, frame: dict):
-        unnorm, _ = adapter.predict_action_chunk_batch(
-            obs,
-            frame["task"],
-            [frame["subtask"]],
-            metadatas=[frame["metadata"]],
-            noise=noise,
-            inference_action_mode="continuous",
-        )
-        logits = policy._depth_gripper_event_logits
-        probs = None if logits is None else torch.sigmoid(logits.detach().float()).cpu()[0]
-        return unnorm[0], probs
+    consistency = None
 
     per_frame: list[dict] = []
     try:
@@ -877,7 +866,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
             condition_obs = {
                 DEPLOYMENT: obs,
                 Z_OFFSET: _offset_depth_window(obs, depth_obs_key=depth_obs_key, levels=z_offset_levels),
-                NO_DEPTH: _drop_depth(obs, depth_obs_key=depth_obs_key),
             }
             provenance: dict[str, dict] = {}
             for seconds in shifts_s:
@@ -896,6 +884,29 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
                 condition_obs[CROSS_PHASE] = _replace_depth_window(obs, window, depth_obs_key=depth_obs_key)
                 provenance[CROSS_PHASE] = donor
 
+            # Every condition of the frame in one forward under one noise draw; the rows
+            # differ only through their depth window.
+            present = [condition for condition in conditions if condition in condition_obs]
+            unnorm, norm = adapter.predict_action_chunk_stacked(
+                [condition_obs[condition] for condition in present],
+                frame["task"],
+                subtask=frame["subtask"],
+                metadata=frame["metadata"],
+                noise=adapter.flow_noise_like(len(present), 0),
+                inference_action_mode="continuous",
+            )
+            logits = policy._depth_gripper_event_logits
+            probs = None if logits is None else torch.sigmoid(logits.detach().float()).cpu()
+            if consistency is None:
+                # The deployment row against the one-frame path at the same seed: how much
+                # batching alone moves a chunk. Every contrast stays inside one batch.
+                _, single = adapter.predict_action_chunk_batch(
+                    obs, frame["task"], [frame["subtask"]], metadatas=[frame["metadata"]],
+                    noise=adapter.flow_noise_like(1, 0), inference_action_mode="continuous",
+                )
+                consistency = float((single[0] - norm[0]).abs().max())
+                logging.info(f"[depth_event] stacked vs single-frame forward, max |delta| = {consistency:.2e}")
+
             record = {
                 **row,
                 "g_now": g_now,
@@ -906,11 +917,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
                 },
                 "conditions": {},
             }
-            for condition in conditions:
-                if condition not in condition_obs:
-                    continue
-                unnorm, prob = predict(condition_obs[condition], frame)
-                gripper = unnorm[:, gripper_dim].numpy()
+            for i, condition in enumerate(present):
+                gripper = unnorm[i, :, gripper_dim].numpy()
                 close_step, open_step = gripper_transitions(
                     gripper,
                     row["closed_now"],
@@ -923,16 +931,15 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
                     "mean_delta": float(gripper.mean() - g_now),
                     "close_step": close_step,
                     "open_step": open_step,
-                    "p_close": None if prob is None else float(prob[0]),
-                    "p_open": None if prob is None else float(prob[1]),
+                    "p_close": None if probs is None else float(probs[i, 0]),
+                    "p_open": None if probs is None else float(probs[i, 1]),
                 }
             per_frame.append(record)
 
             deployment = record["conditions"][DEPLOYMENT]
             shown = " ".join(
                 f"{condition}={record['conditions'][condition]['gripper'][-1] - deployment['gripper'][-1]:+.1f}"
-                for condition in conditions[1:]
-                if condition in record["conditions"]
+                for condition in present[1:]
             )
             logging.info(
                 f"[depth_event] {row['stratum']} ep{row['episode_idx']} fr{row['frame_idx']}: "
@@ -955,10 +962,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         "rubric": labels["rubric"],
         "gripper_dim": gripper_dim,
         "conditions": conditions,
+        "stacked_vs_single_max_abs_delta": consistency,
         "condition_kind": {
             DEPLOYMENT: "deployment",
-            **{condition: "counterfactual" for condition in conditions[1:] if condition != NO_DEPTH},
-            NO_DEPTH: "untrained shape",
+            **{condition: "counterfactual" for condition in conditions[1:]},
         },
         "headline_condition": Z_OFFSET,
         "strata": strata,

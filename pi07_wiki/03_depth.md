@@ -368,15 +368,20 @@ gripper.
 **Frames.** Chosen through the auxiliary head's own sidecars
 (`depth_gripper_events.parquet`, the dense `close_delta` / `open_delta`;
 §depth_gripper_event_labels.md): `pre_close_{L}s` and `pre_open_{L}s` at each lead
-$L \in \{0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4\}$ s (the labels must agree that event is the
-next of its type), plus `carry` / `free` controls with no event within $L_{\max}+1$ s and
-a 1 s settle, two per event per episode. Val v3 gives 29 closes / 31 opens over 4
-episodes, so ~480 event frames and ~120 controls, all on the stride grid. The chunk is
-1 s, so leads under 1 s put the commanded event inside the chunk.
+$L \in \{0.5, 1, 2, 3\}$ s (the labels must agree that event is the next of its type),
+plus `carry` / `free` controls with no event within $L_{\max}+1$ s and a 1 s settle, two
+per event per episode. Val v4 gives 33 closes / 36 opens over 4 episodes, so 275 event
+frames and 144 controls, all on the stride grid. The chunk is 1 s, so leads under 1 s put
+the commanded event inside the chunk. The ladder was 8 leads (0.25 to 4 s) until
+2026-09-07: 0.25 s leaves the chunk no room before the event, 0.75 and 1.5 s only
+interpolate a log axis, and 4 s (target 0.06) pushed the control exclusion window to 5 s.
 
 **Conditions.** Each replaces the wrist depth window (current + history slots) and leaves
 RGB, the top camera, the state and the prompt untouched; every chunk is decoded with the
-flow decoder under one fixed noise draw, so two conditions differ only through depth.
+flow decoder under one fixed noise draw, so two conditions differ only through depth. All
+conditions of a frame run in one stacked forward (`predict_action_chunk_stacked`, the
+input_swap path); the stacked-vs-single max $|\Delta|$ is logged once and stored in the
+summary.
 
 - `z_offset` (headline): every valid pixel gets $+30$ mm, zeros stay zero; the
   back-projection scales $X, Y$ with $Z$, so the whole scene sits 30 mm farther from the
@@ -385,7 +390,14 @@ flow decoder under one fixed noise draw, so two conditions differ only through d
   approach the object reads farther than RGB shows.
 - `cross_phase`: the same-stratum depth window from another episode, nearest by
   standardized state. Same phase, different scene: the paired null.
-- `no_depth`: window removed. Untrained input shape (depth dropout is 0 in training).
+
+`no_depth` (window removed, an untrained input shape) and `shift_2s` were dropped
+2026-09-07: stacked rows must share keys, the matched-depth probe (`depth_modality`)
+still reports `no_depth`, and `shift_2s` is `shift_1s` at a larger lag.
+
+**Budget.** 689 frames x 6 single forwards ran 80 min on the history model (2026-09-07,
+about 1.2 s per forward); 419 frames x one stacked forward of 4 conditions is the shape
+under the 40-minute probe cap.
 
 **Readouts**, all on the gripper dimension in the dataset's degrees (closed near 0, open
 at $-150$ to $-250$ on this rig; label thresholds $-60$ close, $-90$ open). With
