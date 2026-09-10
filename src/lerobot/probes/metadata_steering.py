@@ -7,17 +7,21 @@ training sample. At rollout every deployment prompt asks for the
 same thing: quality 5, no mistakes. This probe is the whole test of whether asking
 does anything.
 
-Two clauses, one of them a five-level scale, so the probe is a small factorial rather
+Three clauses, two of them five-level scales, so the probe is a small factorial rather
 than a two-pole contrast. Every condition is one ``predict_action_chunk`` on the same
 frame under the same seeded flow noise, so the only thing that varies is the clause:
 
   ``none``          no metadata clause at all (the dropout regime, and the origin
                     every displacement below is measured from)
-  ``q1`` … ``q5``   quality $q$, no mistake — the dose axis
+  ``q1`` … ``q5``   quality $q$, no mistake, speed 5 — the dose axis
   ``q1m``, ``q5m``  the same poles with the mistake sentence flipped on
+  ``s1`` … ``s5``   speed $k$ at quality 5 with no mistake — the tempo axis. ``s5`` is
+                    character-for-character the ``q5`` prompt, so it is aliased rather
+                    than forwarded twice
   ``gt``            the frame's own labels, from ``meta/episode_metadata.parquet``
-                    (per segment) + ``meta/mistakes.parquet`` (per 4 s window), the
-                    same spans training broadcasts
+                    (quality, per segment) + ``meta/mistakes.parquet`` (per 4 s window)
+                    + ``meta/speed_hybrid_v1.parquet`` (speed, per segment), the same
+                    spans training broadcasts
   seed floor        ``q5`` re-drawn under different flow seeds
 
 Write $a^{(c)}$ for the normalized chunk under condition $c$, $a^{\star}$ for the
@@ -92,19 +96,82 @@ the mistake flag, the mistake effect $\lVert a^{(q,\mathrm{T})}-a^{(q,\mathrm{F}
 averaged over the pole, and the interaction $\lVert d_{\mathrm{T}}-d_{\mathrm{F}}\rVert$
 with $d_m=a^{(q_5,m)}-a^{(q_1,m)}$ — all three against the same seed floor.
 
-Two facts about the labels that decide what these figures can show. Quality is per
+**6. Is the speed number read as tempo, and is it its own axis?** Quality and mistake are
+judgements about a segment; speed is a claim about the arm. It has a physical reading the
+other two do not, so it gets a test the other two cannot take. Write
+
+$$\operatorname{step}(x)=\sqrt{\frac{1}{(T-1)D}\sum_{t,d}\left(x_{t+1,d}-x_{t,d}\right)^{2}}$$
+
+for RMS per-step travel — how fast a chunk moves, with no regard for where it goes — and
+$m_k=\operatorname{step}\left(a^{(s_k)}\right)$ for the model's tempo under the clause that
+asks for speed $k$. The demonstrations give the curve the model would have to reproduce:
+
+$$M_k=\operatorname{median}\left\{\operatorname{step}(a^{\star}_f)\ :\ k_{\mathrm{true}}(f)=k\right\}$$
+
+over the frames the annotation itself calls speed $k$. Both curves are divided by their own
+value at $k=3$, the modal label, so a frame's overall pace drops out and what is compared is
+the shape. Two numbers come out of that: the shape match
+
+$$r_f=\operatorname{corr}_{k}\left(m_k(f),\ M_k\right),$$
+
+taken per frame and reported as a median, and the endpoint ratio $m_5/m_3$ read against the
+demonstrations' own $M_5/M_3$.
+
+Neither is read against zero. $M_k$ is not monotone, so a model that has learned nothing but
+"bigger number, faster" already scores $\operatorname{corr}_k(k, M_k)\approx+0.7$ on the ReBot
+curve — that, and not $0$, is the line $r$ has to clear before it says the annotation was
+learned rather than the digit. And a frame's $r$ is a correlation over five points, so it
+scatters by about $0.5$; the median over frames is the only form worth reading.
+
+$M_k$ is not monotone, and that is the reason to measure it rather than assume it. On the
+ReBot roots $M_1 > M_2$: the hybrid label calls a thrashing failed attempt slow — which is
+exactly why the duration-only labels were rejected — and thrashing carries high per-step
+travel with no progress. A model that has learned the annotation therefore has to reproduce
+the U, and $m_5/m_1$ can sit comfortably above 1 while the low end of the scale is backwards.
+Hence the anchor at $k=3$ and not at $k=1$.
+
+Both five-level clauses are also just numbers in one sentence, and the labels themselves are
+correlated — per root, $r\approx+0.26$ to $+0.49$ between the quality and the speed a segment
+is given. So the last question is whether the model keeps them apart at all:
+
+$$\cos\left(u^{q}_f,\ u^{s}_f\right),\qquad u^{q}_f=a^{(q_5)}_f-a^{(q_1)}_f,\qquad
+u^{s}_f=a^{(s_5)}_f-a^{(s_1)}_f$$
+
+read against the same cosine between two reseeds of one fixed clause taken from a shared
+third draw,
+
+$$\cos\left(a^{(\sigma_1)}-a^{(\sigma_0)},\ a^{(\sigma_2)}-a^{(\sigma_0)}\right).$$
+
+The shared draw is deliberate, not sloppiness. The speed ramp holds quality at 5, so
+$a^{(s_5)}$ *is* $a^{(q_5)}$ — the same prompt, aliased — and the two clause axes therefore
+meet at that point. Two vectors sharing an endpoint are correlated at roughly $+\tfrac{1}{2}$
+before any clause is involved, so a null built from disjoint pairs would hand that structural
+offset to the measurement and call it steering. The null carries the same shared point and
+the offset cancels. It absorbs a second bias for free: the chunks do not fill their
+$T\times D$ box, so even unrelated edits do not land at $0$ on their own. Three flow draws,
+which is the code floor. At the null, two clauses mean two directions. Near $+1$, one
+direction is wearing two names and the speed label buys nothing the quality label had not
+already bought.
+
+Three facts about the labels that decide what these figures can show. Quality is per
 *segment*, not per episode, so it varies within an episode and a frame's true level is
 well defined. And the levels are not uniform in training: the annotated corpus runs
 6.6% at quality 1, 9.4% at 2, 25.0% at 3, 24.9% at 4 and 34.1% at 5 (165,740 frames,
 2026-08-02 merge), so asking for quality 1 is a rare prompt and a weak response at the
-low end is as much a data statement as a model one. Which levels the *held-out* frames
+low end is as much a data statement as a model one. Speed is thinner still at the top: over
+the five ReBot training roots (230,438 labelled frames, ``speed_hybrid_v1``) the mix is 3.4%
+at speed 1, 25.4% at 2, 40.6% at 3, 24.2% at 4 and 6.5% at 5 — and the clause the rollout
+prompt actually sends, quality 5 with no mistake AND speed 5 together, covers 3.35% of
+training frames (0.25% on ``rebot_rollouts-annotated-v2``). Asking for speed 5 at deployment
+is a tail prompt in a way that asking for quality 5 is not. Which levels the *held-out* frames
 actually cover is in the provenance box, and a level missing there has no column in the
 conditionality panel.
 
-Cost is ``n_frames x (9 + n_seeds - 1)`` forwards, issued as two batched calls per
-frame — every clause in one, the seed floor in the other. The clause rows share the
-frame's images and one flow-noise draw, so what separates them is the clause alone
-(batched 2026-08-22).
+Cost is ``n_frames x (13 + n_seeds - 1)`` forwards — 12 clause rows, plus ``gt`` where the
+frame is labelled — issued as two batched calls per frame: every clause in one, the seed
+floor in the other. The clause rows share the frame's images and one flow-noise draw, so
+what separates them is the clause alone (batched 2026-08-22). The speed ramp is four extra
+rows in that existing batch, not four extra forwards (2026-09-09).
 
 Registered probe: enable with ``probe_parameters.enable_metadata_steering``.
 """
@@ -138,6 +205,10 @@ _SPEED_LEVELS = (1, 2, 3, 4, 5)
 # The rollout clause asks for speed 5, so every quality / mistake cell holds speed at
 # 5 and the speed ramp holds quality at 5 with no mistake: one axis moves per cell.
 _DEPLOYED_SPEED = 5
+# Tempo is read as a shape, and a shape needs an anchor. Level 3 is the modal label
+# (40.6% of training frames) and the level above which the label is unambiguously
+# monotone in per-step travel on every root; level 1 is neither.
+_TEMPO_ANCHOR = 3
 
 # The dose axis gets a sequential ramp so a monotone response is visible as a colour
 # order; everything that is not a quality level stays off that ramp.
@@ -218,6 +289,50 @@ def _median_se(rows: list[dict], key: str, n_boot: int = 512) -> float:
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
     denominator = float(np.linalg.norm(a) * np.linalg.norm(b))
     return float(a @ b / denominator) if denominator > 1e-12 else 0.0
+
+
+def _pearson(x: list[float] | np.ndarray, y: list[float] | np.ndarray) -> float:
+    """Correlation of two short curves — the cosine of their centred versions."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    return _cosine(x - x.mean(), y - y.mean())
+
+
+def _ratio_se(numerator: np.ndarray, denominator: np.ndarray, n_boot: int = 512) -> float:
+    """Bootstrap SE of a ratio of medians taken over two *different* groups of frames.
+
+    The demonstration tempo curve is one median per speed label, so its normalization
+    divides one group's median by another's and both sides carry sampling error. Seeded
+    per call so the figure is reproducible.
+    """
+    if numerator.size < 2 or denominator.size < 2:
+        return 0.0
+    rng = np.random.default_rng(0)
+    draws = [
+        np.median(rng.choice(values, size=(n_boot, values.size), replace=True), axis=1)
+        for values in (numerator, denominator)
+    ]
+    return float((draws[0] / np.maximum(draws[1], 1e-12)).std())
+
+
+def _chunk_is_unpadded(dataset, global_idx: int, episode_idx: int, chunk_size: int) -> bool:
+    """Is the demonstration chunk real to its last step, rather than repeat-padded?
+
+    `get_frame_data` stops at the episode boundary and repeats the final action to
+    length. That freezes the tail and so deflates per-step travel — the one quantity the
+    tempo panel measures — and `sample_episodes_evenly` puts a sample on the last frame
+    of every episode, so the padded frames are not a rare accident. They are dropped from
+    the demonstration curve only; every clause contrast is a within-frame difference and
+    is unaffected.
+    """
+    tail = global_idx + chunk_size - 1
+    if tail >= len(dataset):
+        return False
+    row = dataset.hf_dataset[tail]
+    if int(row["episode_index"].item()) != episode_idx:
+        return False
+    is_pad = row.get("action_is_pad", False)
+    return not (is_pad.item() if isinstance(is_pad, torch.Tensor) else is_pad)
 
 
 def _loo_alignment(vectors: list[np.ndarray]) -> list[float]:
@@ -674,6 +789,142 @@ def _render_factorial(rows: list[dict], summary: dict, output_path: str) -> None
     plt.close(fig)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Figure 4 — is the speed number read as tempo, and is it its own axis?
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _render_speed(rows: list[dict], summary: dict, output_path: str) -> None:
+    fig = plt.figure(figsize=(17.5, 6.6))
+    grid = fig.add_gridspec(1, 3, wspace=0.28, left=0.05, right=0.985, top=0.77, bottom=0.34)
+    axes = [fig.add_subplot(grid[0, col]) for col in range(3)]
+
+    # ── Left: is the ramp ordered in chunk space? (the speed twin of figure 1's right) ──
+    for row in rows:
+        axes[0].plot(_SPEED_LEVELS, [row[f"proj_s{k}"] for k in _SPEED_LEVELS],
+                     color="#7209B7", alpha=0.12, linewidth=0.8)
+    axes[0].errorbar(
+        _SPEED_LEVELS, [_mean(rows, f"proj_s{k}") for k in _SPEED_LEVELS],
+        yerr=[_sem(rows, f"proj_s{k}") for k in _SPEED_LEVELS],
+        color="#3A0CA3", linewidth=2.2, marker="o", capsize=3, label="mean over frames",
+    )
+    axes[0].axhline(0.0, color="black", linewidth=0.8)
+    axes[0].set_xticks(list(_SPEED_LEVELS))
+    axes[0].set_xlabel("speed asked for")
+    axes[0].set_ylabel(r"$\pi(k)$ — position on the $s_1 \rightarrow s_5$ axis")
+    axes[0].set_title(
+        "Is the speed ramp ordered at all?\n"
+        rf"{summary['speed_separation_median']:.2f}x the flow-seed floor"
+        "\n"
+        rf"mean $\tau$ = {summary['speed_kendall_tau_mean']:+.2f}"
+    )
+    axes[0].legend(fontsize=8)
+    _caption(axes[0], y=-0.32, lines=[
+        r"Figure 1's right panel, for speed: quality held at 5, mistake sentence off, so the",
+        r"speed number is the only thing moving. Per frame $u = a^{(s_5)} - a^{(s_1)}$, and each",
+        r"level projected onto it: $\pi(k) = \langle a^{(s_k)} - \bar{a},\, u \rangle / \|u\|$.",
+        r"The ends are pinned ($\pi(5) - \pi(1) = \|u\|$); what is measured is where 2, 3, 4 land.",
+        r"Read the separation first — a ramp near 1x sits inside the sampler's own noise and",
+        r"the other two panels are moot.",
+        r"This says the five strings are ordered IN CHUNK SPACE. It does not say they are",
+        r"ordered as TEMPO. That is the middle panel, and the two can disagree.",
+    ])
+
+    # ── Middle: does the number mean what the annotation means by it? ──
+    levels = sorted(int(k) for k in summary["speed_demo_tempo"])
+    if levels:
+        axes[1].errorbar(
+            levels, [summary["speed_demo_tempo"][str(k)] for k in levels],
+            yerr=[summary["speed_demo_tempo_se"][str(k)] for k in levels],
+            color="black", marker="D", linewidth=2.2, capsize=3,
+            label=rf"demonstration $M_k / M_{_TEMPO_ANCHOR}$",
+        )
+    axes[1].errorbar(
+        _SPEED_LEVELS, [_median(rows, f"tempo_s{k}") for k in _SPEED_LEVELS],
+        yerr=[_median_se(rows, f"tempo_s{k}") for k in _SPEED_LEVELS],
+        color="#F72585", marker="o", linestyle="--", linewidth=2.2, capsize=3,
+        label=rf"model $m_k / m_{_TEMPO_ANCHOR}$",
+    )
+    axes[1].axhline(1.0, color="black", linewidth=0.8, linestyle=":")
+    counts = summary["speed_demo_n"]
+    axes[1].set_xticks(list(_SPEED_LEVELS),
+                       [f"{k}\n(n={counts.get(str(k), 0)})" for k in _SPEED_LEVELS])
+    axes[1].set_xlabel("speed level")
+    axes[1].set_ylabel(rf"per-step travel, relative to level {_TEMPO_ANCHOR}")
+    axes[1].set_title(
+        "Does the number mean what the\nannotation means by it?\n"
+        rf"shape match $r$ = {summary['speed_tempo_correlation']:+.2f}   "
+        rf"(monotone reader {summary['speed_tempo_correlation_monotone']:+.2f})"
+        "\n"
+        rf"$m_5/m_3$ = {summary['speed_tempo_ratio_5_3']:.2f}   "
+        rf"(demonstration {summary['speed_tempo_ratio_5_3_demo']:.2f})"
+    )
+    axes[1].legend(fontsize=8)
+    _caption(axes[1], y=-0.32, lines=[
+        r"Per-step travel: the RMS of $x_{t+1} - x_t$ over chunk steps and joints — how fast a",
+        r"chunk moves, with no regard for where it goes. Each curve is divided by its own",
+        r"value at level 3, so a frame's overall pace cancels and only the SHAPE is compared.",
+        r"Pink: five chunks from the SAME frame, one per speed clause; median of $m_k/m_3$.",
+        r"Black: the RECORDED chunk on the frames the annotation calls speed $k$, $M_k/M_3$ —",
+        r"a different set of frames at every point, the only cross-frame comparison in this",
+        r"probe, hence the counts on the axis. Chunks repeat-padded past the end of an episode",
+        r"are excluded: their tail is frozen and would read as slow.",
+        r"THE BLACK CURVE IS NOT MONOTONE. The hybrid label calls thrashing slow, so $M_1 > M_2$",
+        r"on most roots. Matching the annotation means matching that U; a pink curve rising",
+        r"straight through is reading 'a bigger number', which is what the monotone-reader",
+        r"score in the title is — the line $r$ must clear, well above zero.",
+        r"One frame's $r$ is over five points and scatters by ~0.5. Read the median, not a frame.",
+    ])
+
+    # ── Right: are quality and speed two directions, or one? ──
+    cosines = _column(rows, "quality_speed_cosine")
+    null = _column(rows, "quality_speed_null_cosine")
+    groups = [(r"$u^q$ vs $u^s$" + "\nquality axis vs speed axis", cosines, "#F72585")]
+    if null.size:
+        groups.append((r"reseed vs reseed" + "\nshared draw (null)", null, "#ADB5BD"))
+    boxes = axes[2].boxplot([values for _label, values, _color in groups],
+                            tick_labels=[label for label, _values, _color in groups],
+                            patch_artist=True, widths=0.5)
+    for patch, (_label, _values, color) in zip(boxes["boxes"], groups, strict=True):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.65)
+    for offset, (_label, values, _color) in enumerate(groups):
+        jitter = np.random.default_rng(0).normal(0.0, 0.045, size=len(values))
+        axes[2].plot(offset + 1 + jitter, values, ".", color="#1D3557", markersize=3, alpha=0.35)
+    for level in (-1.0, 0.0, 1.0):
+        axes[2].axhline(level, color="black", linewidth=0.8,
+                        linestyle="-" if level == 0.0 else ":")
+    axes[2].set_ylim(-1.08, 1.08)
+    axes[2].set_ylabel(r"cosine between the two clause axes")
+    axes[2].set_title(
+        "Two clauses, or one number twice?\n"
+        rf"cosine {summary['quality_speed_cosine_median']:+.2f}   "
+        rf"(null {summary['quality_speed_null_cosine_median']:+.2f})"
+        "\n"
+        rf"labels' own $r$ = {summary['quality_speed_label_correlation']:+.2f}"
+    )
+    _caption(axes[2], y=-0.32, lines=[
+        r"Per frame, the cosine between the quality axis $u^q = a^{(q_5)} - a^{(q_1)}$ and the",
+        r"speed axis $u^s = a^{(s_5)} - a^{(s_1)}$, each flattened over chunk step and joint.",
+        r"Both contain $a^{(q_5)}$: the speed ramp holds quality at 5, so $s_5$ and $q_5$ are the",
+        r"same prompt. Two vectors sharing an endpoint correlate at roughly $+0.5$ before any",
+        r"clause is involved, so the null is built to share one the same way — two reseeds of",
+        r"one fixed clause, both measured off a shared third draw.",
+        r"READ THE GAP, NOT THE HEIGHT.",
+        r"At the null: two clauses, two directions, speed doing its own work. Well above it:",
+        r"one direction wearing two names, and speed buys nothing quality had not bought.",
+        r"The labels' own $r$ in the title is context — a correlation between two integers, not",
+        r"a cosine between two chunks, so it is not a line this box is meant to sit on.",
+    ])
+
+    fig.suptitle(
+        f"Metadata steering — the speed clause (n={summary['n_frames']} frames, "
+        f"{sum(summary['speed_demo_n'].values())} with an unpadded demonstration)",
+        fontsize=13, fontweight="bold",
+    )
+    fig.savefig(output_path, bbox_inches="tight", dpi=110)
+    plt.close(fig)
+
+
 def _render_example(diagnostic: dict, output_path: str) -> None:
     """Per-joint chunk under every metadata condition, demonstration overlaid."""
     gt = diagnostic["gt"]
@@ -790,6 +1041,53 @@ constant offset. Flagged frames are rare in a held-out split; the counts are on 
 axis, and a handful supports no conclusion."""
 
 
+_SPEED_HOW = r"""Quality and mistake are judgements about a segment. Speed is a claim
+about the arm, so unlike the other two it can be checked against the arm — that is what this
+page does, plus one question the other pages cannot ask: whether the two five-level numbers
+in the clause are two numbers or one.
+
+**Left — is the ramp ordered?** The speed twin of figure 1's right panel. Each level is
+projected onto the axis its own poles define,
+$\pi(k)=\langle a^{(s_k)}-\bar a,\,u\rangle/\lVert u\rVert$ with $u=a^{(s_5)}-a^{(s_1)}$ and
+quality pinned at 5 throughout, so the only thing moving is the speed number. Read the
+separation in the title before the shape: a ramp that sits inside the sampler's own noise
+makes the rest of this page moot. And ordering here is ordering *in chunk space* — it says
+the five strings are distinguishable and sorted, not that they mean anything about pace.
+
+**Middle — is that order tempo?** Per-step travel
+$\operatorname{step}(x)=\sqrt{\frac{1}{(T-1)D}\sum_{t,d}(x_{t+1,d}-x_{t,d})^{2}}$ measures how
+fast a chunk moves without caring where it goes. The model gives $m_k$ under each speed
+clause; the demonstrations give $M_k$, the median $\operatorname{step}(a^{\star})$ over the
+frames the annotation calls speed $k$. Both are divided by their level-3 value so a frame's
+overall pace cancels and only the five-point shape is compared, and the headline $r$ is the
+correlation between the two shapes, taken per frame and reported as a median.
+
+Read $r$ against the number beside it, not against zero. Because $M_k$ is not monotone, a model
+that has learned only "bigger number, faster" already scores the correlation between a straight
+ramp and $M_k$ — about $+0.7$ on the ReBot curve. Below that line the clause is not being read
+as tempo at all; at it, the model is reading the digit rather than the annotation; only above it
+has it learned what this label means. Each frame contributes a correlation over five points, so
+one frame's $r$ scatters by roughly $0.5$ and only the median over frames carries information.
+
+Two asymmetries are worth knowing rather than glossing. The model's ratio is formed *within*
+a frame and then medianed; the demonstration's can only be a ratio of medians over two
+different groups of frames, because no frame has two true speeds — which also means the black
+curve carries whatever else differs between speed-1 segments and speed-5 segments, not tempo
+alone. And $M_k$ is not monotone: the hybrid label calls a thrashing failed attempt slow, so
+$M_1>M_2$ on most roots. A model that has learned this annotation has to reproduce that U.
+A pink curve rising straight through is reading "a bigger number", not this label.
+
+**Right — two clauses or one?** The cosine between the quality axis $u^q=a^{(q_5)}-a^{(q_1)}$
+and the speed axis $u^s=a^{(s_5)}-a^{(s_1)}$. Both contain $a^{(q_5)}$, because the speed ramp
+holds quality at 5 and so $s_5$ and $q_5$ are character-for-character the same prompt; two
+vectors sharing an endpoint sit near $+\frac{1}{2}$ before any clause is involved. The null is
+therefore built to share an endpoint in the same way — two reseeds of one fixed clause, both
+measured off a shared third draw — so that offset lands in both boxes and cancels. Read the
+gap between the boxes, never the height of one. The labels' own correlation is printed as
+context; it is a correlation between two integers rather than a cosine between two chunks, so
+it is not a line the box is meant to sit on."""
+
+
 def run(adapter, dataset, cfg, output_dir: str) -> None:
     memory_cfg = getattr(cfg.policy, "memory", None)
     if memory_cfg is None or not getattr(memory_cfg, "metadata_enabled", False):
@@ -889,6 +1187,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 return {key.removesuffix("_relative"): float(components[key])
                         for key in TRAJECTORY_RELATIVE_KEYS}
 
+            # A repeat-padded chunk has a frozen tail, which is exactly what tempo reads.
+            unpadded = _chunk_is_unpadded(dataset, global_idx, episode_idx, chunk_size)
             gt_mse = {name: float((act - gt_norm).pow(2).mean()) for name, act in acts.items()}
             quality_effect = [_rmse(acts[f"q5{m}"], acts[f"q1{m}"]) for m in ("", "m")]
             mistake_effect = [_rmse(acts[f"q{q}m"], acts[f"q{q}"]) for q in _MISTAKE_POLES]
@@ -913,6 +1213,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "speed_range_rmse": _rmse(acts["s5"], acts["s1"]),
                 "speed_kendall_tau": speed_tau,
                 **{f"proj_s{k}": value for k, value in speed_projection.items()},
+                # Tempo: RMS per-step travel under each speed clause, and the
+                # demonstration's own, which is the curve those five have to match.
+                **{f"step_s{k}": _step_rms(acts[f"s{k}"]) for k in _SPEED_LEVELS},
+                "gt_step_rms": _step_rms(gt_norm) if unpadded else None,
             }
             row["separation"] = row["quality_range_rmse"] / max(floor_mean, 1e-9)
             row["mistake_separation"] = row["mistake_flip_rmse"] / max(floor_mean, 1e-9)
@@ -920,6 +1224,17 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             row["step_motion_ratio"] = _step_rms(acts["q5"]) / max(_step_rms(acts["q1"]), 1e-9)
             # The physical reading of the speed number: does asking for 5 move the arm more per step than 1?
             row["speed_step_motion_ratio"] = _step_rms(acts["s5"]) / max(_step_rms(acts["s1"]), 1e-9)
+            # Two five-level numbers in one sentence: do they move the chunk in different
+            # directions? The speed ramp holds quality at 5, so ``s5`` IS ``q5`` and the two
+            # axes meet there — hence a null of two reseeds measured from a shared third
+            # draw, carrying the same shared endpoint rather than pretending it away.
+            quality_axis = (acts["q5"] - acts["q1"]).flatten().float().cpu().numpy()
+            speed_axis = (acts["s5"] - acts["s1"]).flatten().float().cpu().numpy()
+            row["quality_speed_cosine"] = _cosine(quality_axis, speed_axis)
+            row["quality_speed_null_cosine"] = _cosine(
+                (floor_draws[1] - floor_draws[0]).flatten().float().cpu().numpy(),
+                (floor_draws[2] - floor_draws[0]).flatten().float().cpu().numpy(),
+            ) if len(floor_draws) >= 3 else None
             # The floor in the same relative units: the rollout clause against itself under a
             # different seed. Its denominator is that chunk's excursion rather than
             # ``none``'s, which differ by exactly the effect being measured — second order.
@@ -995,6 +1310,35 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         for q in true_levels
     ]
 
+    # ── Speed as tempo ──────────────────────────────────────────────────────────
+    # The demonstration curve: median per-step travel of the RECORDED chunk over the
+    # frames the annotation calls speed k. Unlike every clause contrast above, this
+    # compares different frames with each other — the only form the demonstration comes
+    # in, since a frame has exactly one true speed. Padded chunks are already excluded.
+    demo_step = {
+        k: _column([row for row in speed_labelled if row["gt_speed"] == k], "gt_step_rms")
+        for k in _SPEED_LEVELS
+    }
+    demo_curve = {k: float(np.median(v)) for k, v in demo_step.items() if v.size}
+    tempo_levels = sorted(demo_curve)
+    for row in rows:
+        for k in _SPEED_LEVELS:
+            row[f"tempo_s{k}"] = row[f"step_s{k}"] / max(row[f"step_s{_TEMPO_ANCHOR}"], 1e-12)
+        # Shape match: the model's five tempi against the demonstrations' five, over the
+        # levels this split actually has. Two points always correlate perfectly, so a
+        # split with fewer than three populated levels reports nothing rather than +1.
+        row["speed_tempo_r"] = _pearson(
+            [row[f"step_s{k}"] for k in tempo_levels], [demo_curve[k] for k in tempo_levels]
+        ) if len(tempo_levels) >= 3 else None
+    demo_anchored = _TEMPO_ANCHOR in demo_curve
+    # What a model that has learned only "bigger number, faster" scores against this split's
+    # curve: a straight ramp correlated with it. Because $M_k$ is not monotone that sits well
+    # above zero — on the ReBot curve it is about +0.7 — so it, and not 0, is the line the
+    # measured correlation has to clear before it means the model read this annotation.
+    monotone_reference = _pearson(
+        tempo_levels, [demo_curve[k] for k in tempo_levels]
+    ) if len(tempo_levels) >= 3 else float("nan")
+
     summary = {
         "n_frames": len(rows),
         "n_episodes": len({row["episode_idx"] for row in rows}),
@@ -1018,6 +1362,28 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "speed_mix": {
             str(k): sum(row["gt_speed"] == k for row in speed_labelled) for k in _SPEED_LEVELS
         },
+        "speed_tempo_correlation": _median(rows, "speed_tempo_r"),
+        "speed_tempo_correlation_monotone": monotone_reference,
+        "speed_tempo_ratio_5_3": _median(rows, "tempo_s5"),
+        "speed_tempo_ratio_5_3_demo": (
+            demo_curve[5] / demo_curve[_TEMPO_ANCHOR]
+            if demo_anchored and 5 in demo_curve else float("nan")
+        ),
+        "speed_demo_step_rms": {str(k): value for k, value in demo_curve.items()},
+        "speed_demo_n": {str(k): int(demo_step[k].size) for k in _SPEED_LEVELS},
+        "speed_demo_tempo": {
+            str(k): demo_curve[k] / demo_curve[_TEMPO_ANCHOR] for k in tempo_levels
+        } if demo_anchored else {},
+        "speed_demo_tempo_se": {
+            str(k): _ratio_se(demo_step[k], demo_step[_TEMPO_ANCHOR]) for k in tempo_levels
+        } if demo_anchored else {},
+        "quality_speed_cosine_median": _median(rows, "quality_speed_cosine"),
+        "quality_speed_null_cosine_median": _median(rows, "quality_speed_null_cosine"),
+        # Context for the cosine, not a threshold for it: how correlated the two labels
+        # are on these very frames. A model can only separate what the annotation did.
+        "quality_speed_label_correlation": _pearson(
+            [row["gt_quality"] for row in labelled], [row["gt_speed"] for row in labelled]
+        ) if len(labelled) > 1 else float("nan"),
         "kendall_tau_mean": _mean(rows, "kendall_tau"),
         "monotone_fraction": float(np.mean([row["monotone"] for row in rows])),
         "seed_floor_disp_path": seed_floor_disp,
@@ -1057,6 +1423,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
 
     _render_floor(rows, summary, os.path.join(output_dir, "steering_floor.png"))
     _render_factorial(rows, summary, os.path.join(output_dir, "factorial.png"))
+    _render_speed(rows, summary, os.path.join(output_dir, "speed.png"))
     if labelled and len(rows) > 1:
         _render_response(rows, mean_axis, summary, os.path.join(output_dir, "response.png"))
 
@@ -1091,6 +1458,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
               "What the clause does to the chunk — is the move conditional on the frame, "
               "and is it one shared direction?",
               how=_RESPONSE_HOW, primary=True),
+        Panel("speed.png",
+              "The speed clause — is the number read as tempo, and is it its own axis?",
+              how=_SPEED_HOW, primary=True),
         Panel("factorial.png",
               "The 2x2 — does the number or the mistake sentence carry the effect?",
               how=_FACTORIAL_HOW),
@@ -1129,12 +1499,59 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 note="Speed-range RMSE (speed 1 to 5 at quality 5, no mistake) over the seed floor.",
             ),
             Metric(
+                "speed_tempo_correlation",
+                "speed tempo shape match",
+                good="high",
+                fmt=2,
+                baseline=summary["speed_tempo_correlation_monotone"],
+                primary=True,
+                trend=True,
+                note=(
+                    "Median over frames of the correlation between the model's per-step travel across "
+                    "the five speed clauses and the demonstrations' per-step travel across the five "
+                    "speed labels. The baseline is NOT 0: it is what a model that has learned only "
+                    "'bigger number, faster' scores against this split's curve, which is about +0.7 "
+                    "because the demonstration curve is not monotone (the hybrid label calls a "
+                    "thrashing failed attempt slow, so speed 1 travels further per step than speed 2). "
+                    "Below the baseline the number is not read as tempo at all; at it, the model reads "
+                    "the digit and not the annotation; only above it has it learned this label. Five "
+                    "points per frame, so a single frame's correlation has a spread of about 0.5 and "
+                    "only the median over a decent frame count is worth reading."
+                ),
+            ),
+            Metric(
+                "speed_tempo_ratio_5_3",
+                "per-step motion, speed 5 over speed 3",
+                fmt=2,
+                baseline=summary["speed_tempo_ratio_5_3_demo"],
+                note=(
+                    "RMS per-step travel of the speed-5 chunk over the speed-3 chunk. The baseline is "
+                    "the same ratio in the demonstrations on this split, so matching it is the target "
+                    "and neither high nor low is good on its own. Anchored at 3, not 1: 3 is the modal "
+                    "label and 3-to-5 is the stretch of the scale that is monotone in travel on every "
+                    "root, whereas speed 1 carries the thrashing segments and sits above speed 2."
+                ),
+            ),
+            Metric(
+                "quality_speed_cosine_median",
+                "quality axis vs speed axis",
+                good="low",
+                fmt=2,
+                baseline=summary["quality_speed_null_cosine_median"],
+                note=(
+                    "Cosine between the q1-to-q5 and s1-to-s5 chunk displacements. Both share the q5 "
+                    "endpoint (the speed ramp holds quality at 5), which is worth about +0.5 on its own, "
+                    "so the baseline is a null built to share an endpoint the same way — read the gap, "
+                    "not the value. At the null the two clauses steer in their own directions; well "
+                    "above it they are one direction with two names."
+                ),
+            ),
+            Metric(
                 "speed_step_motion_ratio",
                 "per-step motion, speed 5 over speed 1",
                 fmt=2,
                 baseline=1.0,
-                trend=True,
-                note="RMS per-step travel of the speed-5 chunk over the speed-1 chunk. Above 1, asking for 'fast' makes the arm move more per step; 1 means the number is not read as tempo.",
+                note="RMS per-step travel of the speed-5 chunk over the speed-1 chunk. Kept for continuity, and weaker than the 5-over-3 ratio above: the demonstrations' own speed-1 segments move MORE per step than their speed-2 and speed-3 ones, so this ratio can sit above 1 while the low end of the scale is backwards.",
             ),
         ],
         panels=panels,
@@ -1148,6 +1565,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         f"mistake={summary['mistake_flip_rmse']:.4f}  "
         f"speed range={summary['speed_range_rmse']:.4f} ({summary['speed_separation_median']:.2f}x floor, "
         f"tau={summary['speed_kendall_tau_mean']:+.2f}, step motion x{summary['speed_step_motion_ratio']:.2f})  "
+        f"speed tempo r={summary['speed_tempo_correlation']:+.2f} "
+        f"(monotone {summary['speed_tempo_correlation_monotone']:+.2f}) "
+        f"(m5/m3={summary['speed_tempo_ratio_5_3']:.2f} vs demo {summary['speed_tempo_ratio_5_3_demo']:.2f})  "
+        f"q/s axis cos={summary['quality_speed_cosine_median']:+.2f} "
+        f"(null {summary['quality_speed_null_cosine_median']:+.2f}, labels r={summary['quality_speed_label_correlation']:+.2f})  "
         f"tau={summary['kendall_tau_mean']:+.2f}  "
         f"rho(q5)={summary['q5_disp_path']:.4f} (floor {summary['seed_floor_disp_path']:.4f})  "
         f"conditionality={summary['conditionality_ratio']:.2f}x  "
