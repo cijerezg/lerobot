@@ -28,7 +28,13 @@ is spelled out:
 * one canonical camera-role name per recorded camera, so sources that spell the same
   physical view differently land in the same model slot and an unmapped camera is a
   hard error rather than a silently dropped view;
-* the per-anchor ``mistake`` flag recomputed from the reviewed event spans.
+* the per-anchor ``mistake`` flag recomputed from the reviewed event spans;
+* the per-anchor ``subtask`` text and ``speed`` label (1-5) read off the reviewed
+  one-action atom the anchor instant falls in (``subtask_atoms.jsonl`` and the speed
+  sidecar beside it). The stored anchor ``subtask`` is the parent interval's
+  description — for RoboChallenge the whole task string — and is kept as
+  ``parent_subtask``; the prompt's "current step" is the atom, the same grammar ReBot's
+  segments already use.
 
 The stored anchor flag is segment-level: it is true for every anchor inside a segment
 that contains any mistake event, which over-claims on 65 common anchors whose own
@@ -243,6 +249,23 @@ def _common_anchor_mistake(record: dict[str, Any], anchor_s: float) -> bool | No
     return None
 
 
+def _atom_at(atoms: list[dict[str, Any]], timestep: int) -> dict[str, Any] | None:
+    """The reviewed atom whose native timestep span holds the anchor."""
+    for atom in atoms:
+        if int(atom["start_timestep"]) <= timestep < int(atom["end_timestep_exclusive"]):
+            return atom
+    return None
+
+
+def _atoms_by_episode(corpus: FederatedDiverseCorpus, view: str) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    atoms: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for atom in getattr(corpus.common, view)():
+        atoms[("common", str(atom["episode_id"]))].append(atom)
+    for atom in getattr(corpus.fmb, view)():
+        atoms[("fmb", str(atom["episode_id"]))].append(atom)
+    return atoms
+
+
 def _fmb_anchor_mistake(record: dict[str, Any], timestep: int) -> bool | None:
     for interval in record["primitive_intervals"]:
         if int(interval["start_timestep"]) <= timestep < int(interval["end_timestep_exclusive"]):
@@ -301,6 +324,8 @@ def select_actor_anchors(
     the audit, but no code path may filter on it: this run trains on all of it.
     """
     rows = corpus.actor_anchors(split=None, retained_only=True)
+    subtask_atoms = _atoms_by_episode(corpus, "subtask_atoms")
+    speed_atoms = _atoms_by_episode(corpus, "speed_atoms")
 
     records: dict[str, dict[str, Any]] = {}
     prepared: list[dict[str, Any]] = []
@@ -321,6 +346,7 @@ def select_actor_anchors(
         if row["corpus_key"] == "fmb":
             declared_dim = int(record["arrays"]["obs/q"]["shape"][1]) + 1
             anchor_mistake = _fmb_anchor_mistake(record, int(row["anchor_frame"]))
+            anchor_timestep = int(row["anchor_timestep"])
         else:
             declared_dim = int(record["action_dimension"])
             if declared_dim != int(record["state_dimension"]):
@@ -329,6 +355,9 @@ def select_actor_anchors(
                     "anchor encoding subtracts the state from the action and needs one width."
                 )
             anchor_mistake = _common_anchor_mistake(record, float(row["anchor_s"]))
+            anchor_timestep = int(row["anchor_frame"])
+        atom = _atom_at(subtask_atoms[(row["corpus_key"], episode_id)], anchor_timestep)
+        speed_atom = _atom_at(speed_atoms[(row["corpus_key"], episode_id)], anchor_timestep)
         if declared_dim != layout.dim:
             raise ValueError(
                 f"{episode_id}: layout {layout.name} declares {layout.dim}D but the episode stores "
@@ -336,6 +365,13 @@ def select_actor_anchors(
             )
         if anchor_mistake is None:
             raise ValueError(f"{episode_id}: anchor {row['anchor_s']}s falls in no reviewed interval.")
+        if atom is None:
+            raise ValueError(f"{episode_id}: anchor {row['anchor_s']}s falls in no reviewed subtask atom.")
+        if speed_atom is None:
+            raise ValueError(
+                f"{episode_id}: anchor {row['anchor_s']}s falls in no speed atom — regenerate the "
+                "speed sidecar after the subtask atoms change."
+            )
 
         row["action_layout"] = layout.name
         row["action_layout_id"] = layout.index
@@ -344,6 +380,9 @@ def select_actor_anchors(
         row["has_depth"] = row["corpus_key"] == "fmb"
         row["mistake_flag_as_stored"] = bool(row["mistake"])
         row["mistake"] = bool(anchor_mistake)
+        row["parent_subtask"] = str(row["subtask"])
+        row["subtask"] = str(atom["subtask"])
+        row["speed"] = int(speed_atom["speed"])
         corrected += int(bool(anchor_mistake) != bool(row["mistake_flag_as_stored"]))
         prepared.append(row)
 
@@ -402,6 +441,7 @@ class SourceAudit:
     quality_provenance: Counter = field(default_factory=Counter)
     mistake_anchors: int = 0
     mistake_anchors_as_stored: int = 0
+    speed_values: Counter = field(default_factory=Counter)
     subtasks: int = 0
     depth_episodes: int = 0
     depth_anchors: int = 0
@@ -430,6 +470,7 @@ def audit_selection(selection: DiverseActorSelection) -> dict[str, SourceAudit]:
         audit.quality_provenance[row.get("quality_provenance")] += 1
         audit.mistake_anchors += int(bool(row["mistake"]))
         audit.mistake_anchors_as_stored += int(bool(row["mistake_flag_as_stored"]))
+        audit.speed_values[int(row["speed"])] += 1
         audit.depth_anchors += int(bool(row["has_depth"]))
         audit.future_inside_subtask += int(bool(row["future_inside_subtask"]))
         subtasks[source].add(row["subtask"])
@@ -488,6 +529,7 @@ def format_audit(selection: DiverseActorSelection) -> str:
             f"  mistake anchor {audit.mistake_anchors} "
             f"(stored segment-level flag: {audit.mistake_anchors_as_stored})"
         )
+        lines.append(f"  speed          {dict(sorted(audit.speed_values.items()))}")
         lines.append(f"  future inside  {audit.future_inside_subtask}/{audit.anchors}")
         lines.append(f"  depth anchors  {audit.depth_anchors}/{audit.anchors}")
         lines.append(f"  split (provenance only, never filtered) {dict(audit.splits)}")

@@ -1004,18 +1004,26 @@ def test_materialize_metadata_from_dataset_rows():
         {"episode_index": 0, "from_index": 4, "to_index": 7, "mistake": True},
         {"episode_index": 1, "from_index": 7, "to_index": 10, "mistake": False},
     ]
-    buffer.materialize_metadata(episode_rows, mistake_rows)
+    speed_rows = [
+        {"episode_index": 0, "segment_index": 0, "from_index": 0, "to_index": 4, "speed": 2},
+        {"episode_index": 0, "segment_index": 1, "from_index": 4, "to_index": 7, "speed": 5},
+        {"episode_index": 1, "segment_index": 0, "from_index": 7, "to_index": 10, "speed": 3},
+    ]
+    buffer.materialize_metadata(episode_rows, mistake_rows, speed_rows)
 
     quality = buffer.complementary_info["metadata_quality"].float()
     assert (quality[:7] == 4.0).all()
     assert (quality[7:10] == 3.0).all()
     mistake = buffer.complementary_info["metadata_mistake"].float()
     assert mistake[:10].tolist() == [0, 0, 0, 0, 1, 1, 1, 0, 0, 0]
-    # No speed column: omitted by design, the prompt clause renders partially.
-    assert "metadata_speed" not in buffer.complementary_info
+    speed = buffer.complementary_info["metadata_speed"].float()
+    assert speed[:10].tolist() == [2, 2, 2, 2, 5, 5, 5, 3, 3, 3]
+    # Frames no row covers keep the -1 sentinel, which the prompt omits.
+    assert (speed[10:] == -1.0).all()
 
     batch = buffer.sample(batch_size=4, action_chunk_size=2)
     assert batch["complementary_info"]["metadata_quality"].shape == (4,)
+    assert batch["complementary_info"]["metadata_speed"].shape == (4,)
 
 
 def test_history_strided_image_rows():

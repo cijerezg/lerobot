@@ -5,6 +5,11 @@
 - `outputs/rebot_socks_v1` — raw: 6 eps, 29,192 frames @ 30 fps, top + wrist RGB, wrist depth sidecar.
 - `outputs/rebot-socks-annotated-v2` — **training-ready**: `subtask_index` per frame, 13-label canonical vocab, 81 hand-written summaries (12 s grid), quality/mistake metadata, depth hardlinked.
 - Everything SO-101-era is legacy 6-dim; don't mix.
+- **config_rl.yaml since 2026-09-09:** `rebot_socks_basket/shirts_bin/two_container-annotated-v3` (the 2026-09-08 audit
+  revisions of the -v2 roots, frames hardlinked), `rebot_sorting_clothes_v4-multitask-annotated-v1`, and
+  `outputs/rebot_rollouts-annotated-v2` (train source `rollouts`, 15 eps / 49,040 frames = the three 2026-09-08 inference
+  episodes + the v1 set below); every root carries `meta/speed_hybrid_v1.parquet` (the adopted speed labels,
+  `REBOT_SPEED_TABLE`), which `metadata_enabled` now requires alongside the two metadata parquets.
 - `outputs/rebot_rollouts-annotated-v1` (train source `rollouts_0906`, 12 eps / 31,010 frames) + `outputs/rebot_val-annotated-v4`
   (val, 4 eps / 16,907 frames) — **the consolidated sets in config_rl.yaml since 2026-09-07**. The train set is the 11
   rollout episodes below plus one teleop demo (ep 11 = the v4-1 socks episode that was `rebot_val-annotated-v3` ep 3, flagged

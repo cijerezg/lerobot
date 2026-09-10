@@ -115,6 +115,39 @@ def test_selection_is_the_whole_accepted_corpus() -> None:
     assert {name: audit.anchors for name, audit in per_source.items()} == EXPECTED_ANCHORS_BY_SOURCE
 
 
+def test_every_anchor_carries_the_speed_of_its_reviewed_atom() -> None:
+    """Subtask text and speed are read off the reviewed atom by native timestep: the
+    anchor's own frame (``anchor_frame`` common, ``anchor_timestep`` FMB) must land inside
+    exactly one atom, and the row keeps that atom's text and 1-5 bucket (the speed
+    sidecar is joined to the atom by (episode, parent, atom) index here, independently
+    of the selection's span lookup)."""
+    selection = _selection()
+    atoms: dict[tuple[str, str], list[dict]] = {}
+    for key, store in (("common", selection.corpus.common), ("fmb", selection.corpus.fmb)):
+        speeds = {
+            (str(a["episode_id"]), int(a["parent_interval_index"]), int(a["atom_index"])): int(a["speed"])
+            for a in store.speed_atoms()
+        }
+        for atom in store.subtask_atoms():
+            key_ = (str(atom["episode_id"]), int(atom["parent_interval_index"]), int(atom["atom_index"]))
+            atoms.setdefault((key, str(atom["episode_id"])), []).append({**atom, "speed": speeds[key_]})
+    for row in selection.rows:
+        frame = int(row["anchor_timestep"] if row["corpus_key"] == "fmb" else row["anchor_frame"])
+        hits = [
+            atom
+            for atom in atoms[(row["corpus_key"], str(row["episode_id"]))]
+            if int(atom["start_timestep"]) <= frame < int(atom["end_timestep_exclusive"])
+        ]
+        assert len(hits) == 1, (row["episode_id"], frame)
+        assert row["speed"] == int(hits[0]["speed"])
+        assert 1 <= row["speed"] <= 5
+        # The step text is the atom's, not the parent interval's (kept as parent_subtask).
+        assert row["subtask"] == hits[0]["subtask"]
+        assert row["parent_subtask"] != "" and "subtask" in row
+    per_source = audit_selection(selection)
+    assert all(sum(audit.speed_values.values()) == audit.anchors for audit in per_source.values())
+
+
 def test_split_stays_on_every_row_as_provenance() -> None:
     selection = _selection()
     assert all(row["split"] in {"train", "validation", "test"} for row in selection.rows)

@@ -30,6 +30,8 @@ from lerobot.datasets.diverse_corpus import (
     FUTURE_FPS,
     FUTURE_POINTS,
     HISTORY_OFFSETS_S,
+    SPEED_ATOMS_VIEW,
+    SUBTASK_ATOMS_VIEW,
     DiverseCorpus,
     time_stratified_indices,
 )
@@ -124,10 +126,24 @@ class FMBCorpus:
         self._actor_view_name = actor_view
         self._actor_rows: list[dict[str, Any]] | None = None
         self._critic_rows: list[dict[str, Any]] | None = None
+        self._speed_rows: list[dict[str, Any]] | None = None
+        self._subtask_atom_rows: list[dict[str, Any]] | None = None
 
     @lru_cache(maxsize=64)  # noqa: B019 - bounded by the production episode count
     def episode(self, episode_id: str) -> FMBCorpusEpisode:
         return FMBCorpusEpisode(self.root / "episodes" / episode_id, self._records[episode_id])
+
+    def subtask_atoms(self) -> list[dict[str, Any]]:
+        """The primitive intervals as atoms (subtask_atoms.jsonl), same row shape as the common store."""
+        if self._subtask_atom_rows is None:
+            self._subtask_atom_rows = _read_jsonl(self.root / SUBTASK_ATOMS_VIEW)
+        return self._subtask_atom_rows
+
+    def speed_atoms(self) -> list[dict[str, Any]]:
+        """Speed per primitive interval (the FMB atoms), same row shape as the common store."""
+        if self._speed_rows is None:
+            self._speed_rows = _read_jsonl(self.root / SPEED_ATOMS_VIEW)
+        return self._speed_rows
 
     def _interval_at(self, episode_id: str, timestep: int) -> dict[str, Any]:
         return next(

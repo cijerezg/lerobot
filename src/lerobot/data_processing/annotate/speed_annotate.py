@@ -277,7 +277,55 @@ def label(segments: list[dict], reference: dict) -> list[dict]:
             r["speed"] = previous.get(episode, 3)
             r["speed_source"] = "inherited" if episode in previous else "default"
         previous[episode] = r["speed"]
+    if reference.get("unclear_policy") == "atoms_default_3_v1":
+        _default_unclear_atoms(out, reference)
     return out
+
+
+def _default_unclear_atoms(rows: list[dict], reference: dict) -> None:
+    """Opt-in conservative atom labels; keep the original label for inspection.
+
+    Releases inherit only across contiguous carry/release supervision. Rare verbs
+    and unsure reviews default to 3. Same-action parent fragments are flagged;
+    their accepted boundaries and metric remain unchanged.
+    """
+    previous = {}
+    for r in rows:
+        if r.get("annotation_layer") != "atoms":
+            continue
+        episode = (r["root"], r["episode_id"])
+        prev = previous.get(episode)
+        contiguous = prev is not None and prev["end_timestep_exclusive"] == r["start_timestep"]
+        flags, defaults = [], []
+        r["raw_speed"] = r["speed"]
+        if r.get("confidence") == "unsure":
+            defaults.append("uncertain atomic review")
+        if not np.isfinite(r["expected_s"]) or r["expected_s"] <= 0 or not np.isfinite(r["ratio"]):
+            defaults.append("invalid expected duration")
+        if r["class"] == "release":
+            if not contiguous or prev["class"] not in ("move", "lift", "release"):
+                defaults.append("release has no contiguous carry or release predecessor")
+            else:
+                r["speed"] = prev["speed"]
+                r["speed_source"] = "inherited"
+                if prev.get("speed_default_reason"):
+                    defaults.append("release inherits an uncertain predecessor")
+        else:
+            cell = reference["cells"].get(f"{r['group']}/{r['class']}")
+            if cell is None or cell["n"] < reference["min_class_segments"]:
+                defaults.append("too few training examples of this robot/action")
+        if (contiguous and prev["parent_interval_index"] != r["parent_interval_index"]
+                and prev["subtask"] == r["subtask"]):
+            flag = "same action continues across a parent boundary"
+            flags.append(flag)
+            if flag not in prev["speed_flags"]:
+                prev["speed_flags"].append(flag)
+        r["speed_default_reason"] = "; ".join(defaults)
+        r["speed_flags"] = defaults + flags
+        if defaults:
+            r["speed"] = 3
+            r["speed_source"] = "default_unclear"
+        previous[episode] = r
 
 
 def _shares(rows: list[dict]) -> str:
@@ -361,6 +409,8 @@ def cmd_annotate_diverse(args):
     if args.diverse_layer == "atoms":
         columns.remove("interval_index")
         columns += ["parent_interval_index", "atom_index", "annotation_layer", "confidence"]
+        if reference.get("unclear_policy") == "atoms_default_3_v1":
+            columns += ["raw_speed", "speed_flags", "speed_default_reason"]
     for sub in ("corpus", "fmb"):
         target = diverse / sub / _speed_filename(args.diverse_layer)
         if target.exists() and not args.force:

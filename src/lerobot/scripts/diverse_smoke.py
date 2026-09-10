@@ -21,6 +21,11 @@ hierarchical iterator and the real preprocessor -- draws batches, and reports wh
 out. No model, no GPU, no gradient: this is the cheap check that runs before the smoke
 training run and answers the questions that do not need a forward pass.
 
+With the preprocessor on, the first batch is also checked clause by clause: every
+sample's rendered prompt must carry exactly the quality / mistake / speed its metadata
+columns say, and a diverse sample's speed and step text must be the ones its selection
+row holds (the reviewed atom spanning the anchor). A mismatch is an error, not a log line.
+
     uv run --no-project --python .venv/bin/python \\
         python -m lerobot.scripts.diverse_smoke --config_path=config_rl.yaml --batches 8
 """
@@ -29,6 +34,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
+from collections import Counter
 
 import torch
 
@@ -50,6 +57,53 @@ logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 logger = logging.getLogger(__name__)
 
 SOURCE_NAMES = {0: "droid", 1: "droid_success", 2: "fmb", 3: "robochallenge", 4: "ur7e", 5: "rebot"}
+REBOT_SOURCE_ID = 5
+
+_QUALITY_CLAUSE = re.compile(r"The quality is (\d) of 5\.")
+_SPEED_CLAUSE = re.compile(r"The speed is (\d) of 5\.")
+_STEP_CLAUSE = re.compile(r"The current step is (.+?)\.(?= The | Given )")
+
+
+def check_metadata_prompts(packed: dict, info: dict, step, diverse_rows: list[dict]) -> Counter:
+    """Every rendered prompt against its own metadata columns and, for diverse rows, the
+    selection row the sample came from. Returns the count of checked clauses."""
+    if float(step.metadata_dropout) > 0:
+        raise ValueError("metadata_dropout > 0: the prompt check needs deterministic clauses.")
+    tokenizer = step.processor.tokenizer
+    quality = info["metadata_quality"].reshape(-1).tolist()
+    quality_valid = info["metadata_quality_is_valid"].reshape(-1).tolist()
+    mistake = info["metadata_mistake"].reshape(-1).tolist()
+    speed = info["metadata_speed"].reshape(-1).tolist()
+    source = info["source_id"].reshape(-1).tolist()
+    row_index = info["diverse_row_index"].reshape(-1).tolist()
+    counts: Counter = Counter()
+    for i, ids in enumerate(packed["input_ids"]):
+        text = tokenizer.decode(ids)
+        found_quality = _QUALITY_CLAUSE.findall(text)
+        found_speed = _SPEED_CLAUSE.findall(text)
+        if int(source[i]) != REBOT_SOURCE_ID:
+            row = diverse_rows[int(row_index[i])]
+            if int(speed[i]) != int(row["speed"]):
+                raise ValueError(f"sample {i}: column speed {speed[i]} != selection row speed {row['speed']}")
+            # The step clause is the reviewed atom, not the parent interval it tiles.
+            step = _STEP_CLAUSE.findall(text)
+            if step != [str(row["subtask"]).rstrip(".")]:
+                raise ValueError(f"sample {i}: prompt step {step} != atom {row['subtask']!r}")
+            counts["diverse_speed_and_step_vs_selection"] += 1
+            counts["step_is_the_parent_interval"] += int(row["subtask"] == row["parent_subtask"])
+        if found_speed != [str(int(speed[i]))]:
+            raise ValueError(f"sample {i}: prompt speed {found_speed} vs column {speed[i]}: {text[-400:]}")
+        if bool(quality_valid[i]):
+            if found_quality != [str(int(quality[i]))]:
+                raise ValueError(f"sample {i}: prompt quality {found_quality} vs column {quality[i]}")
+        elif found_quality:
+            raise ValueError(f"sample {i}: quality withheld but rendered: {found_quality}")
+        sentence = "The robot made a mistake." if mistake[i] > 0.5 else "The robot made no mistakes."
+        if sentence not in text:
+            raise ValueError(f"sample {i}: mistake column {mistake[i]} but '{sentence}' absent")
+        counts["prompts"] += 1
+        counts[f"speed_{int(speed[i])}"] += 1
+    return counts
 
 
 def _load_config(path: str):
@@ -158,6 +212,7 @@ def main() -> None:
         preprocessor, _ = Trainer.for_config(cfg).make_processors(cfg, dataset=main_dataset)
 
     telemetry = MixtureTelemetry()
+    speed_by_half: dict[str, Counter] = {"rebot": Counter(), "diverse": Counter()}
     iterator = make_hierarchical_offline_iterator(
         groups,
         batch_size=cfg.batch_size,
@@ -183,6 +238,12 @@ def main() -> None:
             int(info[f"depth.{spec.depth_role}.depth_is_present"].sum()),
             int(batch[ACTION].shape[0]),
         )
+        speeds = info["metadata_speed"].reshape(-1).tolist()
+        sources = info["source_id"].reshape(-1).tolist()
+        if any(not 1 <= int(v) <= 5 for v in speeds):
+            raise ValueError(f"metadata_speed outside 1-5 in batch {step}: {sorted(set(speeds))}")
+        for value, source_id in zip(speeds, sources, strict=True):
+            speed_by_half["rebot" if int(source_id) == REBOT_SOURCE_ID else "diverse"][int(value)] += 1
         if preprocessor is not None and step == 0:
             from lerobot.rl.rl_trainer import Trainer  # noqa: F401 (kept local)
 
@@ -206,8 +267,11 @@ def main() -> None:
             )
             attended = packed["attention_mask"].sum(dim=1)
             logger.info("  attended tokens per sample: min %d max %d", int(attended.min()), int(attended.max()))
+            checked = check_metadata_prompts(packed, info, trainer._pack_step(preprocessor), diverse.rows)
+            logger.info("  metadata clauses match their columns on every prompt: %s", dict(checked))
 
     logger.info("\n%s", telemetry.describe(SOURCE_NAMES))
+    logger.info("Speed label shares by half: %s", {half: dict(sorted(c.items())) for half, c in speed_by_half.items()})
 
 
 if __name__ == "__main__":

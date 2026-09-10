@@ -102,7 +102,10 @@ def test_a_missing_task_is_an_error_not_an_empty_clause() -> None:
 def test_every_selected_episode_yields_a_task(selection) -> None:
     tasks, subtasks = diverse_vocabulary(selection)
     assert len(tasks) == 121
-    assert len(subtasks) == 243
+    # The step vocabulary is the reviewed one-action atoms, not the parent intervals
+    # (243 of those before 2026-09-09), so it speaks ReBot's grasp/move/release grammar.
+    assert len(subtasks) == 445
+    assert all(text == text.strip() and text for text in subtasks)
     assert FMB_TASK_TEXT in tasks
     assert tasks == sorted(tasks) and subtasks == sorted(subtasks)
 
@@ -240,6 +243,24 @@ def test_the_buffer_carries_provenance_and_validity(selection) -> None:
             assert info["metadata_quality"][position].item() == float(row["quality"])
         else:
             assert info["metadata_quality"][position].item() == UNKNOWN_QUALITY
+        # Speed is a computed label with no provenance gate: every anchor carries its atom's.
+        assert info["metadata_speed"][position].item() == float(row["speed"])
+        assert 1 <= row["speed"] <= 5
+
+
+def test_speed_renders_as_an_integer_of_five() -> None:
+    assert " The speed is 4 of 5." in _prompt({"quality": 4, "mistake": False, "speed": 4})
+    step_metadata = MolmoAct2PackInputsProcessorStep._extract_metadata(
+        {
+            "metadata_quality": torch.tensor([5.0]),
+            "metadata_mistake": torch.tensor([0.0]),
+            "metadata_speed": torch.tensor([-1.0]),
+        },
+        1,
+    )[0]
+    # The -1 sentinel (no atom / no segment) omits the clause, never "-1 of 5".
+    assert "speed" not in step_metadata
+    assert "-1" not in _prompt(step_metadata)
 
 
 def test_automatic_quality_can_be_switched_back_on(selection) -> None:

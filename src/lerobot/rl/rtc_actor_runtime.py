@@ -628,10 +628,10 @@ def rtc_inference_worker(
         subtask_interval = float(getattr(cfg.policy, "subtask_regeneration_interval", 1.0))
         last_subtask_time: float | None = None
         # Metadata steering at inference = prompt the best behavior (π0.7: quality 5,
-        # no mistakes; speed omitted — the clause renders partially).
+        # no mistakes, speed 5 = the fast bucket of speed_annotate.py's fixed edges).
         memory_cfg = getattr(cfg.policy, "memory", None)
         inference_metadata = (
-            {"quality": 5, "mistake": False}
+            {"quality": 5, "mistake": False, "speed": 5}
             if memory_cfg is not None and memory_cfg.metadata_enabled
             else None
         )
@@ -1478,7 +1478,7 @@ def _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state: RTC
         preprocessor=preprocessor,
         robot_type=cfg.env.robot.type if hasattr(cfg.env, "robot") else "",
         subtask=subtask,
-        metadata={"quality": 5, "mistake": False} if memory_cfg is not None and memory_cfg.metadata_enabled else None,
+        metadata={"quality": 5, "mistake": False, "speed": 5} if memory_cfg is not None and memory_cfg.metadata_enabled else None,
     )
     dummy_prev = torch.zeros(execution_horizon, action_dim, device=device, dtype=torch.float32)
     with torch.no_grad():

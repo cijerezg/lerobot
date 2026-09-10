@@ -272,6 +272,7 @@ class _RowIdentity:
     quality_provenance_id: int
     retention_reason_id: int
     mistake: bool
+    speed: int
 
 
 class DiverseActorBuffer:
@@ -328,6 +329,7 @@ class DiverseActorBuffer:
                     quality_provenance_id=quality_provenance_id(provenance),
                     retention_reason_id=retention_reason_id(row.get("retention_reason")),
                     mistake=bool(row["mistake"]),
+                    speed=int(row["speed"]),
                 )
             )
         self._geometry: dict[tuple[int, int, bool], ResizeGeometry] = {}
@@ -519,6 +521,7 @@ class DiverseActorBuffer:
         metadata_quality = torch.full((batch,), UNKNOWN_QUALITY, dtype=torch.float32)
         metadata_quality_is_valid = torch.zeros((batch,), dtype=torch.bool)
         metadata_mistake = torch.zeros((batch,), dtype=torch.float32)
+        metadata_speed = torch.zeros((batch,), dtype=torch.float32)
         row_index_column = torch.zeros((batch,), dtype=torch.long)
 
         for position, sample in enumerate(samples):
@@ -566,6 +569,7 @@ class DiverseActorBuffer:
             metadata_quality[position] = entry.quality
             metadata_quality_is_valid[position] = entry.quality_is_valid
             metadata_mistake[position] = float(entry.mistake)
+            metadata_speed[position] = float(entry.speed)
             row_index_column[position] = sample["row_index"]
 
         state_dict: dict[str, torch.Tensor] = {OBS_STATE: state.to(self.device)}
@@ -610,6 +614,7 @@ class DiverseActorBuffer:
             "metadata_quality": metadata_quality.to(self.device),
             "metadata_quality_is_valid": metadata_quality_is_valid.to(self.device),
             "metadata_mistake": metadata_mistake.to(self.device),
+            "metadata_speed": metadata_speed.to(self.device),
             "task_index": identity["task_index"].to(self.device),
             "subtask_index": identity["subtask_index"].to(self.device),
             "quality_provenance_id": identity["quality_provenance_id"].to(self.device),

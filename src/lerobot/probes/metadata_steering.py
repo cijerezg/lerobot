@@ -1,4 +1,4 @@
-r"""Metadata-steering probe: does the quality / mistake clause reach the actions?
+r"""Metadata-steering probe: does the quality / mistake / speed clause reach the actions?
 
 The action prompt carries a steering clause built by ``_build_robot_text``
 (processor_molmoact2.py) — "The quality is $N$ of 5." and "The robot made a
@@ -134,19 +134,28 @@ from lerobot.probes.utils import (
 
 _QUALITY_LEVELS = (1, 2, 3, 4, 5)
 _MISTAKE_POLES = (1, 5)  # where the mistake sentence is flipped, giving the 2x2
+_SPEED_LEVELS = (1, 2, 3, 4, 5)
+# The rollout clause asks for speed 5, so every quality / mistake cell holds speed at
+# 5 and the speed ramp holds quality at 5 with no mistake: one axis moves per cell.
+_DEPLOYED_SPEED = 5
 
 # The dose axis gets a sequential ramp so a monotone response is visible as a colour
 # order; everything that is not a quality level stays off that ramp.
 _QUALITY_COLORS = {q: plt.get_cmap("viridis")(i / 4) for i, q in enumerate(_QUALITY_LEVELS)}
+_SPEED_COLORS = {k: plt.get_cmap("plasma")(i / 4) for i, k in enumerate(_SPEED_LEVELS)}
 _CONDITION_STYLE = {
     "none": ("#E63946", "--"),
     "gt": ("#B5179E", ":"),
     **{f"q{q}": (_QUALITY_COLORS[q], "-") for q in _QUALITY_LEVELS},
     **{f"q{q}m": (_QUALITY_COLORS[q], "-.") for q in _MISTAKE_POLES},
+    **{f"s{k}": (_SPEED_COLORS[k], (0, (5, 2))) for k in _SPEED_LEVELS},
 }
 
-_STEERED = {f"q{q}": {"quality": q, "mistake": False} for q in _QUALITY_LEVELS}
-_STEERED |= {f"q{q}m": {"quality": q, "mistake": True} for q in _MISTAKE_POLES}
+_STEERED = {f"q{q}": {"quality": q, "mistake": False, "speed": _DEPLOYED_SPEED} for q in _QUALITY_LEVELS}
+_STEERED |= {f"q{q}m": {"quality": q, "mistake": True, "speed": _DEPLOYED_SPEED} for q in _MISTAKE_POLES}
+# s5 is the same prompt as q5 (quality 5, no mistake, speed 5); it is aliased below
+# rather than forwarded twice.
+_STEERED |= {f"s{k}": {"quality": 5, "mistake": False, "speed": k} for k in _SPEED_LEVELS if k != _DEPLOYED_SPEED}
 
 # The clause the rollout prompt carries, and the one the old probe called "bad".
 _ROLLOUT = "q5"
@@ -225,16 +234,17 @@ def _loo_alignment(vectors: list[np.ndarray]) -> list[float]:
     return [_cosine(v, (total - v) / (len(vectors) - 1)) for v in stack]
 
 
-def _quality_projection(acts: dict[str, torch.Tensor]) -> tuple[dict[int, float], float]:
+def _level_projection(acts: dict[str, torch.Tensor], prefix: str) -> tuple[dict[int, float], float]:
     r"""Where each level sits on the axis its own two poles define, and Kendall's $\tau$.
 
     $\pi(q) = \langle a^{(q)} - \bar{a}, u\rangle / \lVert u \rVert$ with $u = a^{(q_5)} -
     a^{(q_1)}$, so $\pi(5) - \pi(1) = \lVert u \rVert$ and the interior levels are placed
     between the poles in the same units as every other distance here. $\tau$ over the five
     $(q, \pi(q))$ pairs is $+1$ for a monotone staircase and $0$ for levels in no order at
-    all — the difference between a read scale and five unrelated strings.
+    all — the difference between a read scale and five unrelated strings. ``prefix``
+    ``"q"`` is the quality ramp, ``"s"`` the speed ramp.
     """
-    stack = torch.stack([acts[f"q{q}"] for q in _QUALITY_LEVELS])
+    stack = torch.stack([acts[f"{prefix}{q}"] for q in _QUALITY_LEVELS])
     axis = stack[-1] - stack[0]
     norm = float(axis.pow(2).mean().sqrt())
     if norm < 1e-12:
@@ -247,6 +257,10 @@ def _quality_projection(acts: dict[str, torch.Tensor]) -> tuple[dict[int, float]
         for j in range(i + 1, len(values))
     )
     return dict(zip(_QUALITY_LEVELS, values, strict=True)), float(concordant) / 10.0
+
+
+def _quality_projection(acts: dict[str, torch.Tensor]) -> tuple[dict[int, float], float]:
+    return _level_projection(acts, "q")
 
 
 def _provenance(rows: list[dict], dataset, cfg, conditions: list[str], n_seeds: int) -> dict:
@@ -373,6 +387,7 @@ def _render_floor(rows: list[dict], summary: dict, output_path: str) -> None:
     contrasts = [
         ("quality\nq5 vs q1", "quality_range_rmse"),
         ("mistake\nsentence", "mistake_flip_rmse"),
+        ("speed\ns5 vs s1", "speed_range_rmse"),
         ("both poles\n(old good/bad)", "pole_range_rmse"),
         ("flow seed\n(floor)", "seed_floor_mean"),
     ]
@@ -381,14 +396,17 @@ def _render_floor(rows: list[dict], summary: dict, output_path: str) -> None:
     axes[0].set_ylabel(r"$\|a^{(c)} - a^{(c')}\|$  (normalized actions)")
     axes[0].set_title(
         "Does the clause move the chunk\nmore than noise does?\n"
-        f"median quality separation $S$ = {summary['separation_median']:.2f}x   ·   "
-        f"mistake {summary['mistake_separation_median']:.2f}x"
+        f"median separation $S$: quality {summary['separation_median']:.2f}x   ·   "
+        f"mistake {summary['mistake_separation_median']:.2f}x   ·   "
+        f"speed {summary['speed_separation_median']:.2f}x"
     )
     _caption(axes[0], [
-        r"One frame gives one point to each box. The first three are clause contrasts on that frame,",
-        r"the fourth is the same clause ($q_5$, no mistake) re-drawn under " + str(summary["n_seeds"]) + r" flow seeds.",
-        r"None of the first three has a scale of its own — only the ratio $S$ to the fourth does, and",
+        r"One frame gives one point to each box. The first four are clause contrasts on that frame,",
+        r"the fifth is the same clause ($q_5$, no mistake, speed 5) re-drawn under " + str(summary["n_seeds"]) + r" flow seeds.",
+        r"None of the first four has a scale of its own — only the ratio $S$ to the fifth does, and",
         r"$S \approx 1$ says the clause did nothing the sampler was not already doing anyway.",
+        r"'speed' holds quality at 5 and no mistake and moves the speed number 1 to 5; its per-step",
+        r"motion ratio (speed 5 over speed 1) is in the summary: above 1 means 'fast' reads as moving more.",
         r"'both poles' is the contrast the previous version of this probe reported alone: it moves",
         r"two clauses at once, so a tall box there attributes to neither.",
     ])
@@ -837,6 +855,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 noise=adapter.flow_noise_like(len(condition_names), 0),
             )
             acts = {name: condition_chunks[i] for i, name in enumerate(condition_names)}
+            acts[f"s{_DEPLOYED_SPEED}"] = acts[_ROLLOUT]  # same prompt, not forwarded twice
 
             # Seed floor: the rollout clause re-drawn under different noise. Without it
             # every distance above is a number with no scale. One row per reseed.
@@ -854,6 +873,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             floor_mean, floor_max = _pairwise_rmse(floor_draws)
 
             projection, tau = _quality_projection(acts)
+            speed_projection, speed_tau = _level_projection(acts, "s")
             base = acts["none"]
 
             def displacement(moved: torch.Tensor, reference: torch.Tensor) -> dict[str, float]:
@@ -879,6 +899,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "frame_idx": int(frame_idx),
                 "gt_quality": None if labels is None else int(labels["quality"]),
                 "gt_mistake": bool(labels["mistake"]) if labels is not None else False,
+                "gt_speed": None if labels is None else int(labels["speed"]),
                 "seed_floor_mean": floor_mean,
                 "seed_floor_max": floor_max,
                 "quality_range_rmse": _rmse(acts["q5"], acts["q1"]),
@@ -889,10 +910,16 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "kendall_tau": tau,
                 "monotone": abs(tau) == 1.0,
                 **{f"proj_q{q}": value for q, value in projection.items()},
+                "speed_range_rmse": _rmse(acts["s5"], acts["s1"]),
+                "speed_kendall_tau": speed_tau,
+                **{f"proj_s{k}": value for k, value in speed_projection.items()},
             }
             row["separation"] = row["quality_range_rmse"] / max(floor_mean, 1e-9)
             row["mistake_separation"] = row["mistake_flip_rmse"] / max(floor_mean, 1e-9)
+            row["speed_separation"] = row["speed_range_rmse"] / max(floor_mean, 1e-9)
             row["step_motion_ratio"] = _step_rms(acts["q5"]) / max(_step_rms(acts["q1"]), 1e-9)
+            # The physical reading of the speed number: does asking for 5 move the arm more per step than 1?
+            row["speed_step_motion_ratio"] = _step_rms(acts["s5"]) / max(_step_rms(acts["s1"]), 1e-9)
             # The floor in the same relative units: the rollout clause against itself under a
             # different seed. Its denominator is that chunk's excursion rather than
             # ``none``'s, which differ by exactly the effect being measured — second order.
@@ -900,6 +927,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 [displacement(draw, acts[_ROLLOUT])["path"] for draw in floor_draws[1:]]
             ))
             for name, act in acts.items():
+                if name == f"s{_DEPLOYED_SPEED}":
+                    continue  # alias of q5; its numbers are q5's
                 row[f"{name}_gt_mse"] = gt_mse[name]
                 if name != "none":
                     row[f"{name}_rmse"] = _rmse(act, base)
@@ -927,6 +956,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         return
 
     conditions = ["none"] + list(_STEERED) + (["gt"] if "gt_gt_mse" in rows[0] else [])
+    speed_labelled = [row for row in rows if row["gt_speed"] is not None]
     labelled = [row for row in rows if row["gt_quality"] is not None]
     flagged = [row for row in rows if row["gt_mistake"]]
 
@@ -981,6 +1011,13 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "separation_mean": _mean(rows, "separation"),
         "separation_median": float(np.median(_column(rows, "separation"))),
         "mistake_separation_median": float(np.median(_column(rows, "mistake_separation"))),
+        "speed_range_rmse": _mean(rows, "speed_range_rmse"),
+        "speed_separation_median": float(np.median(_column(rows, "speed_separation"))),
+        "speed_kendall_tau_mean": _mean(rows, "speed_kendall_tau"),
+        "speed_step_motion_ratio": _median(rows, "speed_step_motion_ratio"),
+        "speed_mix": {
+            str(k): sum(row["gt_speed"] == k for row in speed_labelled) for k in _SPEED_LEVELS
+        },
         "kendall_tau_mean": _mean(rows, "kendall_tau"),
         "monotone_fraction": float(np.mean([row["monotone"] for row in rows])),
         "seed_floor_disp_path": seed_floor_disp,
@@ -1082,6 +1119,23 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 trend=True,
                 note="Quality-range RMSE (q1 to q5) over the seed floor. 1 means the quality clause moves the chunk no further than reseeding does.",
             ),
+            Metric(
+                "speed_separation_median",
+                "speed / flow-noise separation",
+                good="high",
+                fmt=2,
+                baseline=1.0,
+                trend=True,
+                note="Speed-range RMSE (speed 1 to 5 at quality 5, no mistake) over the seed floor.",
+            ),
+            Metric(
+                "speed_step_motion_ratio",
+                "per-step motion, speed 5 over speed 1",
+                fmt=2,
+                baseline=1.0,
+                trend=True,
+                note="RMS per-step travel of the speed-5 chunk over the speed-1 chunk. Above 1, asking for 'fast' makes the arm move more per step; 1 means the number is not read as tempo.",
+            ),
         ],
         panels=panels,
         extra={"provenance": summary["data"]},
@@ -1092,6 +1146,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         f"quality range={summary['quality_range_rmse']:.4f} "
         f"({summary['separation_median']:.2f}x floor)  "
         f"mistake={summary['mistake_flip_rmse']:.4f}  "
+        f"speed range={summary['speed_range_rmse']:.4f} ({summary['speed_separation_median']:.2f}x floor, "
+        f"tau={summary['speed_kendall_tau_mean']:+.2f}, step motion x{summary['speed_step_motion_ratio']:.2f})  "
         f"tau={summary['kendall_tau_mean']:+.2f}  "
         f"rho(q5)={summary['q5_disp_path']:.4f} (floor {summary['seed_floor_disp_path']:.4f})  "
         f"conditionality={summary['conditionality_ratio']:.2f}x  "

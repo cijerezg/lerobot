@@ -465,23 +465,28 @@ class ReplayBuffer:
         self,
         episode_rows: list[dict],
         mistake_rows: list[dict],
+        speed_rows: list[dict],
     ) -> None:
         """π0.7-style metadata columns from meta/episode_metadata.parquet +
-        meta/mistakes.parquet (offline buffers; written by metadata_annotate.py,
-        loaded via load_metadata_rows).
+        meta/mistakes.parquet + meta/speed.parquet (offline buffers; written by
+        metadata_annotate.py / speed_annotate.py, loaded via load_metadata_rows).
 
-        quality (1-5) broadcasts per episode, mistake (boolean) per subtask
-        window; row from_index/to_index are global dataset frame ranges (==
-        buffer positions, as with summaries). Speed is deliberately absent —
-        the prompt clause renders partially.
+        quality (1-5) and speed (1-5) broadcast per subtask segment, mistake
+        (boolean) per subtask window; row from_index/to_index are global dataset
+        frame ranges (== buffer positions, as with summaries). -1 is the "no row
+        covers this frame" sentinel for quality and speed; the prompt omits that
+        clause rather than rendering it.
         """
         quality = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
         mistake = torch.zeros(self.capacity, dtype=torch.bfloat16, device=self.storage_device)
+        speed = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
         for row in episode_rows:
             quality[row["from_index"] : min(int(row["to_index"]), self.size)] = float(row["quality"])
         for row in mistake_rows:
             if row["mistake"]:
                 mistake[row["from_index"] : min(int(row["to_index"]), self.size)] = 1.0
+        for row in speed_rows:
+            speed[row["from_index"] : min(int(row["to_index"]), self.size)] = float(row["speed"])
         # Reward a mistake event once at its entry, not every annotated recovery
         # frame; its cost must not depend on the span's annotated duration.
         mistake_onset = torch.zeros_like(mistake)
@@ -491,8 +496,9 @@ class ReplayBuffer:
             mistake_onset[1 : self.size] = mistake[1 : self.size] * (1.0 - mistake[: self.size - 1])
         self.complementary_info["metadata_quality"] = quality
         self.complementary_info["metadata_mistake"] = mistake
+        self.complementary_info["metadata_speed"] = speed
         self.complementary_info["critic_mistake_onset"] = mistake_onset
-        for key in ("metadata_quality", "metadata_mistake", "critic_mistake_onset"):
+        for key in ("metadata_quality", "metadata_mistake", "metadata_speed", "critic_mistake_onset"):
             if key not in self.complementary_info_keys:
                 self.complementary_info_keys.append(key)
         self.has_complementary_info = True

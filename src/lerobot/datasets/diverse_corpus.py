@@ -44,6 +44,21 @@ FUTURE_POINTS = 30
 FUTURE_FPS = 30.0
 
 
+# The speed sidecar the training selection reads, beside each store's
+# subtask_atoms.jsonl. Every candidate is written under its own versioned name and
+# none is ever overwritten, so adopting one is this constant (plus REBOT_SPEED_TABLE
+# in rl/offline_dataset_utils.py, which must name the SAME method for the two halves
+# of the mixture to mean one thing by "speed").
+#   speed_atoms.jsonl            v4, work-normalized duration — rejected 2026-09-09
+#                                (fast failed attempts read as slow)
+#   speed_atoms_state_v1.jsonl   v5, joint-motion quintiles per robot group — diverse only
+#   speed_atoms_hybrid_v1.jsonl  v6, 1 s smoothed motion nudged <= 0.35 bucket toward the
+#                                duration label — ADOPTED 2026-09-09, the only method that
+#                                also exists for ReBot (meta/speed_hybrid_v1.parquet, v7)
+SPEED_ATOMS_VIEW = "speed_atoms_hybrid_v1.jsonl"
+SUBTASK_ATOMS_VIEW = "subtask_atoms.jsonl"
+
+
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as stream:
         return [json.loads(line) for line in stream if line.strip()]
@@ -114,6 +129,8 @@ class DiverseCorpus:
         self._actor_view_name = actor_view
         self._actor_rows: list[dict[str, Any]] | None = None
         self._critic_rows: list[dict[str, Any]] | None = None
+        self._speed_rows: list[dict[str, Any]] | None = None
+        self._subtask_atom_rows: list[dict[str, Any]] | None = None
 
     @lru_cache(maxsize=64)  # noqa: B019 - bounded by the corpus episode count
     def episode(self, episode_id: str) -> CorpusEpisode:
@@ -148,6 +165,23 @@ class DiverseCorpus:
         if source is not None:
             rows = [row for row in rows if row["source"] == source]
         return rows
+
+    def subtask_atoms(self) -> list[dict[str, Any]]:
+        """The reviewed one-action atoms (subtask_atoms.jsonl, 2026-09-09 atomic review):
+        one row per (episode_id, parent_interval_index, atom_index) tiling each parent
+        interval, with native ``start_timestep`` / ``end_timestep_exclusive`` and the
+        atom's ``subtask`` text in the ReBot grammar (grasp / move / release / ...)."""
+        if self._subtask_atom_rows is None:
+            self._subtask_atom_rows = _read_jsonl(self.root / SUBTASK_ATOMS_VIEW)
+        return self._subtask_atom_rows
+
+    def speed_atoms(self) -> list[dict[str, Any]]:
+        """Speed labels per reviewed subtask atom: one row per (episode_id,
+        parent_interval_index, atom_index) with the atom's native ``start_timestep`` /
+        ``end_timestep_exclusive`` and ``speed`` 1-5 (file: SPEED_ATOMS_VIEW)."""
+        if self._speed_rows is None:
+            self._speed_rows = _read_jsonl(self.root / SPEED_ATOMS_VIEW)
+        return self._speed_rows
 
     # -- actor view ------------------------------------------------------------------
 

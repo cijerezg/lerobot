@@ -87,7 +87,7 @@ def makedirs(*paths: str) -> None:
 
 # The metadata clause a rollout asks for: the best behaviour the steering offers.
 # Active dropout is zero; `metadata_steering` intentionally varies this deployment input.
-DEPLOYMENT_METADATA = {"quality": 5, "mistake": False}
+DEPLOYMENT_METADATA = {"quality": 5, "mistake": False, "speed": 5}
 
 _PACK_DROPOUT_FIELDS = (
     "subtask_dropout",
@@ -272,16 +272,17 @@ def subtask_group(subtask: str) -> str:
 
 
 def frame_metadata_lookup(dataset) -> dict[int, dict]:
-    """global frame index → ``{"quality": int, "mistake": bool}``.
+    """global frame index → ``{"quality": int, "mistake": bool, "speed": int}``.
 
-    Same spans training uses (`ReplayBuffer.materialize_metadata`): quality
-    broadcasts over the episode, mistake over its 4 s window. Returns ``{}`` when
-    the dataset has not been through `metadata_annotate.py`.
+    Same spans training uses (`ReplayBuffer.materialize_metadata`): quality and
+    speed broadcast over the subtask segment, mistake over its 4 s window. Returns
+    ``{}`` when the dataset has not been through `metadata_annotate.py` and
+    `speed_annotate.py`.
     """
     from lerobot.rl.offline_dataset_utils import load_metadata_rows
 
     try:
-        episode_rows, mistake_rows = load_metadata_rows(dataset.root)
+        episode_rows, mistake_rows, speed_rows = load_metadata_rows(dataset.root)
     except FileNotFoundError:
         return {}
 
@@ -290,11 +291,15 @@ def frame_metadata_lookup(dataset) -> dict[int, dict]:
     for row in mistake_rows:
         if row["mistake"]:
             mistakes.update(range(int(row["from_index"]), min(int(row["to_index"]), size)))
+    speeds: dict[int, int] = {}
+    for row in speed_rows:
+        for idx in range(int(row["from_index"]), min(int(row["to_index"]), size)):
+            speeds[idx] = int(row["speed"])
 
     lookup: dict[int, dict] = {}
     for row in episode_rows:
         for idx in range(int(row["from_index"]), min(int(row["to_index"]), size)):
-            lookup[idx] = {"quality": int(row["quality"]), "mistake": idx in mistakes}
+            lookup[idx] = {"quality": int(row["quality"]), "mistake": idx in mistakes, "speed": speeds[idx]}
     return lookup
 
 

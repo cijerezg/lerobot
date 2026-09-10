@@ -418,29 +418,51 @@ Design (revised 2026-07-18):
 - **Mistake** — boolean per 4 s subtask window. Produced by a recall-tuned LLM
   suspicion pass (evidence-first score 0–10, thresholded at review time) followed
   by human confirm/reject of flagged windows only; unflagged = clean by definition.
-- **Speed** — per subtask segment, integer 1–5 (added 2026-09-08,
-  `annotate/speed_annotate.py`). Work-normalized duration: $\text{ratio} =
-  (a_{g,c} + b_{g,c} D) / T$ with $T$ the segment's wall time and $D$ its net
-  arm-joint displacement; $(a, b)$ a Theil-Sen fit of $T$ on $D$ per (group,
-  class) cell of the *train* population (median $T$ when the cell is small or
-  uncorrelated). Fixed edges on the ratio, 0.40 / 0.65 / 1.10 / 1.40, so 1–2 mean
-  genuinely slow (>1.5× the expected time) and 5 means under 71% of it; inference
-  asks for 5. Classes: ReBot verb, FMB primitive, RoboChallenge task string,
-  DROID/UR7e coarse verb. Reference table
-  `outputs/stats/speed_reference_rebot-annot-v2-diverse.json`; labels in
-  `meta/speed.parquet` per ReBot root and `speed.jsonl` beside each diverse
-  `critic_intervals.jsonl`. Not yet consumed by the loader (`materialize_metadata`
-  still writes no `metadata_speed` column) or the diverse cache.
+- **Speed** — per subtask segment / reviewed atom, integer 1–5; inference asks for 5.
+  Three methods were generated and none overwrites another, so the adopted one is named
+  by two constants that must agree: `SPEED_ATOMS_VIEW` (`datasets/diverse_corpus.py`) for
+  the corpus and `REBOT_SPEED_TABLE` (`rl/offline_dataset_utils.py`) for the ReBot roots.
+  1. *Work-normalized duration* (v4, `annotate/speed_annotate.py`): $\text{ratio} =
+     (a_{g,c} + b_{g,c} D) / T$ over segment wall time $T$ and net arm-joint
+     displacement $D$, Theil-Sen per (group, class) on the train population, fixed edges
+     0.40 / 0.65 / 1.10 / 1.40. **Rejected 2026-09-09** — a fast but failing attempt
+     covers little ground, so it read as slow. Files `meta/speed.parquet`,
+     `speed_atoms.jsonl`.
+  2. *Joint motion* (v5): $\lVert q_{t+1} - q_t \rVert \cdot \text{fps}$ smoothed over
+     0.2 s, ranked against the robot group's training-transition quintiles. Diverse only.
+     Files `speed_atoms_state_v1.jsonl`, `speed_state_v1/*.npz`.
+  3. *Hybrid motion + duration* (v6 corpus / v7 ReBot) — **ADOPTED 2026-09-09**: motion
+     over a 1 s window scored against the same training percentiles, nudged by at most
+     0.35 of a bucket toward the duration label (weight 0.2, defaults ignored), smoothed
+     again over 0.4 s, atom label = round(median score). Neither filter crosses an
+     excluded gap; task quality never enters. ReBot is its own reference group, fit on
+     the five training roots and applied unchanged to val / inference. Files
+     `meta/speed_hybrid_v1.parquet` + `speed_hybrid_v1_trace.npz` per ReBot root and
+     `speed_atoms_hybrid_v1.jsonl` + `speed_hybrid_v1/*.npz` per diverse store;
+     references `speed_reference_joint_motion{,_rebot}_v1.json` and
+     `speed_reference_hybrid_motion_duration_v1.json`; passes
+     `migration/subtask_atoms_2026-09-08/speed_hybrid_{pass,rebot_pass}.py`.
+  **Consumed since 2026-09-09:** `load_metadata_rows` requires all three parquets and
+  `materialize_metadata` broadcasts `metadata_speed` per segment (-1 sentinel where no
+  row covers a frame, omitted from the prompt like unknown quality); the diverse
+  selection (`select_actor_anchors`) attaches each anchor's atom speed **and the atom's
+  own step text** by native timestep, and `DiverseActorBuffer.collate` emits the same
+  columns, so both halves of the mixture render `The speed is N of 5.` and name one
+  action in the step clause. The diverse memmap cache is untouched
+  (speed rides the selection rows, not the cache). Inference and every probe's
+  deployment prompt ask `{quality: 5, mistake: false, speed: 5}`; `metadata_steering`
+  adds an `s1..s5` ramp (quality 5, no mistake) with its own separation, ordering and
+  per-step-motion metrics.
 
 Storage mirrors the summaries pattern (window-range parquets, no dataset rewrite):
 `meta/episode_metadata.parquet`, `meta/mistakes.parquet`, `meta/metadata_info.json`.
 Loading is hard-error (`load_metadata_rows`); `ReplayBuffer.materialize_metadata`
 ([rl/buffer.py:461](../src/lerobot/rl/buffer.py#L461)) broadcasts to per-frame
-`metadata_quality` / `metadata_mistake` columns; `_extract_metadata`
+`metadata_quality` / `metadata_mistake` / `metadata_speed` columns; `_extract_metadata`
 ([processor_molmoact2.py:1047](../src/lerobot/policies/molmoact2/processor_molmoact2.py#L1047))
 turns them into per-sample dicts (an explicit `metadata` dict — the rollout/eval
-path — always wins). Inference prompts `{quality: 5, mistake: false}`
-([rl/rtc_actor_runtime.py:475-480](../src/lerobot/rl/rtc_actor_runtime.py#L475)).
+path — always wins). Inference prompts `{quality: 5, mistake: false, speed: 5}`
+(`rl/rtc_actor_runtime.py`, `probes/utils.py DEPLOYMENT_METADATA`).
 Gated by `memory.metadata_enabled` (config: true). Live online transitions carry no
 metadata by design (episode outcome is unknowable mid-episode; the 15% dropout
 covers the mixed regime) — recorded rollouts get labeled post-hoc.

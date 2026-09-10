@@ -307,7 +307,7 @@ def _build_robot_text(
                 " The robot made a mistake." if metadata["mistake"] else " The robot made no mistakes."
             )
         if "speed" in metadata:
-            metadata_clause += f" The speed is {metadata['speed']}."
+            metadata_clause += f" The speed is {int(metadata['speed'])} of 5."
     prompt = (
         f"{embodiment_clause}The task is to {task}."
         f"{depth_clause}{subtask_clause}{state_clause}{history_clause}"
@@ -1705,8 +1705,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             if isinstance(metadata, dict):
                 return [metadata] * batch_size
             return list(metadata)
-        # Offline batches: per-frame metadata columns from materialize_metadata.
-        # Speed is optional (omitted for single-operator data); the clause renders partially.
+        # Offline batches: per-frame metadata columns from materialize_metadata (ReBot)
+        # or the diverse buffer's collate. Speed is absent only on buffers filled before
+        # speed labels existed; the clause then renders without it.
         quality = complementary.get("metadata_quality")
         if quality is None:
             return [None] * batch_size
@@ -1718,11 +1719,12 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         # A negative quality is the "unknown" sentinel materialize_metadata fills for
         # frames no episode row covers, and the value the diverse buffer writes when a
         # sample's quality was derived automatically rather than reviewed. Omit the
-        # clause for those rather than rendering "The quality is -1 of 5."
+        # clause for those rather than rendering "The quality is -1 of 5." Speed uses
+        # the same sentinel.
         return [
             ({"quality": int(quality[i])} if float(quality[i]) >= 0 else {})
             | {"mistake": bool(mistake[i] > 0.5)}
-            | ({"speed": int(speed[i])} if speed is not None else {})
+            | ({"speed": int(speed[i])} if speed is not None and float(speed[i]) >= 0 else {})
             for i in range(batch_size)
         ]
 

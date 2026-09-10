@@ -91,10 +91,10 @@ def test_anchor_encoding_subtracts_state_from_action_in_matching_slots():
 
 
 def test_metadata_clause_partial_rendering():
-    prompt = build(metadata={"quality": 5, "mistake": False, "speed": "fast"})
+    prompt = build(metadata={"quality": 5, "mistake": False, "speed": 4})
     assert "The quality is 5 of 5." in prompt
     assert "The robot made no mistakes." in prompt
-    assert "The speed is fast." in prompt
+    assert "The speed is 4 of 5." in prompt
 
     prompt = build(metadata={"mistake": True})
     assert "The robot made a mistake." in prompt

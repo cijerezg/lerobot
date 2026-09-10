@@ -8,7 +8,7 @@ Checks per dataset:
  1. data/ + videos/ + depth/ are HARDLINKS to the source (same inode) — nothing copied,
     nothing to diverge, originals safe.
  2. state/action are bit-identical to the source parquet.
- 3. `load_metadata_rows` (the function rl_offline.py calls) parses both parquets.
+ 3. `load_metadata_rows` (the function rl_offline.py calls) parses all three parquets.
  4. `ReplayBuffer.materialize_metadata` broadcasts them into per-frame columns with the
     coverage and values the label files imply.
  5. Every frame of every episode is covered by exactly one quality segment.
@@ -76,9 +76,10 @@ def main():
         check(np.array_equal(s_new, s_old) and np.array_equal(a_new, a_old),
               f"state/action bit-identical to source ({s_new.shape})")
 
-        ep_rows, mis_rows = load_metadata_rows(dst)
-        check(len(ep_rows) > 0 and len(mis_rows) >= 0,
-              f"load_metadata_rows -> {len(ep_rows)} segment rows, {len(mis_rows)} mistake rows")
+        ep_rows, mis_rows, speed_rows = load_metadata_rows(dst)
+        check(len(ep_rows) > 0 and len(mis_rows) >= 0 and len(speed_rows) == len(ep_rows),
+              f"load_metadata_rows -> {len(ep_rows)} segment rows, {len(mis_rows)} mistake rows, "
+              f"{len(speed_rows)} speed rows")
 
         n = len(s_new)
         buf = ReplayBuffer(capacity=n, device="cpu", storage_device="cpu")
@@ -86,9 +87,11 @@ def main():
         # _initialize_storage only runs on the first add(); materialize_metadata is
         # called before any transition lands, so stand the containers up the same way.
         buf.complementary_info, buf.complementary_info_keys = {}, []
-        buf.materialize_metadata(ep_rows, mis_rows)
+        buf.materialize_metadata(ep_rows, mis_rows, speed_rows)
         q = buf.complementary_info["metadata_quality"].float().numpy()
         m = buf.complementary_info["metadata_mistake"].float().numpy()
+        sp = buf.complementary_info["metadata_speed"].float().numpy()
+        check(set(np.unique(sp)).issubset({1.0, 2.0, 3.0, 4.0, 5.0}), f"speed values {sorted(set(np.unique(sp)))}")
         check(not (q < 0).any(), f"every frame has a quality (no -1 left); mean {q.mean():.2f}")
         check(set(np.unique(q)).issubset({1.0, 2.0, 3.0, 4.0, 5.0}), f"quality values {sorted(set(np.unique(q)))}")
         share = {int(v): round(float((q == v).mean()), 3) for v in (1, 2, 3, 4, 5)}

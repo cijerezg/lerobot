@@ -209,21 +209,38 @@ def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
         stats[key] = pooled
 
 
-def load_metadata_rows(root) -> tuple[list[dict], list[dict]]:
+# Which speed table of a ReBot root the run trains on. Candidates live side by side and
+# none is overwritten; this names the adopted one and must describe the same method as
+# SPEED_ATOMS_VIEW (datasets/diverse_corpus.py), because both halves of the mixture feed
+# one "The speed is N of 5." clause.
+#   speed.parquet            v4, work-normalized duration — rejected 2026-09-09
+#   speed_hybrid_v1.parquet  v7, 1 s smoothed arm motion against the ReBot training
+#                            percentiles nudged <= 0.35 bucket toward the duration label
+#                            — ADOPTED 2026-09-09 (same method as the corpus' v6)
+REBOT_SPEED_TABLE = "speed_hybrid_v1.parquet"
+
+
+def load_metadata_rows(root) -> tuple[list[dict], list[dict], list[dict]]:
     """Read meta/episode_metadata.parquet + meta/mistakes.parquet (written by
-    metadata_annotate.py) into the inputs ReplayBuffer.materialize_metadata
-    expects. Raises when missing: metadata_enabled requires annotated datasets."""
+    metadata_annotate.py) + the adopted speed table (REBOT_SPEED_TABLE) into the inputs
+    ReplayBuffer.materialize_metadata expects. Raises when any is missing:
+    metadata_enabled requires fully annotated datasets."""
     meta = Path(root) / "meta"
-    for name in ("episode_metadata.parquet", "mistakes.parquet"):
+    for name, tool in (
+        ("episode_metadata.parquet", "metadata_annotate.py"),
+        ("mistakes.parquet", "metadata_annotate.py"),
+        (REBOT_SPEED_TABLE, "the speed pass that writes " + REBOT_SPEED_TABLE),
+    ):
         if not (meta / name).exists():
             raise FileNotFoundError(
-                f"metadata_enabled but {meta / name} is missing — run metadata_annotate.py on this dataset."
+                f"metadata_enabled but {meta / name} is missing — run {tool} on this dataset."
             )
     import pandas as pd
 
     episode_rows = pd.read_parquet(meta / "episode_metadata.parquet").to_dict("records")
     mistake_rows = pd.read_parquet(meta / "mistakes.parquet").to_dict("records")
-    return episode_rows, mistake_rows
+    speed_rows = pd.read_parquet(meta / REBOT_SPEED_TABLE).to_dict("records")
+    return episode_rows, mistake_rows, speed_rows
 
 
 def _idx_to_name(dataset, table_name: str, index_column: str, text_column: str) -> dict[int, str]:

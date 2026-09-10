@@ -87,3 +87,47 @@ def test_parent_reference_cannot_label_atoms(diverse,tmp_path):
     ref=tmp_path/'reference.json';data=reference();data.pop('diverse_layer');ref.write_text(json.dumps(data))
     with pytest.raises(ValueError,match='layer differ'):
         speed.cmd_annotate_diverse(Namespace(reference=str(ref),diverse=str(diverse),diverse_layer='atoms',force=False))
+
+
+def conservative_reference():
+    ref = reference()
+    ref['unclear_policy'] = 'atoms_default_3_v1'
+    ref['cells']['droid/move'] = {'a': 4.0, 'b': 0.0, 'n': 10}
+    return ref
+
+
+def test_unclear_carry_defaults_and_release_inherits_default(diverse):
+    rows = [r for r in speed.diverse_segments(diverse) if r['source'] == 'droid']
+    rows[0]['confidence'] = 'unsure'
+    result = speed.label(rows, conservative_reference())
+    assert [r['raw_speed'] for r in result] == [5, 5]
+    assert [r['speed'] for r in result] == [3, 3]
+    assert all(r['speed_source'] == 'default_unclear' for r in result)
+    assert result[1]['speed_default_reason'] == 'release inherits an uncertain predecessor'
+
+
+def test_release_does_not_inherit_across_excluded_gap(diverse):
+    rows = [r for r in speed.diverse_segments(diverse) if r['source'] == 'droid']
+    rows[1]['start_timestep'] += 1
+    result = speed.label(rows, conservative_reference())
+    assert [r['speed'] for r in result] == [5, 3]
+    assert result[1]['raw_speed'] == 5
+    assert 'no contiguous' in result[1]['speed_default_reason']
+
+
+def test_supported_carry_release_unchanged_and_rare_action_defaults(diverse):
+    rows = [r for r in speed.diverse_segments(diverse) if r['source'] == 'droid']
+    assert [r['speed'] for r in speed.label(rows, conservative_reference())] == [5, 5]
+    rows[0]['class'] = 'stir'
+    result = speed.label(rows, conservative_reference())
+    assert result[0]['speed'] == 3
+    assert 'too few training' in result[0]['speed_default_reason']
+    assert result[1]['speed'] == 3
+
+
+def test_parent_continuations_flag_both_sides_without_changing_speed(diverse):
+    rows = [r for r in speed.diverse_segments(diverse) if r['source'] == 'droid']
+    rows[1].update(parent_interval_index=1, atom_index=0, subtask=rows[0]['subtask'], **{'class':'move'})
+    result = speed.label(rows, conservative_reference())
+    assert [r['speed'] for r in result] == [5, 5]
+    assert all('same action continues across a parent boundary' in r['speed_flags'] for r in result)
