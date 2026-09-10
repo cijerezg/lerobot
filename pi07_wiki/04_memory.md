@@ -281,7 +281,7 @@ Registered in the validation loop (each runs only when its enable flag is set):
 | `mem_history_regime` | *how many frames* — does history help, does it hurt, and is either real? | $z$ on $\mathrm{MSE}(\mathrm{stale})-\mathrm{MSE}(\mathrm{full})$, the paired test against the same window taken $W$ s too early: below 2 the model reacted to *a* window rather than reading *this* one. Then helped/hurt fractions against $\tau=Q_{0.9}(\|\Delta\|)$ under a reseed alone. Exists because the usefulness bar above is a mean over a population that is half positive: on v6/1600, $+0.00067$ out of 47% helped and 53% hurt. The covariate ranking that used to answer *which* frames was removed 2026-08-10 — every $\rho$ sat at its own noise band and nothing was concluded from it |
 | `mem_temporal_attention` | when and where is history read? | past-attention mass against the uniform-over-time baseline $T/(T+1)$ of the temporal softmax; enrichment ~1 means no selective read survives |
 | `subtask_sweep` | does the subtask clause move the actions at all? | vocabulary spread over a same-clause seed floor; this was P3 of the plan doc, and it gates every claim that memory reaches behaviour |
-| `input_swap` | which input stream does the chunk follow — state, images (+history), or state history? | $2^3$ cube per anchor: each stream taken from the anchor or from a donor frame, all 8 cells in one stacked forward at one flow seed; depth, subtask and metadata stay the anchor's. Donors are `same_episode` (≥4 s away), `matched` (nearest state in another episode — scene changes, pose roughly does not) and `random`. Readouts are per-cell displacement distributions with the three donors side by side, the cube's variance shares, the state-only cell's absolute shift over the state shift, and the policy's all-donor displacement against the demonstrations' own gap over the same pairs. Added 2026-09-05 (`probes/input_swap.py`); `--pairs=anchor:donor,...` runs chosen pairs only and writes an action-inspector dashboard (`trace.html`) of every pair, also written for the full run's nine example pairs |
+| `input_swap` | which input stream does the chunk follow — state, images, or subtask text? | $2^3$ cube per anchor (S/I/T; the state-history switch was removed 2026-09-09): each switch taken from the anchor or from a donor frame, all 8 cells in one stacked forward at one flow seed; depth, the task string and metadata stay the anchor's. Donors are `same_episode` (≥4 s away), `matched` (nearest state in another episode — scene changes, pose roughly does not) and `random`. Readouts are per-cell displacement distributions with the three donors side by side, the cube's variance shares, the state-only cell's absolute shift over the state shift, and the policy's all-donor displacement against the demonstrations' own gap over the same pairs. Added 2026-09-05 (`probes/input_swap.py`); `--pairs=anchor:donor,...` runs chosen pairs only and writes an action-inspector dashboard (`trace.html`) of every pair, also written for the full run's nine example pairs |
 
 The rest of [archive/memory_probes_plan.md](archive/memory_probes_plan.md) (retired
 2026-08-02) was written against the long-term summary memory and its HL decode.
@@ -418,9 +418,19 @@ Design (revised 2026-07-18):
 - **Mistake** — boolean per 4 s subtask window. Produced by a recall-tuned LLM
   suspicion pass (evidence-first score 0–10, thresholded at review time) followed
   by human confirm/reject of flagged windows only; unflagged = clean by definition.
-- **Speed** — **omitted**: single-operator data; pace variation is grasp fumbling,
-  which the mistake channel already carries. The clause renders partially and the
-  extractor tolerates the missing column; backfillable later.
+- **Speed** — per subtask segment, integer 1–5 (added 2026-09-08,
+  `annotate/speed_annotate.py`). Work-normalized duration: $\text{ratio} =
+  (a_{g,c} + b_{g,c} D) / T$ with $T$ the segment's wall time and $D$ its net
+  arm-joint displacement; $(a, b)$ a Theil-Sen fit of $T$ on $D$ per (group,
+  class) cell of the *train* population (median $T$ when the cell is small or
+  uncorrelated). Fixed edges on the ratio, 0.40 / 0.65 / 1.10 / 1.40, so 1–2 mean
+  genuinely slow (>1.5× the expected time) and 5 means under 71% of it; inference
+  asks for 5. Classes: ReBot verb, FMB primitive, RoboChallenge task string,
+  DROID/UR7e coarse verb. Reference table
+  `outputs/stats/speed_reference_rebot-annot-v2-diverse.json`; labels in
+  `meta/speed.parquet` per ReBot root and `speed.jsonl` beside each diverse
+  `critic_intervals.jsonl`. Not yet consumed by the loader (`materialize_metadata`
+  still writes no `metadata_speed` column) or the diverse cache.
 
 Storage mirrors the summaries pattern (window-range parquets, no dataset rewrite):
 `meta/episode_metadata.parquet`, `meta/mistakes.parquet`, `meta/metadata_info.json`.
@@ -443,5 +453,4 @@ Cheap upgrade parked: classifier-free guidance on the metadata clause at inferen
 - **Done-list** (built 2026-07-13, removed 2026-07-15): fill-time
   `materialize_done_lists`, `done_list_ids` column, prompt clause, RTC bookkeeping —
   fully deleted in favor of the MEM summary. The summary IS the budget mechanism.
-- **Speed metadata** — omitted (above).
 - **Subtask token passthrough** (pi05 plan) — obsoleted by the string-level design.

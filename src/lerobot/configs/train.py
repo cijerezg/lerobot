@@ -337,7 +337,7 @@ class ProbeConfig:
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
-    enable_input_swap: bool = False  # inject another frame's state / images(+history) / state history: 2^3 cube per anchor
+    enable_input_swap: bool = False  # inject another frame's state / images / subtask text: 2^3 cube per anchor
 
     # Common
     output_dir: str = "outputs/probe"

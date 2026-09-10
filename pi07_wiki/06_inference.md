@@ -94,10 +94,10 @@ against the real checkpoint (replaced the gate-0 bit-identity probe 2026-07-26 �
 no gate exists under the joint softmax read;
 `uv run python -m lerobot.probes.depth_modality_probe --config config_rl.yaml`).
 `probes/input_swap.py` (2026-09-05) asks which input stream the chunk actually
-follows: for each anchor frame it injects a donor frame's state, images (+history) and
-state history in every one of the $2^3$ combinations — depth, subtask and metadata stay
-the anchor's — all 8 cells in one stacked forward (`adapter.predict_action_chunk_stacked`)
-at one flow seed. Three donors per anchor: a same-episode frame at least 4 s away, the
+follows: for each anchor frame it injects a donor frame's state, images and subtask text
+in every one of the $2^3$ combinations (S/I/T; the state-history switch was removed
+2026-09-09) — depth, the task string and metadata stay the anchor's — all 8 cells in one
+stacked forward (`adapter.predict_action_chunk_stacked`) at one flow seed. Three donors per anchor: a same-episode frame at least 4 s away, the
 state-matched frame of another episode (the scene intervention) and a random other-episode
 frame. Standalone on the val set, one `output_dir` for every checkpoint so the viewer's
 Trends page lines them up:

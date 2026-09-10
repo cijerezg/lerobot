@@ -5,14 +5,12 @@ which each of the switched streams comes either from the anchor or from the dono
 
     S  state          ``observation.state`` — the current joints, which is also the
                       anchor the relative action chunk is decoded against
-    I  image          both cameras (``observation.images.*``) and their history windows
-    H  state history  ``history.observation.state`` (only when the policy carries one)
+    I  image          both cameras (``observation.images.*``)
     T  subtask text   the prompt's subtask clause ("The current step is ...")
 
-Everything else — wrist depth and its history, the metadata clause, the task string —
-stays the anchor's own in every cell. The switches give $2^k$ inputs, the cells of a
-cube: $2^3 = 8$ for a policy without state history (S/I/T), $2^4 = 16$ with it
-(S/I/H/T). A cell is named by the switches flipped to the donor: ``...`` is the
+Everything else — wrist depth, the metadata clause, the task string — stays the
+anchor's own in every cell. The switches give $2^3 = 8$ inputs, the cells of the S/I/T
+cube. A cell is named by the switches flipped to the donor: ``...`` is the
 anchor's own prompt (the reference), ``.I.`` has only the donor's images, ``..T`` is
 the anchor's frame under the donor's subtask text, ``SIT`` the donor's frame and text
 under the anchor's depth.
@@ -21,16 +19,15 @@ All cells run in ONE forward pass with ONE flow-noise draw (``adapter.flow_noise
 so two cells differ only in what was swapped; the pack step builds every row's prompt
 from its own subtask string, so the T cells share the batch too.
 
-The S and I readouts are the same measurements whichever other switches the cube
-carries, so they compare across checkpoints trained with and without history and with
-runs of the probe from before the T switch existed.
+The S and I readouts are the same measurements as in the probe's runs from before the
+T switch existed, so they compare across them.
 
 **The T switch is a no-op when both frames carry the same subtask text** (a same-episode
 donor inside the same segment, a matched donor at the same phase of the same object):
 the T cells then duplicate their partners and every T contrast is exactly zero. Each
 pair records ``subtask_differs``, and every T-specific number in the summary — the T
 cells' displacement, the T main effect, the T and interaction variance shares — is
-taken over the pairs whose texts differ, with its own ``n``. The S, I and H numbers, the
+taken over the pairs whose texts differ, with its own ``n``. The S and I numbers, the
 spread and the all-donor corner stay over every pair: a duplicated T cell leaves them
 unchanged.
 
@@ -140,12 +137,11 @@ from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
 # The switches in bit order: the state is bit 0 (``_state_follow`` reads the S-only cell
-# there), the images bit 1, the state history bit 2 when the policy carries one, the
-# subtask text last.
-FACTOR_LETTERS = {"state": "S", "image": "I", "state_history": "H", "subtask": "T"}
-INTERACTION_NAMES = {2: "two_way", 3: "three_way", 4: "four_way"}
+# there), the images bit 1, the subtask text bit 2.
+FACTOR_LETTERS = {"state": "S", "image": "I", "subtask": "T"}
+INTERACTION_NAMES = {2: "two_way", 3: "three_way"}
 # Switches that select observation keys; the subtask switch selects the prompt text.
-OBS_FACTORS = ("state", "image", "state_history")
+OBS_FACTORS = ("state", "image")
 DONOR_KINDS = ("same_episode", "matched", "random")
 # A same-episode donor sits at least this far from the anchor in time: closer frames
 # share the pose and the scene and swapping them changes nothing worth measuring.
@@ -157,10 +153,8 @@ MATCH_GRIPPER_TOL = 25.0
 # before its state-follow ratio is read; below it the ratio is a division by noise.
 STATE_FOLLOW_MIN_STD = 0.05
 
-FACTOR_COLORS = {"state": "#1f77b4", "image": "#2ca02c", "state_history": "#9467bd", "subtask": "#ff7f0e"}
-FACTOR_LEGEND = {
-    "state": "blue state", "image": "green images", "state_history": "purple state history", "subtask": "orange subtask text",
-}
+FACTOR_COLORS = {"state": "#1f77b4", "image": "#2ca02c", "subtask": "#ff7f0e"}
+FACTOR_LEGEND = {"state": "blue state", "image": "green images", "subtask": "orange subtask text"}
 REF_COLOR = "#000000"
 ALL_DONOR_COLOR = "#d62728"
 KIND_COLORS = {"same_episode": "#2a9d8f", "matched": "#e07b00", "random": "#5b2c83"}
@@ -183,18 +177,9 @@ class InputSwapProbeConfig(TrainRLServerPipelineConfig):
 
 @dataclass(frozen=True)
 class Cube:
-    """The switches of one run, in bit order, and the cells they span."""
+    """The switches in bit order and the cells they span."""
 
     factors: tuple[str, ...]
-
-    @classmethod
-    def for_config(cls, cfg) -> "Cube":
-        memory = getattr(cfg.policy, "memory", None)
-        with_state_history = (
-            memory is not None and OBS_STATE in memory.history_keys and memory.history_num_samples > 0
-        )
-        streams = ("state", "image", "state_history") if with_state_history else ("state", "image")
-        return cls((*streams, "subtask"))
 
     @property
     def letters(self) -> str:
@@ -210,7 +195,7 @@ class Cube:
 
     @property
     def interaction_keys(self) -> tuple[str, ...]:
-        """Variance-share keys for the interactions, by order: ("two_way",) or ("two_way", "three_way")."""
+        """Variance-share keys for the interactions, by order: ("two_way", "three_way")."""
         return tuple(INTERACTION_NAMES[order] for order in range(2, len(self.factors) + 1))
 
     @property
@@ -219,7 +204,7 @@ class Cube:
 
     @property
     def streams_text(self) -> str:
-        names = {"state": "state", "image": "images", "state_history": "state history", "subtask": "subtask text"}
+        names = {"state": "state", "image": "images", "subtask": "subtask text"}
         words = [names[f] for f in self.factors]
         return ", ".join(words[:-1]) + " or " + words[-1]
 
@@ -249,14 +234,12 @@ class Cube:
         return self.code(mask)
 
     def shown_cells(self) -> list[int]:
-        """Single-stream cells, then multi-stream cells, then the all-donor corner, each once
-        (on the square "all but S" is "I only")."""
-        cells = [self.single_in(i) for i in range(len(self.factors))]
-        for i in range(len(self.factors)):
-            mask = self.all_but(i)
-            if mask not in cells and mask != self.all_donor:
-                cells.append(mask)
-        return cells + [self.all_donor]
+        """Single-stream cells, then two-stream cells, then the all-donor corner."""
+        n = len(self.factors)
+        return [self.single_in(i) for i in range(n)] + [self.all_but(i) for i in range(n)] + [self.all_donor]
+
+
+CUBE = Cube(("state", "image", "subtask"))
 
 
 def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]]:
@@ -273,11 +256,9 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
         name = str(key)
         if name == OBS_STATE:
             groups["state"].append(key)
-        elif name == f"history.{OBS_STATE}" and "state_history" in groups:
-            groups["state_history"].append(key)
-        elif name.startswith("observation.images.") or name.startswith("history.observation.images."):
+        elif name.startswith("observation.images."):
             groups["image"].append(key)
-        elif name.startswith("observation.depth.") or name.startswith("history.depth."):
+        elif name.startswith("observation.depth."):
             fixed.append(key)
         else:
             raise KeyError(f"observation key {key!r} belongs to no swap switch")
@@ -391,9 +372,9 @@ def _factorial_shares(cells: np.ndarray, cube: Cube) -> dict[str, float]:
 
     With $N$ cells, $h_S(c) = (-1)^{|c \\wedge S|}$ and $\\beta_S = \\frac{1}{N}\\sum_c h_S(c)\\,a_c$,
     $\\sum_c \\|a_c - \\bar a\\|^2 = N \\sum_{S \\neq \\emptyset} \\|\\beta_S\\|^2$; each share
-    is $\\|\\beta_S\\|^2$ over that sum, interactions grouped by order (``two_way``, and
-    ``three_way`` on the cube). ``spread`` is the RMS deviation of the cells around their
-    mean, in the cells' own units.
+    is $\\|\\beta_S\\|^2$ over that sum, interactions grouped by order (``two_way``,
+    ``three_way``). ``spread`` is the RMS deviation of the cells around their mean, in
+    the cells' own units.
     """
     x = cells.reshape(cube.n_cells, -1)
     masks = np.arange(cube.n_cells)
@@ -405,8 +386,7 @@ def _factorial_shares(cells: np.ndarray, cube: Cube) -> dict[str, float]:
     scale = total if total > 0 else 1.0
     shares = {factor: beta[1 << i] / scale for i, factor in enumerate(cube.factors)}
     for order, name in INTERACTION_NAMES.items():
-        if order <= len(cube.factors):
-            shares[name] = sum(v for s, v in beta.items() if bin(s).count("1") == order) / scale
+        shares[name] = sum(v for s, v in beta.items() if bin(s).count("1") == order) / scale
     shares["spread"] = float(np.sqrt(total / x.shape[1]))
     return shares
 
@@ -643,12 +623,8 @@ def _render_distributions(rows: list[dict], summary: dict, output_path: str, cub
             if mask & t_bit and mask != cube.all_donor:
                 rows_k = [r for r in rows_k if r["subtask_differs"]]
             _box(ax, pos + offset, [r["rms"][mask] for r in rows_k], KIND_COLORS[kind], width=0.22)
-    # Separators: after the single-stream cells, and before the all-donor corner when
-    # multi-stream cells sit between them (the cube; the square has none).
-    boundaries = [len(cube.factors) - 0.5]
-    if len(cells) > len(cube.factors) + 1:
-        boundaries.append(len(cells) - 1.5)
-    for boundary in boundaries:
+    # Separators: after the single-stream cells and before the all-donor corner.
+    for boundary in (len(cube.factors) - 0.5, len(cells) - 1.5):
         ax.axvline(boundary, color="#dddddd", linewidth=0.8)
     if reseed:
         ax.axhline(reseed, color="#555555", linestyle="--", linewidth=0.9)
@@ -715,13 +691,8 @@ def _render_per_joint(summary: dict, joint_names: list[str], output_path: str, c
 
 def _render_shares(summary: dict, output_path: str, cube: Cube) -> None:
     keys = (*cube.factors, *cube.interaction_keys)
-    labels = {
-        **{f: f"{f} (main effect)" for f in cube.factors},
-        "two_way": "two-way interactions" if len(cube.factors) > 2 else "two-way interaction",
-        "three_way": "three-way interactions" if len(cube.factors) > 3 else "three-way interaction",
-        "four_way": "four-way interaction",
-    }
-    colors = [*(FACTOR_COLORS[f] for f in cube.factors), "#bbbbbb", "#777777", "#444444"][: len(keys)]
+    labels = {**{f: f"{f} (main effect)" for f in cube.factors}, "two_way": "two-way interactions", "three_way": "three-way interaction"}
+    colors = [*(FACTOR_COLORS[f] for f in cube.factors), "#bbbbbb", "#777777"]
     fig, ax = plt.subplots(figsize=(8.5, 4.8))
     for x, kind in enumerate(DONOR_KINDS):
         block = summary["kinds"][kind]["variance_share"]
@@ -851,19 +822,13 @@ def _render_state_follow(summary: dict, output_path: str, cube: Cube) -> None:
 
 def _cell_lines(cube: Cube) -> list[tuple[int, str, str, float, str]]:
     """(mask, label, colour, width, dash) per drawn cell: the reference and the all-donor
-    corner heavy, one stream from the donor solid, two streams dotted (cube only: on the
-    square every two-stream cell is the all-donor corner or a single-stream cell)."""
+    corner heavy, one stream from the donor solid, two streams dotted."""
     lines = [
         (0, f"anchor's own ({cube.code(0)})", REF_COLOR, 2.2, "-"),
         (cube.all_donor, f"all donor ({cube.code(cube.all_donor)})", ALL_DONOR_COLOR, 1.8, "-"),
     ]
     lines += [(cube.single_in(i), f"{cube.letters[i]} only ({f})", FACTOR_COLORS[f], 1.3, "-") for i, f in enumerate(cube.factors)]
-    drawn = {mask for mask, *_ in lines}
-    lines += [
-        (cube.all_but(i), f"all but {cube.letters[i]}", FACTOR_COLORS[f], 0.9, ":")
-        for i, f in enumerate(cube.factors)
-        if cube.all_but(i) not in drawn
-    ]
+    lines += [(cube.all_but(i), f"all but {cube.letters[i]}", FACTOR_COLORS[f], 0.9, ":") for i, f in enumerate(cube.factors)]
     return lines
 
 
@@ -1211,7 +1176,7 @@ def _write_manifest(output_dir: str, summary: dict, example_files: list[tuple[st
                     fmt=3,
                     baseline=reseed,
                     primary=(kind == "matched"),
-                    trend=(kind == "matched" and factor in ("state", "image", "subtask")),
+                    trend=(kind == "matched"),
                     note=(
                         "Median over the pairs whose subtask texts differ of the normalized RMS distance from the anchor's own chunk (a shared text makes this cell a duplicate)."
                         if factor == "subtask"
@@ -1300,7 +1265,7 @@ def _write_manifest(output_dir: str, summary: dict, example_files: list[tuple[st
         summary=summary,
         metrics=metrics,
         panels=panels,
-        see_also=["depth_modality", "mem_history_influence", "subtask_sweep", "action_trace"],
+        see_also=["depth_modality", "subtask_sweep", "action_trace"],
     )
 
 
@@ -1313,7 +1278,7 @@ def _write_pairs_manifest(output_dir: str, summary: dict, example_files: list[tu
             metrics.append(Metric(
                 f"pairs.{name}.headline.single_in_displacement.{factor}",
                 f"{name} ({where}): chunk displacement when only the {factor} comes from the donor",
-                fmt=3, baseline=reseed, primary=(factor == "image"), trend=(factor in ("state", "image", "subtask")),
+                fmt=3, baseline=reseed, primary=(factor == "image"), trend=True,
                 note="Normalized RMS distance from the anchor's own chunk. The baseline is the distance between two flow seeds on the same input, for scale.",
             ))
         metrics.append(Metric(
@@ -1368,7 +1333,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     seed = int(p.random_seed)
     n_reseeds = max(int(p.n_seeds) - 1, 1)
     rng = np.random.RandomState(seed)
-    cube = Cube.for_config(cfg)
+    cube = CUBE
 
     table = _frame_table(dataset, stride)
     grid = table["global_idx"]
