@@ -265,25 +265,22 @@ policy:
   metadata_dropout: 0.0
 
   # Operator subtask console (eval only). Non-empty REPLACES decoding: the generation
-  # head is untrained (subtask_loss_weight 0.0), so the operator latches the current
-  # step by keypress instead. Strings are free text — a rendered chord that matches the checkpoint's
-  # pooled subtask vocabulary logs its index, anything else logs subtask_index -1.
-  # Chord = verb key (q w e r) THEN object key (a s ...); return to home sends on r alone.
-  # First verb x first object is the episode default (and what a reset falls back to). Empty = decode.
+  # head is untrained (subtask_loss_weight 0.0), so the operator walks this script by
+  # keypress instead: n = next step, b = back one step. An episode starts on and resets
+  # to the first entry; the cursor clamps at both ends. Reorder by editing this list.
+  # Strings are free text — an entry that matches the checkpoint's pooled vocabulary logs
+  # its index, anything else logs subtask_index -1 (misses are listed at startup). Empty = decode.
   # Latency: a press lands on the next chunk build, so press ~0.5s ahead of the transition.
   # Letters, not digits: the 102HD leader's handover keys are 0/1/2/5 and both listeners are global.
   eval_subtasks:
-    verbs:
-      "q": "grasp the {object}"
-      "w": "move the {object} to the {container}"
-      "e": "release the {object} in the {container}"
-      "r": "return to home"
-    objects:
-      "a": "black sock"
-      "s": "red shirt"
-    containers:
-      "black sock": "basket"
-      "red shirt": "bin"
+    - grasp the black sock
+    - move the black sock to the basket
+    - release the black sock in the basket
+    - return to home
+    - grasp the red shirt
+    - move the red shirt to the bin
+    - release the red shirt in the bin
+    - return to home
   memory:
     metadata_enabled: true                # quality/mistake loaded from dataset meta; hard-errors until metadata_annotate.py finalize has run
     history_dropout: 0.0                  # keep the full state/RGB/depth history block on every training sample

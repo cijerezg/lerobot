@@ -32,6 +32,25 @@ def test_clear_subtask_state():
     assert shared.subtask_snapshot() == (None, -1)
 
 
+def test_subtask_script_walk():
+    shared = RTCSharedState()
+    shared.set_subtask_script([("grasp the cup", 1), ("return to home", 5), ("wiggle", -1)])
+    assert shared.subtask_snapshot() == ("grasp the cup", 1)
+
+    assert shared.advance_subtask(1) == 1
+    assert shared.advance_subtask(1) == 2
+    assert shared.subtask_snapshot() == ("wiggle", -1)
+    # Clamped at the end, then back one.
+    assert shared.advance_subtask(1) == 2
+    assert shared.advance_subtask(-1) == 1
+    assert shared.subtask_snapshot() == ("return to home", 5)
+
+    # Episode reset rewinds to the first entry; back clamps at the start.
+    shared.clear_subtask_state()
+    assert shared.subtask_snapshot() == ("grasp the cup", 1)
+    assert shared.advance_subtask(-1) == 0
+
+
 def test_extract_metadata_from_columns():
     import torch
 

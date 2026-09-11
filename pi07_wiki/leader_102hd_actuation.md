@@ -325,7 +325,7 @@ stop. The leader is still unloaded at the keypress, so any sag before the grip i
 follower follows; damping at the handover (stop mode 0x12 instead of 0x10) is the untested fix.
 
 Operator keys: the leader owns 0/1/2/5 (terminate/success/start/intervention) globally through
-pynput; `eval_subtasks` therefore binds letters (verbs q w e r, objects a s d f).
+pynput; the `eval_subtasks` console therefore uses letters (n next, b back).
 
 ---
 

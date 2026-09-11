@@ -241,12 +241,13 @@ class RTCSharedState:
         self.episode_active = False
         self.history_offsets: dict[str, list[int]] | None = None
         self.history_entries: deque | None = None
-        # Current subtask: decoded by the high-level query, or latched by the
-        # operator console. default_subtask is what an episode reset falls back to
-        # (None until the console installs its first binding).
+        # Current subtask: decoded by the high-level query, or walked by the operator
+        # console through subtask_script (the rollout's steps in order, cursor 0 on
+        # episode reset; empty = decode path).
         self.current_subtask_name: str | None = None
         self.current_subtask_index: int = -1
-        self.default_subtask: tuple[str | None, int] = (None, -1)
+        self.subtask_script: list[tuple[str, int]] = []
+        self.subtask_cursor: int = 0
         self.policy_reset_requested = False
         self.update_parameters_requested = False
         self.running = True
@@ -423,15 +424,28 @@ class RTCSharedState:
         with self.lock:
             return self.current_subtask_name, self.current_subtask_index
 
-    def set_default_subtask(self, name: str, index: int) -> None:
+    def set_subtask_script(self, script: list[tuple[str, int]]) -> None:
         with self.lock:
-            self.default_subtask = (name, index)
-            self.current_subtask_name = name
-            self.current_subtask_index = index
+            self.subtask_script = list(script)
+            self._seek_subtask(0)
+
+    def advance_subtask(self, delta: int) -> int:
+        """Move the script cursor by delta, clamped to the script; returns the new cursor."""
+        with self.lock:
+            self._seek_subtask(min(max(self.subtask_cursor + delta, 0), len(self.subtask_script) - 1))
+            return self.subtask_cursor
 
     def clear_subtask_state(self) -> None:
         with self.lock:
-            self.current_subtask_name, self.current_subtask_index = self.default_subtask
+            self._seek_subtask(0)
+
+    def _seek_subtask(self, cursor: int) -> None:
+        # Lock held by the caller. No script (decode path) leaves the clause blank.
+        self.subtask_cursor = cursor
+        if self.subtask_script:
+            self.current_subtask_name, self.current_subtask_index = self.subtask_script[cursor]
+        else:
+            self.current_subtask_name, self.current_subtask_index = None, -1
 
     def push_history(self, entry: dict) -> None:
         with self.lock:
@@ -1600,11 +1614,9 @@ def act_with_policy_rtc_inference(
             teleop_device.start_trace(Path(cfg.output_dir) / "leader_trace.csv")
         action_queue = ActionQueue(policy.config.rtc_config)
 
-        # Operator subtask console: free-text bindings, indexed against the checkpoint
+        # Operator subtask console: the scripted steps, indexed against the checkpoint
         # vocabulary where they match (else -1) for the buffer's subtask_index column.
         subtask_console = make_subtask_console(cfg, trainer, preprocessor, shared)
-        if subtask_console is not None:
-            shared.set_default_subtask(*subtask_console.initial)
 
         post_inference_hook = None
         if post_inference_hook_factory is not None:

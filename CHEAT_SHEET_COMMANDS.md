@@ -116,9 +116,10 @@ uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 The checkpoint is `inference_checkpoint_path` in config_rl.yaml (falls back to
 `policy.pretrained_path`); it must be a complete `checkpoints/<step>/pretrained_model`
 dir. `inference_send_actions_to_robot: false` is the safety preflight: the follower is
-read but never commanded, actions go out through the leader feedback path. Subtasks are
-fed by keypress from `policy.eval_subtasks`: press a verb key (q w e r) then an object key
-(a s d f); the object press renders the verb's template and sends it. r (return to home) sends alone.
+read but never commanded, actions go out through the leader feedback path. Subtasks come
+from the `policy.eval_subtasks` script (the steps in order, free text): `n` advances to the
+next entry, `b` steps back; an episode starts on and resets to the first entry. Reorder by
+editing the list.
 
 ## Probe viewer
 
