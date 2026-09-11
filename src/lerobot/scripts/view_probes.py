@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import mimetypes
 import re
 import threading
@@ -269,8 +270,21 @@ def build_index(val_dir: Path) -> dict:
 
 # ── HTTP plumbing ────────────────────────────────────────────────────────────
 
+def _finite(value):
+    """NaN and Infinity are legal in Python's json output and illegal in JSON proper, so
+    one nan metric (an empty group, a null a split cannot form) makes the browser's parse
+    throw and blanks the whole viewer. They arrive as null instead."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: _finite(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_finite(item) for item in value]
+    return value
+
+
 def _json_response(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200) -> None:
-    body = json.dumps(payload).encode("utf-8")
+    body = json.dumps(_finite(payload)).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))

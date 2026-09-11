@@ -164,6 +164,45 @@ Other flags: `--dry-run` (prints the plan, needs no DGX), `--keep-checkpoint`,
 `--out DIR`, `--config PATH`, and a leading code-tree argument to ship a different
 checkout, e.g. `remote_validate.sh lerobot-tinypi outputs/.../checkpoints/000400`.
 
+## Chasing a run's checkpoints (overnight)
+
+Keep the DGX busy for a whole training run instead of probing one checkpoint by hand:
+
+lerobot/scripts/chase_validate.sh outputs/molmoact2_rebot_diverse_speed_v1
+
+It watches `<run>/checkpoints/` and hands the NEWEST unprobed step to `remote_validate.sh`,
+one pass at a time. Checkpoints that land while a pass is in flight are marked `.skipped`,
+never queued - the DGX always works on the freshest weights. The newest step is read from
+the step directories themselves, not `checkpoints/last`, and a directory is only shipped
+once its byte size stops changing (`--settle`, default 20 s), so a half-written save never
+moves. A failed pass is retried (`--retries`, default 2) and then recorded, and the chase
+moves on to the next checkpoint rather than stalling the box.
+
+Only one pass runs on the box at a time: the chase takes an flock on
+`outputs/remote_val/.dgx.lock` and defers a checkpoint to the next scan if it cannot get
+it. Re-running a checkpoint by hand while the chase is up must take the same lock:
+
+    flock outputs/remote_val/.dgx.lock lerobot/scripts/remote_validate.sh <ckpt>
+
+State is on disk under `<run>/validation/.chase/` - `<step>.ok`, `<step>.failed` (holding
+the exit code), `<step>.skipped`, `log.<step>`, `chase.log` - so a restart re-probes
+nothing. Results land in `<run>/validation/step_<step>/`, which `view_probes` reads live.
+
+It exits when the training process it followed exits (after a final pass on the last
+checkpoint) or when told to stop. A restarted `rl_offline` is adopted rather than treated
+as the end of the run:
+
+    touch outputs/<run>/validation/.chase/STOP    # stops after the pass in flight
+
+Detach it for the night, and pass any `remote_validate.sh` flags after `--`:
+
+    setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> > /dev/null 2>&1 &
+    lerobot/scripts/chase_validate.sh outputs/<run> -- --host dgx --keep-checkpoint
+
+`--pid N` follows a specific training process; without it the chaser attaches to the
+running `rl_offline` (and, if there is none, runs until STOP).
+
+
 
 
 # probe motors
