@@ -8,6 +8,7 @@ Actor prompt conditioning is subtask + metadata clauses (no advantage clause).
 
 from __future__ import annotations
 
+import collections
 import logging
 from copy import deepcopy
 from pathlib import Path
@@ -18,6 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from lerobot.rl.rl_trainer import Trainer
+from lerobot.rl.stochastic_rounding_adamw import StochasticRoundingAdamW
 from lerobot.utils.constants import (
     ACTION,
     CHECKPOINTS_DIR,
@@ -50,6 +52,44 @@ def _is_actor_depth_parameter(name: str) -> bool:
             "depth_gripper_event_head",
         )
     )
+
+
+def _weight_block_of(name: str) -> str:
+    """Blocks of the 2026-09-11 weight-delta audit (migration/weight_deltas_2026-09-11)."""
+    if name.startswith("model.model.transformer"):
+        return "vlm"
+    if name.startswith("model.lm_head"):
+        return "lm_head"
+    if name.startswith("model.model.action_expert"):
+        return "action_expert"
+    if name.startswith("model.model.vision_backbone"):
+        return "vit"
+    if _is_actor_depth_parameter(name):
+        return "depth"
+    return "other"
+
+
+def _rounding_telemetry(policy: nn.Module, optimizers: list[StochasticRoundingAdamW]) -> dict[str, float]:
+    """Per block and in total: optim/moved_frac = fraction of bf16 elements whose stored value
+    changed this step; optim/rn_moved_frac = the fraction nearest rounding would have changed on
+    the same update (the regime of every run before optimizer_stochastic_rounding)."""
+    stats = {}
+    for opt in optimizers:
+        stats.update(opt.step_stats)
+    moved = collections.defaultdict(int)
+    rn_moved = collections.defaultdict(int)
+    numel = collections.defaultdict(int)
+    for name, p in policy.named_parameters():
+        if p in stats:
+            for block in (_weight_block_of(name), "total"):
+                moved[block] = moved[block] + stats[p][0]
+                rn_moved[block] = rn_moved[block] + stats[p][1]
+                numel[block] += p.numel()
+    out = {}
+    for block in numel:
+        out[f"optim/moved_frac/{block}"] = moved[block].item() / numel[block]
+        out[f"optim/rn_moved_frac/{block}"] = rn_moved[block].item() / numel[block]
+    return out
 
 
 def _actor_depth_component(name: str) -> str | None:
@@ -1159,6 +1199,14 @@ class MolmoAct2Trainer(Trainer):
 
         actor_grad_norm = runtime.clip_grad_norm_(actor_params, clip_norm).item()
 
+        # bf16 rounding telemetry, only with optimizer_stochastic_rounding (see _rounding_telemetry).
+        rounding_optimizers = []
+        for opt in (policy_opt, depth_opt):
+            inner = getattr(opt, "optimizer", opt)  # accelerate wraps the optimizer
+            if isinstance(inner, StochasticRoundingAdamW):
+                inner.collect_stats = capture_modality_telemetry
+                rounding_optimizers.append(inner)
+
         policy_opt.step()
         if depth_opt is not None:
             depth_opt.step()
@@ -1167,6 +1215,8 @@ class MolmoAct2Trainer(Trainer):
                 raw_policy.future_visual.optimizer_step(raw_policy._backbone().vision_backbone.image_vit)
 
         accum["actor_grad_norm"] = actor_grad_norm
+        if capture_modality_telemetry and rounding_optimizers:
+            accum.update(_rounding_telemetry(raw_policy, rounding_optimizers))
         # depth_token_rms_ratio is captured inside the micro-batch loop, right after the
         # training forward — see the note there.
 
@@ -1496,7 +1546,11 @@ class MolmoAct2Trainer(Trainer):
 
     @classmethod
     def _aim_metrics(cls, training_infos: dict) -> dict:
-        return {key: value for key, value in training_infos.items() if key in cls._AIM_METRIC_KEYS}
+        return {
+            key: value
+            for key, value in training_infos.items()
+            if key in cls._AIM_METRIC_KEYS or key.startswith("optim/")
+        }
 
     def log_metrics(
         self,
@@ -1528,6 +1582,8 @@ class MolmoAct2Trainer(Trainer):
             "depth_injected_token_rms",
             "depth_late_early_rms_ratio",
             "depth_grad_norm_preclip",
+            "optim/moved_frac/total",
+            "optim/rn_moved_frac/total",
         )
         console_scalars = {
             k: training_infos[k] for k in console_keys if isinstance(training_infos.get(k), (int, float))

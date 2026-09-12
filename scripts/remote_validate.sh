@@ -208,8 +208,11 @@ EOF
 
   sshx "mkdir -p '$STATE' && rm -f '$STATE/exit_code' && : > '$RLOG'" || die "cannot prepare $RUN_DIR on $HOST"
   rsync -a -e "ssh ${SSH_OPTS[*]}" "$launcher" "$HOST:$launcher" || die "launcher rsync failed"
-  sshx "rm -f '$STATE/pid'; cd '$WS' && setsid nohup bash '$launcher' >> '$RLOG' 2>&1 < /dev/null & disown" \
-    || die "failed to launch on $HOST"
+  # This ssh occasionally never returns although the job is up (2026-09-03, 2026-09-11); the
+  # pid poll below is the real launch check, so a timed-out ssh (rc 124) is not a failure.
+  timeout 60 ssh "${SSH_OPTS[@]}" "$HOST" \
+    "rm -f '$STATE/pid'; cd '$WS' && setsid nohup bash '$launcher' >> '$RLOG' 2>&1 < /dev/null & disown"
+  rc=$?; (( rc == 0 || rc == 124 )) || die "failed to launch on $HOST (rc=$rc)"
   REMOTE_PID=""
   for _ in $(seq 30); do
     REMOTE_PID="$(sshx "cat '$STATE/pid' 2>/dev/null" || true)"

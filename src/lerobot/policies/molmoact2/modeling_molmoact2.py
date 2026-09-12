@@ -1652,7 +1652,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 pm_config,
                 d_mem=pm_config.token_width,
                 gradient_checkpointing=bool(self.config.gradient_checkpointing),
-            ).to(device=device, dtype=torch.float32)
+            ).to(device=device, dtype=model_dtype)
             self.depth_visual = DepthVisualBackbone(
                 pm_config,
                 backbone.vision_backbone,
@@ -1667,7 +1667,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             if self.config.depth_gripper_event_loss.enabled:
                 d_text = int(self._hf_model().config.text_config.hidden_size)
                 self.depth_gripper_event_norm = nn.LayerNorm(d_text).to(
-                    device=device, dtype=torch.float32
+                    device=device, dtype=model_dtype
                 )
                 hidden_dim = self.config.depth_gripper_event_loss.hidden_dim
                 self.depth_gripper_event_head = (
@@ -1678,7 +1678,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
                         nn.GELU(),
                         nn.Linear(int(hidden_dim), 2),
                     )
-                ).to(device=device, dtype=torch.float32)
+                ).to(device=device, dtype=model_dtype)
             # Keep the existing telemetry denominator for continuity with old runs.
             self._depth_embed_rms = _token_embedding_rms(backbone)
 
@@ -1696,7 +1696,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             d_text = int(self._hf_model().config.text_config.hidden_size)
             device = next(self.model.parameters()).device
             self.state_history_projector = nn.Linear(int(state_feature.shape[0]), d_text).to(
-                device=device, dtype=torch.float32
+                device=device, dtype=model_dtype
             )
 
         self.future_visual = None

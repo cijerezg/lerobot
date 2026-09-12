@@ -733,6 +733,7 @@ def run_offline_training(
     raw_optimizers = build_named_adamw_optimizers(
         trainer.get_optimizer_groups(policy, cfg),
         cfg.policy,
+        seed=int(cfg.seed or 0),
     )
     pretrained_merges = build_pretrained_merges(
         optimizers=raw_optimizers,

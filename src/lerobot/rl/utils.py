@@ -17,6 +17,7 @@ from lerobot.utils.constants import (
     ACTION_TOKEN_MASK,
     OBS_STATE,
 )
+from lerobot.rl.stochastic_rounding_adamw import StochasticRoundingAdamW
 from lerobot.types import TransitionKey
 
 
@@ -25,26 +26,36 @@ from lerobot.types import TransitionKey
 KNOWN_OPTIMIZER_GROUPS = ("policy", "critic", "depth")
 
 
-def build_named_adamw_optimizers(groups: list[dict], policy_cfg) -> dict[str, torch.optim.Optimizer]:
+def build_named_adamw_optimizers(
+    groups: list[dict], policy_cfg, seed: int = 0
+) -> dict[str, torch.optim.Optimizer]:
     """
     Build one AdamW optimizer per trainer parameter group.
 
     Group-specific values override policy defaults; the trainer currently
     supplies per-group learning rates for actor/critic.
+
+    policy_cfg.optimizer_stochastic_rounding swaps in StochasticRoundingAdamW for every
+    group (same math and state layout; only the bf16 weight write differs). `seed` seeds
+    its rounding noise, which is kept off the global RNG stream.
     """
     default_betas = tuple(getattr(policy_cfg, "optimizer_betas", (0.9, 0.999)))
     default_eps = float(getattr(policy_cfg, "optimizer_eps", 1e-8))
     default_weight_decay = float(getattr(policy_cfg, "optimizer_weight_decay", 0.0))
+    stochastic_rounding = bool(getattr(policy_cfg, "optimizer_stochastic_rounding", False))
 
     optimizers = {}
     for group in groups:
-        optimizers[group["name"]] = torch.optim.AdamW(
-            group["params"],
+        kwargs = dict(
             lr=group["lr"],
             betas=tuple(group.get("betas", default_betas)),
             eps=float(group.get("eps", default_eps)),
             weight_decay=float(group.get("weight_decay", default_weight_decay)),
         )
+        if stochastic_rounding:
+            optimizers[group["name"]] = StochasticRoundingAdamW(group["params"], seed=seed, **kwargs)
+        else:
+            optimizers[group["name"]] = torch.optim.AdamW(group["params"], **kwargs)
     return optimizers
 
 

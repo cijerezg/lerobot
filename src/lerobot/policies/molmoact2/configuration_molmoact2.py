@@ -376,6 +376,9 @@ class MolmoAct2Config(PreTrainedConfig):
     optimizer_eps: float = 1e-6
     optimizer_weight_decay: float = 0.0
     optimizer_grad_clip_norm: float = 1.0
+    # bf16 params + AdamW: round the weight write stochastically (rl/stochastic_rounding_adamw.py)
+    # instead of to nearest, which drops every step below half an ulp. False = torch.optim.AdamW.
+    optimizer_stochastic_rounding: bool = False
 
     scheduler_warmup_steps: int = 200
     scheduler_decay_steps: int | None = None

@@ -220,6 +220,7 @@ def add_actor_information_and_train(
     optimizers = build_named_adamw_optimizers(
         trainer.get_optimizer_groups(policy, cfg),
         cfg.policy,
+        seed=int(cfg.seed or 0),
     )
     pretrained_merges = build_pretrained_merges(
         optimizers=optimizers,
