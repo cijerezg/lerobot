@@ -51,6 +51,27 @@ def test_subtask_script_walk():
     assert shared.advance_subtask(-1) == 0
 
 
+def test_subtask_console_home_override():
+    from types import SimpleNamespace
+
+    from lerobot.rl.subtask_console import SubtaskConsole
+
+    shared = RTCSharedState()
+    console = SubtaskConsole(["grasp the cup", "move the cup"], "return to home", ["grasp the cup", "return to home"], shared)
+    assert console.home == ("return to home", 1)
+    assert shared.subtask_snapshot() == ("grasp the cup", 0)
+
+    # r latches home immediately without moving the cursor; the next n resumes the script.
+    console._on_press(SimpleNamespace(char="r"))
+    assert shared.subtask_snapshot() == ("return to home", 1)
+    assert shared.subtask_cursor == 0
+    console._on_press(SimpleNamespace(char="n"))
+    assert shared.subtask_snapshot() == ("move the cup", -1)
+    console._on_press(SimpleNamespace(char="r"))
+    console._on_press(SimpleNamespace(char="b"))
+    assert shared.subtask_snapshot() == ("grasp the cup", 0)
+
+
 def test_extract_metadata_from_columns():
     import torch
 

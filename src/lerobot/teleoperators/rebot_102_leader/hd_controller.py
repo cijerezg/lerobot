@@ -242,7 +242,8 @@ class RebotArm102HDController:
             missing = [name for name in self.motor_names if result[self.config.joint_ids[name]].angle_monitor is None]
             if not missing:
                 break
-            logger.warning("Leader monitor read %d/%d: no reply from %s", attempt, _MONITOR_READ_ATTEMPTS, ", ".join(missing))
+            # Leader chatter muted 2026-09-13 (terminal noise); uncomment when debugging the leader bus.
+            # logger.warning("Leader monitor read %d/%d: no reply from %s", attempt, _MONITOR_READ_ATTEMPTS, ", ".join(missing))
         if missing:
             self._trip_fault_locked(f"no monitor reply from {', '.join(missing)} in {_MONITOR_READ_ATTEMPTS} reads")
         raw: dict[str, float] = {}
@@ -268,7 +269,8 @@ class RebotArm102HDController:
         for name, value in status.items():
             flags = value & _STATUS_ERROR_MASK
             if flags != self._status_flagged.get(name, 0):
-                logger.warning("Leader %s status: %s", name, _status_names(flags))
+                # Leader chatter muted 2026-09-13; uncomment when debugging the leader bus.
+                # logger.warning("Leader %s status: %s", name, _status_names(flags))
                 self._status_flagged[name] = flags
         return raw
 
@@ -355,14 +357,16 @@ class RebotArm102HDController:
                     self._trip_fault_locked(reason, raise_error=False)
                     raise ValueError(reason)
                 clamped_position = clamp_position(value, self.config.joint_ranges[name])
-                if clamped_position != value:
-                    logger.warning(
-                        "Leader feedback target %s=%.3f is outside %s; clamped to %.3f",
-                        key,
-                        value,
-                        self.config.joint_ranges[name],
-                        clamped_position,
-                    )
+                # Leader chatter muted 2026-09-13: fires every write while the leader sits on a
+                # joint limit (float noise past the edge). Uncomment when debugging the leader.
+                # if clamped_position != value:
+                #     logger.warning(
+                #         "Leader feedback target %s=%.3f is outside %s; clamped to %.3f",
+                #         key,
+                #         value,
+                #         self.config.joint_ranges[name],
+                #         clamped_position,
+                #     )
                 requested[name] = position_to_raw(
                     clamped_position,
                     self.config.joint_ranges[name],

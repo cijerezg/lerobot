@@ -8,7 +8,9 @@ walks it with two global keys, ``n`` (next) and ``b`` (back), and the entry unde
 cursor is latched into ``RTCSharedState``; the inference worker renders it as the
 prompt's "The current step is ..." clause on its next cycle. An episode starts on
 (and resets to) the first entry, the cursor clamps at both ends, and a different
-order is a config edit.
+order is a config edit. ``r`` latches ``cfg.policy.eval_home_subtask`` over the
+current entry at any point without moving the cursor, so the next ``n``/``b``
+continues the script from where it was.
 
 The listener is a global hook (no terminal focus required) and fires on its own
 thread, so neither the 30Hz executor nor the inference thread polls for input.
@@ -24,19 +26,21 @@ logger = logging.getLogger(__name__)
 
 NEXT_KEY = "n"
 BACK_KEY = "b"
+HOME_KEY = "r"
 
 
 class SubtaskConsole:
-    """Walks ``shared_state.subtask_script`` with n (next) / b (back)."""
+    """Walks ``shared_state.subtask_script`` with n (next) / b (back); r overrides with home."""
 
-    def __init__(self, script: list[str], vocabulary: list[str], shared_state) -> None:
+    def __init__(self, script: list[str], home: str, vocabulary: list[str], shared_state) -> None:
         self.shared_state = shared_state
         self.listener = None
-        indexed = [(text, vocabulary.index(text) if text in vocabulary else -1) for text in script]
+        indexed = [(text, vocabulary.index(text) if text in vocabulary else -1) for text in script + [home]]
         for text, index in indexed:
             if index < 0:
                 logger.info("[SUBTASK] %r is not in the checkpoint vocabulary; logs subtask_index -1.", text)
-        shared_state.set_subtask_script(indexed)
+        self.home = indexed[-1]
+        shared_state.set_subtask_script(indexed[:-1])
 
     def start(self) -> None:
         from pynput import keyboard
@@ -45,9 +49,11 @@ class SubtaskConsole:
         self.listener.start()
         steps = "\n".join(f"  {i + 1}. {text}" for i, (text, _) in enumerate(self.shared_state.subtask_script))
         logger.info(
-            "[SUBTASK] Operator console active — generation disabled. [%s] next, [%s] back.\n%s",
+            "[SUBTASK] Operator console active — generation disabled. [%s] next, [%s] back, [%s] %s.\n%s",
             NEXT_KEY,
             BACK_KEY,
+            HOME_KEY,
+            self.home[0],
             steps,
         )
 
@@ -62,6 +68,10 @@ class SubtaskConsole:
             self._move(1)
         elif char == BACK_KEY:
             self._move(-1)
+        elif char == HOME_KEY:
+            self.shared_state.update_subtask(*self.home)
+            cursor = self.shared_state.subtask_cursor
+            logger.info("[SUBTASK] %s   (script at %d/%d, n/b resume from there)", self.home[0], cursor + 1, len(self.shared_state.subtask_script))
 
     def _move(self, delta: int) -> None:
         cursor = self.shared_state.advance_subtask(delta)
@@ -75,4 +85,4 @@ def make_subtask_console(cfg, trainer, preprocessor, shared_state) -> SubtaskCon
     script = getattr(cfg.policy, "eval_subtasks", None)
     if not script:
         return None
-    return SubtaskConsole(script, trainer.subtask_vocabulary(preprocessor), shared_state)
+    return SubtaskConsole(script, cfg.policy.eval_home_subtask, trainer.subtask_vocabulary(preprocessor), shared_state)

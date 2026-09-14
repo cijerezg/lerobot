@@ -57,7 +57,10 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # The rollout's steps in order (free text). Non-empty REPLACES generation at
     # rollout: n advances, b steps back, an episode starts on and resets to the first
     # entry. Entries that match the checkpoint vocabulary log its index, others -1.
+    # r latches eval_home_subtask over the current entry at any point; the cursor stays
+    # put, so the next n/b continues the script from where it was.
     eval_subtasks: list[str] = field(default_factory=list)
+    eval_home_subtask: str = "return to home"
 
     # ── Replay buffer ──────────────────────────────────────────────────────
     storage_device: str = "cpu"
