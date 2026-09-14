@@ -36,20 +36,31 @@ nothing** (training buffers keep contiguous frames across takeover; teleop actio
 workers. Bounds the decoded chunk in follower degrees relative to $s_0$, the
 observed state the chunk was inferred from, in this order:
 
-1. excursion: $a_t \leftarrow s_0 + \mathrm{clip}(a_t - s_0, -D_j, D_j)$ — `action_delta_limits`
-2. absolute: $a_t \leftarrow \mathrm{clip}(a_t, lo_j, hi_j)$ — `action_clamp_limits`
-3. rate: $a_t \leftarrow a_{t-1} + \mathrm{clip}(a_t - a_{t-1}, -r_j, r_j)$, $a_{-1} = s_0$ — `action_step_limits`
+1. lag: $a_0 \leftarrow s_0 + \mathrm{clip}(a_0 - s_0, -L_j, L_j)$, tick 0 only — `action_lag_limits`
+2. excursion: $a_t \leftarrow s_0 + \mathrm{clip}(a_t - s_0, -D_j, D_j)$ — `action_delta_limits`
+3. absolute: $a_t \leftarrow \mathrm{clip}(a_t, lo_j, hi_j)$ — `action_clamp_limits`
+4. rate: $a_t \leftarrow a_{t-1} + \mathrm{clip}(a_t - a_{t-1}, -r_j, r_j)$ for $t \ge 1$, chained from the bounded $a_0$ — `action_step_limits`
 
-Invariants: the absolute clamp is a contraction so it cannot undo the excursion
-bound; the rate stage runs last in tracking form, so an $s_0$ outside the workspace
-walks to the box edge at $r_j$ per tick instead of jumping. The RTC leftover tensor
-(normalized, fed back as guidance) is not bounded, as with the filter. Fires log one
-`[BOUND]` warning per chunk with the max shift per joint. The probes must not apply
+Invariants: the absolute clamp is a contraction so it cannot undo the lag or
+excursion bounds; the rate stage runs last and measures what $r_j$ was measured on,
+consecutive commands. Tick 0 is a different quantity: the demos' $a_0 - s_0$ is the
+follower's lag behind the leader (q01/q99 -16/+19 deg on the shoulder), so it gets its
+own envelope $L_j$ instead of the per-tick $r_j$ (until 2026-09-14 the rate stage was
+seeded from $s_0$ and clipped that lag on tick 0 of every chunk, harmlessly: the
+catch-up took 2-4 ticks, all inside the discarded inference delay). The RTC leftover
+tensor (normalized, fed back as guidance) is not bounded, as with the filter. Each
+stage logs one `[BOUND]` line per chunk with the max shift per joint and the tick it
+bit at: lag / excursion / rate at warning (the model left the demos' envelope),
+absolute at debug (its box is capped by the driver's `joint_limits`, which the model
+sits a few degrees past at "closed" on every chunk and the follower clips at anyway;
+the bound applies that clip early so the recorded action equals the motor command,
+since `RobotEnv.step` records the pre-driver value). The probes must not apply
 these bounds. Values are 8 wide (padding column = 0, pinned) and come from
-`migration/measure_action_bounds.py` over the training roots: $D_j$ = 1.5 x the
-anchor-delta q01/q99 envelope over the horizon, workspace = action q0.1/q99.9 -/+ 5 deg
-capped by the driver's `joint_limits`, $r_j$ = 1.25 x the max per-tick delta in the
-demos. The driver's own `joint_limits` clip and the 60 deg/s `pos_vel_velocity` cap
+`migration/measure_action_bounds.py` over the training roots: $L_j$ = 2.0 x the
+anchor-delta q01/q99 envelope at k=0, $D_j$ = 2.0 x that envelope over the horizon,
+workspace = action q0.1/q99.9 -/+ 10 deg capped by the driver's `joint_limits`,
+$r_j$ = 1.5 x the max per-tick delta in the demos.
+The driver's own `joint_limits` clip and the 60 deg/s `pos_vel_velocity` cap
 stay as the outer layer. The reset move (`fixed_reset_joint_positions`,
 `reset_follower_position`) goes through `send_action` at 20 deg/s, so it passes the
 same driver layer; `RobotEnv` reads joint names from `robot.action_features`, not from
@@ -144,7 +155,9 @@ dark-shirt reach), `8998:9` (ep2 shirt reach vs ep0 socks at the rest pose), `81
   "register 10 not received"); `get_observation()` checks one motor per call, round-robin,
   so every joint is verified every 7 steps (~0.23 s at 30 Hz, ~1 ms per step). The raise
   propagates unchanged: env worker logs it as fatal, the supervisor sees the dead thread
-  and exits the program; the unfinished episode is discarded (frozen joints are not data).
+  and exits the program; the unfinished episode is saved with `truncated = true` in
+  `meta/online_labels.parquet` (the frames before the fault are valid; the 2026-09-14 12:18
+  run lost 4080 good frames to the old discard).
   Park does not ping, so the live joints still descend on the way out.
   Second signal, same afternoon: the 15:27 episode had all seven motors answering pings
   and sending fresh positions while wrist_yaw / wrist_roll / gripper ignored every
@@ -199,9 +212,9 @@ through `rl/online_recorder.OnlineEpisodeRecorder`, in the **lerobot_record form
 - Depth: `depth_writer.write_depth` PNG16 sidecar, stride = `policy.image_stride`, phase on
   the global frame index (same grid the memmap cache reads). `save_episode` after each
   episode (video encode runs between episodes), `finalize` when the env worker exits; an
-  unfinished episode at shutdown is discarded.
+  unfinished episode at shutdown (fault, Ctrl-C) is saved too, flagged `truncated`.
 - `meta/online_labels.parquet` (episode_index, frame_index, index, is_intervention,
-  subtask_index, subtask text): per-frame labels the recorded schema has no column for,
+  subtask_index, subtask text, truncated): per-frame labels the recorded schema has no column for,
   a sidecar in the style of the annotation files. Subtask text rides along because the
   vocabulary may be revised.
 - Consumption: add the run's `inference_dataset` as a `dataset.sources` entry; annotation

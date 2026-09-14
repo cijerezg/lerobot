@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import struct
 import time
 
@@ -25,8 +26,38 @@ class _FakeServo:
 
 
 class _FakeUART:
-    def __init__(self) -> None:
+    def __init__(self, ctrl) -> None:
+        self.ctrl = ctrl
         self.closed = False
+        self.requests = 0
+        self.buffer = bytearray()
+
+    def reset_input_buffer(self):
+        self.buffer.clear()
+
+    def write(self, data):
+        self.requests += 1
+        for servo_id, servo in self.ctrl.servos.items():
+            if servo.angle_monitor is None:
+                continue
+            ratio = math.exp((1 / (servo.temp + 273.15) - 1 / 298.15) * 3435)
+            temp_raw = round(4096 * ratio / (1 + ratio))
+            params = struct.pack(
+                "<BHHHHBih", servo_id, servo.voltage, servo.current, servo.power,
+                temp_raw, servo.status, round(servo.angle_monitor * 10), 0,
+            )
+            packet = b"\x05\x1c" + bytes([22, len(params)]) + params
+            self.buffer.extend(packet + bytes([sum(packet) % 256]))
+        return len(data)
+
+    @property
+    def in_waiting(self):
+        return len(self.buffer)
+
+    def read(self, count):
+        out = bytes(self.buffer[:count])
+        del self.buffer[:count]
+        return out
 
     def close(self) -> None:
         self.closed = True
@@ -41,8 +72,7 @@ class _FakeCtrl:
         self.fail_send = False
 
     def send_sync_servo_monitor(self, ids, realtime=True):
-        del realtime
-        return {servo_id: self.servos[servo_id] for servo_id in ids}
+        raise AssertionError("The SDK's blocking monitor reader must not be used")
 
     def send_sync_multiturnanglebyinterval(self, command, count, payload):
         if self.fail_send:
@@ -62,7 +92,7 @@ def _controller(**overrides) -> tuple[RebotArm102HDController, _FakeCtrl, _FakeU
     )
     controller = RebotArm102HDController(config)
     ctrl = _FakeCtrl(config)
-    uart = _FakeUART()
+    uart = _FakeUART(ctrl)
     controller.ctrl = ctrl
     controller.uart = uart
     controller._last_raw_positions = dict.fromkeys(config.joint_ids, 0.0)
@@ -264,6 +294,10 @@ def test_watchdog_unloads_after_feedback_stalls() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
+        ("monitor_read_timeout_s", 0.0),
+        ("monitor_read_timeout_s", float("nan")),
+        ("monitor_stale_timeout_s", 0.0),
+        ("monitor_stale_timeout_s", float("inf")),
         ("feedback_max_raw_step_deg", 0.0),
         ("feedback_watchdog_timeout_s", 0.0),
         ("feedback_max_raw_error_deg", 0.0),
@@ -284,37 +318,100 @@ def test_invalid_safety_thresholds_are_rejected(field: str, value: float) -> Non
         )
 
 
-def test_monitor_read_retries_a_stalled_reply_without_faulting() -> None:
-    controller, ctrl, _ = _controller()
-    empty = {servo_id: _FakeServo() for servo_id in ctrl.servos}
-    for servo in empty.values():
-        servo.angle_monitor = None
-    calls: list[int] = []
-
-    def monitor(ids, realtime=True):
-        calls.append(1)
-        source = empty if len(calls) == 1 else ctrl.servos
-        return {servo_id: source[servo_id] for servo_id in ids}
-
-    ctrl.send_sync_servo_monitor = monitor
-    positions = controller.read_positions()
-
-    assert len(calls) == 2
-    assert set(positions) == set(controller.motor_names)
-    assert controller.feedback_fault is None
+def test_monitor_miss_keeps_entire_previous_sample_and_retries_next_tick() -> None:
+    controller, ctrl, uart = _controller()
+    previous = controller.read_positions()
+    last_good_time = controller._last_monitor_time
+    ctrl.servos[0].angle_monitor = 12.0
+    ctrl.servos[6].angle_monitor = None
+    requests = uart.requests
+    stale = controller.read_positions()
+    assert uart.requests == requests + 1
+    assert stale == previous  # no mixture of old and fresh joint positions
+    assert controller.last_read_fresh is False
+    assert controller._last_monitor_time == last_good_time
     assert ctrl.stop_commands == []
 
+    ctrl.servos[6].angle_monitor = 1.0
+    recovered = controller.read_positions()
+    assert uart.requests == requests + 2
+    assert recovered["shoulder_pan"] == -12.0
+    assert controller.last_read_fresh is True
+    assert controller.feedback_fault is None
 
-def test_monitor_read_silent_bus_trips_fault_after_retries() -> None:
+
+def test_monitor_silence_faults_on_sample_age_not_retry_count() -> None:
+    controller, ctrl, _ = _controller()
+    controller.read_positions()
+    for servo in ctrl.servos.values():
+        servo.angle_monitor = None
+    for _ in range(4):
+        controller.read_positions()
+    assert controller.feedback_fault is None
+    controller._last_monitor_time = time.monotonic() - controller.config.monitor_stale_timeout_s
+    with pytest.raises(LeaderFeedbackError, match="no fresh leader monitor sample"):
+        controller.read_positions()
+    assert ctrl.stop_commands[-1] == (0xFF, STOP_UNLOAD, 0x00)
+    # Recovery requires explicit enable; a subsequent healthy reply cannot clear a fault.
+    ctrl.servos[0].angle_monitor = 0.0
+    with pytest.raises(LeaderFeedbackError, match="faulted and unloaded"):
+        controller.read_positions()
+
+
+def test_monitor_without_initial_sample_cannot_return_a_fabricated_pose() -> None:
     controller, ctrl, _ = _controller()
     for servo in ctrl.servos.values():
         servo.angle_monitor = None
-
-    with pytest.raises(LeaderFeedbackError, match="in 3 reads"):
+    with pytest.raises(LeaderFeedbackError, match="no fresh leader monitor sample"):
         controller.read_positions()
 
-    assert controller.feedback_fault is not None
-    assert ctrl.stop_commands[-1] == (0xFF, STOP_UNLOAD, 0x00)
+
+def test_torque_enable_requires_a_fresh_sample_even_with_a_cache() -> None:
+    controller, ctrl, _ = _controller()
+    controller.read_positions()
+    ctrl.servos[0].angle_monitor = None
+    with pytest.raises(LeaderFeedbackError, match="no fresh leader monitor sample"):
+        controller.enable_torque()
+    assert not controller.feedback_enabled
+    assert not ctrl.sync_commands
+
+
+def test_intervention_release_waits_for_fresh_regular_read_without_extra_request() -> None:
+    controller, ctrl, uart = _controller()
+    controller.enable_torque()
+    controller._handle_key_char("5")
+    assert controller.is_intervening
+    assert not controller.feedback_enabled
+    requests = uart.requests
+    controller._handle_key_char("5")
+    assert uart.requests == requests  # key listener does not read the bus
+    ctrl.servos[0].angle_monitor = None
+    controller.read_positions()
+    assert controller.is_intervening
+    assert not controller.feedback_enabled
+    ctrl.servos[0].angle_monitor = 5.0
+    controller.read_positions()
+    assert uart.requests == requests + 2
+    assert not controller.is_intervening
+    assert controller.feedback_enabled
+    assert _decoded_payload(controller, ctrl)["shoulder_pan"][1] == 50
+
+
+def test_cached_measurements_do_not_evaluate_or_erase_existing_health_timers() -> None:
+    controller, ctrl, _ = _controller()
+    controller.enable_torque()
+    controller.read_positions()
+    controller._raw_error_since["shoulder_pan"] = time.monotonic() - 10
+    controller._current_since["shoulder_pan"] = time.monotonic() - 10
+    ctrl.servos[6].angle_monitor = None
+    controller.read_positions()
+    assert "shoulder_pan" in controller._raw_error_since
+    assert "shoulder_pan" in controller._current_since
+    assert not controller.feedback_fault
+    ctrl.servos[6].angle_monitor = 0.0
+    controller.read_positions()  # a healthy fresh sample clears the timers
+    assert not controller._raw_error_since
+    assert not controller._current_since
 
 
 def test_trace_records_reads_and_tracking_fault_dumps_the_last_second(tmp_path, caplog) -> None:
@@ -330,7 +427,7 @@ def test_trace_records_reads_and_tracking_fault_dumps_the_last_second(tmp_path, 
     elbow.current = 250
     elbow.status = 0x04  # stall error bit
 
-    caplog.set_level("WARNING")
+    caplog.set_level("DEBUG")
     controller.read_positions()
     time.sleep(0.25)
     with pytest.raises(LeaderFeedbackError, match="elbow_flex remained 20.0"):
@@ -379,3 +476,19 @@ def test_feedback_ceiling_stretches_with_time_since_the_last_command() -> None:
     with pytest.raises(LeaderFeedbackError, match=r"shoulder_pan asked to move \+33.0 raw deg .*ceiling 32.0"):
         controller.send_positions(_feedback(controller.config, shoulder_pan=-53.0))
     assert controller.feedback_enabled is False
+
+
+def test_monitor_io_failure_faults_instead_of_reusing_cache():
+    controller, ctrl, uart = _controller()
+    controller.read_positions()
+    def failed_write(data):
+        raise OSError("disconnected")
+    uart.write = failed_write
+    with pytest.raises(LeaderFeedbackError, match="leader monitor I/O failed: disconnected"):
+        controller.read_positions()
+    assert ctrl.stop_commands[-1] == (0xFF, STOP_UNLOAD, 0x00)
+
+
+def test_stale_age_must_cover_the_transaction_budget():
+    with pytest.raises(ValueError, match="monitor_stale_timeout_s must be at least"):
+        _controller(monitor_read_timeout_s=0.020, monitor_stale_timeout_s=0.010)

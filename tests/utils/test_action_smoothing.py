@@ -23,30 +23,38 @@ def test_absolute_clamp():
     assert torch.equal(out, torch.tensor([[-10.0, 1.0]] * 3))
 
 
-def test_rate_limit_seeds_from_anchor_and_tracks():
+def test_lag_bound_clips_tick_zero_only():
+    anchor = torch.tensor([10.0, -10.0])
+    actions = anchor + torch.tensor([[30.0, -30.0]] * 4)
+    out = bound_action_chunk(actions, anchor, lag_limits=[5.0, 7.0])
+    assert torch.allclose(out[0] - anchor, torch.tensor([5.0, -7.0]))
+    assert torch.equal(out[1:], actions[1:])
+
+
+def test_rate_limit_chains_from_first_tick_not_anchor():
     anchor = torch.tensor([0.0])
-    out = bound_action_chunk(torch.full((10, 1), 7.0), anchor, step_limits=[2.0])
-    assert out[:, 0].tolist() == [2.0, 4.0, 6.0, 7.0, 7.0, 7.0, 7.0, 7.0, 7.0, 7.0]
+    actions = torch.full((10, 1), 7.0)
+    actions[3:] = 20.0
+    out = bound_action_chunk(actions, anchor, step_limits=[2.0])
+    assert out[:, 0].tolist() == [7.0, 7.0, 7.0, 9.0, 11.0, 13.0, 15.0, 17.0, 19.0, 20.0]
 
 
-def test_anchor_outside_workspace_walks_to_edge():
-    anchor = torch.tensor([20.0])
-    out = bound_action_chunk(
-        torch.full((6, 1), 20.0), anchor, clamp_limits=[[-10.0, 10.0]], step_limits=[3.0]
-    )
-    assert out[:, 0].tolist() == [17.0, 14.0, 11.0, 10.0, 10.0, 10.0]
+def test_lag_then_rate_walks_from_the_bounded_first_tick():
+    anchor = torch.tensor([0.0])
+    out = bound_action_chunk(torch.full((6, 1), 20.0), anchor, lag_limits=[5.0], step_limits=[3.0])
+    assert out[:, 0].tolist() == [5.0, 8.0, 11.0, 14.0, 17.0, 20.0]
 
 
-def test_all_three_bounds_hold_together():
+def test_all_four_bounds_hold_together():
     torch.manual_seed(0)
     anchor = torch.zeros(4)
     actions = torch.randn(30, 4) * 200
     out = bound_action_chunk(
         actions, anchor,
-        delta_limits=[50.0] * 4, clamp_limits=[[-20.0, 30.0]] * 4, step_limits=[1.5] * 4,
+        lag_limits=[8.0] * 4, delta_limits=[50.0] * 4, clamp_limits=[[-20.0, 30.0]] * 4, step_limits=[1.5] * 4,
     )
-    steps = torch.diff(out, dim=0, prepend=anchor[None])
-    assert steps.abs().max() <= 1.5 + 1e-6
+    assert (out[0] - anchor).abs().max() <= 8.0 + 1e-6
+    assert torch.diff(out, dim=0).abs().max() <= 1.5 + 1e-6
     assert (out >= -20.0).all() and (out <= 30.0).all()
     assert (out - anchor).abs().max() <= 50.0 + 1e-6
 

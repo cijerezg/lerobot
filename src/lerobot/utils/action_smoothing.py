@@ -42,24 +42,30 @@ def apply_butterworth_filter(actions: torch.Tensor | np.ndarray) -> torch.Tensor
 def bound_action_chunk(
     actions: torch.Tensor,
     anchor: torch.Tensor,
+    lag_limits=None,
     delta_limits=None,
     clamp_limits=None,
     step_limits=None,
 ) -> torch.Tensor:
     """Bound an absolute [T, D] chunk in robot units, relative to ``anchor`` (the
-    observed state the chunk was inferred from, shape [D]). Three stages, each skipped
+    observed state the chunk was inferred from, shape [D]). Four stages, each skipped
     when its limit is None:
 
-    1. excursion: |a_t - anchor| <= delta_limits[j]
-    2. absolute:  clamp_limits[j][0] <= a_t <= clamp_limits[j][1]
-    3. rate:      a_t <- a_{t-1} + clip(a_t - a_{t-1}, -step_limits[j], step_limits[j]),
-                  with a_{-1} = anchor
+    1. lag:       |a_0 - anchor| <= lag_limits[j]        (tick 0 only)
+    2. excursion: |a_t - anchor| <= delta_limits[j]
+    3. absolute:  clamp_limits[j][0] <= a_t <= clamp_limits[j][1]
+    4. rate:      a_t <- a_{t-1} + clip(a_t - a_{t-1}, -step_limits[j], step_limits[j])
+                  for t >= 1, chained from the bounded a_0
 
-    The absolute clamp is a contraction, so it cannot undo the excursion bound. The
-    rate stage runs last and in tracking form, so an anchor outside the workspace
-    walks to the box edge at step_limits per tick instead of jumping to it.
+    The demos' a_0 lags s_0 by the follower's tracking error (q99 ~ 18 deg on the
+    shoulder), so the first tick gets its own measured bound and the rate stage
+    measures what its limit was measured on: consecutive commands. The absolute
+    clamp is a contraction, so it cannot undo the lag or excursion bounds.
     """
     anchor = anchor.to(actions)
+    if lag_limits is not None:
+        limit = torch.as_tensor(lag_limits, dtype=actions.dtype, device=actions.device)
+        actions = torch.cat([anchor + (actions[0] - anchor).clamp(-limit, limit)[None], actions[1:]])
     if delta_limits is not None:
         limit = torch.as_tensor(delta_limits, dtype=actions.dtype, device=actions.device)
         actions = anchor + (actions - anchor).clamp(-limit, limit)
@@ -69,8 +75,9 @@ def bound_action_chunk(
     if step_limits is not None:
         limit = torch.as_tensor(step_limits, dtype=actions.dtype, device=actions.device)
         bounded = torch.empty_like(actions)
-        previous = anchor
-        for t in range(actions.shape[0]):
+        previous = actions[0]
+        bounded[0] = previous
+        for t in range(1, actions.shape[0]):
             previous = previous + (actions[t] - previous).clamp(-limit, limit)
             bounded[t] = previous
         actions = bounded

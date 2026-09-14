@@ -158,11 +158,13 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     embodiment: str | None = None
 
     # Per-joint bounds on the decoded chunk, in degrees, applied after the Butterworth
-    # by utils/action_smoothing.bound_action_chunk in the order excursion, absolute,
+    # by utils/action_smoothing.bound_action_chunk in the order lag, excursion, absolute,
     # rate. s_0 is the observed state the chunk was inferred from. None disables a stage.
+    #   action_lag_limits:   |a_0 - s_0| <= limit            (first tick: the demos' follower lag)
     #   action_delta_limits: |a_t - s_0| <= limit            (reach within one horizon)
     #   action_clamp_limits: [min, max] on a_t                (task workspace)
-    #   action_step_limits:  |a_t - a_{t-1}| <= limit, a_{-1} = s_0  (change per tick)
+    #   action_step_limits:  |a_t - a_{t-1}| <= limit, t >= 1 (change per tick)
+    action_lag_limits: list[float] | None = None
     action_delta_limits: list[float] | None = None
     action_clamp_limits: list[list[float]] | None = None
     action_step_limits: list[float] | None = None
@@ -204,7 +206,7 @@ class MolmoAct2RLConfig(MolmoAct2Config):
             if shape:
                 action_dim = int(shape[0])
 
-        for name in ("action_delta_limits", "action_clamp_limits", "action_step_limits"):
+        for name in ("action_lag_limits", "action_delta_limits", "action_clamp_limits", "action_step_limits"):
             limits = getattr(self, name)
             if limits is None:
                 continue

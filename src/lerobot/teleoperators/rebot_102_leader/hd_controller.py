@@ -45,6 +45,7 @@ import serial
 
 from ..utils import TeleopEvents, TeleopFeedbackError
 from .mapping import clamp_position, position_to_raw, raw_to_position
+from .monitor import read_servo_monitor
 
 if TYPE_CHECKING:
     from .config_rebot_102_leader import RebotArm102LeaderConfig
@@ -54,8 +55,6 @@ logger = logging.getLogger(__name__)
 STOP_UNLOAD = 0x10
 SYNC_MULTITURN_BY_INTERVAL = 14
 
-
-_MONITOR_READ_ATTEMPTS = 3
 
 # Servo status byte (SDK query_status legend): bit 0 is "executing", bits 1-7 are errors the
 # servo clears itself once the condition ends. A stalled or protected servo says so here.
@@ -103,6 +102,11 @@ class RebotArm102HDController:
         self._feedback_fault: str | None = None
         self._last_feedback_time: float | None = None
         self._last_raw_positions: dict[str, float] = {}
+        self._last_monitor_time: float | None = None
+        self._monitor_read_fresh = False
+        self.last_read_fresh = False
+        self._monitor_misses = 0
+        self._resume_requested = False
         self._last_sent_raw: dict[str, float] | None = None
         self._currents_ma: dict[str, int] = {}
         self._power_mw: dict[str, int] = {}
@@ -154,6 +158,8 @@ class RebotArm102HDController:
         if self.config.feedback_max_raw_step_deg <= 0:
             raise ValueError("feedback_max_raw_step_deg must be positive")
         for name, value in {
+            "monitor_read_timeout_s": self.config.monitor_read_timeout_s,
+            "monitor_stale_timeout_s": self.config.monitor_stale_timeout_s,
             "feedback_watchdog_timeout_s": self.config.feedback_watchdog_timeout_s,
             "feedback_max_raw_error_deg": self.config.feedback_max_raw_error_deg,
             "feedback_error_timeout_s": self.config.feedback_error_timeout_s,
@@ -162,8 +168,10 @@ class RebotArm102HDController:
             "feedback_step_period_s": self.config.feedback_step_period_s,
             "feedback_max_step_stretch": self.config.feedback_max_step_stretch,
         }.items():
-            if value <= 0:
+            if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.config.monitor_stale_timeout_s < self.config.monitor_read_timeout_s:
+            raise ValueError("monitor_stale_timeout_s must be at least monitor_read_timeout_s")
         powers = dict.fromkeys(self.motor_names, self.config.feedback_power)
         powers.update(self.config.feedback_joint_powers)
         unknown = set(powers) - set(self.motor_names)
@@ -183,6 +191,7 @@ class RebotArm102HDController:
                 stopbits=1,
                 bytesize=8,
                 timeout=0,
+                write_timeout=self.config.monitor_read_timeout_s,
             )
             ctrl = uservo.UartServoManager(uart, srv_num=8)
             try:
@@ -207,7 +216,7 @@ class RebotArm102HDController:
             self._unload_locked()
             self.ctrl.reset_multi_turn_angle(0xFF)
             time.sleep(0.1)
-            self._last_raw_positions = self._read_raw_locked()
+            self._last_raw_positions = self._read_raw_locked(require_fresh=True)
         if self.config.enable_keyboard_handover:
             self._start_key_listener()
 
@@ -221,10 +230,20 @@ class RebotArm102HDController:
 
     def read_positions(self) -> dict[str, float]:
         with self.io_lock:
+            if self._feedback_fault is not None:
+                raise LeaderFeedbackError(f"leader feedback is faulted and unloaded: {self._feedback_fault}")
             raw = self._read_raw_locked()
-            self._last_raw_positions = raw
-            self._record_trace_locked(raw)
-            self._evaluate_feedback_health_locked(raw, time.monotonic())
+            self.last_read_fresh = self._monitor_read_fresh
+            if self.last_read_fresh:
+                self._record_trace_locked(raw)
+                self._evaluate_feedback_health_locked(raw, time.monotonic())
+                if self._resume_requested:
+                    # Release waits for a fresh regular tick, never an extra read
+                    # in the key listener or an enable from an old cached pose.
+                    self._enable_feedback_locked(send_hold=True, raw=raw)
+                    self.is_intervening = False
+                    self._resume_requested = False
+                    logger.info("Intervention ended: leader feedback following resumed.")
             return {
                 name: raw_to_position(
                     raw[name], self.config.joint_ranges[name], self.config.joint_directions[name]
@@ -232,20 +251,35 @@ class RebotArm102HDController:
                 for name in self.motor_names
             }
 
-    def _read_raw_locked(self) -> dict[str, float]:
+    def _read_raw_locked(self, *, require_fresh: bool = False) -> dict[str, float]:
         self._require_connected()
-        # One sync-monitor request waits 100 ms for seven reply frames; a USB stall past that
-        # returns every servo empty (2026-09-05, all seven missing once in ~450 reads). Retry
-        # before tripping, so only a bus that stays silent unloads the arm.
-        for attempt in range(1, _MONITOR_READ_ATTEMPTS + 1):
-            result = self.ctrl.send_sync_servo_monitor(self.ids, realtime=True)
-            missing = [name for name in self.motor_names if result[self.config.joint_ids[name]].angle_monitor is None]
-            if not missing:
-                break
-            # Leader chatter muted 2026-09-13 (terminal noise); uncomment when debugging the leader bus.
-            # logger.warning("Leader monitor read %d/%d: no reply from %s", attempt, _MONITOR_READ_ATTEMPTS, ", ".join(missing))
+        self._monitor_read_fresh = False
+        try:
+            result = read_servo_monitor(self.uart, self.ids, self.config.monitor_read_timeout_s)
+        except OSError as error:
+            self._trip_fault_locked(f"leader monitor I/O failed: {error}")
+        now = time.monotonic()
+        missing = [name for name in self.motor_names if self.config.joint_ids[name] not in result]
         if missing:
-            self._trip_fault_locked(f"no monitor reply from {', '.join(missing)} in {_MONITOR_READ_ATTEMPTS} reads")
+            self._monitor_misses += 1
+            age = float("inf") if self._last_monitor_time is None else now - self._last_monitor_time
+            if require_fresh or not self._last_raw_positions or age >= self.config.monitor_stale_timeout_s:
+                self._trip_fault_locked(
+                    f"no fresh leader monitor sample (age {age:.3f}s); missing {', '.join(missing)}"
+                )
+            if self._monitor_misses == 1:
+                logger.warning(
+                    "Leader monitor deadline %.0f ms: missing %s; keeping last complete sample (age %.3fs)",
+                    self.config.monitor_read_timeout_s * 1000, ", ".join(missing), age,
+                )
+            # Do not evaluate health against cached measurements. Preserve existing
+            # error timers until a fresh sample either clears or confirms them.
+            return self._last_raw_positions.copy()
+        if self._monitor_misses:
+            logger.debug("Leader monitor recovered after %d missed ticks", self._monitor_misses)
+        self._monitor_misses = 0
+        self._monitor_read_fresh = True
+        self._last_monitor_time = now
         raw: dict[str, float] = {}
         currents: dict[str, int] = {}
         power_mw: dict[str, int] = {}
@@ -269,9 +303,9 @@ class RebotArm102HDController:
         for name, value in status.items():
             flags = value & _STATUS_ERROR_MASK
             if flags != self._status_flagged.get(name, 0):
-                # Leader chatter muted 2026-09-13; uncomment when debugging the leader bus.
-                # logger.warning("Leader %s status: %s", name, _status_names(flags))
+                logger.debug("Leader %s status: %s", name, _status_names(flags))
                 self._status_flagged[name] = flags
+        self._last_raw_positions = raw
         return raw
 
     def start_trace(self, path: str | os.PathLike) -> None:
@@ -398,11 +432,13 @@ class RebotArm102HDController:
         with self.io_lock:
             self._require_connected()
             self.is_intervening = False
+            self._resume_requested = False
             self._feedback_fault = None
             self._enable_feedback_locked(send_hold=True)
 
-    def _enable_feedback_locked(self, send_hold: bool) -> None:
-        raw = self._read_raw_locked()
+    def _enable_feedback_locked(self, send_hold: bool, raw: dict[str, float] | None = None) -> None:
+        if raw is None:
+            raw = self._read_raw_locked(require_fresh=True)
         self._last_raw_positions = raw
         self._last_sent_raw = raw
         self._raw_error_since.clear()
@@ -427,6 +463,7 @@ class RebotArm102HDController:
             if self.ctrl is not None:
                 self.ctrl.stop_on_control_mode(0xFF, STOP_UNLOAD, 0x00)
         finally:
+            self._resume_requested = False
             self._feedback_enabled = False
             self._last_feedback_time = None
             self._last_sent_raw = None
@@ -522,14 +559,13 @@ class RebotArm102HDController:
     def _handle_key_char(self, char: str) -> None:
         if char == "5":
             with self.io_lock:
-                self.is_intervening = not self.is_intervening
-                if self.is_intervening:
+                if not self.is_intervening:
+                    self.is_intervening = True
                     self._unload_locked()
                     logger.info("Intervention enabled: leader torque unloaded for manual control.")
                 else:
-                    self._feedback_fault = None
-                    self._enable_feedback_locked(send_hold=True)
-                    logger.info("Intervention ended: leader feedback following resumed.")
+                    self._resume_requested = not self._resume_requested
+                    logger.info("Leader intervention release pending fresh sample: %s", self._resume_requested)
         elif char == "1":
             self.is_success = True
             logger.info("Success triggered manually.")

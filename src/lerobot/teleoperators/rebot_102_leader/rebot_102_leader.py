@@ -62,6 +62,7 @@ class RebotArm102Leader(Teleoperator):
         self.bus: FashionStarServo | None = None
         self.motor_names = list(config.joint_ids.keys())
         self._last_raw_positions: dict[str, float] = {}
+        self._action_is_fresh = True
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -223,6 +224,7 @@ class RebotArm102Leader(Teleoperator):
         start = time.perf_counter()
         if self.config.variant == "102HD":
             positions = self._hd_controller.read_positions()
+            self._action_is_fresh = self._hd_controller.last_read_fresh
             action_dict = {f"{name}.pos": value for name, value in positions.items()}
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read action: {dt_ms:.1f}ms")
@@ -256,6 +258,11 @@ class RebotArm102Leader(Teleoperator):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read action: {dt_ms:.1f}ms")
         return action_dict
+
+    @property
+    def action_is_fresh(self) -> bool:
+        """Whether the last get_action call obtained a complete new monitor sample."""
+        return self._action_is_fresh
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
         if self.config.variant != "102HD":

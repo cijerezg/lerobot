@@ -31,7 +31,7 @@ def bound_policy_actions(actions: torch.Tensor, latest_obs: dict, policy) -> tor
     """
     limits = {
         name: getattr(policy.config, name, None)
-        for name in ("action_delta_limits", "action_clamp_limits", "action_step_limits")
+        for name in ("action_lag_limits", "action_delta_limits", "action_clamp_limits", "action_step_limits")
     }
     if all(limit is None for limit in limits.values()):
         return actions
@@ -41,24 +41,27 @@ def bound_policy_actions(actions: torch.Tensor, latest_obs: dict, policy) -> tor
     width = anchor.shape[-1]
     # The chunk is the policy's padded width, the state is the rig's own; the pad
     # columns carry zero limits, so a zero anchor there is exact (zeroing the pad is
-    # by design, so the warning below skips those columns).
+    # by design, so the log below skips those columns).
     anchor = torch.nn.functional.pad(anchor, (0, actions.shape[-1] - width))
     # One stage at a time, so the log names the binding stage and the tick it bit at.
-    # The queue executes a chunk from its inference delay onward: a clip confined to
-    # the ticks before that never reaches the robot.
+    # The absolute box is capped by the driver's joint_limits, which the follower
+    # clips at anyway (the model sits a few degrees past them at "closed" on every
+    # chunk), so that stage logs at debug like the follower's own clip; the other
+    # three only bind when the model leaves the demos' envelope.
     stages = (
-        ("excursion", {"delta_limits": limits["action_delta_limits"]}),
-        ("absolute", {"clamp_limits": limits["action_clamp_limits"]}),
-        ("rate", {"step_limits": limits["action_step_limits"]}),
+        ("lag", {"lag_limits": limits["action_lag_limits"]}, logger.warning),
+        ("excursion", {"delta_limits": limits["action_delta_limits"]}, logger.warning),
+        ("absolute", {"clamp_limits": limits["action_clamp_limits"]}, logger.debug),
+        ("rate", {"step_limits": limits["action_step_limits"]}, logger.warning),
     )
     bounded = actions
-    for stage, limit in stages:
+    for stage, limit, log in stages:
         before = bounded
         bounded = bound_action_chunk(before, anchor, **limit)
         moved, at = (bounded - before).abs()[:, :width].max(dim=0)
         joints = (moved > 1e-3).nonzero(as_tuple=True)[0].tolist()
         if joints:
-            logger.warning(
+            log(
                 "[BOUND] %s stage moved joints %s by up to %s deg@tick",
                 stage,
                 joints,

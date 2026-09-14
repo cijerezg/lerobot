@@ -19,6 +19,7 @@ class _FakeHDController:
         self.connected = False
         self.calls: list[object] = []
         self.feedback = None
+        self.last_read_fresh = True
         type(self).instances.append(self)
 
     @property
@@ -112,6 +113,10 @@ def test_hd_wrapper_exposes_and_delegates_full_feedback_contract(monkeypatch, tm
     teleop.send_feedback(feedback)
     assert controller.feedback is feedback
     assert set(teleop.get_action()) == set(teleop.action_features)
+    assert teleop.action_is_fresh is True
+    controller.last_read_fresh = False
+    teleop.get_action()
+    assert teleop.action_is_fresh is False
     assert teleop.get_teleop_events()[TeleopEvents.START_EPISODE] is True
     teleop.disable_torque()
     teleop.disconnect()

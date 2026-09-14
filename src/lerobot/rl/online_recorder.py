@@ -13,9 +13,12 @@ the camera's own uint8 frame), not from the online replay buffer, whose bf16 low
 storage would round the joint angles.
 
 Per-frame labels the recorded schema has no column for go to ``meta/online_labels.parquet``
-(episode_index, frame_index, index, is_intervention, subtask_index, subtask): a sidecar in
-the style of the annotation files, invisible to the loaders. The subtask text rides next to
-its index because the subtask vocabulary may be revised.
+(episode_index, frame_index, index, is_intervention, subtask_index, subtask, truncated): a
+sidecar in the style of the annotation files, invisible to the loaders. The subtask text rides
+next to its index because the subtask vocabulary may be revised. ``truncated`` marks every
+frame of an episode that ended without ``done`` (a hardware fault or Ctrl-C mid-episode):
+``finalize`` saves such an episode instead of discarding it, because the frames up to the
+fault are valid data (the follower stops the loop within 60 ms of a motor going silent).
 """
 
 import logging
@@ -99,7 +102,7 @@ class OnlineEpisodeRecorder:
             "subtask": subtask,
         })
 
-    def save_episode(self) -> None:
+    def save_episode(self, *, truncated: bool = False) -> None:
         if self.dataset is None or not self.dataset.has_pending_frames():
             return
         episode_buffer = self.dataset.writer.episode_buffer
@@ -108,21 +111,25 @@ class OnlineEpisodeRecorder:
         # live runtime (CUDA, cameras, rerun, pynput, ~100 threads); a forked worker
         # deadlocked at exit on 2026-09-06 and hung the env worker before the next episode.
         self.dataset.save_episode(parallel_encoding=False)
+        for row in self._episode_labels:
+            row["truncated"] = truncated
         self._labels.extend(self._episode_labels)
         self._episode_labels = []
         pq.write_table(pa.Table.from_pylist(self._labels), self.root / LABELS_FILE)
-        logger.info("[RECORDER] Episode %d saved (%d frames).", episode_index, num_frames)
+        logger.info(
+            "[RECORDER] Episode %d saved (%d frames%s).", episode_index, num_frames, ", truncated" if truncated else ""
+        )
 
     def finalize(self) -> None:
         if self.dataset is None:
             return
-        writer = self.dataset.writer
         if self.dataset.has_pending_frames():
-            episode_index, num_frames = writer.episode_buffer["episode_index"], writer.episode_buffer["size"]
-            logger.warning("[RECORDER] Discarding %d frames of the unfinished episode.", num_frames)
-            writer.clear_episode_buffer()  # waits for the image writer; deletes only image-dtype dirs
-            writer.cleanup_interrupted_episode(episode_index)  # the video keys' temporary PNGs
-            self._episode_labels = []
+            # The env worker exited mid-episode (fault or Ctrl-C): keep the frames, flagged.
+            logger.warning(
+                "[RECORDER] Saving %d frames of the unfinished episode as truncated.",
+                self.dataset.writer.episode_buffer["size"],
+            )
+            self.save_episode(truncated=True)
         self.dataset.finalize()
         images_dir = self.root / "images"
         if images_dir.exists() and not any(images_dir.rglob("*.png")):

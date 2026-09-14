@@ -32,6 +32,11 @@ class RebotArm102LeaderConfig:
 
     baudrate: int = 1_000_000
 
+    # One monitor request per control tick; never retry within this budget.
+    monitor_read_timeout_s: float = 0.020
+    # Cached poses tolerate isolated misses, but not a disconnected leader.
+    monitor_stale_timeout_s: float = 2.0
+
     # The original 102LD is encoder-only. Only the 102HD exposes position
     # feedback/shadowing so existing LD configurations remain read-only.
     # Kept as str because the repository's pinned draccus cannot decode Literal
@@ -70,9 +75,7 @@ class RebotArm102LeaderConfig:
     # 2026-09-05: raw error raised 20 -> 40. With the follower policy-driven the leader
     # only shadows it, and the 102HD elbow lags a follower moving at the rate ceiling
     # (tripped at 22.2 raw deg / 0.77 s); a lagging shadow is not a fault worth an unload.
-    # 2026-09-06: watchdog raised 0.5 -> 2.0. A leader USB stall (all seven servos empty on
-    # one monitor read) holds the io_lock through the retry and blocks feedback for 0.8 s;
-    # the bus recovered, so a stall shorter than a hung actor must not unload the arm.
+    # Command watchdog is separate from the age of the last complete monitor sample.
     feedback_watchdog_timeout_s: float = 2.0
     feedback_max_raw_error_deg: float = 40.0
     feedback_error_timeout_s: float = 0.75

@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 GRIPPER_KEY = "gripper"
 DISCRETE_PENALTY_KEY = "discrete_penalty"
 TELEOP_ACTION_KEY = "teleop_action"
+TELEOP_ACTION_IS_FRESH = "teleop_action_is_fresh"
 
 
 @runtime_checkable
@@ -123,6 +124,7 @@ class AddTeleopActionAsComplimentaryDataStep(ComplementaryDataProcessorStep):
         """
         new_complementary_data = dict(complementary_data)
         new_complementary_data[TELEOP_ACTION_KEY] = self.teleop_device.get_action()
+        new_complementary_data[TELEOP_ACTION_IS_FRESH] = getattr(self.teleop_device, "action_is_fresh", True)
         return new_complementary_data
 
     def transform_features(
@@ -470,9 +472,10 @@ class InterventionActionProcessorStep(ProcessorStep):
     # Joint-control interventions are delta: the leader pose is shifted by its gap to the
     # follower at the moment the intervention began, so a lagging leader never snaps the
     # follower (2026-09-05: the shadowing 102HD trailed by 22 deg). The gripper stays
-    # absolute. Captured on the first intervening step from the transition's observation,
-    # the follower's raw {joint}.pos dict; cleared when the intervention ends.
+    # absolute. Capture from the first fresh intervening sample and the follower's
+    # raw {joint}.pos (or its held target while waiting); clear on intervention end.
     _offset: dict[str, float] | None = field(default=None, init=False, repr=False)
+    _last_joint_target: dict[str, float] | None = field(default=None, init=False, repr=False)
 
     def __call__(self, transition: EnvTransition) -> EnvTransition:
         """
@@ -501,7 +504,7 @@ class InterventionActionProcessorStep(ProcessorStep):
         new_transition = transition.copy()
 
         if not is_intervention:
-            self._offset = None
+            self.reset()
 
         # Override action if intervention is active
         if is_intervention and teleop_action is not None:
@@ -519,19 +522,31 @@ class InterventionActionProcessorStep(ProcessorStep):
                     # Joint control: prefer keys ending in ".pos", fall back to all values
                     joints = {k: float(v) for k, v in teleop_action.items() if k.endswith(".pos")}
                     if joints:
-                        if self._offset is None:
-                            follower = transition[TransitionKey.OBSERVATION]
-                            self._offset = {
-                                k: 0.0 if k.endswith("gripper.pos") else v - float(follower.get(k, v))
-                                for k, v in joints.items()
-                            }
-                            worst = max(self._offset, key=lambda k: abs(self._offset[k]))
-                            logger.info(
-                                "[INTERVENTION] delta mode: leader offset captured, largest %+.1f deg on %s",
-                                self._offset[worst],
-                                worst,
-                            )
-                        action_list = [v - self._offset[k] for k, v in joints.items()]
+                        fresh = complementary_data.get(TELEOP_ACTION_IS_FRESH, True)
+                        if not fresh:
+                            # Repeat the target, including the absolute gripper. At
+                            # handover hold the follower until a fresh leader pose
+                            # establishes the delta offset; never execute the policy
+                            # action just because intervention input is unavailable.
+                            if self._last_joint_target is None:
+                                follower = transition[TransitionKey.OBSERVATION]
+                                self._last_joint_target = {k: float(follower[k]) for k in joints}
+                            action_list = [self._last_joint_target[k] for k in joints]
+                        else:
+                            if self._offset is None:
+                                follower = self._last_joint_target or transition[TransitionKey.OBSERVATION]
+                                self._offset = {
+                                    k: 0.0 if k.endswith("gripper.pos") else v - float(follower.get(k, v))
+                                    for k, v in joints.items()
+                                }
+                                worst = max(self._offset, key=lambda k: abs(self._offset[k]))
+                                logger.info(
+                                    "[INTERVENTION] delta mode: leader offset captured, largest %+.1f deg on %s",
+                                    self._offset[worst],
+                                    worst,
+                                )
+                            self._last_joint_target = {k: v - self._offset[k] for k, v in joints.items()}
+                            action_list = list(self._last_joint_target.values())
                     else:
                         action_list = list(teleop_action.values())
             elif isinstance(teleop_action, np.ndarray):
@@ -561,6 +576,10 @@ class InterventionActionProcessorStep(ProcessorStep):
         new_transition[TransitionKey.COMPLEMENTARY_DATA] = complementary_data
 
         return new_transition
+
+    def reset(self) -> None:
+        self._offset = None
+        self._last_joint_target = None
 
     def get_config(self) -> dict[str, Any]:
         """
