@@ -335,6 +335,7 @@ class ProbeConfig:
     enable_depth_event: bool = False  # depth read at pre-grasp frames against far-from-event controls
     enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
+    enable_subtask_scene_sweep: bool = False  # same, on empty-handed frames with scene-plausible labels + absent control
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
     enable_input_swap: bool = False  # inject another frame's state / images / subtask text: 2^3 cube per anchor
@@ -444,6 +445,11 @@ class ProbeConfig:
     subtask_sweep_labels: list[str] | None = None
     # Side figure only: a fan grid of this many joints x this many of the swept frames.
     subtask_sweep_fan_grid: int = 4
+    # Scene sweep: the hand-reviewed frame list (per-frame present / absent classes and GT
+    # label, built by migration/subtask_scene_sweep_frames.py and checked on its contact
+    # sheets). Required when the probe is enabled; n_seeds falls back to the sweep's.
+    subtask_scene_sweep_frames: str | None = None
+    subtask_scene_sweep_n_seeds: int | None = None
 
     # Task sweep: same intervention/noise-floor test over meta/tasks.parquet.
     task_sweep_n_frames: int | None = None
