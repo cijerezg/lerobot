@@ -1,13 +1,6 @@
 # reBot Commands
 
-> **Run everything from this directory (the workspace root) with the root `.venv`.**
-> Every command below uses `uv run --no-project --python .venv/bin/python`. There is no
-> `pyproject.toml` at the workspace root, and `outputs/` + `config_rl.yaml` paths in the
-> config are relative to it.
->
-> Do **not** use `uv run --project lerobot ...`: that resolves against
-> `lerobot/pyproject.toml` and builds a *separate* environment (cu128 pins, no
-> matplotlib), which fails in ways that never name the venv.
+Run everything from the workspace root with the root `.venv`. Never `uv run --project lerobot` (builds a separate env).
 
 ## Teleop
 
@@ -23,6 +16,8 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --display_data=true
 
 ## Record
+
+`depth_stride` must equal `policy.image_stride` in config_rl.yaml (which must divide `policy.chunk_size`).
 
 uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobot_record.py \
     --robot.type=rebot_b601_follower \
@@ -42,21 +37,16 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --dataset.push_to_hub=false \
     --display_data=true
 
-`depth_stride=3` writes PNG16 wrist depth at 10Hz instead of 30Hz (actions/proprio/RGB stay 30Hz).
-Depth is ~83% of on-disk size and the buffer cache only reads stride-aligned rows, so this is a
-3x saving on the dominant term with nothing lost. It must equal `policy.image_stride` in
-config_rl.yaml, and that must divide `policy.chunk_size`.
+## New dataset prep (once per dataset)
 
-## Offline training prep (run once per new dataset)
-
-Anchor action stats (chunk-size must match policy.chunk_size; writes outputs/stats/action_stats_anchor_<dataset>.pt):
+Anchor action stats (`--chunk-size` = `policy.chunk_size`):
 
 uv run --no-project --python .venv/bin/python python -m lerobot.scripts.compute_delta_stats \
     --root outputs/rebot_dataset_dummy_v1 \
     --encoding anchor \
     --chunk-size 30
 
-Memmap buffer cache (pre-decodes frames so training doesn't hold all pixels in RAM; repo-id must match dataset.repo_id in config_rl.yaml):
+Memmap buffer cache (`--image-stride` = `policy.image_stride`, mismatch is a hard error):
 
 uv run --no-project --python .venv/bin/python python -m lerobot.scripts.lerobot_memmap_buffer_cache \
     --repo-id cijerezg/rebot_dataset_dummy_v1 \
@@ -65,163 +55,81 @@ uv run --no-project --python .venv/bin/python python -m lerobot.scripts.lerobot_
     --image-storage-dtype uint8 \
     --image-stride 3
 
-`--image-stride` must match `policy.image_stride` in config_rl.yaml (it is part of the cache
-fingerprint — a mismatch is a hard error, not a silent fallback) and must divide `chunk_size`.
-
-## Offline training (config: config_rl.yaml at repo root)
-
-
-Full run:
+## Offline training
 
 uv run python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml
 
+Smoke test without Aim:
+
+uv run python -m lerobot.scripts.rl_offline --config_path=config_rl.yaml --aim.enable=false
+
 ## Aim metrics UI
 
-Aim is enabled in config_rl.yaml, so the full training command above writes metrics while it runs.
-There is no account, login, or upload step. Run these commands from the workspace root.
-
-One-time environment setup (or after dependencies change):
+Env setup (once, or after dependency changes):
 
 uv sync --project lerobot --extra training --extra molmoact2 --extra pi
 
-Terminal 1 - start training:
-
-uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offline \
-    --config_path=config_rl.yaml
-
-Terminal 2 - start the metrics UI (during or after training):
+Start the UI (http://127.0.0.1:43800), during or after training:
 
 uv run aim up --repo ./aim
 
-Open http://127.0.0.1:43800 in a browser. Refresh the runs page after training starts if it was
-initially empty. Metrics are stored locally in ./aim; the same repository lets the UI compare
-runs. Stop the UI with Ctrl+C. Training does not need the UI to be running.
-
-Useful override - disable Aim for a smoke test:
-
-uv run --no-project --python .venv/bin/python python -m lerobot.scripts.rl_offline \
-    --config_path=config_rl.yaml \
-    --aim.enable=false
-
-To use a different metrics directory, pass the same location to both training
-(--aim.repo=PATH) and the UI (aim up --repo PATH). Do not delete ./aim unless you intend to
-delete all locally stored run history.
-
 ## Inference (standalone, RTC)
 
-Run the checkpoint on the real robot, no learner or gRPC:
+Loads `inference_checkpoint_path` from config_rl.yaml. `inference_send_actions_to_robot: false` = read-only preflight. Subtasks: `n` next, `b` back.
 
 uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 
-The checkpoint is `inference_checkpoint_path` in config_rl.yaml (falls back to
-`policy.pretrained_path`); it must be a complete `checkpoints/<step>/pretrained_model`
-dir. `inference_send_actions_to_robot: false` is the safety preflight: the follower is
-read but never commanded, actions go out through the leader feedback path. Subtasks come
-from the `policy.eval_subtasks` script (the steps in order, free text): `n` advances to the
-next entry, `b` steps back; an episode starts on and resets to the first entry. Reorder by
-editing the list.
-
 ## Probe viewer
 
-Browser UI over a run's validation probes (serves on http://127.0.0.1:7870):
+Browser UI over a run's probes (http://127.0.0.1:7870), rescans on refresh. Takes a run dir, `validation/`, or a `step_*` dir.
 
 uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes outputs/molmoact2_offline_rebot_all-v6
 
-Takes a run directory, its `validation/`, or a single `step_*` dir. It re-scans
-`<run>/validation/step_*/<probe>/` on every request, so a checkpoint that lands
-mid-session shows up on refresh — no export step. `--port` to move it, `--no-open` to
-skip the browser tab. Probes are written by the validation loop only when their
-`probe_parameters.enable_*` flag is set in config_rl.yaml.
-
-
 ## Remote validation on the DGX
 
-Run a checkpoint's probe suite on the DGX from the main PC and pull the results back into
-the mirrored local path. Both boxes use the same absolute paths, so the checkpoint,
-run dir and results all keep their names.
+Run one checkpoint's probe suite on the DGX and pull results to `outputs/remote_val/<run>-<step>/`. Syncs code + config_rl.yaml; datasets/stats/cache must already be on the DGX.
 
 lerobot/scripts/remote_validate.sh outputs/molmoact2_offline_rebot_v4/checkpoints/000400
 
-It syncs `lerobot/src/lerobot/` + `config_rl.yaml`, pushes the checkpoint (~11 GB), runs
+Reattach to a detached run:
 
-    rl_offline --policy.pretrained_path=<ckpt> --policy.offline_steps=0 --val_on_start=true
-               --save_checkpoint=false --aim.enable=false --offline_output_dir=<run>
+lerobot/scripts/remote_validate.sh --attach outputs/molmoact2_offline_rebot_v4/checkpoints/000400
 
-streams the log, rsyncs `<run>/` back (~280 MB), then deletes the remote checkpoint copy.
-Results land in `outputs/remote_val/<run>-<step>/validation/step_00000000/`, which the probe
-viewer above reads directly. Which probes run is still `probe_parameters.enable_*` in
-config_rl.yaml — that file is part of the sync, so edit it locally.
+Flags: `--dry-run`, `--keep-checkpoint`, `--force-delete`, `--out DIR`, `--config PATH`, `--host`.
 
-The remote run is detached (`setsid`), so a dropped ssh does not kill it: Ctrl-C only stops
-the tail, and `--attach <ckpt>` picks it back up. The checkpoint is kept on failure, and is
-never deleted if it already existed on the DGX before the run (`--force-delete` overrides).
+## Chase a run's checkpoints (overnight)
 
-Needs a `Host dgx` block in `~/.ssh/config` with key auth (or `--host` / `$DGX_HOST`).
-Static assets — the five dataset roots, `outputs/rebot_val-annotated-v4`, `outputs/MolmoAct2`,
-the FAST tokenizer, `outputs/stats/`, the buffer cache — are NOT synced by this script; it
-reads their paths out of config_rl.yaml and fails fast if any is missing on the DGX.
+Probes the newest unprobed checkpoint on the DGX until training exits or STOP. State in `<run>/validation/.chase/`.
 
-Other flags: `--dry-run` (prints the plan, needs no DGX), `--keep-checkpoint`,
-`--out DIR`, `--config PATH`, and a leading code-tree argument to ship a different
-checkout, e.g. `remote_validate.sh lerobot-tinypi outputs/.../checkpoints/000400`.
+setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> > /dev/null 2>&1 &
 
-## Chasing a run's checkpoints (overnight)
+Stop after the pass in flight:
 
-Keep the DGX busy for a whole training run instead of probing one checkpoint by hand:
+touch outputs/<run>/validation/.chase/STOP
 
-lerobot/scripts/chase_validate.sh outputs/molmoact2_rebot_diverse_speed_v1
+Probe a checkpoint by hand while the chase is up:
 
-It watches `<run>/checkpoints/` and hands the NEWEST unprobed step to `remote_validate.sh`,
-one pass at a time. Checkpoints that land while a pass is in flight are marked `.skipped`,
-never queued - the DGX always works on the freshest weights. The newest step is read from
-the step directories themselves, not `checkpoints/last`, and a directory is only shipped
-once its byte size stops changing (`--settle`, default 20 s), so a half-written save never
-moves. A failed pass is retried (`--retries`, default 2) and then recorded, and the chase
-moves on to the next checkpoint rather than stalling the box.
+flock outputs/remote_val/.dgx.lock lerobot/scripts/remote_validate.sh <ckpt>
 
-Only one pass runs on the box at a time: the chase takes an flock on
-`outputs/remote_val/.dgx.lock` and defers a checkpoint to the next scan if it cannot get
-it. Re-running a checkpoint by hand while the chase is up must take the same lock:
+## Hardware checks
 
-    flock outputs/remote_val/.dgx.lock lerobot/scripts/remote_validate.sh <ckpt>
+Probe follower motors:
 
-State is on disk under `<run>/validation/.chase/` - `<step>.ok`, `<step>.failed` (holding
-the exit code), `<step>.skipped`, `log.<step>`, `chase.log` - so a restart re-probes
-nothing. Results land in `<run>/validation/step_<step>/`, which `view_probes` reads live.
-
-It exits when the training process it followed exits (after a final pass on the last
-checkpoint) or when told to stop. A restarted `rl_offline` is adopted rather than treated
-as the end of the run:
-
-    touch outputs/<run>/validation/.chase/STOP    # stops after the pass in flight
-
-Detach it for the night, and pass any `remote_validate.sh` flags after `--`:
-
-    setsid nohup lerobot/scripts/chase_validate.sh outputs/<run> > /dev/null 2>&1 &
-    lerobot/scripts/chase_validate.sh outputs/<run> -- --host dgx --keep-checkpoint
-
-`--pid N` follows a specific training process; without it the chaser attaches to the
-running `rl_offline` (and, if there is none, runs until STOP).
-
-
-
-
-# probe motors
 .venv/bin/python probe_rebot_motors.py
 
-# leader USB port check (after any re-plug). In `lsusb -t` the ch341 must hang under Bus 003 or 005
-# (CPU controller); Bus 001 (chipset, incl. the PC-case port) drops bytes. Must print 200/200 clean.
+Leader USB check after any re-plug (must be 200/200; ch341 must be under Bus 003/005 in `lsusb -t`, Bus 001 drops bytes):
+
 .venv/bin/python migration/leader_bus_capture.py burst --trials 200 --spacing 0.033 --window 0.025
 
-# follower (rebot B601) motor order, CAN ids as probe_rebot_motors.py prints them.
-# Chain is in this order, base first: a contiguous dead tail = broken cable just upstream of the first dead motor;
-# one dead motor with live ones after it = that motor's own connector/board.
-#   #  joint          send  recv
-#   1  shoulder_pan      1    17
-#   2  shoulder_lift     2    18
-#   3  elbow_flex        3    19
-#   4  wrist_flex        4    20
-#   5  wrist_yaw         5    21
-#   6  wrist_roll        6    22
-#   7  gripper           7    23
-# Leader (102HD, ttyUSB0) uses ids 0-6 in the same joint order; id 7 is the button board.
+Follower chain order, base first (dead tail = cable upstream of first dead motor; one dead motor = its own board):
+
+    #  joint          send  recv
+    1  shoulder_pan      1    17
+    2  shoulder_lift     2    18
+    3  elbow_flex        3    19
+    4  wrist_flex        4    20
+    5  wrist_yaw         5    21
+    6  wrist_roll        6    22
+    7  gripper           7    23
+
+Leader (102HD, ttyUSB0): ids 0-6 same order, id 7 = button board.
