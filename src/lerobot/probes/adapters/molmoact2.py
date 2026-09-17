@@ -641,6 +641,7 @@ class MolmoAct2Adapter(ProbablePolicy):
         gt_actions: Tensor | None = None,
         subtask: str | None = None,
         metadata: dict | None = None,
+        vlm_layers: list[int] | None = None,
     ) -> AttentionCaptureResult:
         # Register the action-expert hooks once per adapter. The hooks stay
         # installed (no-ops when the global flag is off), so this is safe.
@@ -652,7 +653,7 @@ class MolmoAct2Adapter(ProbablePolicy):
             return self._capture_attention_jacobian(
                 obs, task_str, timestep, layers, gt_actions, subtask, metadata
             )
-        return self._capture_attention_viz(obs, task_str, timestep, layers, subtask, metadata)
+        return self._capture_attention_viz(obs, task_str, timestep, layers, subtask, metadata, vlm_layers)
 
     def capture_action_sensitivity(
         self,
@@ -833,13 +834,22 @@ class MolmoAct2Adapter(ProbablePolicy):
         return obs_on_device, batch, model_inputs, timesteps_tensor
 
     @torch.no_grad()
-    def _capture_attention_viz(self, obs, task_str, timestep, layers, subtask=None, metadata=None):
+    def _capture_attention_viz(
+        self, obs, task_str, timestep, layers, subtask=None, metadata=None, vlm_layers=None
+    ):
         obs_on_device, batch, model_inputs, timesteps_tensor = self._flow_probe_inputs(
             obs, task_str, timestep, None, subtask, metadata,
         )
         _MOLMOACT2_PROBING_CAPTURE.clear()
         _MOLMOACT2_PROBING_CAPTURE["enabled"] = True
         _MOLMOACT2_PROBING_CAPTURE["requires_grad"] = False
+        vlm_query_positions = None
+        if vlm_layers:
+            # The VLM's own read: prompt text rows only, against every key. Full rows
+            # would be S x S per layer; the text rows are the ones a token picker shows.
+            vlm_query_positions = self._text_token_positions(batch)
+            _MOLMOACT2_PROBING_CAPTURE["vlm_layers"] = {int(layer) for layer in vlm_layers}
+            _MOLMOACT2_PROBING_CAPTURE["vlm_query_positions"] = vlm_query_positions
         self._set_probe_cuda_graph_enabled(False)
         try:
             self._policy._compute_flow_matching_loss_joint_per_layer(
@@ -851,6 +861,8 @@ class MolmoAct2Adapter(ProbablePolicy):
         finally:
             _MOLMOACT2_PROBING_CAPTURE["enabled"] = False
             _MOLMOACT2_PROBING_CAPTURE["requires_grad"] = False
+            _MOLMOACT2_PROBING_CAPTURE.pop("vlm_layers", None)
+            _MOLMOACT2_PROBING_CAPTURE.pop("vlm_query_positions", None)
             self._restore_probe_cuda_graph_enabled()
 
         cross_raw = _MOLMOACT2_PROBING_CAPTURE.get("cross_attn_by_layer", {})
@@ -859,7 +871,11 @@ class MolmoAct2Adapter(ProbablePolicy):
         wanted = set(layers) if layers is not None else set(cross_raw.keys()) | set(self_raw.keys())
         cross_attn = {k: v for k, v in cross_raw.items() if k in wanted}
         self_attn  = {k: v for k, v in self_raw.items()  if k in wanted}
-        return self._pack_molmoact2_result(cross_attn, self_attn, batch, obs_on_device)
+        result = self._pack_molmoact2_result(cross_attn, self_attn, batch, obs_on_device)
+        if vlm_query_positions is not None:
+            result.extras["vlm_attn_by_layer"] = dict(_MOLMOACT2_PROBING_CAPTURE.get("vlm_attn_by_layer", {}))
+            result.extras["vlm_query_positions"] = list(vlm_query_positions)
+        return result
 
     def _capture_attention_jacobian(
         self, obs, task_str, timestep, layers, gt_actions=None, subtask=None, metadata=None
@@ -1171,30 +1187,40 @@ class MolmoAct2Adapter(ProbablePolicy):
             "image_overlay_segments": overlay_segments,
             "image_tensors_by_segment": tensors_by_segment,
         }
-        attention_mask = batch.get("attention_mask")
-        if torch.is_tensor(attention_mask) and attention_mask.ndim >= 2:
-            valid_mask = attention_mask[0].detach().cpu().to(torch.bool)
-            labels = batch.get("labels")
-            if torch.is_tensor(labels) and labels.ndim >= 2:
-                valid_mask &= labels[0].detach().cpu().eq(-100)
-            valid_positions = valid_mask.nonzero(as_tuple=False).flatten()
-            # Depth placeholders are prompt positions now, but they carry point-map
-            # tokens, not words: they get their own segment and spatial overlay, so
-            # counting them here too would put 192 columns of depth mass inside the
-            # task clause of every prompt panel.
-            depth_token_id = batch.get("depth_token_id")
-            skip_ids = {int(patch_id)}
-            if depth_token_id is not None:
-                skip_ids.add(int(depth_token_id))
-            text_positions = [
-                int(pos) for pos in valid_positions.tolist()
-                if int(row[int(pos)]) not in skip_ids
-            ]
-            if text_positions:
-                extras["text_token_indices_by_segment"] = {"language": text_positions}
+        # Depth placeholders are prompt positions now, but they carry point-map
+        # tokens, not words: they get their own segment and spatial overlay, so
+        # counting them here too would put 192 columns of depth mass inside the
+        # task clause of every prompt panel.
+        text_positions = self._text_token_positions(batch)
+        if text_positions:
+            extras["text_token_indices_by_segment"] = {"language": text_positions}
         if pooling_by_segment:
             extras["image_pooling_by_segment"] = pooling_by_segment
         return encoder_segments, image_tensors, patches_per_cam, extras
+
+    def _text_token_positions(self, batch: dict) -> list[int]:
+        """Prompt positions that carry words: valid, not a label, not an image patch or
+        depth placeholder. Row 0 of the batch."""
+        input_ids = batch.get("input_ids")
+        attention_mask = batch.get("attention_mask")
+        if not torch.is_tensor(input_ids) or not torch.is_tensor(attention_mask) or attention_mask.ndim < 2:
+            return []
+        row = input_ids[0].detach().cpu()
+        valid_mask = attention_mask[0].detach().cpu().to(torch.bool)
+        labels = batch.get("labels")
+        if torch.is_tensor(labels) and labels.ndim >= 2:
+            valid_mask &= labels[0].detach().cpu().eq(-100)
+        skip_ids = set()
+        patch_id = self._image_patch_token_id()
+        if patch_id is not None:
+            skip_ids.add(int(patch_id))
+        depth_token_id = batch.get("depth_token_id")
+        if depth_token_id is not None:
+            skip_ids.add(int(depth_token_id))
+        return [
+            int(pos) for pos in valid_mask.nonzero(as_tuple=False).flatten().tolist()
+            if int(row[int(pos)]) not in skip_ids
+        ]
 
     def _depth_attention_extras(self, batch: dict, obs_on_device: dict[str, Tensor], encoder_seq_len: int):
         """Locate the point-map depth tokens inside the prefix.

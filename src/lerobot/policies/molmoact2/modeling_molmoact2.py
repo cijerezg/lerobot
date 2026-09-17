@@ -1081,6 +1081,28 @@ def _patch_training_kv_collection(backbone: Any) -> None:
 
             collected_key_states = key_states
             collected_value_states = value_states
+            vlm_layers = _MOLMOACT2_PROBING_CAPTURE.get("vlm_layers")
+            if vlm_layers is not None and int(self.layer_idx) in vlm_layers:
+                # Prompt-row softmax(QK^T) of the VLM itself (model_explorer). The SDPA
+                # path below never materialises weights, so recompute the asked-for
+                # query rows against every key and stash them on CPU. Same global gate
+                # as the action-expert capture, so it rides the same in-thread forward.
+                with torch.no_grad():
+                    rows = _MOLMOACT2_PROBING_CAPTURE.get("vlm_query_positions")
+                    if rows is not None:
+                        rows = torch.as_tensor(rows, dtype=torch.long, device=query_states.device)
+                    q_rows = query_states if rows is None else query_states.index_select(2, rows)
+                    k_all = repeat_kv(key_states, self.num_key_value_groups)
+                    scores = torch.matmul(q_rows.float(), k_all.float().transpose(-2, -1)) * self.scaling
+                    if attention_mask is not None:
+                        bias = attention_mask if rows is None else attention_mask.index_select(2, rows)
+                        if bias.dtype == torch.bool:
+                            scores = scores.masked_fill(~bias, float("-inf"))
+                        else:
+                            scores = scores + bias.float()
+                    _MOLMOACT2_PROBING_CAPTURE.setdefault("vlm_attn_by_layer", {})[int(self.layer_idx)] = (
+                        torch.softmax(scores, dim=-1).cpu()
+                    )
             dropout_p = 0.0 if not self.training else self.attention_dropout
             if self.config._attn_implementation == "sdpa" and (
                 attention_mask is None or torch.is_tensor(attention_mask)
