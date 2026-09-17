@@ -25,6 +25,7 @@ import torch
 from torch import Tensor
 
 from lerobot.policies.molmoact2.anchor_encoding import ANCHOR_KEY, EMBODIMENT_INDEX_KEY
+from lerobot.policies.molmoact2.processor_molmoact2 import ACTION_OUTPUT_TOKEN
 from lerobot.policies.molmoact2.modeling_molmoact2 import (
     _MOLMOACT2_PROBING_CAPTURE,
     register_action_attention_probing,
@@ -1347,6 +1348,198 @@ class MolmoAct2Adapter(ProbablePolicy):
     # skips gradient-based plots when this isn't supported.
 
     # ── Representations ──────────────────────────────────────────────────────
+
+    # Clause markers of the action prompt (_build_robot_text). Each clause runs from
+    # its marker to the next marker; the question clause ends at <|im_end|>.
+    _PROMPT_CLAUSES = (
+        ("embodiment", "The robot is"),
+        ("task", " The task is to"),
+        ("task_first", "The task is to"),  # no embodiment clause: the task opens the prompt
+        ("depth_words", " The depth of the scene is"),
+        ("subtask", " The current step is"),
+        ("state", " The current state of the robot is"),
+        ("history", " The recent states of the robot"),
+        ("metadata_quality", " The quality is"),
+        ("metadata_mistake", " The robot made"),
+        ("metadata_speed", " The speed is"),
+        ("question", " Given these,"),
+    )
+
+    @staticmethod
+    def _find_subsequence(row: list[int], pattern: list[int], start: int = 0) -> int | None:
+        n = len(pattern)
+        for start in range(start, len(row) - n + 1):
+            if row[start : start + n] == pattern:
+                return start
+        return None
+
+    def _prompt_token_groups(self, batch: dict, obs_on_device: dict, presence: dict) -> dict[str, list[int]]:
+        """Prompt positions by what they carry: image patches per camera, depth tokens,
+        each text clause, the fixed question, the leftover template tokens and the
+        <action_output> position. Absent cameras and absent clauses map to []."""
+        row = batch["input_ids"][0].detach().cpu().tolist()
+        seq_len = len(row)
+        tokenizer = self._tokenizer()
+        groups: dict[str, list[int]] = {}
+
+        _, _, _, extras = self._image_attention_metadata(batch, obs_on_device, seq_len)
+        by_segment = extras.get("image_patch_indices_by_segment", {})
+        for index, key in enumerate(self._image_keys_for_obs(obs_on_device)):
+            cam = self._safe_cam_name(key, index)
+            positions = []
+            for segment, indices in by_segment.items():
+                if segment == cam or segment.startswith(cam + "_crop"):
+                    positions.extend(int(p) for p in indices)
+            groups[cam] = sorted(positions) if presence.get(key, True) else []
+
+        depth = self._depth_attention_extras(batch, obs_on_device, seq_len).get("depth_segment")
+        groups["depth"] = [] if depth is None or not presence.get("depth", True) else list(depth["indices"])
+
+        text = self._text_token_positions(batch)
+        text_set = set(text)
+        starts = {}
+        for name, marker in self._PROMPT_CLAUSES:
+            pos = self._find_subsequence(row, tokenizer.encode(marker, add_special_tokens=False))
+            if pos is not None and pos in text_set:
+                starts[name] = pos
+        if "task" not in starts and "task_first" in starts:
+            starts["task"] = starts.pop("task_first")
+        starts.pop("task_first", None)
+        for name in ("task", "state", "question"):
+            if name not in starts:
+                raise ValueError(f"prompt clause {name!r} not found in the packed prompt")
+        # The prompt opens with an <|im_end|> too, so the closing one is searched for
+        # past the question.
+        im_end = self._find_subsequence(row, tokenizer.encode("<|im_end|>", add_special_tokens=False), starts["question"])
+        action_output = self._find_subsequence(row, tokenizer.encode(ACTION_OUTPUT_TOKEN, add_special_tokens=False), starts["question"])
+        if im_end is None or action_output is None:
+            raise ValueError("prompt lacks <|im_end|> or <action_output>")
+
+        ordered = sorted(starts.items(), key=lambda kv: kv[1])
+        bounds = [pos for _, pos in ordered] + [im_end]
+        clause_of: dict[int, str] = {}
+        for (name, start), end in zip(ordered, bounds[1:]):
+            for pos in range(start, end):
+                clause_of[pos] = name
+        metadata = {"metadata_quality", "metadata_mistake", "metadata_speed"}
+        for name in ("embodiment", "task", "subtask", "state", "history", "question", "metadata", "template"):
+            groups[name] = []
+        for pos in text:
+            if pos == action_output:
+                continue
+            name = clause_of.get(pos, "template")
+            if name in metadata:
+                name = "metadata"
+            elif name == "depth_words":
+                name = "template"
+            groups[name].append(pos)
+        groups["action_output"] = [action_output]
+        return groups
+
+    @torch.no_grad()
+    def capture_layer_representations(
+        self,
+        obs: dict[str, Tensor],
+        task_str: str,
+        subtask: str | None = None,
+        metadata: dict | None = None,
+        extra_complementary: dict | None = None,
+        noise_seed: int = 0,
+    ) -> dict:
+        """Every layer's hidden state, pooled per prompt token group, at the first
+        inference step (t = 0: the action tokens are pure noise drawn from ``noise_seed``,
+        the same draw for every frame, so the expert's state is context and nothing of
+        the frame's own action).
+
+        ``extra_complementary`` overrides the ReBot identity columns, which is how a
+        diverse-corpus sample brings its own action_layout_id, embodiment_index,
+        camera presence and depth presence through the same pack step.
+
+        Returns ``{"encoder": {group: Tensor[L, D] | None}, "action_expert": {"action":
+        Tensor[L, D]}, "n_tokens": {group: int}}``; ``None`` marks a group this frame
+        does not carry (absent camera, absent clause).
+        """
+        backbone = self._policy._backbone()
+        transformer = backbone.transformer
+        action_expert = backbone._require_action_expert()
+        device = self._device
+        chunk_size, action_dim = self.chunk_size, self.action_dim
+
+        obs_on_device = {k: v.to(device) for k, v in obs.items()}
+        obs_on_device, presence_flags = self._fill_absent_cameras(obs_on_device)
+        complementary: dict = {**self._identity_columns, **presence_flags}
+        if extra_complementary:
+            complementary.update(extra_complementary)
+        if subtask:
+            complementary["subtask"] = [subtask]
+        if metadata is not None:
+            complementary["metadata"] = metadata
+        presence = {}
+        for key in self._configured_image_keys():
+            flag = complementary.get(f"camera_is_present.{key}", True)
+            presence[key] = bool(torch.as_tensor(flag).reshape(-1)[0]) if torch.is_tensor(flag) else bool(flag)
+        pointmap = getattr(self._cfg.policy, "pointmap_config", None)
+        if pointmap is not None:
+            flag = complementary.get(f"depth.{pointmap.depth_key}.depth_is_present", True)
+            presence["depth"] = bool(torch.as_tensor(flag).reshape(-1)[0]) if torch.is_tensor(flag) else bool(flag)
+
+        flat = {
+            **obs_on_device,
+            "task": task_str,
+            ACTION: torch.zeros(1, chunk_size, action_dim, device=device),
+            TransitionKey.COMPLEMENTARY_DATA: complementary,
+        }
+        with suppress_pack_dropout(self._preprocessor):
+            batch = self._preprocessor(flat)
+        batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+        model_inputs = self._policy._model_inputs(batch)
+        num_t = max(1, int(getattr(self._policy.config, "num_flow_timesteps", 1)))
+        action_dtype = next(action_expert.parameters()).dtype
+        timesteps = torch.zeros((1, num_t), device=device, dtype=action_dtype)
+        packed_action = batch[ACTION]  # [1, T, D_packed]: the pack step pads the width
+        generator = torch.Generator().manual_seed(int(noise_seed))
+        noise = torch.randn(1, 1, *packed_action.shape[1:], generator=generator)
+        noise = noise.to(device=device, dtype=torch.float32).expand(1, num_t, *packed_action.shape[1:]).contiguous()
+
+        encoder_layers: list[Tensor] = []
+        expert_layers: list[Tensor] = []
+
+        def _encoder_hook(_module, _inputs, output):
+            hidden = output[0] if isinstance(output, tuple) else output
+            encoder_layers.append(hidden[0].detach().float().cpu())
+
+        def _expert_hook(_module, _inputs, output):
+            hidden = output[0] if isinstance(output, tuple) else output
+            expert_layers.append(hidden[0].detach().float().cpu())
+
+        handles = [block.register_forward_hook(_encoder_hook) for block in transformer.blocks]
+        handles += [block.register_forward_hook(_expert_hook) for block in action_expert.blocks]
+        self._set_probe_cuda_graph_enabled(False)
+        try:
+            self._policy._compute_flow_matching_loss_joint_per_layer(
+                batch=batch, model_inputs=model_inputs, timesteps=timesteps, noise=noise, reduction="mean",
+            )
+        finally:
+            self._restore_probe_cuda_graph_enabled()
+            for handle in handles:
+                handle.remove()
+        if len(encoder_layers) != len(transformer.blocks) or len(expert_layers) != len(action_expert.blocks):
+            raise RuntimeError(
+                f"captured {len(encoder_layers)} encoder / {len(expert_layers)} expert layers, expected "
+                f"{len(transformer.blocks)} / {len(action_expert.blocks)}"
+            )
+
+        groups = self._prompt_token_groups(batch, obs_on_device, presence)
+        encoder = torch.stack(encoder_layers)  # [L, S, D]
+        pooled: dict[str, Tensor | None] = {}
+        for name, positions in groups.items():
+            pooled[name] = None if not positions else encoder[:, positions, :].mean(dim=1).half()
+        expert = torch.stack(expert_layers)  # [L, T, D]
+        return {
+            "encoder": pooled,
+            "action_expert": {"action": expert.mean(dim=1).half()},
+            "n_tokens": {name: len(positions) for name, positions in groups.items()},
+        }
 
     @torch.no_grad()
     def capture_representations(

@@ -35,7 +35,7 @@ import cv2
 import numpy as np
 import torch
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from lerobot.configs import parser
@@ -55,12 +55,20 @@ from lerobot.probes.utils import (
     probe_image_stride,
     register_config_choices,
 )
+from lerobot.robots.rebot_b601_follower.kinematics import RebotKinematics
+from lerobot.utils.action_smoothing import apply_butterworth_filter
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.utils import init_logging
 
 logger = logging.getLogger(__name__)
 
 HTML_PATH = Path(__file__).with_name("model_explorer.html")
+
+
+def _plotly_js_path() -> Path:
+    import plotly
+
+    return Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
 
 
 @dataclass
@@ -87,7 +95,7 @@ class PredictRequest(BaseModel):
     metadata: dict | None = None
     seeds: int = 1
     action_layer: int = 9
-    vlm_layer: int = 9
+    vlm_layer: int | None = None  # VLM prompt-row attention; the page no longer asks for it
     vlm_head: int = -1
     fast: bool = False
 
@@ -162,6 +170,9 @@ class Explorer:
         self.subtask_by_frame: dict[str, Any] = {}
         self.frame_cache: OrderedDict[tuple, dict] = OrderedDict()
         self.capture_cache: OrderedDict[tuple, Any] = OrderedDict()
+
+        self.kin = RebotKinematics()
+        self.table_z = float(getattr(cfg.probe_parameters, "trace_table_z", 0.0))
 
         policy = self.adapter.policy
         self.n_action_layers = len(policy._action_expert().blocks)
@@ -305,24 +316,37 @@ class Explorer:
 
         width = int(inputs["gt_actions"].shape[1])
         gt_norm = adapter.normalize_gt_actions(inputs["gt_actions"], inputs["state"])
+        # As in action_trace: every PREDICTED chunk is the filtered command the runtimes
+        # would send (zero-phase Butterworth); GT is a recording and stays raw.
+        chunks = [apply_butterworth_filter(c[:, :width].double().numpy()) for c in unnorm]
+        fast_np = apply_butterworth_filter(fast[:, :width].double().numpy()) if fast is not None else None
+        gt_np = inputs["gt_actions"][:, :width].double().numpy()
+        state_np = inputs["state"].double().numpy() if inputs["state"] is not None else None
         payload = {
-            "chunks": _round(unnorm[:, :, :width], 3),
+            "chunks": _round(np.stack(chunks), 3),
             "chunks_norm": _round(norm[:, :, :width], 4),
             "gt_norm": _round(gt_norm[:, :width], 4),
-            "fast": _round(fast[:, :width], 3) if fast is not None else None,
+            "fast": _round(fast_np, 3) if fast_np is not None else None,
+            "ee": {
+                "gt": _round(self.kin.ee_path(gt_np), 5),
+                "seeds": _round(np.stack([self.kin.ee_path(c) for c in chunks]), 5),
+                "fast": _round(self.kin.ee_path(fast_np), 5) if fast_np is not None else None,
+                "start": _round(self.kin.ee_path(state_np[None])[0], 5) if state_np is not None else None,
+                "table_z": self.table_z,
+            },
             "attention": self._attention_payload(result, entry, req),
         }
         return payload
 
     def _capture(self, entry, task, subtask, metadata, action_layer, vlm_layer):
         key = (entry["payload"]["global_idx"], entry["inputs"]["task"], task, subtask,
-               tuple(sorted((metadata or {}).items())), int(action_layer), int(vlm_layer))
+               tuple(sorted((metadata or {}).items())), int(action_layer), vlm_layer)
         if key in self.capture_cache:
             self.capture_cache.move_to_end(key)
             return self.capture_cache[key]
         result = self.adapter.capture_attention(
             entry["inputs"]["obs"], task, timestep=0.5, layers=[int(action_layer)],
-            vlm_layers=[int(vlm_layer)], subtask=subtask, metadata=metadata,
+            vlm_layers=None if vlm_layer is None else [int(vlm_layer)], subtask=subtask, metadata=metadata,
         )
         self.capture_cache[key] = result
         while len(self.capture_cache) > 16:
@@ -334,7 +358,7 @@ class Explorer:
         obs_dev, presence = self.adapter._fill_absent_cameras(obs_dev)
         present = self._present_cams(obs_dev, presence)
 
-        text_positions = list(result.extras.get("vlm_query_positions", []))
+        text_positions = [int(p) for p in result.extras.get("text_token_indices_by_segment", {}).get("language", [])]
         ids = result.task_tokens[0].detach().cpu()
         tokens = [{"pos": int(p), "label": _decode_token_label(result.tokenizer, ids[p])} for p in text_positions]
 
@@ -357,9 +381,9 @@ class Explorer:
                 action["prompt"] = _round(attn.index_select(2, idx).mean(dim=1))  # [H, T]
             action["budget"] = self._budget(attn, result, present, text_positions)
 
-        # ── VLM prompt rows → prefix ───────────────────────────────────────
-        vlm_layer = int(req.vlm_layer)
-        vlm_raw = result.extras.get("vlm_attn_by_layer", {}).get(vlm_layer)
+        # ── VLM prompt rows → prefix (only when asked for) ─────────────────
+        vlm_layer = req.vlm_layer
+        vlm_raw = None if vlm_layer is None else result.extras.get("vlm_attn_by_layer", {}).get(int(vlm_layer))
         vlm: dict = {"layer": vlm_layer, "head": int(req.vlm_head), "n_heads": 0, "cams": {}, "depth": None,
                      "budget": None}
         if vlm_raw is not None and text_positions:
@@ -457,6 +481,10 @@ def build_app(explorer: Explorer) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def index():
         return HTML_PATH.read_text()
+
+    @app.get("/static/plotly.min.js")
+    def plotly_js():
+        return FileResponse(_plotly_js_path(), media_type="application/javascript")
 
     @app.get("/api/meta")
     def meta():

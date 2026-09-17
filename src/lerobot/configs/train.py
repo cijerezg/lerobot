@@ -339,6 +339,7 @@ class ProbeConfig:
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
     enable_input_swap: bool = False  # inject another frame's state / images / subtask text: 2^3 cube per anchor
+    enable_domain_representations: bool = False  # ReBot vs diverse hidden states per layer and token group (probes/domain_representations.py)
 
     # Common
     output_dir: str = "outputs/probe"
@@ -378,6 +379,11 @@ class ProbeConfig:
     # refit is logged loudly because it invalidates comparison with earlier runs.
     action_manifold_cache: str | None = None
     repr_pca_dims: int = 100
+    # Domain representations. Frames per ReBot episode (None inherits n_frames_per_episode);
+    # the diverse side draws the same total, split evenly over its sources. k is the
+    # cosine neighbourhood of the purity readout.
+    domain_repr_n_frames_per_episode: int | None = None
+    domain_repr_knn_k: int = 10
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1
     umap_seed: int = 42

@@ -246,6 +246,24 @@ class ProbablePolicy(ABC):
 
     # ── Representations ──────────────────────────────────────────────────────
 
+    def capture_layer_representations(
+        self,
+        obs: dict[str, Tensor],
+        task_str: str,
+        subtask: str | None = None,
+        metadata: dict | None = None,
+        extra_complementary: dict | None = None,
+        noise_seed: int = 0,
+    ) -> dict:
+        """Every layer's hidden state pooled per prompt token group (domain_representations).
+
+        Returns ``{"encoder": {group: Tensor[L, D] | None}, "action_expert": {group:
+        Tensor[L, D]}, "n_tokens": {group: int}}``. ``extra_complementary`` carries a
+        sample's own identity columns (action layout, embodiment, camera and depth
+        presence) when it is not a ReBot frame.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no per-layer token-group capture.")
+
     @abstractmethod
     def capture_representations(
         self,
