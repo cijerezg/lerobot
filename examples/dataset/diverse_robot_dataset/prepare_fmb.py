@@ -471,7 +471,7 @@ def write_actor_views(output_root: Path) -> dict[str, Any]:
                         "episode_id": identifier,
                         "split": metadata["split"],
                         "source": "fmb",
-                        "component": "single_object_manipulation",
+                        "component": metadata.get("component", "single_object_manipulation"),
                         # A Franka, the same robot DROID records; the alias table
                         # resolves this to "Franka Panda" where "FMB_source_robot"
                         # resolved to unknown (-1).
@@ -523,6 +523,10 @@ def write_actor_views(output_root: Path) -> dict[str, Any]:
         }
 
     corpus_path = output_root / "corpus.json"
+    # A union store written by fmb_merge_stores.py keeps its source stores' corpus files
+    # under suffixed names and has no corpus.json of its own.
+    if not corpus_path.is_file():
+        return summaries
     corpus = read_json(corpus_path)
     derived = corpus["accounting"]["derived_training_rows"]
     derived["stored_actor_anchor_views"] = summaries
@@ -540,7 +544,10 @@ def write_actor_views(output_root: Path) -> dict[str, Any]:
 def load_review(review_root: Path | None, source_path: str) -> dict[tuple[int, int], dict[str, Any]]:
     if review_root is None:
         return {}
-    path = review_root / f"{Path(source_path).stem}.review.json"
+    stem = Path(source_path).stem
+    if Path(source_path).parent.name.startswith("board_"):
+        stem = f"{Path(source_path).parent.name}_{stem}"
+    path = review_root / f"{stem}.review.json"
     if not path.is_file():
         return {}
     review = read_json(path)
@@ -630,7 +637,11 @@ def _depth_gripper_event_accounting(metadata_records: list[dict[str, Any]]) -> d
 
 
 def episode_id(index: int, source_path: str) -> str:
-    return f"episode_{index:06d}_{Path(source_path).stem}"
+    # Multi-object trajectories repeat their stem across boards; the board keeps ids unique.
+    stem = Path(source_path).stem
+    if Path(source_path).parent.name.startswith("board_"):
+        stem = f"{Path(source_path).parent.name}_{stem}"
+    return f"episode_{index:06d}_{stem}"
 
 
 def convert(
@@ -816,6 +827,7 @@ def convert(
         invalid = (valid_depth == 0) | (valid_depth == 65535)
         episode_metadata = {
             "episode_id": identifier,
+            "component": manifest.get("source_subset", "single_object_manipulation_dataset").replace("_dataset", ""),
             "split": file_spec["split"],
             "source": {
                 "repo_id": manifest["source_repo_id"],
@@ -1091,10 +1103,14 @@ def validate(manifest: dict[str, Any], raw_root: Path, output_root: Path) -> dic
             errors.append(f"rejected_without_reason:{key}")
         quality = row.get("quality")
         events = row.get("mistake_events", [])
+        if row["critic_eligible"] and quality is None:
+            errors.append(f"eligible_without_reviewed_quality:{key}")
         if quality is not None:
             if not isinstance(quality, int) or isinstance(quality, bool) or not 1 <= quality <= 5:
                 errors.append(f"critic_quality_value:{key}")
-            if row.get("quality_provenance") != "human_reviewed_rebot_rubric":
+            if row.get("quality_provenance") not in {
+                "human_reviewed_rebot_rubric", "model_reviewed_rebot_rubric"
+            }:
                 errors.append(f"critic_quality_provenance:{key}")
             if quality >= 3 and events:
                 errors.append(f"critic_quality_mistake_mismatch:{key}")
@@ -1176,6 +1192,7 @@ def write_production_audit(
     pilot_audit_path: Path,
     output_root: Path,
     review_root: Path | None = None,
+    labels_path: Path | None = None,
 ) -> Path:
     manifest = read_json(manifest_path)
     corpus = read_json(output_root / "corpus.json")
@@ -1185,10 +1202,15 @@ def write_production_audit(
     candidate_intervals = derived_rows["candidate_critic_intervals"]
     reviewed_intervals = derived_rows["visually_reviewed_critic_intervals"]
     unreviewed_intervals = candidate_intervals - reviewed_intervals
-    labels_path = Path(__file__).resolve().parent / "fmb_production_quality_mistakes.json"
+    if labels_path is None:
+        labels_path = Path(__file__).resolve().parent / "fmb_production_quality_mistakes.json"
+    # The single-object production review had a metric-flagged dense second look; the
+    # multi-object review cites its dense sheets inside the labels file instead.
     dense_manifest_path = (
         output_root.parent / "quality_mistake_review" / "dense_metric_flags" / "manifest.json"
     )
+    if not dense_manifest_path.is_file():
+        dense_manifest_path = None
     audit = {
         "status": validation["status"],
         "source": {
@@ -1242,8 +1264,12 @@ def write_production_audit(
             "production_review_root": str(review_root) if review_root is not None else None,
             "quality_mistake_labels": str(labels_path),
             "quality_mistake_labels_sha256": sha256(labels_path),
-            "dense_metric_flag_manifest": str(dense_manifest_path),
-            "dense_metric_flag_manifest_sha256": sha256(dense_manifest_path),
+            "dense_metric_flag_manifest": (
+                str(dense_manifest_path) if dense_manifest_path is not None else None
+            ),
+            "dense_metric_flag_manifest_sha256": (
+                sha256(dense_manifest_path) if dense_manifest_path is not None else None
+            ),
         },
     }
     output = output_root.parent / "fmb_production_audit.json"
@@ -1304,6 +1330,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("outputs/diverse_robot_dataset/fmb"),
     )
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=here / "fmb_production_quality_mistakes.json",
+        help="Quality/mistake label artifact recorded in the production audit.",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     select_parser = commands.add_parser("select")
     select_parser.add_argument("--episode-count", type=int, default=100)
@@ -1352,7 +1384,9 @@ def main() -> None:
         corpus["validation_status"] = report["status"]
         corpus["validation_report_sha256"] = sha256(args.output_root / "validation_report.json")
         write_json(corpus_path, corpus)
-        write_production_audit(args.manifest, args.pilot_audit, args.output_root, args.review_root)
+        write_production_audit(
+            args.manifest, args.pilot_audit, args.output_root, args.review_root, args.labels
+        )
     print(json.dumps(report, indent=2))
     if report["status"] != "passed":
         raise SystemExit(1)

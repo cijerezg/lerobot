@@ -1,0 +1,44 @@
+{
+  "sources": [
+    {
+      "name": "molmoact_household",
+      "repo_id": "allenai/MolmoAct2-MolmoAct-Dataset-Household",
+      "revision": "main",
+      "source_format": "lerobot_v3",
+      "pilot_episodes": 0,
+      "robot_type": "franka",
+      "license": "apache-2.0",
+      "real_robot_evidence": "Ai2's in-house MolmoAct real-robot collection: a single-arm Franka in home environments (MolmoAct paper, 10k trajectories over 93 tasks; MolmoAct2 re-release with per-episode language annotations).",
+      "state_fields": ["observation.state"],
+      "action_fields": ["action.abs_ee_action"],
+      "gripper_field": "observation.state[6]",
+      "state_semantics": "End-effector pose: x, y, z in metres, then three Euler angles (roll wraps at +-pi in the source), then the gripper position as a 0-1 ratio. Not joint positions.",
+      "action_semantics": "The source's action.abs_ee_action is bit-identical to observation.state at the same timestep (measured max |diff| 0.0 on the Tabletop shard), and action.del_ee_action is the one-step state difference. The measured pose is therefore copied into the action vector under the audited copy_state exception; the Euler triple is unwrapped per episode at ingest so anchor deltas never cross the +-pi seam.",
+      "gripper_semantics": "Gripper position ratio in [~-0.013, 1.0]; open/closed orientation is not stated by the card and must not be inferred.",
+      "joint_names": [],
+      "metadata_patterns": ["README.md", "meta/**"],
+      "action_source": "copy_state",
+      "notes": "15 Hz, 7,529 episodes over 115 tasks, median 7.6 s per episode. Three cameras (primary, secondary, wrist) at 480x640. The base policy (MolmoAct2) was pretrained on this data. Sampling is two episodes per task for scene/task coverage rather than depth within a task."
+    },
+    {
+      "name": "molmoact_tabletop",
+      "repo_id": "allenai/MolmoAct2-MolmoAct-Dataset-Tabletop",
+      "revision": "main",
+      "source_format": "lerobot_v3",
+      "pilot_episodes": 0,
+      "robot_type": "franka",
+      "license": "apache-2.0",
+      "real_robot_evidence": "Ai2's in-house MolmoAct real-robot collection: a single-arm Franka on a tabletop (MolmoAct paper; MolmoAct2 re-release with per-episode language annotations).",
+      "state_fields": ["observation.state"],
+      "action_fields": ["action.abs_ee_action"],
+      "gripper_field": "observation.state[6]",
+      "state_semantics": "End-effector pose: x, y, z in metres, then three Euler angles (roll wraps at +-pi in the source), then the gripper position as a 0-1 ratio. Not joint positions.",
+      "action_semantics": "The source's action.abs_ee_action is bit-identical to observation.state at the same timestep (measured max |diff| 0.0 on the Tabletop shard), and action.del_ee_action is the one-step state difference. The measured pose is therefore copied into the action vector under the audited copy_state exception; the Euler triple is unwrapped per episode at ingest so anchor deltas never cross the +-pi seam.",
+      "gripper_semantics": "Gripper position ratio in [~-0.013, 1.0]; open/closed orientation is not stated by the card and must not be inferred.",
+      "joint_names": [],
+      "metadata_patterns": ["README.md", "meta/**"],
+      "action_source": "copy_state",
+      "notes": "20 Hz, 2,959 episodes over 19 tasks, median 8.3 s per episode. Three cameras (primary, secondary, wrist) at 480x640. Same sampling rule as the household half."
+    }
+  ]
+}

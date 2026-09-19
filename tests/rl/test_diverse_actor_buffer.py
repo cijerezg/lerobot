@@ -32,7 +32,7 @@ from lerobot.rl.data_sources.diverse_actor_buffer import (
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v2"
 
 
 @pytest.fixture(scope="module")
@@ -126,7 +126,7 @@ def test_identity_columns_point_back_at_the_sampled_rows(buffer, selection) -> N
 def test_every_source_is_representable_in_one_batch(buffer, selection) -> None:
     batch = buffer.collate(_one_row_per_source(selection))
     info = batch["complementary_info"]
-    assert set(info["source_id"].tolist()) == {SOURCE_IDS[s] for s in ("droid", "droid_success", "fmb", "robochallenge", "ur7e")}
+    assert set(info["source_id"].tolist()) == {SOURCE_IDS[s] for s in ("droid", "droid_success", "fmb", "molmoact", "robochallenge", "ur7e")}
     # Mixed widths survive collation rather than being unified by truncation.
     widths = (~info["action_dim_is_pad"]).sum(dim=1).tolist()
     assert set(widths) == {7, 8}

@@ -211,6 +211,13 @@ class Component:
         reviews = {
             index: read_json(self.review_root / f"episode_{index:06d}.review.json") for index in accepted
         }
+        # Model reviews carry their provenance on every review record; a human review
+        # carries none and the selection stays as in v1.
+        provenance = {}
+        for key in ("review_provenance", "quality_provenance", "reviewer_model", "review_date"):
+            values = {review.get(key) for review in reviews.values()}
+            if len(values) == 1 and None not in values:
+                provenance[key] = values.pop()
         write_json(
             self.review_root / "selection.json",
             {
@@ -236,6 +243,7 @@ class Component:
                 "rejections": read_json(self.review_root / "rejections.json")
                 if (self.review_root / "rejections.json").exists()
                 else {},
+                **provenance,
             },
         )
 
@@ -298,6 +306,7 @@ class Component:
             ),
             "dataset_root": f"datasets/franka/{self.slug}",
             "review_root": f"review/{self.slug}",
+            "review_round": "v2" if index.get("dataset") == "diverse_robot_dataset_v2" else "round1",
         }
         components = [item for item in index["components"] if item["component"] != self.lab]
         components.append(component)

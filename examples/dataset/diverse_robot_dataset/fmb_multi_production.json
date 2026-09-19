@@ -1,0 +1,800 @@
+{
+  "conversion_policy": {
+    "actor_future_fps": 30.0,
+    "actor_future_points": 30,
+    "actor_history_s": 6.0,
+    "actor_interpolation": "linear_in_source_native_action_space_no_extrapolation",
+    "depth_scale_provenance": "user_authorized_same_D405_model_assumption",
+    "depth_storage": "source_native_D405_Z16_uint16_levels",
+    "depth_units_mm_per_level": 0.1,
+    "invalid_depth_values": [
+      0,
+      65535
+    ],
+    "keep_depth": [
+      "wrist_1"
+    ],
+    "keep_rgb": [
+      "side_1",
+      "side_2",
+      "wrist_1"
+    ],
+    "omit_depth": [
+      "side_1",
+      "side_2",
+      "wrist_2"
+    ],
+    "omit_rgb": [
+      "wrist_2"
+    ],
+    "timestamp_provenance": "derived_nominal_grid_no_source_timestamps_in_npy"
+  },
+  "files": [
+    {
+      "bytes": 157374064,
+      "object": {
+        "board": "board_1",
+        "object_id": "1",
+        "trajectory": "75"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_1_75.npy",
+      "pilot_reviewed": false,
+      "sha256": "960a2fd13ae0873769f8abf006f1d530d547707310df29db33c3625b242cc8e8",
+      "split": "train"
+    },
+    {
+      "bytes": 356717795,
+      "object": {
+        "board": "board_1",
+        "object_id": "2",
+        "trajectory": "119"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_2_119.npy",
+      "pilot_reviewed": false,
+      "sha256": "5462fcafe4488b73dc948fe887860f89142831af28b3adea779eab1220c596cf",
+      "split": "train"
+    },
+    {
+      "bytes": 192782836,
+      "object": {
+        "board": "board_1",
+        "object_id": "3",
+        "trajectory": "88"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_3_88.npy",
+      "pilot_reviewed": false,
+      "sha256": "c3d2ba0c95c5fa3027633e7221b7d10bd3ef5345fe4529a603046346588bc86f",
+      "split": "train"
+    },
+    {
+      "bytes": 417044771,
+      "object": {
+        "board": "board_1",
+        "object_id": "4",
+        "trajectory": "57"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_4_57.npy",
+      "pilot_reviewed": false,
+      "sha256": "17eba562a3cab44ae92110650e86e5e85c688629226307ea964ed6ed8ece343f",
+      "split": "train"
+    },
+    {
+      "bytes": 376389635,
+      "object": {
+        "board": "board_1",
+        "object_id": "1",
+        "trajectory": "89"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_1_89.npy",
+      "pilot_reviewed": false,
+      "sha256": "64ed517748604324e9f9d67d49b59a93d73ac7a4e4ee368820ec186993725332",
+      "split": "train"
+    },
+    {
+      "bytes": 128522472,
+      "object": {
+        "board": "board_1",
+        "object_id": "2",
+        "trajectory": "110"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_2_110.npy",
+      "pilot_reviewed": false,
+      "sha256": "5544ebf5dbb32d3a4480f4eeadd9c26f6c923e5f0bd4d5a2f3bec92e5a8511cd",
+      "split": "train"
+    },
+    {
+      "bytes": 219011556,
+      "object": {
+        "board": "board_1",
+        "object_id": "3",
+        "trajectory": "133"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_3_133.npy",
+      "pilot_reviewed": false,
+      "sha256": "91e0d1f1f0b4c69ff6af677c10ccf102586a297a4ebb0192d429241f7e23d2cb",
+      "split": "train"
+    },
+    {
+      "bytes": 482617571,
+      "object": {
+        "board": "board_1",
+        "object_id": "4",
+        "trajectory": "5"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_4_5.npy",
+      "pilot_reviewed": false,
+      "sha256": "71454486b10aab4a45910b893f4b2c3085db2a1628b5bf1f444dbf7a5c7625e3",
+      "split": "train"
+    },
+    {
+      "bytes": 428847875,
+      "object": {
+        "board": "board_1",
+        "object_id": "1",
+        "trajectory": "8"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_1_8.npy",
+      "pilot_reviewed": false,
+      "sha256": "00741c33a70126ff7930c0b334a459149422841e1ce64cc45bb3493eed99445d",
+      "split": "validation"
+    },
+    {
+      "bytes": 398684387,
+      "object": {
+        "board": "board_1",
+        "object_id": "2",
+        "trajectory": "83"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_2_83.npy",
+      "pilot_reviewed": false,
+      "sha256": "ad064e6a34514bbba2dc1a04a1310b59b0ce1be97fdbf274c550679ceb716dba",
+      "split": "test"
+    },
+    {
+      "bytes": 222945864,
+      "object": {
+        "board": "board_1",
+        "object_id": "3",
+        "trajectory": "10"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_3_10.npy",
+      "pilot_reviewed": false,
+      "sha256": "775ac4cbedcec3a0c70e7a24f0ecbaec715db99b73d537183d761c645d7b99cb",
+      "split": "train"
+    },
+    {
+      "bytes": 418356227,
+      "object": {
+        "board": "board_1",
+        "object_id": "4",
+        "trajectory": "87"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_4_87.npy",
+      "pilot_reviewed": false,
+      "sha256": "9398c6de1c76380818eed48d0db94342cf70bfe5d1d873577387a79593ce7ba9",
+      "split": "train"
+    },
+    {
+      "bytes": 390815651,
+      "object": {
+        "board": "board_1",
+        "object_id": "1",
+        "trajectory": "67"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_1_67.npy",
+      "pilot_reviewed": false,
+      "sha256": "3d7b9e8258fbaaa03a725c5e30328491b8b2639fbb72a94ea342237d07ded5f5",
+      "split": "train"
+    },
+    {
+      "bytes": 439339523,
+      "object": {
+        "board": "board_1",
+        "object_id": "2",
+        "trajectory": "47"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_2_47.npy",
+      "pilot_reviewed": false,
+      "sha256": "1441a17f30180f5c1e095bb8f81a995fcebd5550c9902b8ad4fb41bb552f2eb0",
+      "split": "train"
+    },
+    {
+      "bytes": 204585760,
+      "object": {
+        "board": "board_1",
+        "object_id": "3",
+        "trajectory": "29"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_3_29.npy",
+      "pilot_reviewed": false,
+      "sha256": "5a3807b9f3a20013a1bfa45c805bafca247086388f83dfa5e7846e12409ad170",
+      "split": "train"
+    },
+    {
+      "bytes": 392127107,
+      "object": {
+        "board": "board_1",
+        "object_id": "4",
+        "trajectory": "10"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_4_10.npy",
+      "pilot_reviewed": false,
+      "sha256": "d602c98575032c123518c12b7f9b750764ad56997d7fcfdadb86fce7f7142451",
+      "split": "train"
+    },
+    {
+      "bytes": 305570992,
+      "object": {
+        "board": "board_1",
+        "object_id": "1",
+        "trajectory": "126"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_1_126.npy",
+      "pilot_reviewed": false,
+      "sha256": "8a5ba5034d35f3de6e5f3e0acab44be4385a03d06df624a065705a6a04c6b22e",
+      "split": "train"
+    },
+    {
+      "bytes": 201962888,
+      "object": {
+        "board": "board_1",
+        "object_id": "2",
+        "trajectory": "11"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_2_11.npy",
+      "pilot_reviewed": false,
+      "sha256": "0620150883b28b3080a829ddb8f94e3b697384a158b041446852e14075083820",
+      "split": "train"
+    },
+    {
+      "bytes": 264911816,
+      "object": {
+        "board": "board_1",
+        "object_id": "3",
+        "trajectory": "48"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_3_48.npy",
+      "pilot_reviewed": false,
+      "sha256": "94b945666a65807951c9594b25c1c0286809a00106abecc4b79b11e7bb26f992",
+      "split": "validation"
+    },
+    {
+      "bytes": 198028580,
+      "object": {
+        "board": "board_1",
+        "object_id": "4",
+        "trajectory": "84"
+      },
+      "path": "multi_object_manipulation_dataset/board_1/trajectory_4_84.npy",
+      "pilot_reviewed": false,
+      "sha256": "e9433197071b2e7e0e20f35a5b801893e6477ada8a8afceb13041253e55c5498",
+      "split": "test"
+    },
+    {
+      "bytes": 129833908,
+      "object": {
+        "board": "board_2",
+        "object_id": "1",
+        "trajectory": "75"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_1_75.npy",
+      "pilot_reviewed": false,
+      "sha256": "573a19b64a1502e950201917b850186553f217c303688c7aee9ca04f34829b9c",
+      "split": "train"
+    },
+    {
+      "bytes": 177045604,
+      "object": {
+        "board": "board_2",
+        "object_id": "2",
+        "trajectory": "119"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_2_119.npy",
+      "pilot_reviewed": false,
+      "sha256": "7e5196e820e22d73819d8ee5c06bcaa70ed94114bdbccafa2090350259861f17",
+      "split": "train"
+    },
+    {
+      "bytes": 175734168,
+      "object": {
+        "board": "board_2",
+        "object_id": "3",
+        "trajectory": "88"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_3_88.npy",
+      "pilot_reviewed": false,
+      "sha256": "64741ef803adfaf198d15b34434a9d99fa0228b3a65ffdc1b59169496eef8d30",
+      "split": "train"
+    },
+    {
+      "bytes": 335734499,
+      "object": {
+        "board": "board_2",
+        "object_id": "4",
+        "trajectory": "57"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_4_57.npy",
+      "pilot_reviewed": false,
+      "sha256": "d7cc0207c1f4aee36d98910d9ec334374226b390af1c8f5329b9cb6ddea5f3b1",
+      "split": "train"
+    },
+    {
+      "bytes": 145571140,
+      "object": {
+        "board": "board_2",
+        "object_id": "1",
+        "trajectory": "89"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_1_89.npy",
+      "pilot_reviewed": false,
+      "sha256": "0da4d502c71b390957b6b0bb5add99456843f48e5a503c62cc785bff6c4fe70c",
+      "split": "train"
+    },
+    {
+      "bytes": 186225656,
+      "object": {
+        "board": "board_2",
+        "object_id": "2",
+        "trajectory": "110"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_2_110.npy",
+      "pilot_reviewed": false,
+      "sha256": "ff21e36cb6b574732819b71b9b67b6c27fc2d2070642a269725083bc3354e6a7",
+      "split": "train"
+    },
+    {
+      "bytes": 137702524,
+      "object": {
+        "board": "board_2",
+        "object_id": "3",
+        "trajectory": "133"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_3_133.npy",
+      "pilot_reviewed": false,
+      "sha256": "434a9ff81b48f81de634ed7d37b1d24709cb741703444b632421a9a66abd89ad",
+      "split": "train"
+    },
+    {
+      "bytes": 135079652,
+      "object": {
+        "board": "board_2",
+        "object_id": "4",
+        "trajectory": "5"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_4_5.npy",
+      "pilot_reviewed": false,
+      "sha256": "cb289e4ed9b53bd9539f8c4148eaaad42fd6d18d28c6c33911e269251a70c349",
+      "split": "train"
+    },
+    {
+      "bytes": 142948268,
+      "object": {
+        "board": "board_2",
+        "object_id": "1",
+        "trajectory": "8"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_1_8.npy",
+      "pilot_reviewed": false,
+      "sha256": "eafa6b73be1d6f66cad3b32eeb9bd8024519eddd35038d597c01a894946ddf12",
+      "split": "validation"
+    },
+    {
+      "bytes": 245240276,
+      "object": {
+        "board": "board_2",
+        "object_id": "2",
+        "trajectory": "83"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_2_83.npy",
+      "pilot_reviewed": false,
+      "sha256": "33d8e7ebf58a8eed00819ae9db9c1d23bf5bd5ecb2c8e6e05a8d143cfb27fad9",
+      "split": "test"
+    },
+    {
+      "bytes": 153439756,
+      "object": {
+        "board": "board_2",
+        "object_id": "3",
+        "trajectory": "10"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_3_10.npy",
+      "pilot_reviewed": false,
+      "sha256": "eb819c9a7fd5fee42d824fcf044e70ae72473473d9e72e5d230557f78451152d",
+      "split": "train"
+    },
+    {
+      "bytes": 219011556,
+      "object": {
+        "board": "board_2",
+        "object_id": "4",
+        "trajectory": "87"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_4_87.npy",
+      "pilot_reviewed": false,
+      "sha256": "c0cb34a100f6311337588b91fd895fd7228f016fbfd64ff583b1364fc5c1beba",
+      "split": "train"
+    },
+    {
+      "bytes": 145571140,
+      "object": {
+        "board": "board_2",
+        "object_id": "1",
+        "trajectory": "67"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_1_67.npy",
+      "pilot_reviewed": false,
+      "sha256": "7caef7eef7626947eabb11bc9b1090d2ba74fb0f8a3ea7fc504fa86136d6841c",
+      "split": "train"
+    },
+    {
+      "bytes": 343603235,
+      "object": {
+        "board": "board_2",
+        "object_id": "2",
+        "trajectory": "47"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_2_47.npy",
+      "pilot_reviewed": false,
+      "sha256": "0d2ad16030597af10e8a45587d4a7ea99323fcf0a38746254f2871523a336a40",
+      "split": "train"
+    },
+    {
+      "bytes": 352783427,
+      "object": {
+        "board": "board_2",
+        "object_id": "3",
+        "trajectory": "29"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_3_29.npy",
+      "pilot_reviewed": false,
+      "sha256": "fb90933d2c3aab8d4e30c5746ad8aacd4c657cf10f227b14cb1b1ab9f55eddc8",
+      "split": "train"
+    },
+    {
+      "bytes": 359340707,
+      "object": {
+        "board": "board_2",
+        "object_id": "4",
+        "trajectory": "10"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_4_10.npy",
+      "pilot_reviewed": false,
+      "sha256": "22a85b91f94bcbb30d50ac22403e82dd1fe728cad14fc34b38622958531a40e6",
+      "split": "train"
+    },
+    {
+      "bytes": 179668476,
+      "object": {
+        "board": "board_2",
+        "object_id": "1",
+        "trajectory": "126"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_1_126.npy",
+      "pilot_reviewed": false,
+      "sha256": "c1c80891a26c2a2097afcec07a2690bc3957b53ac195875272c9952afc81ff28",
+      "split": "train"
+    },
+    {
+      "bytes": 249174584,
+      "object": {
+        "board": "board_2",
+        "object_id": "2",
+        "trajectory": "11"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_2_11.npy",
+      "pilot_reviewed": false,
+      "sha256": "c4bd0aa4ce2bac5aae3b124bdba1381203790029cfc0ec7bf2b2d3ec2aa02936",
+      "split": "train"
+    },
+    {
+      "bytes": 369832355,
+      "object": {
+        "board": "board_2",
+        "object_id": "3",
+        "trajectory": "48"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_3_48.npy",
+      "pilot_reviewed": false,
+      "sha256": "5aa3dfb2e5d73bc8b0232c4a9dfa9c32ba5db307e45120e16ecedb66c959638b",
+      "split": "validation"
+    },
+    {
+      "bytes": 166554116,
+      "object": {
+        "board": "board_2",
+        "object_id": "4",
+        "trajectory": "84"
+      },
+      "path": "multi_object_manipulation_dataset/board_2/trajectory_4_84.npy",
+      "pilot_reviewed": false,
+      "sha256": "c04e5d2d89be4451be827430ae94da11c0acaae249945cf2dc9d03309dc5b1d1",
+      "split": "test"
+    },
+    {
+      "bytes": 140325396,
+      "object": {
+        "board": "board_3",
+        "object_id": "1",
+        "trajectory": "76"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_1_76.npy",
+      "pilot_reviewed": false,
+      "sha256": "de760a4e4ddc92d797cb0954ff144dfa4076e6e1b531b98e0d1ad1119f328f82",
+      "split": "train"
+    },
+    {
+      "bytes": 179668476,
+      "object": {
+        "board": "board_3",
+        "object_id": "2",
+        "trajectory": "15"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_2_15.npy",
+      "pilot_reviewed": false,
+      "sha256": "0bb09aa9837fa395d26823076dce65e8753247b2a2d2f80dac7f01fac04039b1",
+      "split": "train"
+    },
+    {
+      "bytes": 213765812,
+      "object": {
+        "board": "board_3",
+        "object_id": "3",
+        "trajectory": "88"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_3_88.npy",
+      "pilot_reviewed": false,
+      "sha256": "1eed733c9e381fc91533da634b15125f3bce96774554659c6d12644a1fc7e322",
+      "split": "train"
+    },
+    {
+      "bytes": 232125916,
+      "object": {
+        "board": "board_3",
+        "object_id": "4",
+        "trajectory": "57"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_4_57.npy",
+      "pilot_reviewed": false,
+      "sha256": "5a95706094c43662bc53aefdb89fa87f2f69243bc59b65c20d6cc2d2b7f9a231",
+      "split": "train"
+    },
+    {
+      "bytes": 158685500,
+      "object": {
+        "board": "board_3",
+        "object_id": "1",
+        "trajectory": "118"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_1_118.npy",
+      "pilot_reviewed": false,
+      "sha256": "d892cdd399703c2e6e3dcd3de626f8f9a782d1e52ce6cb49ce6a9089f5006488",
+      "split": "train"
+    },
+    {
+      "bytes": 141636832,
+      "object": {
+        "board": "board_3",
+        "object_id": "2",
+        "trajectory": "34"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_2_34.npy",
+      "pilot_reviewed": false,
+      "sha256": "b67454b407f63aec5d56bb78ff2f4f3e5bc465b9f5ec4bd43f166bf35b7b9d7c",
+      "split": "train"
+    },
+    {
+      "bytes": 258354636,
+      "object": {
+        "board": "board_3",
+        "object_id": "3",
+        "trajectory": "133"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_3_133.npy",
+      "pilot_reviewed": false,
+      "sha256": "f0b3b146a7cbb5413bbfbbe5ff39be154e94d96d225a87e6e5b956c0d91dd2d5",
+      "split": "train"
+    },
+    {
+      "bytes": 342291779,
+      "object": {
+        "board": "board_3",
+        "object_id": "4",
+        "trajectory": "5"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_4_5.npy",
+      "pilot_reviewed": false,
+      "sha256": "e979e9e30abe58b909137a68d8a50c134e2dc78cd629811ea216130e6e2b8a89",
+      "split": "train"
+    },
+    {
+      "bytes": 216388684,
+      "object": {
+        "board": "board_3",
+        "object_id": "1",
+        "trajectory": "52"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_1_52.npy",
+      "pilot_reviewed": false,
+      "sha256": "fcc3267a43c29a08c0aebe37c8ee6625407accf9d37f39b678cd1393be331b14",
+      "split": "validation"
+    },
+    {
+      "bytes": 201962888,
+      "object": {
+        "board": "board_3",
+        "object_id": "2",
+        "trajectory": "22"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_2_22.npy",
+      "pilot_reviewed": false,
+      "sha256": "b685887ae76d21333c9868c33a58df5d4d2ea97d18b11819936ad3289687a20e",
+      "split": "test"
+    },
+    {
+      "bytes": 287206228,
+      "object": {
+        "board": "board_3",
+        "object_id": "3",
+        "trajectory": "10"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_3_10.npy",
+      "pilot_reviewed": false,
+      "sha256": "431e0b38d0260c80221fcb5442111e8927504e5420233b6a6b312134f30c6082",
+      "split": "train"
+    },
+    {
+      "bytes": 198028580,
+      "object": {
+        "board": "board_3",
+        "object_id": "4",
+        "trajectory": "87"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_4_87.npy",
+      "pilot_reviewed": false,
+      "sha256": "ba9f141f5401ff40657659fac338fc494333c7fa6ee366a5c78f26fddd966ac6",
+      "split": "train"
+    },
+    {
+      "bytes": 157374064,
+      "object": {
+        "board": "board_3",
+        "object_id": "1",
+        "trajectory": "117"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_1_117.npy",
+      "pilot_reviewed": false,
+      "sha256": "519cd41b799a433b8ba4d0f6cc0bc82d9148c8fc42ec60f13eba1cdc26effc62",
+      "split": "train"
+    },
+    {
+      "bytes": 184914220,
+      "object": {
+        "board": "board_3",
+        "object_id": "2",
+        "trajectory": "140"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_2_140.npy",
+      "pilot_reviewed": false,
+      "sha256": "f8f9d44397e7886b6c6d6fdcb921a3ae35ccd9b3c708fab8f81a66702a7f071b",
+      "split": "train"
+    },
+    {
+      "bytes": 262292944,
+      "object": {
+        "board": "board_3",
+        "object_id": "3",
+        "trajectory": "29"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_3_29.npy",
+      "pilot_reviewed": false,
+      "sha256": "1ee432c580361852f53dc577862f1b167da67e5343350f371846748d3d77fa61",
+      "split": "train"
+    },
+    {
+      "bytes": 360652163,
+      "object": {
+        "board": "board_3",
+        "object_id": "4",
+        "trajectory": "10"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_4_10.npy",
+      "pilot_reviewed": false,
+      "sha256": "b198cea0ca3c34dddd2437d4b00807c31dabe320c382db2b3f98eced9ef3d603",
+      "split": "train"
+    },
+    {
+      "bytes": 207208632,
+      "object": {
+        "board": "board_3",
+        "object_id": "1",
+        "trajectory": "16"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_1_16.npy",
+      "pilot_reviewed": false,
+      "sha256": "1c3ea30b0ec656c75ac7be5901fc84de0f4b2fbca8eb1b82f24a9ed5aed15eed",
+      "split": "train"
+    },
+    {
+      "bytes": 192782836,
+      "object": {
+        "board": "board_3",
+        "object_id": "2",
+        "trajectory": "94"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_2_94.npy",
+      "pilot_reviewed": false,
+      "sha256": "5be3433d8b4981b0ecbe2023c12a9c76a7f74ce2d1009eb77be0b26941f53a3f",
+      "split": "train"
+    },
+    {
+      "bytes": 490486307,
+      "object": {
+        "board": "board_3",
+        "object_id": "3",
+        "trajectory": "48"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_3_48.npy",
+      "pilot_reviewed": false,
+      "sha256": "6c274ace969a743e0f92a4dc4b2b280171f4342d4dc8f1788724c5674cf29e09",
+      "split": "validation"
+    },
+    {
+      "bytes": 239994532,
+      "object": {
+        "board": "board_3",
+        "object_id": "4",
+        "trajectory": "84"
+      },
+      "path": "multi_object_manipulation_dataset/board_3/trajectory_4_84.npy",
+      "pilot_reviewed": false,
+      "sha256": "61394eb6db1c55927af189148ee204d3b4fb32cff32856824fc249e090d8f0c5",
+      "split": "test"
+    }
+  ],
+  "license": "CC-BY-4.0",
+  "nominal_fps": 10.0,
+  "selection": {
+    "boards": {
+      "board_1": {
+        "bytes": 162851369003,
+        "files": 600,
+        "objects": {
+          "1": 150,
+          "2": 150,
+          "3": 150,
+          "4": 150
+        }
+      },
+      "board_2": {
+        "bytes": 147803900378,
+        "files": 600,
+        "objects": {
+          "1": 150,
+          "2": 150,
+          "3": 150,
+          "4": 150
+        }
+      },
+      "board_3": {
+        "bytes": 132863285335,
+        "files": 604,
+        "objects": {
+          "1": 152,
+          "2": 152,
+          "3": 150,
+          "4": 150
+        }
+      }
+    },
+    "episode_count": 60,
+    "selection_policy": "20 trajectories per board, five per object id, evenly spaced trajectory ids; no overlap with the single-object production set by construction (different subset)",
+    "split_episode_counts": {
+      "test": 6,
+      "train": 48,
+      "validation": 6
+    }
+  },
+  "source_repo_id": "charlesxu0124/functional-manipulation-benchmark",
+  "source_revision": "f99fd55c072eea5573523c96aa527aed3c665690",
+  "source_subset": "multi_object_manipulation_dataset"
+}

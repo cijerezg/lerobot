@@ -62,6 +62,14 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def review_stem(source_path: str) -> str:
+    """Review-file stem: multi-object trajectories repeat their stem across boards."""
+    path = Path(source_path)
+    if path.parent.name.startswith("board_"):
+        return f"{path.parent.name}_{path.stem}"
+    return path.stem
+
+
 def episode_directories(corpus_root: Path) -> dict[str, Path]:
     result = {}
     for directory in sorted((corpus_root / "episodes").glob("episode_*")):
@@ -150,7 +158,7 @@ def render(corpus_root: Path, review_root: Path, sheet_root: Path, columns: int,
         review = read_json(path)
         if review.get("review_status") != "complete":
             continue
-        stem = Path(review["source_path"]).stem
+        stem = review_stem(review["source_path"])
         if stem not in directories:
             raise ValueError(f"Reviewed pilot episode missing from corpus: {stem}")
         render_episode_sheet(
@@ -281,6 +289,9 @@ def validate_mistake(interval: dict[str, Any], event: dict[str, Any]) -> None:
 
 def validate(labels_path: Path, review_root: Path) -> dict[str, Any]:
     labels = read_json(labels_path)
+    quality_provenance = labels.get("quality_provenance", "model_reviewed_rebot_rubric")
+    if quality_provenance not in {"human_reviewed_rebot_rubric", "model_reviewed_rebot_rubric"}:
+        raise ValueError(f"Invalid quality provenance: {quality_provenance}")
     by_source = {item["source_path"]: item for item in labels["episodes"]}
     reviewed = {}
     for path in review_root.glob("*.review.json"):
@@ -354,7 +365,7 @@ def apply_labels(labels_path: Path, review_root: Path) -> dict[str, Any]:
     result = validate(labels_path, review_root)
     labels = read_json(labels_path)
     for episode in labels["episodes"]:
-        review_path = review_root / f"{Path(episode['source_path']).stem}.review.json"
+        review_path = review_root / f"{review_stem(episode['source_path'])}.review.json"
         review = read_json(review_path)
         by_boundary = {
             (item["start_timestep"], item["end_timestep_exclusive"]): item
@@ -366,7 +377,7 @@ def apply_labels(labels_path: Path, review_root: Path) -> dict[str, Any]:
             subtask.update(
                 {
                     "quality": label["quality"],
-                    "quality_provenance": "human_reviewed_rebot_rubric",
+                    "quality_provenance": labels.get("quality_provenance", "model_reviewed_rebot_rubric"),
                     "mistake_assessment": "observed" if label["mistakes"] else "none_observed",
                     "mistake_events": label["mistakes"],
                     "quality_mistake_note": label["note"],
@@ -511,7 +522,7 @@ def finalize_production(
             )
             production_subtasks.append(subtask)
         review["subtasks"] = production_subtasks
-        write_json(review_root / f"{Path(source_path).stem}.review.json", review)
+        write_json(review_root / f"{review_stem(source_path)}.review.json", review)
         episodes.append(episode_labels)
     labels = {"rubric": rubric, "review_provenance": provenance, "episodes": episodes}
     write_json(labels_path, labels)

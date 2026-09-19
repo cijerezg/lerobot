@@ -56,25 +56,43 @@ from typing import Any
 from lerobot.datasets.diverse_corpus import HISTORY_OFFSETS_S
 from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
 
-# ── Corpus ledger (DIVERSE_ROBOT_DATASET.md section 3.3) ──────────────────────
-# The training selection is all of it. Startup asserts these, so a corpus that was
-# rebuilt, half-copied, or filtered cannot quietly train on a different dataset.
-EXPECTED_EPISODES = 404
-EXPECTED_ANCHORS = 60_728
+# ── Corpus ledger (diverse_robot_dataset_v2, 2026-09-18; v1 was 404 / 60_728) ──────
+# The training selection is all of it minus the held-out episodes. Startup asserts these,
+# so a corpus that was rebuilt, half-copied, or filtered cannot quietly train on a
+# different dataset.
+# v2 = v1 + MolmoAct Tabletop 36 + Household 185 + DROID CLVR/RAIL 20 + FMB multi-object 60,
+# views from 0 s (`views --min-anchor-s 0`); the droid count is 3 above v1 because the
+# anchor grid starts at 0 s instead of 6 s and three anchors sit on a float tie.
+# Full corpus 705 episodes / 78,205 anchors; `<root>/holdout_episodes.json` (2026-09-18)
+# removes 5 episodes / 415 anchors (droid 2 / 191, droid_success 1 / 68, molmoact 1 / 35,
+# robochallenge 1 / 121) for the shared-representations probe.
+HOLDOUT_FILE = "holdout_episodes.json"
+EXPECTED_EPISODES = 700
+EXPECTED_ANCHORS = 77_790
 EXPECTED_EPISODES_BY_SOURCE = {
-    "robochallenge": 200,
-    "droid": 50,
-    "droid_success": 50,
+    "robochallenge": 199,
+    "droid": 48,
+    "droid_success": 69,
+    "molmoact": 220,
     "ur7e": 4,
-    "fmb": 100,
+    "fmb": 160,
 }
 EXPECTED_ANCHORS_BY_SOURCE = {
-    "robochallenge": 40_706,
-    "droid": 5_774,
-    "droid_success": 5_823,
+    "robochallenge": 40_585,
+    "droid": 5_586,
+    "droid_success": 7_752,
+    "molmoact": 11_724,
     "ur7e": 954,
-    "fmb": 7_471,
+    "fmb": 11_189,
 }
+
+
+def holdout_episode_ids(root: str | Path) -> set[str]:
+    """Episode ids listed in ``<root>/holdout_episodes.json``; empty when the file is absent."""
+    path = Path(root) / HOLDOUT_FILE
+    if not path.is_file():
+        return set()
+    return {str(episode_id) for episode_id in json.loads(path.read_text(encoding="utf-8"))["episode_ids"]}
 
 # ── Packed observation window ────────────────────────────────────────────────
 # Every actor sample carries seven observations at [-6, -5, -4, -3, -2, -1, 0] s.
@@ -148,6 +166,7 @@ CAMERA_ROLE_MAP: dict[str, dict[str, str]] = {
     "fmb": {"side_1": "external_0", "side_2": "external_1", "wrist_1": "wrist_0"},
     "robochallenge": {"global": "external_0", "side": "external_1", "wrist": "wrist_0"},
     "ur7e": {"realsense_topview": "external_0", "realsense_wrist": "wrist_0"},
+    "molmoact": {"primary": "external_0", "secondary": "external_1", "wrist": "wrist_0"},
     # ReBot is not part of this corpus; its map lives here so the mixed run has one
     # camera vocabulary and the ReBot cache probe can check itself against it.
     "rebot": {"top": "external_0", "wrist": "wrist_0"},
@@ -214,6 +233,9 @@ ACTION_LAYOUTS: tuple[ActionLayout, ...] = (
     # ReBot: the established half of the 50/50 mixture. Its buffer is a LeRobotDataset,
     # not this corpus, but it needs an id in the same space for per-layout stats.
     ActionLayout(6, "rebot_b601_joint7_commanded", "rebot", "Rebot B601", 7, "native", "ratio_0_1"),
+    # v2: MolmoAct Dataset (Household + Tabletop). End-effector pose, not joints: xyz metres,
+    # Euler triple unwrapped per episode at ingest, gripper ratio. Source action == state.
+    ActionLayout(7, "molmoact_franka_ee7_measured", "molmoact", "Franka", 7, "copy_state", "ratio_0_1"),
 )
 
 _LAYOUT_BY_KEY = {(layout.source, layout.embodiment): layout for layout in ACTION_LAYOUTS}
@@ -291,6 +313,7 @@ class DiverseActorSelection:
     rows: list[dict[str, Any]]
     episode_records: dict[str, dict[str, Any]]
     mistake_flags_corrected: int = 0
+    held_out: dict[str, int] = field(default_factory=dict)  # episode id -> retained anchors removed
 
     @property
     def episode_ids(self) -> list[str]:
@@ -318,12 +341,20 @@ def select_actor_anchors(
     *,
     verify_counts: bool = True,
 ) -> DiverseActorSelection:
-    """The training selection: ``actor_anchors(split=None, retained_only=True)``.
+    """The training selection: ``actor_anchors(split=None, retained_only=True)`` minus
+    the episodes listed in ``<root>/holdout_episodes.json``.
 
     ``split`` is never passed. It stays on every row as provenance and is reported by
-    the audit, but no code path may filter on it: this run trains on all of it.
+    the audit, but no code path may filter on it. The holdout file is the only exclusion:
+    every id in it must exist in the corpus, and the removed anchors are reported per
+    episode (``held_out``) and fold into the cache fingerprint through the counts.
     """
     rows = corpus.actor_anchors(split=None, retained_only=True)
+    holdout = holdout_episode_ids(corpus.common.root.parent)
+    held_out = Counter(str(row["episode_id"]) for row in rows if str(row["episode_id"]) in holdout)
+    if holdout - set(held_out):
+        raise ValueError(f"holdout episodes not in the corpus: {sorted(holdout - set(held_out))}")
+    rows = [row for row in rows if str(row["episode_id"]) not in holdout]
     subtask_atoms = _atoms_by_episode(corpus, "subtask_atoms")
     speed_atoms = _atoms_by_episode(corpus, "speed_atoms")
 
@@ -391,6 +422,7 @@ def select_actor_anchors(
         rows=prepared,
         episode_records=records,
         mistake_flags_corrected=corrected,
+        held_out=dict(held_out),
     )
     if verify_counts:
         assert_selection_counts(selection)
@@ -495,9 +527,13 @@ def audit_selection(selection: DiverseActorSelection) -> dict[str, SourceAudit]:
 def format_audit(selection: DiverseActorSelection) -> str:
     per_source = audit_selection(selection)
     lines: list[str] = []
-    lines.append("Diverse actor selection -- actor_anchors(split=None, retained_only=True)")
+    lines.append("Diverse actor selection -- actor_anchors(split=None, retained_only=True) minus holdout_episodes.json")
     lines.append(f"  episodes {len(selection.episode_ids)} (expected {EXPECTED_EPISODES})")
     lines.append(f"  anchors  {len(selection.rows)} (expected {EXPECTED_ANCHORS})")
+    lines.append(
+        f"  held out {len(selection.held_out)} episodes / {sum(selection.held_out.values())} anchors: "
+        + ", ".join(f"{episode_id} ({anchors})" for episode_id, anchors in sorted(selection.held_out.items()))
+    )
     lines.append(
         f"  mistake flags corrected from segment-level to anchor-level: "
         f"{selection.mistake_flags_corrected}"
@@ -575,6 +611,7 @@ def check_sample_contract(
         order = sorted(kept)
 
     checked = 0
+    clamped = 0
     shapes: Counter[str] = Counter()
     for episode_id in order:
         for row in by_episode[episode_id]:
@@ -599,11 +636,16 @@ def check_sample_contract(
             if native_dim not in (7, 8):
                 raise ValueError(f"{episode_id}: native width {native_dim} is neither 7 nor 8.")
 
-            # The selected instants must be the ones the corpus actually packed. Clamped
-            # history (an anchor closer to the episode start than 6 s) is not silently
-            # tolerated: the anchor stride starts at 6 s precisely so it cannot happen.
+            # The selected instants must be the ones the corpus actually packed. v1 anchored
+            # from 6 s so clamped history could not happen; v2 anchors from 0 s and marks
+            # such rows history_complete=False, which the check reports instead of failing.
             anchor_time = timestamps[PACKED_CURRENT_SLOT]
-            for slot, age in zip(slots, ages, strict=True):
+            if not row.get("history_complete", True):
+                clamped += 1
+                slot_ages = []
+            else:
+                slot_ages = list(zip(slots, ages, strict=True))
+            for slot, age in slot_ages:
                 error = abs((anchor_time - timestamps[slot]) - abs(age))
                 if error > max(1.0 / float(row["native_rate_hz"]), 1e-6):
                     raise ValueError(
@@ -620,7 +662,8 @@ def check_sample_contract(
     scope = "all anchors" if per_source is None else f"<= {per_source} anchors/source"
     return (
         f"Sample contract OK on {checked} samples ({scope}): 7 packed observations, "
-        f"history slots {slots} at ages {ages} s plus current slot {PACKED_CURRENT_SLOT}, "
+        f"history slots {slots} at ages {ages} s plus current slot {PACKED_CURRENT_SLOT} "
+        f"({clamped} rows with clamped history, history_complete=False), "
         f"action shapes {dict(shapes)}."
     )
 

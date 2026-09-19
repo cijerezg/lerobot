@@ -16,6 +16,7 @@ from lerobot.datasets.diverse_actor_selection import (
     EXPECTED_ANCHORS,
     EXPECTED_ANCHORS_BY_SOURCE,
     EXPECTED_EPISODES,
+    holdout_episode_ids,
     PACKED_CURRENT_SLOT,
     PACKED_OBSERVATIONS,
     action_layout_for,
@@ -28,7 +29,7 @@ from lerobot.datasets.diverse_actor_selection import (
     select_actor_anchors,
 )
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v2"
 
 
 def _selection():
@@ -115,6 +116,14 @@ def test_selection_is_the_whole_accepted_corpus() -> None:
     assert {name: audit.anchors for name, audit in per_source.items()} == EXPECTED_ANCHORS_BY_SOURCE
 
 
+def test_holdout_episodes_are_absent_and_accounted_for() -> None:
+    selection = _selection()
+    holdout = holdout_episode_ids(DATA_ROOT)
+    assert holdout and set(selection.held_out) == holdout
+    assert not holdout & set(selection.episode_ids)
+    assert sum(selection.held_out.values()) == 415
+
+
 def test_every_anchor_carries_the_speed_of_its_reviewed_atom() -> None:
     """Subtask text and speed are read off the reviewed atom by native timestep: the
     anchor's own frame (``anchor_frame`` common, ``anchor_timestep`` FMB) must land inside
@@ -156,9 +165,9 @@ def test_split_stays_on_every_row_as_provenance() -> None:
 
 
 def test_mistake_flags_are_anchor_level_not_segment_level() -> None:
-    """The stored flag over-claims on 65 common anchors; ReBot's column is per-frame."""
+    """The stored flag over-claims on 208 common anchors (v2 corpus minus the holdout; 65 on v1); ReBot's column is per-frame."""
     selection = _selection()
-    assert selection.mistake_flags_corrected == 65
+    assert selection.mistake_flags_corrected == 208
     corrected = [row for row in selection.rows if row["mistake"] != row["mistake_flag_as_stored"]]
     # Every correction removes a claim, never adds one.
     assert all(row["mistake_flag_as_stored"] and not row["mistake"] for row in corrected)

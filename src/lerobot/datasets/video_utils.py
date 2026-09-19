@@ -998,10 +998,13 @@ class VideoEncodingManager:
 
     Args:
         dataset: The LeRobotDataset instance
+        save_partial_episode: On an exception mid-episode, commit the frames recorded so
+            far as an episode instead of discarding them.
     """
 
-    def __init__(self, dataset):
+    def __init__(self, dataset, save_partial_episode: bool = False):
         self.dataset = dataset
+        self.save_partial_episode = save_partial_episode
 
     def __enter__(self):
         return self
@@ -1009,6 +1012,15 @@ class VideoEncodingManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         writer = self.dataset.writer
         if writer is not None:
+            # Must run before finalize() and cleanup_interrupted_episode() below, which
+            # close the writers and delete the in-progress episode's frames. Guarded so a
+            # failing save still lets the caller's cleanup (robot park) run.
+            if exc_type is not None and self.save_partial_episode and self.dataset.has_pending_frames():
+                logger.warning("Saving partially recorded episode before exit")
+                try:
+                    self.dataset.save_episode()
+                except Exception:
+                    logger.exception("Failed to save the partial episode")
             if exc_type is not None and writer._streaming_encoder is not None:
                 writer.cancel_pending_videos()
 

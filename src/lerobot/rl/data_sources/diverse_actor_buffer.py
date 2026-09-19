@@ -77,6 +77,7 @@ SOURCE_IDS: dict[str, int] = {
     "robochallenge": 3,
     "ur7e": 4,
     "rebot": 5,
+    "molmoact": 6,
 }
 
 DEPTH_INVALID_Z16 = (0, 65_535)

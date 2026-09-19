@@ -137,6 +137,10 @@ def read_jsonl(path: Path) -> list[dict]:
 
 
 def event_key(e: dict) -> tuple:
+    # FMB events are timestep-native ({start_timestep, end_timestep_exclusive, mistake_type});
+    # the atom rows keep those keys next to the derived seconds.
+    if "start_timestep" in e:
+        return (e.get("kind", e.get("mistake_type")), int(e["start_timestep"]), int(e["end_timestep_exclusive"]))
     return (e.get("kind"), round(float(e.get("source_start_s", e.get("start_s"))), 3), round(float(e.get("source_end_s", e.get("end_s"))), 3))
 
 
@@ -238,7 +242,7 @@ def validate_store(root: Path, name: str, strict: bool) -> tuple[list[str], dict
                 if ce.get("provenance") == "parent" and event_key(ce) == event_key(pe)
             ]
             if len(hits) != 1:
-                errors.append(f"{where}: parent mistake {pe.get('kind')} {pe['start_s']}-{pe['end_s']}s lands in {len(hits)} children")
+                errors.append(f"{where}: parent mistake {event_key(pe)} lands in {len(hits)} children")
             else:
                 stats["mistake_events_in_children"] += 1
     for key in by_parent:

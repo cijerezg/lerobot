@@ -25,7 +25,7 @@ from lerobot.rl.data_sources.diverse_mixture import (
     allocate_group_quotas,
 )
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v2"
 DRAWS = 20_000
 # Four standard errors of a binomial proportion at this many draws. Wide enough that a
 # correct sampler effectively never trips it, tight enough to catch a wrong weight rule
@@ -90,11 +90,12 @@ def test_a_different_outer_split_is_configurable() -> None:
 
 def test_sqrt_episode_weights_are_what_the_plan_says(selection) -> None:
     targets = HierarchicalAnchorSampler(selection, seed=0).target_proportions()
-    expected = {
-        "robochallenge": math.sqrt(200),
-        "fmb": math.sqrt(100),
-        "droid": math.sqrt(50),
-        "droid_success": math.sqrt(50),
+    expected = {  # v2 corpus episode counts (2026-09-18)
+        "robochallenge": math.sqrt(199),
+        "molmoact": math.sqrt(220),
+        "fmb": math.sqrt(160),
+        "droid": math.sqrt(48),
+        "droid_success": math.sqrt(69),
         "ur7e": math.sqrt(4),
     }
     total = sum(expected.values())
@@ -120,7 +121,7 @@ def test_the_mixture_is_not_row_proportional(selection) -> None:
     sampler = HierarchicalAnchorSampler(selection, seed=1)
     rows = sampler(DRAWS)
     observed = collections.Counter(selection.rows[int(index)]["source"] for index in rows)
-    row_share = 40_706 / 60_728  # RoboChallenge's share of the anchors
+    row_share = 40_585 / 77_790  # RoboChallenge's share of the anchors
     assert observed["robochallenge"] / DRAWS < row_share - 0.2
     # ... nor source-uniform, which would overfit the four UR7e episodes.
     assert observed["ur7e"] / DRAWS < 0.10
@@ -170,7 +171,7 @@ def test_weights_can_be_overridden_per_group(selection) -> None:
         selection, seed=0, group_weight="uniform", group_weight_overrides={"ur7e": 4.0}
     )
     targets = sampler.target_proportions()
-    assert targets["ur7e"] == pytest.approx(4 / 8)
+    assert targets["ur7e"] == pytest.approx(4 / 9)  # six groups in v2: five at 1.0 plus ur7e at 4.0
     with pytest.raises(KeyError, match="unknown group"):
         HierarchicalAnchorSampler(selection, group_weight_overrides={"nope": 1.0})
 

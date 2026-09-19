@@ -142,7 +142,7 @@ def cache_fingerprint(root: str | Path, spec: DiverseSampleSpec, *, anchors: int
         "schema_version": CACHE_SCHEMA_VERSION,
         "corpus": corpus_fingerprint(root),
         "selection": {
-            "rule": "actor_anchors(split=None, retained_only=True)",
+            "rule": "actor_anchors(split=None, retained_only=True) minus holdout_episodes.json",
             "anchors": int(anchors),
             "episodes": int(episodes),
         },
@@ -521,7 +521,7 @@ def build_cache(
         "spec": spec.fingerprint(),
         "camera_map": {source: dict(mapping) for source, mapping in sorted(CAMERA_ROLE_MAP.items())},
         "selection": {
-            "rule": "actor_anchors(split=None, retained_only=True)",
+            "rule": "actor_anchors(split=None, retained_only=True) minus holdout_episodes.json",
             "anchors": total_anchors,
             "episodes": len(selection.episode_ids),
             "expected_anchors": EXPECTED_ANCHORS,

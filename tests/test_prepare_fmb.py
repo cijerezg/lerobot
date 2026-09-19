@@ -225,6 +225,24 @@ def test_converter_retains_only_approved_modalities_and_validates(tmp_path: Path
     assert critic[0]["critic_eligible"] is False
     assert critic[0]["critic_rejection_reason"] == "pending_episode_visual_review"
 
+    # Pending render templates must not pass admission as critic-eligible.
+    critic[0].update(critic_eligible=True, critic_rejection_reason=None)
+    prepare_fmb.write_jsonl(output_root / "critic_intervals.jsonl", critic)
+    pending_result = prepare_fmb.validate(manifest, raw_root, output_root)
+    assert any("eligible_without_reviewed_quality" in error for error in pending_result["errors"])
+    critic[0].update(critic_eligible=False, critic_rejection_reason="pending_episode_visual_review")
+
+    # The corpus validator must preserve both supported review origins.
+    critic[0].update(quality=5, mistake_assessment="none_observed")
+    for provenance in ("model_reviewed_rebot_rubric", "human_reviewed_rebot_rubric", "automatic"):
+        critic[0]["quality_provenance"] = provenance
+        prepare_fmb.write_jsonl(output_root / "critic_intervals.jsonl", critic)
+        result = prepare_fmb.validate(manifest, raw_root, output_root)
+        if provenance == "automatic":
+            assert any("critic_quality_provenance" in error for error in result["errors"])
+        else:
+            assert result["status"] == "passed"
+
 
 def test_rebot_mistake_event_validates_inside_native_subtask() -> None:
     interval = {"start_timestep": 10, "end_timestep_exclusive": 30}
@@ -255,3 +273,38 @@ def test_rebot_mistake_span_must_stay_inside_native_subtask() -> None:
         assert "crosses" in str(exc)
     else:
         raise AssertionError("Expected a cross-boundary mistake event to fail validation")
+
+
+def test_fmb_apply_preserves_review_origin_and_board_identity(tmp_path: Path) -> None:
+    """Distinct boards must retain distinct labels, including who produced them."""
+    review_root = tmp_path / 'reviews'
+    review_root.mkdir()
+    episodes = []
+    for board, quality in [('board_1', 5), ('board_2', 4)]:
+        source = f'multi_object_manipulation_dataset/{board}/trajectory_1_117.npy'
+        interval = {'start_timestep': 0, 'end_timestep_exclusive': 20, 'primitive': 'grasp'}
+        review = {'source_path': source, 'review_status': 'complete', 'subtasks': [interval]}
+        annotate_fmb_critic.write_json(review_root / f'{board}_trajectory_1_117.review.json', review)
+        episodes.append({'source_path': source, 'subtasks': [dict(interval, quality=quality, mistakes=[], note=f'{board}: observed approach.')]})
+    labels = {'episodes': episodes, 'rubric': {}, 'review_provenance': {'reviewer': 'test_model'}}
+    labels_path = tmp_path / 'labels.json'
+    for origin in [None, 'model_reviewed_rebot_rubric', 'human_reviewed_rebot_rubric']:
+        if origin is not None:
+            labels['quality_provenance'] = origin
+        annotate_fmb_critic.write_json(labels_path, labels)
+        annotate_fmb_critic.apply_labels(labels_path, review_root)
+        for episode in episodes:
+            loaded = prepare_fmb.load_review(review_root, episode['source_path'])[(0, 20)]
+            assert loaded['quality'] == episode['subtasks'][0]['quality']
+            assert loaded['quality_provenance'] == (origin or 'model_reviewed_rebot_rubric')
+            assert loaded['quality_mistake_review_provenance'] == labels['review_provenance']
+    before = {p: p.read_bytes() for p in review_root.glob('*.json')}
+    labels['quality_provenance'] = 'automatic_unreviewed'
+    annotate_fmb_critic.write_json(labels_path, labels)
+    try:
+        annotate_fmb_critic.apply_labels(labels_path, review_root)
+    except ValueError as exc:
+        assert 'provenance' in str(exc)
+    else:
+        raise AssertionError('Unreviewed provenance must be rejected')
+    assert before == {p: p.read_bytes() for p in before}

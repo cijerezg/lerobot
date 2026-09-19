@@ -203,7 +203,7 @@ class FMBCorpus:
         row.update(
             corpus_key="fmb",
             source="fmb",
-            component="single_object_manipulation",
+            component=record.get("component", "single_object_manipulation"),
             embodiment="Franka",
             anchor_s=anchor_s,
             anchor_index=anchor_index,
@@ -270,7 +270,7 @@ class FMBCorpus:
         row.update(
             corpus_key="fmb",
             source="fmb",
-            component="single_object_manipulation",
+            component=record.get("component", "single_object_manipulation"),
             embodiment="Franka",
             duration_s=float(row["duration_s_nominal"]),
             start_s=float(row["start_s_nominal"]),

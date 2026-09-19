@@ -219,6 +219,39 @@ The refreshed unified ledger is
 its separate 14,892-row 10 Hz actor index. All indexes reference the original
 source-native episode arrays and duplicate zero sensor/action arrays.
 
+## FMB multi-object component (v2)
+
+The v2 corpus adds 60 multi-object trajectories (5 per object per board, boards 1-3,
+manifest `fmb_multi_production.json`, 80/10/10 splits 48/6/6) through the same converter
+with board-qualified episode ids (`episode_NNNNNN_board_B_trajectory_X_Y`). All 280
+source-native primitive intervals were model-reviewed under the ReBot rubric; the pinned
+label artifact is `fmb_multi_production_quality_mistakes.json` (275 quality 5, 3 quality 4,
+1 quality 3, 1 quality 2 with a single `knock` event; one interval critic-ineligible).
+Review files applied at conversion live in
+`outputs/diverse_robot_dataset_v2_build/fmb_multi/review_completed/`.
+
+```bash
+# Convert with the completed reviews into a fresh store, validate, then union with v1.
+.venv/bin/python lerobot/examples/dataset/diverse_robot_dataset/prepare_fmb.py \
+  --manifest lerobot/examples/dataset/diverse_robot_dataset/fmb_multi_production.json \
+  --review-root outputs/diverse_robot_dataset_v2_build/fmb_multi/review_completed \
+  --raw-root outputs/diverse_robot_dataset_v2_build/fmb_multi/staging \
+  --output-root outputs/diverse_robot_dataset_v2_build/fmb_multi/store_reviewed \
+  --labels lerobot/examples/dataset/diverse_robot_dataset/fmb_multi_production_quality_mistakes.json \
+  convert   # then: validate
+.venv/bin/python lerobot/examples/dataset/diverse_robot_dataset/fmb_merge_stores.py \
+  --into outputs/diverse_robot_dataset_v2/fmb \
+  --store outputs/diverse_robot_dataset/fmb \
+  --store outputs/diverse_robot_dataset_v2_build/fmb_multi/store_reviewed
+```
+
+The union store hardlinks both episode collections (no array copies), concatenates
+`episodes.jsonl` / `critic_intervals.jsonl`, rebuilds both actor views and keeps each
+source store's `corpus.json` / `source_manifest.json` under a store-suffixed name; it has no
+`corpus.json` of its own. `FMBCorpus` rows carry `component` from `episodes.jsonl`
+(`single_object_manipulation` or `multi_object_manipulation`). Merged v2 FMB store: 160
+episodes, 801 critic intervals (800 eligible), 11,189 actor rows at 5 Hz and 22,292 at 10 Hz.
+
 ## RoboChallenge
 
 RoboChallenge uses the component workflow below. Its production manifest selects 10 single-arm

@@ -629,6 +629,7 @@ def nominate(
 
 
 REVIEWER_REJECT_REASONS = {"erratic", "low_quality", "human_intervention", "out_of_scope", "static"}
+PROVENANCE_FIELDS = ("review_provenance", "quality_provenance", "reviewer_model", "review_date")
 REVIEWER_KEEP_REASONS = {
     "useful_motion",
     "informative_mistake",
@@ -771,6 +772,9 @@ def build_annotations(
         "segments": segments,
         "required_segment_fields": ["start_s", "end_s", "retention", "retention_reason"],
         "required_keep_segment_fields": ["subtask", "quality", "mistake_events"],
+        # A model review declares its provenance in the review record; the v1 human reviews
+        # carry none and keep the corpus default (human_reviewed).
+        **{key: review[key] for key in PROVENANCE_FIELDS if key in review},
     }
 
 

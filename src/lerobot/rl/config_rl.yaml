@@ -70,19 +70,16 @@ dataset:
   use_imagenet_stats: false
   max_episodes: null
   sources:
-    - name: socks_basket                # 15 eps / 68635 frames — largest, "Put socks in brown basket"
-      root: outputs/rebot_socks_basket-annotated-v2
-      weight: 68635
+    # ONE root (2026-09-18, migration/dataset_consolidation_2026-09-18/): the sampler gives every
+    # source one forced sample per batch before the weighted split (_weighted_batch_sizes), so
+    # 6 ReBot roots x 16 ReBot samples/batch over-drew the small roots 2x. One root samples
+    # uniformly over frames. Blocks (see meta/provenance.json): autonomous rollouts 09-11..09-16
+    # (17 eps), shirts_bin v3 (9), socks_basket v3 (15), rollouts v2 (15, teleop interventions),
+    # two_container v3 (14), bottle/tape/cup 09-17/18 (12), sorting_clothes v4 multitask (8).
+    - name: rebot_all                   # 90 eps / 312424 frames
+      root: outputs/rebot_all-annotated-v1
+      weight: 312424
       normalization_source: true
-    - name: shirts_bin                  # 9 eps / 30822 frames — "Put shirts in bin"
-      root: outputs/rebot_shirts_bin-annotated-v2
-      weight: 30822
-    - name: two_container               # 14 eps / 66283 frames — socks to basket AND shirts to bin
-      root: outputs/rebot_two_container-annotated-v2
-      weight: 66283
-    - name: sorting_clothes_v4          # 8 eps / 15658 frames — task-routed socks and shirts
-      root: outputs/rebot_sorting_clothes_v4-multitask-annotated-v1
-      weight: 15658
 
 buffer_cache_dir: outputs/buffer_cache-rebot-annot-v2  # one dir; each source gets its own fingerprint subdir
 cache_policy: require   # a cache miss is a hard error — 180k frames of video decode is not a fallback
@@ -92,8 +89,8 @@ cache_policy: require   # a cache miss is a hard error — 180k frames of video 
 # -----------------------------------------------------------------------------
 diverse:
   enabled: true
-  root: outputs/diverse_robot_dataset
-  cache_dir: outputs/buffer_cache-diverse
+  root: outputs/diverse_robot_dataset_v2    # 2026-09-18 v2 corpus (705 eps; training selection 700 / 77,790 after holdout_episodes.json)
+  cache_dir: outputs/buffer_cache-diverse-v2
   # 50/50 by group: equal expected gradient mass for the established and the new
   # distributions. Row counts would have given ReBot ~3:1 by arithmetic alone.
   rebot_weight: 1.0
@@ -117,9 +114,10 @@ skip_critic: true    # Skip critic if not interested in RECAP. It also saves VRA
 # -----------------------------------------------------------------------------
 # Validation (shared)
 # -----------------------------------------------------------------------------
-# Held out: 4 eps / 15802 frames, including the new v4-1 socks episode, while
-# retaining coverage of the socks-basket, shirts-bin, and two-container families.
-val_dataset_path: outputs/rebot_val-annotated-v3
+# rebot_val-annotated-v6 (2026-09-18): ep 0 = autonomous rollout 2026-09-14 21-42-35 (green shirt -> bin,
+# socks -> basket), ep 1 = bottle/tape/cup episode 2026-09-18 11:28 (tail trimmed to 2,844 frames for the
+# depth phase), eps 2-5 = rebot_val-annotated-v4 (socks + shirts, incl. the 18:55 rollout of 2026-09-06).
+val_dataset_path: outputs/rebot_val-annotated-v6
 val_split: 0.0    # If you don't have a separate val set, split your main set using this param.
 val_freq: 0               # probes are ReBot-shaped; the smoke run keeps corpus/unit diagnostics instead
 val_on_start: false   # probe-only run: generate the suite at step 0

@@ -200,6 +200,27 @@ def discover_components(source: str) -> list[Component]:
                 )
             )
             continue
+        if "spec_name" in entry and "config_name" in entry:
+            # v2 sources reviewed without a packed component: the entry names the spec and
+            # points at the review-side manifest, selection, and annotations.
+            spec = _spec_from_config(str(entry["config_name"]), str(entry["spec_name"]))
+            components.append(
+                Component(
+                    source=source,
+                    component=str(entry["component"]),
+                    embodiment=embodiment,
+                    dataset_root=dataset_root,
+                    staging_root=source_root / "staging",
+                    metadata_root=source_root / "metadata" / str(entry["spec_name"]),
+                    spec=spec,
+                    video_origin="staged_v3",
+                    manifest_path=source_root / str(entry["manifest_path"]),
+                    selection_path=source_root / str(entry["selection_path"]),
+                    annotations_root=source_root / str(entry["annotations_root"]),
+                    review_round=str(entry.get("review_round", "v2")),
+                )
+            )
+            continue
         spec_name = {"droid": "droid_failure", "droid_success": "droid_success", "ur7e": "ur7e_stack"}[source]
         config_name = {"droid": "droid_sources.json", "droid_success": "droid_sources.json"}.get(
             source, "ur7e_sources.json"
@@ -216,6 +237,7 @@ def discover_components(source: str) -> list[Component]:
                 metadata_root=source_root / "metadata" / metadata_name,
                 spec=spec,
                 video_origin="staged_v3",
+                review_round=str(entry.get("review_round", "round1")),
             )
         )
     return components
@@ -441,11 +463,21 @@ def ingest_episode(
     )
     camera_sources = _camera_sources(component, episode_index, episode_manifest, frames)
 
+    states = np.asarray(arrays.states, dtype=np.float64)
+    actions = np.asarray(arrays.actions, dtype=np.float64)
+    state_transform = None
+    if component.source == "molmoact":
+        # The source Euler roll wraps at +-pi (2,463 seam crossings on the Tabletop shard).
+        # Anchor encoding subtracts the current state from every future action, so the
+        # seam would read as a 2*pi jump. Unwrap per episode; xyz and gripper untouched.
+        states[:, 3:6] = np.unwrap(states[:, 3:6], axis=0)
+        actions[:, 3:6] = np.unwrap(actions[:, 3:6], axis=0)
+        state_transform = "np.unwrap(axis=0) over dims 3..5 (Euler angles) per episode"
     destination.mkdir(parents=True, exist_ok=True)
     np.save(destination / "timestamp_s.npy", relative)
     np.save(destination / "source_timestamp_s.npy", timestamps)
-    np.save(destination / "state.npy", np.asarray(arrays.states, dtype=np.float64))
-    np.save(destination / "action.npy", np.asarray(arrays.actions, dtype=np.float64))
+    np.save(destination / "state.npy", states)
+    np.save(destination / "action.npy", actions)
 
     cameras = []
     for name, source in sorted(camera_sources.items()):
@@ -481,14 +513,6 @@ def ingest_episode(
             }
         )
 
-    selection = component.selection
-    accepted_detail = _accepted_episode_detail(selection, episode_index)
-    keep_subtasks = [
-        str(segment["subtask"]) for segment in annotations["segments"] if segment.get("retention") == "keep"
-    ]
-    task = (
-        annotations.get("task") or accepted_detail.get("task") or (keep_subtasks[0] if keep_subtasks else "")
-    )
     record = {
         "episode_id": identifier,
         "corpus_format": CORPUS_FORMAT,
@@ -497,7 +521,6 @@ def ingest_episode(
         "component": component.component,
         "embodiment": component.embodiment,
         "split": split,
-        "task": task,
         "source_repo_id": component.spec.repo_id,
         "source_revision": manifest.get("revision", component.spec.revision),
         "source_episode_index": episode_index,
@@ -509,6 +532,7 @@ def ingest_episode(
         "measured_rate_hz": measured_rate_hz,
         "rate_provenance": "declared_by_the_source_dataset_info",
         "timestamp_provenance": "source native per-episode timestamps, rebased to a zero start",
+        "state_transform": state_transform,
         "state_dimension": int(arrays.states.shape[1]),
         "action_dimension": int(arrays.actions.shape[1]),
         "state_semantics": component.spec.state_semantics,
@@ -526,6 +550,25 @@ def ingest_episode(
             "action": {"path": "action.npy", "shape": [frames, int(arrays.actions.shape[1])]},
         },
         "cameras": cameras,
+        **_annotation_fields(component, episode_index, annotations),
+        "source_tasks": list(arrays.tasks),
+    }
+    write_json(record_path, record)
+    return record
+
+
+def _annotation_fields(component: Component, episode_index: int, annotations: dict[str, Any]) -> dict[str, Any]:
+    """The record fields derived from the component's finalized review: task, annotations, review."""
+    selection = component.selection
+    accepted_detail = _accepted_episode_detail(selection, episode_index)
+    keep_subtasks = [
+        str(segment["subtask"]) for segment in annotations["segments"] if segment.get("retention") == "keep"
+    ]
+    task = (
+        annotations.get("task") or accepted_detail.get("task") or (keep_subtasks[0] if keep_subtasks else "")
+    )
+    return {
+        "task": task,
         "annotations": annotations,
         "review": {
             "outcome": annotations.get("outcome", accepted_detail.get("outcome", "unknown")),
@@ -554,10 +597,35 @@ def ingest_episode(
             "review_prompt": annotations.get("review_prompt") or selection.get("review_prompt"),
             "selection_rule": selection.get("selection_rule"),
         },
-        "source_tasks": list(arrays.tasks),
     }
-    write_json(record_path, record)
-    return record
+
+
+def refresh_annotations(source: str, corpus_root: Path, *, components: list[str] | None, episodes: list[int]) -> int:
+    """Re-derive task/annotations/review of already-ingested episodes from the component's
+    re-finalized review (a regrade): arrays and videos are left alone."""
+    wanted = set(episodes)
+    updated = 0
+    for component in discover_components(source):
+        if components and component.component not in components:
+            continue
+        for episode_index in _accepted_episodes(component):
+            if wanted and episode_index not in wanted:
+                continue
+            identifier = episode_id(component, episode_index)
+            record_path = corpus_root / "episodes" / identifier / "episode.json"
+            record = read_json(record_path)
+            annotations = read_json(component.annotations_path(episode_index))
+            if annotations.get("review_status") != "validated":
+                raise ValueError(f"{identifier}: annotations are not validated")
+            fields = _annotation_fields(component, episode_index, annotations)
+            if all(record.get(key) == value for key, value in fields.items()):
+                continue
+            record.update(fields)
+            write_json(record_path, record)
+            print(f"{identifier}: annotations refreshed", flush=True)
+            updated += 1
+    refresh_episode_index(corpus_root)
+    return updated
 
 
 def ingest(source: str, corpus_root: Path, *, components: list[str] | None, overwrite: bool) -> None:
@@ -713,16 +781,18 @@ def _nearest_frames(timestamps: np.ndarray, targets: np.ndarray) -> np.ndarray:
     return np.where(choose_left, left, right).astype(np.int64)
 
 
-def actor_anchors(record: dict[str, Any], corpus_root: Path, stride_s: float) -> list[dict[str, Any]]:
+def actor_anchors(
+    record: dict[str, Any], corpus_root: Path, stride_s: float, min_anchor_s: float = HISTORY_S
+) -> list[dict[str, Any]]:
     """Candidate anchors over one episode, with the reviewed eligibility decision attached."""
     directory = corpus_root / "episodes" / record["episode_id"]
     timestamps = np.load(directory / "timestamp_s.npy")
     annotations = record["annotations"]
     last_anchor = float(timestamps[-1]) - FUTURE_END_S
-    if last_anchor < HISTORY_S:
+    if last_anchor < min_anchor_s:
         return []
-    count = int(math.floor((last_anchor - HISTORY_S) / stride_s + 1e-9)) + 1
-    anchors = HISTORY_S + np.arange(count, dtype=np.float64) * stride_s
+    count = int(math.floor((last_anchor - min_anchor_s) / stride_s + 1e-9)) + 1
+    anchors = min_anchor_s + np.arange(count, dtype=np.float64) * stride_s
     history_offsets = np.asarray([-6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0])
     # Boundary-relative fields let an experiment change the subtask-conditioning policy
     # without rebuilding the corpus: keep the anchor, decide later whether its future may
@@ -761,6 +831,7 @@ def actor_anchors(record: dict[str, Any], corpus_root: Path, stride_s: float) ->
                 "anchor_s": anchor,
                 "anchor_frame": int(observation_frames[-1]),
                 "history_frames": [int(value) for value in observation_frames],
+                "history_complete": bool(anchor >= HISTORY_S - 1e-9),
                 "max_observation_timing_error_s": float(np.abs(timing_error).max()),
                 "future_end_s": anchor + FUTURE_END_S,
                 "future_points": FUTURE_POINTS,
@@ -874,11 +945,15 @@ def critic_intervals(record: dict[str, Any], corpus_root: Path) -> list[dict[str
         duration_s = float(interval["end_s"] - interval["start_s"])
         samples = end_frame - start_frame
         qualities = [int(segment["quality"]) for segment in interval["segments"]]
-        mistake_events = [
-            dict(event, type="mistake")
-            for segment in interval["segments"]
-            for event in segment.get("mistake_events", [])
-        ]
+        # A segment lists every event overlapping it, so an event straddling two segments
+        # of one subtask appears in both; keep one copy per (kind, span).
+        mistake_events = list(
+            {
+                (event.get("kind"), float(event["start_s"]), float(event["end_s"])): dict(event, type="mistake")
+                for segment in interval["segments"]
+                for event in segment.get("mistake_events", [])
+            }.values()
+        )
         recovery_events = [
             {
                 "start_s": float(segment["start_s"]),
@@ -984,13 +1059,13 @@ def critic_intervals(record: dict[str, Any], corpus_root: Path) -> list[dict[str
     return rows
 
 
-def build_views(corpus_root: Path, stride_s: float) -> dict[str, Any]:
+def build_views(corpus_root: Path, stride_s: float, min_anchor_s: float = HISTORY_S) -> dict[str, Any]:
     records = [read_json(path) for path in sorted((corpus_root / "episodes").glob("*/episode.json"))]
     stride_name = f"{1.0 / stride_s:.0f}hz".replace(".", "_")
     actor_rows: list[dict[str, Any]] = []
     critic_rows: list[dict[str, Any]] = []
     for record in records:
-        actor_rows.extend(actor_anchors(record, corpus_root, stride_s))
+        actor_rows.extend(actor_anchors(record, corpus_root, stride_s, min_anchor_s))
         critic_rows.extend(critic_intervals(record, corpus_root))
     retained = [row for row in actor_rows if row["retained"]]
     actor_path = corpus_root / f"actor_anchors_{stride_name}.jsonl"
@@ -1000,6 +1075,7 @@ def build_views(corpus_root: Path, stride_s: float) -> dict[str, Any]:
         "actor_view": {
             "path": actor_path.name,
             "stride_s": stride_s,
+            "min_anchor_s": min_anchor_s,
             "candidate_anchors": len(actor_rows),
             "retained_anchors": len(retained),
             "retention": len(retained) / len(actor_rows) if actor_rows else 0.0,
@@ -1645,13 +1721,17 @@ def ledger(corpus_root: Path, actor_view: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    global DATASET_ROOT, BUILD_ROOT, CORPUS_ROOT
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus-root", type=Path, default=CORPUS_ROOT)
+    parser.add_argument("--corpus-root", type=Path, default=None)
+    # v2 roots: a second corpus with its own build tree, leaving v1 untouched.
+    parser.add_argument("--dataset-root", type=Path, default=DATASET_ROOT)
+    parser.add_argument("--build-root", type=Path, default=BUILD_ROOT)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     ingest_parser = subparsers.add_parser("ingest")
     ingest_parser.add_argument(
-        "--source", required=True, choices=["robochallenge", "droid", "droid_success", "ur7e"]
+        "--source", required=True, choices=["robochallenge", "droid", "droid_success", "ur7e", "molmoact"]
     )
     ingest_parser.add_argument("--component", action="append")
     ingest_parser.add_argument("--overwrite", action="store_true")
@@ -1664,9 +1744,16 @@ def main() -> None:
 
     subparsers.add_parser("index")
     subparsers.add_parser("refresh-metadata")
+    refresh_parser = subparsers.add_parser("refresh-annotations")
+    refresh_parser.add_argument("--source", required=True)
+    refresh_parser.add_argument("--component", action="append", default=None)
+    refresh_parser.add_argument("--episode", type=int, action="append", default=[], help="source episode index (repeatable); none = every accepted episode")
 
     views_parser = subparsers.add_parser("views")
     views_parser.add_argument("--stride-hz", type=float, default=5.0)
+    # v1 anchored from HISTORY_S so every row carried 6 s of real history. With history off
+    # in training, v2 anchors from 0 s; rows record whether their history window is complete.
+    views_parser.add_argument("--min-anchor-s", type=float, default=HISTORY_S)
 
     pack_parser = subparsers.add_parser("pack")
     pack_parser.add_argument("--source")
@@ -1682,17 +1769,25 @@ def main() -> None:
     validate_parser.add_argument("--check-hashes", action="store_true")
 
     args = parser.parse_args()
+    DATASET_ROOT = args.dataset_root.resolve()
+    BUILD_ROOT = args.build_root.resolve()
+    CORPUS_ROOT = DATASET_ROOT / "corpus"
+    if args.corpus_root is None:
+        args.corpus_root = CORPUS_ROOT
     if args.command == "ingest":
         ingest(args.source, args.corpus_root, components=args.component, overwrite=args.overwrite)
     elif args.command == "ingest-round":
         ingest_round(args.source, args.task, args.round, args.corpus_root, overwrite=args.overwrite)
+    elif args.command == "refresh-annotations":
+        count = refresh_annotations(args.source, args.corpus_root, components=args.component, episodes=args.episode)
+        print(f"refreshed annotations of {count} episodes", flush=True)
     elif args.command == "refresh-metadata":
         print(f"{refresh_metadata(args.corpus_root)} episode records updated")
     elif args.command == "index":
         rows = refresh_episode_index(args.corpus_root)
         print(f"{len(rows)} episodes indexed")
     elif args.command == "views":
-        summary = build_views(args.corpus_root, 1.0 / args.stride_hz)
+        summary = build_views(args.corpus_root, 1.0 / args.stride_hz, min_anchor_s=args.min_anchor_s)
         print(json.dumps(summary, indent=2))
     elif args.command == "ledger":
         report = ledger(args.corpus_root, args.actor_view)

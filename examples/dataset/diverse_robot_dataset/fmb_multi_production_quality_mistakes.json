@@ -1,0 +1,3093 @@
+{
+  "quality_provenance": "model_reviewed_rebot_rubric",
+  "review_provenance": {
+    "reviewer": "Codex (batch 1) / Claude (batches 2-12)",
+    "review_date": "2026-09-18",
+    "decision": "model_reviewed",
+    "method": "Per-batch provenance is recorded in codex_batch{1..12}_quality_mistakes.json and in each review file.",
+    "limitations": "Sampled visual evidence; events between samples cannot be ruled out. Final seating assessed visually."
+  },
+  "rubric": {
+    "path": "lerobot/pi07_wiki/annotation_rubric.md",
+    "version": "2026-08-02"
+  },
+  "status": "component_review_60_of_60",
+  "episodes": [
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_1_126.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_1_126.quality_mistake.png",
+          "sha256": "22336518a41bc4b3f2fff97e74dc41ec537747b8736c8012c006802f861ce6f6"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 51,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,11 through f50: one approach to the pink block edge and secure close; later lift confirms acquisition. No visible corrective return or failed close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 51,
+          "end_timestep_exclusive": 55,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four frames f51-54: pink block rises with the fingers and remains retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 55,
+          "end_timestep_exclusive": 108,
+          "quality": 5,
+          "note": "side_2/wrist_1 f55-107, especially f84-107: continuous carry to the black fixture and controlled upright placement, with no visible placement retry.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 108,
+          "end_timestep_exclusive": 162,
+          "quality": 5,
+          "note": "side_2/wrist_1 f108,114,120,126,132,137,143,149,155,161: intended release, reorientation and single regrasp; f162 onward confirms secure acquisition. Planned opening is not a failed close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 162,
+          "end_timestep_exclusive": 186,
+          "quality": 5,
+          "note": "side_2/wrist_1 f162-185: block leaves the fixture, which is empty by f175, and is carried securely toward the board without a visible correction.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 186,
+          "end_timestep_exclusive": 233,
+          "quality": 5,
+          "note": "side_1/wrist_1 f186,191,196,201,206,212,217,222,227,232: controlled descent into the matching board opening; final view shows lower seated position without a visible withdrawal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_1_67.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_1_67.quality_mistake.png",
+          "sha256": "edd781e1988d40486000b352cdda3ab659189ed9f6c8c88d1975bdc4de3e941d"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_1_67.210_298_stride3.jpg",
+          "sha256": "d46194767c8947d3b35f350b459e45f368a7ea7ee15f0e9dc908862132db13f7"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 48,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,16,21,26,31,37,42,47: direct approach and close around the pink block; successful f48-51 lift retrospectively confirms grasp.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 48,
+          "end_timestep_exclusive": 52,
+          "quality": 5,
+          "note": "side_2/wrist_1 f48-51, every native frame: controlled lift with the pink block retained and no visible slip.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 52,
+          "end_timestep_exclusive": 94,
+          "quality": 5,
+          "note": "side_2/wrist_1 f52,57,61,66,70,75,79,84,88,93: smooth transfer and upright placement on the black fixture; f94-103 confirms it remains supported during planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 94,
+          "end_timestep_exclusive": 177,
+          "quality": 5,
+          "note": "side_2/wrist_1 f94,103,112,121,130,140,149,158,167,176: planned release and change of approach to the upright block, then single secure close; subsequent lift clears the fixture.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 177,
+          "end_timestep_exclusive": 199,
+          "quality": 5,
+          "note": "side_2/wrist_1 f177,179,182,184,186,189,191,193,196,198: direct transfer toward the board; fixture empty and object retained throughout sampled carry.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 199,
+          "end_timestep_exclusive": 298,
+          "quality": 4,
+          "note": "side_1/wrist_1 overview f199-297 and dense f210-297 every three frames: small alignment settle around f225-237, near-stationary contact hold f237-288, then final seating f291-297. One hesitant contact phase; no visible drop, release or failed grasp. Completed with a pause, not an interrupted primitive.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_1_75.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_1_75.quality_mistake.png",
+          "sha256": "7e7be5792ee54b8b97c701adde2540a55feaa359d19ae1c9a744af1e23100248"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 45,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,15,20,24,29,34,39,44: direct approach to the already upright pink block and secure close; f45-48 confirms it lifts.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 45,
+          "end_timestep_exclusive": 49,
+          "quality": 5,
+          "note": "side_2/wrist_1 f45-48, every native frame: block rises while retained, without a visible correction or slip.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 49,
+          "end_timestep_exclusive": 65,
+          "quality": 5,
+          "note": "side_2/wrist_1 f49,51,52,54,56,57,59,61,62,64: single secure carry to the board, with no fixture step in this native sequence.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 65,
+          "end_timestep_exclusive": 120,
+          "quality": 5,
+          "note": "side_1/wrist_1 f65,71,77,83,89,95,101,107,113,119: progressive descent into the matching opening, reaching the lower seated position in f113-119 with no visible pullback or renewed insertion attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_1_8.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_1_8.quality_mistake.png",
+          "sha256": "b6f678214fd3afee200806e458fa988f8e90a6f464da4723a1731d40f7bb4697"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_1_8.105_167_stride3.jpg",
+          "sha256": "34994b845b397e7349760fc6b23c3472b38c2178a7e9c917328a5286bd699f28"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 78,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,9,17,26,34,43,51,60,68,77: approach and close around the pink block; successful f78-81 lift confirms grasp. No visible empty close, object displacement, or approach reversal.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 78,
+          "end_timestep_exclusive": 82,
+          "quality": 5,
+          "note": "side_2/wrist_1 f78-81, every native frame: controlled lift with block retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 82,
+          "end_timestep_exclusive": 167,
+          "quality": 4,
+          "note": "side_2/wrist_1 overview f82-166 and dense f105-166 every three frames: wrist/board orientation changes through f126 then turns back by f138 before lowering onto fixture f141-166. One approach alignment correction; no lost object or placement retry.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 167,
+          "end_timestep_exclusive": 238,
+          "quality": 5,
+          "note": "side_2/wrist_1 f167,175,183,190,198,206,214,221,229,237: planned release and reorientation followed by a single close; subsequent carry confirms secure regrasp. No visible failed close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 238,
+          "end_timestep_exclusive": 261,
+          "quality": 5,
+          "note": "side_2/wrist_1 f238,240,243,245,248,250,253,255,258,260: fixture clears and pink block is carried directly toward board, retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 261,
+          "end_timestep_exclusive": 327,
+          "quality": 5,
+          "note": "side_1/wrist_1 f261,268,275,283,290,297,304,312,319,326: controlled continuous lowering and final seated position in f319-326; no visible withdrawal or separate retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_1_89.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_1_89.quality_mistake.png",
+          "sha256": "add7a1973641f6db4abe40c63416e1ae5916551c702f7703a364a50e0f7ab2f1"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_1_89.240_287_stride3.jpg",
+          "sha256": "c67b84bc4fc14aca9426ac8a9fa5529049a8388df6b7d102c6a92eb0a815829f"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 64,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,14,21,28,35,42,49,56,63: direct approach and close to pink block beside cyan beam; f64-67 confirms secure lift without visible target displacement.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 64,
+          "end_timestep_exclusive": 68,
+          "quality": 5,
+          "note": "side_2/wrist_1 f64-67, every native frame: block rises securely without visible slip or corrective reversal.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 68,
+          "end_timestep_exclusive": 129,
+          "quality": 5,
+          "note": "side_2/wrist_1 f68,75,81,88,95,101,108,115,121,128: continuous transfer and placement of pink block onto fixture; f129-136 confirms stable support during intended release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 129,
+          "end_timestep_exclusive": 196,
+          "quality": 5,
+          "note": "side_2/wrist_1 f129,136,144,151,158,166,173,180,188,195: planned release, changed orientation and single close around the upright block; subsequent lift confirms grip.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 196,
+          "end_timestep_exclusive": 219,
+          "quality": 5,
+          "note": "side_2/wrist_1 f196,198,201,203,206,208,211,213,216,218: direct secure carry from fixture toward board without a visible return or collision.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 219,
+          "end_timestep_exclusive": 287,
+          "quality": 4,
+          "note": "side_1/wrist_1 overview f219-286 and dense f240-286 every three frames: initial descent, slight angular alignment settle f246-264, then seating f276-286. One minor contact adjustment, with no visible discrete failure or renewed grasp.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_2_11.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_2_11.quality_mistake.png",
+          "sha256": "c041b0b74503ea343caee1c30c0f4e3eb12ae8c9a4d623aa7350e547bd47b9ad"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_11.112_154_stride2.jpg",
+          "sha256": "afe737a12fda321b810d6add9daa7e78a97866868e97cc5151b85f4324f463db"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_11.28_62_stride2.jpg",
+          "sha256": "b982037046c3279e797c5427063f5f6bd5398d9acbecf1ff35a94a5d2bc35353"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 62,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,14,20,27,34,41,47,54,61 and dense wrist_1 f38-61 every two frames: one continuous descent onto the orange U-piece with the jaw entering beside its right prong and a single close visible by f58-61. The piece is not displaced during the approach and the following lift confirms acquisition.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 62,
+          "end_timestep_exclusive": 66,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f62-65: the orange piece stays fixed in the wrist view while the background drops, so it rises retained; no slip or corrective reopen.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 66,
+          "end_timestep_exclusive": 84,
+          "quality": 5,
+          "note": "side_2/wrist_1 f66,68,70,72,74,75,77,79,81,83: direct carry toward the board; the table site the piece occupied is empty from f70 and no return or re-approach is visible.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 84,
+          "end_timestep_exclusive": 154,
+          "quality": 5,
+          "note": "side_1/wrist_1 f84,92,99,107,115,122,130,138,145,153 and dense f112-153 every two frames, magnified at f126,136,146,153: monotone descent into the rear board cavity, release around f148-150, and f152-153 shows the piece standing seated with the gripper withdrawn. No pullback or repeated insertion attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_2_110.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_2_110.quality_mistake.png",
+          "sha256": "d841f87e53e37e64367dc9a9ad22dad97d2cf1e3664076a0645803585f5e885c"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_110.36_50_stride1.jpg",
+          "sha256": "ef0281a2828df9b15b8276df071d26b13cf024dd0d172120e6a15f27ced3b6fa"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_110.78_98_stride2.jpg",
+          "sha256": "e887783dac6418187befd9a53f2f8650ad1213549f0800fbd44b905d5c0e3879"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 46,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,15,20,25,30,35,40,45 and dense f36-49 every native frame: single approach and close on the orange U-piece prong, with the jaws closed from f41 onward and no empty close or re-approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 46,
+          "end_timestep_exclusive": 50,
+          "quality": 5,
+          "note": "wrist_1/side_2 f46-49, every native frame: the piece is retained while the board recedes in the wrist view; no slip.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 50,
+          "end_timestep_exclusive": 65,
+          "quality": 5,
+          "note": "side_2/wrist_1 f50,52,53,55,56,58,59,61,62,64: direct carry toward the board with the orange piece fixed between the fingers; the vacated table site stays empty.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 65,
+          "end_timestep_exclusive": 98,
+          "quality": 5,
+          "note": "side_1/wrist_1 f65,69,72,76,79,83,86,90,93,97 and dense f78-97 every two frames, magnified at f82,88,94,97: continuous descent into the rear cavity; the final native frame f97 shows the piece seated with the gripper clear. No withdrawal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_2_119.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_2_119.quality_mistake.png",
+          "sha256": "cd1b0f33275d6085bd111fc0192e1a542b2b3308df36e9151ce9e9322d91c0e9"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_119.180_198_stride2.jpg",
+          "sha256": "a277433bad4396f7ce8ac82afa60b31da779b69ce9a917bb8f7285cb8646366c"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_119.236_272_stride2.jpg",
+          "sha256": "6fc08f6162f134aefa4e31d818f13ad3c06617b57d13e6d454c5e7a3a0a4c156"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_119.44_62_stride2.jpg",
+          "sha256": "e740a90b47a7f30bbcfe6bbcc878c70798b40b832111e8fd20e35bd8bda205fb"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 60,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,13,20,26,33,39,46,52,59 and dense wrist_1 f44-61 every two frames: one descent onto the flat-lying orange piece and a single close held from f54 to f61. The piece does not shift on the table during the approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 60,
+          "end_timestep_exclusive": 64,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f60-63: the piece lifts with the fingers and stays retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 64,
+          "end_timestep_exclusive": 131,
+          "quality": 5,
+          "note": "side_2/wrist_1 f64,71,79,86,93,101,108,115,123,130: one continuous transfer to the black fixture and an upright placement; f131-146 confirms the piece stands supported during the planned release, with no placement retry.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 131,
+          "end_timestep_exclusive": 198,
+          "quality": 5,
+          "note": "side_2/wrist_1 f131,138,146,153,160,168,175,182,190,197 and dense wrist_1 f180-197 every two frames: planned release, change of approach and a single close on the upright piece, which stays stable on the fixture. The lift at f204 confirms the regrasp.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 198,
+          "end_timestep_exclusive": 224,
+          "quality": 5,
+          "note": "side_2/wrist_1 f198,201,204,206,209,212,215,217,220,223: the fixture is empty from f204 and the piece is carried directly toward the board without a visible return or collision.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 224,
+          "end_timestep_exclusive": 272,
+          "quality": 5,
+          "note": "side_1/wrist_1 f224,229,234,240,245,250,255,261,266,271 and dense f236-271 every two frames, magnified at f248,256,264,271: steady descent into the rear cavity, ending seated at f271 with the gripper opening and clearing. No alignment reversal or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_2_47.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_2_47.quality_mistake.png",
+          "sha256": "e1ded537227290c09c9c72f82c0ced5612f18ca4219e17054dd835f9b8b2dd9b"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_47.210_229_stride2.jpg",
+          "sha256": "246f63479c91447e575d43eeb2de2ffb6941b3bd4bececd7e6a7f6231591f422"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_47.288_335_stride3.jpg",
+          "sha256": "b3ca36af299c6784707367b00d8707a3bfe088fd2ae3a3a294f3877a2c9b386f"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_47.44_62_stride2.jpg",
+          "sha256": "a9b7df4e561d0422f36a39ebe7f14d5b6be69348d56b68c409b380207615bfd6"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 62,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,14,20,27,34,41,47,54,61 and dense wrist_1 f44-61 every two frames: single approach to the flat-lying orange piece with the jaw in contact from f48 and closed through f61; no reopen and no displacement of the piece.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 62,
+          "end_timestep_exclusive": 66,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f62-65: the piece rises retained in the fingers, with the table falling away in the wrist view.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 66,
+          "end_timestep_exclusive": 147,
+          "quality": 5,
+          "note": "side_2/wrist_1 f66,75,84,93,102,110,119,128,137,146: one continuous carry from the table to the black fixture and an upright placement; f147-165 confirms the piece stands supported, with no re-seating attempt.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 147,
+          "end_timestep_exclusive": 229,
+          "quality": 5,
+          "note": "side_2/wrist_1 f147,156,165,174,183,192,201,210,219,228 and dense wrist_1 f210-228 every two frames: planned release, repositioning and one close on the upright piece at f222-228. The piece stays stable on the fixture throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 229,
+          "end_timestep_exclusive": 254,
+          "quality": 5,
+          "note": "side_2/wrist_1 f229,232,234,237,240,242,245,248,250,253: the fixture is empty from f234 and the piece is carried directly toward the board, retained throughout the sampled carry.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 254,
+          "end_timestep_exclusive": 335,
+          "quality": 5,
+          "note": "side_1/wrist_1 f254,263,272,281,290,298,307,316,325,334 and dense f288-334 every three frames, magnified at f291,303,315,324: a slow but monotone descent into the rear cavity, seated by f330-334 with the gripper released and clearing. The 8.1 s duration comes from the descent rate; no hold, reversal or repeated attempt is visible.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_2_83.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_2_83.quality_mistake.png",
+          "sha256": "43e449c775e346043604c702d3787a6ee0efe46f5cf06a69470749bda90576f8"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_83.195_213_stride2.jpg",
+          "sha256": "dc638bce9360a19afb0da2ba4ad896c9b0968e9853ff44df13da9963f18e5715"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_83.268_304_stride2.jpg",
+          "sha256": "2ed6483fd4c907840f138af6313e889bdd967d9ef7ae072265467e6f51c48843"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_2_83.48_72_stride2.jpg",
+          "sha256": "7e844325346cab45b1be3a8d84b8a990adbafc7605dde55e523f14a1edbec0c4"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 72,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,8,16,24,32,39,47,55,63,71 and dense side_2/wrist_1 f48-71 every two frames: one descent onto the flat-lying orange piece, the jaw entering its inner opening and closing by f66-71. The piece keeps its position and orientation on the table; the apparent shift in side_2 is arm occlusion.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 72,
+          "end_timestep_exclusive": 76,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f72-75: the piece leaves the table retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 76,
+          "end_timestep_exclusive": 130,
+          "quality": 5,
+          "note": "side_2/wrist_1 f76,82,88,94,100,105,111,117,123,129: single transfer to the black fixture and upright placement; f130-148 confirms the piece stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 130,
+          "end_timestep_exclusive": 213,
+          "quality": 5,
+          "note": "side_2/wrist_1 f130,139,148,157,166,176,185,194,203,212 and dense wrist_1 f195-212 every two frames: planned release, re-approach from a new angle and one close along the upright wall at f203-212, with the piece stable on the fixture and no tipping.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 213,
+          "end_timestep_exclusive": 237,
+          "quality": 5,
+          "note": "side_2/wrist_1 f213,216,218,221,223,226,228,231,233,236: the fixture is empty from f218 and the piece is carried directly toward the board without a visible correction.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 237,
+          "end_timestep_exclusive": 304,
+          "quality": 5,
+          "note": "side_1/wrist_1 f237,244,252,259,266,274,281,288,296,303 and dense f268-303 every two frames, magnified at f276,284,292,300: continuous descent into the rear cavity with release and withdrawal by f300-303, where the piece stands seated. No reversal or second attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_3_10.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_3_10.quality_mistake.png",
+          "sha256": "a3060bbc954677d65760062637a6340e1b7e9dfc71d2e3d0a41fefbd7156d9cd"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_3_10.140_170_stride2.jpg",
+          "sha256": "f6207e89513c9a679f4f58bc810dc7c4ac02c566288e706ce0aea34463a9e3c5"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 58,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,13,19,25,32,38,44,51,57: one continuous descent onto the cyan beam lying on the table, with the jaw closing on its near end by f44-57. The beam keeps its position through the approach and the following lift confirms acquisition.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 58,
+          "end_timestep_exclusive": 62,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f58-61: the beam rises retained in the fingers, tilting with the wrist and not slipping.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 62,
+          "end_timestep_exclusive": 82,
+          "quality": 5,
+          "note": "side_2/wrist_1 f62,64,66,68,70,73,75,77,79,81: the table position the beam occupied is empty from f66 and the beam is carried directly toward the board without a return.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 82,
+          "end_timestep_exclusive": 170,
+          "quality": 5,
+          "note": "side_1/wrist_1 f82,92,101,111,121,130,140,150,159,169 and dense f140-169 every two frames, magnified at f146,154,162,169: continuous lowering into the central board channel between the pink blocks, progressively straightening, and the last native frame f169 shows the beam standing deep in the channel. No pullback or repeated attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_3_133.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_3_133.quality_mistake.png",
+          "sha256": "58bbfb6ae2d3177fd31f3a7f56284e84c6ef26cec01267b08511b038e815c1a8"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_3_133.138_167_stride2.jpg",
+          "sha256": "987b835696530a7f2bce79d34471381c4454ede78926fa8b95467ded66bf8c3a"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 57,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,19,25,31,37,44,50,56: single approach to the cyan beam and close on its near end by f50-56, with the beam undisplaced during the approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 57,
+          "end_timestep_exclusive": 62,
+          "quality": 5,
+          "note": "side_2/wrist_1 all five native frames f57-61: controlled lift with the beam retained; no slip or corrective reversal.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 62,
+          "end_timestep_exclusive": 87,
+          "quality": 5,
+          "note": "side_2/wrist_1 f62,65,67,70,73,75,78,81,83,86: the beam leaves the table, whose position is empty from f67, and is carried directly to the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 87,
+          "end_timestep_exclusive": 167,
+          "quality": 5,
+          "note": "side_1/wrist_1 f87,96,105,113,122,131,140,148,157,166 and dense f138-166 every two frames, magnified at f142,150,158,166: steady descent into the central channel, with the beam deepest at the final native frame f166 and no visible rise, pullback or second attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_3_29.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_3_29.quality_mistake.png",
+          "sha256": "5acc23cdec35317ddae124a73ef941bd41c2ba7810f375cb31857b336115b1e0"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_3_29.20_50_stride3.jpg",
+          "sha256": "7d8c485977346eb1c0b793fe6d59d70a8ef40577eda862fc12577ae7876253c2"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 78,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,9,17,26,34,43,51,60,68,77 and dense side_2/wrist_1 f20-49 every three frames: the beam keeps its exact table position while the gripper descends in one approach and closes on its near end; the later lift confirms the grasp.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 78,
+          "end_timestep_exclusive": 82,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f78-81: the beam lifts retained in the fingers without slip.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 82,
+          "end_timestep_exclusive": 103,
+          "quality": 5,
+          "note": "side_2/wrist_1 f82,84,86,89,91,93,95,98,100,102: direct carry toward the board, the vacated table position empty from f86, with no return or collision.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 103,
+          "end_timestep_exclusive": 156,
+          "quality": 5,
+          "note": "side_1/wrist_1 f103,109,115,120,126,132,138,143,149,155: continuous lowering into the central channel, reaching its deepest position at the final native frame f155 with no visible pullback or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_3_48.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_3_48.quality_mistake.png",
+          "sha256": "032ca98c167db82b7b5493ba7d2dfc6ea1b8a5894b4cf9acf006085dd97ace09"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_3_48.150_202_stride3.jpg",
+          "sha256": "2b70e2584ec33968c20dff371a0db4b7dfbfbfcef66c60166f568554775ea64e"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 78,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,9,17,26,34,43,51,60,68,77: one continuous approach to the cyan beam and close on its near end by f60-77, with the beam undisplaced during the approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 78,
+          "end_timestep_exclusive": 82,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f78-81: the beam rises retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 82,
+          "end_timestep_exclusive": 101,
+          "quality": 5,
+          "note": "side_2/wrist_1 f82,84,86,88,90,92,94,96,98,100: direct carry toward the board; the table position is empty from f88 and no correction is visible.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 101,
+          "end_timestep_exclusive": 202,
+          "quality": 3,
+          "note": "side_1/wrist_1 f101,112,123,134,145,157,168,179,190,201 and dense f150-201 every three frames: the beam reaches the central channel by about f134, then side_1 shows it rocked repeatedly from side to side - leaning left at f162,171,177,189,198 and right at f165,174,180,192,201 - with the wrist view swinging in step. At least four alignment reversals over roughly five seconds, still in progress at the final native frame f201, where the beam sits angled in the channel. Repeated corrections with no visible drop, slip or release.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_3_88.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_3_88.quality_mistake.png",
+          "sha256": "5b236e2265a046d740d55c1e86b714dfb177148389fc43bdf2251493be565db6"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 67,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,15,22,29,37,44,51,59,66: the beam starts upright on the table; one continuous approach and close on its upper end by f37-66, with no visible tipping or re-approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 67,
+          "end_timestep_exclusive": 71,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f67-70: the beam lifts retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 71,
+          "end_timestep_exclusive": 90,
+          "quality": 5,
+          "note": "side_2/wrist_1 f71,73,75,77,79,81,83,85,87,89: the beam leaves the table, empty from f75, and is carried directly to the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 90,
+          "end_timestep_exclusive": 147,
+          "quality": 5,
+          "note": "side_1/wrist_1 f90,96,102,109,115,121,127,134,140,146: continuous lowering into the central channel from f109 onward, deepest at the final native frame f146, with no visible reversal or second attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_4_10.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_4_10.quality_mistake.png",
+          "sha256": "35b0f05726f444a28c53414938c4028ccade441c6afe785c72b3588818dbf7d2"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_4_10.270_299_stride2.jpg",
+          "sha256": "0401b36390ccfa41eb188423c1cd3e6a5c2ccf81d89fe6a3e250b24dbb5289e4"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 48,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,16,21,26,31,37,42,47: one continuous descent onto the green Z-piece and a single close on its near arm by f31-47; the piece keeps its table position and the following lift confirms acquisition.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 48,
+          "end_timestep_exclusive": 52,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f48-51: the piece rises retained in the fingers, with the table dropping away in the wrist view.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 52,
+          "end_timestep_exclusive": 111,
+          "quality": 5,
+          "note": "side_2/wrist_1 f52,58,65,71,78,84,91,97,104,110: one continuous carry to the black fixture and an upright placement; f111-133 confirms the piece stands supported during the planned release, with no second placement attempt.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 111,
+          "end_timestep_exclusive": 211,
+          "quality": 5,
+          "note": "side_2/wrist_1 f111,122,133,144,155,166,177,188,199,210: planned release, a wide reorientation away from the fixture and a single close on the upright piece at f199-210, which stays stable on the fixture throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 211,
+          "end_timestep_exclusive": 233,
+          "quality": 5,
+          "note": "side_2/wrist_1 f211,213,216,218,220,223,225,227,230,232: the fixture is empty from f216 and the piece is carried directly toward the board without a visible return.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 233,
+          "end_timestep_exclusive": 299,
+          "quality": 5,
+          "note": "side_1/wrist_1 f233,240,247,255,262,269,276,284,291,298 and dense f270-298 every two frames, magnified at f274,282,290,298: continuous lowering onto the board beside the inserted beam, seated at the final native frame f298 with the gripper opening and clearing. No reversal or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_4_5.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_4_5.quality_mistake.png",
+          "sha256": "b1901791ee2d7d48c8a6a37aaa27d5ee9e4b0d0925ddb2edff0d1dc1709f89c3"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_1_trajectory_4_5.300_368_stride4.jpg",
+          "sha256": "0af8f896667f98a9c43770feaac9c410294f42fba4f8106a8f619372d74bbd9b"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 54,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,18,24,29,35,41,47,53: single approach to the green Z-piece and close on its near arm by f35-53, with the piece undisplaced.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 54,
+          "end_timestep_exclusive": 58,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f54-57: the piece lifts retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 58,
+          "end_timestep_exclusive": 114,
+          "quality": 5,
+          "note": "side_2/wrist_1 f58,64,70,76,82,89,95,101,107,113: one continuous transfer to the black fixture and an upright placement; f114-141 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 114,
+          "end_timestep_exclusive": 236,
+          "quality": 5,
+          "note": "side_2/wrist_1 f114,127,141,154,168,181,195,208,222,235: planned release, a long reorientation clear of the fixture and one close on the upright piece at f222-235; the piece stays stable and no failed close is visible.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 236,
+          "end_timestep_exclusive": 261,
+          "quality": 5,
+          "note": "side_2/wrist_1 f236,239,241,244,247,249,252,255,257,260: the fixture is empty from f241 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 261,
+          "end_timestep_exclusive": 368,
+          "quality": 5,
+          "note": "side_1/wrist_1 f261,273,285,296,308,320,332,343,355,367 and dense f300-367 every four frames, magnified at f300,308,316,324,332 and f340,348,356,364,367: a steady, strictly monotone descent onto the board beside the beam, seated at the final native frame f367 with the gripper released. The 10.7 s duration is transit plus a slow descent, with no hold, reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_4_57.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_4_57.quality_mistake.png",
+          "sha256": "9294680521952c4cd6b918e4262ab536362b2523ac4244cdb0f4ebbdfbdd9a2c"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 49,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,11,16,21,27,32,37,43,48: one approach and close on the green Z-piece by f27-48, with the jaw seated between its arms and no target displacement.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 49,
+          "end_timestep_exclusive": 53,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f49-52: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 53,
+          "end_timestep_exclusive": 123,
+          "quality": 5,
+          "note": "side_2/wrist_1 f53,61,68,76,84,91,99,107,114,122: single carry to the black fixture and upright placement; f123-147 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 123,
+          "end_timestep_exclusive": 233,
+          "quality": 5,
+          "note": "side_2/wrist_1 f123,135,147,159,171,184,196,208,220,232: planned release at f123-135, reorientation clear of the fixture, and one close on the upright piece at f220-232 with the piece stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 233,
+          "end_timestep_exclusive": 257,
+          "quality": 5,
+          "note": "side_2/wrist_1 f233,236,238,241,243,246,248,251,253,256: the fixture is empty from f238 and the piece is carried directly to the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 257,
+          "end_timestep_exclusive": 318,
+          "quality": 5,
+          "note": "side_1/wrist_1 f257,264,270,277,284,290,297,304,310,317: continuous lowering onto the board beside the beam from f284 onward, seated at the final native frame f317 with the gripper opening. No pullback or second attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_4_84.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_4_84.quality_mistake.png",
+          "sha256": "c2957b86cb98e1d384c61392043147f2f0f0747d4d398f5700695da02170b360"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 64,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,14,21,28,35,42,49,56,63: the piece starts already upright beside the board; one continuous approach and close on it by f35-63, with no tipping or re-approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 64,
+          "end_timestep_exclusive": 68,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f64-67: the piece lifts retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 68,
+          "end_timestep_exclusive": 82,
+          "quality": 5,
+          "note": "side_2/wrist_1 f68,69,71,72,74,75,77,78,80,81: the vacated position is empty from f71 and the piece is carried directly to the board; no fixture step in this native sequence.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 82,
+          "end_timestep_exclusive": 151,
+          "quality": 5,
+          "note": "side_1/wrist_1 f82,90,97,105,112,120,127,135,142,150: continuous lowering onto the board beside the inserted beam, seated at the final native frame f150 with the gripper opening and clearing. No reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_1/trajectory_4_87.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_1_trajectory_4_87.quality_mistake.png",
+          "sha256": "7a36e160c3aaa491397a0f7621180c9b49bb6ec84116a7dedee196c03908b118"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 73,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,8,16,24,32,40,48,56,64,72: single descent onto the green Z-piece and one close by f40-72, with the piece keeping its table position.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 73,
+          "end_timestep_exclusive": 77,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f73-76: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 77,
+          "end_timestep_exclusive": 142,
+          "quality": 5,
+          "note": "side_2/wrist_1 f77,84,91,98,105,113,120,127,134,141: one continuous transfer to the black fixture and an upright placement; f142-160 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 142,
+          "end_timestep_exclusive": 223,
+          "quality": 5,
+          "note": "side_2/wrist_1 f142,151,160,169,178,186,195,204,213,222: planned release at f142-151, reorientation clear of the fixture, and a single close on the upright piece at f213-222, which stays stable.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 223,
+          "end_timestep_exclusive": 246,
+          "quality": 5,
+          "note": "side_2/wrist_1 f223,225,228,230,233,235,238,240,243,245: the fixture is empty from f228 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 246,
+          "end_timestep_exclusive": 319,
+          "quality": 5,
+          "note": "side_1/wrist_1 f246,254,262,270,278,286,294,302,310,318: continuous lowering onto the board beside the beam from f278 onward, seated at the final native frame f318 with the gripper opening. No alignment reversal or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_1_126.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_1_126.quality_mistake.png",
+          "sha256": "81d53deff812eb9f14f1e2c6b29da466aaff376d3a13460cb1596acf597ca0d2"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_1_126.104_137_stride2.jpg",
+          "sha256": "58bb0dc12440633ee531efe4194d2833bdb868ac19419ab30473be79adba4e43"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_1_126.40_77_stride2.jpg",
+          "sha256": "a7bb6c72a280eda32e917e650c64414aac46d0644c4b03726d14eb73d858a750"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 77,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,8,17,25,34,42,51,59,68,76 and dense wrist_1 f40-76 every two frames: one descent alongside the upright green U-piece beside the pink board and a single close on its wall, held from about f60 to f76. The blue rod behind it only changes apparent angle with the camera; side_2 shows it still standing through f92. No target displacement or re-approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 77,
+          "end_timestep_exclusive": 81,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f77-80: the piece stays fixed in the wrist view while the board edge drops away, so it rises retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 81,
+          "end_timestep_exclusive": 93,
+          "quality": 5,
+          "note": "side_2/wrist_1 f81,82,83,85,86,87,88,90,91,92: direct carry over the pink board with the piece retained; side_1 f86-92 shows it arriving above the cross cavity without a return.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 93,
+          "end_timestep_exclusive": 137,
+          "quality": 5,
+          "note": "side_1/wrist_1 f93,98,103,107,112,117,122,126,131,136 and dense f104-136 every two frames, magnified at f108,116,124,132,136: continuous lowering into the cross cavity and release; the final native frame f136 shows the piece seated with the gripper clear. No pullback or second attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_1_67.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_1_67.quality_mistake.png",
+          "sha256": "1f5648ef7cbd9c91add8647b907b405ca8549de4219d087a9adc4d497df1e367"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 53,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,17,23,29,35,40,46,52: single approach to the upright green piece at the centre of side_2 and one close on its wall by f40-52; the piece keeps its position.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 53,
+          "end_timestep_exclusive": 57,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f53-56: the piece lifts retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 57,
+          "end_timestep_exclusive": 76,
+          "quality": 5,
+          "note": "side_2/wrist_1 f57,59,61,63,65,67,69,71,73,75: the vacated table position is empty from f61 and the piece is carried directly over the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 76,
+          "end_timestep_exclusive": 111,
+          "quality": 5,
+          "note": "side_1/wrist_1 f76,80,84,87,91,95,99,102,106,110: continuous lowering into the cross cavity from f91, seated at f102-110 with the gripper opening and retreating. No reversal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_1_75.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_1_75.quality_mistake.png",
+          "sha256": "dd293027a4cb2fbee8d18ae346211442d2436657c381a1e7cab75d76e411c151"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 39,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,8,13,17,21,25,30,34,38: one approach and close on the upright green piece by f25-38, with no displacement or reopen.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 39,
+          "end_timestep_exclusive": 43,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f39-42: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 43,
+          "end_timestep_exclusive": 62,
+          "quality": 5,
+          "note": "side_2/wrist_1 f43,45,47,49,51,53,55,57,59,61: the table position is empty from f47 and the piece is carried directly over the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 62,
+          "end_timestep_exclusive": 99,
+          "quality": 5,
+          "note": "side_1/wrist_1 f62,66,70,74,78,82,86,90,94,98: continuous lowering into the cross cavity from f74, seated at f94-98 with the gripper opening. No pullback or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_1_8.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_1_8.quality_mistake.png",
+          "sha256": "8d85307edf4e9d5357772b4c679ff9cb3a0eb25c8178f4dbbef96854e7923ba7"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 39,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,8,13,17,21,25,30,34,38: single descent onto the upright green piece and one close by f30-38; the piece does not move before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 39,
+          "end_timestep_exclusive": 43,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f39-42: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 43,
+          "end_timestep_exclusive": 60,
+          "quality": 5,
+          "note": "side_2/wrist_1 f43,45,47,48,50,52,54,55,57,59: the table position is empty from f47 and the piece is carried directly over the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 60,
+          "end_timestep_exclusive": 109,
+          "quality": 5,
+          "note": "side_1/wrist_1 f60,65,71,76,81,87,92,97,103,108: continuous lowering into the cross cavity from f76, seated at f103-108 with the gripper opening. No reversal or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_1_89.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_1_89.quality_mistake.png",
+          "sha256": "06566fd8744b8595a17004f8811a4addf2a5bfa8043d5d10b8001bac75acfede"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 43,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,9,14,19,23,28,33,37,42: one approach to the upright green piece beside the board and a single close by f28-42, with the neighbouring blue rod and orange stick left standing.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 43,
+          "end_timestep_exclusive": 47,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f43-46: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 47,
+          "end_timestep_exclusive": 63,
+          "quality": 5,
+          "note": "side_2/wrist_1 f47,49,50,52,54,55,57,59,60,62: direct carry over the board with the piece retained; no return.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 63,
+          "end_timestep_exclusive": 111,
+          "quality": 5,
+          "note": "side_1/wrist_1 f63,68,73,79,84,89,94,100,105,110: continuous lowering into the cross cavity from f79, seated at f105-110 with the gripper opening. No pullback.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_2_11.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_2_11.quality_mistake.png",
+          "sha256": "a40c96597479919076d92c061b084cff4a2979293992244feb9c099ef393348a"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_2_11.130_190_stride3.jpg",
+          "sha256": "c80bcb0e4ce7aa45f18836cb384dc880dfbc5699b07ab93ce9ffae8bd8470414"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 57,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,19,25,31,37,44,50,56: one descent onto the upright blue T-piece and a single close on its stem by f37-56; the piece keeps its position and the next lift confirms acquisition.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 57,
+          "end_timestep_exclusive": 61,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f57-60: the piece rises retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 61,
+          "end_timestep_exclusive": 84,
+          "quality": 5,
+          "note": "side_2/wrist_1 f61,63,66,68,71,73,76,78,81,83: the table position is empty from f66 and the piece is carried directly over the board; side_1 f83 shows it above the slot.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 84,
+          "end_timestep_exclusive": 190,
+          "quality": 5,
+          "note": "side_1/wrist_1 f84,96,107,119,131,142,154,166,177,189 and dense f130-189 every three frames, magnified at f130,139,148,157,166 and f172,178,184,187,189: progressive lowering of the T-piece into the long slot beside the green blocks, deepest by about f172, then held at that depth to the final native frame. Monotone descent with a post-seating hold; no pullback or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_2_110.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_2_110.quality_mistake.png",
+          "sha256": "9c2cf8e306212588da34e1c025db5519b9c13fcacf06a630835e55bcb938420d"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_2_110.100_142_stride3.jpg",
+          "sha256": "224146c3687d752d788aa2e23a339bc548232f4c5921b2c1c54e81b33232251d"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 54,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,18,24,29,35,41,47,53: single approach to the upright blue T-piece and one close on its stem by f35-53, with no displacement or reopen.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 54,
+          "end_timestep_exclusive": 58,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f54-57: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 58,
+          "end_timestep_exclusive": 71,
+          "quality": 5,
+          "note": "side_2/wrist_1 f58,59,61,62,63,65,66,67,69,70: direct carry over the board with the piece retained; the vacated table position stays empty.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 71,
+          "end_timestep_exclusive": 142,
+          "quality": 5,
+          "note": "side_1/wrist_1 f71,79,87,94,102,110,118,125,133,141 and dense f100-141 every three frames, magnified at f103,112,121,130,141: continuous lowering into the long slot, deepest at the final native frame f141 with the arm still on the piece. No reversal or second attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_2_119.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_2_119.quality_mistake.png",
+          "sha256": "f8661ba348ab7bdde267c0a4b4c93136c8180e44b1afd8d7eb8e8a449e46c773"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 48,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,16,21,26,31,37,42,47: one descent onto the upright blue T-piece and a single close by f31-47; the piece does not move before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 48,
+          "end_timestep_exclusive": 52,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f48-51: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 52,
+          "end_timestep_exclusive": 76,
+          "quality": 5,
+          "note": "side_2/wrist_1 f52,55,57,60,62,65,67,70,72,75: the table position is empty from f55 and the piece is carried directly over the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 76,
+          "end_timestep_exclusive": 135,
+          "quality": 5,
+          "note": "side_1/wrist_1 f76,82,89,95,102,108,115,121,128,134: continuous lowering into the long slot from f95, deepest at f128-134 with the arm still on the piece. No pullback.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_2_47.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_2_47.quality_mistake.png",
+          "sha256": "55380fd82dffc639e55620829350ba3e433ffa30a9c18976f38287b076af5936"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 61,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,13,20,27,33,40,47,53,60: one descent onto the flat-lying blue T-piece and a single close on its stem by f33-60; the piece keeps its position on the table.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 61,
+          "end_timestep_exclusive": 65,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f61-64: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 65,
+          "end_timestep_exclusive": 111,
+          "quality": 5,
+          "note": "side_2/wrist_1 f65,70,75,80,85,90,95,100,105,110: single carry to the black fixture and an upright placement at f95-110; f111-142 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 111,
+          "end_timestep_exclusive": 181,
+          "quality": 5,
+          "note": "side_2/wrist_1 f111,119,126,134,142,149,157,165,172,180: planned release at f111-126, reorientation clear of the fixture, and one close on the upright piece at f165-180 with the piece stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 181,
+          "end_timestep_exclusive": 203,
+          "quality": 5,
+          "note": "side_2/wrist_1 f181,183,186,188,190,193,195,197,200,202: the fixture is empty from f186 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 203,
+          "end_timestep_exclusive": 262,
+          "quality": 5,
+          "note": "side_1/wrist_1 f203,209,216,222,229,235,242,248,255,261: continuous lowering into the long slot from f229, seated at f255-261 with the gripper opening and clearing. No reversal or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_2_83.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_2_83.quality_mistake.png",
+          "sha256": "ce8e61c782d6db72f38deb71bd67623ef1aae9cae6cb1867734a681ec86a0f6f"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_2_83.120_187_stride3.jpg",
+          "sha256": "4eaf32a2c9ccb9024090785da6958d224ba7d6301fc67bbc6f27b73c74aec7c5"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 53,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,17,23,29,35,40,46,52: single approach to the upright blue T-piece and one close on its stem by f35-52; the blue rod beside it is left standing.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 53,
+          "end_timestep_exclusive": 57,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f53-56: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 57,
+          "end_timestep_exclusive": 77,
+          "quality": 5,
+          "note": "side_2/wrist_1 f57,59,61,63,65,68,70,72,74,76: the table position is empty from f61 and the piece is carried directly over the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 77,
+          "end_timestep_exclusive": 187,
+          "quality": 5,
+          "note": "side_1/wrist_1 f77,89,101,113,125,138,150,162,174,186 and dense f120-186 every three frames, magnified at f120,132,144,156,168 and f171,177,180,183,186: progressive lowering into the long slot, deepest by about f168, then held at that depth to the final native frame. Monotone descent with a post-seating hold; no pullback or second attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_3_10.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_3_10.quality_mistake.png",
+          "sha256": "3133ba653d9d477bae84eba9020c89c88e2f0e1ab0392990d9d8ae24b60996b0"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 57,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,19,25,31,37,44,50,56: one approach to the upright orange peg beside the blue rod and a single close by f37-56; the peg and rod keep their positions.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 57,
+          "end_timestep_exclusive": 62,
+          "quality": 5,
+          "note": "side_2/wrist_1 all five native frames f57-61: the peg lifts retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 62,
+          "end_timestep_exclusive": 76,
+          "quality": 5,
+          "note": "side_2/wrist_1 f62,63,65,66,68,69,71,72,74,75: direct carry over the board with the peg retained; the blue rod stays on the table.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 76,
+          "end_timestep_exclusive": 117,
+          "quality": 5,
+          "note": "side_1/wrist_1 f76,80,85,89,94,98,103,107,112,116: the peg is centred over the round hole in the blue T-piece by f89-94, enters it by f98 and is pushed down through f116 with the arm still on it. No lateral correction or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_3_133.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_3_133.quality_mistake.png",
+          "sha256": "27a6f065d6ce3f650ecac298dc2e6fb62093e8f84f4e872c3dcd03747f5d89b4"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 38,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,8,12,16,21,25,29,33,37: single approach to the upright orange peg and one close by f25-37; the neighbouring blue rod is left standing.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 38,
+          "end_timestep_exclusive": 42,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f38-41: the peg lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 42,
+          "end_timestep_exclusive": 59,
+          "quality": 5,
+          "note": "side_2/wrist_1 f42,44,46,47,49,51,53,54,56,58: direct carry over the board with the peg retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 59,
+          "end_timestep_exclusive": 105,
+          "quality": 5,
+          "note": "side_1/wrist_1 f59,64,69,74,79,84,89,94,99,104: the peg reaches the round hole by f79, enters by f84-89 and is pushed down through f104 with the arm on it. No correction visible.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_3_29.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_3_29.quality_mistake.png",
+          "sha256": "fb04d386202495b8834f7aa556d4ebed4afa2be915679223660bf922d93d8082"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 64,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,14,21,28,35,42,49,56,63: one descent onto the orange peg lying flat on the table and a single close on its shaft by f42-63; the peg does not roll or shift before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 64,
+          "end_timestep_exclusive": 68,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f64-67: the peg lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 68,
+          "end_timestep_exclusive": 133,
+          "quality": 5,
+          "note": "side_2/wrist_1 f68,75,82,89,96,104,111,118,125,132: single carry to the black fixture and an upright placement at f104-132; f133-148 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 133,
+          "end_timestep_exclusive": 200,
+          "quality": 5,
+          "note": "side_2/wrist_1 f133,140,148,155,162,170,177,184,192,199: planned release at f133-148, reorientation clear of the fixture, and one close on the upright peg at f184-199 with the peg stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 200,
+          "end_timestep_exclusive": 223,
+          "quality": 5,
+          "note": "side_2/wrist_1 f200,202,205,207,210,212,215,217,220,222: the fixture is empty from f205 and the peg is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 223,
+          "end_timestep_exclusive": 269,
+          "quality": 5,
+          "note": "side_1/wrist_1 f223,228,233,238,243,248,253,258,263,268: the peg is centred over the round hole by f243, enters by f248 and is pushed down through f268 with the arm on it. No lateral correction.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_3_48.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_3_48.quality_mistake.png",
+          "sha256": "fd44e96a47222c2d2c4ffcf89d04936a5d8094f3e63086fd58c12d57b8f73687"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_3_48.215_282_stride3.jpg",
+          "sha256": "2fe1e7ff71224a44269e94b2d54119733aab297cdf58605ace9c9418e0923d77"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 38,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,8,12,16,21,25,29,33,37: one descent onto the orange peg lying flat beside the blue rod and a single close on its shaft by f25-37; neither object shifts before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 38,
+          "end_timestep_exclusive": 42,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f38-41: the peg lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 42,
+          "end_timestep_exclusive": 92,
+          "quality": 5,
+          "note": "side_2/wrist_1 f42,47,53,58,64,69,75,80,86,91: single carry to the black fixture and an upright placement at f69-91; f92-108 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 92,
+          "end_timestep_exclusive": 167,
+          "quality": 5,
+          "note": "side_2/wrist_1 f92,100,108,117,125,133,141,150,158,166: planned release at f92-108, reorientation clear of the fixture, and one close on the upright peg at f150-166 with the peg stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 167,
+          "end_timestep_exclusive": 189,
+          "quality": 5,
+          "note": "side_2/wrist_1 f167,169,172,174,176,179,181,183,186,188: the fixture is empty from f172 and the peg is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 189,
+          "end_timestep_exclusive": 282,
+          "quality": 5,
+          "note": "side_1/wrist_1 f189,199,209,220,230,240,250,261,271,281 and dense f215-281 every three frames, magnified at f215,227,239,251,263,281: the peg is over the round hole at f215, inside it by f227, and the exposed shaft shortens steadily through f281 as the arm keeps pushing. A slow but monotone insertion with no lateral correction or withdrawal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_3_88.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_3_88.quality_mistake.png",
+          "sha256": "0e97ccdbb4edd696e5016b7e9e91082c6b094cfce418d267a40c27b61b34e002"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_3_88.85_134_stride3.jpg",
+          "sha256": "b86e2366a415cbd5c99b2518790c46841d496f833d0c1ef0258069f0bced42b0"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 44,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,14,19,24,29,33,38,43: single approach to the upright orange peg and one close by f29-43; the blue rod beside it stays standing.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 44,
+          "end_timestep_exclusive": 48,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f44-47: the peg lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 48,
+          "end_timestep_exclusive": 63,
+          "quality": 5,
+          "note": "side_2/wrist_1 f48,50,51,53,54,56,57,59,60,62: direct carry over the board with the peg retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 63,
+          "end_timestep_exclusive": 134,
+          "quality": 5,
+          "note": "side_1/wrist_1 f63,71,79,86,94,102,110,117,125,133 and dense f85-133 every three frames, magnified at f85,94,103,112,121,133: the peg is over the round hole at f85, inside it by f94, and is pushed steadily deeper through f133 with the arm on it. No correction or withdrawal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_4_10.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_4_10.quality_mistake.png",
+          "sha256": "2d57a827438c60c3a452ebddd287c32f8c391a196a6b29239fff15e7d20a7649"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 58,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,13,19,25,32,38,44,51,57: one descent onto the blue rod lying flat on the table and a single close on its shaft by f38-57; the rod does not roll or shift before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 58,
+          "end_timestep_exclusive": 62,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f58-61: the rod lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 62,
+          "end_timestep_exclusive": 108,
+          "quality": 5,
+          "note": "side_2/wrist_1 f62,67,72,77,82,87,92,97,102,107: single carry to the black fixture and an upright placement at f87-107; f108-126 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 108,
+          "end_timestep_exclusive": 188,
+          "quality": 5,
+          "note": "side_2/wrist_1 f108,117,126,134,143,152,161,169,178,187: planned release at f108-126, reorientation clear of the fixture, and one close on the upright rod at f169-187 with the rod stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 188,
+          "end_timestep_exclusive": 213,
+          "quality": 5,
+          "note": "side_2/wrist_1 f188,191,193,196,199,201,204,207,209,212: the fixture is empty from f191 and the rod is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 213,
+          "end_timestep_exclusive": 274,
+          "quality": 5,
+          "note": "side_1/wrist_1 f213,220,226,233,240,246,253,260,266,273: the rod is centred over the round hole in the blue T-piece by f233, enters by f240 and is pushed down through f273 with the arm on it. No lateral correction or withdrawal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_4_5.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_4_5.quality_mistake.png",
+          "sha256": "22d5056fd5c8ce9545843f7504e3a56c1a3106293d31b2c3eb52b7772d740a47"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 36,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,8,12,16,19,23,27,31,35: single approach to the upright blue rod and one close by f23-35, with no displacement or reopen.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 36,
+          "end_timestep_exclusive": 40,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f36-39: the rod lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 40,
+          "end_timestep_exclusive": 57,
+          "quality": 5,
+          "note": "side_2/wrist_1 f40,42,44,45,47,49,51,52,54,56: the table position is empty from f44 and the rod is carried directly over the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 57,
+          "end_timestep_exclusive": 103,
+          "quality": 5,
+          "note": "side_1/wrist_1 f57,62,67,72,77,82,87,92,97,102: the rod is over the round hole by f72, enters by f77-82 and is pushed down through f102 with the arm on it. No correction visible.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_4_57.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_4_57.quality_mistake.png",
+          "sha256": "c578c4cd20eb510c681ffdfdd01393ad3e839df0731c93154907cdb32c951aaa"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_4_57.212_256_stride3.jpg",
+          "sha256": "275ba9e8dc884c8edec772f1b568ce8c0c4a40308c6d9878b4e876ea12b99f12"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 39,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,8,13,17,21,25,30,34,38: one descent onto the blue rod lying flat and a single close on its shaft by f25-38; the rod does not shift before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 39,
+          "end_timestep_exclusive": 43,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f39-42: the rod lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 43,
+          "end_timestep_exclusive": 108,
+          "quality": 5,
+          "note": "side_2/wrist_1 f43,50,57,64,71,79,86,93,100,107: single carry to the black fixture and an upright placement at f86-107; f108-120 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 108,
+          "end_timestep_exclusive": 162,
+          "quality": 5,
+          "note": "side_2/wrist_1 f108,114,120,126,132,137,143,149,155,161: planned release at f108-120, reorientation clear of the fixture, and one close on the upright rod at f149-161 with the rod stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 162,
+          "end_timestep_exclusive": 190,
+          "quality": 5,
+          "note": "side_2/wrist_1 f162,165,168,171,174,177,180,183,186,189: the fixture is empty from f165 and the rod is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 190,
+          "end_timestep_exclusive": 256,
+          "quality": 5,
+          "note": "side_1/wrist_1 f190,197,204,212,219,226,233,241,248,255 and dense f212-255 every three frames, magnified at f212,221,230,239,248,255: the rod is over the round hole at f212, inside it by f221-230, and pushed steadily deeper through f255 with the arm on it. No lateral correction or withdrawal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_4_84.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_4_84.quality_mistake.png",
+          "sha256": "0c374063f2e4891178372f90408508de3347e2688d53287d021bbb8583fb7a8e"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 43,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,9,14,19,23,28,33,37,42: single approach to the upright blue rod and one close by f28-42; the rod keeps its position.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 43,
+          "end_timestep_exclusive": 47,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f43-46: the rod lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 47,
+          "end_timestep_exclusive": 68,
+          "quality": 5,
+          "note": "side_2/wrist_1 f47,49,51,54,56,58,60,63,65,67: the table position is empty from f51 and the rod is carried directly over the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 68,
+          "end_timestep_exclusive": 127,
+          "quality": 5,
+          "note": "side_1/wrist_1 f68,74,81,87,94,100,107,113,120,126: the rod is over the round hole by f87, enters by f94-100 and is pushed down through f126 with the arm on it. No correction or withdrawal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_2/trajectory_4_87.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_2_trajectory_4_87.quality_mistake.png",
+          "sha256": "99bbf67eb3bcd1b11081148ab5d46ff6870f3963d8e72ba5cb58b8000e9ced9b"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_2_trajectory_4_87.100_167_stride3.jpg",
+          "sha256": "101cb3d1d1e8b06112197b493919f6c6759a668edd4efe7abefb08ff28f0043d"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 44,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,14,19,24,29,33,38,43: single approach to the upright blue rod and one close by f29-43, with no displacement or reopen.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 44,
+          "end_timestep_exclusive": 48,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f44-47: the rod lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 48,
+          "end_timestep_exclusive": 72,
+          "quality": 5,
+          "note": "side_2/wrist_1 f48,51,53,56,58,61,63,66,68,71: the table position is empty from f51 and the rod is carried directly over the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 72,
+          "end_timestep_exclusive": 167,
+          "quality": 5,
+          "note": "side_1/wrist_1 f72,82,93,103,114,124,135,145,156,166 and dense f100-166 every three frames, magnified at f100,112,124,136,148,166: the rod is over the round hole at f100, inside it by f112, and the exposed shaft shortens steadily through f166 as the arm keeps pushing. A slow but monotone insertion; no lateral correction or withdrawal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_1_117.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_1_117.quality_mistake.png",
+          "sha256": "2274c541459c675e97499e751ad4f83f6e6f96475ea49228fe9e8b5b76874d47"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 50,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,11,16,22,27,33,38,44,49: one descent onto the green beam lying beside the pink and blue pieces and a single close on its far end by f27-49; the beam and its neighbours keep their positions.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 50,
+          "end_timestep_exclusive": 54,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f50-53: the beam rises retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 54,
+          "end_timestep_exclusive": 73,
+          "quality": 5,
+          "note": "side_2/wrist_1 f54,56,58,60,62,64,66,68,70,72: the beam leaves the table, its position empty from f58, and is carried directly toward the light-blue board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 73,
+          "end_timestep_exclusive": 120,
+          "quality": 5,
+          "note": "side_1/wrist_1 f73,78,83,88,93,99,104,109,114,119: the beam is brought over the long left slot by f93, enters it by f99-104 and is lowered to the final native frame f119 with the arm on it. No lateral correction or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_1_118.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_1_118.quality_mistake.png",
+          "sha256": "bb7452c7bc42ca4286972bb516e05665315308d769c9427ea036d65bd7491e13"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 57,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,19,25,31,37,44,50,56: single approach to the green beam beside the orange beam and one close on its far end by f37-56; neither beam moves before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 57,
+          "end_timestep_exclusive": 61,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f57-60: the beam lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 61,
+          "end_timestep_exclusive": 80,
+          "quality": 5,
+          "note": "side_2/wrist_1 f61,63,65,67,69,71,73,75,77,79: the table position is empty from f65 and the beam is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 80,
+          "end_timestep_exclusive": 121,
+          "quality": 5,
+          "note": "side_1/wrist_1 f80,84,89,93,98,102,107,111,116,120: the beam is over the long left slot by f98, enters by f102-107 and is lowered to the final native frame f120 with the arm on it. No correction visible.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_1_16.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_1_16.quality_mistake.png",
+          "sha256": "7c2a9cc55511f666713103a73d19a36200dc3eac3af36073f00505ca39054db9"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_1_16.30_80_stride3.jpg",
+          "sha256": "7c93ccd0bb48923d3de36ebfef915c52e17a8abce162b96e322299da64c35eb4"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 80,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,9,18,26,35,44,53,61,70,79 and dense wrist_1/side_2 f30-79 every three frames, magnified at f33,42,51,60,69,79: a slow single descent onto the green beam, the jaw settling on its far end from f51 and closed by f69, with the beam undisplaced throughout. Long duration from the approach speed, not from a correction.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 80,
+          "end_timestep_exclusive": 84,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f80-83: the beam lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 84,
+          "end_timestep_exclusive": 113,
+          "quality": 5,
+          "note": "side_2/wrist_1 f84,87,90,93,96,100,103,106,109,112: the table position is empty from f90 and the beam is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 113,
+          "end_timestep_exclusive": 158,
+          "quality": 5,
+          "note": "side_1/wrist_1 f113,118,123,128,133,137,142,147,152,157: the beam is over the long left slot by f128, enters by f133-137 and is lowered to the final native frame f157 with the arm on it. No lateral correction.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_1_52.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_1_52.quality_mistake.png",
+          "sha256": "d499548ac09014c13c3702d7e50f27392ec78c3a1caed255d94790d42044f9ad"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_1_52.30_80_stride3.jpg",
+          "sha256": "daffea94639f168fab7e8c80aaac631ade012bdef9e7d58ebca3c470cee60def"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 80,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,9,18,26,35,44,53,61,70,79 and dense wrist_1/side_2 f30-79 every three frames, magnified at f33,42,51,60,69,79: a slow single descent onto the green beam beside the orange beam, the jaw on its far end from f51 and closed by f69; the beam is not displaced. Long duration from the approach speed, not from a correction.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 80,
+          "end_timestep_exclusive": 84,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f80-83: the beam lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 84,
+          "end_timestep_exclusive": 115,
+          "quality": 5,
+          "note": "side_2/wrist_1 f84,87,91,94,97,101,104,107,111,114: the table position is empty from f91 and the beam is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 115,
+          "end_timestep_exclusive": 165,
+          "quality": 5,
+          "note": "side_1/wrist_1 f115,120,126,131,137,142,148,153,159,164: the beam is over the long left slot by f131, enters by f137-142 and is lowered to the final native frame f164 with the arm on it. No correction or withdrawal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_1_76.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_1_76.quality_mistake.png",
+          "sha256": "097be4c67cdf297fc7a6535d92691de7621d108bbdc6a2623968a8bb626bb374"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 48,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,16,21,26,31,37,42,47: single approach to the green beam and one close on its far end by f26-47; the beam and the neighbouring pink piece keep their positions.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 48,
+          "end_timestep_exclusive": 52,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f48-51: the beam lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 52,
+          "end_timestep_exclusive": 75,
+          "quality": 5,
+          "note": "side_2/wrist_1 f52,54,57,59,62,64,67,69,72,74: the table position is empty from f57 and the beam is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 75,
+          "end_timestep_exclusive": 107,
+          "quality": 5,
+          "note": "side_1/wrist_1 f75,78,82,85,89,92,96,99,103,106: the beam is over the long left slot by f85, enters by f92-96 and is lowered to the final native frame f106 with the arm on it. No correction visible.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_2_140.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_2_140.quality_mistake.png",
+          "sha256": "1c086708a392c37ca50c308c25f453d494b337396a4bb10e3be7e4e1aa472bcf"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 66,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,14,22,29,36,43,51,58,65: one descent onto the orange beam lying in front of the blue T-piece and a single close on its near end by f43-65; the beam keeps its position on the table.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 66,
+          "end_timestep_exclusive": 70,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f66-69: the beam rises retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 70,
+          "end_timestep_exclusive": 101,
+          "quality": 5,
+          "note": "side_2/wrist_1 f70,73,77,80,83,87,90,93,97,100: the beam leaves the table, its position empty from f77, and is carried directly toward the light-blue board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 101,
+          "end_timestep_exclusive": 141,
+          "quality": 5,
+          "note": "side_1/wrist_1 f101,105,110,114,118,123,127,131,136,140: the beam is over the long right slot beside the green beam by f118, enters by f123 and is lowered to the final native frame f140 with the arm on it. No lateral correction or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_2_15.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_2_15.quality_mistake.png",
+          "sha256": "e3b5071c2efc5da0366b4a3297797e552943f0b035cf594c72415b612db7b30e"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 57,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,19,25,31,37,44,50,56: single approach to the orange beam in front of the pink and blue pieces and one close on its near end by f37-56; the beam does not move before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 57,
+          "end_timestep_exclusive": 61,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f57-60: the beam lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 61,
+          "end_timestep_exclusive": 92,
+          "quality": 5,
+          "note": "side_2/wrist_1 f61,64,68,71,74,78,81,84,88,91: the table position is empty from f68 and the beam is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 92,
+          "end_timestep_exclusive": 137,
+          "quality": 5,
+          "note": "side_1/wrist_1 f92,97,102,107,112,116,121,126,131,136: the beam is over the long right slot by f112, enters by f116 and is lowered to the final native frame f136 with the arm on it. No correction visible.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_2_22.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_2_22.quality_mistake.png",
+          "sha256": "65d87720e6f638fc48ad368a00d7f7db08b022e21a5627c3141fd55ea389f9f2"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 83,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,9,18,27,36,46,55,64,73,82: a slow single descent onto the orange beam in front of the blue T-piece, the jaw settling on its near end from f46 and closed by f73-82, with the beam undisplaced throughout. Long duration from the approach speed, not from a correction.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 83,
+          "end_timestep_exclusive": 87,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f83-86: the beam lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 87,
+          "end_timestep_exclusive": 118,
+          "quality": 5,
+          "note": "side_2/wrist_1 f87,90,94,97,100,104,107,110,114,117: the table position is empty from f94 and the beam is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 118,
+          "end_timestep_exclusive": 154,
+          "quality": 5,
+          "note": "side_1/wrist_1 f118,122,126,130,134,137,141,145,149,153: the beam is over the long right slot by f134, enters by f137-141 and is lowered to the final native frame f153 with the arm on it. No lateral correction.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_2_34.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_2_34.quality_mistake.png",
+          "sha256": "6047acba775a5b695c57f6541330caef6190ba7b916c49e1bf575f58f8b21274"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 47,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,15,20,26,31,36,41,46: the beam starts upright beside the pink piece; one approach and a single close on its upper end by f26-46, with no tipping or re-approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 47,
+          "end_timestep_exclusive": 51,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f47-50: the beam lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 51,
+          "end_timestep_exclusive": 73,
+          "quality": 5,
+          "note": "side_2/wrist_1 f51,53,56,58,60,63,65,67,70,72: the table position is empty from f56 and the beam is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 73,
+          "end_timestep_exclusive": 108,
+          "quality": 5,
+          "note": "side_1/wrist_1 f73,77,81,84,88,92,96,99,103,107: the beam is over the long right slot by f84, enters by f88-92 and is lowered to the final native frame f107 with the arm on it. No correction or withdrawal.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_2_94.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_2_94.quality_mistake.png",
+          "sha256": "cbbef9088408faeec7deaab87e32c681bf1d102fbf5387ddfbc368f8f4846281"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 70,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,8,15,23,31,38,46,54,61,69: one descent onto the orange beam in front of the pink piece and a single close on its near end by f46-69; the beam keeps its position.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 70,
+          "end_timestep_exclusive": 74,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f70-73: the beam lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 74,
+          "end_timestep_exclusive": 105,
+          "quality": 5,
+          "note": "side_2/wrist_1 f74,77,81,84,87,91,94,97,101,104: the table position is empty from f81 and the beam is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 105,
+          "end_timestep_exclusive": 147,
+          "quality": 5,
+          "note": "side_1/wrist_1 f105,110,114,119,123,128,132,137,141,146: the beam is over the long right slot by f119, enters by f123-128 and is lowered to the final native frame f146 with the arm on it. No correction visible.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_3_10.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_3_10.quality_mistake.png",
+          "sha256": "3d2f91d116fd3472ec119dfba2470dab9ad974d81c8a10ab9ca177b9c0ff2c7c"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_3_10.125_219_stride4.jpg",
+          "sha256": "cf0559814edb2266285d748b7e31e83ea6a3212d26c3f5b9ca6ed5a370785991"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 52,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,11,17,23,28,34,40,45,51: one descent onto the pink E-piece lying beside the blue rail and a single close on its stem by f34-51; the piece keeps its position on the table.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 52,
+          "end_timestep_exclusive": 56,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f52-55: the piece rises retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 56,
+          "end_timestep_exclusive": 84,
+          "quality": 5,
+          "note": "side_2/wrist_1 f56,59,62,65,68,71,74,77,80,83: the table position is empty from f62 and the piece is carried directly toward the light-blue board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 84,
+          "end_timestep_exclusive": 219,
+          "quality": 5,
+          "note": "side_1/wrist_1 f84,99,114,129,144,158,173,188,203,218 and dense f125-218 every four frames, magnified at f129,141,153,165,177,189 and f193,201,205,209,213,218: the piece is centred above the two standing beams by f129 and hovers there at constant height until about f189 (a six-second stationary hold with no lateral motion), then descends monotonically and is seated over both beams at the final native frame f218. No contact with the beams before seating, no reversal or renewed attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_3_133.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_3_133.quality_mistake.png",
+          "sha256": "049b23ebf204b6024f4bd10e47e0ae06f35e62a719454c97dff29dfd0bd59df2"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_3_133.135_197_stride3.jpg",
+          "sha256": "2d1683e833e08b546784b302fae4a5909521fa818e22f007cdee58504d5e322f"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 71,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,8,16,23,31,39,47,54,62,70: single approach to the pink E-piece lying beside the blue rail and one close on its stem by f47-70; the piece does not move before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 71,
+          "end_timestep_exclusive": 75,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f71-74: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 75,
+          "end_timestep_exclusive": 104,
+          "quality": 5,
+          "note": "side_2/wrist_1 f75,78,81,84,87,91,94,97,100,103: the table position is empty from f81 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 104,
+          "end_timestep_exclusive": 197,
+          "quality": 5,
+          "note": "side_1/wrist_1 f104,114,124,135,145,155,165,176,186,196 and dense f135-196 every three frames, magnified at f135,147,159,171,183,196: the piece is aligned over the two beams by f135 and pushed down slowly and monotonically, seated at the final native frame f196 with the arm still on it. No beam contact, reversal or second attempt.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_3_29.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_3_29.quality_mistake.png",
+          "sha256": "578d3131dc8d540778b09c52c8c26354530f6473ec3d2242ff72bbfadc46efc6"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 38,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,8,12,16,21,25,29,33,37: one descent onto the pink E-piece lying on the table and a single close on its stem by f25-37; the piece keeps its position.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 38,
+          "end_timestep_exclusive": 42,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f38-41: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 42,
+          "end_timestep_exclusive": 75,
+          "quality": 5,
+          "note": "side_2/wrist_1 f42,46,49,53,56,60,63,67,70,74: single carry to the black fixture and an upright placement at f60-74; f75-88 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 75,
+          "end_timestep_exclusive": 135,
+          "quality": 5,
+          "note": "side_2/wrist_1 f75,82,88,95,101,108,114,121,127,134: planned release at f75-88, reorientation clear of the fixture, and one close on the upright piece at f127-134 with the piece stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 135,
+          "end_timestep_exclusive": 159,
+          "quality": 5,
+          "note": "side_2/wrist_1 f135,138,140,143,145,148,150,153,155,158: the fixture is empty from f140 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 159,
+          "end_timestep_exclusive": 200,
+          "quality": 5,
+          "note": "side_1/wrist_1 f159,163,168,172,177,181,186,190,195,199: the piece is over the two beams by f172 and descends continuously, seated at f195-199 with the arm still on it. No beam contact, reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_3_48.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_3_48.quality_mistake.png",
+          "sha256": "7a3d6e2377600330019900f49c3a6c90286c8b90ffc35ef4389227c59f31dd25"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_3_48.238_258_stride1.jpg",
+          "sha256": "f401828b927626411e11425c637c90324b41e67671e90f69d1e7f41835cea64f"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_3_48.240_374_stride5.jpg",
+          "sha256": "25afd37be3178533ca1b31a6e9d430788f92f159cac6708fee6e985d17033f3b"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 65,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,14,21,28,36,43,50,57,64: one descent onto the pink E-piece lying beside the blue rail and a single close on its stem by f43-64; the piece keeps its position.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 65,
+          "end_timestep_exclusive": 69,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f65-68: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 69,
+          "end_timestep_exclusive": 125,
+          "quality": 5,
+          "note": "side_2/wrist_1 f69,75,81,87,93,100,106,112,118,124: single carry to the black fixture and an upright placement at f100-124; f125-142 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 125,
+          "end_timestep_exclusive": 201,
+          "quality": 5,
+          "note": "side_2/wrist_1 f125,133,142,150,158,167,175,183,192,200: planned release at f125-142, reorientation clear of the fixture, and one close on the upright piece at f192-200 with the piece stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 201,
+          "end_timestep_exclusive": 224,
+          "quality": 5,
+          "note": "side_2/wrist_1 f201,203,206,208,211,213,216,218,221,223: the fixture is empty from f206 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 224,
+          "end_timestep_exclusive": 374,
+          "quality": 2,
+          "note": "side_1/wrist_1 f224,241,257,274,290,307,323,340,356,373, dense f240-373 every five frames and native f238-257: the piece descends onto the two beams from f240; its left leg lands on the standing green beam, which tilts from f248-249 and stays leaning through f275 (knock). The piece is raised, the beam is upright again by f280, the piece is re-aligned over both beams by f305-315 and pushed down monotonically from f330, seated at the final native frame f373. One discrete failure recovered within the primitive; no drop or slip.",
+          "mistakes": [
+            {
+              "start_timestep": 245,
+              "end_timestep_exclusive": 252,
+              "mistake": true,
+              "mistake_type": "knock",
+              "note": "side_1 native frames f238-257: the descending left leg of the pink E-piece lands on the standing green beam; the beam is upright through f247 and visibly tilted from f248-249. Event closes three frames after the tilt is observable. Recovery (piece raised, beam upright by f280, piece re-lowered and seated by f373) is excluded from the event."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_3_88.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_3_88.quality_mistake.png",
+          "sha256": "34ab88a46a65d61151813fad25cf5f08af012ec455432379332cf0c92676a51d"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 61,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,13,20,27,33,40,47,53,60: single approach to the pink E-piece lying beside the blue rail and one close on its stem by f40-60; the piece keeps its position.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 61,
+          "end_timestep_exclusive": 65,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f61-64: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 65,
+          "end_timestep_exclusive": 94,
+          "quality": 5,
+          "note": "side_2/wrist_1 f65,68,71,74,77,81,84,87,90,93: the table position is empty from f71 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 94,
+          "end_timestep_exclusive": 163,
+          "quality": 5,
+          "note": "side_1/wrist_1 f94,102,109,117,124,132,139,147,154,162: the piece is over the two beams by f109 and descends continuously, seated by f147-162 with the arm still on it. No beam contact, reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_4_10.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_4_10.quality_mistake.png",
+          "sha256": "f0036d902ffedc407b0a301d93f80deefaa7a687e1dda24b18216e353db1d8c2"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_4_10.195_275_stride4.jpg",
+          "sha256": "7f6d7964c5fbe2ff55ab5c27d11638e6362d51dba4132e1cf27ced06bfd562c5"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 35,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,8,11,15,19,23,26,30,34: one descent onto the blue bridge piece lying on the table and a single close on its stem by f23-34; the piece keeps its position.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 35,
+          "end_timestep_exclusive": 39,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f35-38: the piece lifts retained in the fingers.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 39,
+          "end_timestep_exclusive": 85,
+          "quality": 5,
+          "note": "side_2/wrist_1 f39,44,49,54,59,64,69,74,79,84: single carry to the black fixture and an upright placement at f64-84; f85-100 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 85,
+          "end_timestep_exclusive": 155,
+          "quality": 5,
+          "note": "side_2/wrist_1 f85,93,100,108,116,123,131,139,146,154: planned release at f85-100, reorientation clear of the fixture, and one close on the upright piece at f146-154 with the piece stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 155,
+          "end_timestep_exclusive": 180,
+          "quality": 5,
+          "note": "side_2/wrist_1 f155,158,160,163,166,168,171,174,176,179: the fixture is empty from f160 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 180,
+          "end_timestep_exclusive": 275,
+          "quality": 5,
+          "note": "side_1/wrist_1 f180,190,201,211,222,232,243,253,264,274 and dense f195-274 every four frames, magnified at f199,211,223,235,247,259 and f259,263,267,271,274: the piece is centred over the E-piece and beams by f199 and hovers at constant height until about f259 (a six-second stationary hold, no lateral motion), then descends monotonically and is seated at the final native frame f274 with the gripper opening. No contact failure, reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_4_5.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_4_5.quality_mistake.png",
+          "sha256": "c88cbd95c50afa407be015ca472b73436d328792d383128f85bb154106a3b18d"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_4_5.205_261_stride3.jpg",
+          "sha256": "3674a6c1947ce9019e9cd4070343e6171fa8b84854c7283b8c184ee5cc8230f8"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 45,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,5,10,15,20,24,29,34,39,44: single approach to the blue bridge piece lying on the table and one close on its stem by f29-44; the piece does not move before the close.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 45,
+          "end_timestep_exclusive": 48,
+          "quality": 5,
+          "note": "side_2/wrist_1 all three native frames f45-47: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "place_on_fixture",
+          "start_timestep": 48,
+          "end_timestep_exclusive": 89,
+          "quality": 5,
+          "note": "side_2/wrist_1 f48,52,57,61,66,70,75,79,84,88: single carry to the black fixture and an upright placement at f66-88; f89-107 confirms it stands supported during the planned release.",
+          "mistakes": []
+        },
+        {
+          "primitive": "regrasp",
+          "start_timestep": 89,
+          "end_timestep_exclusive": 172,
+          "quality": 5,
+          "note": "side_2/wrist_1 f89,98,107,116,125,135,144,153,162,171: planned release at f89-107, reorientation clear of the fixture, and one close on the upright piece at f162-171 with the piece stable throughout.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 172,
+          "end_timestep_exclusive": 194,
+          "quality": 5,
+          "note": "side_2/wrist_1 f172,174,177,179,181,184,186,188,191,193: the fixture is empty from f177 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 194,
+          "end_timestep_exclusive": 261,
+          "quality": 5,
+          "note": "side_1/wrist_1 f194,201,209,216,223,231,238,245,253,260 and dense f205-260 every three frames, magnified at f208,217,226,235,244,253,260: the piece is centred over the E-piece by f217 and descends slowly and monotonically, seated at the final native frame f260 with the gripper opening. No contact failure, reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_4_57.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_4_57.quality_mistake.png",
+          "sha256": "221bfa8bb8d492c86f3c8743ca7376e75b8aa57e1f73f3440ff3b5f89567d903"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_4_57.85_177_stride4.jpg",
+          "sha256": "1f58309cdf83eda14ad7722a326f0a1ca65f06491525b8291a94d64a2a438584"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 40,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,4,9,13,17,22,26,30,35,39: the piece starts upright on the table; one approach and a single close on its stem by f26-39, with no tipping or re-approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 40,
+          "end_timestep_exclusive": 44,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f40-43: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 44,
+          "end_timestep_exclusive": 67,
+          "quality": 5,
+          "note": "side_2/wrist_1 f44,46,49,51,54,56,59,61,64,66: the table position is empty from f49 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 67,
+          "end_timestep_exclusive": 177,
+          "quality": 5,
+          "note": "side_1/wrist_1 f67,79,91,103,115,128,140,152,164,176 and dense f85-176 every four frames, magnified at f89,101,113,125,137,149 and f153,157,161,165,169,176: the piece is centred over the E-piece and beams by f89 and hovers at constant height until about f149 (a six-second stationary hold), then descends monotonically and is seated at the final native frame f176 with the gripper opening. No contact failure, reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_4_84.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_4_84.quality_mistake.png",
+          "sha256": "eb1830214b26e07aefa5fcc2d42ca9bf4f33588f83256780986697a0b46b4b85"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_4_84.110_183_stride4.jpg",
+          "sha256": "7866927c8142760bcc300fd7a278dcbb4ca58d07be19bb2fb5648ba54b27e4c7"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 60,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,7,13,20,26,33,39,46,52,59: the piece starts upright; one approach and a single close on its stem by f39-59, with no tipping or re-approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 60,
+          "end_timestep_exclusive": 64,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f60-63: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 64,
+          "end_timestep_exclusive": 92,
+          "quality": 5,
+          "note": "side_2/wrist_1 f64,67,70,73,76,79,82,85,88,91: the table position is empty from f70 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 92,
+          "end_timestep_exclusive": 183,
+          "quality": 5,
+          "note": "side_1/wrist_1 f92,102,112,122,132,142,152,162,172,182 and dense f110-182 every four frames, magnified at f114,126,138,150,162,174,182: the piece is centred over the E-piece and beams by f114 and hovers at constant height until about f162 (a five-second stationary hold), then descends monotonically and is seated at the final native frame f182 with the gripper opening. No contact failure, reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    },
+    {
+      "source_path": "multi_object_manipulation_dataset/board_3/trajectory_4_87.npy",
+      "evidence": [
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/quality_mistake_review/board_3_trajectory_4_87.quality_mistake.png",
+          "sha256": "9314e9f551f6ae8144cacd41323b63e44fb791b29463b838baf3b6f340868999"
+        },
+        {
+          "path": "outputs/_annotation/diverse_v2_expansion_review/fmb_multi/dense_codex/board_3_trajectory_4_87.100_151_stride3.jpg",
+          "sha256": "d7b1a3140aea1331b1b00e7c09be79aef035f2227f237b287ce531b666a7482d"
+        }
+      ],
+      "subtasks": [
+        {
+          "primitive": "grasp",
+          "start_timestep": 0,
+          "end_timestep_exclusive": 55,
+          "quality": 5,
+          "note": "side_2/wrist_1 f0,6,12,18,24,30,36,42,48,54: the piece starts upright; one approach and a single close on its stem by f36-54, with no tipping or re-approach.",
+          "mistakes": []
+        },
+        {
+          "primitive": "move_up",
+          "start_timestep": 55,
+          "end_timestep_exclusive": 59,
+          "quality": 5,
+          "note": "side_2/wrist_1 all four native frames f55-58: the piece lifts retained.",
+          "mistakes": []
+        },
+        {
+          "primitive": "go_to_board",
+          "start_timestep": 59,
+          "end_timestep_exclusive": 88,
+          "quality": 5,
+          "note": "side_2/wrist_1 f59,62,65,68,71,75,78,81,84,87: the table position is empty from f65 and the piece is carried directly toward the board.",
+          "mistakes": []
+        },
+        {
+          "primitive": "insert",
+          "start_timestep": 88,
+          "end_timestep_exclusive": 151,
+          "quality": 5,
+          "note": "side_1/wrist_1 f88,95,102,109,116,122,129,136,143,150 and dense f100-150 every three frames, magnified at f103,112,121,130,139,148,150: the piece is centred over the E-piece by f103 and descends slowly and monotonically, seated at the final native frame f150 with the gripper opening. No contact failure, reversal or retry.",
+          "mistakes": []
+        }
+      ]
+    }
+  ]
+}

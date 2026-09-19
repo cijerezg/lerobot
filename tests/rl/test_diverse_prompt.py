@@ -37,7 +37,7 @@ from lerobot.rl.data_sources.diverse_actor_buffer import (  # noqa: E402
     DiverseSampleSpec,
 )
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v2"
 SOURCE_WORDS = ("droid", "robochallenge", "fmb", "ur7e", "rebot", "arx5")
 
 
@@ -101,10 +101,10 @@ def test_a_missing_task_is_an_error_not_an_empty_clause() -> None:
 
 def test_every_selected_episode_yields_a_task(selection) -> None:
     tasks, subtasks = diverse_vocabulary(selection)
-    assert len(tasks) == 121
+    assert len(tasks) == 344  # v2 corpus 2026-09-18 (v1: 121)
     # The step vocabulary is the reviewed one-action atoms, not the parent intervals
     # (243 of those before 2026-09-09), so it speaks ReBot's grasp/move/release grammar.
-    assert len(subtasks) == 445
+    assert len(subtasks) == 792  # v1: 445
     assert all(text == text.strip() and text for text in subtasks)
     assert FMB_TASK_TEXT in tasks
     assert tasks == sorted(tasks) and subtasks == sorted(subtasks)
