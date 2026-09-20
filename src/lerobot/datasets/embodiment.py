@@ -43,6 +43,8 @@ EMBODIMENT_NAMES: tuple[str, ...] = (
     "Rebot B601",
     "SO-101",
     "ALOHA",
+    # v3 (2026-09-19): i2rt YAM single arm (yam-pick-duster-200, yam-espresso, yam-pick-place).
+    "YAM",
 )
 
 # The clause reads "The robot is {article} {name}." — spelled-out initialisms take
@@ -78,6 +80,10 @@ EMBODIMENT_ALIASES: dict[str, str] = {
     "so101leader": "SO-101",
     "aloha": "ALOHA",
     "alohaagilex": "ALOHA",
+    # Bimanual YAM sets are deliberately NOT aliased: only the single-arm sets are ingested.
+    "yam": "YAM",
+    "yamfollower": "YAM",
+    "i2rtyam": "YAM",
 }
 
 

@@ -59,6 +59,9 @@ class SourceSpec:
     metadata_patterns: tuple[str, ...]
     action_source: str = "native"
     usage_basis: str | None = None
+    # {"state": ..., "action": ...}, each "identity" or "flip_0_1" (g -> 1 - g), applied to
+    # the gripper slot at corpus ingest so a source's sets share one open/closed convention.
+    gripper_transform: dict[str, str] | None = None
     notes: str = ""
 
     @classmethod

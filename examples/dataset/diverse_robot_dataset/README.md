@@ -51,7 +51,11 @@ Rates come from the source's declared fps, never from the stored timestamps: flo
 quantization reports a 30 Hz stream as 30.0000286 Hz, which would route RoboChallenge and
 UR7e through the interpolation branch and turn their audited same-timestamp `copy_state`
 actions into interpolated ones. `refresh-metadata` re-derives that field for episodes
-ingested before the rule existed.
+ingested before the rule existed. The rule keys only on an exact 30.0: the 25 Hz YAM duster
+set (float32 measures 25.000024 Hz, inside the 1e-3 declared-vs-measured tolerance) takes
+the interpolation branch like the 15 Hz DROID and 15/20 Hz MolmoAct sources, and the 30 Hz
+YAM espresso and pick-place sets keep their native samples. Nothing downstream (corpus
+reader, actor cache, validate) reads the rate other than through `native_rate_hz`.
 
 Read the corpus with `lerobot.datasets.diverse_corpus`:
 

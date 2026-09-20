@@ -412,6 +412,14 @@ def assign_splits(episode_indices: list[int]) -> dict[int, str]:
     return splits
 
 
+YAM_GRIPPER = 6
+GRIPPER_TRANSFORMS = {"identity": lambda g: g, "flip_0_1": lambda g: 1.0 - g}
+
+
+def apply_gripper_transform(gripper: np.ndarray, transform: str) -> np.ndarray:
+    return GRIPPER_TRANSFORMS[transform](gripper)
+
+
 def ingest_episode(
     component: Component,
     episode_index: int,
@@ -473,6 +481,14 @@ def ingest_episode(
         states[:, 3:6] = np.unwrap(states[:, 3:6], axis=0)
         actions[:, 3:6] = np.unwrap(actions[:, 3:6], axis=0)
         state_transform = "np.unwrap(axis=0) over dims 3..5 (Euler angles) per episode"
+    gripper_transform = None
+    if component.source == "yam":
+        # The three YAM repos do not share one gripper convention (yam-pick-place even stores
+        # its measured gripper as 1 - command). The spec says per slot what brings it to
+        # layout 8's ratio_0_open_1_closed; the record carries what was applied.
+        gripper_transform = dict(component.spec.gripper_transform)
+        states[:, YAM_GRIPPER] = apply_gripper_transform(states[:, YAM_GRIPPER], gripper_transform["state"])
+        actions[:, YAM_GRIPPER] = apply_gripper_transform(actions[:, YAM_GRIPPER], gripper_transform["action"])
     destination.mkdir(parents=True, exist_ok=True)
     np.save(destination / "timestamp_s.npy", relative)
     np.save(destination / "source_timestamp_s.npy", timestamps)
@@ -533,6 +549,7 @@ def ingest_episode(
         "rate_provenance": "declared_by_the_source_dataset_info",
         "timestamp_provenance": "source native per-episode timestamps, rebased to a zero start",
         "state_transform": state_transform,
+        "gripper_transform": gripper_transform,
         "state_dimension": int(arrays.states.shape[1]),
         "action_dimension": int(arrays.actions.shape[1]),
         "state_semantics": component.spec.state_semantics,
@@ -1731,7 +1748,7 @@ def main() -> None:
 
     ingest_parser = subparsers.add_parser("ingest")
     ingest_parser.add_argument(
-        "--source", required=True, choices=["robochallenge", "droid", "droid_success", "ur7e", "molmoact"]
+        "--source", required=True, choices=["robochallenge", "droid", "droid_success", "ur7e", "molmoact", "yam"]
     )
     ingest_parser.add_argument("--component", action="append")
     ingest_parser.add_argument("--overwrite", action="store_true")

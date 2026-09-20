@@ -16,6 +16,12 @@ makes this source useful -- 134 tasks in home and tabletop scenes -- rather than
     prepare_molmoact.py --spec molmoact_household proxies
     # review the sheets, write verdicts.json, then
     prepare_molmoact.py --spec molmoact_household finalize --verdicts .../verdicts.json
+
+A later round tops the quota up without re-reviewing the first round: `nominate --prior` takes
+the earlier candidates.json, excludes its nominees from the pool, and writes the union of both
+rounds (each record stamped `round`); `proxies --round v3 --sheets-dir` renders only the new
+round into a separate review dir with a `batches.json` for the batch writer. `finalize` then
+takes the union verdict file (see migration/diverse_v3_control_mode_2026-09-19/molmoact/).
 """
 
 from __future__ import annotations
@@ -24,8 +30,9 @@ import argparse
 import json
 import math
 import os
+import shutil
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -51,6 +58,10 @@ XYZ_STEP_LIMIT_M = 0.05
 REVIEWER_MODEL = "claude-fable-5-1"
 KEEP_REASONS = {"useful_motion", "informative_mistake", "recovery", "task_required_hold"}
 MISTAKE_TYPES = {"failed_close", "slip", "drop", "knock", "wrong_target"}
+PRIOR_ROUND = "v2"
+ROUND = "v3"
+# Review batches: sorted by episode index and dealt round-robin, so each batch mixes tasks.
+BATCH_SIZE = 19
 
 
 class Paths:
@@ -168,18 +179,25 @@ def scan(paths: Paths) -> dict:
     return value
 
 
-def nominate(paths: Paths, per_task: int) -> dict:
+def nominate(paths: Paths, per_task: int, prior: Path | None = None) -> dict:
+    """Pick per_task episodes per task; with a prior round's candidates.json, fill only the shortfall."""
     scanned = read_json(paths.scan)
-    pool = [item for item in scanned["summaries"] if not item["discontinuous"] and item["active_cells"] >= 2]
+    prior_candidates = read_json(prior)["candidates"] if prior is not None else []
+    prior_indices = {int(item["episode_index"]) for item in prior_candidates}
+    prior_per_task = Counter(item["task"] for item in prior_candidates)
+    pool = [item for item in scanned["summaries"] if not item["discontinuous"] and item["active_cells"] >= 2 and int(item["episode_index"]) not in prior_indices]
     by_task: dict[str, list[dict]] = defaultdict(list)
     for item in pool:
         by_task[item["task"]].append(item)
     chosen = []
     for task, items in sorted(by_task.items()):
+        quota = max(per_task - prior_per_task[task], 0)
+        if quota == 0:
+            continue
         items = sorted(items, key=lambda item: item["episode_index"])
         # Spread the picks over the task's recording order so two episodes are unlikely to
         # come from the same session, then take the most active one inside each slice.
-        slices = np.array_split(np.arange(len(items)), min(per_task, len(items)))
+        slices = np.array_split(np.arange(len(items)), min(quota, len(items)))
         for chunk in slices:
             candidates = [items[int(i)] for i in chunk]
             chosen.append(max(candidates, key=lambda item: (item["active_fraction"], item["xyz_path_length_m"])))
@@ -198,18 +216,43 @@ def nominate(paths: Paths, per_task: int) -> dict:
         "grouping": "one physical Franka; diversity comes from tasks and scenes, so the quota is per task",
         "candidates": chosen,
     }
+    if prior is not None:
+        # The union is what finalize reviews; prior records are carried verbatim plus their round.
+        value["candidates"] = [{**item, "round": PRIOR_ROUND} for item in prior_candidates] + [{**item, "round": ROUND} for item in chosen]
+        value["candidate_count"] = len(value["candidates"])
+        value["new_candidate_count"] = len(chosen)
+        value["round_counts"] = {PRIOR_ROUND: len(prior_candidates), ROUND: len(chosen)}
+        value["prior_candidates_path"] = str(prior)
+        backup = paths.candidates.with_name(f"candidates_{PRIOR_ROUND}.json")
+        if paths.candidates.is_file() and not backup.is_file():
+            shutil.copyfile(paths.candidates, backup)
     write_json(paths.candidates, value)
     return value
 
 
-def proxies(paths: Paths) -> list[Path]:
+def batches_for(indices: list[int]) -> list[list[int]]:
+    indices = sorted(indices)
+    count = math.ceil(len(indices) / BATCH_SIZE)
+    return [indices[start::count] for start in range(count)]
+
+
+def proxies(paths: Paths, round_name: str | None = None, sheets_dir: Path | None = None) -> list[Path]:
+    """Three sheets per candidate; a round renders only its own candidates, into sheets_dir when given."""
     info = read_json(paths.metadata_root / "meta/info.json")
     rows = {int(row["episode_index"]): row for row in episode_rows(paths.metadata_root)}
+    selected = [item for item in read_json(paths.candidates)["candidates"] if round_name is None or item.get("round") == round_name]
+    if sheets_dir is None:
+        sheets_dir = paths.review_root
+    else:
+        # The batch writer and the verdict merge read these next to the sheets.
+        sheets_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(paths.candidates, sheets_dir / "candidates.json")
+        write_json(sheets_dir / "batches.json", batches_for([int(item["episode_index"]) for item in selected]))
     written = []
-    for item in read_json(paths.candidates)["candidates"]:
+    for item in selected:
         index = int(item["episode_index"])
         row = rows[index]
-        stem = paths.review_root / f"episode_{index:06d}"
+        stem = sheets_dir / f"episode_{index:06d}"
         for camera in CAMERAS:
             label = camera.rsplit(".", 1)[-1]
             video = paths.source_root / info["video_path"].format(
@@ -399,7 +442,10 @@ def main() -> None:
     sub.add_parser("scan")
     nomination = sub.add_parser("nominate")
     nomination.add_argument("--per-task", type=int, default=2)
-    sub.add_parser("proxies")
+    nomination.add_argument("--prior", type=Path, help="earlier round's candidates.json: its nominees are excluded and carried into the union")
+    sheets = sub.add_parser("proxies")
+    sheets.add_argument("--round", help="render only candidates stamped with this round (e.g. v3)")
+    sheets.add_argument("--sheets-dir", type=Path, help="write sheets, batches.json and a candidates.json copy here instead of the review dir")
     final = sub.add_parser("finalize")
     final.add_argument("--verdicts", type=Path, required=True)
     final.add_argument("--review-prompt", default="ReBot rubric: quality 1-5 over the whole episode; mistakes only as bounded failed_close/slip/drop/knock/wrong_target events; reject on uncontrolled motion, human intervention, severe occlusion, or an unverifiable outcome; unclear = reject.")
@@ -409,11 +455,11 @@ def main() -> None:
         value = scan(paths)
         print(json.dumps({k: v for k, v in value.items() if k != "summaries"}, indent=2))
     elif args.command == "nominate":
-        value = nominate(paths, args.per_task)
+        value = nominate(paths, args.per_task, args.prior)
         print(json.dumps({k: v for k, v in value.items() if k != "candidates"}, indent=2))
     elif args.command == "proxies":
-        written = proxies(paths)
-        print(f"{len(written)} sheets under {paths.review_root}")
+        written = proxies(paths, args.round, args.sheets_dir)
+        print(f"{len(written)} sheets under {paths.review_root if args.sheets_dir is None else args.sheets_dir}")
     else:
         print(json.dumps(finalize(paths, args.verdicts, args.review_prompt), indent=2))
 

@@ -8,14 +8,27 @@ state and action describe the same quantities in the same order, because the anc
 encoding subtracts one from the other elementwise; feature *widths* may still differ,
 so the shared prefix is what has to line up.
 
-Every packed source is joint-space: measured or commanded joint positions followed by
-a gripper channel.  There is deliberately no control-mode axis.  FMB was the one
-Cartesian holdout, and rather than carry a coordinate-system switch through the whole
-pipeline for a single corpus it now reads its measured Franka joints (see
-``FMBCorpusEpisode.state``), which is the same 8-slot layout DROID records.  A future
-genuinely Cartesian source would need that switch reintroduced -- and, more
-importantly, its own answer for anchor encoding, which is only meaningful when state
-and action live in the same space.
+Every packed source but one is joint-space: measured or commanded joint positions
+followed by a gripper channel.  FMB was the first Cartesian candidate and reads its
+measured Franka joints instead (see ``FMBCorpusEpisode.state``), the same 8-slot layout
+DROID records.  MolmoAct (layout 7, v2) is the genuinely Cartesian source: xyz metres,
+an Euler triple, gripper ratio, and no joint channel in either release.  The switch
+that tells the two apart is ``ActionLayout.control_mode`` ("joint" | "end_effector",
+``datasets/diverse_actor_selection.py``): it lives on the layout record only, never on
+a config field or a batch column of its own, and reaches the model as a prompt clause
+(``The control mode is joint space.`` / ``... end-effector space.``) rendered right
+after the embodiment clause on every row from the batch's ``action_layout_id``
+(``processor_molmoact2._build_robot_text``).  Nothing numeric branches on it.
+
+Anchor encoding has no layout branch either: ``AnchorEncodeStep`` subtracts the state
+from the action elementwise for every row.  For layout 7 that is well-defined because
+MolmoAct's action IS its state at the same timestep (``copy_state``), so both live in
+the same end-effector frame and the encoded target is a pose displacement -- xyz in
+metres, three Euler deltas in radians (the triple is unwrapped per episode at ingest,
+so no delta crosses a +-pi seam), gripper ratio -- normalized under layout 7's own
+stats row.  What it does not do: no conversion between spaces, no check that a row's
+state and action share one; that invariant is a property of the ingest, not of this
+step.
 
 What is left here is bookkeeping for **width**: a batch is one tensor, so rows of
 different DoF are right-padded to a common width and the padding is carried alongside

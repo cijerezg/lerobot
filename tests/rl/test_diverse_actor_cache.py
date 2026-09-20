@@ -300,3 +300,155 @@ def test_a_seven_wide_peer_concatenates_with_state_history_present(selection, bu
     assert merged["state"][f"history.{OBS_STATE}"].shape == (size + 2, 3, 8)
     # bfloat16 beside float32 promotes up, never down.
     assert merged[ACTION].dtype == torch.float32
+
+
+# ── YAM readiness (v3, 2026-09-19) ───────────────────────────────────────────
+# A synthetic one-episode common store shaped like the YAM duster set: 25 Hz, exactly two
+# cameras (top + right_wrist, no external_1), 7-wide joint layout 8, no depth. Nothing on
+# disk is read; the reader, the selection and the builder all run on this store.
+
+YAM_RATE_HZ = 25.0
+YAM_FRAMES = 250  # 10 s
+YAM_EPISODE = "yam__pick_duster__ep000003"
+YAM_CAMERAS = ("top", "right_wrist")
+YAM_ANCHORS_S = [6.0 + 0.2 * k for k in range(11)]  # 6.0 .. 8.0, complete histories
+
+
+def _yam_frame(camera_index: int, frame_index: int, height: int, width: int) -> np.ndarray:
+    """A flat colour that names the frame: R = frame index, G = camera. CRF 18 keeps a flat
+    frame within a couple of levels, so a decoded frame identifies its index."""
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[..., 0] = frame_index
+    frame[..., 1] = 60 + 120 * camera_index
+    frame[..., 2] = 128
+    return frame
+
+
+def _write_yam_video(path: Path, camera_index: int, height: int, width: int) -> None:
+    import av
+
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("libx264", rate=int(YAM_RATE_HZ))
+        stream.width, stream.height, stream.pix_fmt = width, height, "yuv420p"
+        stream.options = {"crf": "18", "g": str(int(YAM_RATE_HZ)), "keyint_min": str(int(YAM_RATE_HZ))}
+        for frame_index in range(YAM_FRAMES):
+            frame = av.VideoFrame.from_ndarray(_yam_frame(camera_index, frame_index, height, width), format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+def _write_yam_corpus(root: Path, height: int, width: int) -> None:
+    common = root / "corpus"
+    episode_dir = common / "episodes" / YAM_EPISODE
+    (episode_dir / "videos").mkdir(parents=True)
+    timestamps = np.arange(YAM_FRAMES, dtype=np.float64) / YAM_RATE_HZ
+    state = np.stack([np.sin(timestamps + d) for d in range(7)], axis=1).astype(np.float32)
+    np.save(episode_dir / "timestamp_s.npy", timestamps)
+    np.save(episode_dir / "state.npy", state)
+    np.save(episode_dir / "action.npy", state + 0.05)  # a real command channel, ahead of the state
+    for camera_index, camera in enumerate(YAM_CAMERAS):
+        _write_yam_video(episode_dir / "videos" / f"{camera}.mp4", camera_index, height, width)
+    record = {
+        "episode_id": YAM_EPISODE, "source": "yam", "component": "pick_duster", "embodiment": "YAM",
+        "split": "train", "native_rate_hz": YAM_RATE_HZ, "frames": YAM_FRAMES, "action_source": "native",
+        "state_dimension": 7, "action_dimension": 7, "task": "pick up the duster",
+        "cameras": [{"name": camera, "path": f"videos/{camera}.mp4", "fps": YAM_RATE_HZ} for camera in YAM_CAMERAS],
+        "review": {"quality_provenance": "human_reviewed"},
+        "annotations": {"segments": [{"start_s": 0.0, "end_s": 10.0, "retention": "keep", "quality": 4,
+                                      "subtask": "grasp the duster", "mistake_events": []}]},
+    }
+    (episode_dir / "episode.json").write_text(json.dumps(record))
+    offsets = np.asarray([-6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0])
+    anchors = []
+    for anchor_index, anchor_s in enumerate(YAM_ANCHORS_S):
+        frames = np.rint((anchor_s + offsets) * YAM_RATE_HZ).astype(int)
+        anchors.append({
+            "episode_id": YAM_EPISODE, "source": "yam", "component": "pick_duster", "embodiment": "YAM",
+            "split": "train", "anchor_index": anchor_index, "anchor_s": anchor_s, "anchor_frame": int(frames[-1]),
+            "history_frames": [int(f) for f in frames], "native_rate_hz": YAM_RATE_HZ, "action_source": "native",
+            "retained": True, "retention_reason": None, "subtask": "grasp the duster", "quality": 4,
+            "quality_provenance": "human_reviewed", "mistake": False,
+        })
+    atom = {"episode_id": YAM_EPISODE, "source": "yam", "embodiment": "YAM", "parent_interval_index": 0,
+            "atom_index": 0, "start_timestep": 0, "end_timestep_exclusive": YAM_FRAMES,
+            "subtask": "grasp the duster", "speed": 3}
+    for name, rows in (("episodes.jsonl", [record]), ("actor_anchors_5hz.jsonl", anchors),
+                       ("subtask_atoms.jsonl", [atom]), ("speed_atoms_hybrid_v1.jsonl", [atom])):
+        (common / name).write_text("".join(json.dumps(row) + "\n" for row in rows))
+    (root / "fmb").mkdir()
+    for name in ("episodes.jsonl", "actor_anchors_5hz.jsonl", "subtask_atoms.jsonl", "speed_atoms_hybrid_v1.jsonl"):
+        (root / "fmb" / name).write_text("")
+
+
+# The training contract (depth loaded) at the frame size, so the resize is the identity;
+# with no FMB episode the depth banks are allocated with zero rows and never read.
+YAM_SPEC = DiverseSampleSpec(image_size=(48, 64), depth_size=(48, 64))
+
+
+@pytest.fixture(scope="module")
+def yam_built(tmp_path_factory):
+    root = tmp_path_factory.mktemp("yam_corpus")
+    _write_yam_corpus(root, *YAM_SPEC.image_size)
+    selection = select_actor_anchors(open_federated_corpus(root), verify_counts=False)
+    path = build_cache(root, tmp_path_factory.mktemp("yam_cache"), YAM_SPEC, selection=selection)
+    return root, selection, path
+
+
+def test_yam_episode_lands_in_the_cache_with_two_cameras_and_no_depth(yam_built) -> None:
+    root, selection, path = yam_built
+    assert len(selection.rows) == len(YAM_ANCHORS_S)
+    row = selection.rows[0]
+    assert row["action_layout_id"] == 8 and row["native_action_dim"] == 7
+    assert row["camera_roles"] == {"external_0": "top", "wrist_0": "right_wrist"}
+    assert row["has_depth"] is False
+
+    metadata = json.loads((path / "metadata.json").read_text())
+    assert metadata["partial"] is False
+    # 4 slots (6, 4, 2, 0 s ago) over 11 anchors 0.2 s apart on a 25 Hz clock: frames
+    # 0..200 every 5, banked once each; external_1 never recorded, no depth rows.
+    assert metadata["bank_sizes"] == {"external_0": 41, "external_1": 0, "wrist_0": 41}
+    assert metadata["depth_rows"] == 0
+
+    cache = DiverseFrameCache(path, YAM_SPEC)
+    identity = cache.columns["identity"][0]
+    assert list(identity) == [7, 0, 0, 8, 7]  # source yam, episode 0, anchor 0, layout 8, embodiment YAM
+    assert list(cache.columns["camera_present"][0]) == [True, False, True]
+    assert list(cache.columns["frame_slot"][0, 1]) == [-1, -1, -1, -1]
+    assert int(cache.columns["depth_slot"][0, 0]) == -1
+    assert int(cache.columns["native_width"][0]) == 7
+    assert np.all(cache.columns["state"][0, 7:] == 0)
+
+
+def test_yam_frames_decode_at_the_25hz_index_clock(yam_built) -> None:
+    """The bank row an anchor slot points at is the native frame index / 25 s."""
+    _, selection, path = yam_built
+    cache = DiverseFrameCache(path, YAM_SPEC)
+    for row_index in (0, 5, 10):
+        sample = cache.sample(row_index)
+        wanted = np.asarray(selection.rows[row_index]["history_frames"])[[*YAM_SPEC.history_slots, 6]]
+        for role, camera_index in (("external_0", 0), ("wrist_0", 1)):
+            frames = sample["images"][role]  # (4, 3, H, W)
+            assert frames.shape == (4, 3, *YAM_SPEC.image_size)
+            red = frames[:, 0].reshape(4, -1).mean(axis=1)
+            assert np.all(np.abs(red - wanted) <= 3), (role, red, wanted)
+            assert abs(frames[:, 1].mean() - (60 + 120 * camera_index)) <= 3
+
+
+def test_yam_cached_and_uncached_anchors_agree(yam_built) -> None:
+    _, selection, path = yam_built
+    live = DiverseActorBuffer(selection, YAM_SPEC)
+    cached = DiverseActorBuffer(selection, YAM_SPEC, cache=DiverseFrameCache(path, YAM_SPEC))
+    picks = [0, 4, 10]
+    left, right = live.collate(picks), cached.collate(picks)
+    assert torch.equal(left[ACTION], right[ACTION])
+    for key, value in left["state"].items():
+        assert torch.equal(value, right["state"][key]), f"state {key} differs"
+    for key, value in left["complementary_info"].items():
+        assert torch.equal(value, right["complementary_info"][key]), f"complementary {key} differs"
+    # 25 Hz is not 30 Hz: the 1 s chunk is the interpolation branch, not native samples.
+    chunk = selection.corpus.actor_sample(selection.rows[0], cameras=False)
+    assert chunk["action.interpolated_mask"].any()
+    assert left[ACTION].shape == (3, 30, 8)
+    assert torch.equal(left["complementary_info"]["action_dim_is_pad"][0], torch.tensor([False] * 7 + [True]))

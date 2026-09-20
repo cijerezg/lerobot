@@ -67,9 +67,11 @@ class AnchorEncodeStep(ProcessorStep):
             return transition
 
         # Anchor/delta encoding subtracts state from action elementwise, which is only
-        # meaningful when both live in the same space. Every packed source is joint-space
-        # (see action_layout), so there is no mode to check -- a future Cartesian corpus
-        # would have to re-establish that invariant before reaching this step.
+        # meaningful when both live in the same space. Every layout satisfies that on its
+        # own: the joint-space sources pair joints with joints, and the one end-effector
+        # source (MolmoAct, layout 7) copies its pose state into the action, so its delta
+        # is a pose displacement under its own stats row. The control mode reaches the
+        # model as a prompt clause (ActionLayout.control_mode); nothing here branches on it.
         comp = dict(transition.get(TransitionKey.COMPLEMENTARY_DATA) or {})
 
         action = torch.as_tensor(action)

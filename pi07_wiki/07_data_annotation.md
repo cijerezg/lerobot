@@ -51,6 +51,35 @@
 
 Episode GT for eval sanity: ep0 white; ep1 white,black; ep2 white×2,black; ep3 +blue-heeled; ep4 +blue-striped, mistake ~162→185 s; ep5 interleaved, mistake ~176→205 s.
 
+## Diverse corpus action layouts (`datasets/diverse_actor_selection.py`)
+
+One row per source convention, keyed by `action_layout_id` (append-only; the per-layout
+stats artifact and the buffer column index into it). `control_mode` (2026-09-19) is what
+the leading channels are; it renders as the prompt clause `The control mode is joint
+space.` / `... end-effector space.` right after the embodiment clause on every row
+([06 §3](06_inference.md)). Anchor encoding is the same elementwise `action - state` for
+every row; for layout 7 that is a pose displacement (metres, unwrapped Euler radians,
+gripper ratio), well-defined because MolmoAct's action is its state (`copy_state`).
+
+| id | name | source | embodiment | dim | action | gripper | control_mode |
+|---|---|---|---|---|---|---|---|
+| 0 | droid_franka_joint8_commanded | droid | Franka | 8 | native | command_0_open_1_closed | joint |
+| 1 | droid_success_franka_joint8_commanded | droid_success | Franka | 8 | native | command_0_open_1_closed | joint |
+| 2 | fmb_franka_joint8_measured | fmb | Franka | 8 | copy_state | source_gripper_pose_levels | joint |
+| 3 | robochallenge_arx5_joint7_measured | robochallenge | ARX5 | 7 | copy_state | width_metres | joint |
+| 4 | robochallenge_ur5_joint7_measured | robochallenge | UR5 | 7 | copy_state | width_metres | joint |
+| 5 | ur7e_joint7_commanded | ur7e | UR7e | 7 | native | ratio_0_1 | joint |
+| 6 | rebot_b601_joint7_commanded | rebot | Rebot B601 | 7 | native | ratio_0_1 | joint |
+| 7 | molmoact_franka_ee7_measured | molmoact | Franka | 7 | copy_state | ratio_0_1 | end_effector |
+| 8 | yam_joint7_commanded | yam | YAM | 7 | native | ratio_0_open_1_closed (see prepare_yam.py) | joint |
+
+Layout 7 (v2): xyz metres + Euler triple (unwrapped per episode at ingest, state and
+action) + gripper; no joint channel in either MolmoAct release. Layout 8 (v3): i2rt YAM
+single arm, six joint radians + a real commanded gripper channel; the three Hub sets
+(yam-pick-duster-200, yam-espresso, yam-pick-place) are brought to one gripper convention at
+ingest. ReBot (6) is not part of the corpus; it holds an id so the mixture keys one stats
+table.
+
 ## Chain (scripts in `data_processing/annotate/`)
 
 Order matters: `summary_annotate.py` (12 s grid) → `subtask_annotate_grid.py` (4 s grid, conditions on summaries; labels atomic + progress-free) → `metadata_annotate.py annotate` + `review` (suspicion 0–10, `--threshold 4`; review UI writes the meta files). Validation sets: `--reuse-map <train-root>`. AV1 videos → ffmpeg, not cv2.

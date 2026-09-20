@@ -285,6 +285,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         task_str: str,
         subtasks: list[str | None],
         metadatas: list[dict] | None = None,
+        embodiments: list[str] | None = None,
+        control_modes: list[str] | None = None,
+        extra_complementary: dict | None = None,
     ) -> dict:
         """Preprocessor input for N prompt variants over ONE frame."""
         n = len(subtasks)
@@ -293,6 +296,19 @@ class MolmoAct2Adapter(ProbablePolicy):
         obs_on_device, presence = self._fill_absent_cameras(obs_on_device)
         flat: dict = {**obs_on_device, "task": [task_str] * n}
         complementary: dict = {**self._identity_columns, **presence, "subtask": list(subtasks)}
+        if extra_complementary:
+            for key, value in extra_complementary.items():
+                if torch.is_tensor(value) and value.ndim >= 1 and value.shape[0] == 1:
+                    value = value.to(device).repeat(n, *([1] * (value.ndim - 1)))
+                complementary[key] = value
+        if embodiments is not None:
+            if len(embodiments) != n:
+                raise ValueError(f"embodiments must have length {n}, got {len(embodiments)}.")
+            complementary["embodiment"] = list(embodiments)
+        if control_modes is not None:
+            if len(control_modes) != n:
+                raise ValueError(f"control_modes must have length {n}, got {len(control_modes)}.")
+            complementary["control_mode"] = list(control_modes)
         if metadatas is not None:
             if len(metadatas) != n:
                 raise ValueError(f"metadatas must have length {n}, got {len(metadatas)}.")
@@ -315,6 +331,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         noise: Tensor | None = None,
         generator: torch.Generator | None = None,
         inference_action_mode: str | None = None,
+        embodiments: list[str] | None = None,
+        control_modes: list[str] | None = None,
+        extra_complementary: dict | None = None,
     ) -> tuple[Tensor, Tensor]:
         """One forward over N prompt variants of a single frame.
 
@@ -328,11 +347,25 @@ class MolmoAct2Adapter(ProbablePolicy):
         *inference_action_mode* overrides the config's decoder choice; a probe whose
         readout is the flow output (a seed floor is meaningless under FAST decoding)
         passes ``"continuous"`` explicitly.
+
+        *embodiments* is one prompt name per row for the embodiment clause ("" = no
+        clause); it wins over any ``embodiment_index`` column, exactly as the rollout
+        path's explicit string does. *control_modes* is the same per-row override for
+        the control-mode clause ("joint" / "end_effector", "" = no clause); it wins over
+        the ``action_layout_id`` column the clause otherwise reads, so a swap can cross
+        name and control mode independently. *extra_complementary* overrides the ReBot
+        identity columns, which is how a diverse-corpus sample brings its own
+        action_layout_id, embodiment_index, camera presence and depth presence through
+        the same pack step (the ``capture_layer_representations`` seam); one-row tensors
+        are repeated to N. Added 2026-09-18 for ``probes.embodiment_swap``.
         """
         n = len(subtasks)
         if n == 0:
             raise ValueError("subtasks must be non-empty.")
-        batch = self._make_batch_multi(obs, task_str, subtasks, metadatas)
+        batch = self._make_batch_multi(
+            obs, task_str, subtasks, metadatas, embodiments=embodiments, control_modes=control_modes,
+            extra_complementary=extra_complementary,
+        )
         anchor = self._expand_to_batch(obs[OBS_STATE].to(self._device), n)
         return self._decode_batch(
             batch, anchor, noise=noise, generator=generator, inference_action_mode=inference_action_mode
@@ -1223,8 +1256,13 @@ class MolmoAct2Adapter(ProbablePolicy):
             if int(row[int(pos)]) not in skip_ids
         ]
 
-    def _depth_attention_extras(self, batch: dict, obs_on_device: dict[str, Tensor], encoder_seq_len: int):
+    def _depth_attention_extras(
+        self, batch: dict, obs_on_device: dict[str, Tensor], encoder_seq_len: int, with_image: bool = True
+    ):
         """Locate the point-map depth tokens inside the prefix.
+
+        ``with_image`` builds the display frame the overlay renderer draws on; a caller
+        that only wants the positions passes False and skips a full-resolution CPU copy.
 
         Depth used to be extra columns appended to the expert's cross-attention K/V, so
         the block was the tail past the prompt length. It is now ordinary prefix
@@ -1260,7 +1298,7 @@ class MolmoAct2Adapter(ProbablePolicy):
 
         depth = obs_on_device.get(f"observation.depth.{pointmap_config.depth_key}")
         image = None
-        if torch.is_tensor(depth):
+        if with_image and torch.is_tensor(depth):
             # Display-scale the raw 0.1 mm levels over the configured working range,
             # in the [-1, 1] convention the overlay renderer expects. Invalid pixels
             # (0) stay at the floor rather than dominating the scale.
@@ -1353,8 +1391,10 @@ class MolmoAct2Adapter(ProbablePolicy):
     # its marker to the next marker; the question clause ends at <|im_end|>.
     _PROMPT_CLAUSES = (
         ("embodiment", "The robot is"),
+        ("control_mode", " The control mode is"),
+        ("control_mode_first", "The control mode is"),  # no embodiment clause: ReBot rows open with it
         ("task", " The task is to"),
-        ("task_first", "The task is to"),  # no embodiment clause: the task opens the prompt
+        ("task_first", "The task is to"),  # neither clause: the task opens the prompt
         ("depth_words", " The depth of the scene is"),
         ("subtask", " The current step is"),
         ("state", " The current state of the robot is"),
@@ -1392,7 +1432,7 @@ class MolmoAct2Adapter(ProbablePolicy):
                     positions.extend(int(p) for p in indices)
             groups[cam] = sorted(positions) if presence.get(key, True) else []
 
-        depth = self._depth_attention_extras(batch, obs_on_device, seq_len).get("depth_segment")
+        depth = self._depth_attention_extras(batch, obs_on_device, seq_len, with_image=False).get("depth_segment")
         groups["depth"] = [] if depth is None or not presence.get("depth", True) else list(depth["indices"])
 
         text = self._text_token_positions(batch)
@@ -1402,9 +1442,10 @@ class MolmoAct2Adapter(ProbablePolicy):
             pos = self._find_subsequence(row, tokenizer.encode(marker, add_special_tokens=False))
             if pos is not None and pos in text_set:
                 starts[name] = pos
-        if "task" not in starts and "task_first" in starts:
-            starts["task"] = starts.pop("task_first")
-        starts.pop("task_first", None)
+        for name in ("control_mode", "task"):
+            if name not in starts and f"{name}_first" in starts:
+                starts[name] = starts.pop(f"{name}_first")
+            starts.pop(f"{name}_first", None)
         for name in ("task", "state", "question"):
             if name not in starts:
                 raise ValueError(f"prompt clause {name!r} not found in the packed prompt")
@@ -1422,7 +1463,9 @@ class MolmoAct2Adapter(ProbablePolicy):
             for pos in range(start, end):
                 clause_of[pos] = name
         metadata = {"metadata_quality", "metadata_mistake", "metadata_speed"}
-        for name in ("embodiment", "task", "subtask", "state", "history", "question", "metadata", "template"):
+        for name in (
+            "embodiment", "control_mode", "task", "subtask", "state", "history", "question", "metadata", "template"
+        ):
             groups[name] = []
         for pos in text:
             if pos == action_output:
@@ -1501,16 +1544,25 @@ class MolmoAct2Adapter(ProbablePolicy):
         noise = torch.randn(1, 1, *packed_action.shape[1:], generator=generator)
         noise = noise.to(device=device, dtype=torch.float32).expand(1, num_t, *packed_action.shape[1:]).contiguous()
 
+        # The token groups are a property of the packed prompt, so they are known before
+        # the forward — which lets each hook pool its layer on the GPU and keep [G, D]
+        # instead of shipping the whole [S, D] layer to CPU. At 36 layers that is the
+        # difference between ~250 MB and ~2 MB per frame, and it was 70% of this call.
+        groups = self._prompt_token_groups(batch, obs_on_device, presence)
+        pooled_names = [name for name, positions in groups.items() if positions]
+        pooled_index = [torch.tensor(groups[name], device=device) for name in pooled_names]
+
         encoder_layers: list[Tensor] = []
         expert_layers: list[Tensor] = []
 
         def _encoder_hook(_module, _inputs, output):
             hidden = output[0] if isinstance(output, tuple) else output
-            encoder_layers.append(hidden[0].detach().float().cpu())
+            row = hidden[0].detach().float()
+            encoder_layers.append(torch.stack([row[index].mean(dim=0) for index in pooled_index]))
 
         def _expert_hook(_module, _inputs, output):
             hidden = output[0] if isinstance(output, tuple) else output
-            expert_layers.append(hidden[0].detach().float().cpu())
+            expert_layers.append(hidden[0].detach().float().mean(dim=0))
 
         handles = [block.register_forward_hook(_encoder_hook) for block in transformer.blocks]
         handles += [block.register_forward_hook(_expert_hook) for block in action_expert.blocks]
@@ -1529,15 +1581,13 @@ class MolmoAct2Adapter(ProbablePolicy):
                 f"{len(transformer.blocks)} / {len(action_expert.blocks)}"
             )
 
-        groups = self._prompt_token_groups(batch, obs_on_device, presence)
-        encoder = torch.stack(encoder_layers)  # [L, S, D]
-        pooled: dict[str, Tensor | None] = {}
-        for name, positions in groups.items():
-            pooled[name] = None if not positions else encoder[:, positions, :].mean(dim=1).half()
-        expert = torch.stack(expert_layers)  # [L, T, D]
+        encoder = torch.stack(encoder_layers).half().cpu()  # [L, G, D]
+        pooled: dict[str, Tensor | None] = dict.fromkeys(groups)
+        for position, name in enumerate(pooled_names):
+            pooled[name] = encoder[:, position, :]
         return {
             "encoder": pooled,
-            "action_expert": {"action": expert.mean(dim=1).half()},
+            "action_expert": {"action": torch.stack(expert_layers).half().cpu()},  # [L, D]
             "n_tokens": {name: len(positions) for name, positions in groups.items()},
         }
 

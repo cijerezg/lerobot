@@ -561,9 +561,12 @@ def probe_frame_inputs(
     with_depth: bool = True,
     with_history: bool = True,
     metadata: dict | None = DEPLOYMENT_METADATA,
+    with_gripper_event_targets: bool = True,
 ) -> dict:
     """One frame in the deployment regime: observation + wrist depth + short-term
     history + the subtask and metadata clauses the action prompt carries at rollout.
+    ``with_gripper_event_targets`` adds the depth gripper-event loss targets when that
+    loss is on; a probe that only reads the forward never needs them.
 
     This is the prompt every probe should measure against. `get_frame_data` alone
     yields a prompt with no subtask, no metadata and no history — a regime that
@@ -611,7 +614,7 @@ def probe_frame_inputs(
         "global_idx": global_idx,
     }
     depth_event_config = getattr(cfg.policy, "depth_gripper_event_loss", None)
-    if getattr(depth_event_config, "enabled", False):
+    if with_gripper_event_targets and getattr(depth_event_config, "enabled", False):
         targets = load_depth_gripper_event_targets(dataset)
         result.update({key: values[global_idx] for key, values in targets.items()})
     return result

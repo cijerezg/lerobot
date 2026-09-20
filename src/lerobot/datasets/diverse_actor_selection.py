@@ -167,6 +167,13 @@ CAMERA_ROLE_MAP: dict[str, dict[str, str]] = {
     "robochallenge": {"global": "external_0", "side": "external_1", "wrist": "wrist_0"},
     "ur7e": {"realsense_topview": "external_0", "realsense_wrist": "wrist_0"},
     "molmoact": {"primary": "external_0", "secondary": "external_1", "wrist": "wrist_0"},
+    # One YAM source, three repos with their own camera spellings; each episode carries
+    # exactly one external and one wrist camera, so the union map never doubles a role.
+    "yam": {
+        "top": "external_0", "right_wrist": "wrist_0",  # yam-pick-duster-200
+        "outside": "external_0", "wrist": "wrist_0",  # yam-espresso
+        "cam_high": "external_0", "cam_wrist": "wrist_0",  # yam-pick-place
+    },
     # ReBot is not part of this corpus; its map lives here so the mixed run has one
     # camera vocabulary and the ReBot cache probe can check itself against it.
     "rebot": {"top": "external_0", "wrist": "wrist_0"},
@@ -205,6 +212,12 @@ class ActionLayout:
 
     ``embodiment`` is the broad robot name; it is deliberately not the key. DROID and
     FMB are both Franka Panda and share neither action semantics nor gripper units.
+
+    ``control_mode`` says what the leading channels of the vector are: "joint" (joint
+    positions, measured or commanded) or "end_effector" (a Cartesian pose). The layout
+    record is the only source of truth for it; the prompt seam renders it as a clause
+    on every row (processor_molmoact2._build_robot_text) by reading ``ACTION_LAYOUTS``
+    through the batch's ``action_layout_id`` column.
     """
 
     index: int
@@ -214,28 +227,50 @@ class ActionLayout:
     dim: int
     action_source: str
     gripper: str
+    control_mode: str
 
 
 ACTION_LAYOUTS: tuple[ActionLayout, ...] = (
-    ActionLayout(0, "droid_franka_joint8_commanded", "droid", "Franka", 8, "native", "command_0_open_1_closed"),
+    ActionLayout(
+        0, "droid_franka_joint8_commanded", "droid", "Franka", 8, "native", "command_0_open_1_closed",
+        control_mode="joint",
+    ),
     ActionLayout(
         1, "droid_success_franka_joint8_commanded", "droid_success", "Franka", 8, "native",
-        "command_0_open_1_closed",
-    ),
-    ActionLayout(2, "fmb_franka_joint8_measured", "fmb", "Franka", 8, "copy_state", "source_gripper_pose_levels"),
-    ActionLayout(
-        3, "robochallenge_arx5_joint7_measured", "robochallenge", "ARX5", 7, "copy_state", "width_metres"
+        "command_0_open_1_closed", control_mode="joint",
     ),
     ActionLayout(
-        4, "robochallenge_ur5_joint7_measured", "robochallenge", "UR5", 7, "copy_state", "width_metres"
+        2, "fmb_franka_joint8_measured", "fmb", "Franka", 8, "copy_state", "source_gripper_pose_levels",
+        control_mode="joint",
     ),
-    ActionLayout(5, "ur7e_joint7_commanded", "ur7e", "UR7e", 7, "native", "ratio_0_1"),
+    ActionLayout(
+        3, "robochallenge_arx5_joint7_measured", "robochallenge", "ARX5", 7, "copy_state", "width_metres",
+        control_mode="joint",
+    ),
+    ActionLayout(
+        4, "robochallenge_ur5_joint7_measured", "robochallenge", "UR5", 7, "copy_state", "width_metres",
+        control_mode="joint",
+    ),
+    ActionLayout(5, "ur7e_joint7_commanded", "ur7e", "UR7e", 7, "native", "ratio_0_1", control_mode="joint"),
     # ReBot: the established half of the 50/50 mixture. Its buffer is a LeRobotDataset,
     # not this corpus, but it needs an id in the same space for per-layout stats.
-    ActionLayout(6, "rebot_b601_joint7_commanded", "rebot", "Rebot B601", 7, "native", "ratio_0_1"),
+    ActionLayout(
+        6, "rebot_b601_joint7_commanded", "rebot", "Rebot B601", 7, "native", "ratio_0_1", control_mode="joint"
+    ),
     # v2: MolmoAct Dataset (Household + Tabletop). End-effector pose, not joints: xyz metres,
     # Euler triple unwrapped per episode at ingest, gripper ratio. Source action == state.
-    ActionLayout(7, "molmoact_franka_ee7_measured", "molmoact", "Franka", 7, "copy_state", "ratio_0_1"),
+    # The only end-effector layout: its rows share the "Franka" clause with DROID and FMB,
+    # so the control-mode clause is what tells the model these channels are a pose.
+    ActionLayout(
+        7, "molmoact_franka_ee7_measured", "molmoact", "Franka", 7, "copy_state", "ratio_0_1",
+        control_mode="end_effector",
+    ),
+    # v3: i2rt YAM single arm (yam-pick-duster-200, yam-espresso, yam-pick-place). Six joint
+    # radians + gripper, a real commanded channel. Gripper unit: see prepare_yam.py (the three
+    # sets are brought to one convention at ingest).
+    ActionLayout(
+        8, "yam_joint7_commanded", "yam", "YAM", 7, "native", "ratio_0_open_1_closed", control_mode="joint"
+    ),
 )
 
 _LAYOUT_BY_KEY = {(layout.source, layout.embodiment): layout for layout in ACTION_LAYOUTS}
@@ -355,6 +390,40 @@ def select_actor_anchors(
     if holdout - set(held_out):
         raise ValueError(f"holdout episodes not in the corpus: {sorted(holdout - set(held_out))}")
     rows = [row for row in rows if str(row["episode_id"]) not in holdout]
+    prepared, records, corrected = _prepare_rows(corpus, rows)
+    selection = DiverseActorSelection(
+        corpus=corpus,
+        rows=prepared,
+        episode_records=records,
+        mistake_flags_corrected=corrected,
+        held_out=dict(held_out),
+    )
+    if verify_counts:
+        assert_selection_counts(selection)
+    return selection
+
+
+def holdout_actor_selection(corpus: FederatedDiverseCorpus) -> DiverseActorSelection:
+    """The episodes of ``<root>/holdout_episodes.json`` and nothing else, prepared exactly
+    like the training rows (atoms, layout, camera roles). Never trained on and never
+    cached: a buffer over it decodes video. For the shared-representations probe."""
+    holdout = holdout_episode_ids(corpus.common.root.parent)
+    rows = [
+        row for row in corpus.actor_anchors(split=None, retained_only=True)
+        if str(row["episode_id"]) in holdout
+    ]
+    prepared, records, corrected = _prepare_rows(corpus, rows)
+    return DiverseActorSelection(
+        corpus=corpus, rows=prepared, episode_records=records, mistake_flags_corrected=corrected
+    )
+
+
+def _prepare_rows(
+    corpus: FederatedDiverseCorpus, rows: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], int]:
+    """Attach training identity to corpus rows: layout, camera roles, the reviewed atom's
+    subtask and speed, the anchor's own mistake flag. Returns (rows, episode records,
+    mistake flags corrected)."""
     subtask_atoms = _atoms_by_episode(corpus, "subtask_atoms")
     speed_atoms = _atoms_by_episode(corpus, "speed_atoms")
 
@@ -416,17 +485,7 @@ def select_actor_anchors(
         row["speed"] = int(speed_atom["speed"])
         corrected += int(bool(anchor_mistake) != bool(row["mistake_flag_as_stored"]))
         prepared.append(row)
-
-    selection = DiverseActorSelection(
-        corpus=corpus,
-        rows=prepared,
-        episode_records=records,
-        mistake_flags_corrected=corrected,
-        held_out=dict(held_out),
-    )
-    if verify_counts:
-        assert_selection_counts(selection)
-    return selection
+    return prepared, records, corrected
 
 
 def assert_selection_counts(selection: DiverseActorSelection) -> None:

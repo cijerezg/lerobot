@@ -271,6 +271,8 @@ _VALIDATION_PROBES = (
     _ValidationProbeSpec(
         "enable_domain_representations", "lerobot.probes.domain_representations", "domain_representations"
     ),
+    _ValidationProbeSpec("enable_conditions_matrix", "lerobot.probes.conditions_matrix", "conditions_matrix"),
+    _ValidationProbeSpec("enable_embodiment_swap", "lerobot.probes.embodiment_swap", "embodiment_swap"),
 )
 
 

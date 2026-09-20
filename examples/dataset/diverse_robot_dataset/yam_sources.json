@@ -1,0 +1,120 @@
+{
+  "sources": [
+    {
+      "name": "yam_duster",
+      "repo_id": "Dimios45/yam-pick-duster-200",
+      "revision": "c56057329fca55ccaa77d93ea8ff15827a7a2084",
+      "source_format": "lerobot_v3",
+      "pilot_episodes": 4,
+      "robot_type": "yam",
+      "license": "apache-2.0",
+      "real_robot_evidence": "Source card: 200 VR-teleoperated demonstrations of a single I2RT YAM arm (right arm, linear_4310 gripper) picking a blue duster and placing it in a red box, recorded in two sittings on 2026-08-17/18; fixed overhead and wrist cameras show the physical arm.",
+      "state_fields": [
+        "observation.state"
+      ],
+      "action_fields": [
+        "action"
+      ],
+      "gripper_field": "action[6]",
+      "state_semantics": "Six measured YAM joint positions in radians (right_joint_1..6) followed by the measured gripper position as a 0-1 ratio.",
+      "action_semantics": "Six commanded joint targets in radians plus the commanded gripper ratio, sampled at 25 Hz from the 200 Hz VR-teleop control loop (Meta Quest -> WebXR -> differential IK). Measured 2026-09-19 by per-joint cross-correlation on six episodes spread over the set: the command leads the measurement by 2 ticks (80 ms) on joints 1-3, 4-5 ticks (160-200 ms) on joints 4-6 and 1 tick on the gripper; max |action - state| 0.03-0.29 rad per joint. Values are preserved exactly.",
+      "gripper_semantics": "Card: 0 = open, 1 = closed, inverted from i2rt native at record time. Measured: the command spans [0, 1.0] and starts at 0.000 in every episode; the measurement starts at 0.000 and tops out at 0.46-0.93 per episode (the fingers stall on the duster), so state and command share one convention. Polarity is decided from the wrist frames (polarity sheets), not from the card.",
+      "gripper_transform": {
+        "state": "identity",
+        "action": "identity"
+      },
+      "joint_names": [
+        "right_joint_1",
+        "right_joint_2",
+        "right_joint_3",
+        "right_joint_4",
+        "right_joint_5",
+        "right_joint_6",
+        "right_gripper"
+      ],
+      "metadata_patterns": [
+        "README.md",
+        "meta/**"
+      ],
+      "action_source": "native",
+      "notes": "25 Hz, 200 episodes, 274-701 frames (11.0-28.0 s; the card's 109-280 frame figure is not this release's frame count), one task string. Cameras top (fixed overhead) and right_wrist, both 640x480 AV1, stored uncropped. The card names two aborted takes by recording timestamp (20260818T004003534366, 20260818T005359521504); those identifiers are not carried in the metadata and every episode's measured gripper closes at least once (>= 0.46), so the takes cannot be matched to episode indices from the data. Float32 timestamps measure 25.000024 Hz, so the declared 25 Hz is used and the action chunk goes through the interpolation branch like the 15/20 Hz sources."
+    },
+    {
+      "name": "yam_espresso",
+      "repo_id": "robots123/yam-espresso",
+      "revision": "b221086668839e89b0ca9cb75c04c2940c3fc3db",
+      "source_format": "lerobot_v3",
+      "pilot_episodes": 4,
+      "robot_type": "yam_follower",
+      "license": "apache-2.0",
+      "real_robot_evidence": "Recorded with lerobot-record on a yam_follower robot (meta/info.json robot_type); the outside and wrist cameras show a physical single YAM arm at an espresso machine.",
+      "state_fields": [
+        "observation.state"
+      ],
+      "action_fields": [
+        "action"
+      ],
+      "gripper_field": "action[6]",
+      "state_semantics": "Six measured joint positions in radians (motor_0..5.pos) followed by the measured gripper motor_6.pos as a 0-1 ratio.",
+      "action_semantics": "Native commanded joint targets in the same seven slots, recorded at 30 Hz by lerobot-record from the leader arm. Measured 2026-09-19 by per-joint cross-correlation on six episodes: the command leads the measurement by 3 ticks (100 ms) on joints 0-1, 4 on joint 2, 2 on joint 3, 5-7 on joints 4-5 and 2 on the gripper; max |action - state| 0.04-0.26 rad per joint. Values are preserved exactly.",
+      "gripper_semantics": "Measured and commanded gripper agree in convention (max |action - state| <= 0.18) and both span [~0.0, 1.0]; the episode start value varies from 0.01 to 1.00, so the start pose does not pin the polarity. The card says nothing about open/closed. Polarity is decided from the wrist frames (polarity sheets).",
+      "gripper_transform": {
+        "state": "flip_0_1",
+        "action": "flip_0_1"
+      },
+      "joint_names": [
+        "motor_0.pos",
+        "motor_1.pos",
+        "motor_2.pos",
+        "motor_3.pos",
+        "motor_4.pos",
+        "motor_5.pos",
+        "motor_6.pos"
+      ],
+      "metadata_patterns": [
+        "README.md",
+        "meta/**"
+      ],
+      "action_source": "native",
+      "notes": "30 Hz, 91 episodes, 369-1172 frames (12.3-39.1 s). Cameras wrist and outside, both 1280x720 AV1. The single task string 'fold napkins' is wrong for what the frames show and is relabelled 'insert the portafilter into the espresso machine' at scan time. meta/episodes carries episode_success: 83 true, 8 false; the false takes are excluded from the nomination pool as source-flagged failures."
+    },
+    {
+      "name": "yam_pick_place",
+      "repo_id": "EmptyDrum/yam-pick-place",
+      "revision": "a29e0e93d59a387d864a38c0935dd7a629a27045",
+      "source_format": "lerobot_v3",
+      "pilot_episodes": 4,
+      "robot_type": "yam",
+      "license": null,
+      "real_robot_evidence": "meta/info.json robot_type yam; the cam_high and cam_wrist streams show a physical single YAM arm moving a pencil between two sharpeners; meta/episodes_backup.jsonl logs the live re-takes of the recording session.",
+      "state_fields": [
+        "observation.state"
+      ],
+      "action_fields": [
+        "action"
+      ],
+      "gripper_field": "action[6]",
+      "state_semantics": "Six measured joint positions in radians (joint_0..5) followed by the measured gripper as a 0-1 ratio.",
+      "action_semantics": "Native commanded joint targets in the same seven slots at 30 Hz (the control_source feature is 0 on every frame). Measured 2026-09-19 by per-joint cross-correlation on six episodes: the command leads the measurement by 2-4 ticks (67-133 ms) on joints 0-3 and 3-5 ticks on joints 4-5; max |action - state| reaches 0.5-1.0 rad on joint 3 during fast moves. Values are preserved exactly.",
+      "gripper_semantics": "The measured gripper is 1 - command: the command starts at ~0.00 and steps to ~1.0 while the measurement starts at 0.998 and falls (corr(1 - action, state) 0.98 at a 3-8 tick lag on five episodes); the command overshoots to [-0.012, 1.07]. The two slots therefore need opposite gripper_transform values to share one convention. Polarity is decided from the wrist frames (polarity sheets).",
+      "gripper_transform": {
+        "state": "flip_0_1",
+        "action": "identity"
+      },
+      "joint_names": [
+        "joint_0",
+        "joint_1",
+        "joint_2",
+        "joint_3",
+        "joint_4",
+        "joint_5",
+        "gripper"
+      ],
+      "metadata_patterns": [
+        "meta/**"
+      ],
+      "action_source": "native",
+      "notes": "30 Hz, 51 episodes, 200-551 frames (6.7-18.4 s), one task string. Cameras cam_wrist and cam_high, 640x480 AV1, one data shard and one video shard per episode. No README and no license tag on the Hub: admission fails until the coordinator supplies usage_basis. Four episodes (15, 24, 37, 39) publish the discarded first take's video (321/534/407/315 frames per episodes_backup.jsonl) beside the saved re-take's parquet rows, so their video and data are different takes; the scan excludes them as video_data_mismatch."
+    }
+  ]
+}

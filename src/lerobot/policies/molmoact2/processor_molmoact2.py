@@ -16,6 +16,7 @@ from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.datasets.diverse_actor_selection import ACTION_LAYOUTS
 from lerobot.datasets.embodiment import (
     EMBODIMENT_NAMES,
     canonical_embodiment,
@@ -58,6 +59,9 @@ from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequen
 _FAST_BIN_PROBE_LIMIT = 2048  # FAST bin values are c - min_token; nothing legitimate exceeds this
 
 ACTION_OUTPUT_TOKEN = "<action_output>"  # nosec B105
+# ActionLayout.control_mode -> the words of the prompt clause. Baked into every checkpoint
+# trained with the clause, so the wording is as frozen as the layout indices are.
+CONTROL_MODE_TEXT = {"joint": "joint space", "end_effector": "end-effector space"}
 ACTION_START_TOKEN = "<action_start>"  # nosec B105
 ACTION_END_TOKEN = "<action_end>"  # nosec B105
 ACTION_TOKEN_PREFIX = "<action_"  # nosec B105
@@ -258,6 +262,7 @@ def _build_robot_text(
     discrete_state_string: str,
     num_images: int,
     embodiment: str | None = None,
+    control_mode: str | None = None,
     current_subtask: str | None = None,
     metadata: dict[str, Any] | None = None,
     num_history_states: int = 0,
@@ -281,9 +286,22 @@ def _build_robot_text(
     the clause is the only thing distinguishing them. None omits it (byte-identical
     legacy prompt). Unlike the subtask and metadata clauses it gets NO training
     dropout: those describe things unavailable at inference, while the embodiment is
-    always known, so dropping it would only teach the model to ignore it."""
+    always known, so dropping it would only teach the model to ignore it.
+
+    control_mode: what the action channels are, "joint" or "end_effector", rendered
+    right after the embodiment clause (a ReBot row carries no embodiment clause, so
+    its prompt opens with this sentence). The embodiment name alone cannot say it:
+    MolmoAct's rows are end-effector poses under the same "Franka" clause as DROID's
+    and FMB's joint rows, and every vector pads to the same width, so the clause is
+    the only thing telling the model which space the state tokens and the target
+    live in. None omits it (byte-identical legacy prompt). No training dropout, for
+    the embodiment clause's reason: the control mode is a property of the layout
+    record, known at inference, so hiding it would only teach the model to ignore it."""
     embodiment_clause = (
         f"The robot is {embodiment_article(embodiment)} {embodiment}. " if embodiment else ""
+    )
+    control_mode_clause = (
+        f"The control mode is {CONTROL_MODE_TEXT[control_mode]}. " if control_mode else ""
     )
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
@@ -309,7 +327,7 @@ def _build_robot_text(
         if "speed" in metadata:
             metadata_clause += f" The speed is {int(metadata['speed'])} of 5."
     prompt = (
-        f"{embodiment_clause}The task is to {task}."
+        f"{embodiment_clause}{control_mode_clause}The task is to {task}."
         f"{depth_clause}{subtask_clause}{state_clause}{history_clause}"
         f"{metadata_clause} "
         f"Given these, what action should the robot take to complete the task?"
@@ -329,19 +347,24 @@ def _build_subtask_generation_text(
     discrete_state_string: str,
     num_images: int,
     embodiment: str | None = None,
+    control_mode: str | None = None,
 ) -> str:
     """Generation prompt (two-prompt design): same visual/state context as the action
     prompt, but the question asks for the next step. The assistant's answer is the
     subtask alone; at training time the caller appends it (+eos) and puts CE labels
-    on it."""
+    on it. The embodiment and control-mode clauses render exactly as in the action
+    prompt (see _build_robot_text); None omits either."""
     embodiment_clause = (
         f"The robot is {embodiment_article(embodiment)} {embodiment}. " if embodiment else ""
+    )
+    control_mode_clause = (
+        f"The control mode is {CONTROL_MODE_TEXT[control_mode]}. " if control_mode else ""
     )
     state_clause = (
         f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
     )
     prompt = (
-        f"{embodiment_clause}The task is to {task}.{state_clause} "
+        f"{embodiment_clause}{control_mode_clause}The task is to {task}.{state_clause} "
         f"Given these, what step should the robot perform next?"
     )
     if num_images <= 0:
@@ -1516,6 +1539,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         tasks = self._extract_tasks(observation, complementary, batch_size)
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
+        control_modes = self._extract_control_modes(complementary, batch_size)
         history_stack = self._extract_history_image_stack(
             complementary, self._resolve_image_keys(observation), batch_size
         )
@@ -1538,6 +1562,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 ),
                 num_images=len(images),
                 embodiment=embodiment_texts[batch_idx],
+                control_mode=control_modes[batch_idx],
             )
             prompts.append(prompt)
             fulls.append(f"{prompt}{name}{self._eos_token}" if name else prompt)
@@ -1607,6 +1632,25 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         if len(flat) == 1:
             flat = flat * batch_size
         return [embodiment_name(index, self.embodiment_names) for index in flat]
+
+    @staticmethod
+    def _extract_control_modes(complementary: dict, batch_size: int) -> list[str | None]:
+        """Control mode per sample: an explicit "control_mode" string (probe override;
+        "" renders no clause), else the layout record behind action_layout_id -- the
+        column every offline buffer stamps and the rollout path stamps from
+        diverse.rebot_layout (probes.utils.identity_columns), so deployment resolves to
+        the ReBot layout's mode with no flag of its own. A batch without the column (a
+        rig-shaped policy) renders no clause."""
+        texts = complementary.get("control_mode")
+        if texts is not None:
+            return [text if text else None for text in _as_text_list(texts, batch_size)]
+        indices = complementary.get("action_layout_id")
+        if indices is None:
+            return [None] * batch_size
+        flat = torch.as_tensor(indices).detach().cpu().reshape(-1).long().tolist()
+        if len(flat) == 1:
+            flat = flat * batch_size
+        return [ACTION_LAYOUTS[index].control_mode for index in flat]
 
     @staticmethod
     def _extract_camera_presence(
@@ -1779,6 +1823,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         subtask_texts = self._extract_subtask_texts(complementary, batch_size)
         embodiment_texts = self._extract_embodiment_texts(complementary, batch_size)
+        control_modes = self._extract_control_modes(complementary, batch_size)
         metadata_list = self._extract_metadata(complementary, batch_size)
         history_states = self._extract_history_states(complementary, batch_size)
         image_keys = self._resolve_image_keys(observation)
@@ -1829,6 +1874,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 discrete_state_string=discrete_state,
                 num_images=len(images),
                 embodiment=embodiment_texts[batch_idx],
+                control_mode=control_modes[batch_idx],
                 num_history_states=(
                     int(history_states.shape[1])
                     if history_states is not None and history_on[batch_idx]

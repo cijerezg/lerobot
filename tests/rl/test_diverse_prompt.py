@@ -14,6 +14,7 @@ import torch
 pytest.importorskip("transformers", reason="molmoact2 processor imports policy deps")
 
 from lerobot.datasets.diverse_actor_selection import (  # noqa: E402
+    ACTION_LAYOUTS,
     open_federated_corpus,
     select_actor_anchors,
 )
@@ -29,8 +30,10 @@ from lerobot.datasets.diverse_prompt import (  # noqa: E402
     should_render_quality,
 )
 from lerobot.policies.molmoact2.processor_molmoact2 import (  # noqa: E402
+    CONTROL_MODE_TEXT,
     MolmoAct2PackInputsProcessorStep,
     _build_robot_text,
+    _build_subtask_generation_text,
 )
 from lerobot.rl.data_sources.diverse_actor_buffer import (  # noqa: E402
     DiverseActorBuffer,
@@ -101,10 +104,11 @@ def test_a_missing_task_is_an_error_not_an_empty_clause() -> None:
 
 def test_every_selected_episode_yields_a_task(selection) -> None:
     tasks, subtasks = diverse_vocabulary(selection)
-    assert len(tasks) == 344  # v2 corpus 2026-09-18 (v1: 121)
+    # v2 corpus minus holdout_episodes.json (5 episodes, 2026-09-18): 344 -> 340 (v1: 121).
+    assert len(tasks) == 340
     # The step vocabulary is the reviewed one-action atoms, not the parent intervals
     # (243 of those before 2026-09-09), so it speaks ReBot's grasp/move/release grammar.
-    assert len(subtasks) == 792  # v1: 445
+    assert len(subtasks) == 782  # 792 before the holdout; v1: 445
     assert all(text == text.strip() and text for text in subtasks)
     assert FMB_TASK_TEXT in tasks
     assert tasks == sorted(tasks) and subtasks == sorted(subtasks)
@@ -208,6 +212,94 @@ def test_no_source_name_leaks_into_a_rendered_prompt(selection) -> None:
     for text in list(tasks) + list(subtasks):
         lowered = text.casefold()
         assert not any(word in lowered for word in SOURCE_WORDS), text
+
+
+# ── Control-mode clause (diverse v3, 2026-09-19) ─────────────────────────────
+
+EXPECTED_CONTROL_MODES = {
+    0: "joint", 1: "joint", 2: "joint", 3: "joint", 4: "joint", 5: "joint", 6: "joint",
+    7: "end_effector",  # MolmoAct: xyz + Euler + gripper under the same Franka clause as 0-2
+    8: "joint",
+}
+
+
+def test_every_layout_declares_its_control_mode() -> None:
+    assert {layout.index: layout.control_mode for layout in ACTION_LAYOUTS} == EXPECTED_CONTROL_MODES
+    assert set(EXPECTED_CONTROL_MODES.values()) == set(CONTROL_MODE_TEXT)
+
+
+def test_the_pack_step_resolves_the_clause_from_the_layout_column() -> None:
+    extract = MolmoAct2PackInputsProcessorStep._extract_control_modes
+    ids = sorted(EXPECTED_CONTROL_MODES)
+    assert extract({"action_layout_id": torch.tensor(ids)}, len(ids)) == [
+        EXPECTED_CONTROL_MODES[i] for i in ids
+    ]
+    # identity_columns() stamps one scalar for the whole batch (rollouts, val_loss, probes).
+    assert extract({"action_layout_id": torch.tensor(6)}, 3) == ["joint"] * 3
+    assert extract({"action_layout_id": 6}, 2) == ["joint"] * 2
+    # No column (a rig-shaped policy) renders no clause.
+    assert extract({}, 2) == [None, None]
+
+
+def test_an_explicit_control_mode_string_wins_and_empty_means_no_clause() -> None:
+    extract = MolmoAct2PackInputsProcessorStep._extract_control_modes
+    assert extract(
+        {"action_layout_id": torch.tensor([7, 7, 7]), "control_mode": ["joint", "", "end_effector"]}, 3
+    ) == ["joint", None, "end_effector"]
+
+
+def _control_mode_prompt(control_mode, embodiment="Franka Panda") -> str:
+    return _build_robot_text(
+        task="arrange the fruit in the basket",
+        discrete_state_string="<state_1>",
+        num_images=2,
+        embodiment=embodiment,
+        control_mode=control_mode,
+        current_subtask="grasp the apple",
+        metadata={"quality": 4, "mistake": False, "speed": 3},
+    )
+
+
+def test_the_clause_follows_the_embodiment_clause() -> None:
+    prompt = _control_mode_prompt("end_effector")
+    assert (
+        "user\nThe robot is a Franka Panda. The control mode is end-effector space. "
+        "The task is to arrange the fruit in the basket." in prompt
+    )
+    assert "The control mode is joint space." in _control_mode_prompt("joint")
+
+
+def test_a_rebot_row_opens_with_the_control_mode_sentence() -> None:
+    """ReBot rows carry no embodiment clause (layout 6 stamps action_layout_id only)."""
+    prompt = _control_mode_prompt("joint", embodiment=None)
+    assert "The robot is" not in prompt
+    assert "<|im_start|>user\nThe control mode is joint space. The task is to arrange" in prompt
+
+
+def test_none_control_mode_is_the_byte_identical_legacy_prompt() -> None:
+    legacy = _build_robot_text(
+        task="fold the towel", discrete_state_string="<state_1>", num_images=1, embodiment="UR5"
+    )
+    assert _build_robot_text(
+        task="fold the towel", discrete_state_string="<state_1>", num_images=1, embodiment="UR5",
+        control_mode=None,
+    ) == legacy
+    assert "control mode" not in legacy
+    assert legacy == (
+        "<|image|><|im_start|>user\nThe robot is a UR5. The task is to fold the towel. "
+        "The current state of the robot is <state_1>. "
+        "Given these, what action should the robot take to complete the task?<|im_end|>\n"
+        "<|im_start|>assistant\n<action_output>"
+    )
+
+
+def test_the_generation_prompt_carries_the_same_clause() -> None:
+    kwargs = {"task": "fold the towel", "discrete_state_string": "<state_1>", "num_images": 1}
+    with_clause = _build_subtask_generation_text(**kwargs, embodiment="UR5", control_mode="joint")
+    assert "user\nThe robot is a UR5. The control mode is joint space. The task is to fold the towel." in with_clause
+    rebot = _build_subtask_generation_text(**kwargs, control_mode="joint")
+    assert "user\nThe control mode is joint space. The task is to fold the towel." in rebot
+    assert "control mode" not in _build_subtask_generation_text(**kwargs, embodiment="UR5")
 
 
 # ── Buffer columns ───────────────────────────────────────────────────────────

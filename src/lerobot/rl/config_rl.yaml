@@ -76,9 +76,9 @@ dataset:
     # uniformly over frames. Blocks (see meta/provenance.json): autonomous rollouts 09-11..09-16
     # (17 eps), shirts_bin v3 (9), socks_basket v3 (15), rollouts v2 (15, teleop interventions),
     # two_container v3 (14), bottle/tape/cup 09-17/18 (12), sorting_clothes v4 multitask (8).
-    - name: rebot_all                   # 90 eps / 312424 frames
+    - name: rebot_all                   # 90 eps / 312418 frames
       root: outputs/rebot_all-annotated-v1
-      weight: 312424
+      weight: 312418
       normalization_source: true
 
 buffer_cache_dir: outputs/buffer_cache-rebot-annot-v2  # one dir; each source gets its own fingerprint subdir
@@ -524,6 +524,8 @@ probe_parameters:
   enable_mem_temporal_attention: false    # MEM: temporal-read distributions + spatial examples
   enable_action_trace: false
   enable_metadata_steering: false
+  enable_embodiment_swap: false  # 2026-09-18 other robots' names on ReBot frames + the ReBot name on the diverse holdout (probes/embodiment_swap.py)
+  enable_conditions_matrix: false  # 2026-09-18 object x phase similarity matrix per robot, compared across robots (probes/conditions_matrix.py); ~930 frames at the default 2 frames x 10 episodes per cell
   enable_depth_modality: false            # matched foreign/stale depth; null depth is stress only
   enable_attention_budget: false
   enable_subtask_sweep: false

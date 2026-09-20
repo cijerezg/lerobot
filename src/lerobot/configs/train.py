@@ -340,6 +340,8 @@ class ProbeConfig:
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
     enable_input_swap: bool = False  # inject another frame's state / images / subtask text: 2^3 cube per anchor
     enable_domain_representations: bool = False  # ReBot vs diverse hidden states per layer and token group (probes/domain_representations.py)
+    enable_conditions_matrix: bool = False  # object x phase similarity matrix per robot, compared across robots (probes/conditions_matrix.py)
+    enable_embodiment_swap: bool = False  # "The robot is a ..." swapped: other names on ReBot frames, the ReBot name on diverse holdout frames (probes/embodiment_swap.py)
 
     # Common
     output_dir: str = "outputs/probe"
@@ -384,6 +386,17 @@ class ProbeConfig:
     # cosine neighbourhood of the purity readout.
     domain_repr_n_frames_per_episode: int | None = None
     domain_repr_knn_k: int = 10
+    # Conditions matrix. Frames per (episode, cell) and episodes per cell on every robot;
+    # the ReBot roots carrying meta/subtask_windows.json, comma-separated (None = the
+    # config's dataset sources). Episodes are the independent unit every similarity here
+    # is built from — same-episode pairs are dropped, and the ceiling splits episodes —
+    # so the budget buys episodes first and frames within an episode second. 2 x 10 is
+    # ~930 frames over the 66 (robot, cell) combos, ~10 min; 10 x 12 was 4,911, ~35 min
+    # on a warm diverse cache and hours without one.
+    conditions_frames_per_episode_cell: int = 2
+    conditions_episodes_per_cell: int = 10
+    conditions_rebot_roots: str | None = None
+    conditions_layers: str = "14,28,32"  # matrices_L<n>.png besides the headline (peak) layer; every layer is analysed regardless
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1
     umap_seed: int = 42
@@ -467,6 +480,11 @@ class ProbeConfig:
     # those frames by their true quality, so cutting it thins the columns, not the lines.
     metadata_steering_n_frames: int | None = None
     metadata_steering_n_seeds: int | None = None
+
+    # Embodiment swap: n_frames x (1 + len(EMBODIMENT_NAMES) + n_seeds - 1) forwards per frame,
+    # on the ReBot val split AND every diverse holdout episode (n_frames per episode each).
+    embodiment_swap_n_frames: int | None = None
+    embodiment_swap_n_seeds: int | None = None
 
     # MEM temporal attention: one forward per frame for the real read, plus one each for
     # the two positional controls when this is on. Mass on an age says the slot was read;

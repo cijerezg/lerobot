@@ -684,6 +684,9 @@ class MolmoAct2Trainer(Trainer):
             # through a 7-DOF prompt.
             if "embodiment_index" in raw_comp:
                 critic_comp["embodiment_index"] = raw_comp["embodiment_index"]
+            # Same for the control-mode clause and the per-layout stats row it keys on.
+            if "action_layout_id" in raw_comp:
+                critic_comp["action_layout_id"] = raw_comp["action_layout_id"]
             if str(getattr(cfg.policy, "critic_reward_mode", "episode")) == "subtask":
                 subtask_index = raw_comp.get("subtask_index")
                 if subtask_index is None or torch.any(torch.as_tensor(subtask_index) < 0):

@@ -56,7 +56,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE
 logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 logger = logging.getLogger(__name__)
 
-SOURCE_NAMES = {0: "droid", 1: "droid_success", 2: "fmb", 3: "robochallenge", 4: "ur7e", 5: "rebot", 6: "molmoact"}
+SOURCE_NAMES = {0: "droid", 1: "droid_success", 2: "fmb", 3: "robochallenge", 4: "ur7e", 5: "rebot", 6: "molmoact", 7: "yam"}
 REBOT_SOURCE_ID = 5
 
 _QUALITY_CLAUSE = re.compile(r"The quality is (\d) of 5\.")
