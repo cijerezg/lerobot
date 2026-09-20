@@ -204,6 +204,23 @@ def test_copy_state_lead_shifts_the_chunk_one_tick():
         sample_action_chunk(timestamps, np.zeros((len(timestamps), 1)), 10 - 29 / 30, native_rate_hz=30, lead_s=COPY_STATE_LEAD_S)
 
 
+def test_copy_state_exact_decimal_endpoint_tolerates_roundoff():
+    """A 10 Hz anchor ending exactly at the last sample must not look out of bounds."""
+    from lerobot.datasets.diverse_pilot import COPY_STATE_LEAD_S
+
+    timestamps = np.arange(117, dtype=np.float64) / 10
+    values = timestamps[:, None]
+    chunk = sample_action_chunk(
+        timestamps,
+        values,
+        106 / 10,
+        native_rate_hz=10,
+        lead_s=COPY_STATE_LEAD_S,
+    )
+    assert chunk.target_timestamps[-1] == pytest.approx(timestamps[-1])
+    assert chunk.values[-1, 0] == pytest.approx(timestamps[-1])
+
+
 def test_duplicate_or_reversed_clock_is_rejected():
     timestamps = np.asarray([0.0, 0.1, 0.1, 0.2, 8.0])
     with pytest.raises(ValueError, match="duplicates"):

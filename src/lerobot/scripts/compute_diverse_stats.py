@@ -86,7 +86,13 @@ def collect_diverse(root: str | Path, chunk_size: int, encoding: str) -> dict[in
     states: dict[int, list[np.ndarray]] = defaultdict(list)
 
     for index, row in enumerate(selection.rows):
-        sample = buffer.load_sample(index)
+        try:
+            sample = buffer.load_sample(index)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to load actor row {index}: {row['episode_id']} anchor "
+                f"{row['anchor_s']}s (frame {row['anchor_frame']}, source {row['source']})"
+            ) from exc
         chunk = np.asarray(sample["action"], dtype=np.float32)
         if chunk.shape[0] != chunk_size:
             raise ValueError(

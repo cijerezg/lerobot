@@ -1288,7 +1288,14 @@ def sample_action_chunk(
     if values.ndim != 2 or values.shape[0] != timestamps.shape[0]:
         raise ValueError("Actions must have shape [time, action_dimension]")
     targets = anchor_timestamp + lead_s + ACTION_OFFSETS_SECONDS
-    if targets[0] < timestamps[0] or targets[-1] > timestamps[-1]:
+    # Decimal anchor grids (notably FMB's 10 Hz grid) can put a mathematically exact
+    # endpoint a few ulps past the stored final timestamp.  Use the same absolute
+    # coincidence tolerance used below for sample matching; genuine crossings remain
+    # rejected, while exact endpoints are clipped back to the final source sample.
+    if (
+        targets[0] < timestamps[0] - coincidence_tolerance_s
+        or targets[-1] > timestamps[-1] + coincidence_tolerance_s
+    ):
         raise ValueError("Action chunk crosses an episode boundary")
     right = np.clip(np.searchsorted(timestamps, targets, side="left"), 0, len(timestamps) - 1)
     left = np.clip(right - 1, 0, len(timestamps) - 1)

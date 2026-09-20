@@ -36,7 +36,7 @@ from lerobot.rl.data_sources.rebot_role_adapter import (
 )
 from lerobot.utils.constants import ACTION, OBS_STATE
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v2"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v3"
 # Small enough that the preallocated (sparse) frame banks cost nothing on disk.
 TEST_SPEC = DiverseSampleSpec(image_size=(48, 64), depth_size=(48, 64))
 

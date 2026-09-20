@@ -40,8 +40,8 @@ from lerobot.rl.data_sources.diverse_actor_buffer import (  # noqa: E402
     DiverseSampleSpec,
 )
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v2"
-SOURCE_WORDS = ("droid", "robochallenge", "fmb", "ur7e", "rebot", "arx5")
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v3"
+SOURCE_WORDS = ("droid", "robochallenge", "fmb", "ur7e", "rebot", "arx5", "yam")
 
 
 @pytest.fixture(scope="module")
@@ -104,11 +104,11 @@ def test_a_missing_task_is_an_error_not_an_empty_clause() -> None:
 
 def test_every_selected_episode_yields_a_task(selection) -> None:
     tasks, subtasks = diverse_vocabulary(selection)
-    # v2 corpus minus holdout_episodes.json (5 episodes, 2026-09-18): 344 -> 340 (v1: 121).
-    assert len(tasks) == 340
+    # v3 corpus minus holdout_episodes.json (6 episodes, 2026-09-19).
+    assert len(tasks) == 491
     # The step vocabulary is the reviewed one-action atoms, not the parent intervals
     # (243 of those before 2026-09-09), so it speaks ReBot's grasp/move/release grammar.
-    assert len(subtasks) == 782  # 792 before the holdout; v1: 445
+    assert len(subtasks) == 880
     assert all(text == text.strip() and text for text in subtasks)
     assert FMB_TASK_TEXT in tasks
     assert tasks == sorted(tasks) and subtasks == sorted(subtasks)

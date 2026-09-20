@@ -89,8 +89,8 @@ cache_policy: require   # a cache miss is a hard error — 180k frames of video 
 # -----------------------------------------------------------------------------
 diverse:
   enabled: true
-  root: outputs/diverse_robot_dataset_v3    # 2026-09-19 v3 corpus: v2 + MolmoAct top-up + YAM single arm; migration/diverse_v3_control_mode_2026-09-19/
-  cache_dir: outputs/buffer_cache-diverse-v3
+  root: outputs/diverse_robot_dataset_v2    # 2026-09-18 v2 corpus (705 eps; training selection 700 / 77,790 after holdout_episodes.json)
+  cache_dir: outputs/buffer_cache-diverse-v2
   # 50/50 by group: equal expected gradient mass for the established and the new
   # distributions. Row counts would have given ReBot ~3:1 by arithmetic alone.
   rebot_weight: 1.0
@@ -364,7 +364,7 @@ policy:
   # while the corpus is in radians (its anchor-delta span is ~60x the others'). Built
   # over the actual training selection by compute_diverse_stats.py.
   action_encoding_stats_path: null
-  embodiment_stats_path: outputs/stats/action_stats_anchor_diverse-rebot-v4.pt   # 2026-09-19 v3 corpus (9 rows, layouts 0-8: + YAM); ReBot row identical to -v3
+  embodiment_stats_path: outputs/stats/action_stats_anchor_diverse-rebot-v1.pt
 
   # ---- Fixed temporal-band auxiliary on the flow residual ------------------
   # Ordinary flow MSE remains unchanged and covers all k=0..29. This adds a fixed

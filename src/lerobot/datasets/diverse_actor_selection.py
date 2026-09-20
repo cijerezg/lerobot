@@ -56,34 +56,35 @@ from typing import Any
 from lerobot.datasets.diverse_corpus import HISTORY_OFFSETS_S
 from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
 
-# ── Corpus ledger (diverse_robot_dataset_v2, 2026-09-18; v1 was 404 / 60_728) ──────
+# ── Corpus ledger (diverse_robot_dataset_v3, 2026-09-19) ──────────────────────
 # The training selection is all of it minus the held-out episodes. Startup asserts these,
 # so a corpus that was rebuilt, half-copied, or filtered cannot quietly train on a
 # different dataset.
-# v2 = v1 + MolmoAct Tabletop 36 + Household 185 + DROID CLVR/RAIL 20 + FMB multi-object 60,
-# views from 0 s (`views --min-anchor-s 0`); the droid count is 3 above v1 because the
-# anchor grid starts at 0 s instead of 6 s and three anchors sit on a float tie.
-# Full corpus 705 episodes / 78,205 anchors; `<root>/holdout_episodes.json` (2026-09-18)
-# removes 5 episodes / 415 anchors (droid 2 / 191, droid_success 1 / 68, molmoact 1 / 35,
-# robochallenge 1 / 121) for the shared-representations probe.
+# Full corpus minus `<root>/holdout_episodes.json`: 903 episodes / 88,268 anchors.
+# The 2026-09-19 held-out ledger removes 6 episodes / 498 anchors:
+# droid__IPRL__ep005438 (53), droid__WEIRD__ep013684 (138),
+# droid_success__IRIS__ep021741 (68), molmoact__household__ep005336 (35),
+# robochallenge__hang_the_cup__ep000970 (121), yam__duster__ep000003 (83).
 HOLDOUT_FILE = "holdout_episodes.json"
-EXPECTED_EPISODES = 700
-EXPECTED_ANCHORS = 77_790
+EXPECTED_EPISODES = 903
+EXPECTED_ANCHORS = 88_268
 EXPECTED_EPISODES_BY_SOURCE = {
     "robochallenge": 199,
     "droid": 48,
     "droid_success": 69,
-    "molmoact": 220,
+    "molmoact": 416,
     "ur7e": 4,
     "fmb": 160,
+    "yam": 7,
 }
 EXPECTED_ANCHORS_BY_SOURCE = {
-    "robochallenge": 40_585,
+    "robochallenge": 40_387,
     "droid": 5_586,
     "droid_success": 7_752,
-    "molmoact": 11_724,
+    "molmoact": 21_657,
     "ur7e": 954,
     "fmb": 11_189,
+    "yam": 743,
 }
 
 

@@ -32,7 +32,7 @@ from lerobot.rl.data_sources.diverse_actor_buffer import (  # noqa: E402
 from lerobot.types import TransitionKey  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
 
-DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v2"
+DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v3"
 BASE_PATH = Path(__file__).resolve().parents[3] / "outputs/MolmoAct2"
 ROLE_KEYS = [f"{OBS_IMAGES}.external_0", f"{OBS_IMAGES}.external_1", f"{OBS_IMAGES}.wrist_0"]
 
