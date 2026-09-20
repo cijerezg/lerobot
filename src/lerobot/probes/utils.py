@@ -500,6 +500,32 @@ def fill_absent_cameras(obs: dict, configured_keys) -> tuple[dict, dict]:
     return obs, flags
 
 
+def dataset_identity_columns(dataset, cfg) -> dict:
+    """Resolve a single-embodiment probe root using the training label loader.
+
+    Call once per dataset, before collecting frames. Offline training takes the
+    name from the dataset, independently of the policy.embodiment fallback.
+    """
+    from lerobot.rl.offline_dataset_utils import _embodiment_indices_for_dataset
+
+    dataset_cfg = getattr(cfg, "dataset", None)
+    sources = getattr(dataset_cfg, "sources", None) or []
+    root = os.path.realpath(str(dataset.root))
+    override = None
+    for source in sources:
+        if os.path.realpath(str(source.root)) == root:
+            override = getattr(source, "embodiment", None)
+            break
+    if not sources and getattr(dataset_cfg, "root", None):
+        if os.path.realpath(str(dataset_cfg.root)) == root:
+            override = getattr(dataset_cfg, "embodiment", None)
+    indices, _ = _embodiment_indices_for_dataset(dataset, len(dataset), override)
+    unique = indices.unique().tolist()
+    if len(unique) != 1:
+        raise ValueError(f"Probe root {dataset.root} must have one embodiment; found {unique}.")
+    return {"embodiment_index": int(unique[0])}
+
+
 def identity_columns(cfg) -> dict:
     """Identity columns per-embodiment normalization needs on every batch.
 

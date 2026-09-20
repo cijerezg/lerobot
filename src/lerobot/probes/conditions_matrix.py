@@ -110,6 +110,7 @@ from lerobot.probes.utils import (
     DEPLOYMENT_METADATA,
     as_image,
     build_episode_index,
+    dataset_identity_columns,
     load_extra_dataset,
     makedirs,
     probe_frame_inputs,
@@ -204,6 +205,7 @@ def _even_picks(n_available: int, n_wanted: int) -> np.ndarray:
 def _rebot_samples(dataset, cfg, name: str, holdout: bool, rng) -> list[dict]:
     """One sample per chosen frame of every (instance, phase) window of a ReBot root."""
     p = cfg.probe_parameters
+    identity = dataset_identity_columns(dataset, cfg)
     windows = json.load(open(os.path.join(dataset.root, "meta", "subtask_windows.json")))["episodes"]
     ep_index = build_episode_index(dataset)
     stride = probe_image_stride(cfg)
@@ -238,6 +240,7 @@ def _rebot_samples(dataset, cfg, name: str, holdout: bool, rng) -> list[dict]:
                 if int(dataset.hf_dataset[global_idx]["frame_index"].item()) != f:
                     raise ValueError(f"{name} episode {ep}: global index {global_idx} is not frame {f} of the episode")
                 samples.append({
+                    **identity,
                     "kind": "rebot", "source_key": name, "robot": REBOT, "source": name,
                     "episode": f"{name}/{ep}", "index": int(global_idx), "frame": int(f),
                     "instance": inst, "object_class": cls, "phase": verb, "destination": dest,
@@ -321,7 +324,8 @@ def _rebot_inputs(dataset, cfg, sample: dict, chunk_size: int) -> dict:
     capture never forwards and which not every ReBot root carries."""
     frame = probe_frame_inputs(dataset, cfg, sample["index"], chunk_size, with_gripper_event_targets=False)
     return {"obs": frame["obs"], "task": frame["task"], "subtask": frame["subtask"],
-            "metadata": dict(DEPLOYMENT_METADATA), "extra": None}
+            "metadata": dict(DEPLOYMENT_METADATA),
+            "extra": {"embodiment_index": sample["embodiment_index"]}}
 
 
 @torch.no_grad()

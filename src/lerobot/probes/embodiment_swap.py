@@ -5,23 +5,20 @@ The action prompt opens with an embodiment clause, ``The robot is {a/an} {name}.
 ``embodiment_index`` with no training dropout. Two facts about the training mixture
 decide what a swap can mean:
 
-  * Every diverse-corpus row carries its own name (Franka Panda, UR5, ARX5, UR7e, …), so
-    for a diverse frame the *training-regime* prompt is the one with its own label.
-  * ReBot rows carry NO clause. ``RoleAlignedBuffer`` stamps ``action_layout_id`` only,
-    and with ``policy.embodiment`` unset the processor's default index is $-1$, which
-    omits the sentence. For a ReBot frame the training-regime prompt is therefore the
-    clause-free one, and ``The robot is a Rebot B601.`` is itself a prompt the model has
-    never seen on ReBot images. (If ``policy.embodiment`` is set the probe reads that as
-    ReBot's home label instead; the provenance box says which.)
+  * Diverse-corpus rows carry their own robot name.
+  * ReBot rows also carry their name: the offline label loader materializes
+    ``embodiment_index`` from the dataset metadata or its configured source override.
+    ``RoleAlignedBuffer`` preserves it while adding the action-layout identity.
 
-So the probe has a *home* prompt per frame — clause-free on ReBot, own label on diverse —
-and every other label is a swap measured from it.
+The home prompt uses that training identity on both sides. On the configured ReBot
+roots it is ``The robot is a Rebot B601.``; removing the clause is an intervention.
+The probe resolves the name with the training label loader, not policy.embodiment.
 
 The second sentence of the prompt is the control-mode clause, ``The control mode is joint
 space.`` / ``... end-effector space.``, rendered on every row from the layout record behind
 ``action_layout_id`` (``ACTION_LAYOUTS[id].control_mode``; MolmoAct rows are the only
 end-effector layout). It is the second axis: the home prompt is the home name at the home
-mode — ReBot: no name + joint (``cfg.diverse.rebot_layout``); diverse: own name + own
+mode — ReBot: its dataset name + joint (``cfg.diverse.rebot_layout``); diverse: own name + own
 layout's mode — and the grid is every name x every mode. Every cell is one row of a single
 batched ``predict_action_chunk_batch`` on the same frame under the same seeded flow noise
 and the same deployment metadata clause, so the only things that vary are the two clauses:
@@ -44,17 +41,16 @@ one number everything is read in is the separation
 
 $$S(L)=\frac{\lVert a^{(L)}-a^{(h)}\rVert}{\operatorname{mean}_{s\neq s'}\lVert a^{(s)}-a^{(s')}\rVert}$$
 
-— the swap's displacement over the seed floor, $S\approx1$ meaning the name did nothing
-the sampler was not already doing. It is a within-frame ratio, so ReBot frames and diverse
+— the swap's displacement over the seed floor. Under paired noise, $S\approx0$
+means little action change; $S\approx1$ means a change as large as reseeding. It is a within-frame ratio, so ReBot frames and diverse
 frames sit on one scale with no cross-domain normalization in the way, and the diverse
 chunks are normalized with their own row's statistics (the row's identity columns ride
 into the pack step) exactly as in training.
 
 **1. ReBot frames under other robots' names.** $S(\text{Franka Panda})$, $S(\text{UR5})$,
-… on ReBot images, plus $S(\text{Rebot B601})$ — the never-trained "correct" label — and
-the unseen strings as a control for "any new sentence moves the chunk". If the trained
-names move the chunk and the unseen ones do not, the name is read as a robot and not as
-tokens.
+… on ReBot images, plus $S(\text{none})$ for removing the trained name, and names
+absent from this fine-tuning selection as a text sensitivity comparison. These names
+may have appeared in pretraining. Displacement alone does not establish useful behavior.
 
 **2. Diverse frames with the label swapped.** $S(\text{none})$ — what removing the clause
 the model always saw does — against $S(\text{Rebot B601})$ and the other trained names,
@@ -109,7 +105,7 @@ import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.embodiment import EMBODIMENT_NAMES, canonical_embodiment
+from lerobot.datasets.embodiment import EMBODIMENT_NAMES, canonical_embodiment, embodiment_name
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.domain_representations import _diverse_inputs
 from lerobot.probes.manifest import Metric, Panel, write_index
@@ -125,6 +121,7 @@ from lerobot.probes.metadata_steering import (
 )
 from lerobot.probes.utils import (
     DEPLOYMENT_METADATA,
+    dataset_identity_columns,
     load_probe_dataset,
     makedirs,
     panel_caption as _caption,
@@ -201,9 +198,9 @@ def _open_holdout(cfg) -> tuple:
     return buffer, trained - {None}
 
 
-def _rebot_home(cfg) -> str:
-    configured = canonical_embodiment(getattr(cfg.policy, "embodiment", None))
-    return NONE if configured is None else _slug(configured)
+def _rebot_home(dataset, cfg) -> str:
+    name = embodiment_name(dataset_identity_columns(dataset, cfg)["embodiment_index"])
+    return NONE if name is None else _slug(name)
 
 
 def _rebot_mode(cfg) -> str:
@@ -371,7 +368,7 @@ def _render(rows: list[dict], summary: dict, trained: set[str], homes: dict[str,
     ax_sep.set_title(
         "Does the name move the chunk more than noise does?\n"
         f"ReBot frames: trained foreign {summary['foreign_trained_on_rebot_sep_median']:.2f}x, "
-        f"Rebot B601 {summary['rebot_label_on_rebot_sep_median']:.2f}x, "
+        f"name removed {summary['none_on_rebot_sep_median']:.2f}x, "
         f"unseen {summary['foreign_unseen_on_rebot_sep_median']:.2f}x\n"
         f"diverse frames: none {summary['none_on_diverse_sep_median']:.2f}x, "
         f"Rebot B601 {summary['rebot_label_on_diverse_sep_median']:.2f}x, "
@@ -382,7 +379,7 @@ def _render(rows: list[dict], summary: dict, trained: set[str], homes: dict[str,
         "One frame gives one point per box; each label's displacement from the frame's HOME prompt (ReBot: "
         f"{'no clause' if homes[REBOT] == NONE else LABELS[homes[REBOT]]}; diverse: its own label),",
         "over the home prompt reseeded. A frame's own label is its home, so it has no point in its box. "
-        "Dashed line = the floor: at 1 the name did nothing the sampler was not already doing.",
+        "Dashed line = reseeding magnitude (S=1); S=0 means no paired action change.",
     ], y=-0.22)
 
     # (b) diverse frames by their own robot
@@ -452,7 +449,7 @@ def _render(rows: list[dict], summary: dict, trained: set[str], homes: dict[str,
         for i, name in enumerate(CONDITIONS):
             for j, mode in enumerate(MODES):
                 cells[i, j] = _median(by_domain[domain], f"{_cell(name, mode)}_sep")
-        image = ax.imshow(np.log10(cells), cmap="viridis", aspect="auto")
+        image = ax.imshow(np.log10(np.maximum(cells, 1e-9)), cmap="viridis", aspect="auto")
         for i in range(len(CONDITIONS)):
             for j in range(len(MODES)):
                 home = np.isnan(cells[i, j])
@@ -510,7 +507,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     rebot = _rebot_samples(dataset, cfg, n_frames)
     diverse_buffer, trained_names = _open_holdout(cfg)
     diverse = _diverse_samples(diverse_buffer, n_frames)
-    homes = {REBOT: _rebot_home(cfg)}
+    homes = {REBOT: _rebot_home(dataset, cfg)}
     rebot_mode = _rebot_mode(cfg)
     if homes[REBOT] != NONE:
         trained_names.add(LABELS[homes[REBOT]])
@@ -575,7 +572,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         "rebot_label_joint_on_diverse_sep_median": _median(by_domain[DIVERSE], f"{rebot_joint}_sep"),
         "mode_swapped_on_rebot_tempo_median": _median(by_domain[REBOT], "mode_swapped_tempo"),
         "mode_swapped_on_diverse_tempo_median": _median(by_domain[DIVERSE], "mode_swapped_tempo"),
-        "rebot_label_on_rebot_sep_median": _median(by_domain[REBOT], f"{rebot_slug}_sep"),
+        "none_on_rebot_sep_median": _median(by_domain[REBOT], f"{NONE}_sep"),
         "foreign_trained_on_rebot_sep_median": _median(by_domain[REBOT], "foreign_trained_sep"),
         "foreign_unseen_on_rebot_sep_median": _median(by_domain[REBOT], "foreign_unseen_sep"),
         "none_on_diverse_sep_median": _median(by_domain[DIVERSE], f"{NONE}_sep"),
@@ -642,13 +639,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
             for group in [[r for r in by_domain[DIVERSE] if r["home_mode"] == mode]]
         },
         "reading": (
-            "S ~ 1 on every label => the embodiment clause is not read on that side. Trained foreign "
-            "names >> unseen names on ReBot frames => the name is read as a robot, not as new tokens. "
-            "On diverse frames, Rebot B601 above the other trained names => the ReBot label is a specific "
-            "move; none ~ 1 => dropping the clause costs nothing. shared_cosine at its null => the swap "
-            "is a per-frame displacement, not one global offset. mode_swapped >> 1 => the control-mode "
-            "clause is read (on the MolmoAct home the joint clause is the DROID/FMB prompt on a pose-space "
-            "image); mode_none ~ 1 => the clause carries nothing the image and the name did not."
+            "S near 0 means little action change under paired noise; S near 1 means a change "
+            "as large as reseeding, not an ignored clause. Larger S measures sensitivity, not "
+            "action quality or successful transfer. Trained/unseen refers only to this fine-tuning "
+            "selection. ReBot home uses the dataset's training identity; none removes its name. "
+            "Direction cosines and tempo describe the changes; neither establishes improvement."
         ),
     }
     summary["data"] = {
@@ -671,12 +666,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
                           f"(no clause, joint, end_effector control-mode clause), plus {n_seeds - 1} "
                           "reseed(s) of the home prompt for the floor; deployment metadata clause "
                           "(quality 5, no mistake, speed 5) on every row"],
-            ["Home prompt", f"ReBot frames: ``{homes[REBOT]}`` + ``{rebot_mode}``" +
-             (" — ReBot training rows carry no embodiment clause (RoleAlignedBuffer stamps action_layout_id "
-              "only; policy.embodiment unset), so ``Rebot B601`` is an unseen prompt on ReBot images; the "
-              "control-mode clause is rendered from that layout"
-              if homes[REBOT] == NONE else " (policy.embodiment; control-mode clause from diverse.rebot_layout)") +
-             "; diverse frames: the row's own label + its layout's control mode, as training rendered them"],
+            ["Home prompt", f"ReBot frames: ``{homes[REBOT]}`` + ``{rebot_mode}`` "
+             "(identity resolved by the training dataset label loader); diverse frames: the row's "
+             "own label + its layout's control mode. Removing the name is an intervention."],
             ["Control-mode axis", "``mode_swapped`` = the home name under the other space (joint <-> "
                                   "end_effector), ``mode_none`` = the home name with no control-mode clause; "
                                   "``{name}@{mode}`` columns are the full grid, ``{name}`` columns the name "
@@ -709,9 +701,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
                    good="none", fmt=2, baseline=1.0, primary=True, trend=True,
                    note="Median over ReBot frames of the mean separation under the trained diverse names. "
                         "1 = the name moves the chunk no further than reseeding."),
-            Metric("rebot_label_on_rebot_sep_median", "ReBot frames: 'Rebot B601' / floor",
+            Metric("none_on_rebot_sep_median", "ReBot frames: name removed / floor",
                    good="none", fmt=2, baseline=1.0, trend=True,
-                   note="The never-trained correct label on ReBot images."),
+                   note="Removing the embodiment clause supplied by the training dataset."),
             Metric("foreign_unseen_on_rebot_sep_median", "ReBot frames: unseen name / floor",
                    good="none", fmt=2, baseline=1.0,
                    note="Names no training row carries: the 'any new sentence' control."),
@@ -727,7 +719,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
             Metric("mode_swapped_on_rebot_sep_median", "ReBot frames: control mode swapped / floor",
                    good="none", fmt=2, baseline=1.0, trend=True,
                    note=f"The home name under the other space ({_swapped(rebot_mode)} on a {rebot_mode} robot). "
-                        "1 = the control-mode clause is not read on ReBot frames."),
+                        "1 = the change matches reseeding magnitude; 0 = no paired change."),
             Metric("mode_none_on_rebot_sep_median", "ReBot frames: control-mode clause removed / floor",
                    good="none", fmt=2, baseline=1.0,
                    note="The pre-clause legacy prompt on a ReBot frame."),
@@ -746,8 +738,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     )
     logging.info(
         f"[embodiment_swap] rebot n={len(by_domain[REBOT])}: foreign trained "
-        f"{summary['foreign_trained_on_rebot_sep_median']:.2f}x, Rebot B601 "
-        f"{summary['rebot_label_on_rebot_sep_median']:.2f}x, unseen {summary['foreign_unseen_on_rebot_sep_median']:.2f}x  |  "
+        f"{summary['foreign_trained_on_rebot_sep_median']:.2f}x, name removed "
+        f"{summary['none_on_rebot_sep_median']:.2f}x, unseen {summary['foreign_unseen_on_rebot_sep_median']:.2f}x  |  "
         f"diverse n={len(by_domain[DIVERSE])}: none {summary['none_on_diverse_sep_median']:.2f}x, Rebot B601 "
         f"{summary['rebot_label_on_diverse_sep_median']:.2f}x, foreign trained "
         f"{summary['foreign_trained_on_diverse_sep_median']:.2f}x  |  shared cos rebot "

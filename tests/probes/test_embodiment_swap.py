@@ -6,12 +6,14 @@ the ReBot name shifts it by its own larger vector, unseen names do nothing, and 
 the embodiment clause on a diverse frame shifts it by a small vector. On the second axis,
 the other control-mode clause adds a large vector, no control-mode clause a small one.
 Flow noise is a whisper, so the separations must come out far above 1 for the read
-prompts and near 1 for the unseen names.
+prompts and zero for the ignored names under paired noise.
 """
 
 import json
 import os
 from types import SimpleNamespace
+
+from datasets import Dataset
 
 import numpy as np
 import pytest
@@ -39,7 +41,7 @@ class FakeAdapter:
         pass
 
     def flow_noise_like(self, n, seed):
-        return torch.randn(n, CHUNK, DIM, generator=torch.Generator().manual_seed(seed))
+        return torch.randn(1, CHUNK, DIM, generator=torch.Generator().manual_seed(seed)).expand(n, -1, -1).clone()
 
     def predict_action_chunk_batch(
         self, obs, task, subtasks, *, metadatas, noise, embodiments, control_modes, extra_complementary
@@ -49,15 +51,17 @@ class FakeAdapter:
         own_mode = "end_effector" if layout == MOLMOACT_LAYOUT else "joint"
         chunks = []
         for i, (name, mode) in enumerate(zip(embodiments, control_modes, strict=True)):
-            shift = torch.zeros(1, DIM)
+            shift = REBOT_VEC.clone() if layout is None else torch.zeros(1, DIM)
             if name == "":
-                shift = NONE_VEC if extra_complementary is not None else torch.zeros(1, DIM)
+                shift = NONE_VEC
             elif name == "Rebot B601":
                 shift = REBOT_VEC
             elif name in TRAINED:
                 # One shared direction, a different magnitude per name: pairwise cosine +1,
                 # and a frame's own label differs from every other trained name.
                 shift = FOREIGN * (1 + sorted(TRAINED).index(name))
+                if layout is None:
+                    shift = shift + REBOT_VEC
             if mode == "":
                 shift = shift + NO_MODE_VEC
             elif mode != own_mode:
@@ -68,6 +72,11 @@ class FakeAdapter:
 
 class FakeDataset:
     root, repo_id = "/does/not/exist", "fake"
+    meta = SimpleNamespace(robot_type="rebot_b601_follower")
+    hf_dataset = Dataset.from_dict({"frame_index": [0, 1]})
+
+    def __len__(self):
+        return len(self.hf_dataset)
 
 
 class FakeBuffer:
@@ -141,12 +150,14 @@ def test_artifacts_written(result):
 def test_name_axis(result):
     _, summary, rows = result
     assert summary["foreign_trained_on_rebot_sep_median"] > 20
-    assert summary["rebot_label_on_rebot_sep_median"] > 20
+    assert summary["none_on_rebot_sep_median"] > 20
+    assert summary["rebot_home"] == "rebot_b601"
+    assert "Rebot B601" in summary["trained_labels"]
     assert summary["foreign_unseen_on_rebot_sep_median"] < 1.5
     assert summary["none_on_diverse_sep_median"] > 5
     assert summary["rebot_label_on_diverse_sep_median"] > 5 and summary["foreign_trained_on_diverse_sep_median"] > 5
     # On diverse frames the fake reads an unseen name as "no clause", which is a move away
-    # from the own-label home by construction; the near-1 unseen check is ReBot-side only.
+    # from the own-label home by construction; the zero-effect check is ReBot-side only.
     # On diverse frames the fake's own-label scale sits mid-ramp, so the other names' shifts
     # have mixed signs there; the +1 pairwise check is meaningful on ReBot frames only.
     assert summary["rebot_foreign_pair_cosine_median"] > 0.99
@@ -156,7 +167,7 @@ def test_name_axis(result):
     assert summary["rebot_shared_cosine_median"] > 0.99 and summary["diverse_shared_cosine_median"] > 0.99
     # A frame's own label is its home and gets no separation entry.
     assert all("franka_panda_sep" not in r for r in rows if r["domain"] == es.DIVERSE and r["own"] == "Franka Panda")
-    assert all("none_sep" not in r for r in rows if r["domain"] == es.REBOT)
+    assert all("rebot_b601_sep" not in r and "none_sep" in r for r in rows if r["domain"] == es.REBOT)
     assert set(summary["diverse_by_robot"]) == {"Franka Panda", "UR5"}
 
 
@@ -177,13 +188,13 @@ def test_control_mode_axis(result):
     assert summary["mode_none_on_diverse_sep_median"] > 5
     assert summary["rebot_label_joint_on_diverse_sep_median"] > 5
     assert set(summary["per_cell"][es.REBOT]) == {f"{n}@{m}" for n in es.CONDITIONS for m in es.MODES}
-    # ReBot home = no name + joint: that cell has no entry, every other cell of the grid does.
+    # ReBot home is its training name + joint; removing the name is an intervention.
     rebot = [r for r in rows if r["domain"] == es.REBOT]
-    assert all(r["home"] == es.NONE and r["home_mode"] == "joint" for r in rebot)
-    assert all("none@joint_sep" not in r and "none@none_sep" in r and "none@end_effector_sep" in r for r in rebot)
+    assert all(r["home"] == "rebot_b601" and r["home_mode"] == "joint" for r in rebot)
+    assert all("rebot_b601@joint_sep" not in r and "none@joint_sep" in r for r in rebot)
     assert all(r["franka_panda_sep"] == r["franka_panda@joint_sep"] for r in rebot)
-    assert all(r["mode_swapped_sep"] == r["none@end_effector_sep"] for r in rebot)
-    assert all(r["mode_none_sep"] == r["none@none_sep"] for r in rebot)
+    assert all(r["mode_swapped_sep"] == r["rebot_b601@end_effector_sep"] for r in rebot)
+    assert all(r["mode_none_sep"] == r["rebot_b601@none_sep"] for r in rebot)
 
 
 def test_diverse_homes_split_by_mode(result):
@@ -201,3 +212,54 @@ def test_diverse_homes_split_by_mode(result):
     assert all(r["rebot_b601_sep"] == r["rebot_b601@end_effector_sep"] for r in molmoact)
     joint = [r for r in rows if r["domain"] == es.DIVERSE and r["source"] != "molmoact"]
     assert all(r["rebot_b601_sep"] == r["rebot_b601@joint_sep"] for r in joint)
+
+
+@pytest.mark.parametrize(
+    "columns,override,expected",
+    [
+        ({}, None, "Rebot B601"),
+        ({}, "UR5", "UR5"),
+        ({"embodiment_index": [3, 3]}, "UR5", "ARX5"),
+        ({"source.robot_type": ["Franka", "Franka"]}, "UR5", "Franka Panda"),
+    ],
+)
+def test_both_probes_match_training_prompt_identity(tmp_path, monkeypatch, columns, override, expected):
+    from lerobot.datasets.embodiment import embodiment_index
+    from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep
+    from lerobot.probes import conditions_matrix as cm
+    from lerobot.rl.offline_dataset_utils import _embodiment_indices_for_dataset
+
+    dataset = FakeDataset()
+    dataset.root = str(tmp_path)
+    dataset.hf_dataset = Dataset.from_dict({"frame_index": [0, 1], **columns}).with_format("numpy")
+    cfg = SimpleNamespace(
+        policy=SimpleNamespace(embodiment="SO-101"),  # not the offline training identity
+        dataset=SimpleNamespace(sources=[SimpleNamespace(root=str(tmp_path), embodiment=override)]),
+        probe_parameters=SimpleNamespace(conditions_episodes_per_cell=2, conditions_frames_per_episode_cell=2),
+    )
+    (tmp_path / "meta").mkdir()
+    (tmp_path / "meta" / "subtask_windows.json").write_text(json.dumps({
+        "episodes": {"0": [{"from_index": 0, "to_index": 2, "subtask": "grasp the cup"}]},
+    }))
+    monkeypatch.setattr(cm, "build_episode_index", lambda _: {0: [0, 1]})
+    monkeypatch.setattr(cm, "probe_image_stride", lambda _: 1)
+    monkeypatch.setattr(cm, "probe_frame_inputs", lambda *a, **kw: {
+        "obs": {}, "task": "put the cup away", "subtask": "grasp the cup",
+    })
+    sample = cm._rebot_samples(dataset, cfg, "rebot", False, np.random.RandomState(0))[0]
+    inputs = cm._rebot_inputs(dataset, cfg, sample, CHUNK)
+    training, _ = _embodiment_indices_for_dataset(dataset, len(dataset), override)
+    pack = object.__new__(MolmoAct2PackInputsProcessorStep)
+    pack.embodiment_names = list(es.EMBODIMENT_NAMES)
+    assert int(training[0]) == sample["embodiment_index"] == embodiment_index(expected)
+    assert pack._extract_embodiment_texts(inputs["extra"], 1) == [expected]
+    assert es._rebot_home(dataset, cfg) == es._slug(expected)
+
+
+def test_ignored_name_has_zero_paired_separation():
+    row, _ = es._measure_frame(
+        FakeAdapter(), {"obs": {}, "task": "task", "subtask": "step", "extra": None},
+        "rebot_b601", "joint", {es._slug(n) for n in TRAINED} | {"rebot_b601"}, 3,
+    )
+    assert row["foreign_unseen_sep"] == 0.0
+    assert row["none_sep"] > 0.0
