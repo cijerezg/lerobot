@@ -11,17 +11,15 @@ tape, block come from the noun of the ReBot subtask window or of the corpus atom
 phases are grasp, move, release (return carries no object). ReBot additionally keeps the
 object INSTANCE (spray bottle, pill bottle, cup, tape roll, sock, shirt) for its own
 matrix. Robots: rebot, droid (droid + droid_success), molmoact, robochallenge. A cell
-exists on a robot when at least two of its episodes carry it. Per (episode, cell) at
-most ``conditions_frames_per_episode_cell`` frames, evenly spaced over the window, and at
-most ``conditions_episodes_per_cell`` episodes per cell: every cell is an episode-balanced
+exists on a robot when at least two of its episodes carry it. One interior frame per (episode, class, phase), at most
+``conditions_episodes_per_cell`` training episodes per cell, and at most
+``conditions_max_frames`` frames including holdout: every cell is an episode-balanced
 sample, and the frame rate is irrelevant because every similarity below is between
 frames of DIFFERENT episodes.
 
 **Text conditions.** Every frame is captured twice: with its real task and subtask text,
-and with neutral text that names no object ("Put the objects in the containers." /
-"grasp the object"). The subtask clause under real text is the language ceiling, where
-the matrices must agree because the words do. Object structure that survives the neutral
-text came through the images.
+and with constant task/step text ("Manipulate the object." / "continue the task"). Real text can directly carry object and phase labels. Structure that survives constant text can come from images or state; it is not proof
+of visual grounding.
 
 **Vectors.** Per layer and token group, the pooled hidden state from the adapter seam
 ``capture_layer_representations`` (flow time t = 0, one fixed noise draw for every frame).
@@ -40,8 +38,8 @@ same-episode pairs removed; on the diagonal it is the cell's cross-episode consi
 **Score.** Spearman $\\rho_{AB}$ over the strict upper triangle of the cells both robots
 have. Null: 2,000 permutations of $B$'s cell labels, reported as the 95th percentile and
 a p-value. Ceiling: split each robot's episodes in half, $\\rho$ between the two half
-matrices, $\\sqrt{\\rho_{AA}\\rho_{BB}}$ averaged over 20 splits. Reported:
-$\\rho_{AB}$ / ceiling, the fraction of the reliable structure that is shared.
+matrices, $\\sqrt{\\rho_{AA}\\rho_{BB}}$ averaged over 20 splits. The ratio $\\rho_{AB}$ / ceiling remains a secondary diagnostic, not a calibrated fraction.
+Headlines use raw correlation and decoding at the configured fixed layer.
 
 **Organisation.** The upper triangle regressed on same-class and same-phase indicators
 (plus same-instance on ReBot's instance matrix): standardised weights per robot.
@@ -52,19 +50,19 @@ pair and both directions, ``dst``'s frames decoded by nearest cosine to ``src``'
 means over the cells both robots have, each robot centred on the mean of its shared-cell
 means (a different cell mix adds no offset). Balanced accuracy for the cell, the object
 class alone and the phase alone (chance 1/K). Ceiling: the same frames decoded with their
-own robot's leave-one-episode-out cell means. Cross at the ceiling = the same directions
-carry the code; cross at chance with the ceiling high = separate codes with the same shape.
+own robot's leave-one-episode-out cell means. Cross near the within-robot reference suggests alignment under this decoder; chance-level
+cross decoding can also reflect domain shift or limited sampling.
 
 **Held out.** ReBot: the validation set's windows. Diverse: ``<root>/holdout_episodes.json``
-(never trained on, decoded from video, see ``holdout_actor_selection``). Each held-out
+(excluded from new runs using this ledger, decoded from video; see ``holdout_actor_selection``). Each held-out
 frame is scored by inner product with its robot's training cell means: nearest-cell
 accuracy, and the Spearman between its similarity row and the training matrix's row for
 its true cell.
 
-**Output** (``<output_dir>/conditions_matrix/``): ``sharing_by_layer.png`` (rho / ceiling
+**Output** (``<output_dir>/conditions_matrix/``): ``sharing_by_layer.png`` (raw rho
 against depth, one panel per robot pair x text condition, null line), ``matrices.png``
-(every robot's class-level matrix at the peak layer, action and wrist groups),
-``rebot_instances.png`` (ReBot's instance-level matrix at the peak layer),
+(every robot's class-level matrix at the fixed headline layer, action and wrist groups),
+``rebot_instances.png`` (ReBot's instance-level matrix at the fixed headline layer),
 ``matrices_L<n>.png`` (the same at ``conditions_layers``, default 14, 28 and 32),
 ``decoding.png`` (ReBot pairs, both directions: cross-robot class and phase accuracy
 against the within-robot ceiling and chance, action and wrist groups, both texts, at the
@@ -150,12 +148,9 @@ GROUPS = (
 )
 GROUP_NAMES = tuple(g for _, g in GROUPS)
 TEXT_CONDITIONS = ("real", "neutral")
-NEUTRAL_TASK = "Put the objects in the containers."
-NEUTRAL_SUBTASK = {
-    "grasp": "grasp the object",
-    "move": "move the object to the container",
-    "release": "release the object in the container",
-}
+PROTOCOL = "bounded_v1_constant_text"
+NEUTRAL_TASK = "Manipulate the object."
+NEUTRAL_SUBTASK = "continue the task"
 N_NULL = 2000
 N_SPLITS = 20
 MIN_EPISODES_PER_CELL = 2
@@ -199,6 +194,8 @@ def _cap_episodes(episodes: list, cap: int, rng) -> list:
 
 
 def _even_picks(n_available: int, n_wanted: int) -> np.ndarray:
+    if n_wanted == 1:
+        return np.array([n_available // 2], dtype=int)
     return np.unique(np.linspace(0, n_available - 1, min(n_wanted, n_available), dtype=int))
 
 
@@ -286,6 +283,40 @@ def _diverse_samples(buffer, cfg, key: str, holdout: bool, rng) -> list[dict]:
     return samples
 
 
+def _bound_samples(samples: list[dict], max_frames: int, episodes_per_cell: int, seed: int) -> list[dict]:
+    """One interior frame per episode/class/phase, balanced cells under a hard cap.
+
+    ReBot instance windows share a class budget. Held-out samples are retained first;
+    training cells then receive frames round-robin, from independent episodes.
+    """
+    if max_frames < 1 or episodes_per_cell < 1:
+        raise ValueError("conditions frame and episode budgets must be positive")
+    unique = {}
+    for s in samples:
+        key = (s["holdout"], s["robot"], s["episode"], s["object_class"], s["phase"])
+        if key not in unique or abs(s["position"] - .5) < abs(unique[key]["position"] - .5):
+            unique[key] = s
+    rng = np.random.RandomState(seed)
+    buckets = defaultdict(list)
+    for s in unique.values():
+        buckets[(s["holdout"], s["robot"], s["object_class"], s["phase"])].append(s)
+    for key, bucket in buckets.items():
+        bucket.sort(key=lambda s: (s["episode"], s["index"]))
+        rng.shuffle(bucket)
+        if not key[0]:
+            del bucket[episodes_per_cell:]
+    selected = []
+    for held in (True, False):
+        keys = sorted(k for k in buckets if k[0] == held)
+        for n in range(max((len(buckets[k]) for k in keys), default=0)):
+            for k in keys:
+                if n < len(buckets[k]):
+                    selected.append(buckets[k][n])
+                    if len(selected) == max_frames:
+                        return selected
+    return selected
+
+
 def _plan_summary(samples: list[dict]) -> dict:
     out: dict = defaultdict(lambda: defaultdict(lambda: {"frames": 0, "episodes": set()}))
     for s in samples:
@@ -346,7 +377,7 @@ def collect(adapter, cfg, samples: list[dict], datasets: dict, buffers: dict, ca
         )
         _save_thumbs(inputs["obs"], cache_dir, i)
         for t, text in enumerate(TEXT_CONDITIONS):
-            task, subtask = (inputs["task"], s["subtask"]) if text == "real" else (NEUTRAL_TASK, NEUTRAL_SUBTASK[s["phase"]])
+            task, subtask = (inputs["task"], s["subtask"]) if text == "real" else (NEUTRAL_TASK, NEUTRAL_SUBTASK)
             reps = adapter.capture_layer_representations(
                 inputs["obs"], task, subtask=subtask, metadata=inputs["metadata"],
                 extra_complementary=inputs["extra"], noise_seed=seed,
@@ -367,11 +398,13 @@ def collect(adapter, cfg, samples: list[dict], datasets: dict, buffers: dict, ca
         arr.flush()
         np.save(os.path.join(cache_dir, f"{group}.present.npy"), present[group])
     with open(os.path.join(cache_dir, "meta.json"), "w") as f:
-        json.dump({"rows": meta, "groups": {g: list(a.shape[1:]) for g, a in arrays.items()}}, f)
+        json.dump({"protocol": PROTOCOL, "rows": meta, "groups": {g: list(a.shape[1:]) for g, a in arrays.items()}}, f)
 
 
 def _load_cache(cache_dir: str) -> tuple[list[dict], dict[str, np.memmap], dict[str, np.ndarray]]:
     meta = json.load(open(os.path.join(cache_dir, "meta.json")))
+    if meta.get("protocol") != PROTOCOL:
+        raise ValueError("Conditions cache uses an older prompt/sampling protocol; collect again.")
     arrays = {g: np.load(os.path.join(cache_dir, f"{g}.npy"), mmap_mode="r") for g in meta["groups"]}
     present = {g: np.load(os.path.join(cache_dir, f"{g}.present.npy")) for g in meta["groups"]}
     return meta["rows"], arrays, present
@@ -696,7 +729,10 @@ def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str)
 
     peak = _peak_layers(metrics, pairs)
     plot_by_layer(metrics, pairs, os.path.join(output_dir, "sharing_by_layer.png"))
-    headline_layer = peak.get("action", peak.get(next(iter(peak), "action"), 0))
+    available_layers = arrays.get("action", next(iter(arrays.values()))).shape[1]
+    headline_layer = min(int(cfg.probe_parameters.conditions_headline_layer), available_layers - 1)
+    if headline_layer < 0:
+        raise ValueError("conditions_headline_layer must be nonnegative")
     totals = {r: _robot_totals(rows, r, class_cells[r]) for r in robots}
     plot_matrices(matrices, robots, totals, headline_layer, os.path.join(output_dir, "matrices.png"))
     n_layers = max((k[2] for k in matrices), default=-1) + 1
@@ -756,6 +792,7 @@ def _summary(rows, metrics, organisation, holdout_rows, decoding, pairs, robots,
 
     n_layers = max((r["layer"] for r in metrics), default=-1) + 1
     summary = {
+        "protocol": PROTOCOL,
         "n_samples": len({r["row"] // len(TEXT_CONDITIONS) for r in rows}),
         "n_rows": len(rows),
         "robots": robots,
@@ -768,8 +805,8 @@ def _summary(rows, metrics, organisation, holdout_rows, decoding, pairs, robots,
         "headline": {},
     }
     for group in GROUP_NAMES:
-        layer = peak.get(group)
-        if layer is None:
+        layer = headline_layer
+        if not at(group, "real", layer):
             continue
         entry = {"layer": layer}
         for text in TEXT_CONDITIONS:
@@ -780,11 +817,11 @@ def _summary(rows, metrics, organisation, holdout_rows, decoding, pairs, robots,
                                  for o in organisation if o["group"] == group and o["text"] == "real" and o["layer"] == layer}
         entry["holdout"] = {h["robot"]: {"accuracy": h["accuracy"], "chance": h["chance"], "row_corr": h["row_corr"], "n_frames": h["n_frames"]}
                             for h in holdout_rows if h["group"] == group and h["text"] == "real" and h["layer"] == layer}
-        summary[f"peak_{group}"] = entry
-    # Flat headline numbers for the manifest: the action group at its peak layer.
+        summary[f"fixed_layer_{group}"] = entry
+    # Flat headline numbers for the manifest: action tokens at the fixed layer.
     for text in TEXT_CONDITIONS:
         for pair, r in at("action", text, headline_layer).items():
-            summary["headline"][f"{text}.{pair.replace('|', '_')}"] = r["rho_over_ceiling"]
+            summary["headline"][f"{text}.{pair.replace('|', '_')}"] = r["rho"]
     for h in holdout_rows:
         if h["group"] == "action" and h["text"] == "real" and h["layer"] == headline_layer:
             summary["headline"][f"holdout_accuracy.{h['robot']}"] = h["accuracy"]
@@ -809,7 +846,7 @@ GROUP_COLORS = {"img_wrist_0": "#2ca02c", "img_external_0": "#d62728", "subtask"
 
 
 def plot_by_layer(metrics: list[dict], pairs, path: str) -> None:
-    """rho / ceiling against layer: one row per robot pair, one column per text condition,
+    """raw Spearman rho against layer: one row per robot pair, one column per text condition,
     one curve per token group; dotted = the largest null 95th percentile over the groups."""
     pair_names = [f"{a}|{b}" for a, b in sorted(pairs, key=lambda p: (REBOT not in p, p))]
     if not pair_names:
@@ -821,7 +858,7 @@ def plot_by_layer(metrics: list[dict], pairs, path: str) -> None:
             ax = axes[i][j]
             null_by_layer: dict[int, list] = defaultdict(list)
             for group in GROUP_NAMES:
-                series = sorted((r["layer"], r["rho_over_ceiling"]) for r in metrics
+                series = sorted((r["layer"], r["rho"]) for r in metrics
                                 if r["pair"] == pair and r["text"] == text and r["group"] == group)
                 if not series:
                     continue
@@ -829,7 +866,7 @@ def plot_by_layer(metrics: list[dict], pairs, path: str) -> None:
                         color=GROUP_COLORS[group], linestyle="--" if group == "action" else "-", label=group)
                 for r in metrics:
                     if r["pair"] == pair and r["text"] == text and r["group"] == group:
-                        null_by_layer[r["layer"]].append(r["null_p95_over_ceiling"])
+                        null_by_layer[r["layer"]].append(r["null_p95"])
             if null_by_layer:
                 layers = sorted(null_by_layer)
                 ax.plot(layers, [np.nanmax(null_by_layer[l]) for l in layers], color="#888", linestyle=":", linewidth=1.2,
@@ -841,10 +878,8 @@ def plot_by_layer(metrics: list[dict], pairs, path: str) -> None:
             if i == len(pair_names) - 1:
                 ax.set_xlabel("layer")
             if j == 0:
-                ax.set_ylabel("rho / ceiling")
-    finite = [r["rho_over_ceiling"] for r in metrics if np.isfinite(r["rho_over_ceiling"])]
-    top = max(1.25, min(2.5, max(finite) + 0.1)) if finite else 1.25
-    axes[0][0].set_ylim(-0.5, top)
+                ax.set_ylabel("raw Spearman rho")
+    axes[0][0].set_ylim(-1.05, 1.05)
     axes[0][0].legend(fontsize=7, loc="lower left", ncol=2)
     fig.tight_layout()
     fig.savefig(path, dpi=150, bbox_inches="tight")
@@ -956,7 +991,7 @@ def plot_cell_frames(rows: list[dict], cells: list[tuple], cache_dir: str, robot
                         ax.set_title(f"{cls}/{phase} · {_episode_short(r['episode'])} @{r['position']:.1f}\n"
                                      f"\"{r['subtask']}\"", fontsize=5)
     fig.suptitle(f"{robot} · {n_frames} frames / {n_episodes} episodes in the matrix · per cell {N_SHOW} of its "
-                 f"episodes shown, first window frame of one and last of the other", fontsize=8)
+                 f"episodes shown, selected interior frames from different episodes", fontsize=8)
     fig.tight_layout()
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -1015,11 +1050,11 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
     for a, b in sorted(pairs, key=lambda p: (REBOT not in p, p)):
         key = f"real.{a}_{b}"
         if key in summary["headline"]:
-            metrics.append(Metric(f"headline.{key}", f"{a} vs {b}: rho / ceiling, action tokens, layer {layer}, real text",
+            metrics.append(Metric(f"headline.{key}", f"{a} vs {b}: raw Spearman rho, action tokens, layer {layer}, real text",
                                   good="high", fmt=2, primary=REBOT in (a, b)))
         key = f"neutral.{a}_{b}"
         if key in summary["headline"]:
-            metrics.append(Metric(f"headline.{key}", f"{a} vs {b}: rho / ceiling, action tokens, layer {layer}, neutral text",
+            metrics.append(Metric(f"headline.{key}", f"{a} vs {b}: raw Spearman rho, action tokens, layer {layer}, neutral text",
                                   good="high", fmt=2))
     for robot in summary["robots"]:
         key = f"holdout_accuracy.{robot}"
@@ -1031,8 +1066,6 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
         if entry["dst"] != REBOT:
             continue
         for name, _ in FACTORS:
-            if text == "neutral" and name == "phase":
-                continue
             metrics.append(Metric(
                 f"headline.decoding.{key}.{name}",
                 f"ReBot frames decoded with {entry['src']}'s cell means: {name}, action tokens, layer {layer}, {text} text",
@@ -1040,25 +1073,24 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
                 note=f"within-ReBot leave-one-episode-out {entry[f'within_{name}']:.2f}, chance {entry[f'{name}_chance']:.2f}"))
     metrics.append(Metric("n_samples", "Frames captured (x2 text conditions)", good="none", fmt=0))
     panels = [
-        Panel("sharing_by_layer.png", "rho / ceiling against depth, one row per robot pair, real and neutral text",
-              how="1 = the two robots arrange the shared object x phase cells identically, up to what each robot's own "
-                  "split-half reliability allows; 0 = unrelated; dotted = 95th percentile of the label-permutation null. "
-                  "Left column has the object words in the prompt, right column has them removed: structure that stays "
-                  "on the right came through the images.", primary=True),
+        Panel("sharing_by_layer.png", "raw Spearman rho against depth, one row per robot pair, real and neutral text",
+              how="Spearman correlation of the shared cells' similarity matrices; dotted = label-permutation null. "
+                  "Neutral text is identical across objects and phases. Remaining structure can use images or state. "
+                  "The reliability ratio in metrics.csv is a secondary diagnostic, not a fraction of shared code.", primary=True),
         Panel("matrices.png", "Each robot's class-level similarity matrix at the headline layer (action and wrist groups)",
               how="Cells are object/phase; entries are mean cosine between frames of different episodes, after per-robot "
-                  "centering. Read the block structure: same-object blocks vs same-phase stripes. Two robots share a "
-                  "representation when their block patterns match, whatever the absolute values.", primary=True),
+                  "centering. Similar block patterns suggest similar relational geometry; they do not establish "
+                  "a common code or successful transfer.", primary=True),
         Panel("rebot_instances.png", "ReBot's instance-level matrix at the headline layer",
-              how="Spray bottle and pill bottle nearer each other than either to the cup = bottle is a category, not two "
-                  "memorised objects; sock vs shirt likewise for cloth."),
+              how="Compare within-class instances (spray/pill bottles, socks/shirts). Similarity is descriptive "
+                  "and can reflect language, scene, or object appearance."),
     ]
     panels.append(Panel("decoding.png", "Cross-robot decoding: ReBot pairs, both directions, class and phase",
                         how="src\u2192dst = dst's frames decoded by nearest cosine to src's cell means over the cells both "
                             "robots have. Bars: cross-robot balanced accuracy; black tick: the same frames decoded with "
                             "their own robot's leave-one-episode-out means (the ceiling); dotted: chance. Bars at the "
-                            "tick = the same directions carry the code on both robots; bars at chance under a high "
-                            "tick = separate codes with the same shape, which the matrices alone cannot tell apart.",
+                            "tick suggest alignment under this decoder; chance-level cross decoding can also reflect "
+                            "domain shift or limited sampling. Read alongside the constant-text results.",
                         primary=True))
     for l in extra_layers:
         panels.append(Panel(f"matrices_L{l}.png", f"The same class-level matrices at layer {l}",
@@ -1066,16 +1098,16 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
     for robot in frames_written:
         panels.append(Panel(f"frames_{robot}.png", f"{robot}: the frames behind its matrix, one tile per cell",
                             how="Rows are object class x camera, columns are phase x two different episodes: the first "
-                                "window frame of one episode and the last of another (@x = position in the subtask "
+                                "selected interior frame from each episode (@x = position in the subtask "
                                 "window, 0 start, 1 end). The diagonal of the matrix is the mean cosine between frames "
                                 "like these two; the caption is the subtask text the model was given under the "
                                 "real-text condition.", primary=True))
     return write_index(
         output_dir, sys.modules[__name__], title="Conditions matrix", group="Representation",
         claim="Are object and phase representations shared across robots: same relational geometry over the cells, "
-              "with and without the object words in the prompt?",
+              "with real versus constant task and step text?",
         summary=summary, metrics=metrics, panels=panels, status="info",
-        extra={"peak_layer": summary["peak_layer"], "cells": summary["cells"]},
+        extra={"headline_layer": layer, "peak_layer_exploratory": summary["peak_layer"], "cells": summary["cells"]},
         see_also=["domain_representations", "input_swap", "subtask_sweep"],
     )
 
@@ -1150,11 +1182,14 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         # Which frames are collected is decided above; this only fixes the order they are
         # read in. Cell-major order walks every episode once per cell, and each hop is a
         # fresh video seek — storage order keeps the decoder moving forward.
+        samples = _bound_samples(samples, int(p.conditions_max_frames), int(p.conditions_episodes_per_cell), int(p.random_seed))
         samples.sort(key=lambda s: (s["kind"], s["source_key"], s["index"]))
         plan = _plan_summary(samples)
         for robot, cells in plan.items():
             logging.info(f"  {robot}: " + "  ".join(f"{c} {v['frames']}f/{v['episodes']}e" for c, v in cells.items()))
         logging.info(f"  {len(samples)} frames x {len(TEXT_CONDITIONS)} text conditions")
+        with open(os.path.join(output_dir, "sampling_plan.json"), "w") as f:
+            json.dump({"protocol": PROTOCOL, "max_frames": p.conditions_max_frames, "captures": len(samples) * 2, "cells": plan, "samples": samples}, f, indent=2)
         collect(adapter, cfg, samples, datasets, buffers, cache_dir)
     if p.mode in ("plot", "all"):
         rows, arrays, present = _load_cache(cache_dir)

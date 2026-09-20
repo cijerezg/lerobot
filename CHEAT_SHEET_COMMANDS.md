@@ -83,7 +83,19 @@ uv run python -m lerobot.rl.inference_async --config=config_rl.yaml
 
 Browser UI over a run's probes (http://127.0.0.1:7870), rescans on refresh. Takes a run dir, `validation/`, or a `step_*` dir.
 
-uv run --no-project --python .venv/bin/python python -m lerobot.scripts.view_probes outputs/molmoact2_offline_rebot_all-v6
+uv run python -m lerobot.scripts.view_probes outputs olmoact2_offline_rebot_all-v6
+
+## Probe compare
+
+Same probes as columns, one to four runs or checkpoints (http://127.0.0.1:7871). Same path forms as
+the viewer; labels are optional and follow the paths in order. Only probes both passes ran line up,
+so a pass with a different suite shows empty columns.
+
+uv run python -m lerobot.scripts.compare_probes \
+    outputs/<run>/validation/step_00000600 \
+    outputs/molmoact2_rebot_diverse_stochastic_rounding_v2/validation/step_00000600 \
+    --label=new-600 \
+    --label=sr_v2-600
 
 ## Remote validation on the DGX
 

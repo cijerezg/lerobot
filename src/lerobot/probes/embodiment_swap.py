@@ -1,93 +1,33 @@
-r"""Embodiment-swap probe: does "The robot is a ..." reach the actions, and on which side?
+r"""Bounded embodiment and control-mode sensitivity on held-out frames.
 
-The action prompt opens with an embodiment clause, ``The robot is {a/an} {name}.``
-(``_build_robot_text``, processor_molmoact2.py), rendered from the sample's
-``embodiment_index`` with no training dropout. Two facts about the training mixture
-decide what a swap can mean:
+The report shows robot-name sensitivity only, with the original control mode and action
+layout held fixed. Tempo, cosine and control-mode comparisons are omitted.
 
-  * Diverse-corpus rows carry their own robot name.
-  * ReBot rows also carry their name: the offline label loader materializes
-    ``embodiment_index`` from the dataset metadata or its configured source override.
-    ``RoleAlignedBuffer`` preserves it while adding the action-layout identity.
+Home prompts use the same dataset identity and action-layout control mode as training,
+including Rebot B601 on ReBot frames. Each frame evaluates nine names (omitted plus
+all registry names) at the home mode, and the home name under the other two modes.
+All eleven variants share flow noise within each of three seeds. This tests separate
+name and mode interventions; it does not estimate their interaction.
 
-The home prompt uses that training identity on both sides. On the configured ReBot
-roots it is ``The robot is a Rebot B601.``; removing the clause is an intervention.
-The probe resolves the name with the training label loader, not policy.embodiment.
+Separation S is the mean paired action displacement divided by the mean distance
+between reseeded home chunks. S=0 means no paired change; S=1 matches reseeding
+magnitude. Neither sensitivity, direction cosine, nor tempo establishes useful transfer.
+Names absent from this fine-tuning mixture may still have appeared in pretraining.
 
-The second sentence of the prompt is the control-mode clause, ``The control mode is joint
-space.`` / ``... end-effector space.``, rendered on every row from the layout record behind
-``action_layout_id`` (``ACTION_LAYOUTS[id].control_mode``; MolmoAct rows are the only
-end-effector layout). It is the second axis: the home prompt is the home name at the home
-mode — ReBot: its dataset name + joint (``cfg.diverse.rebot_layout``); diverse: own name + own
-layout's mode — and the grid is every name x every mode. Every cell is one row of a single
-batched ``predict_action_chunk_batch`` on the same frame under the same seeded flow noise
-and the same deployment metadata clause, so the only things that vary are the two clauses:
+Already-decoded native actions also give demonstration RMSE and gripper MAE changes
+(swap minus home; negative is closer to the recording). These are imitation diagnostics
+under fixed deployment metadata, not rollout-success measurements. Native padding is
+excluded. Source-specific results retain the original action units.
 
-  names                  ``none`` (no embodiment clause) + one per name in
-                         ``EMBODIMENT_NAMES`` — Franka Panda, UR5, UR7e, ARX5, Rebot B601,
-                         SO-101, ALOHA, YAM — of which the ones present in this run's
-                         training selection are *trained* and the rest *unseen* strings
-  modes                  ``none`` (no control-mode clause), ``joint``, ``end_effector``
-  seed floor             the home prompt re-drawn under different flow seeds
+At most 96 frames are sampled round-robin over held-out episodes, with up to six
+candidates per episode and phase coverage on the diverse side. YAM episodes are omitted
+because of limited coverage; YAM remains a counterfactual name. Cost is at most
+96 x 11 x 3 = 3,168 decoded chunks, in three batched calls per frame.
+The holdout guarantee applies to new runs trained with the accompanying ledger.
 
-Columns: ``{name}_sep`` is the name axis at the home mode (the pre-clause report shape),
-``{name}@{mode}_sep`` the full grid, ``mode_none_sep`` / ``mode_swapped_sep`` the mode axis
-at the home name (clause removed / the other space). ``none@none`` on a ReBot frame is the
-legacy prompt a pre-clause checkpoint trained on.
+Standalone::
 
-Write $a^{(L)}$ for the normalized chunk under label $L$, $a^{(h)}$ for the home chunk,
-and $\lVert x \rVert = \sqrt{\frac{1}{TD}\sum_{t,d} x_{t,d}^{2}}$ for the RMSE norm. The
-one number everything is read in is the separation
-
-$$S(L)=\frac{\lVert a^{(L)}-a^{(h)}\rVert}{\operatorname{mean}_{s\neq s'}\lVert a^{(s)}-a^{(s')}\rVert}$$
-
-— the swap's displacement over the seed floor. Under paired noise, $S\approx0$
-means little action change; $S\approx1$ means a change as large as reseeding. It is a within-frame ratio, so ReBot frames and diverse
-frames sit on one scale with no cross-domain normalization in the way, and the diverse
-chunks are normalized with their own row's statistics (the row's identity columns ride
-into the pack step) exactly as in training.
-
-**1. ReBot frames under other robots' names.** $S(\text{Franka Panda})$, $S(\text{UR5})$,
-… on ReBot images, plus $S(\text{none})$ for removing the trained name, and names
-absent from this fine-tuning selection as a text sensitivity comparison. These names
-may have appeared in pretraining. Displacement alone does not establish useful behavior.
-
-**2. Diverse frames with the label swapped.** $S(\text{none})$ — what removing the clause
-the model always saw does — against $S(\text{Rebot B601})$ and the other trained names,
-broken down by the frame's own robot. The direct answer to "does the ReBot label carry
-ReBot behaviour onto another robot's frames".
-
-**3. One direction, or one per name?** Within a frame, the mean pairwise cosine among the
-trained foreign displacements $v^{(L)}=a^{(L)}-a^{(h)}$: near $+1$ every foreign name is
-one "not this robot" move; near the null they are name-specific. The null is two reseeds
-of the home prompt measured from a shared third draw, carrying the same shared endpoint
-(the argument is metadata_steering's). Across frames, the leave-one-out cosine of one
-designated swap — Franka Panda on ReBot frames, Rebot B601 on diverse frames — against
-every other frame's, with the reseed displacement as its null: $+1$ is a global offset
-stamped on every frame, $0$ a displacement computed per frame.
-
-**4. Tempo.** Robots differ in speed, so a read name could show up as per-step travel,
-$\operatorname{step}(a^{(L)})/\operatorname{step}(a^{(h)})$ with
-$\operatorname{step}(x)=\sqrt{\frac{1}{(T-1)D}\sum_{t,d}(x_{t+1,d}-x_{t,d})^{2}}$.
-
-**5. The control-mode clause.** $S$ of the home name under the other space
-(``mode_swapped``) and under no clause (``mode_none``), per domain and, on the diverse
-side, per home mode: on a MolmoAct frame ``Franka Panda@joint`` is the DROID/FMB training
-prompt on a pose-space image, the direct read of whether the clause and not the image
-decides the space. The name x mode grid (heatmaps) says whether the two clauses act
-independently: a name's row at a constant offset across modes, or the mode rewriting it.
-
-Nothing is scored against the demonstration. Frames: the held-out ReBot split sampled as
-metadata_steering samples it, and the diverse holdout — the episodes of
-``<root>/holdout_episodes.json`` (``holdout_actor_selection``), never trained on and never
-cached, decoded from video — every episode, anchors evenly spaced.
-
-Cost is ``n_frames x ((1 + len(EMBODIMENT_NAMES)) x 3 + n_seeds - 1)`` forwards, two
-batched calls per frame.
-
-Registered probe: enable with ``probe_parameters.enable_embodiment_swap``. Standalone::
-
-    uv run python -m lerobot.probes.embodiment_swap --config config_rl.yaml \\
+    uv run python -m lerobot.probes.embodiment_swap --config config_rl.yaml \
         --policy.pretrained_path outputs/<run>/checkpoints/<step>/pretrained_model
 """
 
@@ -96,6 +36,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
+from collections import defaultdict
 
 import matplotlib
 matplotlib.use("Agg")
@@ -122,6 +63,7 @@ from lerobot.probes.metadata_steering import (
 from lerobot.probes.utils import (
     DEPLOYMENT_METADATA,
     dataset_identity_columns,
+    build_episode_index,
     load_probe_dataset,
     makedirs,
     panel_caption as _caption,
@@ -220,10 +162,12 @@ def _layout_mode(extra: dict) -> str:
 def _rebot_samples(dataset, cfg, n_frames: int) -> list[dict]:
     p = cfg.probe_parameters
     samples = sample_episodes_evenly(dataset, n_frames, p.max_episodes, p.random_seed, probe_image_stride(cfg))
+    ep_index = build_episode_index(dataset)
     return [
         {"domain": REBOT, "source": REBOT, "own": REBOT_NAME, "episode": f"rebot/{ep}",
          "frame": int(fr), "index": int(gidx)}
         for ep, fr, gidx in samples
+        if gidx + int(cfg.policy.chunk_size) <= ep_index[ep][-1] + 1
     ]
 
 
@@ -231,19 +175,51 @@ def _diverse_samples(buffer, n_frames: int) -> list[dict]:
     """Every holdout episode, ``n_frames`` anchors evenly spaced over each."""
     by_episode: dict[str, list[int]] = {}
     for row_index, row in enumerate(buffer.rows):
+        if row["source"] == "yam":
+            continue
         by_episode.setdefault(str(row["episode_id"]), []).append(row_index)
     samples = []
     for episode_id in sorted(by_episode):
         rows = sorted(by_episode[episode_id], key=lambda i: float(buffer.rows[i]["anchor_s"]))
-        for pos in np.unique(np.linspace(0, len(rows) - 1, min(n_frames, len(rows)), dtype=int)):
-            row = buffer.rows[rows[int(pos)]]
+        phases = defaultdict(list)
+        for i in rows:
+            phases[str(buffer.rows[i]["subtask"]).split(" ", 1)[0]].append(i)
+        ordered = []
+        for phase in sorted(phases):
+            bucket = phases[phase]
+            picks = np.unique(np.linspace(0, len(bucket) - 1, min(n_frames, len(bucket)) + 2, dtype=int)[1:-1])
+            ordered.append([bucket[int(k)] for k in picks] or [bucket[len(bucket) // 2]])
+        selected = [bucket[k] for k in range(n_frames) for bucket in ordered if k < len(bucket)][:n_frames]
+        for index in selected:
+            row = buffer.rows[index]
             samples.append({
                 "domain": DIVERSE, "source": str(row["source"]),
                 "own": canonical_embodiment(row["embodiment"]),
                 "episode": f"{row['source']}/{episode_id}", "frame": float(row["anchor_s"]),
-                "index": int(rows[int(pos)]),
+                "index": int(index),
             })
     return samples
+
+
+def _bounded_frames(samples: list[dict], cap: int, seed: int) -> list[dict]:
+    """Round-robin episodes under a global frame budget; deterministic across checkpoints."""
+    if cap < 1:
+        raise ValueError("embodiment_swap_max_frames must be positive")
+    groups = defaultdict(list)
+    for s in samples:
+        groups[s["episode"]].append(s)
+    rng = np.random.RandomState(seed)
+    keys = sorted(groups)
+    rng.shuffle(keys)
+    for bucket in groups.values():
+        rng.shuffle(bucket)
+    return [groups[key][i] for i in range(max(map(len, groups.values()), default=0))
+            for key in keys if i < len(groups[key])][:cap]
+
+
+def _frame_grid(home: str, mode: str) -> list[tuple[str, str]]:
+    """All names at the true mode, plus mode interventions at the true name (11 cells)."""
+    return [(name, mode) for name in CONDITIONS] + [(home, other) for other in MODES if other != mode]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -253,55 +229,67 @@ def _diverse_samples(buffer, n_frames: int) -> list[dict]:
 def _measure_frame(
     adapter, inputs: dict, home: str, home_mode: str, trained_slugs: set[str], n_seeds: int
 ) -> tuple[dict, dict]:
-    """Every (name, mode) cell in one forward, the home prompt reseeded in another;
-    per-frame row + the displacement vectors the cross-frame geometry needs."""
-    n = len(GRID)
-    _, chunks = adapter.predict_action_chunk_batch(
-        inputs["obs"], inputs["task"], [inputs["subtask"]] * n,
-        metadatas=[dict(DEPLOYMENT_METADATA)] * n,
-        noise=adapter.flow_noise_like(n, 0),
-        embodiments=[_name_text(name) for name, _ in GRID],
-        control_modes=[_mode_text(mode) for _, mode in GRID],
-        extra_complementary=inputs["extra"],
-    )
-    acts = {cell: chunks[i] for i, cell in enumerate(GRID)}
-    base = acts[(home, home_mode)]
-
-    floor_draws = [base]
-    if n_seeds > 1:
-        floor_noise = torch.cat([adapter.flow_noise_like(1, seed) for seed in range(1, n_seeds)], dim=0)
-        _, floor_chunks = adapter.predict_action_chunk_batch(
-            inputs["obs"], inputs["task"], [inputs["subtask"]] * (n_seeds - 1),
-            metadatas=[dict(DEPLOYMENT_METADATA)] * (n_seeds - 1),
-            noise=floor_noise,
-            embodiments=[_name_text(home)] * (n_seeds - 1),
-            control_modes=[_mode_text(home_mode)] * (n_seeds - 1),
-            extra_complementary=inputs["extra"],
+    """Each name/mode intervention paired with its home under every flow seed."""
+    grid = _frame_grid(home, home_mode)
+    n = len(grid)
+    normalized, raw = [], []
+    for seed in range(n_seeds):
+        unnorm, chunks = adapter.predict_action_chunk_batch(
+            inputs["obs"], inputs["task"], [inputs["subtask"]] * n,
+            metadatas=[dict(DEPLOYMENT_METADATA)] * n,
+            noise=adapter.flow_noise_like(n, seed),
+            embodiments=[_name_text(name) for name, _ in grid],
+            control_modes=[_mode_text(mode) for _, mode in grid],
+            extra_complementary=inputs["extra"], inference_action_mode="continuous",
         )
-        floor_draws += [floor_chunks[i] for i in range(n_seeds - 1)]
+        normalized.append(chunks)
+        if unnorm is not None:
+            raw.append(unnorm)
+    acts = torch.stack(normalized)  # [seed, condition, time, dim]
+    home_index = grid.index((home, home_mode))
+    base = acts[:, home_index]
+    floor_draws = list(base.unbind())
     floor_mean, floor_max = _pairwise_rmse(floor_draws)
-    base_step = max(_step_rms(base), 1e-12)
-
-    row = {"home": home, "home_mode": home_mode, "seed_floor_mean": floor_mean, "seed_floor_max": floor_max}
-    vectors: dict[str, np.ndarray] = {}
-    for name, mode in GRID:
-        if (name, mode) == (home, home_mode):
+    base_steps = [max(_step_rms(x), 1e-12) for x in base]
+    row = {"home": home, "home_mode": home_mode, "seed_floor_mean": floor_mean,
+           "seed_floor_max": floor_max, "paired_seeds": n_seeds, "variants": n}
+    vectors = {}
+    gt = inputs.get("gt_actions")
+    raw_actions = torch.stack(raw) if len(raw) == n_seeds else None
+    if gt is not None and raw_actions is not None:
+        gt = torch.as_tensor(gt).detach().float().cpu()
+        if gt.ndim == 3:
+            gt = gt[0]
+        width = int(inputs.get("native_width", gt.shape[-1]))
+        horizon = min(gt.shape[0], raw_actions.shape[-2])
+        raw_actions = raw_actions[:, :, :horizon, :width]
+        gt = gt[:horizon, :width]
+        errors = (raw_actions - gt).square().mean(dim=(-2, -1)).sqrt()
+        gripper_errors = (raw_actions[..., -1] - gt[:, -1]).abs().mean(dim=-1)
+        row["home_demo_rmse"] = float(errors[:, home_index].mean())
+        row["home_gripper_mae"] = float(gripper_errors[:, home_index].mean())
+    for i, (name, mode) in enumerate(grid):
+        if i == home_index:
             continue
         cell = _cell(name, mode)
-        row[f"{cell}_rmse"] = _rmse(acts[name, mode], base)
+        delta = acts[:, i] - base
+        row[f"{cell}_rmse"] = float(delta.square().mean(dim=(-2, -1)).sqrt().mean())
         row[f"{cell}_sep"] = row[f"{cell}_rmse"] / max(floor_mean, 1e-9)
-        row[f"{cell}_tempo"] = _step_rms(acts[name, mode]) / base_step
-        vectors[cell] = (acts[name, mode] - base).flatten().float().cpu().numpy()
-    # The name axis at the home mode keeps the pre-clause column names; the mode axis at
-    # the home name is "clause removed" and "the other space".
+        row[f"{cell}_tempo"] = float(np.mean([_step_rms(acts[s, i]) / base_steps[s] for s in range(n_seeds)]))
+        vectors[cell] = delta.mean(dim=0).flatten().float().cpu().numpy()
+        if gt is not None and raw_actions is not None:
+            row[f"{cell}_demo_rmse_delta"] = float((errors[:, i] - errors[:, home_index]).mean())
+            row[f"{cell}_gripper_mae_delta"] = float((gripper_errors[:, i] - gripper_errors[:, home_index]).mean())
+            row[f"{cell}_gripper_shift"] = float((raw_actions[:, i, :, -1] - raw_actions[:, home_index, :, -1]).mean())
     aliases = {name: _cell(name, home_mode) for name in CONDITIONS if name != home}
     aliases["mode_none"] = _cell(home, NONE)
     aliases["mode_swapped"] = _cell(home, _swapped(home_mode))
     for alias, cell in aliases.items():
-        for suffix in ("rmse", "sep", "tempo"):
-            row[f"{alias}_{suffix}"] = row[f"{cell}_{suffix}"]
+        for suffix in ("rmse", "sep", "tempo", "demo_rmse_delta", "gripper_mae_delta", "gripper_shift"):
+            if f"{cell}_{suffix}" in row:
+                row[f"{alias}_{suffix}"] = row[f"{cell}_{suffix}"]
         vectors[alias] = vectors[cell]
-    vectors["noise"] = (floor_draws[1] - floor_draws[0]).flatten().float().cpu().numpy() if n_seeds > 1 else None
+    vectors["noise"] = (base[1] - base[0]).flatten().float().cpu().numpy()
 
     foreign_trained = [s for s in trained_slugs if s != home]
     # The ReBot name has its own column on every frame, so it is never an "unseen" control.
@@ -329,18 +317,15 @@ def _tick(slug: str, trained: set[str], homes: dict[str, str]) -> str:
     if slug == NONE:
         return "none"
     tag = "trained" if slug in trained else "unseen"
-    if slug == homes[REBOT]:
-        tag += ", ReBot home"
-    return f"{LABELS[slug]}\n({tag})"
+    home_note = "\nReBot home" if slug == homes[REBOT] else ""
+    return f"{LABELS[slug]}\n({tag}){home_note}"
 
 
 def _render(rows: list[dict], summary: dict, trained: set[str], homes: dict[str, str], output_path: str) -> None:
     by_domain = {d: [r for r in rows if r["domain"] == d] for d in (REBOT, DIVERSE)}
-    fig = plt.figure(figsize=(19, 19))
-    grid = fig.add_gridspec(3, 2, wspace=0.22, hspace=0.62, left=0.085, right=0.985, top=0.93, bottom=0.11)
-    ax_sep, ax_robot, ax_dir, ax_tempo, ax_grid_rebot, ax_grid_diverse = (
-        fig.add_subplot(grid[i, j]) for i in range(3) for j in range(2)
-    )
+    fig = plt.figure(figsize=(19, 7))
+    grid = fig.add_gridspec(1, 2, wspace=0.25, left=0.065, right=0.985, top=0.79, bottom=0.32)
+    ax_sep, ax_robot = (fig.add_subplot(grid[0, j]) for j in range(2))
 
     def paired_boxes(ax, key_suffix: str, ylabel: str, baseline: float) -> None:
         width, positions, ticks = 0.36, [], []
@@ -400,86 +385,12 @@ def _render(rows: list[dict], summary: dict, trained: set[str], homes: dict[str,
     _caption(ax_robot, [
         "Per own-robot group of the holdout: clause removed, Rebot B601 substituted, the other trained names",
         "(mean per frame), the unseen names; medians with a bootstrap SE. 'Rebot B601' above 'other trained'",
-        "says the ReBot label is a specific move rather than any different name.",
+        "shows a larger displacement for that name; it does not establish ReBot behavior transfer.",
     ], y=-0.22)
-
-    # (c) direction
-    designated = {REBOT: summary["designated_swap"][REBOT], DIVERSE: summary["designated_swap"][DIVERSE]}
-    boxes, labels_c, colors_c = [], [], []
-    for domain in (REBOT, DIVERSE):
-        for key, tag in (("shared_cosine", f"{LABELS[designated[domain]]}\nvs other frames"),
-                         ("noise_shared_cosine", "reseed\nvs other frames"),
-                         ("foreign_pair_cosine", "foreign names\npairwise"),
-                         ("null_pair_cosine", "reseeds\npairwise (null)")):
-            values = _column(by_domain[domain], key)
-            if values.size:
-                boxes.append(values)
-                labels_c.append(f"{domain}\n{tag}")
-                colors_c.append(_DOMAIN_COLOR[domain])
-    if boxes:
-        bp = ax_dir.boxplot(boxes, tick_labels=labels_c, patch_artist=True, showfliers=False)
-        for patch, color in zip(bp["boxes"], colors_c, strict=True):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.55)
-        for median in bp["medians"]:
-            median.set_color("black")
-    ax_dir.axhline(0.0, color="grey", linestyle="--", linewidth=1)
-    ax_dir.set_ylabel("cosine")
-    ax_dir.tick_params(axis="x", labelsize=7.5)
-    ax_dir.set_title("One direction, or one per frame and per name?", fontsize=10)
-    _caption(ax_dir, [
-        "Leave-one-out: the designated swap's displacement against the mean displacement of every other frame in "
-        "that domain, next to the same statistic on a reseed (its null).",
-        "Pairwise: within a frame, the mean cosine among the trained foreign names' displacements, next to two "
-        "reseeds measured from a shared third draw (shared-endpoint null).",
-    ], y=-0.36)
-
-    paired_boxes(ax_tempo, "tempo", "per-step travel, swap / home", 1.0)
-    ax_tempo.ticklabel_format(axis="y", useOffset=False)
-    ax_tempo.set_title("Does the name change the tempo?", fontsize=10)
-    _caption(ax_tempo, [
-        "RMS per-step travel of the swapped chunk over the home chunk. Robots differ in speed,",
-        "so a read name can show here even when the posture change is small.",
-    ], y=-0.22)
-
-    # (e, f) the name x mode grid, median S per cell; the home cell(s) are blank
-    mode_ticks = {NONE: "no clause", JOINT: "joint", END_EFFECTOR: "end-effector"}
-    for ax, domain in ((ax_grid_rebot, REBOT), (ax_grid_diverse, DIVERSE)):
-        cells = np.full((len(CONDITIONS), len(MODES)), np.nan)
-        for i, name in enumerate(CONDITIONS):
-            for j, mode in enumerate(MODES):
-                cells[i, j] = _median(by_domain[domain], f"{_cell(name, mode)}_sep")
-        image = ax.imshow(np.log10(np.maximum(cells, 1e-9)), cmap="viridis", aspect="auto")
-        for i in range(len(CONDITIONS)):
-            for j in range(len(MODES)):
-                home = np.isnan(cells[i, j])
-                ax.text(j, i, "home" if home else f"{cells[i, j]:.2f}",
-                        ha="center", va="center", fontsize=8, color="black" if home else "white")
-        ax.set_xticks(range(len(MODES)), [mode_ticks[m] for m in MODES], fontsize=9)
-        ax.set_yticks(range(len(CONDITIONS)), [_tick(n, trained, homes).replace("\n", " ") for n in CONDITIONS],
-                      fontsize=8)
-        ax.set_xlabel("control-mode clause")
-        fig.colorbar(image, ax=ax, fraction=0.03, pad=0.02, label=r"$\log_{10}$ median $S$")
-        ax.set_title(
-            f"{domain} frames (n={len(by_domain[domain])}): name x control mode — "
-            f"mode swapped {summary[f'mode_swapped_on_{domain}_sep_median']:.2f}x, "
-            f"clause removed {summary[f'mode_none_on_{domain}_sep_median']:.2f}x",
-            fontsize=10,
-        )
-    _caption(ax_grid_rebot, [
-        f"Every cell is one prompt on the same frame; home = {'no clause' if homes[REBOT] == NONE else LABELS[homes[REBOT]]} "
-        f"+ {mode_ticks[summary['rebot_mode']]} (the ReBot training prompt). 'none / no clause' is the pre-clause legacy prompt.",
-        "A name's row constant across modes = the two clauses act independently; the mode rewriting the row = they interact.",
-    ], y=-0.2)
-    _caption(ax_grid_diverse, [
-        "Home = the row's own name + own layout's mode (joint everywhere but MolmoAct), so the diverse rows mix two homes;",
-        "'diverse_by_mode' in the JSON splits them. Franka Panda@joint on a MolmoAct frame is the DROID/FMB training prompt.",
-    ], y=-0.2)
 
     fig.suptitle(
-        "Embodiment swap — ReBot frames under other robots' names, diverse frames under the ReBot name, "
-        "both under the other control-mode clause",
-        fontsize=13, y=0.98,
+        "Embodiment name swaps — original control mode and action layout held fixed",
+        fontsize=13, y=0.97,
     )
     fig.savefig(output_path, dpi=120)
     plt.close(fig)
@@ -492,6 +403,65 @@ def _render(rows: list[dict], summary: dict, trained: set[str], homes: dict[str,
 def _stat(rows: list[dict], key: str) -> dict:
     return {"median": _median(rows, key), "se": _median_se(rows, key), "n": int(_column(rows, key).size)}
 
+
+def write_report(rows: list[dict], summary: dict, output_dir: str) -> None:
+    """Render saved measurements without loading the policy or repeating inference."""
+    trained = {_slug(name) for name in summary["trained_labels"]}
+    homes = {REBOT: summary["rebot_home"]}
+    # Old measurements retain their raw mode diagnostics; keep the report's explanation current.
+    details = summary["data"].get("details", [])
+    summary["data"]["details"] = [
+        ["Displayed comparisons", "Robot-name changes keep the recorded frame, original control-mode clause "
+         "and action layout fixed. Changing the text does not convert coordinates."]
+        if item[0] == "Control-mode axis" else item
+        for item in details
+    ]
+    _render(rows, summary, trained, homes, os.path.join(output_dir, "embodiment_swap.png"))
+
+    write_index(
+        output_dir,
+        sys.modules[__name__],
+        title="Embodiment Swap",
+        group="Steering",
+        claim="Does the embodiment clause reach the actions — on ReBot frames under other names, and on diverse frames under the ReBot name?",
+        summary=summary,
+        see_also=["metadata_steering", "domain_representations", "subtask_sweep"],
+        metrics=[
+            Metric("foreign_trained_on_rebot_sep_median", "ReBot frames: trained foreign name / floor",
+                   good="none", fmt=2, baseline=1.0, primary=True, trend=True,
+                   note="Median over ReBot frames of the mean separation under the trained diverse names. "
+                        "1 = the name moves the chunk no further than reseeding."),
+            Metric("none_on_rebot_sep_median", "ReBot frames: name removed / floor",
+                   good="none", fmt=2, baseline=1.0, trend=True,
+                   note="Removing the embodiment clause supplied by the training dataset."),
+            Metric("foreign_unseen_on_rebot_sep_median", "ReBot frames: unseen name / floor",
+                   good="none", fmt=2, baseline=1.0,
+                   note="Names absent from this fine-tuning selection; they may be familiar from pretraining."),
+            Metric("rebot_label_on_diverse_sep_median", "diverse frames: 'Rebot B601' / floor",
+                   good="none", fmt=2, baseline=summary["foreign_trained_on_diverse_sep_median"], primary=True, trend=True,
+                   note="The ReBot label on another robot's frames, read against the other trained names on the same frames."),
+            Metric("none_on_diverse_sep_median", "diverse frames: clause removed / floor",
+                   good="none", fmt=2, baseline=1.0, trend=True,
+                   note="What removing the clause the model always saw on this frame's robot does."),
+        ] + [
+            Metric(f"action_quality_by_source.{source}.{alias}.{metric}",
+                   f"{source}: {label}, {title} change vs home",
+                   good="none", fmt=4,
+                   note="Swap minus home, averaged over paired seeds then median over frames. "
+                        "Negative is closer to the recorded demonstration; native units, not rollout success.")
+            for source in summary["action_quality_by_source"]
+            for alias, label in ((NONE, "name removed"),)
+            for metric, title in (("demo_rmse_delta", "demonstration RMSE"), ("gripper_mae_delta", "gripper MAE"))
+        ],
+        panels=[Panel("embodiment_swap.png",
+                      "Action sensitivity to robot-name changes, with the original control mode and action layout held fixed; "
+                      "overall and grouped by the recorded robot.",
+                      how="Every point is a within-frame contrast of two prompts on the same frame under the same flow noise, "
+                          "divided by that frame's reseeding variation. S=1 matches reseeding; S=0 means no change. "
+                          "This measures prompt sensitivity, not transfer success or joint-versus-EE motion equivalence.",
+                      primary=True)],
+        extra={"provenance": summary["data"]},
+    )
 
 def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     """``dataset`` is the held-out ReBot set; the diverse side is the holdout of ``cfg.diverse.root``."""
@@ -516,9 +486,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         REBOT: _slug("Franka Panda") if _slug("Franka Panda") in trained else sorted(trained)[0],
         DIVERSE: _slug(REBOT_NAME),
     }
-    forwards = len(GRID) + n_seeds - 1
+    samples = _bounded_frames(rebot + diverse, int(p.embodiment_swap_max_frames), int(p.random_seed))
+    forwards = (len(CONDITIONS) + len(MODES) - 1) * n_seeds
     logging.info(
-        f"[embodiment_swap] {len(rebot)} ReBot + {len(diverse)} diverse frames x {forwards} forwards; "
+        f"[embodiment_swap] {len(samples)} capped frames x {forwards} decoded chunks; "
         f"trained names {sorted(trained_names)}; ReBot home = {homes[REBOT]} + {rebot_mode}"
     )
 
@@ -526,12 +497,13 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     rows: list[dict] = []
     geometry: list[dict] = []
     try:
-        for i, sample in enumerate(rebot + diverse):
+        for i, sample in enumerate(samples):
             if i % 25 == 0:
-                logging.info(f"  [{i + 1}/{len(rebot) + len(diverse)}] {sample['episode']} @ {sample['frame']}")
+                logging.info(f"  [{i + 1}/{len(samples)}] {sample['episode']} @ {sample['frame']}")
             if sample["domain"] == REBOT:
-                frame = probe_frame_inputs(dataset, cfg, sample["index"], chunk_size)
-                inputs = {"obs": frame["obs"], "task": frame["task"], "subtask": frame["subtask"], "extra": None}
+                frame = probe_frame_inputs(dataset, cfg, sample["index"], chunk_size, with_gripper_event_targets=False)
+                inputs = {"obs": frame["obs"], "task": frame["task"], "subtask": frame["subtask"], "extra": None,
+                          "gt_actions": frame["gt_actions"]}
                 home, home_mode = homes[REBOT], rebot_mode
             else:
                 inputs = _diverse_inputs(diverse_buffer, cfg, sample)
@@ -557,6 +529,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     rebot_slug = _slug(REBOT_NAME)
     rebot_joint = _cell(rebot_slug, JOINT)
     summary: dict = {
+        "protocol": "bounded_v1_paired_seeds",
+        "max_frames": int(p.embodiment_swap_max_frames),
         "n_rebot_frames": len(by_domain[REBOT]),
         "n_diverse_frames": len(by_domain[DIVERSE]),
         "n_seeds": n_seeds,
@@ -595,6 +569,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
                     "rmse_mean": float(np.mean(_column(by_domain[domain], f"{name}_rmse")))
                     if _column(by_domain[domain], f"{name}_rmse").size else float("nan"),
                     "tempo_median": _median(by_domain[domain], f"{name}_tempo"),
+                    "demo_rmse_delta_median": _median(by_domain[domain], f"{name}_demo_rmse_delta"),
+                    "gripper_mae_delta_median": _median(by_domain[domain], f"{name}_gripper_mae_delta"),
                 }
                 for name in CONDITIONS
             }
@@ -638,12 +614,20 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
             for mode in sorted({r["home_mode"] for r in by_domain[DIVERSE]})
             for group in [[r for r in by_domain[DIVERSE] if r["home_mode"] == mode]]
         },
+        "action_quality_by_source": {
+            source: {alias: {metric: _median(group, f"{alias}_{metric}")
+                            for metric in ("demo_rmse_delta", "gripper_mae_delta", "gripper_shift")}
+                     for alias in (NONE, "mode_none", "mode_swapped", *LABELS)}
+            for source in sorted({r["source"] for r in rows})
+            for group in [[r for r in rows if r["source"] == source]]
+        },
         "reading": (
             "S near 0 means little action change under paired noise; S near 1 means a change "
             "as large as reseeding, not an ignored clause. Larger S measures sensitivity, not "
             "action quality or successful transfer. Trained/unseen refers only to this fine-tuning "
             "selection. ReBot home uses the dataset's training identity; none removes its name. "
-            "Direction cosines and tempo describe the changes; neither establishes improvement."
+            "The report shows name interventions at the original control mode only. Legacy mode interventions "
+            "keep the source action layout fixed and do not compare joint and end-effector motions."
         ),
     }
     summary["data"] = {
@@ -662,80 +646,33 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
         "frames_per_episode": n_frames,
         "forwards": forwards * len(rows),
         "details": [
-            ["Per frame", f"{forwards} forwards — (``none`` + one row per name in EMBODIMENT_NAMES) x "
-                          f"(no clause, joint, end_effector control-mode clause), plus {n_seeds - 1} "
-                          "reseed(s) of the home prompt for the floor; deployment metadata clause "
-                          "(quality 5, no mistake, speed 5) on every row"],
+            ["Per frame", f"{forwards} decoded chunks: all names at the home control mode plus "
+                          f"the home name under the other modes, repeated for {n_seeds} paired seeds. "
+                          "Deployment metadata (quality 5, no mistake, speed 5) stays fixed."],
+            ["Action quality", "Native-unit demonstration RMSE and gripper MAE changes are swap minus home; "
+                               "negative is closer to the recording. Reported per source in native units. "
+                               "These are imitation diagnostics under deployment metadata, not rollout success."],
             ["Home prompt", f"ReBot frames: ``{homes[REBOT]}`` + ``{rebot_mode}`` "
              "(identity resolved by the training dataset label loader); diverse frames: the row's "
              "own label + its layout's control mode. Removing the name is an intervention."],
-            ["Control-mode axis", "``mode_swapped`` = the home name under the other space (joint <-> "
-                                  "end_effector), ``mode_none`` = the home name with no control-mode clause; "
-                                  "``{name}@{mode}`` columns are the full grid, ``{name}`` columns the name "
-                                  "axis at the home mode (pre-clause report shape)"],
+            ["Displayed comparisons", "Robot-name changes keep the recorded frame, original control-mode clause "
+                                       "and action layout fixed. Legacy mode interventions remain in the raw data "
+                                       "but are omitted from the report: changing the text does not convert coordinates."],
             ["Trained / unseen names", f"trained {sorted(trained_names)} (the training selection's rows); "
                                        f"unseen {summary['unseen_labels']}"],
             ["Diverse frames", "the episodes of <root>/holdout_episodes.json (holdout_actor_selection), "
-                               "never trained on, decoded from video, every episode with anchors evenly "
-                               "spaced; identity columns (action_layout_id, embodiment_index, camera and "
+                               "excluded from new training runs, decoded from video, with episode-balanced "
+                               "sampling and phase coverage; identity columns (action_layout_id, embodiment_index, camera and "
                                "depth presence) ride into the pack step so normalization is the row's own"],
-            ["Readout", "normalized flow chunks; the unnormalized output is not used, so the diverse rows' "
-                        "unnormalization path is not exercised"],
+            ["Readout", "Normalized chunks measure sensitivity. Native actions measure demonstration "
+                        "RMSE and gripper MAE, with padded dimensions excluded."],
         ],
     }
 
     with open(os.path.join(output_dir, "embodiment_swap.json"), "w") as f:
         json.dump({"summary": summary, "per_frame": rows}, f, indent=2)
-    _render(rows, summary, trained, homes, os.path.join(output_dir, "embodiment_swap.png"))
+    write_report(rows, summary, output_dir)
 
-    write_index(
-        output_dir,
-        sys.modules[__name__],
-        title="Embodiment Swap",
-        group="Steering",
-        claim="Does the embodiment clause reach the actions — on ReBot frames under other names, and on diverse frames under the ReBot name?",
-        summary=summary,
-        see_also=["metadata_steering", "domain_representations", "subtask_sweep"],
-        metrics=[
-            Metric("foreign_trained_on_rebot_sep_median", "ReBot frames: trained foreign name / floor",
-                   good="none", fmt=2, baseline=1.0, primary=True, trend=True,
-                   note="Median over ReBot frames of the mean separation under the trained diverse names. "
-                        "1 = the name moves the chunk no further than reseeding."),
-            Metric("none_on_rebot_sep_median", "ReBot frames: name removed / floor",
-                   good="none", fmt=2, baseline=1.0, trend=True,
-                   note="Removing the embodiment clause supplied by the training dataset."),
-            Metric("foreign_unseen_on_rebot_sep_median", "ReBot frames: unseen name / floor",
-                   good="none", fmt=2, baseline=1.0,
-                   note="Names no training row carries: the 'any new sentence' control."),
-            Metric("rebot_label_on_diverse_sep_median", "diverse frames: 'Rebot B601' / floor",
-                   good="none", fmt=2, baseline=summary["foreign_trained_on_diverse_sep_median"], primary=True, trend=True,
-                   note="The ReBot label on another robot's frames, read against the other trained names on the same frames."),
-            Metric("none_on_diverse_sep_median", "diverse frames: clause removed / floor",
-                   good="none", fmt=2, baseline=1.0, trend=True,
-                   note="What removing the clause the model always saw on this frame's robot does."),
-            Metric("diverse_shared_cosine_median", "diverse frames: 'Rebot B601' shared direction",
-                   good="none", fmt=2, baseline=summary["diverse_noise_shared_cosine_median"],
-                   note="Leave-one-out cosine of the Rebot B601 displacement against the other frames'; at the reseed null it is computed per frame, near +1 it is one global offset."),
-            Metric("mode_swapped_on_rebot_sep_median", "ReBot frames: control mode swapped / floor",
-                   good="none", fmt=2, baseline=1.0, trend=True,
-                   note=f"The home name under the other space ({_swapped(rebot_mode)} on a {rebot_mode} robot). "
-                        "1 = the change matches reseeding magnitude; 0 = no paired change."),
-            Metric("mode_none_on_rebot_sep_median", "ReBot frames: control-mode clause removed / floor",
-                   good="none", fmt=2, baseline=1.0,
-                   note="The pre-clause legacy prompt on a ReBot frame."),
-            Metric("mode_swapped_on_diverse_sep_median", "diverse frames: control mode swapped / floor",
-                   good="none", fmt=2, baseline=1.0, trend=True,
-                   note="Own name under the other space; diverse_by_mode splits the joint and end-effector homes."),
-        ],
-        panels=[Panel("embodiment_swap.png",
-                      "Separation by name, the diverse breakdown by robot, direction geometry, tempo, and the "
-                      "name x control-mode grid per domain.",
-                      how="Every point is a within-frame contrast of two prompts on the same frame under the same flow noise, "
-                          "in units of that frame's own seed floor; the two domains share the scale because the ratio "
-                          "needs no cross-domain normalization.",
-                      primary=True)],
-        extra={"provenance": summary["data"]},
-    )
     logging.info(
         f"[embodiment_swap] rebot n={len(by_domain[REBOT])}: foreign trained "
         f"{summary['foreign_trained_on_rebot_sep_median']:.2f}x, name removed "

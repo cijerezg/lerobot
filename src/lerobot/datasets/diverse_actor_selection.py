@@ -60,31 +60,29 @@ from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
 # The training selection is all of it minus the held-out episodes. Startup asserts these,
 # so a corpus that was rebuilt, half-copied, or filtered cannot quietly train on a
 # different dataset.
-# Full corpus minus `<root>/holdout_episodes.json`: 903 episodes / 88,268 anchors.
-# The 2026-09-19 held-out ledger removes 6 episodes / 498 anchors:
-# droid__IPRL__ep005438 (53), droid__WEIRD__ep013684 (138),
-# droid_success__IRIS__ep021741 (68), molmoact__household__ep005336 (35),
-# robochallenge__hang_the_cup__ep000970 (121), yam__duster__ep000003 (83).
+# Bounded probes: 18 held-out episodes, including the existing YAM exclusion.
+# Training: 891 episodes / 87,306 anchors.
+# Split provenance: migration/probe_bounded_2026-09-19/holdout_planned.json.
 HOLDOUT_FILE = "holdout_episodes.json"
-EXPECTED_EPISODES = 903
-EXPECTED_ANCHORS = 88_268
+EXPECTED_EPISODES = 891
+EXPECTED_ANCHORS = 87_306
 EXPECTED_EPISODES_BY_SOURCE = {
-    "robochallenge": 199,
     "droid": 48,
-    "droid_success": 69,
-    "molmoact": 416,
-    "ur7e": 4,
+    "droid_success": 65,
     "fmb": 160,
-    "yam": 7,
+    "molmoact": 411,
+    "robochallenge": 196,
+    "ur7e": 4,
+    "yam": 7
 }
 EXPECTED_ANCHORS_BY_SOURCE = {
-    "robochallenge": 40_387,
-    "droid": 5_586,
-    "droid_success": 7_752,
-    "molmoact": 21_657,
+    "droid": 5586,
+    "droid_success": 7401,
+    "fmb": 11189,
+    "molmoact": 21282,
+    "robochallenge": 40151,
     "ur7e": 954,
-    "fmb": 11_189,
-    "yam": 743,
+    "yam": 743
 }
 
 

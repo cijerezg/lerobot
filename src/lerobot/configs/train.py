@@ -390,13 +390,14 @@ class ProbeConfig:
     # the ReBot roots carrying meta/subtask_windows.json, comma-separated (None = the
     # config's dataset sources). Episodes are the independent unit every similarity here
     # is built from — same-episode pairs are dropped, and the ceiling splits episodes —
-    # so the budget buys episodes first and frames within an episode second. 2 x 10 is
-    # ~930 frames over the 66 (robot, cell) combos, ~10 min; 10 x 12 was 4,911, ~35 min
-    # on a warm diverse cache and hours without one.
-    conditions_frames_per_episode_cell: int = 2
+    # so the budget buys episodes first. One interior frame per episode/class/phase;
+    # the global cap includes held-out frames. Each frame needs two captures.
+    conditions_frames_per_episode_cell: int = 1
     conditions_episodes_per_cell: int = 10
+    conditions_max_frames: int = 600
+    conditions_headline_layer: int = 28
     conditions_rebot_roots: str | None = None
-    conditions_layers: str = "14,28,32"  # matrices_L<n>.png besides the headline (peak) layer; every layer is analysed regardless
+    conditions_layers: str = "14,28,32"  # matrices_L<n>.png besides the fixed headline layer; every layer is analysed regardless
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1
     umap_seed: int = 42
@@ -481,10 +482,11 @@ class ProbeConfig:
     metadata_steering_n_frames: int | None = None
     metadata_steering_n_seeds: int | None = None
 
-    # Embodiment swap: n_frames x (1 + len(EMBODIMENT_NAMES) + n_seeds - 1) forwards per frame,
-    # on the ReBot val split AND every diverse holdout episode (n_frames per episode each).
-    embodiment_swap_n_frames: int | None = None
-    embodiment_swap_n_seeds: int | None = None
+    # Embodiment swap: nine names at the home mode plus two mode interventions,
+    # paired under three seeds. Global frame cap: 96 x 11 x 3 decoded chunks.
+    embodiment_swap_n_frames: int | None = 6
+    embodiment_swap_n_seeds: int | None = 3
+    embodiment_swap_max_frames: int = 96
 
     # MEM temporal attention: one forward per frame for the real read, plus one each for
     # the two positional controls when this is on. Mass on an age says the slot was read;

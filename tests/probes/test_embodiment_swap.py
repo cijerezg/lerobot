@@ -44,7 +44,7 @@ class FakeAdapter:
         return torch.randn(1, CHUNK, DIM, generator=torch.Generator().manual_seed(seed)).expand(n, -1, -1).clone()
 
     def predict_action_chunk_batch(
-        self, obs, task, subtasks, *, metadatas, noise, embodiments, control_modes, extra_complementary
+        self, obs, task, subtasks, *, metadatas, noise, embodiments, control_modes, extra_complementary, inference_action_mode="continuous"
     ):
         # The frame's training-regime space: ReBot and every diverse layout but MolmoAct are joint.
         layout = None if extra_complementary is None else int(extra_complementary["action_layout_id"].reshape(-1)[0])
@@ -67,7 +67,7 @@ class FakeAdapter:
             elif mode != own_mode:
                 shift = shift + MODE_VEC
             chunks.append(BASE + shift + 0.002 * noise[i])
-        return None, torch.stack(chunks)
+        return torch.stack(chunks), torch.stack(chunks)
 
 
 class FakeDataset:
@@ -98,20 +98,20 @@ def fake_rebot_samples(dataset, cfg, n_frames):
              "frame": k, "index": e * 100 + k} for e in range(2) for k in range(n_frames)]
 
 
-def fake_probe_frame_inputs(dataset, cfg, index, chunk_size):
-    return {"obs": {}, "task": "put the sock in the basket", "subtask": "grasp the sock"}
+def fake_probe_frame_inputs(dataset, cfg, index, chunk_size, **kwargs):
+    return {"obs": {}, "task": "put the sock in the basket", "subtask": "grasp the sock", "gt_actions": BASE + REBOT_VEC}
 
 
 def fake_diverse_inputs(buffer, cfg, sample):
     layout = MOLMOACT_LAYOUT if sample["source"] == "molmoact" else UR5_LAYOUT
     return {"obs": {}, "task": "hang the cup", "subtask": "grasp the cup",
-            "extra": {"action_layout_id": torch.tensor([layout])}}
+            "extra": {"action_layout_id": torch.tensor([layout])}, "gt_actions": BASE}
 
 
 CFG = SimpleNamespace(
     policy=SimpleNamespace(action_mode="continuous", chunk_size=CHUNK, embodiment=None),
     probe_parameters=SimpleNamespace(n_seeds=3, n_frames_per_episode=4, max_episodes=None, random_seed=0,
-                                     embodiment_swap_n_frames=None, embodiment_swap_n_seeds=None),
+                                     embodiment_swap_n_frames=None, embodiment_swap_n_seeds=None, embodiment_swap_max_frames=96),
     diverse=SimpleNamespace(root="/does/not/exist", render_automatic_quality=False,
                             rebot_layout="rebot_b601_joint7_commanded"),
 )
@@ -176,7 +176,7 @@ def test_yam_is_a_name(result):
     assert es.LABELS["yam"] == "YAM" and "yam" in es.CONDITIONS
     assert "YAM" in summary["trained_labels"] and "YAM" not in summary["unseen_labels"]
     assert summary["per_label"][es.REBOT]["yam"]["sep_median"] > 20
-    assert all("yam_sep" in r and "yam@end_effector_sep" in r for r in rows if r["domain"] == es.REBOT)
+    assert all("yam_sep" in r and "yam@end_effector_sep" not in r for r in rows if r["domain"] == es.REBOT)
 
 
 def test_control_mode_axis(result):
@@ -263,3 +263,35 @@ def test_ignored_name_has_zero_paired_separation():
     )
     assert row["foreign_unseen_sep"] == 0.0
     assert row["none_sep"] > 0.0
+
+
+def test_paired_budget_and_imitation_metrics(result):
+    _, summary, rows = result
+    assert all(r["paired_seeds"] == 3 and r["variants"] == 11 for r in rows)
+    assert summary["data"]["forwards"] == len(rows) * 33
+    for row in rows:
+        assert "none_demo_rmse_delta" in row and "mode_swapped_gripper_mae_delta" in row
+    assert summary["action_quality_by_source"]["rebot"]["mode_swapped"]["demo_rmse_delta"] > 0
+
+
+def test_frame_cap_is_global_and_episode_balanced():
+    samples = [{"episode": str(e), "index": e * 100 + f} for e in range(18) for f in range(20)]
+    chosen = es._bounded_frames(samples, 96, 42)
+    assert chosen == es._bounded_frames(samples, 96, 42)
+    assert len(chosen) == 96
+    counts = [sum(s["episode"] == str(e) for s in chosen) for e in range(18)]
+    assert min(counts) == 5 and max(counts) == 6
+
+
+def test_action_quality_ignores_padded_dimensions():
+    inputs = {"obs": {}, "task": "task", "subtask": "step", "extra": None,
+              "gt_actions": BASE + REBOT_VEC, "native_width": 7}
+    row, _ = es._measure_frame(FakeAdapter(), inputs, "rebot_b601", "joint", {"franka_panda"}, 3)
+    class PaddedAdapter(FakeAdapter):
+        def predict_action_chunk_batch(self, *args, **kwargs):
+            raw, normalized = super().predict_action_chunk_batch(*args, **kwargs)
+            raw[:, :, 7] = 100000
+            return raw, normalized
+    padded, _ = es._measure_frame(PaddedAdapter(), inputs, "rebot_b601", "joint", {"franka_panda"}, 3)
+    assert row["mode_swapped_demo_rmse_delta"] == padded["mode_swapped_demo_rmse_delta"]
+    assert row["mode_swapped_gripper_mae_delta"] == padded["mode_swapped_gripper_mae_delta"]

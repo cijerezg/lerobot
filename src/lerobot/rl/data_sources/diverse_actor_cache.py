@@ -146,6 +146,8 @@ def cache_fingerprint(root: str | Path, spec: DiverseSampleSpec, *, anchors: int
             "anchors": int(anchors),
             "episodes": int(episodes),
         },
+        "holdout_sha256": _sha256_file(Path(root) / "holdout_episodes.json")
+        if (Path(root) / "holdout_episodes.json").is_file() else None,
         "spec": spec.fingerprint(),
         "camera_map": {source: dict(mapping) for source, mapping in sorted(CAMERA_ROLE_MAP.items())},
         "action_layouts": [
@@ -567,6 +569,75 @@ def build_cache(
     final.parent.mkdir(parents=True, exist_ok=True)
     os.replace(staging, final)
     logger.info("Diverse cache published at %s", final)
+    return final
+
+
+def subset_cache(
+    source_dir: str | Path,
+    root: str | Path,
+    cache_dir: str | Path,
+    selection: DiverseActorSelection,
+    source_rows: list[list],
+    spec: DiverseSampleSpec,
+) -> Path:
+    """Publish a smaller training selection over immutable existing frame banks.
+
+    source_rows records the original (episode_id, anchor_index, layout_id) order.
+    Validate it against every cached identity before copying compact anchor tables.
+    Only image/depth banks are hardlinked; the source cache is never modified.
+    """
+    source_dir, root, cache_dir = Path(source_dir), Path(root), Path(cache_dir)
+    meta = json.loads((source_dir / "metadata.json").read_text())
+    if meta.get("schema_version") != CACHE_SCHEMA_VERSION:
+        raise ValueError("Source cache schema changed; rebuild before subsetting")
+    if meta.get("partial") or meta["built_rows"] != len(source_rows):
+        raise ValueError("Subset reuse requires a complete source cache and its full row manifest")
+    if meta["corpus"] != corpus_fingerprint(root) or meta["spec"] != spec.fingerprint():
+        raise ValueError("Source cache corpus or sample specification changed")
+    if meta["selection"]["anchors"] != len(source_rows):
+        raise ValueError("Source row manifest has the wrong length")
+    old_eps = list(dict.fromkeys(r[0] for r in source_rows))
+    old_positions = {ep: i for i, ep in enumerate(old_eps)}
+    identity = _open_memmap(source_dir / "anchors" / "identity.bin", "int32", (len(source_rows), 5), "r")
+    expected = np.array([[old_positions[ep], anchor, layout] for ep, anchor, layout in source_rows])
+    if not np.array_equal(identity[:, 1:4], expected):
+        raise ValueError("Source manifest does not match cached episode/anchor/layout identities")
+    lookup = {tuple(row): i for i, row in enumerate(source_rows)}
+    if len(lookup) != len(source_rows):
+        raise ValueError("Duplicate source anchor identities")
+    keys = [(r["episode_id"], int(r["anchor_index"]), int(r["action_layout_id"])) for r in selection.rows]
+    if any(key not in lookup for key in keys):
+        raise ValueError("Requested selection is not a subset of the source cache")
+    indices = np.array([lookup[key] for key in keys], dtype=np.int64)
+    fingerprint = cache_fingerprint(root, spec, anchors=len(keys), episodes=len(selection.episode_ids))
+    final = cache_dir / fingerprint
+    if final.exists():
+        raise FileExistsError(final)
+    staging = cache_dir / f".subset-{fingerprint}"
+    staging.mkdir(parents=True, exist_ok=False)
+    (staging / "anchors").mkdir()
+    (staging / "banks").mkdir()
+    positions = {ep: i for i, ep in enumerate(selection.episode_ids)}
+    for column in _anchor_columns(spec):
+        original = _open_memmap(source_dir / "anchors" / f"{column.name}.bin", column.dtype,
+                                (len(source_rows), *column.shape), "r")
+        compact = np.array(original[indices])
+        if column.name == "identity":
+            compact[:, 1] = [positions[r["episode_id"]] for r in selection.rows]
+        if column.name == "native_width" and np.any(compact <= 0):
+            raise ValueError("Source cache contains unwritten anchors")
+        compact.tofile(staging / "anchors" / f"{column.name}.bin")
+    for bank in (source_dir / "banks").iterdir():
+        if bank.is_file():
+            os.link(bank, staging / "banks" / bank.name)
+    meta.update({"fingerprint": fingerprint, "corpus_root": str(root),
+                 "selection": {**meta["selection"], "anchors": len(keys), "episodes": len(positions),
+                               "expected_anchors": len(keys), "expected_episodes": len(positions)},
+                 "built_rows": len(keys), "built_episodes": sorted(positions),
+                 "subset_of": str(source_dir), "holdout_episode_ids": sorted(selection.held_out),
+                 "bank_storage": "immutable superset; only compact training anchors address the banks"})
+    (staging / "metadata.json").write_text(json.dumps(meta, indent=2))
+    os.replace(staging, final)
     return final
 
 

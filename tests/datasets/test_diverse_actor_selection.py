@@ -121,7 +121,7 @@ def test_holdout_episodes_are_absent_and_accounted_for() -> None:
     holdout = holdout_episode_ids(DATA_ROOT)
     assert holdout and set(selection.held_out) == holdout
     assert not holdout & set(selection.episode_ids)
-    assert sum(selection.held_out.values()) == 498
+    assert sum(selection.held_out.values()) == 1460
 
 
 def test_every_anchor_carries_the_speed_of_its_reviewed_atom() -> None:

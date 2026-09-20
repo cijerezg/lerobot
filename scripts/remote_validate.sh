@@ -32,7 +32,8 @@ KEEP_CKPT=0
 FORCE_DELETE=0
 ATTACH=0
 DRY=0
-SSH_OPTS=(-o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o ConnectTimeout=15)
+BOUNDED=0
+SSH_OPTS=(-o BatchMode=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o ConnectTimeout=15)
 
 usage() {
   sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
@@ -46,6 +47,7 @@ Options:
   --host HOST        ssh target (default: $DGX_HOST, else "dgx")
   --workspace DIR    workspace root, mirrored on both boxes (default: repo parent)
   --config PATH      training config (default: <workspace>/config_rl.yaml)
+  --bounded         use deployed bounded probes; do not overwrite Spark code/config
   --out DIR          run/output dir (default: <workspace>/outputs/remote_val/<slug>)
   --keep-checkpoint  do not delete the remote checkpoint copy when done
   --force-delete     delete the remote checkpoint even if it pre-existed there
@@ -60,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --host)            HOST="$2"; shift 2 ;;
     --workspace)       WS="$2"; shift 2 ;;
     --config)          CONFIG="$2"; shift 2 ;;
+    --bounded)         BOUNDED=1; shift ;;
     --out)             RUN_DIR="$2"; shift 2 ;;
     --keep-checkpoint) KEEP_CKPT=1; shift ;;
     --force-delete)    FORCE_DELETE=1; shift ;;
@@ -80,7 +83,11 @@ WS="$(cd "$WS" && pwd)" || die "workspace not found"
 CODE="${CODE:-$WS}"
 [[ -d "$CODE" ]] || die "code tree not found: $CODE"
 CODE="$(cd "$CODE" && pwd)"
-CONFIG="${CONFIG:-$WS/config_rl.yaml}"
+if (( BOUNDED )); then
+  CONFIG="$WS/migration/probe_bounded_2026-09-19/config_probe_spark.yaml"
+else
+  CONFIG="${CONFIG:-$WS/config_rl.yaml}"
+fi
 [[ -f "$CONFIG" ]] || die "config not found: $CONFIG"
 
 if   [[ -d "$CODE/src/lerobot" ]];         then SRC="$CODE/src/lerobot"
@@ -122,6 +129,7 @@ fi
 STATE="$RUN_DIR/.remote_val"
 RLOG="$RUN_DIR/remote_val.log"          # remote log path (same string locally)
 LLOG="$RUN_DIR/remote_val.log"          # local mirror we append to while tailing
+PROBE_RUN="$RUN_DIR"
 
 info "host       $HOST"
 info "workspace  $WS"
@@ -136,6 +144,7 @@ if (( ATTACH )); then
   [[ -f "$STATE/pid" ]] || die "no local state at $STATE — nothing to attach to"
   REMOTE_PID="$(cat "$STATE/pid")"
   PREEXISTED="$(cat "$STATE/preexisted" 2>/dev/null || echo 1)"
+  PROBE_RUN="$(cat "$STATE/probe_run" 2>/dev/null || echo "$RUN_DIR")"
 else
   # ── Preflight ─────────────────────────────────────────────────────────────────
   info "preflight"
@@ -163,11 +172,15 @@ else
   (( PREEXISTED )) && warn "checkpoint already exists on $HOST — it will NOT be deleted (use --force-delete to override)"
 
   # ── Sync code + config ────────────────────────────────────────────────────────
+  if (( BOUNDED )); then
+    info "using verified Spark deployment; code and configs stay in place"
+  else
   info "sync code"
   run rsync -a --delete --exclude='__pycache__/' --exclude='*.pyc' --exclude='.venv/' \
       -e "ssh ${SSH_OPTS[*]}" \
       "$SRC/" "$HOST:$SRC/" || die "code rsync failed"
   run rsync -a -e "ssh ${SSH_OPTS[*]}" "$CONFIG" "$HOST:$WS/config_rl.yaml" || die "config rsync failed"
+  fi
 
   # ── Sync checkpoint ───────────────────────────────────────────────────────────
   info "sync checkpoint ($(du -sh "$MODEL" | cut -f1))"
@@ -179,17 +192,25 @@ else
 
   # ── Launch detached ───────────────────────────────────────────────────────────
   (( DRY )) || mkdir -p "$STATE"
+  if (( BOUNDED )); then
+    PROBE_RUN="$RUN_DIR/bounded-$(date +%s)-$$"
+    (( DRY )) || printf '%s\n' "$PROBE_RUN" > "$STATE/probe_run"
+  fi
   launcher="${TMPDIR:-/tmp}/remote_validate.run.$$.sh"
   trap 'rm -f "$launcher"' EXIT
   cat > "$launcher" <<EOF
 #!/usr/bin/env bash
 set -o pipefail
 export PYTHONUNBUFFERED=1
+export PYTHONPATH='$WS/lerobot/src'
 # setsid+nohup gives a non-interactive, non-login shell, which never sources the
 # profile that puts uv on PATH.
 export PATH="\$HOME/.local/bin:\$PATH"
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
+if (( $BOUNDED )); then
+  bash migration/probe_bounded_2026-09-19/run_on_spark.sh '$MODEL' '$PROBE_RUN'
+else
 uv run --no-project --python '$VENV/bin/python' python -m lerobot.scripts.rl_offline \\
     --config_path=config_rl.yaml \\
     --policy.pretrained_path='$MODEL' \\
@@ -198,6 +219,7 @@ uv run --no-project --python '$VENV/bin/python' python -m lerobot.scripts.rl_off
     --save_checkpoint=false \\
     --aim.enable=false \\
     --offline_output_dir='$RUN_DIR'
+fi
 echo \$? > '$STATE/exit_code'
 EOF
   chmod +x "$launcher"
@@ -210,8 +232,14 @@ EOF
   rsync -a -e "ssh ${SSH_OPTS[*]}" "$launcher" "$HOST:$launcher" || die "launcher rsync failed"
   # This ssh occasionally never returns although the job is up (2026-09-03, 2026-09-11); the
   # pid poll below is the real launch check, so a timed-out ssh (rc 124) is not a failure.
-  timeout 60 ssh "${SSH_OPTS[@]}" "$HOST" \
+  if (( BOUNDED )); then
+    sshx "rm -f '$STATE/pid'; systemd-run --user --unit=bounded-probe-$(date +%s)-$$ \
+      -p MemoryMax=100G -p MemorySwapMax=0 -p StandardOutput=append:$RLOG -p StandardError=inherit \
+      bash '$launcher'"
+  else
+    timeout 60 ssh "${SSH_OPTS[@]}" "$HOST" \
     "rm -f '$STATE/pid'; cd '$WS' && setsid nohup bash '$launcher' >> '$RLOG' 2>&1 < /dev/null & disown"
+  fi
   rc=$?; (( rc == 0 || rc == 124 )) || die "failed to launch on $HOST (rc=$rc)"
   REMOTE_PID=""
   for _ in $(seq 30); do
@@ -235,6 +263,10 @@ while :; do
   from=$(( $(wc -l < "$LLOG") + 1 ))
   sshx "tail -n +$from --follow=name --retry --pid=$REMOTE_PID -- '$RLOG'" 2>/dev/null | tee -a "$LLOG"
   sshx "kill -0 $REMOTE_PID 2>/dev/null" || { sleep 3; sshx "[ -f '$STATE/exit_code' ]" && break; }
+  if sshx "test ! -f '$STATE/exit_code' && ! kill -0 $REMOTE_PID 2>/dev/null"; then
+    warn "remote worker exited without a receipt (possibly OOM); recording failure"
+    break
+  fi
   sleep 2
 done
 from=$(( $(wc -l < "$LLOG") + 1 ))
@@ -248,7 +280,10 @@ info "remote run exited $EXIT"
 # ── Pull results back ───────────────────────────────────────────────────────────
 # The remote writes one step dir (step_00000000); take whichever it produced so this
 # does not silently pull nothing if that ever changes.
-remote_step="$(sshx "ls -d '$RUN_DIR'/validation/step_* 2>/dev/null | head -1" || true)"
+remote_step="$(sshx "ls -d '$PROBE_RUN'/validation/step_* 2>/dev/null | head -1" || true)"
+if (( BOUNDED && EXIT != 0 )); then
+  RESULT_DIR="$RUN_DIR/failed-$(basename "$PROBE_RUN")"
+fi
 if [[ -n "$remote_step" ]]; then
   info "pull results -> $RESULT_DIR"
   mkdir -p "$RESULT_DIR"

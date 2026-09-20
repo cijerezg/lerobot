@@ -364,7 +364,7 @@ policy:
   # while the corpus is in radians (its anchor-delta span is ~60x the others'). Built
   # over the actual training selection by compute_diverse_stats.py.
   action_encoding_stats_path: null
-  embodiment_stats_path: outputs/stats/action_stats_anchor_diverse-rebot-v4.pt   # 2026-09-19 v3 corpus (9 rows, layouts 0-8: + YAM); ReBot row identical to -v3
+  embodiment_stats_path: outputs/stats/action_stats_anchor_diverse-rebot-v4-probes.pt   # 2026-09-19 v3 corpus (9 rows, layouts 0-8: + YAM); ReBot row identical to -v3
 
   # ---- Fixed temporal-band auxiliary on the flow residual ------------------
   # Ordinary flow MSE remains unchanged and covers all k=0..29. This adds a fixed
@@ -504,6 +504,14 @@ aim:
 #     at zero for the duration of a capture — the attention/Jacobian probes drive a flow
 #     loss, which is exactly what used to arm them.
 probe_parameters:
+  # Fixed bounded protocol: the same samples and headline layer at every checkpoint.
+  conditions_frames_per_episode_cell: 1
+  conditions_episodes_per_cell: 10
+  conditions_max_frames: 600
+  conditions_headline_layer: 28
+  embodiment_swap_n_frames: 6
+  embodiment_swap_n_seeds: 3
+  embodiment_swap_max_frames: 96
   # ---- Enable flags ---------------------------------------------------------
   # Only probes modified in the counterfactual audit are enabled. This keeps one model
   # load and writes all four corrected artifacts under the same validation step.
@@ -525,7 +533,7 @@ probe_parameters:
   enable_action_trace: false
   enable_metadata_steering: false
   enable_embodiment_swap: false  # 2026-09-18 other robots' names on ReBot frames + the ReBot name on the diverse holdout (probes/embodiment_swap.py)
-  enable_conditions_matrix: false  # 2026-09-18 object x phase similarity matrix per robot, compared across robots (probes/conditions_matrix.py); ~930 frames at the default 2 frames x 10 episodes per cell
+  enable_conditions_matrix: false  # 2026-09-18 object x phase similarity matrix per robot, compared across robots (probes/conditions_matrix.py); capped at 600 frames x 2 captures
   enable_depth_modality: false            # matched foreign/stale depth; null depth is stress only
   enable_attention_budget: false
   enable_subtask_sweep: false

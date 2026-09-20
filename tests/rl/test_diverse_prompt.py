@@ -104,11 +104,11 @@ def test_a_missing_task_is_an_error_not_an_empty_clause() -> None:
 
 def test_every_selected_episode_yields_a_task(selection) -> None:
     tasks, subtasks = diverse_vocabulary(selection)
-    # v3 corpus minus holdout_episodes.json (6 episodes, 2026-09-19).
-    assert len(tasks) == 491
+    # v3 corpus minus holdout_episodes.json (18 episodes, 2026-09-19).
+    assert len(tasks) == 485
     # The step vocabulary is the reviewed one-action atoms, not the parent intervals
     # (243 of those before 2026-09-09), so it speaks ReBot's grasp/move/release grammar.
-    assert len(subtasks) == 880
+    assert len(subtasks) == 862
     assert all(text == text.strip() and text for text in subtasks)
     assert FMB_TASK_TEXT in tasks
     assert tasks == sorted(tasks) and subtasks == sorted(subtasks)

@@ -6,6 +6,7 @@ import torch
 from lerobot.probes.depth_modality_probe import (
     _drop_depth,
     _match_foreign_depth_donors,
+    _paired_stats,
     _replace_depth_window,
     _stale_depth_index,
 )
@@ -104,3 +105,29 @@ def test_stale_index_is_same_episode_stride_aligned():
     # Episode starts at global 100; frame 70 with a requested 30-frame lag lands at 40.
     assert _stale_depth_index(170, 70, stale_frames=30, stride=10) == (140, 30)
     assert _stale_depth_index(100, 0, stale_frames=30, stride=10) is None
+
+
+def _row(global_idx: int, deployment: float, stale: float | None) -> dict:
+    trajectory = {"deployment": {"path_mse": deployment}}
+    if stale is not None:
+        trajectory["stale_depth"] = {"path_mse": stale}
+    return {"global_idx": global_idx, "trajectory": trajectory}
+
+
+def test_penalty_pairs_per_frame_instead_of_differencing_two_means():
+    """The 2026-09-20 artifact: an episode-start frame stale_depth cannot run on.
+
+    Its deployment error is 9x the others, so a difference of per-condition means reads
+    as a large stale "improvement" while every shared frame says stale is slightly worse.
+    """
+    rows = [_row(0, 0.30, None), _row(3, 0.03, 0.031), _row(6, 0.04, 0.041)]
+
+    unpaired = sum(r["trajectory"]["stale_depth"]["path_mse"] for r in rows[1:]) / 2 - sum(
+        r["trajectory"]["deployment"]["path_mse"] for r in rows
+    ) / 3
+    stats = _paired_stats(rows, "stale_depth", "path_mse")
+
+    assert unpaired < -0.08  # the artifact
+    assert stats["n"] == 2
+    assert stats["mean"] == pytest.approx(0.001)
+    assert stats["frac_worse"] == 1.0

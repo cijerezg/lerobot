@@ -19,6 +19,14 @@ no rig in the diverse mixture lacks a wrist camera — so their penalty mixes lo
 information with distribution shift and is NOT evidence for the value of depth. They
 are kept, tagged ``untrained shape`` in the JSON and hatched in the figure.
 
+All six conditions are reported on ONE frame set. Anchors inside the first
+``depth_stale_seconds`` of an episode are moved forward to the first grid frame that can
+host a stale window, so no frame is lost; anything still missing a condition is excluded
+from every aggregate, not just that condition's. Penalties are PAIRED on top of that: the
+mean over frames of (condition - deployment), with sd, t, median and frac_worse beside it
+in ``trajectory_counterfactual_stats``. A difference of per-condition means over different
+frame sets produced a spurious stale-depth "improvement" on 2026-09-20.
+
 The probe reports:
 
   - four normalized-space trajectory criteria vs GT per condition — path MSE,
@@ -299,6 +307,41 @@ def _load_depth_window(dataset, cfg, global_idx: int, obs: dict, *, depth_obs_ke
     return out
 
 
+def _mean(values: list) -> float | None:
+    """Mean of the finite entries, or None when a criterion was non-finite everywhere."""
+    finite = [v for v in values if v is not None]
+    return float(np.mean(finite)) if finite else None
+
+
+def _paired_stats(per_frame: list[dict], condition: str, key: str) -> dict | None:
+    """Difference vs deployment over the frames where BOTH conditions ran.
+
+    ``stale_depth`` has no earlier donor at an episode start, so a difference of
+    per-condition means compares different frame sets. On 2026-09-20 that alone
+    produced a spurious -0.002 stale "improvement": the excluded start frames included
+    one anchor with 9x the corpus path MSE, counted in deployment's mean only.
+    """
+    delta = np.array(
+        [
+            row["trajectory"][condition][key] - row["trajectory"][DEPLOYMENT][key]
+            for row in per_frame
+            if row["trajectory"].get(condition, {}).get(key) is not None
+            and row["trajectory"][DEPLOYMENT].get(key) is not None
+        ]
+    )
+    if not delta.size:
+        return None
+    sd = float(delta.std(ddof=1)) if delta.size > 1 else 0.0
+    return {
+        "mean": float(delta.mean()),
+        "median": float(np.median(delta)),
+        "sd": sd,
+        "t": (float(delta.mean() / (sd / np.sqrt(delta.size))) if sd else None),
+        "frac_worse": float((delta > 0).mean()),
+        "n": int(delta.size),
+    }
+
+
 def _write_manifest(output_dir: str, summary: dict) -> dict:
     """Describe the matched depth counterfactuals and the untrained-shape stress tests."""
     trajectory_keys = [
@@ -324,7 +367,7 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                 warn=0.0,
                 primary=True,
                 trend=True,
-                note="$\\mathrm{mse}(\\text{foreign depth}) - \\mathrm{mse}(\\text{real depth})$ at identical flow noise. The donor comes from another episode and swaps current plus historical depth together. Positive means scene-aligned depth improves the demonstrated path.",
+                note="$\\mathrm{mse}(\\text{foreign depth}) - \\mathrm{mse}(\\text{real depth})$, paired per frame, at identical flow noise. The donor comes from another episode and swaps current plus historical depth together. Positive means scene-aligned depth improves the demonstrated path.",
             ),
             Metric(
                 f"max_abs_delta.{DEPLOYMENT} vs {FOREIGN}",
@@ -340,7 +383,15 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                 good="high",
                 fmt=5,
                 baseline=0.0,
-                note="Path MSE(stale depth) − path MSE(real depth). The full depth window comes from an earlier point in the same episode; start frames without an earlier donor are excluded.",
+                note="Path MSE(stale depth) − path MSE(real depth), paired per frame on the same frames as every other condition. The full depth window comes from an earlier point in the same episode; anchors are shifted past the stale lag so no frame is lost to the episode start.",
+            ),
+            Metric(
+                "trajectory_counterfactual_stats.stale_depth.path_mse.t",
+                "Stale-depth penalty · paired t",
+                good="none",
+                fmt=2,
+                baseline=0.0,
+                note="Paired $t$ over the frames with an earlier donor. $|t| < 2$ means the stale-depth penalty is indistinguishable from zero and should not be read as depth being ignored.",
             ),
             Metric(
                 "missing_depth_penalty",
@@ -416,14 +467,16 @@ def _write_manifest(output_dir: str, summary: dict) -> dict:
                     "lost information with distribution shift.\n\n"
                     "**Right** — the existing finite-difference sensitivity to 1%-of-std raw "
                     "depth and wrist-RGB perturbations. It is secondary to the matched real-"
-                    "depth comparison."
+                    "depth comparison.\n\n"
+                    "Every bar and every penalty uses the same ``n_frames_common`` frames, so "
+                    "bar heights are directly comparable."
                 ),
                 primary=True,
             ),
             Panel(
                 "depth_modality.json",
                 "Summary, donor provenance, and per-frame measurements",
-                how="Each row records donor episode/frame, matching tier and distance, stale lag, condition errors, and paired action shifts.",
+                how="Each row records donor episode/frame, matching tier and distance, stale lag, condition errors, and paired action shifts. Rows missing a condition are excluded from every summary aggregate; ``n_frames_common`` is the frame set all reported numbers use.",
             ),
         ],
         see_also=["attention_budget", "action_trace"],
@@ -466,9 +519,11 @@ def _render(summary: dict, per_frame: list[dict], output_path: str) -> None:
     )
     axes[0].set_xticks(np.arange(len(conditions)), conditions, rotation=20, ha="right")
     axes[0].set_ylabel("normalized MSE vs GT")
+    foreign_t = summary["trajectory_counterfactual_stats"][FOREIGN]["path_mse"]["t"]
     axes[0].set_title(
-        f"Depth counterfactuals — foreign penalty {summary['foreign_depth_penalty']:+.5f}\n"
-        "(mse(foreign depth) − mse(real depth); positive ⇒ aligned depth helps)",
+        f"Depth counterfactuals — foreign penalty {summary['foreign_depth_penalty']:+.5f} "
+        f"(paired t {foreign_t:+.2f})\n"
+        f"paired per frame over the {summary['n_frames_common']} frames every condition ran",
         fontsize=10,
     )
 
@@ -521,17 +576,30 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 f"[depth_modality] snapped frame indices onto the depth grid (stride {stride}): "
                 f"{explicit} -> {frame_indices}"
             )
-    else:
-        frame_indices = [
-            g
-            for _, _, g in sample_episodes_evenly(
-                dataset,
-                int(getattr(p, "depth_modality_n_frames", None) or p.n_frames_per_episode),
-                p.max_episodes,
-                p.random_seed,
-                stride,
-            )
-        ]
+    stale_seconds = float(getattr(p, "depth_stale_seconds", 2.0))
+    stale_frames = max(int(round(stale_seconds * float(cfg.env.fps))), 1)
+    if not explicit:
+        # An anchor inside the first `stale_frames` of an episode has no earlier depth
+        # window, so stale_depth could not run there and the frame would be dropped from
+        # every condition's mean. Move it forward onto the first grid frame that can host
+        # all six conditions instead of losing it.
+        by_episode = build_episode_index(dataset)
+        first_stale_ready = -(-stale_frames // stride) * stride
+        anchors = []
+        for episode_idx, frame_idx, global_idx in sample_episodes_evenly(
+            dataset,
+            int(getattr(p, "depth_modality_n_frames", None) or p.n_frames_per_episode),
+            p.max_episodes,
+            p.random_seed,
+            stride,
+        ):
+            if frame_idx < first_stale_ready:
+                episode = by_episode[episode_idx]
+                if first_stale_ready >= len(episode):
+                    continue
+                global_idx = episode[first_stale_ready]
+            anchors.append(int(global_idx))
+        frame_indices = sorted(dict.fromkeys(anchors))
     if not frame_indices:
         logging.warning("[depth_modality] no frames selected.")
         return
@@ -547,8 +615,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         )
         frame_indices = [idx for idx in frame_indices if idx in donor_matches]
 
-    stale_seconds = float(getattr(p, "depth_stale_seconds", 2.0))
-    stale_frames = max(int(round(stale_seconds * float(cfg.env.fps))), 1)
     adapter._set_probe_cuda_graph_enabled(False)
 
     def predict(obs, frame, *, rgb_on: bool = True) -> torch.Tensor:
@@ -570,13 +636,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             .squeeze(0)
         )
 
-    mse_by_condition: dict[str, list[float]] = {c: [] for c in CONDITIONS}
-    # Keyed by whatever trajectory_error_components returns, so a new criterion
-    # flows through to the summary instead of raising here.
-    trajectory_by_condition: dict[str, dict[str, list[float]]] = {}
-    pairwise_deltas: dict[tuple[str, str], list[float]] = {pair: [] for pair in CONDITION_PAIRS}
-    sens_depth_list: list[float] = []
-    sens_rgb_list: list[float] = []
     per_frame: list[dict] = []
     scale_samples: dict[str, list[float]] = {}
     n_context = 0
@@ -689,26 +748,21 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 if condition not in actions:
                     continue
                 mse = torch.nn.functional.mse_loss(actions[condition][:horizon], gt_norm[:horizon]).item()
-                mse_by_condition[condition].append(mse)
                 row["mse_norm"][condition] = mse
                 components = trajectory_error_components(
                     actions[condition][:horizon],
                     gt_norm[:horizon],
                     hold_norm[:horizon],
                 )
-                row["trajectory"][condition] = {}
-                for key, tensor in components.items():
-                    value = float(tensor) if bool(torch.isfinite(tensor)) else None
-                    row["trajectory"][condition][key] = value
-                    if value is not None:
-                        by_condition = trajectory_by_condition.setdefault(key, {c: [] for c in CONDITIONS})
-                        by_condition[condition].append(value)
+                row["trajectory"][condition] = {
+                    key: (float(tensor) if bool(torch.isfinite(tensor)) else None)
+                    for key, tensor in components.items()
+                }
                 logging.info(f"  mse_norm[{condition:>12s}] = {mse:.5f}")
             for left, right in CONDITION_PAIRS:
                 if left not in actions or right not in actions:
                     continue
                 delta = (actions[left] - actions[right]).abs().max().item()
-                pairwise_deltas[(left, right)].append(delta)
                 row["max_abs_delta"][f"{left} vs {right}"] = delta
                 logging.info(f"  max|Δ| {left} vs {right} = {delta:.4e}")
 
@@ -729,8 +783,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 .norm()
                 .item()
             )
-            sens_depth_list.append(sens_depth)
-            sens_rgb_list.append(sens_rgb)
             row["fd_sensitivity"] = {"depth": sens_depth, "rgb": sens_rgb}
             per_frame.append(row)
             logging.info(
@@ -740,32 +792,43 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     finally:
         adapter._restore_probe_cuda_graph_enabled()
 
+    # EVERY number below comes from `common_frames`: the frames on which all six
+    # conditions ran. Anything averaged over a condition's own frame set would compare
+    # conditions across different frames, which is how the 2026-09-20 stale-depth
+    # artifact arose. Anchors are pre-shifted so this normally keeps all of them.
     n = len(per_frame)
-    mean_depth = sum(sens_depth_list) / n
-    mean_rgb = sum(sens_rgb_list) / n
+    active_conditions = [c for c in CONDITIONS if any(c in row["mse_norm"] for row in per_frame)]
+    common_frames = [row for row in per_frame if all(c in row["mse_norm"] for c in active_conditions)]
+    if not common_frames:
+        logging.warning("[depth_modality] no frame ran every condition; nothing comparable to report.")
+        return
+    kept = {id(row) for row in common_frames}
+    dropped = [int(row["global_idx"]) for row in per_frame if id(row) not in kept]
+    if dropped:
+        logging.warning(
+            f"[depth_modality] {len(dropped)} of {n} anchors could not run every condition "
+            f"and are excluded from all aggregates: {dropped}"
+        )
+    mean_depth = float(np.mean([row["fd_sensitivity"]["depth"] for row in common_frames]))
+    mean_rgb = float(np.mean([row["fd_sensitivity"]["rgb"] for row in common_frames]))
     trajectory = {
-        key: {
-            condition: (float(np.mean(values)) if values else None)
-            for condition, values in by_condition.items()
-        }
-        for key, by_condition in trajectory_by_condition.items()
+        key: {condition: _mean([row["trajectory"][condition][key] for row in common_frames])
+              for condition in active_conditions}
+        for key in common_frames[0]["trajectory"][DEPLOYMENT]
     }
-    active_conditions = [condition for condition in CONDITIONS if mse_by_condition[condition]]
-    trajectory_counterfactual_penalty = {
-        condition: {
-            key: (
-                None
-                if values[DEPLOYMENT] is None or values[condition] is None
-                else values[condition] - values[DEPLOYMENT]
-            )
-            for key, values in trajectory.items()
-        }
+    # Paired: every penalty is a mean OVER FRAMES of (condition - deployment).
+    trajectory_counterfactual_stats = {
+        condition: {key: _paired_stats(common_frames, condition, key) for key in trajectory}
         for condition in (FOREIGN, STALE, NO_DEPTH)
     }
-    match_tier_counts = dict(sorted(Counter(row["foreign_donor"]["tier"] for row in per_frame).items()))
+    trajectory_counterfactual_penalty = {
+        condition: {key: (None if stats is None else stats["mean"]) for key, stats in by_key.items()}
+        for condition, by_key in trajectory_counterfactual_stats.items()
+    }
+    match_tier_counts = dict(sorted(Counter(row["foreign_donor"]["tier"] for row in common_frames).items()))
     state_distances = [
         row["foreign_donor"]["state_distance"]
-        for row in per_frame
+        for row in common_frames
         if row["foreign_donor"]["state_distance"] is not None
     ]
     summary = {
@@ -773,19 +836,24 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "frame_indices": [int(i) for i in frame_indices],
         "conditions": active_conditions,
         "condition_kind": {condition: CONDITION_KIND[condition] for condition in active_conditions},
+        "n_frames_common": len(common_frames),
         "mse_norm": {
-            condition: float(np.mean(mse_by_condition[condition])) for condition in active_conditions
+            condition: _mean([row["mse_norm"][condition] for row in common_frames])
+            for condition in active_conditions
         },
         "max_abs_delta": {
-            f"{left} vs {right}": float(np.mean(values))
-            for (left, right), values in pairwise_deltas.items()
-            if values
+            f"{left} vs {right}": _mean(
+                [row["max_abs_delta"][f"{left} vs {right}"] for row in common_frames]
+            )
+            for left, right in CONDITION_PAIRS
+            if left in active_conditions and right in active_conditions
         },
         "foreign_depth_penalty": trajectory_counterfactual_penalty[FOREIGN]["path_mse"],
         "stale_depth_penalty": trajectory_counterfactual_penalty[STALE]["path_mse"],
         "missing_depth_penalty": trajectory_counterfactual_penalty[NO_DEPTH]["path_mse"],
         "trajectory": trajectory,
         "trajectory_counterfactual_penalty": trajectory_counterfactual_penalty,
+        "trajectory_counterfactual_stats": trajectory_counterfactual_stats,
         "foreign_matching": {
             "tier_counts": match_tier_counts,
             "mean_progress_distance": float(
@@ -794,7 +862,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             "mean_state_distance": (float(np.mean(state_distances)) if state_distances else None),
         },
         "stale_seconds_requested": stale_seconds,
-        "n_stale_frames": len(mse_by_condition[STALE]),
+        "n_stale_frames": sum(row["stale_donor_global_idx"] is not None for row in per_frame),
         "fd_sensitivity": {
             "depth": mean_depth,
             "rgb": mean_rgb,

@@ -220,7 +220,8 @@ def _diverse_inputs(buffer, cfg, sample: dict) -> dict:
     row = buffer.rows[sample["index"]]
     record = buffer.selection.episode_records[str(row["episode_id"])]
     return {"obs": obs, "task": episode_task(record, row["source"])[0], "subtask": str(row["subtask"]),
-            "metadata": dict(DEPLOYMENT_METADATA), "extra": extra}
+            "metadata": dict(DEPLOYMENT_METADATA), "extra": extra,
+            "gt_actions": transition["action"], "native_width": int(row["native_action_dim"])}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
