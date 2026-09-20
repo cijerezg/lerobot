@@ -101,6 +101,10 @@ def test_fmb_actor_and_critic_views_keep_native_arrays_and_depth_contract(tmp_pa
     assert actor["observation.state"].shape == (7, 8)
     assert actor["action"].shape == (30, 8)
     assert actor["action_source"] == "copy_state"
+    # ... starting one tick after the anchor, so the k=0 anchor delta is not identically 0.
+    np.testing.assert_allclose(actor["action.timestamps"][0], actor_row["anchor_s"] + 1 / 30)
+    assert abs(actor_row["future_end_s"] - (actor_row["anchor_s"] + 1.0)) < 1e-9
+    assert not np.array_equal(actor["action"][0], actor["observation.state"][-1])
     assert actor["embodiment"] == "Franka"
     assert actor["observation.state_semantics"] == [
         "measured_franka_joint_positions",

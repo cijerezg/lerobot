@@ -263,8 +263,9 @@ def _stats_for(values: np.ndarray, width: int) -> dict[str, np.ndarray]:
     # onto one target. FMB's gripper did this: >99% of chunks have no gripper motion in the
     # first ~200 ms, so q01 == q99 == 0 at small k, and "closing" normalized to the same -1
     # as "holding". min/max is then the only scale left. Where the data really is constant
-    # -- a copy_state layout's k=0 anchor delta, or a padded dim -- max == min and this is
-    # a no-op, leaving the existing eps path to produce its constant.
+    # -- a padded dim -- max == min and this is a no-op, leaving the existing eps path to
+    # produce its constant. (copy_state layouts no longer have a constant k=0 delta: their
+    # chunk starts one tick after the anchor, diverse_pilot.COPY_STATE_LEAD_S.)
     extent = stats["max"] - stats["min"]
     for lo, hi in _QUANTILE_BANDS:
         if lo not in stats or hi not in stats:

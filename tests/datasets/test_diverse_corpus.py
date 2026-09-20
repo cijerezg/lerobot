@@ -58,6 +58,7 @@ def _write_episode(
     annotations: dict,
     split: str = "train",
     outcome: str = "success",
+    action_source: str = "native",
 ) -> dict:
     directory = corpus_root / "episodes" / episode_id
     directory.mkdir(parents=True, exist_ok=True)
@@ -79,7 +80,7 @@ def _write_episode(
         "native_rate_hz": fps,
         "state_dimension": 2,
         "action_dimension": 2,
-        "action_source": "native",
+        "action_source": action_source,
         "source_episode_index": 0,
         "source_repo_id": "unit/test",
         "source_revision": "0" * 40,
@@ -303,6 +304,40 @@ def test_interior_source_excluded_span_still_truncates_the_interval(tmp_path: Pa
     rows = build_corpus.critic_intervals(record, tmp_path)
     assert rows[0]["critic_eligible"] is False
     assert rows[0]["critic_rejection_reason"] == "truncated_by_source_range"
+
+
+def test_copy_state_future_starts_one_tick_after_the_anchor(tmp_path: Path) -> None:
+    """a[t] == s[t] on a copy_state source, so the k=0 anchor delta would be identically zero;
+    the chunk is s[t0 + 1/30 .. t0 + 1] and the anchor grid leaves room for that last tick."""
+    annotations = _annotations([_keep(0.0, 16.0, "stack the blocks")], 16.0)
+    frames = 481  # 16.0 s at 30 Hz: 16 - 29/30 = 15.0333 is not on the 0.2 s grid, 16 - 1 = 15.0 is
+    copied = _write_episode(
+        tmp_path, "unit__test__ep000007", frames=frames, fps=30.0, annotations=annotations, action_source="copy_state"
+    )
+    native = _write_episode(tmp_path, "unit__test__ep000008", frames=frames, fps=30.0, annotations=annotations)
+    build_corpus.refresh_episode_index(tmp_path)
+    build_corpus.write_jsonl(tmp_path / "critic_intervals.jsonl", [])
+    rows = build_corpus.actor_anchors(copied, tmp_path, 0.2, 0.0) + build_corpus.actor_anchors(native, tmp_path, 0.2, 0.0)
+    build_corpus.write_jsonl(tmp_path / "actor_anchors_5hz.jsonl", rows)
+    corpus = DiverseCorpus(tmp_path)
+    by_source = {}
+    for row in corpus.actor_anchors():
+        by_source.setdefault(row["action_source"], []).append(row)
+    assert by_source["copy_state"][-1]["anchor_s"] == pytest.approx(15.0)
+    assert by_source["native"][-1]["anchor_s"] == pytest.approx(15.0)  # 15.2 > 16 - 29/30 for both
+    assert by_source["copy_state"][-1]["future_end_s"] == pytest.approx(16.0)
+    assert by_source["native"][-1]["future_end_s"] == pytest.approx(15.0 + 29 / 30)
+
+    state = np.load(tmp_path / "episodes/unit__test__ep000007/state.npy")
+    for row in by_source["copy_state"]:
+        sample = corpus.actor_sample(row, cameras=False)
+        anchor_frame = int(round(row["anchor_s"] * 30))
+        np.testing.assert_allclose(sample["action.timestamps"][0], row["anchor_s"] + 1 / 30)
+        np.testing.assert_array_equal(sample["action"], state[anchor_frame + 1 : anchor_frame + 31])
+        assert not np.array_equal(sample["action"][0], sample["observation.state"][-1])
+    sample = corpus.actor_sample(by_source["native"][0], cameras=False)
+    np.testing.assert_allclose(sample["action.timestamps"][0], by_source["native"][0]["anchor_s"])
+    np.testing.assert_array_equal(sample["action"][0], sample["observation.state"][-1])
 
 
 def test_declared_thirty_hertz_rate_keeps_native_actions_uninterpolated(tmp_path: Path) -> None:

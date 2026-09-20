@@ -37,7 +37,7 @@ from typing import Any
 
 import numpy as np
 
-from lerobot.datasets.diverse_pilot import sample_action_chunk
+from lerobot.datasets.diverse_pilot import action_lead_s, sample_action_chunk
 
 HISTORY_OFFSETS_S = np.asarray([-6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0])
 FUTURE_POINTS = 30
@@ -199,6 +199,7 @@ class DiverseCorpus:
             action,
             float(row["anchor_s"]),
             native_rate_hz=episode.native_rate_hz,
+            lead_s=action_lead_s(row["action_source"]),
         )
         sample = {
             "episode_id": row["episode_id"],

@@ -57,6 +57,13 @@ the interpolation branch like the 15 Hz DROID and 15/20 Hz MolmoAct sources, and
 YAM espresso and pick-place sets keep their native samples. Nothing downstream (corpus
 reader, actor cache, validate) reads the rate other than through `native_rate_hz`.
 
+`copy_state` sources (FMB, RoboChallenge, MolmoAct) report `a[t] == s[t]`, so a chunk
+starting at the anchor would carry an identically-zero k=0 anchor delta. Their 30-point
+future therefore starts one tick after the anchor, `s[t0 + 1/30 .. t0 + 1]`
+(`diverse_pilot.COPY_STATE_LEAD_S`; `actor_anchors` ends the grid at `T_end - 1 s` for such
+episodes; the FMB store's 10 Hz clock never puts an anchor inside that last tick, so its
+stored anchor view needs no rebuild). Commanded sources keep `a[t0 .. t0 + 29/30]`.
+
 Read the corpus with `lerobot.datasets.diverse_corpus`:
 
 ```python

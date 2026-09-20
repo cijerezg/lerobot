@@ -35,7 +35,7 @@ from lerobot.datasets.diverse_corpus import (
     DiverseCorpus,
     time_stratified_indices,
 )
-from lerobot.datasets.diverse_pilot import sample_action_chunk
+from lerobot.datasets.diverse_pilot import COPY_STATE_LEAD_S, action_lead_s, sample_action_chunk
 from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
 
 # Last point of the future chunk, matching build_corpus.FUTURE_END_S.
@@ -198,7 +198,8 @@ class FMBCorpus:
         start_s = float(interval["start_s_nominal"])
         end_s = float(interval["end_s_nominal_exclusive"])
         # Nominal-grid fields are optional: derive them when a store predates them.
-        future_end_s = float(row.get("future_end_s_nominal", anchor_s + FUTURE_END_S))
+        # Every FMB row is copy_state, so its future starts one tick after the anchor.
+        future_end_s = float(row.get("future_end_s_nominal", anchor_s + FUTURE_END_S)) + COPY_STATE_LEAD_S
 
         row.update(
             corpus_key="fmb",
@@ -316,6 +317,7 @@ class FMBCorpus:
             episode.actions,
             float(row["anchor_s"]),
             native_rate_hz=episode.native_rate_hz,
+            lead_s=action_lead_s(row["action_source"]),
         )
         sample = {
             "episode_id": row["episode_id"],

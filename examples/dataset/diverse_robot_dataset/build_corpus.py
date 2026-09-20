@@ -41,6 +41,7 @@ if str(REPO_ROOT / "lerobot/src") not in sys.path:
 
 from lerobot.datasets.diverse_pilot import (  # noqa: E402
     SourceSpec,
+    action_lead_s,
     annotation_window_eligibility,
     load_source_specs,
     load_staged_lerobot_episode,
@@ -805,7 +806,9 @@ def actor_anchors(
     directory = corpus_root / "episodes" / record["episode_id"]
     timestamps = np.load(directory / "timestamp_s.npy")
     annotations = record["annotations"]
-    last_anchor = float(timestamps[-1]) - FUTURE_END_S
+    # copy_state futures start one tick after the anchor (diverse_pilot.COPY_STATE_LEAD_S).
+    future_end_offset = FUTURE_END_S + action_lead_s(record["action_source"])
+    last_anchor = float(timestamps[-1]) - future_end_offset
     if last_anchor < min_anchor_s:
         return []
     count = int(math.floor((last_anchor - min_anchor_s) / stride_s + 1e-9)) + 1
@@ -821,7 +824,7 @@ def actor_anchors(
         eligibility = annotation_window_eligibility(
             annotations,
             anchor - HISTORY_S,
-            anchor + FUTURE_END_S,
+            anchor + future_end_offset,
             action_start_s=anchor,
         )
         segment = _segment_at(annotations, anchor)
@@ -836,7 +839,7 @@ def actor_anchors(
             (None, None),
         )
         interval_index, interval = containing
-        future_end = anchor + FUTURE_END_S
+        future_end = anchor + future_end_offset
         rows.append(
             {
                 "episode_id": record["episode_id"],
@@ -850,7 +853,7 @@ def actor_anchors(
                 "history_frames": [int(value) for value in observation_frames],
                 "history_complete": bool(anchor >= HISTORY_S - 1e-9),
                 "max_observation_timing_error_s": float(np.abs(timing_error).max()),
-                "future_end_s": anchor + FUTURE_END_S,
+                "future_end_s": future_end,
                 "future_points": FUTURE_POINTS,
                 "future_rate_hz": FUTURE_FPS,
                 "native_rate_hz": record["native_rate_hz"],

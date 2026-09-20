@@ -30,6 +30,11 @@ from huggingface_hub import HfApi, snapshot_download
 
 HISTORY_OFFSETS_SECONDS = np.asarray([-6, -5, -4, -3, -2, -1, 0], dtype=np.float64)
 ACTION_OFFSETS_SECONDS = np.arange(30, dtype=np.float64) / 30.0
+# A copy_state source reports a[t] == s[t], so the k=0 anchor delta a[t0] - s[t0] is
+# identically zero and the normalizer turns it into a constant/noise target (2026-09-19 FAST
+# roundtrip pre-flight: 30-45% of the 30 Hz rows' tokens). Their chunk therefore starts one
+# tick after the anchor, s[t0 + 1/30 .. t0 + 1]; commanded sources keep a[t0 .. t0 + 29/30].
+COPY_STATE_LEAD_S = 1.0 / 30.0
 PACKED_EXTENSION = "lerobot-v3-packed-sample"
 PACKED_EXTENSION_VERSION = 1
 PAYLOAD_PREFIXES = ("data/", "videos/", "images/")
@@ -1263,12 +1268,18 @@ def nearest_observations(
     return values[indices], actual, indices.astype(np.int64), actual - targets
 
 
+def action_lead_s(action_source: str) -> float:
+    """Offset of the chunk's first target from the anchor: one tick for copy_state, else 0."""
+    return COPY_STATE_LEAD_S if action_source == "copy_state" else 0.0
+
+
 def sample_action_chunk(
     timestamps: np.ndarray,
     values: np.ndarray,
     anchor_timestamp: float,
     *,
     native_rate_hz: float,
+    lead_s: float = 0.0,
     coincidence_tolerance_s: float = 1e-6,
 ) -> ActionChunk:
     """Create a 30 Hz chunk while preserving every action component."""
@@ -1276,7 +1287,7 @@ def sample_action_chunk(
     values = np.asarray(values)
     if values.ndim != 2 or values.shape[0] != timestamps.shape[0]:
         raise ValueError("Actions must have shape [time, action_dimension]")
-    targets = anchor_timestamp + ACTION_OFFSETS_SECONDS
+    targets = anchor_timestamp + lead_s + ACTION_OFFSETS_SECONDS
     if targets[0] < timestamps[0] or targets[-1] > timestamps[-1]:
         raise ValueError("Action chunk crosses an episode boundary")
     right = np.clip(np.searchsorted(timestamps, targets, side="left"), 0, len(timestamps) - 1)

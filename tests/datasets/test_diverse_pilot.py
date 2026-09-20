@@ -182,6 +182,28 @@ def test_30hz_uses_native_samples_exactly():
     assert not chunk.interpolated_mask.any()
 
 
+def test_copy_state_lead_shifts_the_chunk_one_tick():
+    from lerobot.datasets.diverse_pilot import COPY_STATE_LEAD_S, action_lead_s
+
+    assert action_lead_s("copy_state") == COPY_STATE_LEAD_S == 1 / 30
+    assert action_lead_s("native") == 0.0
+    timestamps = np.arange(0, 10, 1 / 30, dtype=np.float64)
+    values = np.arange(len(timestamps) * 2, dtype=np.float32).reshape(-1, 2)
+    chunk = sample_action_chunk(timestamps, values, 6.0, native_rate_hz=30, lead_s=COPY_STATE_LEAD_S)
+    np.testing.assert_array_equal(chunk.values, values[181:211])
+    np.testing.assert_allclose(chunk.target_timestamps, 6.0 + (np.arange(30) + 1) / 30)
+    assert not chunk.interpolated_mask.any()
+    # 15 Hz: the shifted targets interpolate the same ramp one tick later.
+    timestamps = np.arange(0, 10, 1 / 15, dtype=np.float64)
+    values = np.stack([2 * timestamps, -timestamps], axis=1).astype(np.float32)
+    chunk = sample_action_chunk(timestamps, values, 6.0, native_rate_hz=15, lead_s=COPY_STATE_LEAD_S)
+    np.testing.assert_allclose(chunk.values[:, 0], 2 * (6.0 + (np.arange(30) + 1) / 30), atol=2e-6)
+    # The last anchor a 29/30 s grid allows now crosses the episode end.
+    timestamps = np.arange(0, 10 + 1 / 30, 1 / 30)
+    with pytest.raises(ValueError, match="episode boundary"):
+        sample_action_chunk(timestamps, np.zeros((len(timestamps), 1)), 10 - 29 / 30, native_rate_hz=30, lead_s=COPY_STATE_LEAD_S)
+
+
 def test_duplicate_or_reversed_clock_is_rejected():
     timestamps = np.asarray([0.0, 0.1, 0.1, 0.2, 8.0])
     with pytest.raises(ValueError, match="duplicates"):

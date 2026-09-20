@@ -201,9 +201,9 @@ def test_a_collapsed_quantile_band_falls_back_to_min_max() -> None:
 
 
 def test_a_genuinely_constant_dimension_is_left_alone() -> None:
-    """A copy_state layout's k=0 anchor delta really is zero for every sample: max == min,
-    so there is no wider scale to fall back to and the eps path must still produce its
-    constant. Widening it would invent a range the data does not have."""
+    """A padded dimension is zero for every sample: max == min, so there is no wider scale
+    to fall back to and the eps path must still produce its constant. Widening it would
+    invent a range the data does not have."""
     import numpy as np
 
     from lerobot.scripts.compute_embodiment_stats import _stats_for

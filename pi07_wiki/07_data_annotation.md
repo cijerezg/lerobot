@@ -60,6 +60,14 @@ space.` / `... end-effector space.` right after the embodiment clause on every r
 ([06 §3](06_inference.md)). Anchor encoding is the same elementwise `action - state` for
 every row; for layout 7 that is a pose displacement (metres, unwrapped Euler radians,
 gripper ratio), well-defined because MolmoAct's action is its state (`copy_state`).
+Because a `copy_state` row has `a[t] == s[t]`, its k=0 anchor delta would be identically
+zero (the -v3 stats had q01 == q99 == 0 there and the normalizer emitted -1/noise; 30-45% of
+the 30 Hz rows' FAST tokens, 2026-09-19 pre-flight). Since 2026-09-19 the `copy_state`
+future starts one tick after the anchor, `s[t0 + 1/30 .. t0 + 1]`
+(`diverse_pilot.COPY_STATE_LEAD_S`, applied in `sample_action_chunk` through both corpus
+readers' `actor_sample`; `build_corpus.py actor_anchors` stops the grid one tick earlier so the
+window fits). Commanded rows keep `a[t0 .. t0 + 29/30]`; the ReBot row is untouched. Views
+and stats built before that rule (v2, `-v3.pt`) are not comparable on the copy_state rows.
 
 | id | name | source | embodiment | dim | action | gripper | control_mode |
 |---|---|---|---|---|---|---|---|

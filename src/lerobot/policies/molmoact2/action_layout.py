@@ -26,7 +26,9 @@ MolmoAct's action IS its state at the same timestep (``copy_state``), so both li
 the same end-effector frame and the encoded target is a pose displacement -- xyz in
 metres, three Euler deltas in radians (the triple is unwrapped per episode at ingest,
 so no delta crosses a +-pi seam), gripper ratio -- normalized under layout 7's own
-stats row.  What it does not do: no conversion between spaces, no check that a row's
+stats row.  (A ``copy_state`` chunk starts one tick after the anchor,
+``diverse_pilot.COPY_STATE_LEAD_S``, so its k=0 delta is a real displacement rather than
+the identically-zero ``s[t0] - s[t0]``.)  What it does not do: no conversion between spaces, no check that a row's
 state and action share one; that invariant is a property of the ingest, not of this
 step.
 
