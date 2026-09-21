@@ -31,9 +31,12 @@ from pathlib import Path
 
 import pandas as pd
 
-LABELS = Path("outputs/_annotation/labels")
+LABELS = Path(os.environ.get("ANNOTATE_LABELS_ROOT", "outputs/_annotation/labels"))
 OUTPUTS = Path("outputs")
 ORDER = ["rebot_socks_basket-v1", "rebot_shirts_bin-v1", "rebot_two_container-v1", "rebot_val-v1"]
+# {dataset: {"src": path, "dst": path, "top_key": key, "wrist_key": key}} for corpora that
+# do not sit directly under outputs/ with the local camera names.
+ROOT_MAP = json.load(open(os.environ["ANNOTATE_ROOT_MAP"])) if os.environ.get("ANNOTATE_ROOT_MAP") else {}
 
 DEFINITION = (
     "Quality 1-5 per semantic subtask segment, constant across the segment: 5 direct, "
@@ -76,9 +79,12 @@ def main():
         d = json.load(open(p))
         by_ds.setdefault(d["dataset"], []).append(d)
 
-    for ds in ORDER:
+    order = [d for d in ORDER if d in by_ds] + sorted(d for d in by_ds if d not in ORDER)
+    for ds in order:
         eps = sorted(by_ds[ds], key=lambda d: d["episode"])
-        src, dst = OUTPUTS / ds, OUTPUTS / f"{ds.replace('-v1', '')}-{args.suffix}"
+        entry = ROOT_MAP.get(ds, {})
+        src = Path(entry["src"]) if "src" in entry else OUTPUTS / ds
+        dst = Path(entry["dst"]) if "dst" in entry else OUTPUTS / f"{ds.replace('-v1', '')}-{args.suffix}"
 
         seg_rows, mistake_rows, windows = [], [], {}
         n_reviewed = n_frames = n_reviewed_frames = 0
@@ -158,8 +164,8 @@ def main():
             "annotator": "semantic_segment.py + object-identity corrections from the vision pass",
             "created_date": date.today().isoformat(),
             "interval_seconds": None,
-            "top_key": "observation.images.top",
-            "wrist_key": "observation.images.wrist",
+            "top_key": entry.get("top_key", "observation.images.top"),
+            "wrist_key": entry.get("wrist_key", "observation.images.wrist"),
             "episodes": windows,
         }, open(dst / "meta" / "subtask_windows.json", "w"), indent=1)
         print(f"  wrote meta/ -> {dst}")

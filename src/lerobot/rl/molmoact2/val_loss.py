@@ -45,6 +45,7 @@ from lerobot.probes.objective import flow_timestep_grid
 from lerobot.probes.utils import (
     build_episode_index,
     fill_absent_cameras,
+    split_probe_complementary,
     frame_metadata_lookup,
     identity_columns,
     pad_to_action_width,
@@ -190,6 +191,7 @@ class ValLoss:
             key: torch.cat([f["obs"][key] for f in frames], dim=0)
             for key in frames[0]["obs"]
         }
+        obs, prepared = split_probe_complementary(obs)
         obs, presence = fill_absent_cameras(obs, image_keys)
         flat = {
             **obs,
@@ -202,6 +204,7 @@ class ValLoss:
             TransitionKey.COMPLEMENTARY_DATA: {
                 **identity,
                 **presence,
+                **prepared,
                 "subtask": [f["subtask"] for f in frames],
                 "metadata": [f["metadata"] for f in frames],
             },

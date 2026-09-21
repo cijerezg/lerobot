@@ -610,8 +610,11 @@ def probe_frame_inputs(
         dataset, global_idx, chunk_size
     )
 
+    from lerobot.rl.data_sources.prepared_rebot import prepared_episode_depth
+    depth_entry = prepared_episode_depth(getattr(dataset, "root", None), episode_idx)
+    depth_present = depth_entry is None or depth_entry["present"]
     pointmap_cfg = getattr(cfg.policy, "pointmap_config", None)
-    if with_depth and pointmap_cfg is not None:
+    if with_depth and pointmap_cfg is not None and depth_present:
         # Disk name, which may be the camera's own; the obs key stays canonical.
         sidecar = depth_sidecar_key(dataset.root, pointmap_cfg.depth_key)
         depth = load_depth_png(dataset.root, f"{sidecar}.depth", episode_idx, frame_idx)
@@ -619,10 +622,21 @@ def probe_frame_inputs(
             depth.astype(np.float32)
         ).reshape(1, 1, *depth.shape)
 
+    if pointmap_cfg is not None and depth_entry is not None:
+        role = pointmap_cfg.depth_key
+        if with_depth and not depth_present:
+            obs[f"observation.depth.{role}"] = torch.zeros(1, 1, *pointmap_cfg.image_size)
+        obs[f"probe_complementary.depth.{role}.depth_is_present"] = torch.tensor([bool(with_depth and depth_present)])
+        if depth_entry.get("intrinsics"):
+            intrinsics = depth_entry["intrinsics"]
+        else:
+            intrinsics = dict(zip(("fx", "fy", "cx", "cy"), pointmap_cfg.intrinsics))
+        obs[f"probe_complementary.depth.{role}.intrinsics"] = torch.tensor([[intrinsics[k] for k in ("fx", "fy", "cx", "cy")]], dtype=torch.float32)
+
     memory_cfg = getattr(cfg.policy, "memory", None)
     if with_history and memory_cfg is not None and memory_cfg.history_keys and memory_cfg.history_num_samples > 0:
         keys = [str(k) for k in memory_cfg.history_keys]
-        if not (with_depth and pointmap_cfg is not None):
+        if not (with_depth and pointmap_cfg is not None and depth_present):
             keys = [k for k in keys if not k.startswith("depth.")]
         obs.update(assemble_frame_history(dataset, global_idx, memory_cfg, cfg.env.fps, keys))
 
@@ -983,3 +997,10 @@ def frame_colors_rgba(frames, cmap_name: str, alpha: float = 0.85) -> list[str]:
     cmap = matplotlib.colormaps.get_cmap(cmap_name)
     rgba = cmap(norm)
     return [f"rgba({int(r*255)},{int(g*255)},{int(b*255)},{alpha})" for r, g, b, _ in rgba]
+
+
+def split_probe_complementary(obs):
+    """Separate per-frame calibration/presence from camera and state observations."""
+    prefix = "probe_complementary."
+    complementary = {key[len(prefix):]: value for key, value in obs.items() if key.startswith(prefix)}
+    return {key: value for key, value in obs.items() if not key.startswith(prefix)}, complementary

@@ -154,7 +154,7 @@ def test_offline_startup_configures_future_frames_in_its_own_scope(monkeypatch, 
     monkeypatch.setattr(offline, "load_offline_dataset", lambda *args: buffers[0].dataset)
     monkeypatch.setattr(offline, "pool_lowdim_stats", lambda *args, **kwargs: None)
     monkeypatch.setattr(offline, "materialize_dataset_labels", lambda *args, **kwargs: None)
-    monkeypatch.setattr(offline, "buffer_state_keys", lambda cfg: [KEY])
+    monkeypatch.setattr(offline, "buffer_state_keys", lambda cfg, dataset=None: [KEY])
     monkeypatch.setattr(offline.ReplayBuffer, "from_lerobot_dataset", lambda *args, **kwargs: buffers[0])
     monkeypatch.setattr(offline, "load_additional_offline_buffers", lambda **kwargs: buffers[1:])
     for name in ("build_named_adamw_optimizers", "build_named_schedulers", "build_pretrained_merges"):

@@ -27,8 +27,8 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/bottle-grasping-v5 \
-    --dataset.single_task="Put bottles and cup in the brown basket" \
+    --dataset.repo_id=cijerezg/strawberry-strainer-v1 \
+    --dataset.single_task="gently dump the strawberries on the cutting board" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \

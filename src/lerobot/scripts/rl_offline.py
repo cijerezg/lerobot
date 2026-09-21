@@ -797,7 +797,7 @@ def run_offline_training(
             else ReplayBuffer.find_cache(
                 offline_dataset,
                 cache_dir,
-                state_keys=buffer_state_keys(cfg),
+                state_keys=buffer_state_keys(cfg, offline_dataset),
                 image_storage_dtype=getattr(cfg.policy, "image_storage_dtype", "bfloat16"),
                 image_storage_size=getattr(cfg.policy, "image_storage_size", (224, 224)),
                 image_stride=getattr(cfg.policy, "image_stride", 1),
@@ -814,7 +814,7 @@ def run_offline_training(
         lambda: ReplayBuffer.from_lerobot_dataset(
             offline_dataset,
             device=device,
-            state_keys=buffer_state_keys(cfg),
+            state_keys=buffer_state_keys(cfg, offline_dataset),
             storage_device=storage_device,
             optimize_memory=True,
             capacity=cfg.policy.offline_buffer_capacity,
@@ -978,6 +978,8 @@ def run_offline_training(
                 async_prefetch=False,  # the diverse half reads memmaps on this thread
                 queue_size=2,
                 action_chunk_size=cfg.policy.n_action_steps,
+                proportional=bool(diverse_cfg.rebot_group_weights),
+                seed=int(cfg.seed or 0) + runtime.process_index,
             ),
             mixture_telemetry,
             depth_key=f"depth.{spec.depth_role}.depth",

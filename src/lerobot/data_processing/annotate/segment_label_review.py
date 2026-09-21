@@ -10,6 +10,9 @@ whole JSON, and refuses to finish an episode with segments nobody looked at.
     --seg "SEG:Q:NOTE"      Q is a digit, or '=' to keep the baseline grade
     --mistake "SEG:FROM-TO:TYPE:NOTE"   replaces that segment's mistakes
     --drop-mistakes SEG,... clears proprio-flagged spans vision rejected
+    --boundary "SEG:FRAME"  move the boundary between SEG-1 and SEG (both are rewritten,
+                            so coverage stays contiguous)
+    --merge SEG             fold SEG into the segment before it, keeping that one's label
 
 Every listed segment is marked reviewed; `anchor_baseline` flips to false whenever the
 grade moved off the anchor, so the two are always distinguishable afterwards.
@@ -21,9 +24,10 @@ grade moved off the anchor, so the two are always distinguishable afterwards.
 
 import argparse
 import json
+import os
 from pathlib import Path
 
-LABELS = Path("outputs/_annotation/labels")
+LABELS = Path(os.environ.get("ANNOTATE_LABELS_ROOT", "outputs/_annotation/labels"))
 TYPES = {"failed_close", "slip", "drop", "knock", "wrong_target"}
 
 
@@ -34,6 +38,11 @@ def main():
     ap.add_argument("--seg", action="append", default=[])
     ap.add_argument("--mistake", action="append", default=[])
     ap.add_argument("--drop-mistakes", default="")
+    ap.add_argument("--boundary", action="append", default=[],
+                    help="SEG:FRAME — move the start of SEG (and the end of SEG-1) to FRAME")
+    ap.add_argument("--merge", action="append", default=[],
+                    help="SEG — fold this segment into the previous one (for the sub-second "
+                         "stubs the proprio cut leaves behind)")
     ap.add_argument("--subtask", action="append", default=[],
                     help="SEG:TEXT — correct the label, for <object> placeholders and "
                          "majority-vote carryover errors")
@@ -65,6 +74,35 @@ def main():
         s = by_seg[int(sid)]
         s["mistakes"] = []
         s["anchor_baseline"] = False
+
+    # Boundaries first: a later --seg/--mistake refers to the segments as renumbered here.
+    for spec in args.boundary:
+        sid, frame = (int(x) for x in spec.split(":"))
+        segs = data["segments"]
+        i = next(j for j, x in enumerate(segs) if x["seg"] == sid)
+        if i == 0:
+            raise SystemExit(f"seg{sid} is the first of the episode; it has no left boundary")
+        prev = segs[i - 1]
+        if not (prev["from"] < frame < segs[i]["to"]):
+            raise SystemExit(f"frame {frame} escapes [{prev['from']},{segs[i]['to']})")
+        prev["to"] = segs[i]["from"] = frame
+        prev["anchor_baseline"] = segs[i]["anchor_baseline"] = False
+
+    for spec in args.merge:
+        sid = int(spec)
+        segs = data["segments"]
+        i = next(j for j, x in enumerate(segs) if x["seg"] == sid)
+        if i == 0:
+            raise SystemExit(f"seg{sid} is the first of the episode; nothing to merge it into")
+        prev = segs[i - 1]
+        prev["to"] = segs[i]["to"]
+        prev["mistakes"] += segs[i]["mistakes"]
+        prev["anchor_baseline"] = False
+        segs.pop(i)
+        for j, x in enumerate(segs):
+            x["seg"] = j
+        by_seg.clear()
+        by_seg.update({x["seg"]: x for x in segs})
 
     grouped: dict[int, list] = {}
     for spec in args.mistake:

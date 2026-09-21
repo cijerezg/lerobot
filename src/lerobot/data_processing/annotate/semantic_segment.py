@@ -84,11 +84,11 @@ def load_dataset(root: Path):
     return state, bounds
 
 
-def closed_intervals(grip):
+def closed_intervals(grip, close_on=CLOSE_ON, close_off=CLOSE_OFF):
     """Hysteresis threshold -> half-open (start, stop) runs where the gripper is closed."""
     runs, start, closed = [], None, False
     for i, g in enumerate(grip):
-        closed = g > CLOSE_ON if not closed else g >= CLOSE_OFF
+        closed = g > close_on if not closed else g >= close_off
         if closed and start is None:
             start = i
         elif not closed and start is not None:
@@ -109,10 +109,12 @@ def release_span(grip, close_start, close_stop):
     object, so a shirt held at -40 never re-enters a -20 band and would otherwise
     stretch the release back across the whole carry.
     """
-    begin = close_stop
+    # With --boundary-margin 0 a carry can run to the last frame (the object is still
+    # held when the episode ends), so close_stop is one past the end of `grip`.
+    begin = min(close_stop, len(grip) - 1)
     while begin > close_start and float(grip[begin - 1] - grip[begin]) > RAMP_DELTA:
         begin -= 1
-    end = close_stop
+    end = min(close_stop, len(grip) - 1)
     while end + 1 < len(grip) and end - close_stop < SETTLE_MAX:
         if abs(float(grip[end + 1] - grip[end])) < SETTLE_DELTA:
             break
@@ -170,13 +172,16 @@ def majority_object(spans, start, stop):
     return votes.most_common(1)[0][0] if votes else "<object>"
 
 
-def segment_episode(state, lo, hi, spans, disp_max):
+def segment_episode(state, lo, hi, spans, disp_max, close_on=CLOSE_ON, close_off=CLOSE_OFF,
+                    containers=("basket", "bin"), boundary_margin=BOUNDARY_MARGIN,
+                    tail_margin=None):
     grip, pan, arm = state[lo:hi, GRIPPER_DIM], state[lo:hi, PAN_DIM], state[lo:hi, :GRIPPER_DIM]
     n = hi - lo
 
     carries, failures = [], []
-    for start, stop in closed_intervals(grip):
-        if start < BOUNDARY_MARGIN or n - stop < BOUNDARY_MARGIN:
+    for start, stop in closed_intervals(grip, close_on, close_off):
+        tail = boundary_margin if tail_margin is None else tail_margin
+        if start < boundary_margin or n - stop < tail:
             continue
         seg = arm[start:stop]
         disp = float(np.linalg.norm(seg - seg[0], axis=1).max())
@@ -187,7 +192,7 @@ def segment_episode(state, lo, hi, spans, disp_max):
         open_begin, open_end = release_span(grip, start, stop)
         obj = majority_object(spans, lo + start, lo + stop)
         extremum = container_of(pan, start, stop)
-        container = "basket" if extremum > 0 else "bin"
+        container = containers[0] if extremum > 0 else containers[1]
         arrival = arrival_at(pan, start, open_begin, extremum)
         windows.append((cursor, start, f"grasp the {obj}"))
         windows.append((start, arrival, f"move the {obj} to the {container}"))
@@ -211,6 +216,18 @@ def main():
     ap.add_argument("--data-dir", required=True, type=Path)
     ap.add_argument("--disp-max", type=float, default=DISP_MAX)
     ap.add_argument("--write", action="store_true", help="replace meta/subtask_windows.json")
+    ap.add_argument("--boundary-margin", type=int, default=BOUNDARY_MARGIN,
+                    help="frames at the episode edges where a closed run is taken to be the parked "
+                         "gripper; 0 for sources trimmed tight around the grasp")
+    ap.add_argument("--tail-margin", type=int, default=None,
+                    help="same guard at the END of the episode (default: --boundary-margin). 0 keeps "
+                         "a carry whose object is still held on the last frame")
+    ap.add_argument("--close-on", type=float, default=CLOSE_ON)
+    ap.add_argument("--close-off", type=float, default=CLOSE_OFF)
+    ap.add_argument("--containers", nargs=2, default=["basket", "bin"],
+                    help="names for the positive- and negative-pan destination")
+    ap.add_argument("--top-key", default="observation.images.top")
+    ap.add_argument("--wrist-key", default="observation.images.wrist")
     args = ap.parse_args()
 
     root = args.data_dir
@@ -220,7 +237,9 @@ def main():
 
     episodes, n_fail, lengths = {}, 0, []
     for ep, lo, hi in bounds:
-        windows, failures = segment_episode(state, lo, hi, spans, args.disp_max)
+        windows, failures = segment_episode(state, lo, hi, spans, args.disp_max,
+                                           args.close_on, args.close_off, tuple(args.containers),
+                                           args.boundary_margin, args.tail_margin)
         episodes[str(ep)] = windows
         n_fail += len(failures)
         lengths += [w["to_index"] - w["from_index"] for w in windows]
@@ -253,8 +272,8 @@ def main():
             "Failed closes stay inside the enclosing grasp segment."
         ),
         "interval_seconds": None,
-        "top_key": "observation.images.top",
-        "wrist_key": "observation.images.wrist",
+        "top_key": args.top_key,
+        "wrist_key": args.wrist_key,
         "episodes": episodes,
     }
     out = root / "meta" / ("subtask_windows.json" if args.write else "subtask_windows.semantic.json")

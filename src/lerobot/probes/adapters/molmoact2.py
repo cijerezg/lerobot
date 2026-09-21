@@ -33,6 +33,7 @@ from lerobot.policies.molmoact2.modeling_molmoact2 import (
 from lerobot.probes.base import ActionSensitivityResult, AttentionCaptureResult, ProbablePolicy
 from lerobot.probes.utils import (
     fill_absent_cameras,
+    split_probe_complementary,
     find_normalizer_step,
     identity_columns,
     pad_to_action_width,
@@ -124,12 +125,13 @@ class MolmoAct2Adapter(ProbablePolicy):
         """Build the preprocessor input for molmoact2 probe forwards."""
         device = self._device
         obs_on_device = {k: v.to(device) for k, v in obs.items()}
+        obs_on_device, prepared = split_probe_complementary(obs_on_device)
         obs_on_device, presence = self._fill_absent_cameras(obs_on_device)
         flat = {
             **obs_on_device,
             "task": task_str,
         }
-        complementary: dict = {**self._identity_columns, **presence}
+        complementary: dict = {**self._identity_columns, **presence, **prepared}
         if subtask:
             complementary["subtask"] = [subtask]
         if metadata is not None:
@@ -293,9 +295,10 @@ class MolmoAct2Adapter(ProbablePolicy):
         n = len(subtasks)
         device = self._device
         obs_on_device = {k: self._expand_to_batch(v.to(device), n) for k, v in obs.items()}
+        obs_on_device, prepared = split_probe_complementary(obs_on_device)
         obs_on_device, presence = self._fill_absent_cameras(obs_on_device)
         flat: dict = {**obs_on_device, "task": [task_str] * n}
-        complementary: dict = {**self._identity_columns, **presence, "subtask": list(subtasks)}
+        complementary: dict = {**self._identity_columns, **presence, **prepared, "subtask": list(subtasks)}
         if extra_complementary:
             for key, value in extra_complementary.items():
                 if torch.is_tensor(value) and value.ndim >= 1 and value.shape[0] == 1:

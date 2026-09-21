@@ -29,6 +29,7 @@ class OfflineDatasetSourceConfig:
     name: str | None = None
     weight: float = 1.0
     normalization_source: bool = False
+    sampling_group: str = "rebot"
     episodes: list[int] | None = None
     # Overrides the root's meta/info.json robot_type for the prompt's embodiment clause.
     # Leave unset unless that field is missing or wrong; see lerobot/datasets/embodiment.py.

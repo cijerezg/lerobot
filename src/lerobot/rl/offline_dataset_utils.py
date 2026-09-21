@@ -27,6 +27,7 @@ class OfflineDatasetSource:
     repo_id: str
     weight: float
     normalization_source: bool = False
+    sampling_group: str = "rebot"
     episodes: list[int] | None = None
     # Optional override for the prompt's embodiment clause. Only needed when a root's
     # meta/info.json robot_type is missing or wrong; otherwise it is read from there.
@@ -72,6 +73,7 @@ def get_offline_dataset_sources(cfg) -> list[OfflineDatasetSource]:
                     repo_id=repo_id,
                     weight=weight,
                     normalization_source=i == 0,
+                    sampling_group=str(_source_field(source, "sampling_group", "rebot")),
                     episodes=_source_field(source, "episodes", None),
                     embodiment=_source_field(source, "embodiment", None),
                 )
@@ -136,7 +138,7 @@ def get_offline_dataset_weights(cfg) -> list[float]:
     return [source.weight for source in get_offline_dataset_sources(cfg)]
 
 
-def buffer_state_keys(cfg) -> list[str]:
+def buffer_state_keys(cfg, dataset=None) -> list[str]:
     """State keys for the LeRobot buffers of this run.
 
     Normally the policy's own `input_features`. A role-shaped policy has them renamed
@@ -147,6 +149,13 @@ def buffer_state_keys(cfg) -> list[str]:
     from lerobot.datasets.diverse_actor_selection import on_canonical_roles
 
     keys = list(cfg.policy.input_features.keys())
+    if dataset is not None:
+        from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
+
+        if prepared_rebot_contract(dataset.root) is not None:
+            # Match the cache builder's recorded columns; absent views are supplied
+            # with masks by RoleAlignedBuffer, never looked up in the memmap.
+            return [key for key in dataset.meta.features if key.startswith("observation.")]
     if not on_canonical_roles(keys):
         return keys
     from lerobot.rl.data_sources.rebot_role_adapter import rebot_state_keys
@@ -661,7 +670,15 @@ def materialize_dataset_labels(
             embodiment_origin,
         )
     if require_depth_gripper_event_labels:
-        for key, values in load_depth_gripper_event_targets(dataset).items():
+        from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
+        from lerobot.utils.depth_gripper_events import DEPTH_GRIPPER_EVENT_TARGET_KEYS
+
+        contract = prepared_rebot_contract(dataset.root)
+        if contract is not None and contract['depth_key'] is None:
+            targets = {key: torch.zeros(len(task_indices)) for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS}
+        else:
+            targets = load_depth_gripper_event_targets(dataset)
+        for key, values in targets.items():
             _install_buffer_column(buffer, key, values, fill_value=0)
         if is_main_process:
             logging.info(
@@ -714,6 +731,7 @@ def load_additional_offline_buffers(
                 source.weight,
             )
         dataset = load_offline_dataset(cfg, source)
+        state_keys = buffer_state_keys(cfg, dataset)
         cached = None
         if cache_dir is not None:
             cached = ReplayBuffer.find_cache(

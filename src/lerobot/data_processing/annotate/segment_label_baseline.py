@@ -17,17 +17,24 @@ Never overwrites an episode that already has a label file.
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 # Sheets + their feature index live in the project, not the scratchpad: the
 # scratchpad is wiped between turns and took a full regeneration with it once.
-SHEETS = Path("outputs/_annotation/sheets")
-LABELS = Path("outputs/_annotation/labels")
+SHEETS = Path(os.environ.get("ANNOTATE_SHEETS_ROOT", "outputs/_annotation/sheets"))
+LABELS = Path(os.environ.get("ANNOTATE_LABELS_ROOT", "outputs/_annotation/labels"))
 ORDER = ["rebot_socks_basket-v1", "rebot_shirts_bin-v1", "rebot_two_container-v1", "rebot_val-v1"]
 
 # mistake span around a flagged closed interval [ca, cb): 0.4 s of committed descent
 # before the shut, 0.5 s after the reopen so the span covers the reveal.
 LEAD, TRAIL = 12, 15
+
+
+def datasets(paths, pattern):
+    """ORDER first (unchanged for the local corpus), then whatever else is present."""
+    found = sorted(p.name[len(pattern.split("*")[0]):].removesuffix(".json") for p in paths)
+    return [d for d in ORDER if d in found] + [d for d in found if d not in ORDER]
 
 
 def flagged_failures(seg):
@@ -72,7 +79,7 @@ def main():
     args = ap.parse_args()
 
     segs = []
-    for ds in ORDER:
+    for ds in datasets(SHEETS.glob("index__*.json"), "index__*"):
         p = SHEETS / f"index__{ds}.json"
         if p.exists():
             segs += json.load(open(p))["segments"]
@@ -83,7 +90,7 @@ def main():
         by_ep.setdefault((s["ds"], s["ep"]), []).append(s)
 
     written = skipped = 0
-    for (ds, ep), items in sorted(by_ep.items(), key=lambda kv: (ORDER.index(kv[0][0]), kv[0][1])):
+    for (ds, ep), items in sorted(by_ep.items(), key=lambda kv: (ORDER.index(kv[0][0]) if kv[0][0] in ORDER else len(ORDER), kv[0][0], kv[0][1])):
         out = LABELS / f"{ds}__ep{ep:02d}.json"
         if out.exists():
             skipped += 1

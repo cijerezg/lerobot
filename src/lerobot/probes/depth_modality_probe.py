@@ -158,11 +158,15 @@ def _scalar(value, default: int = -1) -> int:
     return int(value.item()) if isinstance(value, torch.Tensor) else int(value)
 
 
+from lerobot.rl.data_sources.prepared_rebot import episode_has_depth
+
 def _depth_match_descriptors(dataset, stride: int) -> tuple[list[dict], dict[int, list[int]]]:
     """Low-dimensional, stride-valid frames used to match foreign depth donors."""
     by_episode = build_episode_index(dataset)
     descriptors: list[dict] = []
     for episode_idx, indices in by_episode.items():
+        if not episode_has_depth(getattr(dataset, "root", None), episode_idx):
+            continue
         episode_length = max(len(indices) - 1, 1)
         for global_idx in indices:
             row = dataset.hf_dataset[global_idx]
@@ -600,6 +604,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 global_idx = episode[first_stale_ready]
             anchors.append(int(global_idx))
         frame_indices = sorted(dict.fromkeys(anchors))
+    frame_indices = [i for i in frame_indices if episode_has_depth(getattr(dataset, "root", None), _scalar(dataset.hf_dataset[i]["episode_index"]))]
     if not frame_indices:
         logging.warning("[depth_modality] no frames selected.")
         return

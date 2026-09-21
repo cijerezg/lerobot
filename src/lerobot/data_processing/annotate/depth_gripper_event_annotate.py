@@ -30,7 +30,13 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from lerobot.utils.gripper_event_targets import future_event_targets as _future_event_targets
+from lerobot.utils.gripper_event_targets import (
+    MIN_CLOSED_DURATION_S,
+    TARGET_CUTOFF_S,
+    TARGET_HALF_LIFE_S,
+    frames_for_duration,
+    future_event_targets as _future_event_targets,
+)
 
 RUBRIC_VERSION = "depth-gripper-event-labels-v1"
 EXPECTED_FPS = 30.0
@@ -115,8 +121,12 @@ def load_info(root: Path) -> tuple[dict, int]:
         info = json.load(f)
 
     fps = float(info.get("fps", -1))
-    if fps != EXPECTED_FPS:
-        raise ValueError(f"Expected {EXPECTED_FPS:g} FPS, found {fps:g}")
+    if not np.isfinite(fps) or fps <= 0:
+        raise ValueError(f"Expected a positive finite FPS, found {fps!r}")
+    # The target semantics are locked in seconds; supported rates must map them to whole frames.
+    frames_for_duration(MIN_CLOSED_DURATION_S, fps)
+    frames_for_duration(TARGET_HALF_LIFE_S, fps)
+    frames_for_duration(TARGET_CUTOFF_S, fps)
 
     try:
         action_feature = info["features"]["action"]
@@ -573,7 +583,12 @@ def materialize(root: Path, overwrite: bool, plot_all: bool, command: str) -> di
         names = ", ".join(str(path) for path in existing)
         raise FileExistsError(f"Refusing to replace existing sidecars without --overwrite: {names}")
 
+    global EXPECTED_FPS, MIN_CLOSED_FRAMES, HALF_LIFE_FRAMES, CUTOFF_FRAMES
     info, gripper_dim = load_info(root)
+    EXPECTED_FPS = float(info["fps"])
+    MIN_CLOSED_FRAMES = frames_for_duration(MIN_CLOSED_DURATION_S, EXPECTED_FPS)
+    HALF_LIFE_FRAMES = frames_for_duration(TARGET_HALF_LIFE_S, EXPECTED_FPS)
+    CUTOFF_FRAMES = frames_for_duration(TARGET_CUTOFF_S, EXPECTED_FPS)
     bounds = load_episode_bounds(root)
     total_frames = int(info.get("total_frames", -1))
     if int(info.get("total_episodes", -1)) != len(bounds):

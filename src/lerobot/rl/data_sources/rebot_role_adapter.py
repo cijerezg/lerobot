@@ -47,6 +47,7 @@ import torch
 from lerobot.datasets.diverse_actor_selection import CAMERA_ROLE_MAP, CANONICAL_CAMERA_ROLES
 from lerobot.rl.data_sources.diverse_actor_buffer import SOURCE_IDS
 from lerobot.utils.constants import ACTION, OBS_IMAGES
+from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +127,10 @@ def probe_rebot_cache(
             f"history offsets {misaligned} are not multiples of image_stride={stride}; "
             "those image rows were never written"
         )
-    expected_cameras = set(CAMERA_ROLE_MAP["rebot"])
+    contract = prepared_rebot_contract(metadata.get("dataset_root"))
+    expected_cameras = set(contract["camera_roles"]) if contract else set(CAMERA_ROLE_MAP["rebot"])
+    if contract:
+        depth_role = "wrist_0" if contract["depth_key"] else None
     present_cameras = {key.rsplit(".", 1)[-1] for key in image_keys}
     missing = sorted(expected_cameras - present_cameras)
     if missing:
@@ -161,7 +165,7 @@ def rebot_role_renames(image_keys: list[str], depth_keys: list[str]) -> dict[str
     renames: dict[str, str] = {}
     for key in image_keys:
         camera = key.rsplit(".", 1)[-1]
-        role = mapping.get(camera)
+        role = camera if camera in CANONICAL_CAMERA_ROLES else mapping.get(camera)
         if role is None:
             raise RebotCacheProbeError(
                 f"ReBot camera {camera!r} is unmapped. Every recorded camera must land in a "
@@ -170,7 +174,7 @@ def rebot_role_renames(image_keys: list[str], depth_keys: list[str]) -> dict[str
         renames[key] = f"{OBS_IMAGES}.{role}"
     for key in depth_keys:
         camera = key.split(".", 1)[0]
-        role = mapping.get(camera)
+        role = camera if camera in CANONICAL_CAMERA_ROLES else mapping.get(camera)
         if role is not None:
             renames[f"depth.{key}"] = f"depth.{role}.depth"
     return renames
@@ -272,12 +276,29 @@ class RoleAlignedBuffer:
         # ReBot's own camera calibration. A mixed batch back-projects two cameras, so the
         # row for these samples has to travel with them.
         self.depth_intrinsics = depth_intrinsics
+        dataset = getattr(buffer, "dataset", None)
+        self.prepared_contract = prepared_rebot_contract(getattr(dataset, "root", None))
+        if self.prepared_contract and self.prepared_contract.get("depth_intrinsics"):
+            intrinsics = self.prepared_contract["depth_intrinsics"]
+            self.depth_intrinsics = tuple(float(intrinsics[key]) for key in ("fx", "fy", "cx", "cy"))
         if align:
             align_rebot_buffer(buffer)
         self.present_roles = tuple(
             role for role in self.camera_roles if f"{OBS_IMAGES}.{role}" in buffer.states
         )
         self.absent_roles = tuple(role for role in self.camera_roles if role not in self.present_roles)
+        if self.prepared_contract and "episode_contracts" in self.prepared_contract:
+            ranges = self.prepared_contract["episode_ranges"]
+            identity = torch.empty(buffer.size, dtype=torch.long, device=buffer.storage_device)
+            for episode, (start, stop) in enumerate(ranges):
+                identity[start:stop] = episode
+            if ranges[0][0] != 0 or ranges[-1][1] != buffer.size:
+                raise ValueError("Consolidated replay must contain the complete prepared source")
+            # Runtime metadata only; existing cache payload/fingerprint is untouched.
+            buffer.complementary_info["prepared_episode_index"] = identity
+            if "prepared_episode_index" not in buffer.complementary_info_keys:
+                buffer.complementary_info_keys.append("prepared_episode_index")
+            buffer.has_complementary_info = True
 
     def __len__(self) -> int:
         return len(self.buffer)
@@ -341,6 +362,11 @@ class RoleAlignedBuffer:
         for index, role in enumerate(self.camera_roles):
             if role in self.present_roles:
                 box[:, index] = torch.tensor([0, 0, height, width], dtype=torch.int16, device=device)
+        if self.prepared_contract:
+            for index, role in enumerate(self.camera_roles):
+                valid_box = self.prepared_contract["image_valid_boxes"].get(role)
+                if valid_box is not None:
+                    box[:, index] = torch.tensor(valid_box, dtype=torch.int16, device=device)
         info["image_valid_box"] = box
         info["action_layout_id"] = torch.full((size,), self.action_layout_id, dtype=torch.long, device=device)
         info["source_id"] = torch.full((size,), self.source_id, dtype=torch.long, device=device)
@@ -354,6 +380,8 @@ class RoleAlignedBuffer:
             info["metadata_quality_is_valid"] = torch.as_tensor(quality).reshape(-1) >= 0
 
         depth_key = f"depth.{self.depth_role}.depth"
+        if self.prepared_contract and self.prepared_contract["depth_key"] is None:
+            info[f"{depth_key}_is_present"] = torch.zeros((size,), dtype=torch.bool, device=device)
         if depth_key in info:
             info[f"{depth_key}_is_present"] = torch.ones((size,), dtype=torch.bool, device=device)
             if self.depth_intrinsics is not None:
@@ -368,6 +396,29 @@ class RoleAlignedBuffer:
                 info[f"history.{depth_key}_is_present"] = torch.ones(
                     (size, int(history_depth.shape[1])), dtype=torch.bool, device=device
                 )
+        if self.prepared_contract and "episode_contracts" in self.prepared_contract:
+            episode_ids = info.pop("prepared_episode_index").reshape(-1).tolist()
+            entries = [self.prepared_contract["episode_contracts"][str(ep)] for ep in episode_ids]
+            masks = torch.tensor([[r in e["camera_roles"] for r in self.camera_roles] for e in entries], dtype=torch.bool, device=device)
+            info["camera_is_present"] = masks
+            info["image_valid_box"] = torch.tensor([[e["image_valid_boxes"].get(r, [0, 0, 0, 0]) for r in self.camera_roles] for e in entries], dtype=torch.int16, device=device)
+            for index, role in enumerate(self.camera_roles):
+                key = f"{OBS_IMAGES}.{role}"
+                info[f"camera_is_present.{key}"] = masks[:, index]
+                if "future_visual_valid" in info:
+                    info[f"future.camera_is_present.{key}"] = masks[:, index]
+                pad_key = f"history.{key}_is_pad"
+                if pad_key in batch["state"]:
+                    batch["state"][pad_key] |= ~masks[:, index, None]
+            if history_slots:
+                info["history.camera_is_present"] = masks[:, :, None].expand(-1, -1, history_slots)
+            depth_present = torch.tensor([bool(e["depth_key"]) for e in entries], dtype=torch.bool, device=device)
+            info[f"{depth_key}_is_present"] = depth_present
+            if depth_key in info:
+                fallback = dict(zip(("fx", "fy", "cx", "cy"), self.depth_intrinsics))
+                info[f"depth.{self.depth_role}.intrinsics"] = torch.tensor([[(e["depth_intrinsics"] or fallback)[k] for k in ("fx", "fy", "cx", "cy")] for e in entries], dtype=torch.float32, device=device)
+                if f"history.{depth_key}" in info:
+                    info[f"history.{depth_key}_is_present"] = depth_present[:, None].expand(-1, info[f"history.{depth_key}"].shape[1])
         return batch
 
     def get_iterator(

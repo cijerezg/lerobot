@@ -223,6 +223,19 @@ def build_mixture_groups(
     rebot_weights: list[float] | None = None,
 ) -> list[MixtureGroup]:
     """ReBot first, diverse second -- the order that decides odd-batch ties."""
+    if diverse_cfg.rebot_group_weights:
+        by_group = {name: [] for name in diverse_cfg.rebot_group_weights}
+        weights = {name: [] for name in by_group}
+        for index, buffer in enumerate(rebot_buffers):
+            name = buffer.offline_source.sampling_group
+            if name not in by_group:
+                raise ValueError(f"Unconfigured ReBot sampling group {name!r}")
+            by_group[name].append(buffer)
+            weights[name].append(rebot_weights[index] if rebot_weights else 1.0)
+        return [
+            MixtureGroup(name, buffers, weight=diverse_cfg.rebot_group_weights[name], inner_weights=weights[name])
+            for name, buffers in by_group.items()
+        ] + [MixtureGroup("diverse", [diverse_buffer], weight=diverse_cfg.weight)]
     return [
         MixtureGroup(
             "rebot",

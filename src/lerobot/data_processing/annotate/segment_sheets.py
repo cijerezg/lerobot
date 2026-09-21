@@ -76,7 +76,7 @@ def phase_of(subtask: str) -> str:
     return "return" if subtask.startswith("return") else subtask.split()[0]
 
 
-def segment_features(state, a, b):
+def segment_features(state, a, b, fps=30.0):
     arm = state[a:b, :GRIPPER_DIM]
     path = float(np.linalg.norm(np.diff(arm, axis=0), axis=1).sum())
     net = float(np.linalg.norm(arm[-1] - arm[0]))
@@ -88,18 +88,19 @@ def segment_features(state, a, b):
         dv = dv[dv != 0]
         rev = int((np.diff(dv) != 0).sum()) if len(dv) > 1 else 0
     return {
-        "dur": round((b - a) / 30.0, 1),
+        "dur": round((b - a) / fps, 1),
         "eff": round(net / path, 3) if path > 1e-6 else 0.0,
         "rev": rev,
         "pan_range": [round(float(pan.min()), 1), round(float(pan.max()), 1)],
     }
 
 
-def build_plan(root: Path, episodes=None):
+def build_plan(root: Path, episodes=None, fps=30.0, cameras=None, name=None):
     """Segments + features + flagged failed closes, grouped into sheets."""
     state, eps = load_dataset(root)
     windows = json.load(open(root / "meta" / "subtask_windows.semantic.json"))["episodes"]
-    ds = root.name
+    ds = name or root.name
+    cams = cameras or CAMERAS
 
     segments, sheets = [], []
     for ep_idx in sorted(int(k) for k in windows):
@@ -122,7 +123,7 @@ def build_plan(root: Path, episodes=None):
             seg = {
                 "ds": ds, "ep": ep_idx, "seg": si, "from": a, "to": b,
                 "subtask": w["subtask"], "phase": ph, "fails": fails,
-                **segment_features(state, a, b),
+                **segment_features(state, a, b, fps),
             }
             segments.append(seg)
             by_phase.setdefault(ph, []).append(seg)
@@ -138,13 +139,13 @@ def build_plan(root: Path, episodes=None):
                         strips.append({"from": max(s["from"], ca - 45), "to": min(s["to"], cb + 45),
                                        "cols": COLS[ph], "seg": s["seg"], "zoom": True})
                     sheets.append({"ds": ds, "ep": ep_idx, "phase": ph, "segs": [s["seg"]],
-                                   "cameras": CAMERAS[ph], "strips": strips})
+                                   "cameras": cams[ph], "strips": strips})
                 clean = [x for x in segs if not x["fails"]]
                 for i in range(0, len(clean), 3):
                     group = clean[i : i + 3]
                     sheets.append({
                         "ds": ds, "ep": ep_idx, "phase": ph, "segs": [g["seg"] for g in group],
-                        "cameras": CAMERAS[ph],
+                        "cameras": cams[ph],
                         "strips": [{"from": g["from"], "to": g["to"], "cols": COLS[ph],
                                     "seg": g["seg"], "zoom": False} for g in group],
                     })
@@ -153,7 +154,7 @@ def build_plan(root: Path, episodes=None):
                     group = segs[i : i + PER_SHEET[ph]]
                     sheets.append({
                         "ds": ds, "ep": ep_idx, "phase": ph, "segs": [g["seg"] for g in group],
-                        "cameras": CAMERAS[ph],
+                        "cameras": cams[ph],
                         "strips": [{"from": g["from"], "to": g["to"], "cols": COLS[ph],
                                     "seg": g["seg"], "zoom": False} for g in group],
                     })
@@ -173,10 +174,10 @@ def sample_indices(a, b, ncols):
 
 def extract_episode(args):
     """One linear ffmpeg decode per (episode, camera) -> {global_frame: png path}."""
-    root, ep_idx, key, wanted, lo, video_path, from_ts, cache = args
+    root, ep_idx, key, wanted, lo, video_path, from_ts, cache, fps = args
     cache = Path(cache)
     cache.mkdir(parents=True, exist_ok=True)
-    offset = int(round(from_ts * 30.0))
+    offset = int(round(from_ts * fps))
     todo = sorted({int(g) for g in wanted})
     local = [g - lo + offset for g in todo]
 
@@ -237,6 +238,9 @@ def main():
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--episodes", type=int, nargs="*", default=None)
     ap.add_argument("--workers", type=int, default=12)
+    ap.add_argument("--top-key", default=TOP, help="overview camera key for this root")
+    ap.add_argument("--wrist-key", default=WRIST, help="close-up camera key; omit if the root has none")
+    ap.add_argument("--name", default=None, help="dataset key in the index/sheet names (default: the root dir name)")
     args = ap.parse_args()
 
     root, out = args.data_dir, args.out
@@ -244,8 +248,10 @@ def main():
     info = json.load(open(root / "meta" / "info.json"))
     fps = float(info["fps"])
 
-    segments, sheets, state, eps = build_plan(root, args.episodes)
-    print(f"{root.name}: {len(segments)} segments -> {len(sheets)} sheets")
+    pair = (args.top_key, args.wrist_key) if args.wrist_key else (args.top_key,)
+    cameras = {"grasp": pair, "move": pair, "release": pair, "return": (args.top_key,)}
+    segments, sheets, state, eps = build_plan(root, args.episodes, fps, cameras, args.name)
+    print(f"{args.name or root.name}: {len(segments)} segments -> {len(sheets)} sheets")
 
     need = {}
     for sh in sheets:
@@ -264,7 +270,7 @@ def main():
             video_key=key, chunk_index=int(ep[f"videos/{key}/chunk_index"]),
             file_index=int(ep[f"videos/{key}/file_index"]))
         jobs.append((str(root), ep_idx, key, gs, int(ep["dataset_from_index"]), str(vp),
-                     float(ep[f"videos/{key}/from_timestamp"]), str(cache / f"ep{ep_idx:02d}")))
+                     float(ep[f"videos/{key}/from_timestamp"]), str(cache / f"ep{ep_idx:02d}"), fps))
 
     frames = {}
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
@@ -277,10 +283,10 @@ def main():
     shutil.rmtree(cache, ignore_errors=True)   # ~11 GB of 640x480 PNGs across the corpus
     print(f"composed {len(sheets)} sheets -> {out}")
 
-    index = {"dataset": root.name, "fps": fps, "segments": segments,
+    index = {"dataset": args.name or root.name, "fps": fps, "segments": segments,
              "sheets": [{k: v for k, v in sh.items() if k != "cameras"} for sh in sheets]}
-    json.dump(index, open(out / f"index__{root.name}.json", "w"), indent=1)
-    print(f"wrote {out / f'index__{root.name}.json'}")
+    json.dump(index, open(out / f"index__{args.name or root.name}.json", "w"), indent=1)
+    print(f"wrote {out / f'index__{args.name or root.name}.json'}")
 
 
 if __name__ == "__main__":

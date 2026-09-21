@@ -14,19 +14,26 @@ state: sheets are regenerable, judgements are not.
 
 import argparse
 import json
+import os
 from collections import Counter
 from pathlib import Path
 
 # Sheets + their feature index live in the project, not the scratchpad: the
 # scratchpad is wiped between turns and took a full regeneration with it once.
-SHEETS = Path("outputs/_annotation/sheets")
-LABELS = Path("outputs/_annotation/labels")
+SHEETS = Path(os.environ.get("ANNOTATE_SHEETS_ROOT", "outputs/_annotation/sheets"))
+LABELS = Path(os.environ.get("ANNOTATE_LABELS_ROOT", "outputs/_annotation/labels"))
 ORDER = ["rebot_socks_basket-v1", "rebot_shirts_bin-v1", "rebot_two_container-v1", "rebot_val-v1"]
+
+
+def datasets(paths, pattern):
+    """ORDER first (unchanged for the local corpus), then whatever else is present."""
+    found = sorted(p.name[len(pattern.split("*")[0]):].removesuffix(".json") for p in paths)
+    return [d for d in ORDER if d in found] + [d for d in found if d not in ORDER]
 
 
 def load_index():
     segs, sheets = [], []
-    for ds in ORDER:
+    for ds in datasets(SHEETS.glob("index__*.json"), "index__*"):
         p = SHEETS / f"index__{ds}.json"
         if p.exists():
             idx = json.load(open(p))

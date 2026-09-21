@@ -179,6 +179,21 @@ def allocate_group_quotas(batch_size: int, groups: list[MixtureGroup]) -> list[l
     ]
 
 
+def draw_proportional_quotas(batch_size: int, groups: list[MixtureGroup], rng) -> list[list[int]]:
+    """Draw a fixed total even when a bucket has more sources than batch slots."""
+    outer = np.asarray([group.weight for group in groups], dtype=np.float64)
+    if batch_size < 1 or not len(groups) or not np.isfinite(outer).all() or np.any(outer <= 0):
+        raise ValueError("Mixture size and finite group weights must be positive.")
+    sizes = rng.multinomial(batch_size, outer / outer.sum())
+    quotas = []
+    for group, size in zip(groups, sizes, strict=True):
+        inner = np.asarray(group.inner_weights, dtype=np.float64)
+        if not np.isfinite(inner).all() or np.any(inner <= 0):
+            raise ValueError("Finite inner mixture weights must be positive.")
+        quotas.append(rng.multinomial(size, inner / inner.sum()).tolist())
+    return quotas
+
+
 def observed(iterator, telemetry: "MixtureTelemetry", *, depth_key: str = "depth.wrist_0.depth"):
     """Pass batches through, recording what the mixture actually produced."""
     for batch in iterator:
@@ -193,8 +208,27 @@ def make_hierarchical_offline_iterator(
     async_prefetch: bool = False,
     queue_size: int = 2,
     action_chunk_size: int = 30,
+    proportional: bool = False,
+    seed: int = 0,
 ):
-    """Fixed-size batches drawn group-first, then buffer-by-weight inside each group."""
+    """Fixed-size batches drawn group-first, then buffer-by-weight inside each group.
+
+    Named buckets use multinomial draws: exact weights in expectation, without
+    forcing one sample per physical root or biasing weights with a minimum quota.
+    The original fixed-quota mode remains the default for existing runs.
+    """
+    if proportional:
+        rng = np.random.default_rng(seed)
+        while True:
+            quotas = draw_proportional_quotas(batch_size, groups, rng)
+            batch = None
+            for group, counts in zip(groups, quotas, strict=True):
+                for buffer, count in zip(group.buffers, counts, strict=True):
+                    if count:
+                        part = buffer.sample(int(count), action_chunk_size=action_chunk_size)
+                        batch = part if batch is None else concatenate_variable_dim_batch_transitions(batch, part)
+            yield batch
+        return
     quotas = allocate_group_quotas(batch_size, groups)
     for group, per_buffer in zip(groups, quotas, strict=True):
         logger.info(
