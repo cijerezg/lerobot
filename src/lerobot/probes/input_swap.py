@@ -258,8 +258,8 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
             groups["state"].append(key)
         elif name.startswith("observation.images."):
             groups["image"].append(key)
-        elif name.startswith("observation.depth."):
-            fixed.append(key)
+        elif name.startswith(("observation.depth.", "probe_complementary.depth.")):
+            fixed.append(key)   # the depth frame and its present flag / intrinsics stay the anchor's
         else:
             raise KeyError(f"observation key {key!r} belongs to no swap switch")
     empty = [factor for factor, keys in groups.items() if not keys]
