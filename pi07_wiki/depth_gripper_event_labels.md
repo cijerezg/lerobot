@@ -191,6 +191,23 @@ Generation must be deterministic. Refuse to replace existing sidecars unless an
 explicit `--overwrite` flag is supplied, and write via a temporary file followed
 by an atomic rename.
 
+### Consolidated and RGB-only roots
+
+A consolidated root (`migration/training_mix_2026-09-21/consolidate_sources.py`) preserves
+the leaf sources' event and frame-label tables with rebased indices and writes this file
+by merging the leaves (`depth_event_labels_info.py` in the same folder): every field that
+is identical across all leaf `_labels_info.json` files is carried over, and the row and
+event counts are recomputed from the consolidated sidecars. The probes read
+`resolved_gripper_dimension`, `thresholds_degrees`, `fps`, and `rubric_version` from it,
+so leaves labelled under different rubrics are refused rather than averaged. The
+`depth_gripper_event_info.json` next to it is the consolidation's own source summary,
+not a substitute.
+
+An RGB-only prepared source (`meta/cache_ready.json` with `depth_key: null`) carries no
+label sidecars at all. Both the training collection and the probe frame loader install
+zero targets for its frames; the loss is masked by the encoder's depth-valid flag, so
+those frames never contribute.
+
 ## Materialization procedure
 
 1. Read and validate `meta/info.json`; resolve `gripper.pos` by name and assert

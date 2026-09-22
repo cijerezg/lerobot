@@ -27,7 +27,10 @@ from lerobot.utils.action_metrics import (
     TRAJECTORY_RELATIVE_KEYS,
     trajectory_error_components,
 )
-from lerobot.utils.depth_gripper_events import load_depth_gripper_event_targets
+from lerobot.utils.depth_gripper_events import (
+    DEPTH_GRIPPER_EVENT_TARGET_KEYS,
+    load_depth_gripper_event_targets,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -655,8 +658,16 @@ def probe_frame_inputs(
     }
     depth_event_config = getattr(cfg.policy, "depth_gripper_event_loss", None)
     if with_gripper_event_targets and getattr(depth_event_config, "enabled", False):
-        targets = load_depth_gripper_event_targets(dataset)
-        result.update({key: values[global_idx] for key, values in targets.items()})
+        from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
+
+        # An RGB-only prepared source carries no event labels: zero targets, as in training,
+        # where the loss is masked by the encoder's depth-valid flag anyway.
+        contract = prepared_rebot_contract(dataset.root)
+        if contract is not None and contract["depth_key"] is None:
+            result.update({key: torch.zeros(()) for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS})
+        else:
+            targets = load_depth_gripper_event_targets(dataset)
+            result.update({key: values[global_idx] for key, values in targets.items()})
     return result
 
 

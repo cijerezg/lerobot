@@ -32,7 +32,6 @@ KEEP_CKPT=0
 FORCE_DELETE=0
 ATTACH=0
 DRY=0
-BOUNDED=0
 SSH_OPTS=(-o BatchMode=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o ConnectTimeout=15)
 
 usage() {
@@ -46,8 +45,7 @@ Positional:
 Options:
   --host HOST        ssh target (default: $DGX_HOST, else "dgx")
   --workspace DIR    workspace root, mirrored on both boxes (default: repo parent)
-  --config PATH      training config (default: <workspace>/config_rl.yaml)
-  --bounded         use deployed bounded probes; do not overwrite Spark code/config
+  --config PATH      probe config (default: <workspace>/config_rl_validate.yaml)
   --out DIR          run/output dir (default: <workspace>/outputs/remote_val/<slug>)
   --keep-checkpoint  do not delete the remote checkpoint copy when done
   --force-delete     delete the remote checkpoint even if it pre-existed there
@@ -62,7 +60,6 @@ while [[ $# -gt 0 ]]; do
     --host)            HOST="$2"; shift 2 ;;
     --workspace)       WS="$2"; shift 2 ;;
     --config)          CONFIG="$2"; shift 2 ;;
-    --bounded)         BOUNDED=1; shift ;;
     --out)             RUN_DIR="$2"; shift 2 ;;
     --keep-checkpoint) KEEP_CKPT=1; shift ;;
     --force-delete)    FORCE_DELETE=1; shift ;;
@@ -83,11 +80,7 @@ WS="$(cd "$WS" && pwd)" || die "workspace not found"
 CODE="${CODE:-$WS}"
 [[ -d "$CODE" ]] || die "code tree not found: $CODE"
 CODE="$(cd "$CODE" && pwd)"
-if (( BOUNDED )); then
-  CONFIG="$WS/migration/probe_bounded_2026-09-19/config_probe_spark.yaml"
-else
-  CONFIG="${CONFIG:-$WS/config_rl.yaml}"
-fi
+CONFIG="${CONFIG:-$WS/config_rl_validate.yaml}"
 [[ -f "$CONFIG" ]] || die "config not found: $CONFIG"
 
 if   [[ -d "$CODE/src/lerobot" ]];         then SRC="$CODE/src/lerobot"
@@ -129,12 +122,14 @@ fi
 STATE="$RUN_DIR/.remote_val"
 RLOG="$RUN_DIR/remote_val.log"          # remote log path (same string locally)
 LLOG="$RUN_DIR/remote_val.log"          # local mirror we append to while tailing
-PROBE_RUN="$RUN_DIR"
+PROBE_RUN="$RUN_DIR/probes-$(date +%Y%m%d-%H%M%S)"   # fresh per launch: run_probes.sh refuses a reused dir
+REMOTE_CONFIG="$RUN_DIR/probe_config.yaml"
 
 info "host       $HOST"
 info "workspace  $WS"
 info "code       $SRC  (venv: $VENV)"
 info "checkpoint $MODEL"
+info "config     $CONFIG"
 info "run dir    $RUN_DIR"
 info "results    $RESULT_DIR"
 
@@ -172,15 +167,14 @@ else
   (( PREEXISTED )) && warn "checkpoint already exists on $HOST — it will NOT be deleted (use --force-delete to override)"
 
   # ── Sync code + config ────────────────────────────────────────────────────────
-  if (( BOUNDED )); then
-    info "using verified Spark deployment; code and configs stay in place"
-  else
   info "sync code"
   run rsync -a --delete --exclude='__pycache__/' --exclude='*.pyc' --exclude='.venv/' \
       -e "ssh ${SSH_OPTS[*]}" \
       "$SRC/" "$HOST:$SRC/" || die "code rsync failed"
-  run rsync -a -e "ssh ${SSH_OPTS[*]}" "$CONFIG" "$HOST:$WS/config_rl.yaml" || die "config rsync failed"
-  fi
+  run sshx "mkdir -p '$RUN_DIR' '$WS/lerobot/scripts/probes'" || die "cannot prepare probe config directory"
+  run rsync -a -e "ssh ${SSH_OPTS[*]}" "$CONFIG" "$HOST:$REMOTE_CONFIG" || die "config rsync failed"
+  run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/run_probes.sh" "$HOST:$WS/lerobot/scripts/" || die "probe launcher rsync failed"
+  run rsync -a -e "ssh ${SSH_OPTS[*]}" "$WS/lerobot/scripts/probes/" "$HOST:$WS/lerobot/scripts/probes/" || die "probe helpers rsync failed"
 
   # ── Sync checkpoint ───────────────────────────────────────────────────────────
   info "sync checkpoint ($(du -sh "$MODEL" | cut -f1))"
@@ -192,10 +186,7 @@ else
 
   # ── Launch detached ───────────────────────────────────────────────────────────
   (( DRY )) || mkdir -p "$STATE"
-  if (( BOUNDED )); then
-    PROBE_RUN="$RUN_DIR/bounded-$(date +%s)-$$"
-    (( DRY )) || printf '%s\n' "$PROBE_RUN" > "$STATE/probe_run"
-  fi
+  (( DRY )) || printf '%s\n' "$PROBE_RUN" > "$STATE/probe_run"
   launcher="${TMPDIR:-/tmp}/remote_validate.run.$$.sh"
   trap 'rm -f "$launcher"' EXIT
   cat > "$launcher" <<EOF
@@ -208,18 +199,7 @@ export PYTHONPATH='$WS/lerobot/src'
 export PATH="\$HOME/.local/bin:\$PATH"
 cd '$WS' || exit 97
 echo \$\$ > '$STATE/pid'
-if (( $BOUNDED )); then
-  bash migration/probe_bounded_2026-09-19/run_on_spark.sh '$MODEL' '$PROBE_RUN'
-else
-uv run --no-project --python '$VENV/bin/python' python -m lerobot.scripts.rl_offline \\
-    --config_path=config_rl.yaml \\
-    --policy.pretrained_path='$MODEL' \\
-    --policy.offline_steps=0 \\
-    --val_on_start=true \\
-    --save_checkpoint=false \\
-    --aim.enable=false \\
-    --offline_output_dir='$RUN_DIR'
-fi
+bash lerobot/scripts/run_probes.sh '$MODEL' '$PROBE_RUN' '$REMOTE_CONFIG'
 echo \$? > '$STATE/exit_code'
 EOF
   chmod +x "$launcher"
@@ -232,14 +212,8 @@ EOF
   rsync -a -e "ssh ${SSH_OPTS[*]}" "$launcher" "$HOST:$launcher" || die "launcher rsync failed"
   # This ssh occasionally never returns although the job is up (2026-09-03, 2026-09-11); the
   # pid poll below is the real launch check, so a timed-out ssh (rc 124) is not a failure.
-  if (( BOUNDED )); then
-    sshx "rm -f '$STATE/pid'; systemd-run --user --unit=bounded-probe-$(date +%s)-$$ \
-      -p MemoryMax=100G -p MemorySwapMax=0 -p StandardOutput=append:$RLOG -p StandardError=inherit \
-      bash '$launcher'"
-  else
-    timeout 60 ssh "${SSH_OPTS[@]}" "$HOST" \
+  timeout 60 ssh "${SSH_OPTS[@]}" "$HOST" \
     "rm -f '$STATE/pid'; cd '$WS' && setsid nohup bash '$launcher' >> '$RLOG' 2>&1 < /dev/null & disown"
-  fi
   rc=$?; (( rc == 0 || rc == 124 )) || die "failed to launch on $HOST (rc=$rc)"
   REMOTE_PID=""
   for _ in $(seq 30); do
@@ -281,7 +255,7 @@ info "remote run exited $EXIT"
 # The remote writes one step dir (step_00000000); take whichever it produced so this
 # does not silently pull nothing if that ever changes.
 remote_step="$(sshx "ls -d '$PROBE_RUN'/validation/step_* 2>/dev/null | head -1" || true)"
-if (( BOUNDED && EXIT != 0 )); then
+if (( EXIT != 0 )); then
   RESULT_DIR="$RUN_DIR/failed-$(basename "$PROBE_RUN")"
 fi
 if [[ -n "$remote_step" ]]; then
