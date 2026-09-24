@@ -392,7 +392,7 @@ For `delta` encoding the network outputs are cumulatively summed first.
 
 ### 2. Zero-Phase Butterworth Filter
 
-A 2nd-order low-pass Butterworth filter (`Wn = 0.2`) is applied along the time axis of each `[T, action_dim]` chunk using `scipy.signal.filtfilt` (zero-phase). Implementation: [`apply_butterworth_filter`](../../src/lerobot/rl/inference_utils.py) in `inference_utils.py`.
+A 2nd-order low-pass Butterworth filter (`Wn = 0.2`) is applied along the time axis of each `[T, action_dim]` chunk using `scipy.signal.filtfilt` (zero-phase). Implementation: [`apply_butterworth_filter`](../../src/lerobot/utils/action_smoothing.py) in `utils/action_smoothing.py`.
 
 Compared to the moving-average smoother used in the $\pi_{0.5}$ pipeline, the Butterworth filter has a sharper frequency cutoff and zero phase delay, so it kills high-frequency jitter without introducing the lag a causal filter would. Chunks shorter than 9 timesteps are returned unchanged (insufficient padding length for `filtfilt`).
 

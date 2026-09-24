@@ -67,3 +67,31 @@ Separate filesystem changes occurred during the pass: 1,898 previously resolving
 media symlinks lost targets under the public-dataset staging area and
 `/home/user/.cache`. None of those targets was in this cleanup's deletion set;
 the cause was not established. Dataset integrity therefore remains unverified.
+
+
+## Custom library source cleanup — 2026-09-24
+
+This follow-up simplified code inside `lerobot/`, with a net reduction of
+1695 Python/shell lines and five deleted scripts. No new modules were introduced.
+
+- `rl/inference_utils.py`: 1,070 to 107 lines. Kept RTC's observation conversion and
+  action bounding functions unchanged; removed the unreachable non-RTC workers,
+  shared state, terminal override console, duplicate action alignment, and episode
+  logging. `inference_async.py` already rejects non-RTC execution.
+- `probes/attention_budget.py`: removed 11 unused plotting helpers and their orphaned
+  import/constants. Current budget, concentration, and history renderers remain.
+- `rl/offline_dataset_utils.py`: removed the unused private path-list wrapper.
+- Deleted `rl/eval_policy.py`, an unreferenced old evaluator that treated the current
+  `(environment, teleoperator)` factory result as an environment.
+- Deleted annotation scratch launchers `load_lerobot_high.py`, `annotate_libero.sh`,
+  and `run_pgen.sh` (hardcoded paths from another machine and interactive debugging),
+  plus `verify_relabelled.py` (a completed four-root historical acceptance recipe).
+  The annotation engines, retained validators, original labels, and datasets remain.
+- Updated affected inference documentation and the historical audit entry.
+
+Validation: 44 focused action-bound, RTC routing, checkpoint-selection, subtask-state,
+and offline-dataset tests passed before and after. Every retained function/class in
+the edited implementation modules has the same AST as before. Saved attention data
+rendered pixel-identical budget, concentration, and two-checkpoint trajectory PNGs.
+No remaining source/test/experiment imports of the deleted modules were found.
+These checks did not execute robot hardware, training, or a model forward.

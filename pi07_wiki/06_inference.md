@@ -29,11 +29,10 @@ Episode restart clears history, subtask, and summary; **intervention clears
 nothing** (training buffers keep contiguous frames across takeover; teleop action
 = executed action).
 
-### Action bounds (both runtimes, after the Butterworth)
+### Action bounds (RTC, after the Butterworth)
 
 `utils/action_smoothing.bound_action_chunk`, called through
-`rl/inference_utils.bound_policy_actions` from the RTC and non-RTC inference
-workers. Bounds the decoded chunk in follower degrees relative to $s_0$, the
+`rl/inference_utils.bound_policy_actions` from the RTC inference worker. Bounds the decoded chunk in follower degrees relative to $s_0$, the
 observed state the chunk was inferred from, in this order:
 
 1. lag: $a_0 \leftarrow s_0 + \mathrm{clip}(a_0 - s_0, -L_j, L_j)$, tick 0 only — `action_lag_limits`

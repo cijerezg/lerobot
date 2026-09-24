@@ -147,7 +147,6 @@ import json
 import logging
 import os
 import sys
-import textwrap
 
 import matplotlib
 matplotlib.use("Agg")
@@ -171,13 +170,10 @@ _EPS = 1e-12
 # Below this a segment holds no mass at all. Its log sits on the clamp and would drag
 # the geometric mean that every clr is measured against, shifting all n series at once.
 _MASS_FLOOR = 1e-6
-# How many segments the compositional-shift panel names; the rest stay grey.
-_N_MOVERS = 6
 
 # Stable colours so a segment keeps its identity across panels and across runs.
 #
-# The compositional-shift panel draws whichever six segments moved most, so *any* pair
-# of these can end up crossing on one white background — which makes the requirement
+# Segment series can cross on one white background, which makes the requirement
 # all-pairs separation, not the usual adjacent-pairs one. This set was searched under
 # that constraint over an OKLCH grid (lightness 0.44-0.76, chroma >= 0.10, contrast
 # >= 2.6 on white) and every one of its 55 coloured pairs clears both gates: worst
@@ -213,25 +209,10 @@ _SEGMENT_COLORS = {
     "residual": "#33332f",
 }
 _INK = "#0b0b0b"
-# Column count varies per frame only for these: the clause text itself changes length.
-_VARIABLE_LENGTH_SEGMENTS = ("subtask", "metadata")
 
 
 def _color(name: str) -> str:
     return _SEGMENT_COLORS.get(name, "#808080")
-
-
-def _row_labels(ax, ordered: list[str], labels: list[str] | None = None) -> None:
-    """Segment names as dark text with a colour chip beside them.
-
-    The chip carries the identity and the text stays legible: a pale hue is a fine
-    mark and a bad 7pt glyph, and three of these hues sit under 3:1 against white.
-    """
-    ax.set_yticks(range(len(ordered)), labels or ordered, fontsize=7)
-    for tick in ax.get_yticklabels():
-        tick.set_color(_INK)
-    ax.scatter([-0.72] * len(ordered), range(len(ordered)), marker="s", s=34,
-               c=[_color(n) for n in ordered], clip_on=False, zorder=5)
 
 
 def _segment_columns(result, encoder_len: int) -> dict[str, list[int]]:
@@ -419,34 +400,6 @@ def _thumbnails(result, obs: dict, pointmap_config, max_width: int = 160) -> dic
     return thumbs
 
 
-def _filmstrip(fig, grid, keys: list[str], picks: np.ndarray, thumbnails: list[dict], frame_meta: list[dict]) -> None:
-    """One column per picked frame, one row per modality, aligned to the frame axis."""
-    valid = np.concatenate(
-        [thumbnails[f]["depth"][thumbnails[f]["depth"] > 0].ravel() for f in picks if "depth" in thumbnails[f]]
-        or [np.zeros(1)]
-    )
-    low, high = np.percentile(valid, [5, 95]) if valid.size > 1 else (0.0, 1.0)
-
-    for row, key in enumerate(keys):
-        for col, frame in enumerate(picks):
-            ax = fig.add_subplot(grid[row, col])
-            thumb = thumbnails[frame].get(key)
-            if thumb is not None and key == "depth":
-                ax.imshow(np.where(thumb > 0, thumb, np.nan), cmap="turbo", vmin=low, vmax=high)
-            elif thumb is not None:
-                ax.imshow(thumb)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            if row == 0:
-                meta = frame_meta[frame]
-                ax.set_title(f"f{frame}  ep{meta['episode_idx']}:{meta['frame_idx']}", fontsize=7, pad=2)
-            if col == 0:
-                label = "depth (mm)" if key == "depth" else key
-                ax.set_ylabel(label, fontsize=8, color=_INK, fontweight="bold")
-            if row == len(keys) - 1:
-                ax.set_xlabel(textwrap.fill(frame_meta[frame].get("subtask") or "", 18), fontsize=5.5)
-
-
 def _episode_rules(ax, frame_meta: list[dict]) -> None:
     """Mark where the frame axis crosses into another episode.
 
@@ -465,256 +418,6 @@ def _declutter(positions: dict[str, float], min_gap: float) -> list[tuple[str, f
     for name, y in sorted(positions.items(), key=lambda item: item[1]):
         placed.append((name, y if not placed else max(y, placed[-1][1] + min_gap)))
     return placed
-
-
-def _levels_panel(ax, ax_per_token, ordered: list[str], focus_mass: np.ndarray, order: np.ndarray,
-                  token_counts: dict[str, int], layer: int) -> None:
-    r"""The same budget twice: as it is, and per column of the segment it landed on.
-
-    The left half is the true softmax partition, $\sum_S m_S = 1$ — what the model's
-    attention compute is actually spent on. Read alone it says the cameras and the depth
-    point map dominate, which is close to arithmetic: they bring 196, 196 and 192 of the
-    697 columns, so at a layer that attends near-uniformly they take a large share by
-    existing. The right half divides by that column count. Nothing else changes, and the
-    ranking usually inverts.
-
-    Neither half is the "correct" one. A segment's total is what it costs the model; its
-    per-column share is how hard the model reads a column of it. The pair is the point,
-    which is why they sit side by side sharing a row order rather than one replacing the
-    other.
-    """
-    means, lows, highs = focus_mass.mean(axis=0)[order], focus_mass.min(axis=0)[order], focus_mass.max(axis=0)[order]
-    counts = np.asarray([max(token_counts.get(n, 1), 1) for n in ordered], dtype=float)
-    y = np.arange(len(ordered))[::-1]
-    left = 1e-4
-
-    ax.barh(y, means, color=[_color(n) for n in ordered], alpha=0.9, height=0.72)
-    ax.hlines(y, np.clip(lows, left, None), np.clip(highs, left, None), color="#222222", linewidth=1.1)
-    for row, mean, high, name in zip(y, means, highs, ordered):
-        ax.text(max(mean, high, left) * 1.35, row, f"{100 * mean:.2f}%  {token_counts.get(name, 0)} tok",
-                va="center", fontsize=7)
-    ax.set_xscale("log")
-    ax.set_xlim(left, float(highs.max()) * 30)
-    ax.set_yticks(y, ordered, fontsize=7.5)
-    for tick in ax.get_yticklabels():
-        tick.set_color(_INK)
-    ax.set_xlabel("share of the budget (log)")
-    ax.set_title(f"Total, layer {layer}", fontsize=10)
-
-    per_token = means / counts
-    ax_per_token.barh(y, per_token, color=[_color(n) for n in ordered], alpha=0.9, height=0.72)
-    ax_per_token.hlines(y, lows / counts, highs / counts, color="#222222", linewidth=1.1)
-    for row, value in zip(y, per_token):
-        ax_per_token.text(value * 1.35, row, f"{100 * value:.3f}%", va="center", fontsize=7)
-    ax_per_token.set_xscale("log")
-    ax_per_token.set_xlim(float(per_token.min()) / 3, float(per_token.max()) * 30)
-    ax_per_token.tick_params(labelleft=False)
-    ax_per_token.set_xlabel("share per column (log)")
-    ax_per_token.set_title("Per column of the segment", fontsize=10)
-
-    _caption(ax, [
-        r"$m_S$ = softmax mass on segment $S$'s encoder columns, averaged over heads, over the action chunk, and over all",
-        r"sampled frames. Bar = mean, rule = min..max across frames. Left: $m_S$, which sums to 1 across segments within",
-        r"one frame. Right: $m_S/n_S$, the same number divided by how many columns $S$ brought — this is the only",
-        r"comparison between two different segments that the column counts do not decide in advance.",
-        r"Both axes are log: the segments span four decades. Segment colours are fixed across every panel of this figure.",
-    ])
-
-
-def _shift_panel(ax, focus_mass: np.ndarray, names: list[str], frame_meta: list[dict], layer: int) -> list[str]:
-    r"""Does the model re-prioritize its inputs from frame to frame, and toward what?
-
-    Three transforms, each removing something that would otherwise be mistaken for an
-    answer:
-
-    1. **log.** A share is a ratio, so only ratios of it mean anything: the depth clause
-       going 0.10% → 0.20% is the same event as the top camera going 30% → 60%, and on a
-       linear axis the first is invisible while the second owns the panel. Taking the log
-       makes "doubled its share" the same vertical distance at every level. Base 2, so
-       one unit on the y-axis is exactly one doubling.
-    2. **minus the mean log** (this is what makes it a *centered log-ratio*). The budget
-       sums to 1, so raw masses cannot move independently — if the images take more,
-       every clause falls whether or not the model changed its mind about clauses. In
-       log space that constraint is an additive offset shared by all segments, and
-       subtracting the across-segment mean log deletes it. What survives is
-       $\log_2$ of segment $S$'s share divided by the geometric mean share, which no
-       other segment can push around: a rise here is $S$ gaining *relative to the field*.
-    3. **minus each series' own mean over frames.** Levels are already in the left panel
-       and they span four decades; centring puts all six series on one readable y-axis so
-       the question becomes "when did it move", not "how big is it".
-
-    So a point at $+0.4$ reads: at this frame that segment took $2^{0.4}\approx 1.3\times$
-    its own usual share of the attention budget, relative to the rest of the field.
-    """
-    clr, kept = _clr_at_focus(focus_mass, names)
-    delta = clr - clr.mean(axis=0, keepdims=True)
-    steps = np.arange(delta.shape[0])
-    rank = np.argsort(-delta.std(axis=0))
-    movers = [kept[i] for i in rank[:_N_MOVERS]]
-
-    # The quiet segments go in as an envelope, not as lines: they are here to show that
-    # nothing outside the named few moved, which a bundle of extra lines cannot say.
-    quiet = delta[:, rank[_N_MOVERS:]]
-    if quiet.shape[1]:
-        ax.fill_between(steps, quiet.min(axis=1), quiet.max(axis=1), color="#d8d8d4", alpha=0.75,
-                        linewidth=0, zorder=1, label=f"other {quiet.shape[1]} segments (range)")
-        ax.legend(fontsize=7, loc="lower left")
-    # A surface-coloured halo under each line: six series crossing this often lose their
-    # identity at every intersection otherwise, whatever the colours are.
-    halo = [path_effects.withStroke(linewidth=3.4, foreground="white")]
-    for name in movers:
-        ax.plot(steps, delta[:, kept.index(name)], color=_color(name), linewidth=1.7, zorder=3,
-                solid_capstyle="round", path_effects=halo)
-    ax.axhline(0.0, color="black", linewidth=0.7)
-    _episode_rules(ax, frame_meta)
-    span = max(0.05, float(np.percentile(np.abs(delta), 99.5)) * 1.2)
-    ax.set_ylim(-span, span)
-    for name, y in _declutter({n: float(delta[-1, kept.index(n)]) for n in movers}, 0.075 * 2 * span):
-        ax.annotate(name, (steps[-1], y), xytext=(5, 0), textcoords="offset points",
-                    fontsize=8, color=_color(name), fontweight="bold", va="center",
-                    annotation_clip=False, path_effects=halo)
-    ax.set_xlim(-0.5, len(steps) - 1 + 0.16 * len(steps))
-    ax.set_xlabel("sampled frame")
-    ax.set_ylabel("share vs own average (log$_2$, doublings)")
-    ax.set_title(f"Does the model re-prioritize its inputs? Layer {layer}\n"
-                 "(each segment against its own average share — no segment can move another)")
-    _caption(ax, [
-        r"Measured: $m_S(t)$ = the share of each action query's softmax row that lands on segment $S$'s",
-        r"encoder columns, averaged over heads and over the action chunk. Plotted: that share in $\log_2$,",
-        r"minus the mean $\log_2$ over the $n$ segments ($\mathrm{clr}$), minus each series' own mean over frames.",
-        r"Log, because a share is only meaningful as a ratio — $0.1\%\to0.2\%$ and $30\%\to60\%$ are the same",
-        r"move, and base 2 prices it at exactly $+1$. Minus the segment mean, because the budget sums to 1:",
-        r"raw masses fall whenever the images rise, with no change of mind. In logs that coupling is one",
-        r"shared offset, and removing it leaves $S$ against the geometric mean of the field — a rise no",
-        r"other segment can manufacture. $+0.4$ = this frame gave $S$ $2^{0.4}\approx1.3\times$ its usual share.",
-        r"Drawn = the " + str(_N_MOVERS) + r" largest std, the rest are one grey band; $n$ counts only segments above $10^{-6}$.",
-        r"Dotted rules are episode cuts: the frame axis is a concatenation, not a trajectory.",
-    ])
-    return kept
-
-
-def _layer_panel(fig, ax, mass: np.ndarray, ordered: list[str], order: np.ndarray,
-                 layers: list[int], token_counts: dict[str, int]) -> None:
-    r"""Per-column share by layer — the one grid where segments are compared to each other.
-
-    Raw mass here was actively misleading. Cells were read across rows as "the cameras and
-    the depth map get the most attention", when at the early layers that is the token
-    histogram and nothing else: at layer 0 of a trained MolmoAct2 run every segment sits
-    within $\pm 0.3$ doublings of its share of the columns. Dividing by $n_S$ costs nothing
-    (the count is constant down a row, so each row's shape over layers is untouched) and
-    makes reading across rows legitimate. The totals live in the levels panel.
-    """
-    from matplotlib.colors import LogNorm
-
-    counts = np.asarray([max(token_counts.get(n, 1), 1) for n in ordered], dtype=float)
-    grid = mass.mean(axis=0).T[order] / counts[:, None]  # [segments, layers]
-    norm = LogNorm(vmin=max(float(grid[grid > 0].min()), _MASS_FLOOR / 100), vmax=float(grid.max()))
-    image = ax.imshow(np.clip(grid, norm.vmin, None), aspect="auto", cmap="viridis", norm=norm)
-    for row in range(grid.shape[0]):
-        for col in range(grid.shape[1]):
-            ax.text(col, row, f"{100 * grid[row, col]:.3f}", ha="center", va="center", fontsize=6.5,
-                    color="white" if norm(max(grid[row, col], norm.vmin)) < 0.62 else "black")
-    ax.set_xticks(range(len(layers)), [str(layer) for layer in layers])
-    _row_labels(ax, ordered, [f"{n}  ({token_counts.get(n, 0)})" for n in ordered])
-    ax.set_xlabel("action-expert layer")
-    ax.set_title("Share per column, by layer")
-    fig.colorbar(image, ax=ax, fraction=0.046).set_label("share per column (log)", fontsize=7)
-    _caption(ax, [
-        r"Cell = $m_S/n_S$ at that layer, averaged over frames, heads and the action chunk, printed as a percentage.",
-        r"$n_S$, in brackets after each name, is that segment's column count. Dividing by it is what makes a",
-        r"comparison between two rows mean something: the cameras bring 196 columns each and the clauses bring 8-20,",
-        r"so in raw mass the widest segment wins by arithmetic. Columns no longer sum to 100% — the totals are in the",
-        r"levels panel. A row's shape across layers is identical either way, since $n_S$ is constant along a row.",
-    ])
-
-
-def _distance_panel(ax, focus_mass: np.ndarray, names: list[str], depth_mm: np.ndarray,
-                    picks: np.ndarray, layer: int) -> None:
-    """The one pairwise log-ratio with a hypothesis behind it, against scene distance."""
-    wrist = next((n for n in names if n.startswith("img_") and "wrist" in n), None)
-    if "depth" not in names or wrist is None:
-        ax.text(0.5, 0.5, "no depth segment", ha="center", va="center")
-        ax.axis("off")
-        return
-
-    ratio = np.log2(
-        np.clip(focus_mass[:, names.index("depth")], _EPS, None)
-        / np.clip(focus_mass[:, names.index(wrist)], _EPS, None)
-    )
-    usable = np.isfinite(depth_mm) & (depth_mm > 0)
-    if usable.sum() >= 3:
-        rho, p = _spearman(depth_mm[usable], ratio[usable])
-        ax.scatter(depth_mm[usable], ratio[usable], s=26, alpha=0.75, color=_color("depth"))
-        for frame in picks:
-            if usable[frame]:
-                ax.annotate(f"f{frame}", (depth_mm[frame], ratio[frame]), fontsize=6,
-                            alpha=0.7, xytext=(3, 3), textcoords="offset points")
-        ax.set_xscale("log")
-        ax.set_title(f"log2(depth / {wrist}) vs scene distance\nSpearman rho={rho:+.2f} (p={p:.3g})")
-    else:
-        ax.set_title(f"log2(depth / {wrist}) vs scene distance — no valid depth")
-    ax.axhline(0.0, color="black", linewidth=0.7)
-    ax.set_xlabel("median valid wrist depth (mm, log)")
-    ax.set_ylabel("log2 mass ratio")
-    _caption(ax, [
-        r"$x$ = median of the wrist depth map over pixels $> 0$, in mm, one point per frame.",
-        r"$y=\log_2(m_\mathrm{depth}/m_\mathrm{wrist})$ at layer " + str(layer) + r"; $0$ = equal share, $+1$ = depth takes double.",
-        r"Invariant to every other segment, so no other clause can manufacture this trend.",
-        r"rho is Spearman on ranks — no line is fitted, and the log $x$ axis is legibility only.",
-    ])
-
-
-def _entropy_panel(ax, entropy: np.ndarray, layers: list[int], frame_meta: list[dict], clr_std: float) -> None:
-    """The sharpening control, zoomed to the data so a flat line is visibly flat."""
-    steps = np.arange(entropy.shape[0])
-    _episode_rules(ax, frame_meta)
-    # Layers are ordered, not categorical, so they take one ramp light-to-dark rather
-    # than unrelated hues — depth in the stack reads off the line without the legend.
-    ramp = ["#86b6ef", "#3987e5", "#256abf", "#184f95", "#0d366b"]
-    for index, layer in enumerate(layers):
-        series = entropy[:, index]
-        line, = ax.plot(steps, series, linewidth=1.3,
-                        color=ramp[round(index * (len(ramp) - 1) / max(len(layers) - 1, 1))],
-                        label=f"layer {layer}   mean {series.mean():.3f}   std {series.std():.4f}")
-        ax.axhline(series.mean(), color=line.get_color(), linewidth=0.6, linestyle="--", alpha=0.6)
-    low, high = float(entropy.min()), float(entropy.max())
-    pad = max(0.01, 0.18 * (high - low))
-    ax.set_ylim(low - pad, high + pad)
-    ax.set_xlabel("sampled frame")
-    ax.set_ylabel("normalized row entropy")
-    ax.set_title("Sharpening control\n(flat here ⇒ composition moves are real)")
-    ax.legend(fontsize=7)
-    _caption(ax, [
-        r"$H(t)=-\sum_j a_j\log a_j$ over the whole key axis, averaged over heads and the action",
-        r"chunk, divided by $\log N_\mathrm{cols}$: $1$ = uniform over every encoder column, $0$ = one column.",
-        r"Movement here is the whole row sharpening, which moves every mass without any",
-        r"change in preference. Its std above vs the largest clr std, " + f"{clr_std:.3f}" + r", is the comparison.",
-        r"y is zoomed to the data; the absolute level is on the axis.",
-    ])
-
-
-def _chunk_panel(fig, ax, by_query: np.ndarray, ordered: list[str], order: np.ndarray, layer: int) -> None:
-    """Budget across the action chunk, each row against its own mean.
-
-    Raw mass here reproduces the layer panel's problem in a second dimension — the
-    image rows saturate the scale and the question ("does the split drift along the
-    chunk?") is about each row's shape, not its level.
-    """
-    query_mass = by_query.mean(axis=0)[order]  # [segments, Q]
-    fold = np.log2(np.clip(query_mass, _EPS, None) / np.clip(query_mass.mean(axis=1, keepdims=True), _EPS, None))
-    span = max(0.05, float(np.percentile(np.abs(fold), 99)))
-
-    image = ax.imshow(fold, aspect="auto", cmap="RdBu_r", vmin=-span, vmax=span)
-    _row_labels(ax, ordered)
-    ax.set_xlabel("action-chunk position")
-    ax.set_title(f"Budget drift along the chunk, layer {layer}")
-    fig.colorbar(image, ax=ax, fraction=0.046).set_label("doublings vs row mean", fontsize=7)
-    _caption(ax, [
-        r"Row $S$ = $\log_2\left(m_S(q)\,/\,\overline{m_S}\right)$ where $q$ indexes the action chunk and $\overline{m_S}$ is that",
-        r"row's mean over $q$; averaged over frames and heads. Red = this position gives $S$ more",
-        r"than its usual share, blue = less. Each row is normalized on itself, so a row's shape",
-        r"is readable next to any other row regardless of how much mass it holds.",
-    ])
 
 
 def _series_panel(ax, ordered: list[str], pct: np.ndarray, frame_meta: list[dict], layer: int,
@@ -886,38 +589,6 @@ def _render(
     plt.close(fig)
 
 
-def _curve_panel(ax, ordered: list[str], curves: np.ndarray, ranks: np.ndarray,
-                 n90: np.ndarray, *, title: bool, caption: bool) -> None:
-    r"""How few columns hold each segment's mass.
-
-    This is the panel that answers "the cameras bring 196 columns, but how many of them
-    is the model actually reading". An elbow far to the left is a segment read through a
-    handful of its columns; a straight ramp to $n_S$ is a segment read whole.
-    """
-    for row, name in enumerate(ordered):
-        ax.plot(ranks, curves[row], color=_color(name), linewidth=1.6, zorder=3,
-                path_effects=[path_effects.withStroke(linewidth=3.2, foreground="white")])
-        count = n90[row]
-        ax.scatter([count], [0.9], s=30, color=_color(name), zorder=4, edgecolor="white", linewidth=0.7)
-    ax.axhline(0.9, color="black", linewidth=0.7, linestyle="--")
-    ax.set_xscale("log")
-    ax.set_xlim(1, float(ranks.max()))
-    ax.set_ylim(0, 1.02)
-    ax.set_xlabel("columns of the segment, hottest first (log)")
-    ax.set_ylabel("share of that segment's own mass")
-    if title:
-        ax.set_title("How concentrated is each segment?")
-    if caption:
-        _caption(ax, [
-            r"Sort segment $S$'s columns by mass, descending: $s_1 \geq s_2 \geq \ldots \geq s_{n_S}$, summing to $m_S$.",
-            r"Curve = $\frac{1}{m_S}\sum_{i \leq k} s_i$ against $k$, so it starts at the hottest column's share of its",
-            r"own segment and reaches 1 at $k=n_S$; held at 1 past $n_S$ so segments of different width share the axis.",
-            r"Dot = where the curve crosses 0.9, which is the count in the middle panel — that panel's labelled rows",
-            r"are this figure's legend. Averaged over frames, heads and the action chunk.",
-            r"A curve says nothing about how much mass $S$ got, only how it spread what it got.",
-        ])
-
-
 def _n90_panel(ax, ordered: list[str], n90_mean: np.ndarray, n90_low: np.ndarray,
                n90_high: np.ndarray, token_counts: dict[str, int], *,
                title: bool, caption: bool) -> None:
@@ -948,44 +619,6 @@ def _n90_panel(ax, ordered: list[str], n90_mean: np.ndarray, n90_low: np.ndarray
         r"Rule = min..max across frames; the number is the mean, rounded.",
         r"A count, not an index: read it as “90% of what this segment got landed on this many of its columns”.",
         r"Computed on the head-averaged row, so it counts what the layer reads — one head can only read fewer.",
-    ])
-
-
-def _per_column_mass(curve: np.ndarray, ranks: np.ndarray, total: float, n_columns: int) -> np.ndarray:
-    r"""One segment's per-rank share *of the whole budget*, NaN past its last column.
-
-    The stored curve is held at 1 past the segment's last column, so those ranks carry
-    no mass and would otherwise draw a line along the bottom of the axis.
-    """
-    per_column = np.diff(curve, prepend=0.0) * total / np.diff(ranks, prepend=0)
-    per_column[ranks > n_columns] = np.nan
-    return per_column
-
-
-def _column_mass_panel(ax, ordered: list[str], per_column: np.ndarray, ranks: np.ndarray,
-                       ylim: tuple[float, float], *, title: bool, caption: bool) -> None:
-    r"""The distribution itself, in budget units, so segments can be compared column to column."""
-    for row, name in enumerate(ordered):
-        ax.plot(ranks, per_column[row], color=_color(name), linewidth=1.5, zorder=3,
-                path_effects=[path_effects.withStroke(linewidth=3.0, foreground="white")])
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlim(1, float(ranks.max()))
-    ax.set_ylim(*ylim)
-    ax.set_xlabel("columns of the segment, hottest first (log)")
-    ax.set_ylabel("share of the budget on that column (log)")
-    if title:
-        ax.set_title("Mass distribution within each segment")
-    if not caption:
-        return
-    _caption(ax, [
-        r"Same sort as the left panel, but in absolute units: $y$ is the share of the whole budget that lands on",
-        r"one column, so heights are directly comparable between segments and each line ends at that segment's",
-        r"$n_S$. Rank 1 is exact; past it each point is the mean over the ranks since the previous point, because",
-        r"the curve is stored on a log-spaced grid. Colours are the middle panel's rows. Both axes are log and",
-        r"the $y$-range is shared by every layer row, so a height is comparable down the figure as well as across it.",
-        r"This is the panel that says whether the hottest camera patch is read as hard as a state column.",
-        r"A flat line is a segment read evenly across its columns; a steep one is a segment with a few that matter.",
     ])
 
 

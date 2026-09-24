@@ -89,8 +89,7 @@ including an `is_intervening` guard that suppresses feedback while the operator 
 
 | Site | Behaviour |
 |---|---|
-| [`inference_utils.py:970`](../src/lerobot/rl/inference_utils.py) | Every non-intervention rollout step: builds `{k: float(v) for k in obs if k.endswith(".pos")}` and calls `send_feedback` |
-| [`rtc_actor_runtime.py:891`](../src/lerobot/rl/rtc_actor_runtime.py) | Same, in the RTC actor |
+| [`rtc_actor_runtime.py`](../src/lerobot/rl/rtc_actor_runtime.py) | Handles leader feedback and action routing in the RTC actor |
 | [`dagger.py:766`](../src/lerobot/rollout/strategies/dagger.py) | On AUTONOMOUS → PAUSED, interpolates the leader onto the follower's pose over 2 s so handover has no jerk. Falls back to dragging the *follower* to the leader when the teleop is not actuated |
 
 **Feature A is therefore already written.** The only reason nothing moves is that
@@ -98,7 +97,8 @@ including an `is_intervening` guard that suppresses feedback while the operator 
 
 ### 2.2 Latent crash
 
-Both rollout call sites invoke `send_feedback` unguarded. `config_rl.yaml` sets
+At the time of this investigation, the RTC and now-removed non-RTC rollout call sites
+invoked `send_feedback` unguarded. `config_rl.yaml` sets
 `control_mode: leader` with `type: rebot_102_leader`, so the first non-intervention step of an
 online run raises and kills the actor. It has never fired because online runs are still blocked
 on `fixed_reset_joint_positions` (`config_rl.yaml:665`). Any option chosen below must close this.

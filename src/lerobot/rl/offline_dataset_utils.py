@@ -130,10 +130,6 @@ def load_offline_dataset(cfg, source: OfflineDatasetSource) -> LeRobotDataset:
     return dataset
 
 
-def _get_additional_dataset_paths(cfg) -> list[str]:
-    return [source.root for source in get_offline_dataset_sources(cfg)[1:] if source.root is not None]
-
-
 def get_offline_dataset_weights(cfg) -> list[float]:
     return [source.weight for source in get_offline_dataset_sources(cfg)]
 

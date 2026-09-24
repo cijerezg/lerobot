@@ -8,6 +8,8 @@ import torch
 
 from lerobot.probes.action_trace_probe import (
     _analyse,
+    _dct_coefficients,
+    _orthonormal_dct_matrix,
     _figure,
     _fit_metrics,
     _intricacy_diagnostics,
@@ -484,3 +486,21 @@ def test_shared_frame_sampler_and_seed_contract():
     ]
     assert action_inspector_sample_seed(42, 123, 0) == 165
     assert action_inspector_sample_seed(42, 123, 1) != action_inspector_sample_seed(42, 123, 0)
+
+
+def test_dct_is_orthonormal_and_preserves_energy():
+    matrix = _orthonormal_dct_matrix(30)
+    assert torch.allclose(matrix @ matrix.T, torch.eye(30, dtype=matrix.dtype), atol=1e-12)
+
+    chunks = torch.randn(11, 30, 7, dtype=torch.float64)
+    transformed = _dct_coefficients(chunks)
+    assert torch.allclose(
+        chunks.square().sum(dim=1), transformed.square().sum(dim=1), atol=1e-10
+    )
+
+
+def test_constant_chunk_has_only_dc_energy():
+    chunks = torch.ones(3, 30, 2, dtype=torch.float64)
+    transformed = _dct_coefficients(chunks)
+    assert torch.allclose(transformed[:, 1:], torch.zeros_like(transformed[:, 1:]), atol=1e-12)
+    assert torch.allclose(transformed[:, 0], torch.full((3, 2), 30**0.5, dtype=torch.float64))

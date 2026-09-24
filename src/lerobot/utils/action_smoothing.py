@@ -2,14 +2,13 @@
 
 This is the last transform between a policy's absolute action chunk and the
 controller, so anything that claims to show or score what the arm would do has to
-apply it: the deployed runtimes (`rl/inference_utils.py`, `rl/rtc_actor_runtime.py`)
-and the probe adapters both call it. It lives here rather than next to the runtimes
-because importing those pulls in matplotlib, OpenCV and the whole rollout stack.
+apply it: the RTC runtime (`rl/rtc_actor_runtime.py`) and the probe adapters both
+call it. The implementation stays independent of the hardware rollout stack.
 
 Order matters. The filter is linear and runs on the *absolute* chunk, after
 anchor/delta reconstruction — under delta encoding, filtering the increments and
 then integrating is a different trajectory. The safety bounds (`bound_action_chunk`)
-come after it. They live here so both runtimes share one implementation, but the
+come after it. The RTC runtime applies them through `bound_policy_actions`, but the
 probes must not apply them: they are a guard on the robot, and folding them into a
 measurement would hide the very violations a probe reports.
 """

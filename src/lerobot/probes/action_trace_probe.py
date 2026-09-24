@@ -52,6 +52,7 @@ import html
 import io
 import json
 import logging
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -61,7 +62,6 @@ import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.probes.action_spectrum import dct_coefficients
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
@@ -221,6 +221,24 @@ def _trajectory_metrics(norm: dict[str, torch.Tensor]) -> dict[str, float | int 
     return metrics
 
 
+def _orthonormal_dct_matrix(horizon: int, *, dtype=torch.float64) -> torch.Tensor:
+    """Orthonormal DCT-II matrix ``C[k,n]``."""
+    n = torch.arange(horizon, dtype=dtype).unsqueeze(0)
+    k = torch.arange(horizon, dtype=dtype).unsqueeze(1)
+    matrix = torch.cos(math.pi * k * (n + 0.5) / horizon)
+    scales = torch.full((horizon,), math.sqrt(2.0 / horizon), dtype=dtype)
+    scales[0] = math.sqrt(1.0 / horizon)
+    return scales.unsqueeze(1) * matrix
+
+
+def _dct_coefficients(chunks: torch.Tensor) -> torch.Tensor:
+    """Apply the orthonormal DCT-II along ``[N,T,D]`` chunk time."""
+    if chunks.ndim != 3:
+        raise ValueError(f"Expected chunks [N,T,D], got {tuple(chunks.shape)}.")
+    matrix = _orthonormal_dct_matrix(chunks.shape[1], dtype=chunks.dtype).to(chunks.device)
+    return torch.einsum("kt,ntd->nkd", matrix, chunks)
+
+
 def _target_spectral_metrics(norm: dict[str, torch.Tensor]) -> dict[str, float | int | bool | None]:
     r"""Target arm energy and intricacy in normalized model-motion space.
 
@@ -250,7 +268,7 @@ def _target_spectral_metrics(norm: dict[str, torch.Tensor]) -> dict[str, float |
     target_cpu = target.detach().to(device="cpu", dtype=torch.float64)
     hold_cpu = hold.detach().to(device="cpu", dtype=torch.float64)
     motion = target_cpu - hold_cpu
-    coefficients = dct_coefficients(motion[None, :, arm_indices])[0]
+    coefficients = _dct_coefficients(motion[None, :, arm_indices])[0]
     power = coefficients.square()
     trusted_stop = min(horizon, 21)
     signal = power[:trusted_stop]
