@@ -1,5 +1,8 @@
 # Annotation redesign — handoff (2026-08-02)
 
+Historical decision record; the build completed. The August consolidation scripts
+were retired on 2026-09-24. This document is not a current work queue.
+
 ## Goal
 
 Replace episode-level quality + fixed-grid subtasks with **per-subtask-segment**
@@ -29,10 +32,10 @@ Merged **by task**, 9 sessions → 3 train sources + 1 val. Originals untouched.
 | `outputs/rebot_val-v1` (v1 ep9 + v2-1 + v3-3 ep0) | 3 | 14,021 |
 
 Train 165,740 / 38 eps. Sampling spread at B=32: **3.64x → 1.04x**. Depth is
-hardlinked. Scripts: `migration/consolidate_stage_{a,b,c,c2}.py`,
-`migration/verify_consolidation.py` (8 checks, all pass: state/action bit-identical,
-depth filename sets + inodes, timestamps, video). Provenance is by **content
-fingerprint**, in `outputs/_staging/provenance.json`.
+hardlinked. The retired August consolidation workflow recorded eight passing
+checks: state/action bit identity, depth filename sets and inodes, timestamps,
+and video. Provenance is by **content fingerprint**, retained in
+`outputs/_staging/provenance.json`.
 
 ## Segmentation: DONE
 

@@ -104,3 +104,54 @@ Gemma 4 31B: summaries unusable (counting echo loop); subtasks ~62% (misses rele
 ## Per-new-dataset prep
 
 annotate → norm stats + `compute_delta_stats.py --encoding anchor --chunk-size 50` → memmap cache `--image-stride 5` (must match config) → verify first steps: `loss_subtask_ce` nonzero, `subtask_index`/`summary_*_index`/`metadata_*` in batch, depth one-shot log fires.
+
+
+## Retained integration decisions (September 2026)
+
+The root diverse-integration plan and speed-progress tracker were retired during
+cleanup on 2026-09-24. Their old corpus counts, launch gates, and run settings are
+historical; use the root training/validation configs and the
+[September 21 preparation record](../../migration/training_mix_2026-09-21/README.md)
+for the later data mixture. No training or validation settings changed in this cleanup.
+
+The integration contracts retained from the plan are:
+
+- Preserve the complete future action chunk through loading and collation. Apply
+  anchor encoding against the current state, preserving native action conventions.
+- Mixed native widths use independent state/action padding masks. Normalization,
+  losses, and statistics exclude padding; FAST tokenization uses each row's native width.
+- Stats are keyed by source action layout, not merely the robot name. Coordinate
+  signs and gripper conventions require source-specific evidence; a tensor-shape
+  check does not validate them.
+- Use canonical camera roles and explicit presence/pixel-valid masks. Missing RGB
+  and depth are distinct from recorded zero values. RGB-only samples remain valid
+  actor-training examples and contribute no depth supervision.
+- History is selected from source timestamps. The integration's -6/-4/-2-second
+  history excluded the current observation; whether history is consumed is a run
+  configuration choice. Do not infer it from the retired plan.
+- Cache compatibility includes source identity, sampling geometry, camera/depth
+  representation, and stride. Required-cache mode must reject missing/incompatible
+  caches; directory existence is insufficient. Annotation overlays must still be
+  checked against the selected supervision.
+- Sampling weights define the objective separately from raw frame counts. The old
+  50/50 recipe and 404-episode launch gates were superseded by later collections.
+
+Speed adoption on 2026-09-09 selected the hybrid motion/duration method for both
+corpus halves: `SPEED_ATOMS_VIEW = "speed_atoms_hybrid_v1.jsonl"` in
+`datasets/diverse_corpus.py`, and `REBOT_SPEED_TABLE = "speed_hybrid_v1.parquet"`
+in `rl/offline_dataset_utils.py`. Both constants were checked during cleanup.
+Duration-only speed was rejected because rapid failed attempts could be labeled
+slow. The diverse prompt step changed to the reviewed atom, while the parent
+subtask remained provenance. Parent quality was deliberately retained at that
+point rather than replaced with the atom's grade; the tracker recorded 1,132
+historical anchors with differing reviewed grades. This is a historical limitation,
+not a newly measured count for the current corpus.
+
+The old review completed 304 non-FMB episodes, 507 parent intervals and 2,259 atoms;
+FMB retained 521 primitive intervals. Manual overrides take precedence over agent
+reviews. Three DROID AUTOLab `003210` parents remained visually unsure despite
+passing structural validation. Full-corpus assembly must not treat `--allow-missing`
+as a reviewed-subset export: that option fills missing reviews with proposals.
+Saved reviews, human overrides, labels, and verification evidence remain on disk.
+See the [review guide](../../migration/subtask_atoms_2026-09-08/REVIEW_GUIDE.md) and
+[manual editor](../../migration/subtask_atoms_2026-09-08/MANUAL_EDITOR.md).
