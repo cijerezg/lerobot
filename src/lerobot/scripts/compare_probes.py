@@ -568,13 +568,14 @@ function drawMain(){
 }
 function wireMedia(){
  const videos=[...document.querySelectorAll(".media video")];videos.forEach(v=>{v.addEventListener("play",()=>syncFrom(v,"play"));
-  v.addEventListener("pause",()=>syncFrom(v,"pause"));v.addEventListener("seeked",()=>syncFrom(v,"seek"));v.addEventListener("ratechange",()=>syncFrom(v,"rate"));});
+  v.addEventListener("pause",()=>syncFrom(v,"pause"));v.addEventListener("seeked",()=>syncFrom(v,"seek"));v.addEventListener("ratechange",()=>syncFrom(v,"rate"));
+  v.addEventListener("timeupdate",()=>{if(!v.paused)syncFrom(v,"time")});});
 }
 function syncFrom(source,action){if(!syncEnabled||synchronizing)return;synchronizing=true;const videos=[...document.querySelectorAll(".media video")];
  videos.forEach(v=>{if(v===source)return;if(Math.abs(v.currentTime-source.currentTime)>.08)v.currentTime=source.currentTime;v.playbackRate=source.playbackRate;
   if(action==="play")v.play().catch(()=>{});if(action==="pause")v.pause();});synchronizing=false;}
 function togglePlayback(){const videos=[...document.querySelectorAll(".media video")];if(!videos.length)return;const play=videos.some(v=>v.paused);
- videos.forEach(v=>play?v.play().catch(()=>{}):v.pause());playbtn.textContent=play?"Ⅱ Pause all":"▶ Play all";}
+ videos.forEach(v=>{if(play)v.currentTime=videos[0].currentTime;play?v.play().catch(()=>{}):v.pause()});playbtn.textContent=play?"Ⅱ Pause all":"▶ Play all";}
 function draw(){drawList();drawMain();runsummary.textContent=`${DATA.runs.length} run${DATA.runs.length===1?'':'s'} · up to 4 columns`;}
 function initializeSteps(previousValues=[]){stepIndices=DATA.runs.map((run,ri)=>{const wanted=previousValues[ri]??run.run.initial_step;
  const at=run.steps.findIndex(s=>s.step===wanted);return at>=0?at:Math.max(0,run.steps.length-1);});}

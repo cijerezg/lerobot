@@ -26,7 +26,7 @@ from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 def build(**overrides):
     kwargs = {
         "task": "fold the towel",
-        "discrete_state_string": "",
+        "state_string": "",
         "num_images": 0,
     }
     kwargs.update(overrides)
@@ -105,11 +105,11 @@ def test_metadata_clause_partial_rendering():
 
 
 def test_history_clause_renders_placeholders():
-    from lerobot.policies.molmoact2.processor_molmoact2 import STATE_HISTORY_TOKEN
+    from lerobot.policies.molmoact2.processor_molmoact2 import CONTINUOUS_STATE_TOKEN
 
     prompt = build(num_history_states=3)
     assert (
-        f"The recent states of the robot, oldest to newest, are {STATE_HISTORY_TOKEN * 3}." in prompt
+        f"The recent states of the robot, oldest to newest, are {CONTINUOUS_STATE_TOKEN * 3}." in prompt
     )
     # Image history never renders in the prompt (MEM video encoder path).
     assert "earlier frames" not in prompt
@@ -268,7 +268,7 @@ def test_max_sequence_length_budgets_history_clause():
 
 
 def test_clause_order_task_then_memory_then_state():
-    prompt = build(current_subtask="step two", discrete_state_string="<state_start><state_0><state_end>")
+    prompt = build(current_subtask="step two", state_string="<state_start><state_0><state_end>")
     task_pos = prompt.index("The task is to")
     current_pos = prompt.index("The current step is")
     state_pos = prompt.index("The current state of the robot is")
@@ -288,7 +288,7 @@ VOCAB = ["reach the cup", "grasp the cup", "lift the cup"]
 def test_generation_prompt_asks_for_next_step():
     prompt = _build_subtask_generation_text(
         task="put the cup on the shelf",
-        discrete_state_string="",
+        state_string="",
         num_images=0,
     )
     assert "what step should the robot perform next?" in prompt
@@ -309,7 +309,97 @@ def test_generation_prompt_carries_no_memory_clause():
     conditions on task + state only, and the answer is the bare subtask."""
     prompt = _build_subtask_generation_text(
         task="fold",
-        discrete_state_string="joint tokens here",
+        state_string="joint tokens here",
         num_images=0,
     )
     assert "Memory:" not in prompt
+
+
+# ── Continuous current state (π0.7): one placeholder, shared projector ──────────
+
+
+def test_continuous_state_clause_renders_one_placeholder_before_history():
+    from lerobot.policies.molmoact2.processor_molmoact2 import CONTINUOUS_STATE_TOKEN
+
+    prompt = build(state_string=CONTINUOUS_STATE_TOKEN, num_history_states=2)
+    assert f"The current state of the robot is {CONTINUOUS_STATE_TOKEN}." in prompt
+    # Current, then the past states: the row order _emit_state_values ships.
+    assert prompt.count(CONTINUOUS_STATE_TOKEN) == 3
+    assert prompt.index("The current state") < prompt.index("The recent states")
+
+
+def test_emit_state_values_rows_follow_prompt_order_and_dropout():
+    from types import SimpleNamespace
+
+    from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep
+
+    emit = MolmoAct2PackInputsProcessorStep._emit_state_values
+    state = torch.arange(2 * 7, dtype=torch.float32).reshape(2, 7)
+    history = 10.0 + torch.arange(2 * 3 * 7, dtype=torch.float32).reshape(2, 3, 7)
+    history_on = torch.tensor([True, False])  # sample 1 lost its history clause
+
+    stub = SimpleNamespace(state_format="continuous", _continuous_state_id=42)
+    complementary: dict = {}
+    emit(stub, complementary, state, history, history_on)
+    values, mask = complementary["state_values"], complementary["state_values_mask"]
+    assert values.shape == (2, 4, 7) and mask.shape == (2, 4)
+    torch.testing.assert_close(values[:, 0], state)
+    torch.testing.assert_close(values[:, 1:], history)
+    assert mask.tolist() == [[True, True, True, True], [True, False, False, False]]
+    assert int(complementary["state_token_id"]) == 42
+
+    # No history clause (the generation prompt): the current state alone.
+    complementary = {}
+    emit(stub, complementary, state, None, history_on)
+    assert complementary["state_values"].shape == (2, 1, 7)
+    assert complementary["state_values_mask"].tolist() == [[True], [True]]
+
+    # Discrete current state + history: row 0 is shipped but never a placeholder.
+    stub.state_format = "discrete"
+    complementary = {}
+    emit(stub, complementary, state, history, history_on)
+    assert complementary["state_values_mask"].tolist() == [[False, True, True, True], [False] * 4]
+
+    # Discrete and no history: the legacy prompt ships nothing, so the scatter stays off.
+    complementary = {}
+    emit(stub, complementary, state, None, history_on)
+    assert "state_values" not in complementary
+
+
+def test_state_scatter_adds_masked_rows_onto_placeholders():
+    from types import SimpleNamespace
+
+    from torch import nn
+
+    from lerobot.policies.molmoact2.modeling_molmoact2 import _patch_leaf_safe_input_embedding_update
+
+    class _Backbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.transformer = SimpleNamespace(wte=nn.Embedding(16, 4), emb_drop=nn.Identity())
+            self.vision_backbone = None
+            self.config = SimpleNamespace(image_patch_id=7)
+
+        def build_input_embeddings(self, input_ids, images=None, token_pooling=None):
+            raise AssertionError("must be replaced")
+
+    backbone = _Backbone()
+    with torch.no_grad():
+        backbone.transformer.wte.weight.fill_(1.0)
+    _patch_leaf_safe_input_embedding_update(backbone)
+    # Two samples, rows (current, past0, past1); sample 1's history clause was dropped.
+    embeds = torch.arange(2 * 3 * 4, dtype=torch.float32).reshape(2, 3, 4)
+    mask = torch.tensor([[True, True, True], [True, False, False]])
+    backbone._lerobot_state_values = (embeds, mask, 9)
+    input_ids = torch.tensor([[5, 9, 9, 9], [5, 9, 5, 5]])
+
+    out, _ = backbone.build_input_embeddings(input_ids)
+    torch.testing.assert_close(out[0, 1:], 1.0 + embeds[0])
+    torch.testing.assert_close(out[1, 1], 1.0 + embeds[1, 0])
+    torch.testing.assert_close(out[:, 0], torch.ones(2, 4))
+    assert backbone._lerobot_state_values is None  # consume-once
+
+    # Placeholder count must equal the shipped rows per sample.
+    backbone._lerobot_state_values = (embeds, mask, 9)
+    with pytest.raises(RuntimeError, match="do not match"):
+        backbone.build_input_embeddings(torch.tensor([[5, 9, 9, 5], [5, 9, 5, 5]]))

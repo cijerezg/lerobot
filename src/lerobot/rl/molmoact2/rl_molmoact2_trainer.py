@@ -499,8 +499,8 @@ class MolmoAct2Trainer(Trainer):
                 param.requires_grad = _is_actor_depth_parameter(name)
                 continue
 
-            if _is_actor_depth_parameter(name) or "state_history_projector" in name:
-                # Independent depth modules plus the fresh MEM state-history
+            if _is_actor_depth_parameter(name) or "state_projector" in name:
+                # Independent depth modules plus the fresh continuous-state
                 # projector are always trainable. Without this whitelist they fall
                 # through to the unknown-parameter branch and are frozen.
                 param.requires_grad = True
@@ -571,8 +571,8 @@ class MolmoAct2Trainer(Trainer):
 
     @staticmethod
     def _split_depth_group(policy: nn.Module, cfg, groups: list[dict]) -> list[dict]:
-        """Move independent depth params (CNN/visual path/marker, plus the MEM
-        state_history_projector and future predictor) out of the policy group into their own
+        """Move independent depth params (CNN/visual path/marker, plus the continuous
+        state_projector and future predictor) out of the policy group into their own
         "depth" group. Its LR defaults exactly to optimizer_lr; the separate group
         name exists to keep these parameters out of
         pretrained_merge_targets (the checkpoint has none of these weights, so a
@@ -580,7 +580,7 @@ class MolmoAct2Trainer(Trainer):
         depth_ids = {
             id(p)
             for name, p in policy.named_parameters()
-            if _is_actor_depth_parameter(name) or "state_history_projector" in name
+            if _is_actor_depth_parameter(name) or "state_projector" in name
             or name.startswith("future_visual.predictor.")
         }
         policy_group = next(g for g in groups if g["name"] == "policy")

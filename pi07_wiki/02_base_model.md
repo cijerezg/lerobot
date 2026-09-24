@@ -125,7 +125,8 @@ Sequence built by the processor
 [Image 1<|image|> … Image N<|image|>]           # image tokens spliced at <image_patch>
 <|im_start|>user
 The task is to {task}. [The current step is {subtask}.]
-The current state of the robot is <state_start><state_k>…<state_end>.
+The current state of the robot is <state_start><state_k>…<state_end>.   # state_format discrete
+The current state of the robot is <extra_0>.                             # state_format continuous (live since 2026-09-23)
 [The recent states of the robot, oldest to newest, were …]
 [Images i to j are earlier frames from the {cam} camera, oldest to newest.]
 [The quality is q of 5.] [The robot made {no} mistakes.]
@@ -143,16 +144,31 @@ absent when its data is `None`, and with all of them off the prompt is
 byte-identical to the legacy MolmoAct2 prompt (checkpoint compatibility, tested).
 Full clause semantics: [04 — Memory & prompts](04_memory.md).
 
-### 4.1 Discrete state string
+### 4.1 State clause (`state_format`)
 
-Continuous state (normalized to $[-1,1]$) is quantized per dimension into
-`num_state_tokens = 256` bins (`_build_discrete_state_string`,
-[processor_molmoact2.py:225](../src/lerobot/policies/molmoact2/processor_molmoact2.py#L225)):
+The clause's words never change; `state_format` picks the value's rendering.
+
+**discrete** (pretraining format, config default). The normalized state
+($[-1,1]$) is quantized per dimension into `num_state_tokens = 256` bins
+(`_build_discrete_state_string`):
 
 $$k_i = \mathrm{round}\Big(\frac{s_i + 1}{2}\,(256 - 1)\Big) \in \{0,\dots,255\}$$
 
-rendered as `<state_start><state_{k_1}>…<state_{k_D}><state_end>`. This export
-supports discrete state only (`state_format='discrete'` enforced).
+rendered as `<state_start><state_{k_1}>…<state_{k_D}><state_end>` — $D + 2$
+sequence positions.
+
+**continuous** (live config since 2026-09-23; π0.7: "embeds the state using a
+linear projection that maps the state dimension to the backbone dimension").
+One `<extra_0>` placeholder whose input embedding gets $W s + b$ added on top,
+$W \in \mathbb{R}^{2560 \times D}$ — the same `state_projector` and placeholder
+the state history uses ([04 §2.4](04_memory.md)), so current and past states
+share one representation and sequence order says which is which. The pack step
+ships `state_values` (B, 1 + T_h, D) with `state_values_mask` marking the rows
+that rendered a placeholder (row 0 = current, only under continuous; rows 1…
+= past, unless the sample's history clause was dropped); the model checks the
+placeholder count against the mask and scatters the masked rows. $W$ is fresh
+in every checkpoint (never trained before 2026-09-23) — the backbone has to learn
+to read the token where it used to parse digits.
 
 ## 5. Anchor action encoding
 

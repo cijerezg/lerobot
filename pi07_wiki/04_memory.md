@@ -26,7 +26,7 @@ disabled by default and is independent of the history enable switch.
 ```
 The task is to {task}.
 [ The current step is {subtask}. ]                                   ← HL subtask
-The current state of the robot is {discrete state string}.
+The current state of the robot is {discrete state string | <extra_0>}.   ← state_format (02 §4.1)
 [ The recent states of the robot, oldest to newest, are: <T_h continuous positions> ]  ← proprio history (§2.4)
 [ The quality is {q} of 5. ] [ The robot made {a mistake | no mistakes}. ]     ← metadata
 Given these, what action should the robot take to complete the task?
@@ -245,9 +245,9 @@ temporal key set) → bit-identity test, and the history-dropout sample (whole
 short-term block, images + states together) degenerates to exactly the
 pretrained path.
 
-**Continuous state history.** Each past state (normalized with the current
-state's transform) is projected by one shared linear layer to one sequence
-position:
+**Continuous state tokens.** Each past state (normalized with the current
+state's transform) is projected by one shared linear layer (`state_projector`)
+to one sequence position:
 
 $$h_{t-k} = W s_{t-k} + b, \qquad s_{t-k} \in \mathbb{R}^7,\ W \in \mathbb{R}^{2560\times 7}$$
 
@@ -258,10 +258,13 @@ the scatter mechanism image patches already use
 Which timestep is which = sequence order. Three positions replace the digit-string
 rendering of the three historical states, and the LLM gets full float precision instead of parsing
 digits. $W$ is the **only new parameter in the whole build** → freeze-whitelist
-+ optimizer-group entries required (the pointmap gate lesson). The current state
-stays a text clause (pretraining format); the generation prompt keeps its §1.2
-shape (no proprio-history clause) but HL decodes see image history automatically
-through the shared encoder.
++ optimizer-group entries required (the pointmap gate lesson). Since 2026-09-23
+the **current state goes through the same $W$** onto its own placeholder
+(`state_format: continuous`, π0.7; [02 §4.1](02_base_model.md)) — the prompt
+keeps the two clauses, current first, and `state_values_mask` tells the scatter
+which rows rendered. The generation prompt keeps its §1.2 shape (no
+proprio-history clause, so only the current-state row ships) but HL decodes see
+image history automatically through the shared encoder.
 
 Not adopted from our own parked list: gates, HAMLET moment tokens,
 DepthStream-style streams — MEM ships none of them. Build checklist: Phase 6 of

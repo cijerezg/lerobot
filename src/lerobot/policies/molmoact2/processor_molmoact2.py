@@ -68,10 +68,11 @@ ACTION_TOKEN_PREFIX = "<action_"  # nosec B105
 STATE_START_TOKEN = "<state_start>"  # nosec B105
 STATE_END_TOKEN = "<state_end>"  # nosec B105
 STATE_TOKEN_PREFIX = "<state_"  # nosec B105
-# Placeholder for one past proprio state (04_memory.md §2.4): an unused reserved
-# token whose input embedding gets the linearly projected state ADDED on top,
-# mirroring the <im_patch> + image-features scatter.
-STATE_HISTORY_TOKEN = "<extra_0>"  # nosec B105
+# Placeholder for one continuous proprio state (04_memory.md §2.4): an unused
+# reserved token whose input embedding gets the linearly projected state ADDED on
+# top, mirroring the <im_patch> + image-features scatter. Every past state renders
+# as one; so does the current state under state_format "continuous" (π0.7).
+CONTINUOUS_STATE_TOKEN = "<extra_0>"  # nosec B105
 # Point-map depth placeholders: one position per pooled depth token. The model replaces
 # this reserved token's arbitrary embedding with depth_marker + projected depth features,
 # matching <im_patch> + projected RGB features at the VLM-prefix seam.
@@ -259,7 +260,7 @@ def _history_time_stamps(
 def _build_robot_text(
     *,
     task: str,
-    discrete_state_string: str,
+    state_string: str,
     num_images: int,
     embodiment: str | None = None,
     control_mode: str | None = None,
@@ -270,8 +271,12 @@ def _build_robot_text(
 ) -> str:
     """Memory clauses: None/0 disables a clause entirely (byte-identical legacy prompt).
 
+    state_string: the current state's rendering — the <state_k> digit string
+    (state_format "discrete") or one CONTINUOUS_STATE_TOKEN placeholder
+    ("continuous"); the clause's words are the same either way.
+
     num_history_states: past proprio states rendered as continuous placeholder
-    positions (one STATE_HISTORY_TOKEN per timestep, oldest to newest; the model
+    positions (one CONTINUOUS_STATE_TOKEN per timestep, oldest to newest; the model
     scatters projected states onto them — 04_memory.md §2.4). Image history is
     NOT in the prompt: it enters through the MEM video encoder.
 
@@ -303,16 +308,14 @@ def _build_robot_text(
     control_mode_clause = (
         f"The control mode is {CONTROL_MODE_TEXT[control_mode]}. " if control_mode else ""
     )
-    state_clause = (
-        f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
-    )
+    state_clause = f" The current state of the robot is {state_string}." if state_string else ""
     subtask_clause = f" The current step is {current_subtask}." if current_subtask else ""
     depth_clause = (
         f" The depth of the scene is {DEPTH_TOKEN * num_depth_tokens}." if num_depth_tokens > 0 else ""
     )
     history_clause = (
         f" The recent states of the robot, oldest to newest, are "
-        f"{STATE_HISTORY_TOKEN * num_history_states}."
+        f"{CONTINUOUS_STATE_TOKEN * num_history_states}."
         if num_history_states > 0
         else ""
     )
@@ -344,7 +347,7 @@ def _build_robot_text(
 def _build_subtask_generation_text(
     *,
     task: str,
-    discrete_state_string: str,
+    state_string: str,
     num_images: int,
     embodiment: str | None = None,
     control_mode: str | None = None,
@@ -360,9 +363,7 @@ def _build_subtask_generation_text(
     control_mode_clause = (
         f"The control mode is {CONTROL_MODE_TEXT[control_mode]}. " if control_mode else ""
     )
-    state_clause = (
-        f" The current state of the robot is {discrete_state_string}." if discrete_state_string else ""
-    )
+    state_clause = f" The current state of the robot is {state_string}." if state_string else ""
     prompt = (
         f"{embodiment_clause}{control_mode_clause}The task is to {task}.{state_clause} "
         f"Given these, what step should the robot perform next?"
@@ -1245,6 +1246,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     add_setup_tokens: bool = True
     add_control_tokens: bool = True
     num_state_tokens: int = 256
+    state_format: str = "discrete"
     max_sequence_length: int | None = None
     chunk_size: int = 30
     max_action_dim: int = 32
@@ -1315,7 +1317,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             )
         self._action_start_id = _single_token_id(self.processor.tokenizer, ACTION_START_TOKEN)
         self._action_end_id = _single_token_id(self.processor.tokenizer, ACTION_END_TOKEN)
-        self._state_history_id = _single_token_id(self.processor.tokenizer, STATE_HISTORY_TOKEN)
+        self._continuous_state_id = _single_token_id(self.processor.tokenizer, CONTINUOUS_STATE_TOKEN)
         self._depth_token_id = _single_token_id(self.processor.tokenizer, DEPTH_TOKEN)
         self._image_patch_id = _single_token_id(self.processor.tokenizer, "<im_patch>")
         self._eos_token = self.processor.tokenizer.eos_token or ""
@@ -1332,6 +1334,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "image_keys": list(self.image_keys),
             "normalize_language": self.normalize_language,
             "num_state_tokens": self.num_state_tokens,
+            "state_format": self.state_format,
             "max_sequence_length": self.max_sequence_length,
             "chunk_size": self.chunk_size,
             "max_action_dim": self.max_action_dim,
@@ -1417,7 +1420,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
     def _extract_state(self, observation: dict[str, Any], batch_size: int) -> Tensor:
         if OBS_STATE not in observation:
-            raise ValueError("MolmoAct2 requires observation.state for discrete state prompting.")
+            raise ValueError("MolmoAct2 requires observation.state for the state clause.")
         state = torch.as_tensor(observation[OBS_STATE], dtype=torch.float32)
         if state.ndim == 1:
             state = state.unsqueeze(0)
@@ -1557,9 +1560,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 history_on[batch_idx] = False  # training text only; the encoder sees no history
             prompt = _build_subtask_generation_text(
                 task=tasks[batch_idx],
-                discrete_state_string=_build_discrete_state_string(
-                    state_np[batch_idx], self.num_state_tokens
-                ),
+                state_string=self._state_string(state_np[batch_idx]),
                 num_images=len(images),
                 embodiment=embodiment_texts[batch_idx],
                 control_mode=control_modes[batch_idx],
@@ -1598,6 +1599,9 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             complementary["history_images"] = frames
             complementary["history_image_times"] = times
             complementary["history_images_mask"] = history_on
+        # The generation prompt carries no history clause: only the current state's
+        # placeholder (if any) needs a projected row.
+        self._emit_state_values(complementary, state, None, history_on)
         complementary["subtask_valid"] = valid
         transition[TransitionKey.COMPLEMENTARY_DATA] = complementary
         return transition
@@ -1679,13 +1683,51 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             present[:, index] = flags
         return present
 
+    def _state_string(self, state: np.ndarray) -> str:
+        """The current state as the prompt renders it: the digit string under
+        state_format "discrete", one CONTINUOUS_STATE_TOKEN placeholder under
+        "continuous" (its projected value rides in complementary state_values)."""
+        if self.state_format == "continuous":
+            return CONTINUOUS_STATE_TOKEN
+        return _build_discrete_state_string(state, self.num_state_tokens)
+
+    def _emit_state_values(
+        self, complementary: dict, state: Tensor, history_states: Tensor | None, history_on: Tensor
+    ) -> None:
+        """Ship the rows the model projects onto CONTINUOUS_STATE_TOKEN placeholders,
+        in prompt order: the current state (row 0, a placeholder only under
+        state_format "continuous"), then the past states oldest → newest (placeholders
+        only for samples whose history clause survived dropout). state_values is
+        (B, 1 + T_h, D); state_values_mask (B, 1 + T_h) marks the rows that rendered.
+        Nothing is shipped when no placeholder renders (the byte-identical legacy
+        prompt), so the model's scatter stays off."""
+        current_on = self.state_format == "continuous"
+        if not current_on and history_states is None:
+            return
+        # CPU like the history window (a GPU batch hands the state over on cuda);
+        # the model moves the stash to its device.
+        state = state.detach().cpu()
+        batch_size = int(state.shape[0])
+        if history_states is None:
+            history_states = state.new_zeros((batch_size, 0, int(state.shape[-1])))
+        num_past = int(history_states.shape[1])
+        complementary["state_values"] = torch.cat([state[:, None], history_states], dim=1)
+        complementary["state_values_mask"] = torch.cat(
+            [
+                torch.full((batch_size, 1), current_on, dtype=torch.bool),
+                history_on.bool()[:, None].expand(batch_size, num_past),
+            ],
+            dim=1,
+        )
+        complementary["state_token_id"] = torch.tensor(self._continuous_state_id)
+
     def _extract_history_states(self, complementary: dict, batch_size: int) -> Tensor | None:
         """Normalized past states for the short-term history window, read from
         complementary key "history.{OBS_STATE}" (the ReplayBuffer.sample()/
         assemble_history_windows lookback, already normalized like the current
         state upstream). Returns (B, T_h, D) float32 oldest → newest, or None when
         history wasn't gathered. Consumed as continuous state tokens (§2.4): one
-        STATE_HISTORY_TOKEN position per timestep, projected by the model."""
+        CONTINUOUS_STATE_TOKEN position per timestep, projected by the model."""
         history = complementary.get(f"history.{OBS_STATE}")
         if history is None:
             return None
@@ -1846,7 +1888,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 rgb_drop_cam = resolved_keys.index(drop_key)
         for batch_idx in range(batch_size):
             images = images_by_example[batch_idx]
-            discrete_state = _build_discrete_state_string(state_np[batch_idx], self.num_state_tokens)
+            state_string = self._state_string(state_np[batch_idx])
             current_subtask = subtask_texts[batch_idx]
             metadata = metadata_list[batch_idx]
             if build_action_labels:  # training text: per-component dropout (π0.7 recipe)
@@ -1871,7 +1913,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             max_num_images = max(max_num_images, len(images))
             prompt = _build_robot_text(
                 task=tasks[batch_idx],
-                discrete_state_string=discrete_state,
+                state_string=state_string,
                 num_images=len(images),
                 embodiment=embodiment_texts[batch_idx],
                 control_mode=control_modes[batch_idx],
@@ -2002,9 +2044,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
 
         complementary.update(dict(inputs))
         complementary["action_dim_is_pad"] = action_dim_is_pad
-        if history_states is not None:
-            complementary["history_state_values"] = history_states
-            complementary["state_history_token_id"] = torch.tensor(self._state_history_id)
+        self._emit_state_values(complementary, state, history_states, history_on)
         if self.num_depth_tokens > 0:
             complementary["depth_token_id"] = torch.tensor(self._depth_token_id)
         if history_stack is not None:
@@ -2206,6 +2246,7 @@ def make_molmoact2_pre_post_processors(
             image_keys=image_keys,
             normalize_language=config.normalize_language,
             num_state_tokens=config.num_state_tokens,
+            state_format=config.state_format,
             max_sequence_length=config.max_sequence_length,
             chunk_size=chunk_size,
             max_action_dim=config.expected_max_action_dim,

@@ -318,6 +318,15 @@ class MolmoAct2Config(PreTrainedConfig):
     normalize_language: bool = True
     normalize_gripper: bool = False
     num_state_tokens: int = 256
+    # How the CURRENT state enters the prompt. "discrete": the pretraining format,
+    # one <state_k> text token per dimension (num_state_tokens bins). "continuous":
+    # one placeholder token whose embedding is the linearly projected state vector
+    # (π0.7: "embeds the state using a linear projection that maps the state
+    # dimension to the backbone dimension"), through the SAME projector and
+    # placeholder the state history uses, so current and past states share one
+    # representation. Checkpoints written before the field load and run unchanged
+    # under the default.
+    state_format: str = "discrete"
     # Leave unset for the default MolmoAct2 sequence budget inferred from the fixed
     # image/prompt/state/action token layout. Override only for unusual long prompts.
     max_sequence_length: int | None = None
@@ -402,6 +411,11 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError(
                 f"Unsupported action_mode={self.action_mode!r}. "
                 "Expected one of {'continuous', 'discrete', 'both'}."
+            )
+        if self.state_format not in {"discrete", "continuous"}:
+            raise ValueError(
+                f"Unsupported state_format={self.state_format!r}. "
+                "Expected one of {'discrete', 'continuous'}."
             )
         if self.inference_action_mode not in {None, "continuous", "discrete"}:
             raise ValueError(

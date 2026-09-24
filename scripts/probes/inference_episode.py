@@ -7,7 +7,7 @@ videos, depth symlinked; meta copied plus subtask windows from the operator cons
 the depth gripper-event labels), gets a config derived from config_rl_validate.yaml with only
 --probes enabled, and runs through run_probes.sh into outputs/probe_runs/<run>-<step>.
 The checkpoint is config_rl.yaml's policy.pretrained_path (inference_checkpoint_path if set) and
-must match the one the actor log says it loaded.
+must match the one the actor log says it loaded; --checkpoint skips that check (off-policy replay).
 """
 import argparse, json, re, shutil, subprocess, sys
 from pathlib import Path
@@ -22,6 +22,7 @@ parser.add_argument("runs", nargs="+", type=Path, help="outputs/train/<day>/<run
 parser.add_argument("--probes", nargs="+", default=["attention", "action_trace", "depth_event"])
 parser.add_argument("--checkpoint", type=Path, default=None, help="override the config's pretrained_model dir")
 parser.add_argument("--trace-stride-s", type=float, default=3.0)
+parser.add_argument("--run-suffix", default="", help="word appended as -<suffix> to the run dir name (the runner refuses an existing dir)")
 args = parser.parse_args()
 
 cfg_train = yaml.safe_load((ROOT / "config_rl.yaml").read_text())
@@ -62,7 +63,7 @@ def write_config(input_dir: Path, run_dir: Path) -> Path:
     p["max_episodes"] = 1
     p["trace_anchor_stride_s"] = args.trace_stride_s
     p["trace_max_anchors_per_episode"] = 64
-    path = input_dir / "config_probe.yaml"
+    path = input_dir / f"config_probe-{step}.yaml"
     path.write_text(yaml.safe_dump(cfg, sort_keys=False))
     return path
 
@@ -71,11 +72,10 @@ for run in args.runs:
     run = run.resolve()
     if run.name == "inference_dataset":
         run = run.parent
-    for log in (run / "logs").glob("actor_*.log"):
+    for log in (run / "logs").glob("actor_*.log") if args.checkpoint is None else ():
         loaded = re.search(r"Loading policy and processors from checkpoint: (\S+)", log.read_text())
         assert loaded is None or Path(loaded.group(1)).resolve() == checkpoint, f"{run.name} ran {loaded.group(1)}, not {checkpoint}"
-    name = f"{run.name}-{step}"
-    input_dir, run_dir = ROOT / "outputs/probe_inputs" / name, ROOT / "outputs/probe_runs" / name
+    input_dir, run_dir = ROOT / "outputs/probe_inputs" / run.name, ROOT / "outputs/probe_runs" / (f"{run.name}-{step}" + (f"-{args.run_suffix}" if args.run_suffix else ""))
     if not input_dir.exists():
         build_input(run / "inference_dataset", input_dir)
     config = write_config(input_dir, run_dir)

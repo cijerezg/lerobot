@@ -650,15 +650,15 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
         x = self.transformer.wte(input_ids)
 
         image_features = None
-        state_history = getattr(self, "_lerobot_state_history", None)
-        self._lerobot_state_history = None  # consume-once, like the vision stash
+        state_values = getattr(self, "_lerobot_state_values", None)
+        self._lerobot_state_values = None  # consume-once, like the vision stash
         depth = getattr(self, "_lerobot_depth", None)
         self._lerobot_depth = None  # consume-once, like the vision stash
         # Per-forward seam telemetry. Reset before handling optional modalities so
         # depth-free/subtask forwards cannot leave stale values for the trainer.
         self._lerobot_rgb_input_rms = None
         self._lerobot_depth_input_rms = None
-        if images is not None or state_history is not None or depth is not None:
+        if images is not None or state_values is not None or depth is not None:
             flat_x = x.reshape(-1, x.shape[-1]).clone()
             if images is not None:
                 image_features = self.vision_backbone(images, token_pooling).to(x.device)
@@ -671,22 +671,25 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
                 self._lerobot_rgb_input_rms = (
                     flat_x[is_image_patch].detach().float().square().mean().sqrt()
                 )
-            if state_history is not None:
-                # Continuous state-history tokens (04_memory.md §2.4): projected past
-                # states ADDED onto the STATE_HISTORY_TOKEN placeholder embeddings,
-                # mirroring the image-patch scatter. Samples whose clause was dropped
-                # contribute zero placeholder positions.
-                embeds, token_id = state_history  # (B, T_h, D), int
+            if state_values is not None:
+                # Continuous state tokens (04_memory.md §2.4): projected states ADDED
+                # onto the CONTINUOUS_STATE_TOKEN placeholder embeddings, mirroring the
+                # image-patch scatter. The mask says which rows rendered a placeholder:
+                # the current state under state_format "continuous", the past states
+                # unless the sample's history clause was dropped. Row order within a
+                # sample is prompt order (current, then oldest → newest), and the
+                # masked gather walks samples in order, so it lines up with the
+                # flattened placeholder positions.
+                embeds, mask, token_id = state_values  # (B, N, D), (B, N) bool, int
                 is_state = input_ids == token_id
                 counts = is_state.sum(dim=1)
-                t_h = int(embeds.shape[1])
-                if not bool(((counts == 0) | (counts == t_h)).all()):
+                expected = mask.sum(dim=1)
+                if not bool((counts == expected).all()):
                     raise RuntimeError(
-                        f"State-history placeholders per sample must be 0 or {t_h}, got {counts.tolist()}."
+                        f"Continuous-state placeholders per sample {counts.tolist()} do not "
+                        f"match the shipped state rows {expected.tolist()}."
                     )
-                flat_x[is_state.reshape(-1)] += embeds.to(flat_x.dtype)[counts > 0].reshape(
-                    -1, embeds.shape[-1]
-                )
+                flat_x[is_state.reshape(-1)] += embeds.to(flat_x.dtype)[mask]
             if depth is not None:
                 # Point-map depth tokens replace the arbitrary DEPTH_TOKEN base embedding
                 # with the already-bounded complete depth values. Unlike state history the
@@ -1704,11 +1707,13 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # Keep the existing telemetry denominator for continuity with old runs.
             self._depth_embed_rms = _token_embedding_rms(backbone)
 
-        # Continuous state-history tokens (04_memory.md §2.4): one shared linear
-        # projecting a past proprio state into the text embedding space, scattered
-        # onto STATE_HISTORY_TOKEN placeholders. The ONLY new weights of the MEM
-        # build — whitelist in _apply_actor_freeze/_apply_critic_freeze.
-        self.state_history_projector: nn.Linear | None = None
+        # Continuous state tokens (04_memory.md §2.4, π0.7): one shared linear
+        # projecting a proprio state — every past one, and the current one under
+        # state_format "continuous" — into the text embedding space, scattered onto
+        # CONTINUOUS_STATE_TOKEN placeholders. Fresh weights, absent from every
+        # pretrained checkpoint — whitelisted in _apply_actor_freeze and given its
+        # own optimizer group in _split_depth_group.
+        self.state_projector: nn.Linear | None = None
         state_feature = self.config.input_features.get(OBS_STATE)
         if state_feature is not None and state_feature.shape:
             # Output dim = the LLM token-embedding width (the projected state is ADDED
@@ -1717,7 +1722,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # Parameters and exposes no .weight.
             d_text = int(self._hf_model().config.text_config.hidden_size)
             device = next(self.model.parameters()).device
-            self.state_history_projector = nn.Linear(int(state_feature.shape[0]), d_text).to(
+            self.state_projector = nn.Linear(int(state_feature.shape[0]), d_text).to(
                 device=device, dtype=model_dtype
             )
 
@@ -1957,8 +1962,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _stash_history_inputs(self, batch: dict[str, Tensor]) -> None:
         """MEM short-term memory transport (04_memory.md §2.4). History rides the
         batch, not the backbone kwargs: the video-encoder frames are stashed on the
-        vision backbone (consumed inside encode_image) and the projected past states
-        on the backbone (consumed inside build_input_embeddings). Consume-once
+        vision backbone (consumed inside encode_image) and the projected states
+        (current + past) on the backbone (consumed inside build_input_embeddings). Consume-once
         semantics on both stashes; every forward path funnels through
         _model_inputs, so a stash never crosses forwards. Single inference thread
         only — same constraint as the attention-capture patches."""
@@ -1975,19 +1980,21 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 batch["history_images_mask"].to(device),
             )
 
-        states = batch.get("history_state_values")
+        states = batch.get("state_values")
         if states is None:
-            backbone._lerobot_state_history = None
+            backbone._lerobot_state_values = None
         else:
-            if self.state_history_projector is None:
+            if self.state_projector is None:
                 raise RuntimeError(
-                    "history_state_values present but the policy has no state_history_projector "
+                    "state_values present but the policy has no state_projector "
                     "(config.input_features lacks observation.state)."
                 )
-            embeds = self.state_history_projector(
-                states.to(device=device, dtype=self.state_history_projector.weight.dtype)
+            embeds = self.state_projector(states.to(device=device, dtype=self.state_projector.weight.dtype))
+            backbone._lerobot_state_values = (
+                embeds,
+                batch["state_values_mask"].to(device=device, dtype=torch.bool),
+                int(batch["state_token_id"]),
             )
-            backbone._lerobot_state_history = (embeds, int(batch["state_history_token_id"]))
 
     def _stash_depth_inputs(self, batch: dict[str, Tensor]) -> None:
         """Point-map depth transport. The CNN + copied visual path run HERE once per

@@ -470,7 +470,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         obs, gt_actions, state = frame["obs"], frame["gt_actions"], frame["state"]
         subtask, task_str, metadata = frame["subtask"], frame["task"], frame["metadata"]
         full_batch = adapter._make_batch(obs, task_str, subtask=subtask, metadata=metadata)
-        if "history_images_mask" not in full_batch and "history_state_values" not in full_batch:
+        # state_values also carries the CURRENT state under state_format "continuous";
+        # only rows past the first are history.
+        state_rows = full_batch["state_values"].shape[1] if "state_values" in full_batch else 0
+        if "history_images_mask" not in full_batch and state_rows <= 1:
             logging.warning("[mem_history_influence] batch carries no history tensors — skipping frame.")
             continue
 
