@@ -188,22 +188,6 @@ def cv2_overlay(img_np, heatmap, title, alpha=0.50, vmax=None, vmin=0.0):
     return out
 
 
-def cv2_heatmap(heatmap, title, img_h, img_w, vmax=None, vmin=0.0):
-    """Render a standalone heatmap (no camera image)."""
-    if vmax is None:
-        vmax = float(heatmap.max().item())
-    span = max(float(vmax) - float(vmin), 1e-8)
-    h_norm = (heatmap - float(vmin)) / span
-    h_gray = (h_norm.clamp(0, 1) * 255).numpy().astype(np.uint8)
-    h_color = cv2.applyColorMap(h_gray, cv2.COLORMAP_JET)
-    h_rgb = cv2.cvtColor(h_color, cv2.COLOR_BGR2RGB)
-    if h_rgb.shape[:2] != (img_h, img_w):
-        h_rgb = cv2.resize(h_rgb, (img_w, img_h))
-    cv2.putText(h_rgb, title, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
-                (255, 255, 255), 1, cv2.LINE_AA)
-    return h_rgb
-
-
 def _attn_values_to_image_heatmap(per_head: torch.Tensor, grid_hw, img_h: int, img_w: int):
     """Upsample per-head patch attention from [H, rows*cols] to image size.
 
@@ -475,17 +459,6 @@ def _render_overlays_from_grids(
         frames[f"overlay_{cam_name}_heads"] = np.vstack(rows)
 
     return frames, vmax_by_panel
-
-
-def render_image_overlays(result: AttentionCaptureResult, layer_idx: int):
-    """Per-frame vmax image overlays. Returns ``(frames, vmax)`` dicts keyed by
-    panel name. Empty if there are no ``img*`` segments. The probe driver uses
-    the two-pass path (``_extract_overlay_grids`` + ``_render_overlays_from_grids``
-    with episode-wide vmax overrides); this wrapper preserves the original
-    single-frame contract for any external callers.
-    """
-    grids = _extract_overlay_grids(result, layer_idx)
-    return _render_overlays_from_grids(grids, vmax_overrides=None)
 
 
 def _episode_overlay_vmax(buf, percentile: float = 98.0) -> dict:
@@ -831,7 +804,6 @@ def _render_prompt_panel(
     fig.tight_layout()
     fig.savefig(out_path, dpi=130, bbox_inches="tight")
     plt.close(fig)
-
 
 
 # ──────────────────────────────────────────────────────────────────────────────

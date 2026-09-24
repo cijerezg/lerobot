@@ -615,34 +615,6 @@ def annotate_sample_image(
     return result
 
 
-def annotate_episode_video(
-    pgen: QwenPgen,
-    video: str | Path,
-    task_description: str,
-    timestamps_with_skills: list[dict],
-) -> list[dict[str, Any]]:
-    """
-    Generate synthetic dialogue for an entire episode using video.
-    
-    Args:
-        pgen: Qwen model wrapper
-        video: Path to episode video file
-        task_description: High-level task description
-        timestamps_with_skills: List of dicts with timestamp, skills_so_far, current_skill
-        
-    Returns:
-        List of dictionaries with generated dialogue, one per timestamp
-    """
-    # Use batch method with single episode
-    results = annotate_episodes_video_batch(
-        pgen=pgen,
-        batch_videos=[video],
-        batch_task_descriptions=[task_description],
-        batch_timestamps_with_skills=[timestamps_with_skills],
-    )
-    return results[0]
-
-
 def annotate_episodes_video_batch(
     pgen: QwenPgen,
     batch_videos: list[str | Path],
@@ -781,8 +753,6 @@ def _parse_video_response(response: str, timestamps_with_skills: list[dict]) -> 
             }
             for ts in timestamps_with_skills
         ]
-
-
 
 
 def _generate_synthetic_data_video_mode(

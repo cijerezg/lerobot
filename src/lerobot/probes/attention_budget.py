@@ -376,30 +376,6 @@ def _median_valid_depth_mm(obs: dict, pointmap_config) -> float:
     return float(valid.median()) * float(pointmap_config.depth_units_mm)
 
 
-def _thumbnails(result, obs: dict, pointmap_config, max_width: int = 160) -> dict[str, np.ndarray]:
-    """Small previews keyed by the same segment names the budget uses.
-
-    RGB comes from the model-view crops, not the raw observation, so the picture is
-    what the attended tokens were actually built from. Depth stays in mm and keeps
-    its zeros, which the renderer masks off rather than painting as near-camera.
-    """
-    thumbs: dict[str, np.ndarray] = {}
-    for name, tensor in (result.extras.get("image_tensors_by_segment") or {}).items():
-        if "_crop" in str(name) or not torch.is_tensor(tensor):
-            continue
-        image = (tensor.squeeze(0).detach().float().cpu() * 0.5 + 0.5).clamp(0, 1).permute(1, 2, 0)
-        array = image.numpy()
-        step = max(1, array.shape[1] // max_width)
-        thumbs[str(name)] = (array[::step, ::step] * 255).astype(np.uint8)
-
-    depth = obs.get(f"observation.depth.{pointmap_config.depth_key}") if pointmap_config else None
-    if torch.is_tensor(depth):
-        array = depth.detach().float().cpu().squeeze().numpy() * float(pointmap_config.depth_units_mm)
-        step = max(1, array.shape[1] // max_width)
-        thumbs["depth"] = array[::step, ::step]
-    return thumbs
-
-
 def _episode_rules(ax, frame_meta: list[dict]) -> None:
     """Mark where the frame axis crosses into another episode.
 
@@ -493,21 +469,15 @@ def _render(
     names: list[str],
     mass: np.ndarray,          # [frames, layers, segments]
     by_query: np.ndarray,      # [frames, layers, segments, Q]
-    entropy: np.ndarray,       # [frames, layers]
     layers: list[int],
     frame_meta: list[dict],
-    depth_mm: np.ndarray,
     token_counts: dict[str, int],
-    thumbnails: list[dict],
     output_path: str,
 ) -> None:
     """Render the primary budget artifact as plain percentages on linear axes."""
-    del entropy, depth_mm, thumbnails
-
     focus = len(layers) // 2
     focus_mass = mass[:, focus, :]
     focus_pct = 100.0 * focus_mass
-    steps = np.arange(len(frame_meta))
     order = np.argsort(-focus_mass.mean(axis=0))
     ordered = [names[index] for index in order]
 
@@ -1035,7 +1005,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     frame_meta: list[dict] = []
     depth_mm: list[float] = []
     fd_rows: list[dict] = []
-    thumbnails: list[dict] = []
 
     try:
         for ep_idx, fr_idx, global_idx in samples:
@@ -1092,7 +1061,6 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 _median_valid_depth_mm(frame["obs"], pointmap_config)
                 if pointmap_config is not None else float("nan")
             )
-            thumbnails.append(_thumbnails(result, frame["obs"], pointmap_config))
 
             if want_fd:
                 fd_rows.append(_fd_sensitivity(adapter, frame, pointmap_config))
@@ -1133,8 +1101,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         episode_idx=np.asarray([m["episode_idx"] for m in frame_meta]),
         frame_idx=np.asarray([m["frame_idx"] for m in frame_meta]),
     )
-    _render(names, mass, by_query, entropy, layers, frame_meta, depth_array,
-            token_counts, thumbnails, os.path.join(output_dir, "budget.png"))
+    _render(names, mass, by_query, layers, frame_meta,
+            token_counts, os.path.join(output_dir, "budget.png"))
     _render_concentration(names, mass, curves, ranks, n90, token_counts, layers,
                           os.path.join(output_dir, "concentration.png"))
     # Reads this run's earlier checkpoints off disk, so it needs the archive above to
@@ -1314,8 +1282,6 @@ def rerender_budget(step_dir: str) -> str:
         layers = [int(value) for value in data["layers"]]
         mass = np.asarray(data["mass"])
         by_query = np.asarray(data["mass_by_query"])
-        entropy = np.asarray(data["entropy"])
-        depth_mm = np.asarray(data["median_depth_mm"])
         counts = [int(value) for value in data["token_counts"]]
         episode_idx = np.asarray(data["episode_idx"])
         frame_idx = (
@@ -1330,8 +1296,8 @@ def rerender_budget(step_dir: str) -> str:
     ]
     output_path = os.path.join(step_dir, "budget.png")
     _render(
-        names, mass, by_query, entropy, layers, frame_meta, depth_mm,
-        dict(zip(names, counts)), [], output_path,
+        names, mass, by_query, layers, frame_meta,
+        dict(zip(names, counts)), output_path,
     )
     return output_path
 

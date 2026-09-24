@@ -752,29 +752,6 @@ def _sinusoidal_seconds_embedding(times: Tensor, dim: int) -> Tensor:
 # the probe drains them after the prefix forward.
 _MEM_TEMPORAL_CAPTURE: dict[str, Any] = {"enabled": False, "records": []}
 
-# Telemetry hook for the joint depth softmax (depth_redesign_options.md §5.1): when
-# enabled, every patched cross-attention appends its mean softmax mass on the depth
-# columns, in layer call order (36 scalars per forward). Costs one eager attention
-# recompute per layer — enable on log steps only, single thread (same constraint as
-# the other capture patches). No-op / zero overhead when disabled.
-_POINTMAP_MASS_CAPTURE: dict[str, Any] = {"enabled": False, "records": []}
-
-
-def set_pointmap_mass_capture(enabled: bool) -> None:
-    _POINTMAP_MASS_CAPTURE["enabled"] = bool(enabled)
-    _POINTMAP_MASS_CAPTURE["records"] = []
-
-
-def drain_pointmap_mass_records() -> list[float]:
-    records = list(_POINTMAP_MASS_CAPTURE["records"])
-    _POINTMAP_MASS_CAPTURE["records"] = []
-    if not records:
-        return []
-    # One device→host transfer for the whole capture. Converting each layer's
-    # scalar to float at the read site serializes the GPU once per layer.
-    return torch.stack(records).to(dtype=torch.float32, device="cpu").tolist()
-
-
 def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tensor | None) -> Tensor:
     """One MEM temporal resblock: space-time SEPARABLE attention.
 
