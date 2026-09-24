@@ -120,7 +120,9 @@ no gate exists under the joint softmax read;
 `probes/input_swap.py` (2026-09-05) asks which input stream the chunk actually
 follows: for each anchor frame it injects a donor frame's state, images and subtask text
 in every one of the $2^3$ combinations (S/I/T; the state-history switch was removed
-2026-09-09) — depth, the task string and metadata stay the anchor's — all 8 cells in one
+2026-09-09; since 2026-09-24 a stream's MEM history rides with its switch, image history
+with I and state history with S) — depth and its history, the task string and metadata
+stay the anchor's — all 8 cells in one
 stacked forward (`adapter.predict_action_chunk_stacked`) at one flow seed. Three donors per anchor: a same-episode frame at least 4 s away, the
 state-matched frame of another episode (the scene intervention) and a random other-episode
 frame. Standalone on the val set, one `output_dir` for every checkpoint so the viewer's

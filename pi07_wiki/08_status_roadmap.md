@@ -32,7 +32,7 @@ probe suite is on, plus held-out `val_loss_*` on 128 frames.
 | ~~MEM summary memory (hold/update seam)~~ | **removed** — seam, `materialize_summaries` and `loss_summary_ce` all deleted | — |
 | Metadata steering (quality/mistake) | done | on |
 | History: buffer sample + actor deque | done, parity-tested | on |
-| History consumption: MEM video encoder (images) + continuous state tokens | done | **back on 2026-09-23**: RGB ×3 + state, -6/-4/-2 s ladder (the diverse cache's ages; -1..-5 needs a ~270 GB cache rebuild), dropout 0 (off 2026-09-08 → 09-23) |
+| History consumption: MEM video encoder (images) + continuous state tokens | done | **off** (`history_keys: []`, 2026-09-24): the 09-23 run (RGB ×3 + state, -6/-4/-2 s ladder, dropout 0) was judged a failure — the model ignored the images and sat 9-20% above the memory-off mix run on val flow; ckpt 1000 kept. Timeline: off 09-08 → on 09-23 → off 09-24 |
 | Continuous current state (`state_format: continuous`, π0.7; shared `state_projector`) | done 2026-09-23 | on |
 | ~~History consumption: prompt path (frames as prompt images + states as text)~~ | deleted 2026-07-22 (LLM token explosion) | — |
 | History consumption: depth (time-embedded pointmap slots) | done 2026-07-21 | on |

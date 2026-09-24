@@ -8,9 +8,11 @@ which each of the switched streams comes either from the anchor or from the dono
     I  image          both cameras (``observation.images.*``)
     T  subtask text   the prompt's subtask clause ("The current step is ...")
 
-Everything else — wrist depth, the metadata clause, the task string — stays the
-anchor's own in every cell. The switches give $2^3 = 8$ inputs, the cells of the S/I/T
-cube. A cell is named by the switches flipped to the donor: ``...`` is the
+A stream's MEM history (``history.observation.images.*``, ``history.observation.state``)
+travels with its switch. Everything else — wrist depth and its history, the metadata
+clause, the task string — stays the anchor's own in every cell. The switches give
+$2^3 = 8$ inputs, the cells of the S/I/T cube. A cell is named by the switches flipped
+to the donor: ``...`` is the
 anchor's own prompt (the reference), ``.I.`` has only the donor's images, ``..T`` is
 the anchor's frame under the donor's subtask text, ``SIT`` the donor's frame and text
 under the anchor's depth.
@@ -254,11 +256,15 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
     fixed: list[str] = []
     for key in obs:
         name = str(key)
-        if name == OBS_STATE:
+        # MEM history rides with the stream it remembers: the image switch moves the
+        # cameras' past with their present, the state switch the past states with the
+        # current one, and depth history stays the anchor's like the depth frame.
+        stream = name.removeprefix("history.")
+        if stream == OBS_STATE:
             groups["state"].append(key)
-        elif name.startswith("observation.images."):
+        elif stream.startswith("observation.images."):
             groups["image"].append(key)
-        elif name.startswith(("observation.depth.", "probe_complementary.depth.")):
+        elif stream.startswith(("observation.depth.", "probe_complementary.depth.", "depth.")):
             fixed.append(key)   # the depth frame and its present flag / intrinsics stay the anchor's
         else:
             raise KeyError(f"observation key {key!r} belongs to no swap switch")

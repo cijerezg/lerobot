@@ -57,6 +57,9 @@ def shutdown_rerun() -> None:
     rr.rerun_shutdown()
 
 
+_blueprint_sent = False
+
+
 def _is_scalar(x):
     return isinstance(x, (float | numbers.Real | np.integer | np.floating)) or (
         isinstance(x, np.ndarray) and x.ndim == 0
@@ -90,7 +93,9 @@ def log_rerun_data(
     require_package("rerun-sdk", extra="viz", import_name="rerun")
     import rerun as rr
 
+    global _blueprint_sent
     if observation:
+        image_keys = []
         for k, v in observation.items():
             if v is None:
                 continue
@@ -110,9 +115,19 @@ def log_rerun_data(
                     # Raw z16 depth (D405: 0.1 mm/level -> 10000 units per meter).
                     # Colormap spans 3-35 cm (D405 min range is ~7 cm); farther values saturate.
                     rr.log(key, rr.DepthImage(arr, meter=10000.0, depth_range=(300, 3500)), static=True)
+                    image_keys.append(key)
                 else:
                     img_entity = rr.Image(arr).compress() if compress_images else rr.Image(arr)
                     rr.log(key, entity=img_entity, static=True)
+                    image_keys.append(key)
+        if image_keys and not _blueprint_sent:
+            # One explicit grid (plot + one view per camera) instead of Rerun's auto-layout,
+            # which also spawns an overlay view of the root because the images are flat siblings.
+            import rerun.blueprint as rrb
+
+            views = [rrb.TimeSeriesView(origin="/")] + [rrb.Spatial2DView(name=k, origin=k) for k in image_keys]
+            rr.send_blueprint(rrb.Grid(*views))
+            _blueprint_sent = True
 
     if action:
         for k, v in action.items():
