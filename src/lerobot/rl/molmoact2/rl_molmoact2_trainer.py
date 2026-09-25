@@ -4,6 +4,8 @@ MolmoAct2Trainer — concrete Trainer for MolmoAct2RLPolicy.
 Actor-only mode     (skip_critic=True):  update_actor only; no critic updates.
 Critic-trained mode (skip_critic=False): update_critic (HL-Gauss distributional TD) + actor.
 Actor prompt conditioning is subtask + metadata clauses (no advantage clause).
+Advantage enters only as an optional per-sample weight on the actor loss
+(policy.advantage_weighting, AWR: exp of the standardized TD advantage).
 """
 
 from __future__ import annotations
@@ -270,6 +272,8 @@ class MolmoAct2Trainer(Trainer):
         "target_value_histogram": (-2.0, 0.1),
         "loss_critic_histogram_flat": (0.0, 6.0),
         "critic_kl_histogram": (-0.5, 6.0),
+        "advantage_histogram": (-2.0, 2.0),
+        "adv_weight_histogram": (0.0, 25.0),
     }
 
     # Compact, decision-oriented live dashboard. Rich distributions stay in probes.
@@ -343,6 +347,15 @@ class MolmoAct2Trainer(Trainer):
             "td_error_histogram",
             "loss_critic_histogram_flat",
             "critic_kl_histogram",
+            "loss_actor_weighted",
+            "advantage_mean",
+            "advantage_std",
+            "advantage_histogram",
+            "adv_weight_ess_frac",
+            "adv_weight_kl",
+            "adv_weight_min",
+            "adv_weight_max",
+            "adv_weight_histogram",
         }
     )
 
@@ -608,6 +621,98 @@ class MolmoAct2Trainer(Trainer):
 
     # ── Critic ────────────────────────────────────────────────────────────────
 
+    def _critic_batches(self, raw: dict, preprocessor, cfg) -> tuple[dict, dict, torch.Tensor, torch.Tensor]:
+        """(V(s) batch, V(s') batch, rewards [B,1], done [B,1]) for one transition batch.
+
+        Shared by update_critic and _advantage_weights so the actor's weights come from
+        exactly the prompt the critic was trained on.
+        """
+        observations = raw.get("state", {})
+        next_observations = raw.get("next_state", {})
+        rewards = raw["reward"]
+        done = raw["done"]
+        if not isinstance(rewards, torch.Tensor):
+            rewards = torch.tensor(rewards)
+        if not isinstance(done, torch.Tensor):
+            done = torch.tensor(done)
+        if rewards.dim() == 1:
+            rewards = rewards.unsqueeze(-1)
+        if done.dim() == 1:
+            done = done.unsqueeze(-1)
+
+        # Lift depth into both critic batches (no-op unless pointmap_config is set): current-state
+        # depth for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
+        # Unconsumed until the critic-side depth read lands (TODO(pointmap-critic), rl_molmoact2.py).
+        observations = self._inject_depth_observations(observations, raw.get("complementary_info"), cfg)
+        next_observations = self._inject_depth_observations(
+            next_observations, raw.get("complementary_info"), cfg, key_prefix="next_depth."
+        )
+
+        # Critic and target must see the same task as the actor. In subtask
+        # reward mode, V(s, z) is additionally conditioned on the active
+        # semantic goal z; a terminal transition never bootstraps into z'.
+        tasks = self._resolve_batch_tasks(raw, cfg.policy.task, rewards.shape[0])
+        critic_input: dict[str, Any] = {"task": tasks}
+        from lerobot.types import TransitionKey
+
+        raw_comp = raw.get("complementary_info") or {}
+        critic_comp: dict[str, Any] = {}
+        # The embodiment clause is unconditional: V(s) must be told which robot it
+        # is valuing whatever the reward mode, or the critic reads a 6-DOF state
+        # through a 7-DOF prompt.
+        if "embodiment_index" in raw_comp:
+            critic_comp["embodiment_index"] = raw_comp["embodiment_index"]
+        # Same for the control-mode clause and the per-layout stats row it keys on.
+        if "action_layout_id" in raw_comp:
+            critic_comp["action_layout_id"] = raw_comp["action_layout_id"]
+        if str(getattr(cfg.policy, "critic_reward_mode", "episode")) == "subtask":
+            subtask_index = raw_comp.get("subtask_index")
+            if subtask_index is None or torch.any(torch.as_tensor(subtask_index) < 0):
+                if not getattr(self, "_warned_missing_critic_subtask", False):
+                    logging.warning(
+                        "[CRITIC] subtask reward mode received a batch without valid subtask labels; "
+                        "critic prompt will omit the subtask clause."
+                    )
+                    self._warned_missing_critic_subtask = True
+            else:
+                critic_comp["subtask_index"] = subtask_index
+        if critic_comp:
+            critic_input[TransitionKey.COMPLEMENTARY_DATA] = critic_comp
+        curr_batch = preprocessor({**observations, **critic_input})
+        next_batch = preprocessor({**next_observations, **critic_input})
+        return curr_batch, next_batch, rewards, done
+
+    def _advantage_weights(
+        self, raw_policy: nn.Module, raw: dict, preprocessor, cfg
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """AWR weights for the actor loss: (weights [B], advantage over kept rows, weights over kept rows).
+
+        A = clamp(r + γ V_target(s')(1 − done), support) − V(s)   the critic's own TD error
+        Â = clip((A − mean A) / std A, ±advantage_clip)
+        w = exp(Â / advantage_beta) / mean w                       mean 1 keeps the LR of plain BC
+        w = (1 − advantage_lambda) + advantage_lambda · w          BC floor
+        Rows with critic_skip (diverse stand-in s') get w = 1 and stay out of the statistics.
+        """
+        p = cfg.policy
+        curr_batch, next_batch, rewards, done = self._critic_batches(raw, preprocessor, cfg)
+        with torch.no_grad():
+            v_next = raw_policy.forward_critic_target(next_batch)["value"].float().view(-1)
+            v_curr = raw_policy.forward_critic(curr_batch)["value"].float().view(-1)
+        rewards = rewards.float().view(-1)
+        done = done.float().view(-1)
+        td_target = (rewards + p.discount * v_next * (1.0 - done)).clamp(p.value_support_min, p.value_support_max)
+        advantage = td_target - v_curr
+        skip = (raw.get("complementary_info") or {}).get("critic_skip")
+        kept = torch.ones_like(advantage, dtype=torch.bool) if skip is None else ~skip.bool().view(-1)
+        a = advantage[kept]
+        a_hat = ((a - a.mean()) / a.std(correction=0).clamp_min(1e-6)).clamp(-p.advantage_clip, p.advantage_clip)
+        w = torch.exp(a_hat / p.advantage_beta)
+        w = w / w.mean()
+        w = (1.0 - p.advantage_lambda) + p.advantage_lambda * w
+        weights = torch.ones_like(advantage)
+        weights[kept] = w
+        return weights, a, w
+
     def update_critic(
         self,
         policy: nn.Module,
@@ -651,59 +756,8 @@ class MolmoAct2Trainer(Trainer):
                 raw = concatenate_variable_dim_batch_transitions(raw, raw_off)
             raw = move_transition_to_device(raw, device)
 
-            observations = raw.get("state", {})
-            next_observations = raw.get("next_state", {})
-            rewards = raw["reward"]
-            done = raw["done"]
-            if not isinstance(rewards, torch.Tensor):
-                rewards = torch.tensor(rewards)
-            if not isinstance(done, torch.Tensor):
-                done = torch.tensor(done)
-            if rewards.dim() == 1:
-                rewards = rewards.unsqueeze(-1)
-            if done.dim() == 1:
-                done = done.unsqueeze(-1)
-
-            # Lift depth into both critic batches (no-op unless pointmap_config is set): current-state
-            # depth for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
-            # Unconsumed until the critic-side depth read lands (TODO(pointmap-critic), rl_molmoact2.py).
-            observations = self._inject_depth_observations(observations, raw.get("complementary_info"), cfg)
-            next_observations = self._inject_depth_observations(
-                next_observations, raw.get("complementary_info"), cfg, key_prefix="next_depth."
-            )
-
-            # Critic and target must see the same task as the actor. In subtask
-            # reward mode, V(s, z) is additionally conditioned on the active
-            # semantic goal z; a terminal transition never bootstraps into z'.
-            tasks = self._resolve_batch_tasks(raw, cfg.policy.task, rewards.shape[0])
-            critic_input: dict[str, Any] = {"task": tasks}
-            from lerobot.types import TransitionKey
-
+            curr_batch, next_batch, rewards, done = self._critic_batches(raw, preprocessor, cfg)
             raw_comp = raw.get("complementary_info") or {}
-            critic_comp: dict[str, Any] = {}
-            # The embodiment clause is unconditional: V(s) must be told which robot it
-            # is valuing whatever the reward mode, or the critic reads a 6-DOF state
-            # through a 7-DOF prompt.
-            if "embodiment_index" in raw_comp:
-                critic_comp["embodiment_index"] = raw_comp["embodiment_index"]
-            # Same for the control-mode clause and the per-layout stats row it keys on.
-            if "action_layout_id" in raw_comp:
-                critic_comp["action_layout_id"] = raw_comp["action_layout_id"]
-            if str(getattr(cfg.policy, "critic_reward_mode", "episode")) == "subtask":
-                subtask_index = raw_comp.get("subtask_index")
-                if subtask_index is None or torch.any(torch.as_tensor(subtask_index) < 0):
-                    if not getattr(self, "_warned_missing_critic_subtask", False):
-                        logging.warning(
-                            "[CRITIC] subtask reward mode received a batch without valid subtask labels; "
-                            "critic prompt will omit the subtask clause."
-                        )
-                        self._warned_missing_critic_subtask = True
-                else:
-                    critic_comp["subtask_index"] = subtask_index
-            if critic_comp:
-                critic_input[TransitionKey.COMPLEMENTARY_DATA] = critic_comp
-            curr_batch = preprocessor({**observations, **critic_input})
-            next_batch = preprocessor({**next_observations, **critic_input})
 
             _fwd_critic = getattr(policy, "forward_critic")
             _fwd_target = getattr(policy, "forward_critic_target")
@@ -942,6 +996,9 @@ class MolmoAct2Trainer(Trainer):
 
         runtime = kwargs.get("training_runtime") or TrainingRuntime(device=device)
         raw_policy = runtime.unwrap_model(policy)
+        advantage_weighting = bool(getattr(cfg.policy, "advantage_weighting", False))
+        if advantage_weighting and not hasattr(raw_policy, "critic"):
+            raise ValueError("policy.advantage_weighting needs skip_critic: false (no critic to score the batch)")
         subtask_loss_weight = float(getattr(cfg.policy, "subtask_loss_weight", 0.0))
         if runtime.num_processes > 1 and subtask_loss_weight > 0:
             raise ValueError(
@@ -986,6 +1043,8 @@ class MolmoAct2Trainer(Trainer):
         discrete_ce_loss_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
+        advantage_list: list[torch.Tensor] = []
+        adv_weight_list: list[torch.Tensor] = []
         depth_on = getattr(raw_policy, "depth_visual", None) is not None
         optimization_step = kwargs.get("optimization_step")
         log_freq = max(1, int(getattr(cfg, "log_freq", 1)))
@@ -1054,6 +1113,12 @@ class MolmoAct2Trainer(Trainer):
             if getattr(raw_policy, "future_visual", None) is not None:
                 raw_policy.prepare_future_visual(fwd_batch)
 
+            adv_weights = None
+            if advantage_weighting:
+                adv_weights, advantage_kept, weights_kept = self._advantage_weights(raw_policy, raw, preprocessor, cfg)
+                advantage_list.append(advantage_kept)
+                adv_weight_list.append(weights_kept)
+
             with runtime.no_sync(policy, accum_idx, grad_accum):
                 # Calling the wrapper enters DDP's reducer for this microbatch.
                 loss, metrics = policy(fwd_batch, reduction="none", return_diagnostics=True)
@@ -1092,6 +1157,8 @@ class MolmoAct2Trainer(Trainer):
                         if depth_input_rms is not None:
                             accum["depth_rgb_rms_ratio"] = depth_input_rms.item() / max(rgb_input, 1e-12)
 
+                if adv_weights is not None:
+                    loss = loss * adv_weights.to(loss.dtype)
                 loss_for_backward = (
                     loss.mean()
                     if isinstance(loss, torch.Tensor)
@@ -1117,6 +1184,11 @@ class MolmoAct2Trainer(Trainer):
             accum["loss_actor"] += (
                 float(metrics.get("loss", loss_for_backward.detach().float().item())) / grad_accum
             )
+            if adv_weights is not None:
+                # loss_actor stays the unweighted mean (comparable across the toggle); this is what was stepped.
+                accum["loss_actor_weighted"] = (
+                    accum.get("loss_actor_weighted", 0.0) + loss_for_backward.detach().float().item() / grad_accum
+                )
             accum["loss_flow"] += float(metrics.get("action_flow_loss", 0.0)) / grad_accum
             for key, value in metrics.items():
                 if key.startswith("future_visual_"):
@@ -1283,6 +1355,19 @@ class MolmoAct2Trainer(Trainer):
         if done_list:
             all_done = torch.cat(done_list)
             accum["done_fraction"] = all_done.float().mean().item()
+
+        if advantage_list:
+            all_adv = torch.cat(advantage_list)
+            all_w = torch.cat(adv_weight_list)
+            accum["advantage_mean"] = all_adv.mean().item()
+            accum["advantage_std"] = all_adv.std().item() if all_adv.numel() > 1 else 0.0
+            accum["advantage_histogram"] = all_adv.cpu().numpy()
+            # Weights have mean 1, so KL(target || BC) = mean(w log w) and ESS/N = (Σw)² / (N Σw²).
+            accum["adv_weight_ess_frac"] = (all_w.sum().square() / (all_w.numel() * all_w.square().sum())).item()
+            accum["adv_weight_kl"] = (all_w * all_w.clamp_min(1e-12).log()).mean().item()
+            accum["adv_weight_min"] = all_w.min().item()
+            accum["adv_weight_max"] = all_w.max().item()
+            accum["adv_weight_histogram"] = all_w.cpu().numpy()
 
         if not getattr(cfg.policy.action_auxiliary_loss, "enabled", False):
             accum.pop("loss_action_aux", None)

@@ -19,9 +19,10 @@ Trainer.for_config(cfg)          ← dispatches to MolmoAct2Trainer or PI05Train
       ├── get_optimizer_groups() ← [actor group, critic group] with per-group LRs
       │
       ├── update_critic()        ← HL-Gauss distributional TD, Polyak target update
-      ├── compute_advantage()    ← r + γV'(s') − V(s), tanh squash
+      ├── compute_advantage()    ← PI05 only: r + γV'(s') − V(s), tanh squash → prompt label
+      ├── _advantage_weights()   ← MolmoAct2: same TD advantage → exp(Â/β), mean 1 → weight on the actor loss (advantage_weighting)
       ├── build_training_batch() ← model-specific batch assembly (subtask inject for PI05)
-      ├── actor_forward()        ← policy loss; advantage remains prompt conditioning only
+      ├── actor_forward()        ← policy loss; PI05 advantage is prompt conditioning only
       ├── update_actor()         ← full actor gradient step
       ├── update_target_networks()
       │

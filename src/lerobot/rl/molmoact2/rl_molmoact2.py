@@ -123,6 +123,20 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     critic_warmup_steps: int = 0
     policy_update_freq: int = 1
 
+    # ── Advantage-weighted actor loss (AWR) ────────────────────────────────
+    # Off: the actor loss is loss.mean(), plain BC. On: per-sample weights
+    #   A  = clamp(r + γ V_target(s')(1 − done), support) − V(s)   the critic's TD error
+    #   Â  = clip((A − mean A) / std A, ±advantage_clip)             stats over the batch
+    #   w  = exp(Â / advantage_beta) / mean w                        mean 1 = same LR as BC
+    #   w  = (1 − advantage_lambda) + advantage_lambda · w           BC floor; 1 = pure AWR
+    # Rows with critic_skip get w = 1. Needs skip_critic: false. Logged: advantage_*,
+    # adv_weight_ess_frac (fraction of the batch driving the gradient) and
+    # adv_weight_kl (nats of the target policy from BC); beta 1–2 keeps KL in 0.1–0.5.
+    advantage_weighting: bool = False
+    advantage_beta: float = 1.0
+    advantage_clip: float = 3.0
+    advantage_lambda: float = 1.0
+
     # ── LR schedule ───────────────────────────────────────────────────────
     # Names of the optimizer groups ("policy", "critic", "depth") that get the
     # inherited MolmoAct2 cosine-with-warmup schedule; the rest hold a constant

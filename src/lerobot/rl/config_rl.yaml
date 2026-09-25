@@ -107,6 +107,10 @@ policy:
   policy_update_freq: 1
   critic_warmup_steps: 0
   utd_ratio: 1
+  advantage_weighting: false   # AWR weight on the actor loss; needs skip_critic: false
+  advantage_beta: 1.0
+  advantage_clip: 3.0
+  advantage_lambda: 1.0
   async_prefetch: false
   storage_device: cpu
   image_stride: 3
