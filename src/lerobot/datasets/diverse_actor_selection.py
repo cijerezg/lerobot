@@ -34,7 +34,10 @@ is spelled out:
   sidecar beside it). The stored anchor ``subtask`` is the parent interval's
   description — for RoboChallenge the whole task string — and is kept as
   ``parent_subtask``; the prompt's "current step" is the atom, the same grammar ReBot's
-  segments already use.
+  segments already use;
+* the per-anchor ``precision`` (1-5) and ``contact`` (code 0-14, contact_vocab.py) read
+  off the same atom from their optional sidecars. Unlike speed, a missing sidecar or a
+  missing atom is not an error: the row carries -1 and the prompt omits the clause.
 
 The stored anchor flag is segment-level: it is true for every anchor inside a segment
 that contains any mistake event, which over-claims on 65 common anchors whose own
@@ -421,10 +424,12 @@ def _prepare_rows(
     corpus: FederatedDiverseCorpus, rows: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], int]:
     """Attach training identity to corpus rows: layout, camera roles, the reviewed atom's
-    subtask and speed, the anchor's own mistake flag. Returns (rows, episode records,
-    mistake flags corrected)."""
+    subtask, speed, precision and contact (-1 when no atom covers the anchor), the
+    anchor's own mistake flag. Returns (rows, episode records, mistake flags corrected)."""
     subtask_atoms = _atoms_by_episode(corpus, "subtask_atoms")
     speed_atoms = _atoms_by_episode(corpus, "speed_atoms")
+    precision_atoms = _atoms_by_episode(corpus, "precision_atoms")
+    contact_atoms = _atoms_by_episode(corpus, "contact_atoms")
 
     records: dict[str, dict[str, Any]] = {}
     prepared: list[dict[str, Any]] = []
@@ -457,6 +462,8 @@ def _prepare_rows(
             anchor_timestep = int(row["anchor_frame"])
         atom = _atom_at(subtask_atoms[(row["corpus_key"], episode_id)], anchor_timestep)
         speed_atom = _atom_at(speed_atoms[(row["corpus_key"], episode_id)], anchor_timestep)
+        precision_atom = _atom_at(precision_atoms[(row["corpus_key"], episode_id)], anchor_timestep)
+        contact_atom = _atom_at(contact_atoms[(row["corpus_key"], episode_id)], anchor_timestep)
         if declared_dim != layout.dim:
             raise ValueError(
                 f"{episode_id}: layout {layout.name} declares {layout.dim}D but the episode stores "
@@ -482,6 +489,8 @@ def _prepare_rows(
         row["parent_subtask"] = str(row["subtask"])
         row["subtask"] = str(atom["subtask"])
         row["speed"] = int(speed_atom["speed"])
+        row["precision"] = -1 if precision_atom is None else int(precision_atom["precision"])
+        row["contact"] = -1 if contact_atom is None else int(contact_atom["contact"])
         corrected += int(bool(anchor_mistake) != bool(row["mistake_flag_as_stored"]))
         prepared.append(row)
     return prepared, records, corrected
@@ -532,6 +541,8 @@ class SourceAudit:
     mistake_anchors: int = 0
     mistake_anchors_as_stored: int = 0
     speed_values: Counter = field(default_factory=Counter)
+    precision_values: Counter = field(default_factory=Counter)
+    contact_values: Counter = field(default_factory=Counter)
     subtasks: int = 0
     depth_episodes: int = 0
     depth_anchors: int = 0
@@ -561,6 +572,8 @@ def audit_selection(selection: DiverseActorSelection) -> dict[str, SourceAudit]:
         audit.mistake_anchors += int(bool(row["mistake"]))
         audit.mistake_anchors_as_stored += int(bool(row["mistake_flag_as_stored"]))
         audit.speed_values[int(row["speed"])] += 1
+        audit.precision_values[int(row.get("precision", -1))] += 1
+        audit.contact_values[int(row.get("contact", -1))] += 1
         audit.depth_anchors += int(bool(row["has_depth"]))
         audit.future_inside_subtask += int(bool(row["future_inside_subtask"]))
         subtasks[source].add(row["subtask"])
@@ -624,6 +637,8 @@ def format_audit(selection: DiverseActorSelection) -> str:
             f"(stored segment-level flag: {audit.mistake_anchors_as_stored})"
         )
         lines.append(f"  speed          {dict(sorted(audit.speed_values.items()))}")
+        lines.append(f"  precision      {dict(sorted(audit.precision_values.items()))}")
+        lines.append(f"  contact        {dict(sorted(audit.contact_values.items()))}")
         lines.append(f"  future inside  {audit.future_inside_subtask}/{audit.anchors}")
         lines.append(f"  depth anchors  {audit.depth_anchors}/{audit.anchors}")
         lines.append(f"  split (provenance only, never filtered) {dict(audit.splits)}")

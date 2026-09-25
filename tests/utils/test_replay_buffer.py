@@ -1024,6 +1024,47 @@ def test_materialize_metadata_from_dataset_rows():
     batch = buffer.sample(batch_size=4, action_chunk_size=2)
     assert batch["complementary_info"]["metadata_quality"].shape == (4,)
     assert batch["complementary_info"]["metadata_speed"].shape == (4,)
+    # Without precision/contact rows the columns still exist, all -1 (clauses omitted).
+    for key in ("metadata_precision", "metadata_contact"):
+        assert (buffer.complementary_info[key].float() == -1.0).all()
+        assert key in buffer.complementary_info_keys
+
+
+def test_materialize_metadata_precision_and_contact_rows():
+    buffer = ReplayBuffer(12, "cpu", [OBS_STATE], use_drq=False, optimize_memory=True)
+    for i in range(10):
+        buffer.add(
+            state={OBS_STATE: torch.tensor([[0.0]])},
+            action=torch.tensor([[0.0]]),
+            reward=0.0,
+            next_state=None,
+            done=(i == 9),
+            truncated=False,
+        )
+
+    episode_rows = [{"episode_index": 0, "quality": 4, "from_index": 0, "to_index": 10}]
+    mistake_rows = [{"episode_index": 0, "from_index": 0, "to_index": 10, "mistake": False}]
+    speed_rows = [{"episode_index": 0, "segment_index": 0, "from_index": 0, "to_index": 10, "speed": 3}]
+    # Precision covers frames 0-6; contact skips 4-5 (no label there) and uses the NA code 14.
+    precision_rows = [
+        {"episode_index": 0, "segment_index": 0, "from_index": 0, "to_index": 4, "precision": 2},
+        {"episode_index": 0, "segment_index": 1, "from_index": 4, "to_index": 7, "precision": 5},
+    ]
+    contact_rows = [
+        {"episode_index": 0, "segment_index": 0, "from_index": 0, "to_index": 4, "contact": 0},
+        {"episode_index": 0, "segment_index": 2, "from_index": 6, "to_index": 10, "contact": 14},
+    ]
+    buffer.materialize_metadata(episode_rows, mistake_rows, speed_rows, precision_rows, contact_rows)
+
+    precision = buffer.complementary_info["metadata_precision"]
+    contact = buffer.complementary_info["metadata_contact"]
+    assert precision.dtype == torch.bfloat16 and contact.dtype == torch.bfloat16
+    assert precision.float().tolist() == [2, 2, 2, 2, 5, 5, 5, -1, -1, -1, -1, -1]
+    assert contact.float().tolist() == [0, 0, 0, 0, -1, -1, 14, 14, 14, 14, -1, -1]
+
+    batch = buffer.sample(batch_size=4, action_chunk_size=2)
+    assert batch["complementary_info"]["metadata_precision"].shape == (4,)
+    assert batch["complementary_info"]["metadata_contact"].shape == (4,)
 
 
 def test_history_strided_image_rows():

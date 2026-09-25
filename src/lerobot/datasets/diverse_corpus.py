@@ -56,12 +56,22 @@ FUTURE_FPS = 30.0
 #                                duration label — ADOPTED 2026-09-09, the only method that
 #                                also exists for ReBot (meta/speed_hybrid_v1.parquet, v7)
 SPEED_ATOMS_VIEW = "speed_atoms_hybrid_v1.jsonl"
+# Precision (1-5) and contact (code 0-14, datasets/contact_vocab.py) sidecars, same row
+# shape as the speed atoms. Optional: a store without the file reads as no rows, every
+# anchor gets -1 and its prompt omits the clause. Not part of the cache key.
+PRECISION_ATOMS_VIEW = "precision_atoms.jsonl"
+CONTACT_ATOMS_VIEW = "contact_atoms.jsonl"
 SUBTASK_ATOMS_VIEW = "subtask_atoms.jsonl"
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as stream:
         return [json.loads(line) for line in stream if line.strip()]
+
+
+def read_optional_jsonl(path: Path) -> list[dict[str, Any]]:
+    """An optional sidecar: no file is no rows, never an error."""
+    return _read_jsonl(path) if path.is_file() else []
 
 
 @dataclass(frozen=True)
@@ -130,6 +140,8 @@ class DiverseCorpus:
         self._actor_rows: list[dict[str, Any]] | None = None
         self._critic_rows: list[dict[str, Any]] | None = None
         self._speed_rows: list[dict[str, Any]] | None = None
+        self._precision_rows: list[dict[str, Any]] | None = None
+        self._contact_rows: list[dict[str, Any]] | None = None
         self._subtask_atom_rows: list[dict[str, Any]] | None = None
 
     @lru_cache(maxsize=64)  # noqa: B019 - bounded by the corpus episode count
@@ -182,6 +194,20 @@ class DiverseCorpus:
         if self._speed_rows is None:
             self._speed_rows = _read_jsonl(self.root / SPEED_ATOMS_VIEW)
         return self._speed_rows
+
+    def precision_atoms(self) -> list[dict[str, Any]]:
+        """Precision labels per reviewed subtask atom, speed-atom row shape with
+        ``precision`` 1-5 (file: PRECISION_ATOMS_VIEW). Empty when the file is absent."""
+        if self._precision_rows is None:
+            self._precision_rows = read_optional_jsonl(self.root / PRECISION_ATOMS_VIEW)
+        return self._precision_rows
+
+    def contact_atoms(self) -> list[dict[str, Any]]:
+        """Contact labels per reviewed subtask atom, speed-atom row shape with
+        ``contact`` a code 0-14 (file: CONTACT_ATOMS_VIEW). Empty when the file is absent."""
+        if self._contact_rows is None:
+            self._contact_rows = read_optional_jsonl(self.root / CONTACT_ATOMS_VIEW)
+        return self._contact_rows
 
     # -- actor view ------------------------------------------------------------------
 

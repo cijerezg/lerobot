@@ -224,6 +224,8 @@ _FORWARDED_COMPLEMENTARY = (
     "metadata_quality",
     "metadata_mistake",
     "metadata_speed",
+    "metadata_precision",
+    "metadata_contact",
     "state_dim_is_pad",
     "action_dim_is_pad",
     "action_layout_id",

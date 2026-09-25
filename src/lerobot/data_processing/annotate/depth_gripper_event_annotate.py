@@ -39,6 +39,11 @@ from lerobot.utils.gripper_event_targets import (
 )
 
 RUBRIC_VERSION = "depth-gripper-event-labels-v1"
+# v2 (2026-09-24, bits task): relative travel instead of absolute thresholds, for tasks whose gripper
+# never opens past -90 (bits open only to -30..-90 and close near 0). Opt-in via --rule relative_travel.
+RELATIVE_RUBRIC_VERSION = "depth-gripper-event-labels-v2-relative-travel"
+TRAVEL_DEGREES = 25.0
+RULE = "absolute"
 EXPECTED_FPS = 30.0
 GRIPPER_FEATURE = "gripper.pos"
 EXPECTED_GRIPPER_DIM = 6
@@ -209,6 +214,8 @@ def validate_source_identities(source: pd.DataFrame, bounds: Sequence[EpisodeBou
 
 def closed_intervals(gripper: np.ndarray, min_frames: int = MIN_CLOSED_FRAMES) -> list[tuple[int, int]]:
     """Return retained half-open closed intervals from the locked hysteresis rule."""
+    if RULE == "relative_travel":
+        return relative_closed_intervals(gripper, min_frames)
     intervals: list[tuple[int, int]] = []
     start: int | None = None
     closed = False
@@ -220,6 +227,29 @@ def closed_intervals(gripper: np.ndarray, min_frames: int = MIN_CLOSED_FRAMES) -
             if frame - start >= min_frames:
                 intervals.append((start, frame))
             start = None
+    if start is not None and len(gripper) - start >= min_frames:
+        intervals.append((start, len(gripper)))
+    return intervals
+
+
+def relative_closed_intervals(gripper: np.ndarray, min_frames: int = MIN_CLOSED_FRAMES) -> list[tuple[int, int]]:
+    """v2: while open, close when the command rises TRAVEL_DEGREES above its most-open value since the last
+    opening; while closed, open when it falls TRAVEL_DEGREES below its most-shut value since the closing."""
+    intervals: list[tuple[int, int]] = []
+    start: int | None = None
+    most_open = most_shut = float(gripper[0])
+    for frame, command in enumerate(gripper):
+        command = float(command)
+        if start is None:
+            most_open = min(most_open, command)
+            if command >= most_open + TRAVEL_DEGREES:
+                start, most_shut = frame, command
+        else:
+            most_shut = max(most_shut, command)
+            if command <= most_shut - TRAVEL_DEGREES:
+                if frame - start >= min_frames:
+                    intervals.append((start, frame))
+                start, most_open = None, command
     if start is not None and len(gripper) - start >= min_frames:
         intervals.append((start, len(gripper)))
     return intervals
@@ -447,13 +477,15 @@ def build_info(
     plot_paths: Sequence[Path],
 ) -> dict:
     return {
-        "rubric_version": RUBRIC_VERSION,
+        "rubric_version": RELATIVE_RUBRIC_VERSION if RULE == "relative_travel" else RUBRIC_VERSION,
+        "rule": RULE,
+        "travel_degrees": TRAVEL_DEGREES if RULE == "relative_travel" else None,
         "creation_date": date.today().isoformat(),
         "source_signal": "raw, unnormalized action",
         "resolved_gripper_feature": GRIPPER_FEATURE,
         "resolved_gripper_dimension": gripper_dim,
         "fps": int(EXPECTED_FPS),
-        "thresholds_degrees": {"close": CLOSE_THRESHOLD, "open": OPEN_THRESHOLD},
+        "thresholds_degrees": None if RULE == "relative_travel" else {"close": CLOSE_THRESHOLD, "open": OPEN_THRESHOLD},
         "persistence": {"frames": MIN_CLOSED_FRAMES, "seconds": MIN_CLOSED_FRAMES / EXPECTED_FPS},
         "target_half_life": {"frames": HALF_LIFE_FRAMES, "seconds": HALF_LIFE_FRAMES / EXPECTED_FPS},
         "target_cutoff": {"frames": CUTOFF_FRAMES, "seconds": CUTOFF_FRAMES / EXPECTED_FPS},
@@ -523,8 +555,9 @@ def write_qa_plots(
 
         figure, (axis_command, axis_target) = plt.subplots(2, 1, figsize=(11, 5), sharex=True)
         axis_command.plot(seconds, local_gripper, color="black", linewidth=0.8, label="gripper command")
-        axis_command.axhline(CLOSE_THRESHOLD, color="tab:red", linestyle="--", label="close threshold")
-        axis_command.axhline(OPEN_THRESHOLD, color="tab:blue", linestyle="--", label="open threshold")
+        if RULE == "absolute":
+            axis_command.axhline(CLOSE_THRESHOLD, color="tab:red", linestyle="--", label="close threshold")
+            axis_command.axhline(OPEN_THRESHOLD, color="tab:blue", linestyle="--", label="open threshold")
         for event_type, color, marker in (("close", "tab:red", "v"), ("open", "tab:blue", "^")):
             event_frames = local_events.loc[local_events["event_type"] == event_type, "frame_index"].to_numpy()
             if len(event_frames):
@@ -571,7 +604,7 @@ def _validate_arrow_schema(path: Path, expected: pa.Schema) -> None:
         raise ValueError(f"Unexpected parquet schema in {path}:\nexpected {expected}\nactual {actual}")
 
 
-def materialize(root: Path, overwrite: bool, plot_all: bool, command: str) -> dict:
+def materialize(root: Path, overwrite: bool, plot_all: bool, command: str, rule: str = "absolute") -> dict:
     root = root.resolve()
     meta_dir = root / "meta"
     event_path = meta_dir / EVENT_FILENAME
@@ -583,7 +616,8 @@ def materialize(root: Path, overwrite: bool, plot_all: bool, command: str) -> di
         names = ", ".join(str(path) for path in existing)
         raise FileExistsError(f"Refusing to replace existing sidecars without --overwrite: {names}")
 
-    global EXPECTED_FPS, MIN_CLOSED_FRAMES, HALF_LIFE_FRAMES, CUTOFF_FRAMES
+    global EXPECTED_FPS, MIN_CLOSED_FRAMES, HALF_LIFE_FRAMES, CUTOFF_FRAMES, RULE
+    RULE = rule
     info, gripper_dim = load_info(root)
     EXPECTED_FPS = float(info["fps"])
     MIN_CLOSED_FRAMES = frames_for_duration(MIN_CLOSED_DURATION_S, EXPECTED_FPS)
@@ -638,13 +672,19 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="plot every episode instead of the first two (required for the validation root)",
     )
+    parser.add_argument(
+        "--rule",
+        choices=["absolute", "relative_travel"],
+        default="absolute",
+        help="absolute = locked v1 -60/-90 hysteresis; relative_travel = v2 25-degree travel from the running extremum",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     command = shlex.join([str(Path(sys.executable).resolve()), *sys.argv])
-    result = materialize(args.data_dir, args.overwrite, args.plot_all_episodes, command)
+    result = materialize(args.data_dir, args.overwrite, args.plot_all_episodes, command, args.rule)
     counts = result["event_counts"]
     stats = result["target_statistics"]
     print(

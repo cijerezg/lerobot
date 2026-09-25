@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from lerobot.datasets.diverse_corpus import CONTACT_ATOMS_VIEW, PRECISION_ATOMS_VIEW
 from lerobot.datasets.diverse_actor_selection import (
     ACTION_LAYOUTS,
     CANONICAL_CAMERA_ROLES,
@@ -32,10 +33,14 @@ from lerobot.datasets.diverse_actor_selection import (
 DATA_ROOT = Path(__file__).resolve().parents[3] / "outputs/diverse_robot_dataset_v3"
 
 
-def _selection():
+def _corpus():
     if not (DATA_ROOT / "corpus" / "episodes.jsonl").is_file():
         pytest.skip("federated corpora not present")
-    return select_actor_anchors(open_federated_corpus(DATA_ROOT))
+    return open_federated_corpus(DATA_ROOT)
+
+
+def _selection():
+    return select_actor_anchors(_corpus())
 
 
 # ── Packed observation window ────────────────────────────────────────────────
@@ -155,6 +160,69 @@ def test_every_anchor_carries_the_speed_of_its_reviewed_atom() -> None:
         assert row["parent_subtask"] != "" and "subtask" in row
     per_source = audit_selection(selection)
     assert all(sum(audit.speed_values.values()) == audit.anchors for audit in per_source.values())
+
+
+def test_without_sidecars_precision_and_contact_are_minus_one() -> None:
+    """The optional channels: a store with no sidecar selects exactly as before, and
+    every one of its rows carries the -1 that omits the clause."""
+    selection = _selection()
+    for key, sub in (("common", "corpus"), ("fmb", "fmb")):
+        rows = [row for row in selection.rows if row["corpus_key"] == key]
+        assert rows
+        if not (DATA_ROOT / sub / PRECISION_ATOMS_VIEW).is_file():
+            assert {row["precision"] for row in rows} == {-1}
+        if not (DATA_ROOT / sub / CONTACT_ATOMS_VIEW).is_file():
+            assert {row["contact"] for row in rows} == {-1}
+
+
+def _label_sidecar(store, drop: str) -> tuple[list[dict], list[dict]]:
+    """Synthetic precision / contact rows over the store's own atoms, in memory (never
+    written into the corpus root), with every atom of episode ``drop`` left out."""
+    precision, contact = [], []
+    for atom in store.subtask_atoms():
+        if str(atom["episode_id"]) == drop:
+            continue
+        span = {name: atom[name] for name in (
+            "episode_id", "parent_interval_index", "atom_index", "start_timestep", "end_timestep_exclusive"
+        )}
+        precision.append({**span, "precision": 1 + int(atom["atom_index"]) % 5})
+        contact.append({**span, "contact": (3 * int(atom["parent_interval_index"]) + int(atom["atom_index"])) % 15})
+    return precision, contact
+
+
+def test_precision_and_contact_follow_their_atom_and_a_missing_atom_is_minus_one(monkeypatch) -> None:
+    corpus = _corpus()
+    dropped = {}
+    for key, store in (("common", corpus.common), ("fmb", corpus.fmb)):
+        dropped[key] = str(store.subtask_atoms()[0]["episode_id"])
+        precision, contact = _label_sidecar(store, dropped[key])
+        monkeypatch.setattr(store, "precision_atoms", lambda rows=precision: rows)
+        monkeypatch.setattr(store, "contact_atoms", lambda rows=contact: rows)
+    selection = select_actor_anchors(corpus)
+
+    atoms: dict[tuple[str, str], list[dict]] = {}
+    for key, store in (("common", corpus.common), ("fmb", corpus.fmb)):
+        for atom in store.subtask_atoms():
+            atoms.setdefault((key, str(atom["episode_id"])), []).append(atom)
+    missing = 0
+    for row in selection.rows:
+        if str(row["episode_id"]) == dropped[row["corpus_key"]]:
+            assert (row["precision"], row["contact"]) == (-1, -1)
+            missing += 1
+            continue
+        frame = int(row["anchor_timestep"] if row["corpus_key"] == "fmb" else row["anchor_frame"])
+        (atom,) = [
+            atom
+            for atom in atoms[(row["corpus_key"], str(row["episode_id"]))]
+            if int(atom["start_timestep"]) <= frame < int(atom["end_timestep_exclusive"])
+        ]
+        assert row["precision"] == 1 + int(atom["atom_index"]) % 5
+        assert row["contact"] == (3 * int(atom["parent_interval_index"]) + int(atom["atom_index"])) % 15
+    # The dropped episodes are not held out, so their rows are selected and carry -1.
+    assert missing > 0
+    per_source = audit_selection(selection)
+    assert sum(audit.precision_values[-1] for audit in per_source.values()) == missing
+    assert all(sum(audit.contact_values.values()) == audit.anchors for audit in per_source.values())
 
 
 def test_split_stays_on_every_row_as_provenance() -> None:

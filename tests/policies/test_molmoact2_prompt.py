@@ -102,6 +102,94 @@ def test_metadata_clause_partial_rendering():
 
     prompt = build(metadata={})
     assert "quality" not in prompt and "mistake" not in prompt and "speed" not in prompt
+    assert "precision" not in prompt and "contact" not in prompt
+
+
+@pytest.mark.parametrize("level", [1, 2, 3, 4, 5])
+def test_precision_clause_renders_each_level(level):
+    prompt = build(metadata={"precision": level})
+    assert f" The precision is {level} of 5. Given these," in prompt
+
+
+@pytest.mark.parametrize(
+    ("code", "phrase"),
+    [
+        (0, "a top pinch"),
+        (2, "a rim pinch"),
+        (11, "an insertion"),
+        (13, "a tool drag"),
+        (14, "not applicable"),
+    ],
+)
+def test_contact_clause_renders_vocab_phrase(code, phrase):
+    prompt = build(metadata={"contact": code})
+    assert f" The contact is {phrase}. Given these," in prompt
+
+
+def test_contact_clause_rejects_unknown_code():
+    with pytest.raises(ValueError, match="not in the vocabulary"):
+        build(metadata={"contact": 15})
+
+
+def test_metadata_clause_order_speed_precision_contact():
+    prompt = build(metadata={"quality": 4, "mistake": False, "speed": 3, "precision": 4, "contact": 2})
+    assert (
+        " The quality is 4 of 5. The robot made no mistakes. The speed is 3 of 5."
+        " The precision is 4 of 5. The contact is a rim pinch. Given these,"
+    ) in prompt
+
+
+def test_metadata_prompt_byte_identical_without_precision_and_contact():
+    """No precision / contact key (every root before the annotation pass) renders
+    exactly the speed-era prompt, clause for clause."""
+    prompt = build(metadata={"quality": 5, "mistake": False, "speed": 5})
+    assert prompt == (
+        "<|im_start|>user\n"
+        "The task is to fold the towel. The quality is 5 of 5. The robot made no mistakes. "
+        "The speed is 5 of 5. "
+        "Given these, what action should the robot take to complete the task?<|im_end|>\n"
+        "<|im_start|>assistant\n<action_output>"
+    )
+
+
+def _extract(complementary, batch_size):
+    from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep
+
+    step = object.__new__(MolmoAct2PackInputsProcessorStep)
+    return step._extract_metadata(complementary, batch_size)
+
+
+def test_extract_precision_and_contact_from_columns():
+    out = _extract(
+        {
+            "metadata_quality": torch.tensor([5.0, 3.0, 4.0]),
+            "metadata_mistake": torch.tensor([0.0, 1.0, 0.0]),
+            "metadata_speed": torch.tensor([2.0, 5.0, 4.0]),
+            "metadata_precision": torch.tensor([4.0, -1.0, 1.0], dtype=torch.bfloat16),
+            "metadata_contact": torch.tensor([14.0, 2.0, -1.0], dtype=torch.bfloat16),
+        },
+        batch_size=3,
+    )
+    assert out[0] == {"quality": 5, "mistake": False, "speed": 2, "precision": 4, "contact": 14}
+    # -1 is the unlabelled sentinel: that key alone is left out.
+    assert out[1] == {"quality": 3, "mistake": True, "speed": 5, "contact": 2}
+    assert out[2] == {"quality": 4, "mistake": False, "speed": 4, "precision": 1}
+
+
+def test_prompt_byte_identical_when_precision_and_contact_columns_absent_or_unlabelled():
+    base = {
+        "metadata_quality": torch.tensor([5.0]),
+        "metadata_mistake": torch.tensor([0.0]),
+        "metadata_speed": torch.tensor([3.0]),
+    }
+    unlabelled = base | {
+        "metadata_precision": torch.full((1,), -1.0, dtype=torch.bfloat16),
+        "metadata_contact": torch.full((1,), -1.0, dtype=torch.bfloat16),
+    }
+    absent_metadata = _extract(base, 1)[0]
+    assert absent_metadata == {"quality": 5, "mistake": False, "speed": 3}
+    assert _extract(unlabelled, 1)[0] == absent_metadata
+    assert build(metadata=_extract(unlabelled, 1)[0]) == build(metadata=absent_metadata)
 
 
 def test_history_clause_renders_placeholders():

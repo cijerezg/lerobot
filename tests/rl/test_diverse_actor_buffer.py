@@ -9,6 +9,7 @@ Geometry tests run everywhere. Corpus-backed tests skip when the data is absent.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -121,6 +122,27 @@ def test_identity_columns_point_back_at_the_sampled_rows(buffer, selection) -> N
         assert info["source_id"][position].item() == SOURCE_IDS[row["source"]]
         assert info["anchor_index"][position].item() == int(row["anchor_index"])
         assert info["action_layout_id"][position].item() == int(row["action_layout_id"])
+
+
+def test_precision_and_contact_columns_carry_the_row_labels(buffer, selection) -> None:
+    """-1 (no atom, no sidecar, or a row predating the channels) rides the column as-is."""
+    indices = _one_row_per_source(selection)
+    info = buffer.collate(indices)["complementary_info"]
+    for position, index in enumerate(indices):
+        row = selection.rows[index]
+        assert info["metadata_precision"][position].item() == float(row["precision"])
+        assert info["metadata_contact"][position].item() == float(row["contact"])
+
+    rows = [dict(selection.rows[index]) for index in indices]
+    for position, row in enumerate(rows):
+        row["precision"], row["contact"] = 1 + position % 5, (position * 4) % 15
+    del rows[0]["precision"], rows[0]["contact"]
+    labelled = DiverseActorBuffer(
+        replace(selection, rows=rows), DiverseSampleSpec(load_images=False, load_depth=False)
+    )
+    info = labelled.collate(list(range(len(rows))))["complementary_info"]
+    assert info["metadata_precision"].tolist() == [-1.0] + [float(r["precision"]) for r in rows[1:]]
+    assert info["metadata_contact"].tolist() == [-1.0] + [float(r["contact"]) for r in rows[1:]]
 
 
 def test_every_source_is_representable_in_one_batch(buffer, selection) -> None:

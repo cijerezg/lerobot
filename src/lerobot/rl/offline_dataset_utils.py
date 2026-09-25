@@ -223,13 +223,20 @@ def pool_lowdim_stats(cfg, dataset, is_main_process: bool = False) -> None:
 #                            percentiles nudged <= 0.35 bucket toward the duration label
 #                            — ADOPTED 2026-09-09 (same method as the corpus' v6)
 REBOT_SPEED_TABLE = "speed_hybrid_v1.parquet"
+# Per-subtask precision (1-5) and contact (CONTACT_VOCAB code 0-14) tables. Optional,
+# unlike speed: a root without them renders today's prompt (no clause, column -1).
+REBOT_PRECISION_TABLE = "precision.parquet"
+REBOT_CONTACT_TABLE = "contact.parquet"
 
 
-def load_metadata_rows(root) -> tuple[list[dict], list[dict], list[dict]]:
+def load_metadata_rows(
+    root,
+) -> tuple[list[dict], list[dict], list[dict], list[dict] | None, list[dict] | None]:
     """Read meta/episode_metadata.parquet + meta/mistakes.parquet (written by
     metadata_annotate.py) + the adopted speed table (REBOT_SPEED_TABLE) into the inputs
-    ReplayBuffer.materialize_metadata expects. Raises when any is missing:
-    metadata_enabled requires fully annotated datasets."""
+    ReplayBuffer.materialize_metadata expects. Raises when any of those is missing:
+    metadata_enabled requires fully annotated datasets. The precision and contact tables
+    (REBOT_PRECISION_TABLE, REBOT_CONTACT_TABLE) are optional and come back None when absent."""
     meta = Path(root) / "meta"
     for name, tool in (
         ("episode_metadata.parquet", "metadata_annotate.py"),
@@ -245,7 +252,11 @@ def load_metadata_rows(root) -> tuple[list[dict], list[dict], list[dict]]:
     episode_rows = pd.read_parquet(meta / "episode_metadata.parquet").to_dict("records")
     mistake_rows = pd.read_parquet(meta / "mistakes.parquet").to_dict("records")
     speed_rows = pd.read_parquet(meta / REBOT_SPEED_TABLE).to_dict("records")
-    return episode_rows, mistake_rows, speed_rows
+    precision_rows, contact_rows = (
+        pd.read_parquet(meta / name).to_dict("records") if (meta / name).exists() else None
+        for name in (REBOT_PRECISION_TABLE, REBOT_CONTACT_TABLE)
+    )
+    return episode_rows, mistake_rows, speed_rows, precision_rows, contact_rows
 
 
 def _idx_to_name(dataset, table_name: str, index_column: str, text_column: str) -> dict[int, str]:

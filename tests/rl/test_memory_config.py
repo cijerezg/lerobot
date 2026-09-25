@@ -104,3 +104,36 @@ def test_rl_config_leaves_stamps_unset_when_history_is_off():
 
     cfg = MolmoAct2RLConfig(memory=MemoryConfig())
     assert cfg.history_times_seconds is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"eval_subtask_precisions": [3]}, "one entry per eval_subtasks step"),
+        ({"eval_subtask_contacts": ["top-pinch", "na", "push"]}, "one entry per eval_subtasks step"),
+        ({"eval_subtask_precisions": [3, 6]}, "integer 1-5"),
+        ({"eval_subtask_precisions": [0, 3]}, "integer 1-5"),
+        ({"eval_home_precision": 7}, "integer 1-5"),
+        ({"eval_subtask_contacts": ["top-pinch", "grab"]}, "not in the vocabulary"),
+        ({"eval_home_contact": "not applicable"}, "not in the vocabulary"),
+    ],
+)
+def test_eval_subtask_metadata_is_validated(overrides, match):
+    """Precision/contact scripts align with eval_subtasks and hold valid values."""
+    from lerobot.rl.molmoact2.rl_molmoact2 import MolmoAct2RLConfig
+
+    with pytest.raises(ValueError, match=match):
+        MolmoAct2RLConfig(eval_subtasks=["grasp the cup", "place the cup"], **overrides)
+
+
+def test_eval_subtask_metadata_defaults_are_off():
+    from lerobot.rl.molmoact2.rl_molmoact2 import MolmoAct2RLConfig
+
+    cfg = MolmoAct2RLConfig(
+        eval_subtasks=["grasp the cup", "place the cup"],
+        eval_subtask_precisions=[5, 1],
+        eval_subtask_contacts=["top-pinch", "na"],
+    )
+    assert (cfg.eval_home_precision, cfg.eval_home_contact) == (1, "na")
+    off = MolmoAct2RLConfig(eval_subtasks=["grasp the cup"])
+    assert off.eval_subtask_precisions is None and off.eval_subtask_contacts is None

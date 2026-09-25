@@ -466,20 +466,27 @@ class ReplayBuffer:
         episode_rows: list[dict],
         mistake_rows: list[dict],
         speed_rows: list[dict],
+        precision_rows: list[dict] | None = None,
+        contact_rows: list[dict] | None = None,
     ) -> None:
         """π0.7-style metadata columns from meta/episode_metadata.parquet +
         meta/mistakes.parquet + meta/speed.parquet (offline buffers; written by
-        metadata_annotate.py / speed_annotate.py, loaded via load_metadata_rows).
+        metadata_annotate.py / speed_annotate.py, loaded via load_metadata_rows),
+        plus the optional meta/precision.parquet and meta/contact.parquet.
 
-        quality (1-5) and speed (1-5) broadcast per subtask segment, mistake
-        (boolean) per subtask window; row from_index/to_index are global dataset
-        frame ranges (== buffer positions, as with summaries). -1 is the "no row
-        covers this frame" sentinel for quality and speed; the prompt omits that
-        clause rather than rendering it.
+        quality (1-5), speed (1-5), precision (1-5) and contact (CONTACT_VOCAB code
+        0-14) broadcast per subtask segment, mistake (boolean) per subtask window;
+        row from_index/to_index are global dataset frame ranges (== buffer
+        positions, as with summaries). -1 is the "no row covers this frame"
+        sentinel for quality, speed, precision and contact; the prompt omits that
+        clause rather than rendering it. precision and contact columns exist even
+        without rows (all -1).
         """
         quality = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
         mistake = torch.zeros(self.capacity, dtype=torch.bfloat16, device=self.storage_device)
         speed = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
+        precision = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
+        contact = torch.full((self.capacity,), -1.0, dtype=torch.bfloat16, device=self.storage_device)
         for row in episode_rows:
             quality[row["from_index"] : min(int(row["to_index"]), self.size)] = float(row["quality"])
         for row in mistake_rows:
@@ -487,6 +494,10 @@ class ReplayBuffer:
                 mistake[row["from_index"] : min(int(row["to_index"]), self.size)] = 1.0
         for row in speed_rows:
             speed[row["from_index"] : min(int(row["to_index"]), self.size)] = float(row["speed"])
+        for row in precision_rows or ():
+            precision[row["from_index"] : min(int(row["to_index"]), self.size)] = float(row["precision"])
+        for row in contact_rows or ():
+            contact[row["from_index"] : min(int(row["to_index"]), self.size)] = float(row["contact"])
         # Reward a mistake event once at its entry, not every annotated recovery
         # frame; its cost must not depend on the span's annotated duration.
         mistake_onset = torch.zeros_like(mistake)
@@ -497,8 +508,17 @@ class ReplayBuffer:
         self.complementary_info["metadata_quality"] = quality
         self.complementary_info["metadata_mistake"] = mistake
         self.complementary_info["metadata_speed"] = speed
+        self.complementary_info["metadata_precision"] = precision
+        self.complementary_info["metadata_contact"] = contact
         self.complementary_info["critic_mistake_onset"] = mistake_onset
-        for key in ("metadata_quality", "metadata_mistake", "metadata_speed", "critic_mistake_onset"):
+        for key in (
+            "metadata_quality",
+            "metadata_mistake",
+            "metadata_speed",
+            "metadata_precision",
+            "metadata_contact",
+            "critic_mistake_onset",
+        ):
             if key not in self.complementary_info_keys:
                 self.complementary_info_keys.append(key)
         self.has_complementary_info = True

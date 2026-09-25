@@ -275,6 +275,9 @@ class _RowIdentity:
     retention_reason_id: int
     mistake: bool
     speed: int
+    # -1 = no precision / contact atom over the anchor: the prompt omits the clause.
+    precision: int = -1
+    contact: int = -1
 
 
 class DiverseActorBuffer:
@@ -332,6 +335,8 @@ class DiverseActorBuffer:
                     retention_reason_id=retention_reason_id(row.get("retention_reason")),
                     mistake=bool(row["mistake"]),
                     speed=int(row["speed"]),
+                    precision=int(row.get("precision", -1)),
+                    contact=int(row.get("contact", -1)),
                 )
             )
         self._geometry: dict[tuple[int, int, bool], ResizeGeometry] = {}
@@ -524,6 +529,8 @@ class DiverseActorBuffer:
         metadata_quality_is_valid = torch.zeros((batch,), dtype=torch.bool)
         metadata_mistake = torch.zeros((batch,), dtype=torch.float32)
         metadata_speed = torch.zeros((batch,), dtype=torch.float32)
+        metadata_precision = torch.full((batch,), -1.0, dtype=torch.float32)
+        metadata_contact = torch.full((batch,), -1.0, dtype=torch.float32)
         row_index_column = torch.zeros((batch,), dtype=torch.long)
 
         for position, sample in enumerate(samples):
@@ -572,6 +579,8 @@ class DiverseActorBuffer:
             metadata_quality_is_valid[position] = entry.quality_is_valid
             metadata_mistake[position] = float(entry.mistake)
             metadata_speed[position] = float(entry.speed)
+            metadata_precision[position] = float(entry.precision)
+            metadata_contact[position] = float(entry.contact)
             row_index_column[position] = sample["row_index"]
 
         state_dict: dict[str, torch.Tensor] = {OBS_STATE: state.to(self.device)}
@@ -617,6 +626,8 @@ class DiverseActorBuffer:
             "metadata_quality_is_valid": metadata_quality_is_valid.to(self.device),
             "metadata_mistake": metadata_mistake.to(self.device),
             "metadata_speed": metadata_speed.to(self.device),
+            "metadata_precision": metadata_precision.to(self.device),
+            "metadata_contact": metadata_contact.to(self.device),
             "task_index": identity["task_index"].to(self.device),
             "subtask_index": identity["subtask_index"].to(self.device),
             "quality_provenance_id": identity["quality_provenance_id"].to(self.device),

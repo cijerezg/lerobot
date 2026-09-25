@@ -173,6 +173,18 @@ floor in the other. The clause rows share the frame's images and one flow-noise 
 what separates them is the clause alone (batched 2026-08-22). The speed ramp is four extra
 rows in that existing batch, not four extra forwards (2026-09-09).
 
+**7. Precision and contact (2026-09-25).** Two more clauses after speed, "The precision is
+$N$ of 5." and "The contact is <phrase>.", each swept on its own at the rollout clause
+(quality 5, no mistake, speed 5): ``p1`` … ``p5`` is a ramp, ``c0`` … ``c14`` a sweep over the
+contact vocabulary (``datasets/contact_vocab.py``; 14 is "not applicable"). Each is measured
+against the no-clause chunk for its channel, which is ``q5`` — the same prompt with that
+sentence absent — and read against the same seed floor: $\lVert a^{(p_k)}-a^{(q_5)}\rVert$ and
+$\lVert a^{(c)}-a^{(q_5)}\rVert$ over the floor. The precision ramp also gets the ordering test of
+question 2 ($\pi$ and $\tau$ on the $p_1 \rightarrow p_5$ axis); contact is categorical, so
+instead of an order it gets a spread, the mean pairwise distance between the fifteen codes over
+the floor — whether the codes differ from each other and not only from the absent sentence.
+These twenty rows are one extra batched call per frame on the same seed-0 draw.
+
 Registered probe: enable with ``probe_parameters.enable_metadata_steering``.
 """
 
@@ -187,6 +199,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from lerobot.datasets.contact_vocab import CONTACT_VOCAB
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.utils.action_metrics import TRAJECTORY_RELATIVE_KEYS, trajectory_error_components
 from lerobot.probes.utils import (
@@ -231,6 +244,14 @@ _STEERED |= {f"s{k}": {"quality": 5, "mistake": False, "speed": k} for k in _SPE
 # The clause the rollout prompt carries, and the one the old probe called "bad".
 _ROLLOUT = "q5"
 _OPPOSITE = "q1m"
+
+# Precision and contact: each channel swept on its own at the rollout clause, so the
+# channel's sentence is the only difference from ``q5``, the no-clause chunk each row is
+# measured against. Contact is categorical: a sweep over the vocabulary, not a ramp.
+_PRECISION_LEVELS = (1, 2, 3, 4, 5)
+_CONTACT_CODES = tuple(element.code for element in CONTACT_VOCAB)
+_CHANNELS = {f"p{k}": {**_STEERED[_ROLLOUT], "precision": k} for k in _PRECISION_LEVELS}
+_CHANNELS |= {f"c{code}": {**_STEERED[_ROLLOUT], "contact": code} for code in _CONTACT_CODES}
 
 
 def _rmse(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -376,6 +397,33 @@ def _level_projection(acts: dict[str, torch.Tensor], prefix: str) -> tuple[dict[
 
 def _quality_projection(acts: dict[str, torch.Tensor]) -> tuple[dict[int, float], float]:
     return _level_projection(acts, "q")
+
+
+def _channel_measurements(
+    channel_acts: dict[str, torch.Tensor], clause_off: torch.Tensor, base: torch.Tensor, floor_mean: float
+) -> dict:
+    """Per-frame numbers for the precision ramp and the contact sweep.
+
+    ``clause_off`` is the rollout chunk ``q5`` — the same prompt with the channel's sentence
+    absent — and every ``*_clause_*`` number is measured from it; ``*_rmse`` is from ``none``
+    like every other condition's. Separations divide by the frame's seed floor.
+    """
+    floor = max(floor_mean, 1e-9)
+    row: dict = {}
+    for name, act in channel_acts.items():
+        row[f"{name}_rmse"] = _rmse(act, base)
+        row[f"{name}_clause_rmse"] = _rmse(act, clause_off)
+        row[f"{name}_clause_separation"] = row[f"{name}_clause_rmse"] / floor
+    projection, tau = _level_projection(channel_acts, "p")
+    row["precision_range_rmse"] = _rmse(channel_acts["p5"], channel_acts["p1"])
+    row["precision_kendall_tau"] = tau
+    row.update({f"proj_p{k}": value for k, value in projection.items()})
+    row["precision_clause_rmse"] = float(np.mean([row[f"p{k}_clause_rmse"] for k in _PRECISION_LEVELS]))
+    row["contact_clause_rmse"] = float(np.mean([row[f"c{code}_clause_rmse"] for code in _CONTACT_CODES]))
+    row["contact_spread_rmse"], _ = _pairwise_rmse([channel_acts[f"c{code}"] for code in _CONTACT_CODES])
+    for key in ("precision_range", "precision_clause", "contact_clause", "contact_spread"):
+        row[f"{key}_separation"] = row[f"{key}_rmse"] / floor
+    return row
 
 
 def _provenance(rows: list[dict], dataset, cfg, conditions: list[str], n_seeds: int) -> dict:
@@ -925,6 +973,79 @@ def _render_speed(rows: list[dict], summary: dict, output_path: str) -> None:
     plt.close(fig)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Figure 5 — do the precision and contact clauses reach the actions?
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _render_channels(rows: list[dict], summary: dict, output_path: str) -> None:
+    fig = plt.figure(figsize=(18, 6.4))
+    grid = fig.add_gridspec(1, 3, wspace=0.26, left=0.05, right=0.985, top=0.80, bottom=0.30)
+    axes = [fig.add_subplot(grid[0, col]) for col in range(3)]
+
+    # ── Left: every contrast against the same seed floor ──
+    contrasts = [
+        ("precision\np5 vs p1", "precision_range_rmse"),
+        ("precision\nvs no clause", "precision_clause_rmse"),
+        ("contact\nvs no clause", "contact_clause_rmse"),
+        ("contact\ncode vs code", "contact_spread_rmse"),
+        ("flow seed\n(floor)", "seed_floor_mean"),
+    ]
+    axes[0].boxplot([_column(rows, key) for _label, key in contrasts],
+                    tick_labels=[label for label, _key in contrasts])
+    axes[0].set_ylabel(r"$\|a^{(c)} - a^{(c')}\|$  (normalized actions)")
+    axes[0].set_title(
+        "Does either clause move the chunk\nmore than noise does?\n"
+        f"precision {summary['precision_separation_median']:.2f}x   ·   "
+        f"contact {summary['contact_clause_separation_median']:.2f}x   ·   "
+        f"contact spread {summary['contact_spread_separation_median']:.2f}x"
+    )
+    _caption(axes[0], [
+        r"One point per frame per box. 'vs no clause' is the mean over levels (codes) of the distance",
+        r"from $a^{(q_5)}$, the rollout prompt with that sentence absent; 'code vs code' is the mean",
+        r"pairwise distance between the fifteen contact chunks. Only the ratio to the floor means anything.",
+    ])
+
+    # ── Middle: is the precision ramp ordered? ──
+    for row in rows:
+        axes[1].plot(_PRECISION_LEVELS, [row[f"proj_p{k}"] for k in _PRECISION_LEVELS],
+                     color="#457B9D", alpha=0.12, linewidth=0.8)
+    axes[1].errorbar(
+        _PRECISION_LEVELS, [_mean(rows, f"proj_p{k}") for k in _PRECISION_LEVELS],
+        yerr=[_sem(rows, f"proj_p{k}") for k in _PRECISION_LEVELS],
+        color="#1D3557", linewidth=2.2, marker="o", capsize=3, label="mean over frames",
+    )
+    axes[1].axhline(0.0, color="black", linewidth=0.8)
+    axes[1].set_xticks(list(_PRECISION_LEVELS))
+    axes[1].set_xlabel("precision asked for")
+    axes[1].set_ylabel(r"$\pi(p)$ — position on the $p_1 \rightarrow p_5$ axis")
+    axes[1].set_title(
+        "Is the precision ramp ordered?\n"
+        rf"mean $\tau$ = {summary['precision_kendall_tau_mean']:+.2f}"
+    )
+    axes[1].legend(fontsize=8)
+    _caption(axes[1], [
+        r"Figure 1's right panel for precision: quality 5, no mistake, speed 5 held, only the",
+        r"precision number moving. Read the separation on the left first.",
+    ])
+
+    # ── Right: which contact codes move the chunk? ──
+    x = np.arange(len(_CONTACT_CODES))
+    axes[2].bar(x, [summary["contact_clause_separation"][str(code)] for code in _CONTACT_CODES],
+                color="#6D597A")
+    axes[2].axhline(1.0, color="#E63946", linestyle="--", linewidth=1.2, label="flow-seed floor")
+    axes[2].set_xticks(x, [element.slug for element in CONTACT_VOCAB], rotation=60, ha="right")
+    axes[2].set_ylabel(r"median $\|a^{(c)} - a^{(q_5)}\|$ / floor")
+    axes[2].set_title("Per contact code: distance from no clause,\nin units of the seed floor")
+    axes[2].legend(fontsize=8)
+
+    fig.suptitle(
+        f"Metadata steering — precision and contact (n={summary['n_frames']} frames)",
+        fontsize=13, fontweight="bold",
+    )
+    fig.savefig(output_path, bbox_inches="tight", dpi=110)
+    plt.close(fig)
+
+
 def _render_example(diagnostic: dict, output_path: str) -> None:
     """Per-joint chunk under every metadata condition, demonstration overlaid."""
     gt = diagnostic["gt"]
@@ -1088,6 +1209,22 @@ context; it is a correlation between two integers rather than a cosine between t
 it is not a line the box is meant to sit on."""
 
 
+_CHANNELS_HOW = r"""Precision and contact are swept one at a time at the rollout clause
+(quality 5, no mistake, speed 5), so the only difference between a row and $a^{(q_5)}$ is the one
+sentence. That makes $a^{(q_5)}$ the no-clause chunk for both channels, and every distance on the
+left is read against the same flow-seed floor as figure 1.
+
+**Left — the floor.** Precision range $\lVert a^{(p_5)}-a^{(p_1)}\rVert$; each channel's mean
+distance from the chunk without its sentence; and the contact spread, the mean pairwise distance
+between the fifteen code chunks, which separates "any contact sentence moves the chunk" from "the
+codes mean different things". A checkpoint trained before these clauses existed should sit at 1.
+
+**Middle — ordering.** The precision ramp projected onto its own $p_1 \rightarrow p_5$ axis, exactly
+as figure 1 does for quality.
+
+**Right — per code.** The median distance from no clause for each contact code, over the floor."""
+
+
 def run(adapter, dataset, cfg, output_dir: str) -> None:
     memory_cfg = getattr(cfg.policy, "memory", None)
     if memory_cfg is None or not getattr(memory_cfg, "metadata_enabled", False):
@@ -1102,6 +1239,11 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     chunk_size = int(cfg.policy.chunk_size)
     n_seeds = max(int(getattr(p, "metadata_steering_n_seeds", None) or p.n_seeds), 2)
     n_frames = int(getattr(p, "metadata_steering_n_frames", None) or p.n_frames_per_episode)
+    if n_seeds < 3:
+        logging.warning(
+            f"[metadata_steering] n_seeds={n_seeds}: the quality/speed null cosine needs 3 flow "
+            "draws and will be nan; set metadata_steering_n_seeds >= 3."
+        )
 
     gt_metadata = frame_metadata_lookup(dataset)
     if not gt_metadata:
@@ -1118,7 +1260,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     )
     logging.info(
         f"[metadata_steering] {len(samples)} frames x ({len(_STEERED) + 1} clauses + "
-        f"{n_seeds - 1} reseeds + gt) = ~{len(samples) * (len(_STEERED) + n_seeds + 1)} forward passes"
+        f"{len(_CHANNELS)} precision/contact + {n_seeds - 1} reseeds + gt) = "
+        f"~{len(samples) * (len(_STEERED) + len(_CHANNELS) + n_seeds + 1)} forward passes"
     )
 
     rows: list[dict] = []
@@ -1170,6 +1313,17 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 floor_draws += [floor_chunks[i] for i in range(n_seeds - 1)]
             floor_mean, floor_max = _pairwise_rmse(floor_draws)
 
+            # Precision ramp and contact sweep: a batch of their own on the same seed-0
+            # draw (``flow_noise_like`` replicates one draw across rows), so each row
+            # differs from ``q5`` by its channel's sentence alone. Kept out of ``acts``:
+            # every figure and gt number above is about the three older clauses.
+            _, channel_chunks = adapter.predict_action_chunk_batch(
+                frame["obs"], frame["task"], [frame["subtask"]] * len(_CHANNELS),
+                metadatas=list(_CHANNELS.values()),
+                noise=adapter.flow_noise_like(len(_CHANNELS), 0),
+            )
+            channel_acts = {name: channel_chunks[i] for i, name in enumerate(_CHANNELS)}
+
             projection, tau = _quality_projection(acts)
             speed_projection, speed_tau = _level_projection(acts, "s")
             base = acts["none"]
@@ -1200,6 +1354,10 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 "gt_quality": None if labels is None else int(labels["quality"]),
                 "gt_mistake": bool(labels["mistake"]) if labels is not None else False,
                 "gt_speed": None if labels is None else int(labels["speed"]),
+                "gt_precision": (
+                    None if labels is None or "precision" not in labels else int(labels["precision"])
+                ),
+                "gt_contact": None if labels is None or "contact" not in labels else int(labels["contact"]),
                 "seed_floor_mean": floor_mean,
                 "seed_floor_max": floor_max,
                 "quality_range_rmse": _rmse(acts["q5"], acts["q1"]),
@@ -1221,6 +1379,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
             row["separation"] = row["quality_range_rmse"] / max(floor_mean, 1e-9)
             row["mistake_separation"] = row["mistake_flip_rmse"] / max(floor_mean, 1e-9)
             row["speed_separation"] = row["speed_range_rmse"] / max(floor_mean, 1e-9)
+            row.update(_channel_measurements(channel_acts, acts[_ROLLOUT], acts["none"], floor_mean))
             row["step_motion_ratio"] = _step_rms(acts["q5"]) / max(_step_rms(acts["q1"]), 1e-9)
             # The physical reading of the speed number: does asking for 5 move the arm more per step than 1?
             row["speed_step_motion_ratio"] = _step_rms(acts["s5"]) / max(_step_rms(acts["s1"]), 1e-9)
@@ -1396,6 +1555,23 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         "quality_mix": {
             str(q): sum(row["gt_quality"] == q for row in labelled) for q in _QUALITY_LEVELS
         },
+        "precision_separation_median": _median(rows, "precision_range_separation"),
+        "precision_clause_separation_median": _median(rows, "precision_clause_separation"),
+        "precision_kendall_tau_mean": _mean(rows, "precision_kendall_tau"),
+        "precision_clause_separation": {
+            str(k): _median(rows, f"p{k}_clause_separation") for k in _PRECISION_LEVELS
+        },
+        "precision_mix": {
+            str(k): sum(row["gt_precision"] == k for row in rows) for k in _PRECISION_LEVELS
+        },
+        "contact_clause_separation_median": _median(rows, "contact_clause_separation"),
+        "contact_spread_separation_median": _median(rows, "contact_spread_separation"),
+        "contact_clause_separation": {
+            str(code): _median(rows, f"c{code}_clause_separation") for code in _CONTACT_CODES
+        },
+        "contact_mix": {
+            str(code): sum(row["gt_contact"] == code for row in rows) for code in _CONTACT_CODES
+        },
         "verdict_note": (
             "separation ~1 => the quality clause moves the chunk no more than flow noise does, "
             "and nothing downstream of it means anything. separation >> 1 with "
@@ -1416,7 +1592,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 summary[f"{name}_gt_mse_improvement_on_gt_mistake"] = _mean(
                     flagged, f"{name}_gt_mse_improvement"
                 )
-    summary["data"] = _provenance(rows, dataset, cfg, conditions, n_seeds)
+    summary["data"] = _provenance(rows, dataset, cfg, conditions + list(_CHANNELS), n_seeds)
 
     with open(os.path.join(output_dir, "metadata_steering.json"), "w") as f:
         json.dump({"summary": summary, "per_frame": rows}, f, indent=2)
@@ -1424,6 +1600,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
     _render_floor(rows, summary, os.path.join(output_dir, "steering_floor.png"))
     _render_factorial(rows, summary, os.path.join(output_dir, "factorial.png"))
     _render_speed(rows, summary, os.path.join(output_dir, "speed.png"))
+    _render_channels(rows, summary, os.path.join(output_dir, "precision_contact.png"))
     if labelled and len(rows) > 1:
         _render_response(rows, mean_axis, summary, os.path.join(output_dir, "response.png"))
 
@@ -1461,6 +1638,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         Panel("speed.png",
               "The speed clause — is the number read as tempo, and is it its own axis?",
               how=_SPEED_HOW, primary=True),
+        Panel("precision_contact.png",
+              "The precision and contact clauses — does either move the chunk past the floor?",
+              how=_CHANNELS_HOW),
         Panel("factorial.png",
               "The 2x2 — does the number or the mistake sentence carry the effect?",
               how=_FACTORIAL_HOW),
@@ -1553,6 +1733,28 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
                 baseline=1.0,
                 note="RMS per-step travel of the speed-5 chunk over the speed-1 chunk. Kept for continuity, and weaker than the 5-over-3 ratio above: the demonstrations' own speed-1 segments move MORE per step than their speed-2 and speed-3 ones, so this ratio can sit above 1 while the low end of the scale is backwards.",
             ),
+            Metric(
+                "precision_separation_median",
+                "precision / flow-noise separation",
+                good="high",
+                fmt=2,
+                baseline=1.0,
+                trend=True,
+                note="Precision-range RMSE (precision 1 to 5 at quality 5, no mistake, speed 5) over the seed floor.",
+            ),
+            Metric(
+                "contact_clause_separation_median",
+                "contact / flow-noise separation",
+                good="high",
+                fmt=2,
+                baseline=1.0,
+                trend=True,
+                note=(
+                    "Mean over the fifteen contact codes of the distance from the rollout chunk without "
+                    "the contact sentence, over the seed floor. The spread between codes is "
+                    "contact_spread_separation_median in the JSON."
+                ),
+            ),
         ],
         panels=panels,
         extra={"provenance": summary["data"]},
@@ -1574,5 +1776,9 @@ def run(adapter, dataset, cfg, output_dir: str) -> None:
         f"rho(q5)={summary['q5_disp_path']:.4f} (floor {summary['seed_floor_disp_path']:.4f})  "
         f"conditionality={summary['conditionality_ratio']:.2f}x  "
         f"shared cos={summary['shared_cosine_median']:+.2f} (null {summary['noise_cosine_median']:+.2f})  "
-        f"R={summary['shared_fraction']:.2f}"
+        f"R={summary['shared_fraction']:.2f}  "
+        f"precision range {summary['precision_separation_median']:.2f}x floor "
+        f"(tau={summary['precision_kendall_tau_mean']:+.2f})  "
+        f"contact {summary['contact_clause_separation_median']:.2f}x floor "
+        f"(spread {summary['contact_spread_separation_median']:.2f}x)"
     )

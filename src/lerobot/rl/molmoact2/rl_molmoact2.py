@@ -21,6 +21,7 @@ import torch
 from torch import Tensor
 
 from lerobot.configs import PreTrainedConfig
+from lerobot.datasets.contact_vocab import code_for
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
 from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
 from lerobot.rl.molmoact2.hybrid_critic import MolmoAct2Critic
@@ -61,6 +62,13 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # put, so the next n/b continues the script from where it was.
     eval_subtasks: list[str] = field(default_factory=list)
     eval_home_subtask: str = "return to home"
+    # Per-step prompt metadata, aligned with eval_subtasks and latched with the step
+    # (r latches the home values). Precision is 1-5; contact is a contact_vocab slug
+    # ("top-pinch", ..., "na"). None = channel off: no clause, the prompt is unchanged.
+    eval_subtask_precisions: list[int] | None = None
+    eval_subtask_contacts: list[str] | None = None
+    eval_home_precision: int = 1
+    eval_home_contact: str = "na"
 
     # ── Replay buffer ──────────────────────────────────────────────────────
     storage_device: str = "cpu"
@@ -221,6 +229,8 @@ class MolmoAct2RLConfig(MolmoAct2Config):
                 elif float(limit) < 0:
                     raise ValueError(f"{name}[{idx}] must be >= 0, got {limit!r}.")
 
+        self._validate_eval_subtask_metadata()
+
         if self.critic_llm_depth < 1:
             raise ValueError("critic_llm_depth must be >= 1.")
         if self.critic_hidden_size < 1:
@@ -265,6 +275,31 @@ class MolmoAct2RLConfig(MolmoAct2Config):
             self.pointmap_config.history_num_samples = self.memory.history_num_samples
             self.pointmap_config.history_window_seconds = self.memory.history_window_seconds
             self.pointmap_config.history_times_seconds = list(history_times)
+
+    def _validate_eval_subtask_metadata(self) -> None:
+        """Precision/contact lists must align with eval_subtasks and hold valid values;
+        the home values are checked too, since r latches them whenever a list is set."""
+        n_steps = len(self.eval_subtasks)
+        for name, values in (
+            ("eval_subtask_precisions", self.eval_subtask_precisions),
+            ("eval_subtask_contacts", self.eval_subtask_contacts),
+        ):
+            if values is not None and len(values) != n_steps:
+                raise ValueError(
+                    f"{name} must have one entry per eval_subtasks step ({n_steps}), got {len(values)}."
+                )
+        for name, precision in [("eval_home_precision", self.eval_home_precision)] + [
+            (f"eval_subtask_precisions[{i}]", p) for i, p in enumerate(self.eval_subtask_precisions or [])
+        ]:
+            if isinstance(precision, bool) or not isinstance(precision, int) or not 1 <= precision <= 5:
+                raise ValueError(f"{name} must be an integer 1-5, got {precision!r}.")
+        for name, slug in [("eval_home_contact", self.eval_home_contact)] + [
+            (f"eval_subtask_contacts[{i}]", c) for i, c in enumerate(self.eval_subtask_contacts or [])
+        ]:
+            try:
+                code_for(slug)
+            except ValueError as err:
+                raise ValueError(f"{name}: {err}") from None
 
 
 # ── Policy ─────────────────────────────────────────────────────────────────

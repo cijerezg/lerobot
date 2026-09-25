@@ -16,13 +16,20 @@ import torch
 
 pytest.importorskip("transformers", reason="molmoact2 processor imports policy deps")
 
+from lerobot.datasets.contact_vocab import CONTACT_VOCAB  # noqa: E402
 from lerobot.policies.molmoact2.processor_molmoact2 import (  # noqa: E402
     MolmoAct2PackInputsProcessorStep,
+    _build_robot_text,
 )
 from lerobot.probes.adapters.molmoact2 import MolmoAct2Adapter  # noqa: E402
 from lerobot.probes.utils import identity_columns  # noqa: E402
 from lerobot.processor import PolicyProcessorPipeline  # noqa: E402
 from lerobot.processor.converters import create_transition  # noqa: E402
+from lerobot.scripts.diverse_smoke import (  # noqa: E402
+    _SPEED_CLAUSE,
+    parse_contact_clauses,
+    parse_precision_clauses,
+)
 from lerobot.types import TransitionKey  # noqa: E402
 from lerobot.utils.constants import OBS_IMAGES, OBS_STATE  # noqa: E402
 
@@ -225,3 +232,72 @@ def test_the_action_key_is_untouched_by_the_clause(pack_step) -> None:
         with_clause[TransitionKey.COMPLEMENTARY_DATA]["action_dim_is_pad"],
         without[TransitionKey.COMPLEMENTARY_DATA]["action_dim_is_pad"],
     )
+
+
+# ── Smoke clause parser: precision and contact ───────────────────────────────
+
+
+def _metadata_prompt(**metadata) -> str:
+    return _build_robot_text(
+        task=TASK,
+        state_string="",
+        num_images=0,
+        current_subtask="grasp the sock",
+        metadata={"quality": 5, "mistake": False, "speed": 3, **metadata},
+    )
+
+
+@pytest.mark.parametrize("level", range(1, 6))
+def test_the_smoke_parser_round_trips_every_precision_level(level) -> None:
+    text = _metadata_prompt(precision=level, contact=0)
+    assert parse_precision_clauses(text) == [level]
+    assert parse_contact_clauses(text) == [0]
+    assert _SPEED_CLAUSE.findall(text) == ["3"]
+
+
+@pytest.mark.parametrize("element", CONTACT_VOCAB, ids=lambda e: e.slug)
+def test_the_smoke_parser_round_trips_every_contact_phrase(element) -> None:
+    text = _metadata_prompt(precision=2, contact=element.code)
+    assert f" The contact is {element.phrase}. Given these" in text
+    assert parse_contact_clauses(text) == [element.code]
+    assert parse_precision_clauses(text) == [2]
+
+
+def test_a_prompt_without_the_new_clauses_parses_to_none() -> None:
+    text = _metadata_prompt()
+    assert "precision" not in text and "contact" not in text
+    assert parse_precision_clauses(text) == []
+    assert parse_contact_clauses(text) == []
+    assert parse_precision_clauses(_build_robot_text(task=TASK, state_string="", num_images=0)) == []
+
+
+def test_a_contact_phrase_outside_the_vocabulary_is_an_error() -> None:
+    with pytest.raises(ValueError, match="not in the vocabulary"):
+        parse_contact_clauses("The speed is 3 of 5. The contact is a firm handshake. Given these")
+
+
+def test_the_pack_step_columns_render_clauses_the_smoke_parser_reads_back(pack_step) -> None:
+    """Through the real tokenizer: the buffer columns (-1 = unlabelled) come back out of
+    the decoded prompt exactly, which is the check diverse_smoke runs on every sample."""
+    precision = [1, 5, -1, 3]
+    contact = [0, 14, 7, -1]
+    out = pack_step(
+        create_transition(
+            observation=_observation(4),
+            action=torch.zeros(4, 30, 8),
+            complementary_data={
+                "metadata_quality": torch.full((4,), 5.0),
+                "metadata_quality_is_valid": torch.ones(4, dtype=torch.bool),
+                "metadata_mistake": torch.zeros(4),
+                "metadata_speed": torch.full((4,), 4.0),
+                "metadata_precision": torch.tensor(precision, dtype=torch.bfloat16),
+                "metadata_contact": torch.tensor(contact, dtype=torch.bfloat16),
+            },
+        )
+    )
+    tokenizer = pack_step.processor.tokenizer
+    for i, ids in enumerate(out[TransitionKey.COMPLEMENTARY_DATA]["input_ids"]):
+        text = tokenizer.decode(ids, skip_special_tokens=False)
+        assert parse_precision_clauses(text) == ([precision[i]] if precision[i] >= 0 else [])
+        assert parse_contact_clauses(text) == ([contact[i]] if contact[i] >= 0 else [])
+        assert _SPEED_CLAUSE.findall(text) == ["4"]

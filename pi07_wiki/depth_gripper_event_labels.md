@@ -298,3 +298,20 @@ to predict episode-level event priors with no observation.
 The auxiliary head and its weight are model-training work and are deliberately
 outside the label-generation pass. The materializer's job ends when the four
 datasets have verified, action-derived sidecars and QA reports.
+
+## v2 relative-travel rule (2026-09-24, opt-in, bits root only)
+
+`--rule relative_travel` (rubric `depth-gripper-event-labels-v2-relative-travel`). The v1 absolute band fails on tasks
+whose gripper never opens past -90: bits open only to -30..-90, so v1 read whole bits episodes as one closed interval
+(14 intervals over 9 episodes, ~75 real closes). v2, per episode on the raw command $g$:
+
+- while open, track $m=\min g$ since the last opening; close at the first frame with $g \ge m + 25^\circ$;
+- while closed, track $M=\max g$ since the closing; open at the first frame with $g \le M - 25^\circ$;
+- 15-frame persistence, event observability, soft targets and sidecar schemas are unchanged.
+
+Read-only comparison of closed intervals v1 -> v2: bits 14 -> 76, bottle-train-v2 33 -> 48, socks-v3 121 -> 124,
+shirts-v3 74 -> 73, two_container-v3 136 -> 143, rollouts-v2 116 -> 115
+(`migration/bits_annotation_2026-09-24/gripper_rule_proto.py`). Only `outputs/rebot_bits-annotated-v2` carries v2
+sidecars (user decision: bits only for now). Its info has `thresholds_degrees: null` + `travel_degrees: 25`, so a
+consolidation with v1 leaves is refused by `depth_event_labels_info.py`, and `probes/depth_event_probe.py` (which re-derives
+the closed state from the absolute thresholds) cannot run on it until the other roots move to v2.

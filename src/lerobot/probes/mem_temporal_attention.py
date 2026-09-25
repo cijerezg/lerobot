@@ -453,7 +453,7 @@ def _load_mistake_spans(dataset) -> list[dict]:
     from lerobot.rl.offline_dataset_utils import load_metadata_rows
 
     try:
-        _episode_rows, rows, _speed_rows = load_metadata_rows(dataset.root)
+        _episode_rows, rows, *_ = load_metadata_rows(dataset.root)
     except (FileNotFoundError, OSError):
         return []
     return [

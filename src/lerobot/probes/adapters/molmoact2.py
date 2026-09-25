@@ -1405,6 +1405,8 @@ class MolmoAct2Adapter(ProbablePolicy):
         ("metadata_quality", " The quality is"),
         ("metadata_mistake", " The robot made"),
         ("metadata_speed", " The speed is"),
+        ("metadata_precision", " The precision is"),
+        ("metadata_contact", " The contact is"),
         ("question", " Given these,"),
     )
 
@@ -1465,7 +1467,9 @@ class MolmoAct2Adapter(ProbablePolicy):
         for (name, start), end in zip(ordered, bounds[1:]):
             for pos in range(start, end):
                 clause_of[pos] = name
-        metadata = {"metadata_quality", "metadata_mistake", "metadata_speed"}
+        metadata = {
+            "metadata_quality", "metadata_mistake", "metadata_speed", "metadata_precision", "metadata_contact"
+        }
         for name in (
             "embodiment", "control_mode", "task", "subtask", "state", "history", "question", "metadata", "template"
         ):

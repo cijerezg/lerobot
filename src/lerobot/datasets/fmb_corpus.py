@@ -27,12 +27,15 @@ from typing import Any
 import numpy as np
 
 from lerobot.datasets.diverse_corpus import (
+    CONTACT_ATOMS_VIEW,
     FUTURE_FPS,
     FUTURE_POINTS,
     HISTORY_OFFSETS_S,
+    PRECISION_ATOMS_VIEW,
     SPEED_ATOMS_VIEW,
     SUBTASK_ATOMS_VIEW,
     DiverseCorpus,
+    read_optional_jsonl,
     time_stratified_indices,
 )
 from lerobot.datasets.diverse_pilot import COPY_STATE_LEAD_S, action_lead_s, sample_action_chunk
@@ -127,6 +130,8 @@ class FMBCorpus:
         self._actor_rows: list[dict[str, Any]] | None = None
         self._critic_rows: list[dict[str, Any]] | None = None
         self._speed_rows: list[dict[str, Any]] | None = None
+        self._precision_rows: list[dict[str, Any]] | None = None
+        self._contact_rows: list[dict[str, Any]] | None = None
         self._subtask_atom_rows: list[dict[str, Any]] | None = None
 
     @lru_cache(maxsize=64)  # noqa: B019 - bounded by the production episode count
@@ -144,6 +149,18 @@ class FMBCorpus:
         if self._speed_rows is None:
             self._speed_rows = _read_jsonl(self.root / SPEED_ATOMS_VIEW)
         return self._speed_rows
+
+    def precision_atoms(self) -> list[dict[str, Any]]:
+        """Precision per primitive interval, same row shape as the common store; empty when absent."""
+        if self._precision_rows is None:
+            self._precision_rows = read_optional_jsonl(self.root / PRECISION_ATOMS_VIEW)
+        return self._precision_rows
+
+    def contact_atoms(self) -> list[dict[str, Any]]:
+        """Contact code per primitive interval, same row shape as the common store; empty when absent."""
+        if self._contact_rows is None:
+            self._contact_rows = read_optional_jsonl(self.root / CONTACT_ATOMS_VIEW)
+        return self._contact_rows
 
     def _interval_at(self, episode_id: str, timestep: int) -> dict[str, Any]:
         return next(

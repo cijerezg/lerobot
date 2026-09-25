@@ -215,7 +215,10 @@ def _diverse_inputs(buffer, cfg, sample: dict) -> dict:
     obs = MolmoAct2Trainer._inject_depth_observations(obs, comp, cfg)
     extra = {key: comp[key] for key in _forwarded_complementary_keys(comp, cfg)}
     # The clauses come as strings below, the way the ReBot side passes them.
-    for key in ("subtask_index", "metadata_quality", "metadata_mistake", "metadata_speed"):
+    for key in (
+        "subtask_index", "metadata_quality", "metadata_mistake", "metadata_speed", "metadata_precision",
+        "metadata_contact",
+    ):
         extra.pop(key, None)
     row = buffer.rows[sample["index"]]
     record = buffer.selection.episode_records[str(row["episode_id"])]

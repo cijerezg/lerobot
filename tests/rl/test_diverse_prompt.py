@@ -6,6 +6,7 @@ the ids are stable, and no source name leaks into the text.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -353,6 +354,26 @@ def test_speed_renders_as_an_integer_of_five() -> None:
     # The -1 sentinel (no atom / no segment) omits the clause, never "-1 of 5".
     assert "speed" not in step_metadata
     assert "-1" not in _prompt(step_metadata)
+
+
+def test_precision_and_contact_columns_reach_the_prompt(selection) -> None:
+    """Buffer column -> _extract_metadata -> clause; -1 leaves today's prompt byte-identical."""
+    index = next(i for i, row in enumerate(selection.rows) if row["source"] == "fmb")
+    spec = DiverseSampleSpec(load_images=False, load_depth=False)
+    unlabelled = DiverseActorBuffer(replace(selection, rows=[selection.rows[index]]), spec)
+    labelled = DiverseActorBuffer(
+        replace(selection, rows=[{**selection.rows[index], "precision": 3, "contact": 0}]), spec
+    )
+    extract = MolmoAct2PackInputsProcessorStep._extract_metadata
+    before = extract(unlabelled.collate([0])["complementary_info"], 1)[0]
+    after = extract(labelled.collate([0])["complementary_info"], 1)[0]
+    if selection.rows[index]["precision"] < 0 and selection.rows[index]["contact"] < 0:
+        assert "precision" not in before and "contact" not in before
+        legacy = {key: value for key, value in before.items() if key not in ("precision", "contact")}
+        assert _prompt(before) == _prompt(legacy)
+        assert "The precision" not in _prompt(before) and "The contact" not in _prompt(before)
+    assert after["precision"] == 3 and after["contact"] == 0
+    assert " The precision is 3 of 5. The contact is a top pinch." in _prompt(after)
 
 
 def test_automatic_quality_can_be_switched_back_on(selection) -> None:

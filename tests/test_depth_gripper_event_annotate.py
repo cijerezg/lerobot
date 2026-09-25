@@ -12,6 +12,7 @@ from lerobot.data_processing.annotate.depth_gripper_event_annotate import (
     build_events,
     build_labels,
     closed_intervals,
+    relative_closed_intervals,
     future_event_targets,
     validate_materialization,
 )
@@ -98,3 +99,12 @@ def test_labels_are_episode_local_and_pass_acceptance_checks() -> None:
     assert labels.loc[219, "depth_gripper_close_delta"] == -1
     assert labels.loc[219, "depth_gripper_close_target"] == 0
     assert labels.loc[220, "depth_gripper_close_delta"] == 20
+
+
+def test_relative_travel_rule_finds_shallow_closes() -> None:
+    # bits-style command: open only to -35, closes to ~0, a partial -17 pinch must not count.
+    gripper = np.full(120, -35.0, dtype=np.float32)
+    gripper[20:50] = 0.0  # close (35 deg of travel) then reopen to -35
+    gripper[70:90] = -17.0  # 18 deg partial pinch, under the 25 deg travel
+    assert relative_closed_intervals(gripper, min_frames=15) == [(20, 50)]
+    assert closed_intervals(gripper, min_frames=15) == [(0, 120)]  # v1: -35 is already "closed", one interval

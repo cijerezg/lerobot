@@ -275,17 +275,21 @@ def subtask_group(subtask: str) -> str:
 
 
 def frame_metadata_lookup(dataset) -> dict[int, dict]:
-    """global frame index → ``{"quality": int, "mistake": bool, "speed": int}``.
+    """global frame index → ``{"quality": int, "mistake": bool, "speed": int}``, plus
+    ``"precision": int`` and ``"contact": int`` (CONTACT_VOCAB code) where a row covers
+    the frame.
 
-    Same spans training uses (`ReplayBuffer.materialize_metadata`): quality and
-    speed broadcast over the subtask segment, mistake over its 4 s window. Returns
-    ``{}`` when the dataset has not been through `metadata_annotate.py` and
-    `speed_annotate.py`.
+    Same spans training uses (`ReplayBuffer.materialize_metadata`): quality, speed,
+    precision and contact broadcast over the subtask segment, mistake over its 4 s
+    window. Returns ``{}`` when the dataset has not been through `metadata_annotate.py`
+    and `speed_annotate.py`.
     """
     from lerobot.rl.offline_dataset_utils import load_metadata_rows
 
     try:
-        episode_rows, mistake_rows, speed_rows = load_metadata_rows(dataset.root)
+        episode_rows, mistake_rows, speed_rows, precision_rows, contact_rows = load_metadata_rows(
+            dataset.root
+        )
     except FileNotFoundError:
         return {}
 
@@ -298,11 +302,19 @@ def frame_metadata_lookup(dataset) -> dict[int, dict]:
     for row in speed_rows:
         for idx in range(int(row["from_index"]), min(int(row["to_index"]), size)):
             speeds[idx] = int(row["speed"])
+    optional: dict[str, dict[int, int]] = {"precision": {}, "contact": {}}
+    for key, rows in (("precision", precision_rows), ("contact", contact_rows)):
+        for row in rows or ():
+            for idx in range(int(row["from_index"]), min(int(row["to_index"]), size)):
+                optional[key][idx] = int(row[key])
 
     lookup: dict[int, dict] = {}
     for row in episode_rows:
         for idx in range(int(row["from_index"]), min(int(row["to_index"]), size)):
             lookup[idx] = {"quality": int(row["quality"]), "mistake": idx in mistakes, "speed": speeds[idx]}
+            for key, values in optional.items():
+                if idx in values:
+                    lookup[idx][key] = values[idx]
     return lookup
 
 

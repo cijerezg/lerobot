@@ -16,6 +16,7 @@ from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
+from lerobot.datasets.contact_vocab import phrase_for as contact_phrase_for
 from lerobot.datasets.diverse_actor_selection import ACTION_LAYOUTS
 from lerobot.datasets.embodiment import (
     EMBODIMENT_NAMES,
@@ -329,6 +330,10 @@ def _build_robot_text(
             )
         if "speed" in metadata:
             metadata_clause += f" The speed is {int(metadata['speed'])} of 5."
+        if "precision" in metadata:
+            metadata_clause += f" The precision is {int(metadata['precision'])} of 5."
+        if "contact" in metadata:
+            metadata_clause += f" The contact is {contact_phrase_for(int(metadata['contact']))}."
     prompt = (
         f"{embodiment_clause}{control_mode_clause}The task is to {task}."
         f"{depth_clause}{subtask_clause}{state_clause}{history_clause}"
@@ -1793,24 +1798,37 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             return list(metadata)
         # Offline batches: per-frame metadata columns from materialize_metadata (ReBot)
         # or the diverse buffer's collate. Speed is absent only on buffers filled before
-        # speed labels existed; the clause then renders without it.
+        # speed labels existed; the clause then renders without it. Precision and
+        # contact (code 0-14) likewise: a missing column leaves the key out.
         quality = complementary.get("metadata_quality")
         if quality is None:
             return [None] * batch_size
         quality = torch.as_tensor(quality).detach().cpu().float().reshape(-1)
         mistake = torch.as_tensor(complementary["metadata_mistake"]).detach().cpu().float().reshape(-1)
-        speed = complementary.get("metadata_speed")
+        speed, precision, contact = (
+            complementary.get(key) for key in ("metadata_speed", "metadata_precision", "metadata_contact")
+        )
         if speed is not None:
             speed = torch.as_tensor(speed).detach().cpu().float().reshape(-1)
+        if precision is not None:
+            precision = torch.as_tensor(precision).detach().cpu().float().reshape(-1)
+        if contact is not None:
+            contact = torch.as_tensor(contact).detach().cpu().float().reshape(-1)
         # A negative quality is the "unknown" sentinel materialize_metadata fills for
         # frames no episode row covers, and the value the diverse buffer writes when a
         # sample's quality was derived automatically rather than reviewed. Omit the
-        # clause for those rather than rendering "The quality is -1 of 5." Speed uses
-        # the same sentinel.
+        # clause for those rather than rendering "The quality is -1 of 5." Speed,
+        # precision and contact use the same sentinel.
         return [
             ({"quality": int(quality[i])} if float(quality[i]) >= 0 else {})
             | {"mistake": bool(mistake[i] > 0.5)}
             | ({"speed": int(speed[i])} if speed is not None and float(speed[i]) >= 0 else {})
+            | (
+                {"precision": int(precision[i])}
+                if precision is not None and float(precision[i]) >= 0
+                else {}
+            )
+            | ({"contact": int(contact[i])} if contact is not None and float(contact[i]) >= 0 else {})
             for i in range(batch_size)
         ]
 

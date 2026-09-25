@@ -11,7 +11,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lerobot.datasets.diverse_corpus import DiverseCorpus, time_stratified_indices
+from lerobot.datasets.diverse_corpus import (
+    CONTACT_ATOMS_VIEW,
+    PRECISION_ATOMS_VIEW,
+    DiverseCorpus,
+    time_stratified_indices,
+)
+from lerobot.datasets.fmb_corpus import FMBCorpus
 
 BUILDER_PATH = (
     Path(__file__).resolve().parents[2]
@@ -491,3 +497,20 @@ def test_fmb_keeps_its_own_label_provenance_rather_than_borrowing_the_common_voc
     # FMB boundaries are source-native primitive runs, not reviewed subtask transitions.
     assert {row["start_boundary"] for row in intervals} <= {"episode_start", "primitive_transition"}
     assert {row["outcome_provenance"] for row in intervals} == {"unknown"}
+
+
+@pytest.mark.parametrize("reader", [DiverseCorpus, FMBCorpus])
+def test_precision_and_contact_sidecars_are_optional(tmp_path: Path, reader) -> None:
+    """No sidecar reads as no rows (every anchor then carries -1); a present one is read
+    in the speed-atom row shape."""
+    (tmp_path / "episodes.jsonl").write_text("", encoding="utf-8")
+    assert reader(tmp_path).precision_atoms() == []
+    assert reader(tmp_path).contact_atoms() == []
+
+    span = {"episode_id": "ep0", "parent_interval_index": 0, "atom_index": 0,
+            "start_timestep": 0, "end_timestep_exclusive": 30}
+    (tmp_path / PRECISION_ATOMS_VIEW).write_text(json.dumps({**span, "precision": 4}) + "\n", encoding="utf-8")
+    (tmp_path / CONTACT_ATOMS_VIEW).write_text(json.dumps({**span, "contact": 14}) + "\n", encoding="utf-8")
+    corpus = reader(tmp_path)
+    assert corpus.precision_atoms() == [{**span, "precision": 4}]
+    assert corpus.contact_atoms() == [{**span, "contact": 14}]

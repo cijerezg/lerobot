@@ -22,9 +22,11 @@ out. No model, no GPU, no gradient: this is the cheap check that runs before the
 training run and answers the questions that do not need a forward pass.
 
 With the preprocessor on, the first batch is also checked clause by clause: every
-sample's rendered prompt must carry exactly the quality / mistake / speed its metadata
-columns say, and a diverse sample's speed and step text must be the ones its selection
-row holds (the reviewed atom spanning the anchor). A mismatch is an error, not a log line.
+sample's rendered prompt must carry exactly the quality / mistake / speed / precision /
+contact its metadata columns say, and a diverse sample's speed and step text must be the
+ones its selection row holds (the reviewed atom spanning the anchor). Precision and contact
+are optional channels: a -1 column must render no clause. A mismatch is an error, not a
+log line.
 
     uv run --no-project --python .venv/bin/python \\
         python -m lerobot.scripts.diverse_smoke --config_path=config_rl.yaml --batches 8
@@ -39,6 +41,7 @@ from collections import Counter
 
 import torch
 
+from lerobot.datasets.contact_vocab import CONTACT_VOCAB
 from lerobot.rl.data_sources.diverse_integration import (
     align_rebot_buffers,
     build_diverse_buffer,
@@ -61,7 +64,31 @@ REBOT_SOURCE_ID = 5
 
 _QUALITY_CLAUSE = re.compile(r"The quality is (\d) of 5\.")
 _SPEED_CLAUSE = re.compile(r"The speed is (\d) of 5\.")
+_PRECISION_CLAUSE = re.compile(r"The precision is (\d) of 5\.")
+_CONTACT_CLAUSE = re.compile(r"The contact is (.+?)\.(?= The | Given |$)")
+_CONTACT_CODE_BY_PHRASE = {element.phrase: element.code for element in CONTACT_VOCAB}
 _STEP_CLAUSE = re.compile(r"The current step is (.+?)\.(?= The | Given )")
+
+
+def parse_precision_clauses(text: str) -> list[int]:
+    """Every precision level rendered in ``text`` (empty when the clause is omitted)."""
+    return [int(level) for level in _PRECISION_CLAUSE.findall(text)]
+
+
+def parse_contact_clauses(text: str) -> list[int]:
+    """Every contact clause in ``text`` as its CONTACT_VOCAB code (empty when omitted).
+    A phrase outside the vocabulary is an error, not a silent miss."""
+    codes = []
+    for phrase in _CONTACT_CLAUSE.findall(text):
+        if phrase not in _CONTACT_CODE_BY_PHRASE:
+            raise ValueError(f"contact clause phrase {phrase!r} is not in the vocabulary")
+        codes.append(_CONTACT_CODE_BY_PHRASE[phrase])
+    return codes
+
+
+def _expected_clause(value) -> list[int]:
+    """The clause list a column value must render: none for the -1 (unlabelled) sentinel."""
+    return [int(value)] if float(value) >= 0 else []
 
 
 def check_metadata_prompts(packed: dict, info: dict, step, diverse_rows: list[dict]) -> Counter:
@@ -74,6 +101,11 @@ def check_metadata_prompts(packed: dict, info: dict, step, diverse_rows: list[di
     quality_valid = info["metadata_quality_is_valid"].reshape(-1).tolist()
     mistake = info["metadata_mistake"].reshape(-1).tolist()
     speed = info["metadata_speed"].reshape(-1).tolist()
+    # A batch without the column is a pre-channel buffer: every row unlabelled.
+    precision, contact = (
+        info[key].reshape(-1).tolist() if key in info else [-1] * len(speed)
+        for key in ("metadata_precision", "metadata_contact")
+    )
     source = info["source_id"].reshape(-1).tolist()
     row_index = info["diverse_row_index"].reshape(-1).tolist()
     counts: Counter = Counter()
@@ -81,10 +113,17 @@ def check_metadata_prompts(packed: dict, info: dict, step, diverse_rows: list[di
         text = tokenizer.decode(ids)
         found_quality = _QUALITY_CLAUSE.findall(text)
         found_speed = _SPEED_CLAUSE.findall(text)
+        found_precision = parse_precision_clauses(text)
+        found_contact = parse_contact_clauses(text)
         if int(source[i]) != REBOT_SOURCE_ID:
             row = diverse_rows[int(row_index[i])]
             if int(speed[i]) != int(row["speed"]):
                 raise ValueError(f"sample {i}: column speed {speed[i]} != selection row speed {row['speed']}")
+            for name, column in (("precision", precision), ("contact", contact)):
+                if int(column[i]) != int(row.get(name, -1)):
+                    raise ValueError(
+                        f"sample {i}: column {name} {column[i]} != selection row {name} {row.get(name, -1)}"
+                    )
             # The step clause is the reviewed atom, not the parent interval it tiles.
             step = _STEP_CLAUSE.findall(text)
             if step != [str(row["subtask"]).rstrip(".")]:
@@ -93,6 +132,10 @@ def check_metadata_prompts(packed: dict, info: dict, step, diverse_rows: list[di
             counts["step_is_the_parent_interval"] += int(row["subtask"] == row["parent_subtask"])
         if found_speed != [str(int(speed[i]))]:
             raise ValueError(f"sample {i}: prompt speed {found_speed} vs column {speed[i]}: {text[-400:]}")
+        if found_precision != _expected_clause(precision[i]):
+            raise ValueError(f"sample {i}: prompt precision {found_precision} vs column {precision[i]}")
+        if found_contact != _expected_clause(contact[i]):
+            raise ValueError(f"sample {i}: prompt contact {found_contact} vs column {contact[i]}")
         if bool(quality_valid[i]):
             if found_quality != [str(int(quality[i]))]:
                 raise ValueError(f"sample {i}: prompt quality {found_quality} vs column {quality[i]}")
@@ -103,6 +146,9 @@ def check_metadata_prompts(packed: dict, info: dict, step, diverse_rows: list[di
             raise ValueError(f"sample {i}: mistake column {mistake[i]} but '{sentence}' absent")
         counts["prompts"] += 1
         counts[f"speed_{int(speed[i])}"] += 1
+        counts["speed_clauses"] += len(found_speed)
+        counts["precision_clauses"] += len(found_precision)
+        counts["contact_clauses"] += len(found_contact)
     return counts
 
 
@@ -136,7 +182,7 @@ def _rebot_buffers(cfg, history_offsets):
         cached = ReplayBuffer.find_cache(
             dataset,
             cfg.buffer_cache_dir,
-            state_keys=buffer_state_keys(cfg),
+            state_keys=buffer_state_keys(cfg, dataset),
             image_storage_dtype=cfg.policy.image_storage_dtype,
             image_storage_size=cfg.policy.image_storage_size,
             image_stride=cfg.policy.image_stride,
@@ -157,6 +203,8 @@ def _rebot_buffers(cfg, history_offsets):
         )
         if cfg.policy.memory.metadata_enabled:
             buffer.materialize_metadata(*load_metadata_rows(dataset.root))
+        # build_mixture_groups reads the sampling group off it, as in training.
+        buffer.offline_source = source
         datasets.append(dataset)
         buffers.append(buffer)
     return datasets[0], buffers
@@ -213,6 +261,8 @@ def main() -> None:
 
     telemetry = MixtureTelemetry()
     speed_by_half: dict[str, Counter] = {"rebot": Counter(), "diverse": Counter()}
+    # Per source name; -1 = unlabelled (clause omitted).
+    channel_by_source: dict[str, dict[str, Counter]] = {"precision": {}, "contact": {}}
     iterator = make_hierarchical_offline_iterator(
         groups,
         batch_size=cfg.batch_size,
@@ -244,6 +294,16 @@ def main() -> None:
             raise ValueError(f"metadata_speed outside 1-5 in batch {step}: {sorted(set(speeds))}")
         for value, source_id in zip(speeds, sources, strict=True):
             speed_by_half["rebot" if int(source_id) == REBOT_SOURCE_ID else "diverse"][int(value)] += 1
+        for name, key, valid in (
+            ("precision", "metadata_precision", range(1, 6)),
+            ("contact", "metadata_contact", range(len(CONTACT_VOCAB))),
+        ):
+            values = info[key].reshape(-1).tolist() if key in info else [-1] * len(sources)
+            if any(int(v) != -1 and int(v) not in valid for v in values):
+                raise ValueError(f"{key} outside {{-1}} + {valid} in batch {step}: {sorted(set(values))}")
+            for value, source_id in zip(values, sources, strict=True):
+                source_name = SOURCE_NAMES.get(int(source_id), str(int(source_id)))
+                channel_by_source[name].setdefault(source_name, Counter())[int(value)] += 1
         if preprocessor is not None and step == 0:
             from lerobot.rl.rl_trainer import Trainer  # noqa: F401 (kept local)
 
@@ -272,6 +332,12 @@ def main() -> None:
 
     logger.info("\n%s", telemetry.describe(SOURCE_NAMES))
     logger.info("Speed label shares by half: %s", {half: dict(sorted(c.items())) for half, c in speed_by_half.items()})
+    for name, by_source in channel_by_source.items():
+        logger.info(
+            "%s label shares by source (-1 = no clause): %s",
+            name.capitalize(),
+            {source: dict(sorted(c.items())) for source, c in sorted(by_source.items())},
+        )
 
 
 if __name__ == "__main__":

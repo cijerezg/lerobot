@@ -12,9 +12,13 @@ from lerobot.rl.buffer import (
 )
 from lerobot.rl.molmoact2.rl_molmoact2_trainer import MolmoAct2Trainer
 from lerobot.rl.offline_dataset_utils import (
+    REBOT_CONTACT_TABLE,
+    REBOT_PRECISION_TABLE,
+    REBOT_SPEED_TABLE,
     _weighted_batch_sizes,
     get_offline_dataset_sources,
     load_additional_offline_buffers,
+    load_metadata_rows,
     materialize_dataset_labels,
     resolve_task_strings,
 )
@@ -434,3 +438,61 @@ def test_release_window_after_a_gap_keeps_both_boundaries(tmp_path):
     )
 
     assert terminals == [False, False, True, False, False, True]
+
+
+def _write_metadata_tables(root, *, precision=False, contact=False):
+    meta = root / "meta"
+    meta.mkdir(parents=True)
+    pd.DataFrame([{"episode_index": 0, "quality": 4, "from_index": 0, "to_index": 6}]).to_parquet(
+        meta / "episode_metadata.parquet"
+    )
+    pd.DataFrame([{"episode_index": 0, "from_index": 0, "to_index": 6, "mistake": False}]).to_parquet(
+        meta / "mistakes.parquet"
+    )
+    pd.DataFrame([{"episode_index": 0, "from_index": 0, "to_index": 6, "speed": 3}]).to_parquet(
+        meta / REBOT_SPEED_TABLE
+    )
+    if precision:
+        pd.DataFrame(
+            [
+                {"episode_index": 0, "from_index": 0, "to_index": 3, "precision": 2},
+                {"episode_index": 0, "from_index": 3, "to_index": 6, "precision": 5},
+            ]
+        ).to_parquet(meta / REBOT_PRECISION_TABLE)
+    if contact:
+        pd.DataFrame([{"episode_index": 0, "from_index": 0, "to_index": 3, "contact": 0}]).to_parquet(
+            meta / REBOT_CONTACT_TABLE
+        )
+
+
+def test_metadata_rows_without_precision_or_contact_tables(tmp_path):
+    """Roots annotated before the precision/contact channels load unchanged."""
+    _write_metadata_tables(tmp_path)
+
+    episode_rows, mistake_rows, speed_rows, precision_rows, contact_rows = load_metadata_rows(tmp_path)
+
+    assert [row["quality"] for row in episode_rows] == [4]
+    assert [row["mistake"] for row in mistake_rows] == [False]
+    assert [row["speed"] for row in speed_rows] == [3]
+    assert precision_rows is None
+    assert contact_rows is None
+
+
+def test_metadata_rows_load_precision_and_contact_tables(tmp_path):
+    _write_metadata_tables(tmp_path, precision=True, contact=True)
+
+    *_, precision_rows, contact_rows = load_metadata_rows(tmp_path)
+
+    assert [(row["from_index"], row["to_index"], row["precision"]) for row in precision_rows] == [
+        (0, 3, 2),
+        (3, 6, 5),
+    ]
+    assert [(row["from_index"], row["to_index"], row["contact"]) for row in contact_rows] == [(0, 3, 0)]
+
+
+def test_metadata_rows_still_require_the_speed_table(tmp_path):
+    _write_metadata_tables(tmp_path, precision=True, contact=True)
+    (tmp_path / "meta" / REBOT_SPEED_TABLE).unlink()
+
+    with pytest.raises(FileNotFoundError, match=REBOT_SPEED_TABLE):
+        load_metadata_rows(tmp_path)

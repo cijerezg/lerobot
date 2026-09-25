@@ -243,10 +243,13 @@ class RTCSharedState:
         self.history_entries: deque | None = None
         # Current subtask: decoded by the high-level query, or walked by the operator
         # console through subtask_script (the rollout's steps in order, cursor 0 on
-        # episode reset; empty = decode path).
+        # episode reset; empty = decode path). A script entry is (text, index) or
+        # (text, index, metadata): the per-step prompt metadata (precision, contact)
+        # latched with the step and merged over the constant metadata each cycle.
         self.current_subtask_name: str | None = None
         self.current_subtask_index: int = -1
-        self.subtask_script: list[tuple[str, int]] = []
+        self.current_subtask_metadata: dict = {}
+        self.subtask_script: list[tuple] = []
         self.subtask_cursor: int = 0
         self.policy_reset_requested = False
         self.update_parameters_requested = False
@@ -415,16 +418,22 @@ class RTCSharedState:
             max_back = max(offsets[0] for offsets in history_offsets.values())
             self.history_entries = deque(maxlen=max_back)
 
-    def update_subtask(self, name: str, index: int) -> None:
+    def update_subtask(self, name: str, index: int, metadata: dict | None = None) -> None:
         with self.lock:
             self.current_subtask_name = name
             self.current_subtask_index = index
+            self.current_subtask_metadata = dict(metadata or {})
 
     def subtask_snapshot(self) -> tuple[str | None, int]:
         with self.lock:
             return self.current_subtask_name, self.current_subtask_index
 
-    def set_subtask_script(self, script: list[tuple[str, int]]) -> None:
+    def subtask_metadata_snapshot(self) -> dict:
+        """Per-step prompt metadata latched with the current step ({} = none)."""
+        with self.lock:
+            return dict(self.current_subtask_metadata)
+
+    def set_subtask_script(self, script: list[tuple]) -> None:
         with self.lock:
             self.subtask_script = list(script)
             self._seek_subtask(0)
@@ -443,9 +452,12 @@ class RTCSharedState:
         # Lock held by the caller. No script (decode path) leaves the clause blank.
         self.subtask_cursor = cursor
         if self.subtask_script:
-            self.current_subtask_name, self.current_subtask_index = self.subtask_script[cursor]
+            entry = self.subtask_script[cursor]
+            self.current_subtask_name, self.current_subtask_index = entry[0], entry[1]
+            self.current_subtask_metadata = dict(entry[2]) if len(entry) > 2 else {}
         else:
             self.current_subtask_name, self.current_subtask_index = None, -1
+            self.current_subtask_metadata = {}
 
     def push_history(self, entry: dict) -> None:
         with self.lock:
@@ -643,12 +655,8 @@ def rtc_inference_worker(
         last_subtask_time: float | None = None
         # Metadata steering at inference = prompt the best behavior (π0.7: quality 5,
         # no mistakes, speed 5 = the fast bucket of speed_annotate.py's fixed edges).
-        memory_cfg = getattr(cfg.policy, "memory", None)
-        inference_metadata = (
-            {"quality": 5, "mistake": False, "speed": 5}
-            if memory_cfg is not None and memory_cfg.metadata_enabled
-            else None
-        )
+        # Precision/contact follow the operator's step and are merged in per cycle.
+        inference_metadata = _constant_inference_metadata(cfg)
 
         while shared_state.running:
             if shared_state.check_and_clear_parameter_update():
@@ -723,6 +731,7 @@ def rtc_inference_worker(
                         logger.warning("[RTC_INFERENCE] Subtask snap missed vocab: %r", raw_text)
 
                 current_subtask, _ = shared_state.subtask_snapshot()
+                cycle_metadata = _merge_subtask_metadata(inference_metadata, shared_state)
                 t_preproc_start = time.perf_counter()
                 processed_batch = trainer.build_inference_batch(
                     obs_filtered,
@@ -731,7 +740,7 @@ def rtc_inference_worker(
                     preprocessor=preprocessor,
                     robot_type=robot_type,
                     subtask=current_subtask if subtask_enabled else None,
-                    metadata=inference_metadata,
+                    metadata=cycle_metadata,
                 )
                 t_preproc_end = time.perf_counter()
 
@@ -1475,6 +1484,22 @@ def _warmup_observation(cfg, history_offsets: dict[str, list[int]] | None, actio
     return obs
 
 
+def _constant_inference_metadata(cfg) -> dict | None:
+    """Quality 5, no mistakes, speed 5 when metadata steering is on, else None."""
+    memory_cfg = getattr(cfg.policy, "memory", None)
+    if memory_cfg is None or not memory_cfg.metadata_enabled:
+        return None
+    return {"quality": 5, "mistake": False, "speed": 5}
+
+
+def _merge_subtask_metadata(constants: dict | None, shared_state: RTCSharedState) -> dict | None:
+    """The constants plus the step's precision/contact (only keys the script sets).
+    Metadata off stays None; no per-step keys leaves the constants unchanged."""
+    if constants is None:
+        return None
+    return {**constants, **shared_state.subtask_metadata_snapshot()}
+
+
 def _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state: RTCSharedState, n_calls: int = 2) -> None:
     """First forwards on a deployment-shaped batch before the operator can start an
     episode: lazy CUDA init, cudnn autotune and (when enabled) compile/graph capture land
@@ -1483,7 +1508,6 @@ def _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state: RTC
     logger.info("[RTC_INFERENCE] Warming up policy (%d calls) - please wait...", n_calls + 1)
     execution_horizon = policy.config.rtc_config.execution_horizon
     action_dim = _action_dim(cfg)
-    memory_cfg = getattr(cfg.policy, "memory", None)
     subtask, _ = shared_state.subtask_snapshot()
     batch = trainer.build_inference_batch(
         _warmup_observation(cfg, shared_state.history_offsets, action_dim),
@@ -1492,7 +1516,7 @@ def _warmup_policy(policy, trainer, preprocessor, cfg, device, shared_state: RTC
         preprocessor=preprocessor,
         robot_type=cfg.env.robot.type if hasattr(cfg.env, "robot") else "",
         subtask=subtask,
-        metadata={"quality": 5, "mistake": False, "speed": 5} if memory_cfg is not None and memory_cfg.metadata_enabled else None,
+        metadata=_merge_subtask_metadata(_constant_inference_metadata(cfg), shared_state),
     )
     dummy_prev = torch.zeros(execution_horizon, action_dim, device=device, dtype=torch.float32)
     with torch.no_grad():
