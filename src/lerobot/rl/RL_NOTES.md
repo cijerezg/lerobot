@@ -161,8 +161,8 @@ the flat `V=0` region. Folding it into its move:
 | val | 76 → 52 | 184 → 319 f | 22 → 68 | 14.4% → 9.9% |
 | sorting_clothes_v4 | 59 → 42 | 272 → 363 f | 56 → 195 | 11.3% → 8.0% |
 
-The fold rule is unambiguous in the data: all 261 release windows across the five
-roots are preceded by an immediately adjacent `move`, none opens an episode.
+A release folds into whatever subtask immediately precedes it, at any length:
+`_subtask_terminals_from_windows` checks neither the preceding verb nor the release's duration.
 
 **Value support still fits.** Post-fold, over 572 segments: median 322 f
 (`V = -0.77`), p90 522 f (`V = -1.14`), max 1061 f (`V = -1.83`). At `discount: 0.97`
@@ -170,6 +170,34 @@ and `reward_normalization_constant: 12.0`, the `[-2, 0]` floor is reached at ~12
 frames, so nothing clips. Recheck this if either constant, `chunk_size`, or the
 annotation granularity changes — the asymptote is `-1/((1-γ)·N) = -2.78`, so the
 headroom is not large.
+
+### The diverse half
+
+Active whenever `skip_critic: false` and `diverse.enabled: true`. `DiverseActorBuffer`
+serves the same transition on its anchors (`critic_view`,
+rl/data_sources/diverse_actor_buffer.py); `rl_offline.py` feeds the mixed batch to
+`update_critic` unchanged.
+
+- The critic segment is the reviewed atom (`subtask_atoms.jsonl`), the text the actor
+  is prompted with. A `release` atom that starts where the previous atom ends folds into
+  it, the rule above (`critic_end_timestep_exclusive`, written per row by `_prepare_rows`
+  in datasets/diverse_actor_selection.py). 852 of the corpus's 865 releases fold; FMB has
+  no release atoms.
+- `done` when that end falls inside the 1 s chunk after the anchor, in native frames.
+  Reward `-1` per step, `0` on the terminal step, `critic_mistake_penalty` once on the
+  step whose window holds a reviewed mistake onset, all over
+  `reward_normalization_constant`. Same numbers as the ReBot half.
+- `next_state` is the anchor one second later (same episode, `anchor_frame + rate`),
+  with its own history; its depth rides `next_depth.*` as for ReBot. About 5 % of
+  anchors have no such row (the last second before an episode's final anchor, or a
+  successor the corpus did not retain: 3.7k of 76k common anchors). They are emitted
+  with `critic_skip` and `update_critic` leaves them out of the loss and the metrics. A
+  ReBot batch carries no `critic_skip`; the concatenation pads it with zeros, which
+  reads as keep.
+- An actor-only run (`skip_critic: true`) gets the same reward and done but mirrors
+  `state` into `next_state` and reads nothing extra.
+- Atoms are shorter than ReBot segments (median 3.7 s against 7.8 s), so more of the
+  diverse half sits in the terminal zone; nothing reaches the 41.8 s floor.
 
 ### Open: `critic_mistake_penalty` likely double-counts
 

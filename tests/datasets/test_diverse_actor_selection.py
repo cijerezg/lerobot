@@ -263,3 +263,41 @@ def test_every_row_carries_a_layout_and_a_camera_role_set() -> None:
 
 def test_sample_contract_holds_on_real_samples() -> None:
     check_sample_contract(_selection(), per_source=3)
+
+
+# ── Critic fields ────────────────────────────────────────────────────────────
+
+
+def test_critic_end_folds_adjacent_releases_only() -> None:
+    from lerobot.datasets.diverse_actor_selection import _critic_end_by_atom_start
+
+    atoms = [
+        {"start_timestep": 0, "end_timestep_exclusive": 10, "verb": "grasp"},
+        {"start_timestep": 10, "end_timestep_exclusive": 20, "verb": "move"},
+        {"start_timestep": 20, "end_timestep_exclusive": 24, "verb": "release"},
+        {"start_timestep": 24, "end_timestep_exclusive": 26, "verb": "release"},
+        {"start_timestep": 30, "end_timestep_exclusive": 33, "verb": "release"},
+        {"start_timestep": 33, "end_timestep_exclusive": 40, "verb": "return"},
+    ]
+    # move -> release -> release chains to 26; the gapped release and the return stand alone.
+    assert _critic_end_by_atom_start(atoms) == {0: 10, 10: 26, 20: 26, 24: 26, 30: 33, 33: 40}
+
+
+def test_mistake_onsets_count_a_span_clipped_across_atoms_once() -> None:
+    from lerobot.datasets.diverse_actor_selection import _mistake_onset_timesteps
+
+    atoms = [
+        {"mistake_events": [{"start_s": 1.0, "end_s": 2.0}]},
+        {"mistake_events": [{"start_s": 2.0, "end_s": 2.5, "source_start_s": 1.0, "clipped_to_atom": True}]},
+        {"mistake_events": None},
+        {"mistake_events": [{"start_s": 4.2, "end_s": 5.0}]},
+    ]
+    assert _mistake_onset_timesteps(atoms, 10.0) == (10, 42)
+
+
+def test_every_row_carries_the_critic_end_of_its_atom() -> None:
+    selection = _selection()
+    for row in selection.rows[::97]:
+        end = row["critic_end_timestep_exclusive"]
+        assert row["anchor_frame"] < end
+        assert all(isinstance(onset, int) for onset in row["mistake_onset_timesteps"])

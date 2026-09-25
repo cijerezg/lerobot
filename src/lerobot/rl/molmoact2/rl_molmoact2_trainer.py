@@ -730,18 +730,23 @@ class MolmoAct2Trainer(Trainer):
             ce_per_sample = -(soft_target.to(logits.device) * F.log_softmax(logits.float(), dim=-1)).sum(
                 dim=-1
             )
-            loss_ce = ce_per_sample.mean()
+            # A diverse anchor whose next observation is not in the selection carries a
+            # stand-in s' (DiverseActorBuffer.collate); its transition is left out of the
+            # loss and the metrics. ReBot rows never set critic_skip.
+            skip = raw_comp.get("critic_skip")
+            kept = torch.ones_like(ce_per_sample, dtype=torch.bool) if skip is None else ~skip.bool().view(-1)
+            loss_ce = ce_per_sample[kept].sum() / kept.sum().clamp_min(1)
             (loss_ce / grad_accum).backward()
 
             accum_ce += loss_ce.item() / grad_accum
 
             with torch.no_grad():
-                v_curr_step = critic_out["value"].float().view(-1)
-                td_target_step = td_target.float().view(-1)
+                v_curr_step = critic_out["value"].float().view(-1)[kept]
+                td_target_step = td_target.float().view(-1)[kept]
                 v_curr_list.append(v_curr_step)
                 td_target_list.append(td_target_step)
                 td_error_list.append(td_target_step - v_curr_step)
-                loss_per_sample_list.append(ce_per_sample.detach().float().view(-1))
+                loss_per_sample_list.append(ce_per_sample.detach().float().view(-1)[kept])
 
                 # CE = H(target) + KL(target || pred). H(target) is an irreducible
                 # floor the critic can never train away: ~3.50 nats for an interior
@@ -751,17 +756,17 @@ class MolmoAct2Trainer(Trainer):
                 # loss_critic can sit flat, or drift the wrong way, while the fit
                 # improves. critic_kl is the part the critic actually owns, and is
                 # the curve to read against loss_critic_mse.
-                target_probs = soft_target.to(logits.device).float()
+                target_probs = soft_target.to(logits.device).float()[kept]
                 target_entropy_list.append(
                     -(target_probs * target_probs.clamp_min(1e-12).log()).sum(dim=-1).view(-1)
                 )
-                kl_list.append(ce_per_sample.detach().float().view(-1) - target_entropy_list[-1])
+                kl_list.append(ce_per_sample.detach().float().view(-1)[kept] - target_entropy_list[-1])
 
                 # Width of the predicted distribution, in value units, against the
                 # HL-Gauss target width (hl_gauss_sigma). CE is the mass-covering
                 # direction: a critic that sharpens below the target width pays a
                 # large KL even as its mean -- and therefore the MSE -- improves.
-                pred_probs = critic_out["probs"].detach().float()
+                pred_probs = critic_out["probs"].detach().float()[kept]
                 pred_entropy_list.append(
                     -(pred_probs * pred_probs.clamp_min(1e-12).log()).sum(dim=-1).view(-1)
                 )
@@ -770,7 +775,7 @@ class MolmoAct2Trainer(Trainer):
                 pred_std_list.append(
                     (pred_probs * (centers - pred_mean).square()).sum(dim=-1).clamp_min(0.0).sqrt().view(-1)
                 )
-                done_list.append(done.detach().float().view(-1))
+                done_list.append(done.detach().float().view(-1)[kept])
 
         critic_net2: nn.Module = getattr(policy, "critic")
         grad_norm = torch.nn.utils.clip_grad_norm_(list(critic_net2.parameters()), clip_norm).item()

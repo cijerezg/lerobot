@@ -29,6 +29,7 @@ from lerobot.rl.data_sources.diverse_actor_buffer import (
     DiverseActorBuffer,
     DiverseSampleSpec,
     ResizeGeometry,
+    critic_view,
 )
 from lerobot.types import TransitionKey
 from lerobot.utils.constants import ACTION, OBS_STATE
@@ -251,3 +252,164 @@ def test_a_diverse_batch_concatenates_with_a_seven_dimensional_peer(buffer, sele
     assert mask.shape == (size + 2, 8)
     # The ReBot rows arrive 7-wide and are marked padded in dimension 8.
     assert mask[-2:, 7].all()
+
+
+# ── Critic view ──────────────────────────────────────────────────────────────
+
+
+def test_critic_view_applies_the_rebot_rules_to_anchor_rows() -> None:
+    """Terminal when the chunk holds the segment end, a mistake charged on the chunk that
+    holds its onset, s' the row one chunk later, skipped when there is none."""
+
+    def row(frame, end, onsets=()):
+        return {
+            "episode_id": "ep",
+            "anchor_frame": frame,
+            "native_rate_hz": 10.0,
+            "critic_end_timestep_exclusive": end,
+            "mistake_onset_timesteps": onsets,
+        }
+
+    view = critic_view([row(0, 25), row(10, 25), row(20, 25), row(30, 40, (35,)), row(40, 60)], 1.0)
+    assert view.done.tolist() == [False, False, True, True, False]
+    assert view.mistake.tolist() == [False, False, False, True, False]
+    assert view.next_row.tolist() == [1, 2, 3, 4, -1]
+    assert view.skip.tolist() == [False, False, False, False, True]
+
+
+@pytest.fixture(scope="module")
+def critic_buffer(selection):
+    return DiverseActorBuffer(
+        selection,
+        DiverseSampleSpec(load_images=False, load_depth=False),
+        serve_critic=True,
+        reward_normalization_constant=12.0,
+        critic_mistake_penalty=5.0,
+    )
+
+
+def _first(view, predicate) -> int:
+    return next(index for index in range(len(view.done)) if predicate(index))
+
+
+def test_the_chunk_that_reaches_the_atom_end_is_terminal(critic_buffer, selection) -> None:
+    view = critic_buffer._critic
+    terminal = _first(view, lambda i: view.done[i] and not view.mistake[i])
+    running = _first(view, lambda i: not view.done[i] and not view.mistake[i] and view.next_row[i] >= 0)
+    for index, expected in ((terminal, True), (running, False)):
+        row = selection.rows[index]
+        window = round(row["native_rate_hz"])
+        assert (row["anchor_frame"] < row["critic_end_timestep_exclusive"] <= row["anchor_frame"] + window) is expected
+    batch = critic_buffer.collate([terminal, running])
+    assert batch["done"].tolist() == [1.0, 0.0]
+    assert batch["reward"].tolist() == pytest.approx([0.0, -1 / 12])
+    assert batch["complementary_info"]["critic_skip"].tolist() == [False, False]
+
+
+def test_next_state_is_the_anchor_one_second_later(critic_buffer, selection) -> None:
+    view = critic_buffer._critic
+    index = _first(view, lambda i: not view.done[i] and view.next_row[i] >= 0)
+    successor = int(view.next_row[index])
+    row, next_row = selection.rows[index], selection.rows[successor]
+    assert next_row["episode_id"] == row["episode_id"]
+    assert next_row["anchor_frame"] == row["anchor_frame"] + round(row["native_rate_hz"])
+    batch = critic_buffer.collate([index])
+    native = int((~batch["complementary_info"]["state_dim_is_pad"][0]).sum())
+    expected = critic_buffer.load_sample(successor)
+    assert np.allclose(batch["next_state"][OBS_STATE][0, :native].numpy(), expected["state"])
+    assert np.allclose(
+        batch["next_state"][f"history.{OBS_STATE}"][0, :, :native].numpy(), expected["history_state"]
+    )
+    assert set(batch["next_state"]) == set(batch["state"])
+
+
+def test_a_row_without_a_successor_is_skipped_not_bootstrapped(critic_buffer, selection) -> None:
+    view = critic_buffer._critic
+    orphan = _first(view, lambda i: view.skip[i])
+    row = selection.rows[orphan]
+    frame = row["anchor_frame"] + round(row["native_rate_hz"])
+    assert not view.done[orphan]
+    assert not any(r["episode_id"] == row["episode_id"] and r["anchor_frame"] == frame for r in selection.rows)
+    batch = critic_buffer.collate([orphan])
+    assert batch["complementary_info"]["critic_skip"].tolist() == [True]
+    assert torch.equal(batch["next_state"][OBS_STATE], batch["state"][OBS_STATE])
+    # Terminal rows and rows with a successor are never skipped.
+    assert not view.skip[view.done].any()
+    assert not view.skip[view.next_row >= 0].any()
+
+
+def test_a_mistake_is_charged_once_on_the_chunk_holding_its_onset(critic_buffer, selection) -> None:
+    view = critic_buffer._critic
+    index = _first(view, lambda i: view.mistake[i])
+    row = selection.rows[index]
+    window = round(row["native_rate_hz"])
+    assert any(row["anchor_frame"] <= onset < row["anchor_frame"] + window for onset in row["mistake_onset_timesteps"])
+    batch = critic_buffer.collate([index])
+    assert batch["reward"][0].item() == pytest.approx((float(view.done[index]) - 1.0 - 5.0) / 12.0)
+
+
+def test_a_release_folds_into_the_atom_before_it(selection) -> None:
+    """A move's last second is not terminal when an adjacent release follows; the
+    release's own last second is."""
+    from collections import defaultdict
+
+    by_episode = defaultdict(list)
+    for atom in selection.corpus.common.subtask_atoms():
+        by_episode[atom["episode_id"]].append(atom)
+    by_frame = {(row["episode_id"], row["anchor_frame"]): index for index, row in enumerate(selection.rows)}
+    for episode_id, atoms in by_episode.items():
+        atoms.sort(key=lambda atom: atom["start_timestep"])
+        for before, release in zip(atoms, atoms[1:], strict=False):
+            rate = round(before["native_rate_hz"])
+            if (
+                release["verb"] != "release"
+                or release["start_timestep"] != before["end_timestep_exclusive"]
+                or release["end_timestep_exclusive"] - release["start_timestep"] < 2 * rate
+            ):
+                continue
+            end = before["end_timestep_exclusive"]
+            inside_before = [by_frame[(episode_id, f)] for f in range(end - rate + 1, end) if (episode_id, f) in by_frame]
+            release_end = release["end_timestep_exclusive"]
+            inside_release = [
+                by_frame[(episode_id, f)] for f in range(release_end - rate + 1, release_end) if (episode_id, f) in by_frame
+            ]
+            if not inside_before or not inside_release:
+                continue
+            rows = [selection.rows[inside_before[0]], selection.rows[inside_release[0]]]
+            assert rows[0]["critic_end_timestep_exclusive"] >= release_end
+            view = critic_view(rows, 1.0)
+            assert view.done.tolist() == [False, True]
+            return
+    pytest.skip("no adjacent release with a retained anchor in both windows")
+
+
+def test_an_actor_only_buffer_keeps_reward_and_done_but_mirrors_the_state(selection) -> None:
+    buffer = DiverseActorBuffer(
+        selection, DiverseSampleSpec(load_images=False, load_depth=False), reward_normalization_constant=12.0
+    )
+    view = buffer._critic
+    running = _first(view, lambda i: not view.done[i] and not view.mistake[i] and view.next_row[i] >= 0)
+    batch = buffer.collate([running])
+    assert batch["done"].tolist() == [0.0]
+    assert batch["reward"].tolist() == pytest.approx([-1 / 12])
+    assert torch.equal(batch["next_state"][OBS_STATE], batch["state"][OBS_STATE])
+
+
+def test_rebot_rows_are_never_skipped_after_concatenation(critic_buffer) -> None:
+    """The ReBot half carries no critic_skip; the concatenation pads it with zeros,
+    which update_critic reads as keep."""
+    view = critic_buffer._critic
+    diverse = critic_buffer.collate([_first(view, lambda i: view.skip[i]), _first(view, lambda i: not view.skip[i])])
+    diverse["state"] = {OBS_STATE: diverse["state"][OBS_STATE]}
+    diverse["next_state"] = {OBS_STATE: diverse["next_state"][OBS_STATE]}
+    rebot = {
+        "state": {OBS_STATE: torch.zeros(2, 7)},
+        ACTION: torch.zeros(2, 30, 7),
+        "reward": torch.zeros(2),
+        "next_state": {OBS_STATE: torch.zeros(2, 7)},
+        "done": torch.zeros(2),
+        "truncated": torch.zeros(2),
+        "complementary_info": {},
+    }
+    merged = concatenate_variable_dim_batch_transitions(diverse, rebot)
+    assert merged["complementary_info"]["critic_skip"].tolist() == [True, False, False, False]

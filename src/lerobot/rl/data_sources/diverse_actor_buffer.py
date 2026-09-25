@@ -33,8 +33,11 @@ What this buffer does NOT do, deliberately:
 * it does not encode actions. Anchor encoding is ``AnchorEncodeStep``'s job, applied to
   the whole chunk inside the preprocessor once the current state and the native-width
   masks are both present. The buffer's contract is absolute actions plus honest masks.
-* it does not serve a critic. ``next_state`` mirrors ``state`` so batches concatenate;
-  no TD target may be computed from it. See the plan's deferred critic phase.
+* it does not resample time. The critic's transition is the ReBot one applied to
+  anchors: reward and done follow the subtask rule (``critic_view``), and s' is the
+  anchor one chunk later, loaded only when ``serve_critic`` is set. An actor-only run
+  mirrors ``state`` into ``next_state`` so batches concatenate and pays for no second
+  read.
 """
 
 from __future__ import annotations
@@ -280,6 +283,41 @@ class _RowIdentity:
     contact: int = -1
 
 
+@dataclass(frozen=True)
+class _CriticView:
+    """Per-row critic facts, fixed by the rows and the chunk length."""
+
+    done: np.ndarray  # the critic segment ends inside this row's chunk
+    mistake: np.ndarray  # a reviewed mistake begins inside this row's chunk
+    next_row: np.ndarray  # row of the same episode one chunk later, -1 when not selected
+    skip: np.ndarray  # not terminal and no next row: the critic loss leaves it out
+
+
+def critic_view(rows: Sequence[dict[str, Any]], chunk_seconds: float) -> _CriticView:
+    """ReBot's subtask-critic rules (``ReplayBuffer.sample``) on anchor rows.
+
+    A transition is terminal when the chunk window after the anchor holds the end of
+    the critic segment (``critic_end_timestep_exclusive``: the atom, with an adjacent
+    release folded in), and a mistake is charged once, on the transition whose window
+    holds its onset. The next state is the anchor exactly one chunk later in native
+    frames. It is missing when the episode's anchors stop before it or the selection
+    did not retain it; that transition has nothing to bootstrap from and is skipped.
+    """
+    count = len(rows)
+    done = np.zeros(count, dtype=bool)
+    mistake = np.zeros(count, dtype=bool)
+    next_row = np.full(count, -1, dtype=np.int64)
+    by_frame = {(str(row["episode_id"]), int(row["anchor_frame"])): index for index, row in enumerate(rows)}
+    for index, row in enumerate(rows):
+        window = int(round(float(row["native_rate_hz"]) * chunk_seconds))
+        start = int(row["anchor_frame"])
+        end = int(row["critic_end_timestep_exclusive"])
+        done[index] = start < end <= start + window
+        mistake[index] = any(start <= onset < start + window for onset in row["mistake_onset_timesteps"])
+        next_row[index] = by_frame.get((str(row["episode_id"]), start + window), -1)
+    return _CriticView(done=done, mistake=mistake, next_row=next_row, skip=~done & (next_row < 0))
+
+
 class DiverseActorBuffer:
     """Anchor-indexed replay exposing the offline collection iterator's interface."""
 
@@ -295,6 +333,9 @@ class DiverseActorBuffer:
         task_indices: dict[str, int] | None = None,
         subtask_indices: dict[str, int] | None = None,
         render_automatic_quality: bool = False,
+        serve_critic: bool = False,
+        reward_normalization_constant: float = 1.0,
+        critic_mistake_penalty: float = 0.0,
     ) -> None:
         self.selection = selection
         self.spec = spec or DiverseSampleSpec()
@@ -302,6 +343,10 @@ class DiverseActorBuffer:
         self.cache = cache
         self.rows = selection.rows
         self.size = len(self.rows)
+        self.serve_critic = bool(serve_critic)
+        self.reward_normalization_constant = float(reward_normalization_constant)
+        self.critic_mistake_penalty = float(critic_mistake_penalty)
+        self._critic = critic_view(self.rows, self.spec.action_horizon / self.spec.action_rate_hz)
         self._rng = np.random.default_rng(seed)
         self._sampler = sampler
 
@@ -475,20 +520,26 @@ class DiverseActorBuffer:
 
     # -- collation --------------------------------------------------------------
 
-    def collate(self, row_indices: Sequence[int]) -> BatchTransition:
+    def _observation(
+        self, samples: list[dict[str, Any]]
+    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        """The observation half of a batch for these samples.
+
+        Returns the ``state`` dict (current and history state, RGB and depth history)
+        and what rides complementary_info beside it: the width and camera masks and the
+        current depth with its validity, presence, units, intrinsics and event targets,
+        keyed as for the current observation. The critic's s' is this same assembly over
+        the successor samples; ``collate`` prefixes its depth entries ``next_``.
+        """
         spec = self.spec
         width = spec.max_width
-        horizon = spec.action_horizon
         history = spec.num_history
-        batch = len(row_indices)
-        samples = [self.load_sample(int(index)) for index in row_indices]
+        batch = len(samples)
 
         state = torch.zeros((batch, width), dtype=torch.float32)
         history_state = torch.zeros((batch, history, width), dtype=torch.float32)
-        action = torch.zeros((batch, horizon, width), dtype=torch.float32)
         # True marks padding, matching concatenate_variable_dim_batch_transitions.
         state_is_pad = torch.ones((batch, width), dtype=torch.bool)
-        action_is_pad = torch.ones((batch, width), dtype=torch.bool)
 
         images: dict[str, torch.Tensor] = {}
         history_images: dict[str, torch.Tensor] = {}
@@ -513,35 +564,13 @@ class DiverseActorBuffer:
         depth_intrinsics = torch.zeros((batch, 4), dtype=torch.float32)
         depth_event_targets = torch.zeros((batch, 2), dtype=torch.float32)
 
-        identity_fields = (
-            "source_id",
-            "episode_position",
-            "anchor_index",
-            "action_layout_id",
-            "embodiment_index",
-            "task_index",
-            "subtask_index",
-            "quality_provenance_id",
-            "retention_reason_id",
-        )
-        identity = {name: torch.zeros((batch,), dtype=torch.long) for name in identity_fields}
-        metadata_quality = torch.full((batch,), UNKNOWN_QUALITY, dtype=torch.float32)
-        metadata_quality_is_valid = torch.zeros((batch,), dtype=torch.bool)
-        metadata_mistake = torch.zeros((batch,), dtype=torch.float32)
-        metadata_speed = torch.zeros((batch,), dtype=torch.float32)
-        metadata_precision = torch.full((batch,), -1.0, dtype=torch.float32)
-        metadata_contact = torch.full((batch,), -1.0, dtype=torch.float32)
-        row_index_column = torch.zeros((batch,), dtype=torch.long)
-
         for position, sample in enumerate(samples):
             native = sample["native_width"]
             if native > width:
                 raise ValueError(f"native width {native} exceeds the model layout width {width}.")
             state[position, :native] = torch.from_numpy(sample["state"])
             history_state[position, :, :native] = torch.from_numpy(sample["history_state"])
-            action[position, :, :native] = torch.from_numpy(sample["action"])
             state_is_pad[position, :native] = False
-            action_is_pad[position, :native] = False
 
             for role_index, role in enumerate(spec.camera_roles):
                 camera_present[position, role_index] = role in sample["camera_roles"]
@@ -572,17 +601,6 @@ class DiverseActorBuffer:
                     sample["depth_event_targets"], dtype=torch.float32
                 )
 
-            entry = self._identity[sample["row_index"]]
-            for name in identity_fields:
-                identity[name][position] = getattr(entry, name)
-            metadata_quality[position] = entry.quality
-            metadata_quality_is_valid[position] = entry.quality_is_valid
-            metadata_mistake[position] = float(entry.mistake)
-            metadata_speed[position] = float(entry.speed)
-            metadata_precision[position] = float(entry.precision)
-            metadata_contact[position] = float(entry.contact)
-            row_index_column[position] = sample["row_index"]
-
         state_dict: dict[str, torch.Tensor] = {OBS_STATE: state.to(self.device)}
         state_dict[f"history.{OBS_STATE}"] = history_state.to(self.device)
         state_dict[f"history.{OBS_STATE}_is_pad"] = torch.zeros(
@@ -600,9 +618,8 @@ class DiverseActorBuffer:
                 ~camera_present[:, role_index, None].expand(batch, history)
             ).contiguous().to(self.device)
 
-        complementary: dict[str, Any] = {
+        info: dict[str, torch.Tensor] = {
             "state_dim_is_pad": state_is_pad.to(self.device),
-            "action_dim_is_pad": action_is_pad.to(self.device),
             "camera_is_present": camera_present.to(self.device),
             "history.camera_is_present": camera_present[:, :, None]
             .expand(batch, len(spec.camera_roles), history)
@@ -616,22 +633,6 @@ class DiverseActorBuffer:
                 f"camera_is_present.{spec.image_key(role)}": camera_present[:, index].to(self.device)
                 for index, role in enumerate(spec.camera_roles)
             },
-            "embodiment_index": identity["embodiment_index"].to(self.device),
-            "action_layout_id": identity["action_layout_id"].to(self.device),
-            "source_id": identity["source_id"].to(self.device),
-            "episode_position": identity["episode_position"].to(self.device),
-            "anchor_index": identity["anchor_index"].to(self.device),
-            "diverse_row_index": row_index_column.to(self.device),
-            "metadata_quality": metadata_quality.to(self.device),
-            "metadata_quality_is_valid": metadata_quality_is_valid.to(self.device),
-            "metadata_mistake": metadata_mistake.to(self.device),
-            "metadata_speed": metadata_speed.to(self.device),
-            "metadata_precision": metadata_precision.to(self.device),
-            "metadata_contact": metadata_contact.to(self.device),
-            "task_index": identity["task_index"].to(self.device),
-            "subtask_index": identity["subtask_index"].to(self.device),
-            "quality_provenance_id": identity["quality_provenance_id"].to(self.device),
-            "retention_reason_id": identity["retention_reason_id"].to(self.device),
         }
         if spec.load_depth:
             depth_key = spec.depth_key()
@@ -639,33 +640,136 @@ class DiverseActorBuffer:
             # looks for it. Depth HISTORY rides state, because that is where ReBot's
             # ReplayBuffer.sample() puts its history and where batch_to_transition picks
             # "history.*" up for the pipeline. The two halves have to agree on both.
-            complementary[depth_key] = depth.to(self.device)
+            info[depth_key] = depth.to(self.device)
             state_dict[f"history.{depth_key}"] = depth_history.to(self.device)
             state_dict[f"history.{depth_key}_is_pad"] = (
                 ~depth_history_present
             ).contiguous().to(self.device)
-            complementary[f"{depth_key}_valid"] = depth_valid.to(self.device)
-            complementary[f"history.{depth_key}_valid"] = depth_history_valid.to(self.device)
-            complementary[f"{depth_key}_is_present"] = depth_present.to(self.device)
-            complementary[f"history.{depth_key}_is_present"] = depth_history_present.to(self.device)
-            complementary[f"{depth_key}_units_mm_per_level"] = depth_units.to(self.device)
+            info[f"{depth_key}_valid"] = depth_valid.to(self.device)
+            info[f"history.{depth_key}_valid"] = depth_history_valid.to(self.device)
+            info[f"{depth_key}_is_present"] = depth_present.to(self.device)
+            info[f"history.{depth_key}_is_present"] = depth_history_present.to(self.device)
+            info[f"{depth_key}_units_mm_per_level"] = depth_units.to(self.device)
             # (fx, fy, cx, cy) already carried through this run's resize geometry, so the
             # back-projection and the pixels cannot disagree about where the image moved.
-            complementary[f"depth.{spec.depth_role}.intrinsics"] = depth_intrinsics.to(self.device)
+            info[f"depth.{spec.depth_role}.intrinsics"] = depth_intrinsics.to(self.device)
             # Real labels where depth exists; zeros elsewhere, which the presence mask
             # excludes from the event loss and from its denominator.
             for index, key in enumerate(DEPTH_GRIPPER_EVENT_TARGET_KEYS):
-                complementary[key] = depth_event_targets[:, index].to(self.device)
+                info[key] = depth_event_targets[:, index].to(self.device)
+        return state_dict, info
 
-        zeros = torch.zeros((batch,), dtype=torch.float32, device=self.device)
+    def collate(self, row_indices: Sequence[int]) -> BatchTransition:
+        spec = self.spec
+        width = spec.max_width
+        horizon = spec.action_horizon
+        batch = len(row_indices)
+        rows = np.asarray(row_indices, dtype=np.int64)
+        samples = [self.load_sample(int(index)) for index in rows]
+        state_dict, complementary = self._observation(samples)
+
+        action = torch.zeros((batch, horizon, width), dtype=torch.float32)
+        # True marks padding, matching concatenate_variable_dim_batch_transitions.
+        action_is_pad = torch.ones((batch, width), dtype=torch.bool)
+
+        identity_fields = (
+            "source_id",
+            "episode_position",
+            "anchor_index",
+            "action_layout_id",
+            "embodiment_index",
+            "task_index",
+            "subtask_index",
+            "quality_provenance_id",
+            "retention_reason_id",
+        )
+        identity = {name: torch.zeros((batch,), dtype=torch.long) for name in identity_fields}
+        metadata_quality = torch.full((batch,), UNKNOWN_QUALITY, dtype=torch.float32)
+        metadata_quality_is_valid = torch.zeros((batch,), dtype=torch.bool)
+        metadata_mistake = torch.zeros((batch,), dtype=torch.float32)
+        metadata_speed = torch.zeros((batch,), dtype=torch.float32)
+        metadata_precision = torch.full((batch,), -1.0, dtype=torch.float32)
+        metadata_contact = torch.full((batch,), -1.0, dtype=torch.float32)
+        row_index_column = torch.zeros((batch,), dtype=torch.long)
+
+        for position, sample in enumerate(samples):
+            native = sample["native_width"]
+            action[position, :, :native] = torch.from_numpy(sample["action"])
+            action_is_pad[position, :native] = False
+
+            entry = self._identity[sample["row_index"]]
+            for name in identity_fields:
+                identity[name][position] = getattr(entry, name)
+            metadata_quality[position] = entry.quality
+            metadata_quality_is_valid[position] = entry.quality_is_valid
+            metadata_mistake[position] = float(entry.mistake)
+            metadata_speed[position] = float(entry.speed)
+            metadata_precision[position] = float(entry.precision)
+            metadata_contact[position] = float(entry.contact)
+            row_index_column[position] = sample["row_index"]
+
+        complementary.update(
+            {
+                "action_dim_is_pad": action_is_pad.to(self.device),
+                "embodiment_index": identity["embodiment_index"].to(self.device),
+                "action_layout_id": identity["action_layout_id"].to(self.device),
+                "source_id": identity["source_id"].to(self.device),
+                "episode_position": identity["episode_position"].to(self.device),
+                "anchor_index": identity["anchor_index"].to(self.device),
+                "diverse_row_index": row_index_column.to(self.device),
+                "metadata_quality": metadata_quality.to(self.device),
+                "metadata_quality_is_valid": metadata_quality_is_valid.to(self.device),
+                "metadata_mistake": metadata_mistake.to(self.device),
+                "metadata_speed": metadata_speed.to(self.device),
+                "metadata_precision": metadata_precision.to(self.device),
+                "metadata_contact": metadata_contact.to(self.device),
+                "task_index": identity["task_index"].to(self.device),
+                "subtask_index": identity["subtask_index"].to(self.device),
+                "quality_provenance_id": identity["quality_provenance_id"].to(self.device),
+                "retention_reason_id": identity["retention_reason_id"].to(self.device),
+                # A ReBot batch carries no such column; the concatenation pads it with
+                # zeros there, which reads as "keep" (see update_critic).
+                "critic_skip": torch.from_numpy(self._critic.skip[rows]).to(self.device),
+            }
+        )
+
+        done = torch.from_numpy(self._critic.done[rows])
+        mistake = torch.from_numpy(self._critic.mistake[rows])
+        # ReBot's subtask reward: -1 per chunk step, 0 on the step that ends the segment,
+        # the mistake penalty once at its onset, all over the normalizer.
+        reward = (done.float() - 1.0 - self.critic_mistake_penalty * mistake.float()) / (
+            self.reward_normalization_constant
+        )
+
+        if self.serve_critic:
+            # s' is the anchor one chunk later. A terminal transition never bootstraps
+            # and a row without a successor is skipped by the critic loss, so both keep
+            # the current sample as a stand-in rather than paying for a second read.
+            next_rows = self._critic.next_row[rows]
+            next_samples = [
+                samples[position]
+                if done[position] or next_rows[position] < 0
+                else self.load_sample(int(next_rows[position]))
+                for position in range(batch)
+            ]
+            next_state, next_info = self._observation(next_samples)
+            if spec.load_depth:
+                # next_depth.* is where the trainer looks for the target's depth, mirroring
+                # ReplayBuffer.sample().
+                depth_key = spec.depth_key()
+                for key in (depth_key, f"{depth_key}_valid", f"{depth_key}_is_present"):
+                    complementary[f"next_{key}"] = next_info[key]
+        else:
+            # Actor-only: nothing reads next_state. It mirrors state so a mixed batch
+            # concatenates key for key.
+            next_state = dict(state_dict)
+
         return BatchTransition(
             state=state_dict,
             action=action.to(self.device),
-            reward=zeros,
-            # Actor-only: nothing reads next_state. It mirrors state so a mixed batch
-            # concatenates key for key; a critic must not be pointed at this buffer.
-            next_state=dict(state_dict),
-            done=zeros.clone(),
-            truncated=zeros.clone(),
+            reward=reward.to(self.device),
+            next_state=next_state,
+            done=done.float().to(self.device),
+            truncated=torch.zeros((batch,), dtype=torch.float32, device=self.device),
             complementary_info=complementary,
         )

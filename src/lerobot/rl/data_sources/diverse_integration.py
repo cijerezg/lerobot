@@ -146,7 +146,7 @@ def build_diverse_buffer(
         rank=rank,
         world_size=world_size,
     )
-    return DiverseActorBuffer(
+    buffer = DiverseActorBuffer(
         selection,
         spec,
         device=device,
@@ -155,7 +155,20 @@ def build_diverse_buffer(
         task_indices=task_indices,
         subtask_indices=subtask_indices,
         render_automatic_quality=diverse_cfg.render_automatic_quality,
+        serve_critic=not cfg.skip_critic,
+        reward_normalization_constant=float(cfg.policy.reward_normalization_constant),
+        critic_mistake_penalty=float(getattr(cfg.policy, "critic_mistake_penalty", 0.0)),
     )
+    if is_main_process:
+        view = buffer._critic  # noqa: SLF001 - reported once at startup
+        logger.info(
+            "[Diverse] critic view: %d terminal anchors, %d charged a mistake, %d without a next "
+            "observation (skipped by the critic loss)",
+            int(view.done.sum()),
+            int(view.mistake.sum()),
+            int(view.skip.sum()),
+        )
+    return buffer
 
 
 def align_rebot_buffers(

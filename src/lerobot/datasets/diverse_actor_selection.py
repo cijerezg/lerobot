@@ -37,7 +37,12 @@ is spelled out:
   segments already use;
 * the per-anchor ``precision`` (1-5) and ``contact`` (code 0-14, contact_vocab.py) read
   off the same atom from their optional sidecars. Unlike speed, a missing sidecar or a
-  missing atom is not an error: the row carries -1 and the prompt omits the clause.
+  missing atom is not an error: the row carries -1 and the prompt omits the clause;
+* the critic's view of the same atom: ``critic_end_timestep_exclusive`` is where the
+  critic segment ends (the atom, with an immediately following ``release`` atom folded
+  in, the same rule ReBot's ``_subtask_terminals_from_windows`` applies), and
+  ``mistake_onset_timesteps`` are the native frames where the episode's reviewed
+  mistakes begin. The diverse buffer turns these into reward and done.
 
 The stored anchor flag is segment-level: it is true for every anchor inside a segment
 that contains any mistake event, which over-claims on 65 common anchors whose own
@@ -325,6 +330,41 @@ def _atoms_by_episode(corpus: FederatedDiverseCorpus, view: str) -> dict[tuple[s
     return atoms
 
 
+def _critic_end_by_atom_start(atoms: list[dict[str, Any]]) -> dict[int, int]:
+    """Each atom's critic end, keyed by the atom's start timestep.
+
+    A ``release`` atom that starts exactly where the previous atom ends is the completion
+    of that atom, not a horizon of its own, so the previous atom's end moves to the
+    release's end; a chain folds through. Same rule as ReBot (``CRITIC_CONTINUATION_VERBS``
+    in rl/offline_dataset_utils.py). A release after a gap, or opening an episode, stands
+    alone.
+    """
+    ordered = sorted(atoms, key=lambda atom: int(atom["start_timestep"]))
+    ends: dict[int, int] = {}
+    for position in range(len(ordered) - 1, -1, -1):
+        atom = ordered[position]
+        start, end = int(atom["start_timestep"]), int(atom["end_timestep_exclusive"])
+        following = ordered[position + 1] if position + 1 < len(ordered) else None
+        if following is not None and int(following["start_timestep"]) == end and following["verb"] == "release":
+            end = ends[int(following["start_timestep"])]
+        ends[start] = end
+    return ends
+
+
+def _mistake_onset_timesteps(atoms: list[dict[str, Any]], rate_hz: float) -> tuple[int, ...]:
+    """Native frame where each reviewed mistake begins, once per event.
+
+    An event clipped to an atom keeps its source start, so a span that crosses atoms is
+    one onset, not one per atom.
+    """
+    onsets = {
+        int(round(float(event.get("source_start_s", event["start_s"])) * rate_hz))
+        for atom in atoms
+        for event in atom.get("mistake_events") or []
+    }
+    return tuple(sorted(onsets))
+
+
 def _fmb_anchor_mistake(record: dict[str, Any], timestep: int) -> bool | None:
     for interval in record["primitive_intervals"]:
         if int(interval["start_timestep"]) <= timestep < int(interval["end_timestep_exclusive"]):
@@ -425,11 +465,14 @@ def _prepare_rows(
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], int]:
     """Attach training identity to corpus rows: layout, camera roles, the reviewed atom's
     subtask, speed, precision and contact (-1 when no atom covers the anchor), the
-    anchor's own mistake flag. Returns (rows, episode records, mistake flags corrected)."""
+    anchor's own mistake flag, and the critic's segment end and mistake onsets.
+    Returns (rows, episode records, mistake flags corrected)."""
     subtask_atoms = _atoms_by_episode(corpus, "subtask_atoms")
     speed_atoms = _atoms_by_episode(corpus, "speed_atoms")
     precision_atoms = _atoms_by_episode(corpus, "precision_atoms")
     contact_atoms = _atoms_by_episode(corpus, "contact_atoms")
+    critic_ends: dict[tuple[str, str], dict[int, int]] = {}
+    mistake_onsets: dict[tuple[str, str], tuple[int, ...]] = {}
 
     records: dict[str, dict[str, Any]] = {}
     prepared: list[dict[str, Any]] = []
@@ -491,6 +534,12 @@ def _prepare_rows(
         row["speed"] = int(speed_atom["speed"])
         row["precision"] = -1 if precision_atom is None else int(precision_atom["precision"])
         row["contact"] = -1 if contact_atom is None else int(contact_atom["contact"])
+        key = (row["corpus_key"], episode_id)
+        if key not in critic_ends:
+            critic_ends[key] = _critic_end_by_atom_start(subtask_atoms[key])
+            mistake_onsets[key] = _mistake_onset_timesteps(subtask_atoms[key], float(row["native_rate_hz"]))
+        row["critic_end_timestep_exclusive"] = critic_ends[key][int(atom["start_timestep"])]
+        row["mistake_onset_timesteps"] = mistake_onsets[key]
         corrected += int(bool(anchor_mistake) != bool(row["mistake_flag_as_stored"]))
         prepared.append(row)
     return prepared, records, corrected
