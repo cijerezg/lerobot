@@ -498,7 +498,8 @@ class ProbeConfig:
     critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution
     critic_grad_frames: int = 200  # frames sampled for ||dV/dvision|| (forward+backward)
     critic_trace_stride_frames: int = 30  # frames between V(s) evaluations in the per-episode traces
-    critic_trace_video: bool = False  # also dump every frame as PNG and render the V(s) overlay video (slow: ~8 min/episode)
+    critic_trace_video: bool = False  # render the V(s) overlay video per episode (every frame_stride-th frame, half size)
+    critic_trace_video_frame_stride: int = 5  # decode every k-th frame for the video (5 -> 6 fps at 30 fps source, ~1 min/episode)
 
     # Action trace (URDF forward kinematics; open-loop pre-flight)
     trace_episodes: str | None = None  # comma-separated episode indices; None = all

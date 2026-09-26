@@ -697,7 +697,10 @@ def run_offline_training(
     policy.train()
 
     # ── Critic initialisation (before freeze so freeze_model can see it) ──────
-    if not skip_critic:
+    # A checkpoint that carries critic.* tensors already built and loaded its critic
+    # in _load_as_safetensor; re-running init_critic here would replace those weights
+    # with a fresh random head (probe passes and resumes read the trained critic).
+    if not skip_critic and not hasattr(policy, "critic"):
         _init_critic = getattr(policy, "init_critic", None)
         if callable(_init_critic):
             _init_critic()

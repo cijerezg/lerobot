@@ -126,7 +126,8 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # ── Advantage-weighted actor loss (AWR) ────────────────────────────────
     # Off: the actor loss is loss.mean(), plain BC. On: per-sample weights
     #   A  = clamp(r + γ V_target(s')(1 − done), support) − V(s)   the critic's TD error
-    #   Â  = clip((A − mean A) / std A, ±advantage_clip)             stats over the batch
+    #   Â  = clip((A − mean A) / std A, ±advantage_clip)             stats over the effective batch
+    #                                                                 (all grad-accum micro-batches)
     #   w  = exp(Â / advantage_beta) / mean w                        mean 1 = same LR as BC
     #   w  = (1 − advantage_lambda) + advantage_lambda · w           BC floor; 1 = pure AWR
     # Rows with critic_skip get w = 1. Needs skip_critic: false. Logged: advantage_*,

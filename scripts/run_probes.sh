@@ -12,7 +12,12 @@ probe_config="${3:-config_rl_validate.yaml}"
 echo "Probe config: $probe_config"
 export PYTHONPATH="lerobot/src${PYTHONPATH:+:$PYTHONPATH}"
 .venv/bin/python lerobot/scripts/probes/preflight.py --config "$probe_config"
-.venv/bin/python -m lerobot.scripts.rl_offline \
+# Stacks of every thread go to the log every 15 min, so a pass that stalls (Spark, 2026-09-25:
+# 100 % CPU, no I/O, no GPU load, no ptrace access) shows where; 4 h caps what a stall costs.
+timeout 14400 .venv/bin/python -c 'import faulthandler, runpy, sys
+faulthandler.dump_traceback_later(900, repeat=True)
+sys.argv = ["rl_offline"] + sys.argv[1:]
+runpy.run_module("lerobot.scripts.rl_offline", run_name="__main__")' \
   --config_path="$probe_config" \
   --policy.pretrained_path="$probe_checkpoint" \
   --policy.offline_steps=0 \

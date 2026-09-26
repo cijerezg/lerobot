@@ -21,6 +21,8 @@ Outputs (under ``probe_parameters.output_dir/critic/``):
   value_vs_time_to_end.png      V(s) against seconds to the segment end, with the
                                 duration-only ideal V* the reward rule implies
   value_by_label.png            mean V - V* by quality label and by mistake flag
+  value_outliers.png            camera frames of the 2 most pessimistic + 2 most
+                                optimistic frames (tagged P1/P2/O1/O2 on the scatter)
   gradient_magnitudes.png       (if adapter supports it)
   frame_p{XX}.png               (if adapter supports it) percentile exemplars
 """
@@ -56,6 +58,7 @@ from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     build_episode_index,
+    canonical_camera_obs,
     frame_metadata_lookup,
     get_frame_data,
     load_probe_dataset,
@@ -179,8 +182,10 @@ def run_episode_critic_traces(
     adapter: ProbablePolicy, val_dataset, val_ep_indices,
     cfg, output_dir: str,
 ):
-    """For each selected episode: save per-frame PNGs, run critic at a fixed
-    stride, save the critic curve + JSON, and render a critic-overlay video.
+    """For each selected episode: run the critic at a fixed stride, save the V(s)
+    curve with the segment ends (subtask boundaries after the release fold, the
+    episode end) and the duration ideal V* + JSON, and optionally per-frame PNGs
+    and a critic-overlay video.
 
     The V(s) curve is sub-sampled (``probe_parameters.critic_trace_stride_frames``,
     default 30 = one V per second at 30 fps, rounded up onto the image stride
@@ -207,12 +212,21 @@ def run_episode_critic_traces(
     chunk_size = adapter.chunk_size
     subsample = max(1, int(getattr(p, "critic_trace_stride_frames", 30)))
     with_video = bool(getattr(p, "critic_trace_video", False))
+    video_stride = max(1, int(getattr(p, "critic_trace_video_frame_stride", 5)))
     seed = int(getattr(p, "random_seed", 42))
     max_episodes = getattr(p, "max_episodes", None)
     video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
     fps = cfg.env.fps
 
-    labels = frame_metadata_lookup(val_dataset)
+    targets = _training_targets(val_dataset, cfg, chunk_size)
+    labels = targets["labels"]
+    ideal_all = _ideal_duration_value(
+        targets["frames_to_end"], chunk_size,
+        float(getattr(cfg.policy, "discount", 0.97)),
+        float(getattr(cfg.policy, "reward_normalization_constant", 1.0)),
+        float(getattr(cfg.policy, "value_support_min", -2.0)),
+    )
+    boundary_all = targets["episode_end"] if targets["terminals"] is None else (targets["terminals"] | targets["episode_end"])
     ep_to_indices = build_episode_index(val_dataset)
     if val_ep_indices is not None:
         ep_to_indices = {k: v for k, v in ep_to_indices.items() if k in val_ep_indices}
@@ -233,9 +247,12 @@ def run_episode_critic_traces(
         ep_dir = os.path.join(output_dir, f"ep{ep_idx:04d}")
         os.makedirs(ep_dir, exist_ok=True)
 
-        # ── 1. Save per-frame PNGs + collect subtask labels for overlay ──────
+        # ── 1. Video frames: every video_stride-th frame, half size, + subtask text ─
+        # Decoding is the cost (random access into the episode's video), so the video
+        # runs at fps / video_stride; the renderer resizes every frame to 448 px anyway.
         subtask_texts: list[str] = []
-        for step_idx, global_idx in enumerate(indices if with_video else ()):
+        video_frames = indices[::video_stride] if with_video else []
+        for step_idx, global_idx in enumerate(video_frames):
             obs, _, _, gt_subtask, _, _, _ = get_frame_data(
                 val_dataset, global_idx, chunk_size,
             )
@@ -256,9 +273,9 @@ def run_episode_critic_traces(
                         img_np = (img_tensor.float().numpy().transpose(1, 2, 0) * 255.0).clip(0, 255).astype(np.uint8)
                     else:
                         img_np = img_tensor.float().numpy().transpose(1, 2, 0).clip(0, 255).astype(np.uint8)
-                PILImage.fromarray(img_np).save(
-                    os.path.join(ep_dir, f"step_{step_idx:06d}_{cam_name}.png")
-                )
+                image = PILImage.fromarray(img_np)
+                image = image.resize((image.width // 2, image.height // 2))
+                image.save(os.path.join(ep_dir, f"step_{step_idx:06d}_{cam_name}.png"))
 
         # ── 2. Subsampled V(s) via adapter ───────────────────────────────────
         # Must use probe_frame_inputs, not get_frame_data: the training critic
@@ -287,18 +304,36 @@ def run_episode_critic_traces(
             critic_values.append(v)
 
         # ── 3. Save critic JSON + plot ───────────────────────────────────────
-        trace_seconds = [indices[ci] - indices[0] for ci in critic_indices]
-        trace_seconds = [frames / float(fps) for frames in trace_seconds]
+        trace_seconds = [(indices[ci] - indices[0]) / float(fps) for ci in critic_indices]
+        # The critic's segments: subtask boundaries (release folded into its predecessor)
+        # and the episode end, exactly where the training reward rule places terminals.
+        trace_ideal = [float(ideal_all[indices[ci]]) for ci in critic_indices]
+        boundary_seconds = [(g - indices[0]) / float(fps) for g in indices if boundary_all[g]]
         with open(os.path.join(ep_dir, "critic_values.json"), "w") as f:
-            json.dump({"seconds": trace_seconds, "values": critic_values, "stride_frames": step}, f)
+            json.dump(
+                {
+                    "seconds": trace_seconds,
+                    "values": critic_values,
+                    "ideal_values": trace_ideal if targets["mode"] == "subtask" else None,
+                    "segment_end_seconds": boundary_seconds,
+                    "stride_frames": step,
+                },
+                f,
+            )
         if critic_values:
-            plt.figure(figsize=(10, 5))
-            plt.plot(trace_seconds, critic_values, marker=".")
-            plt.title(f"Critic Values - Episode {ep_idx}")
+            plt.figure(figsize=(12, 5))
+            plt.plot(trace_seconds, critic_values, marker=".", color="steelblue", label="V(s)")
+            if targets["mode"] == "subtask":
+                plt.plot(trace_seconds, trace_ideal, color="black", linewidth=1.5, label="duration-only ideal V*")
+            for k, b in enumerate(boundary_seconds):
+                plt.axvline(b, color="gray", linestyle="--", linewidth=1, label="segment end" if k == 0 else None)
+            plt.title(f"Critic values along episode {ep_idx} (segments = subtasks, release folded)")
             plt.xlabel("seconds into the episode")
             plt.ylabel("V(s)")
-            plt.grid(True)
-            plt.savefig(os.path.join(ep_dir, "critic_plot.png"))
+            plt.grid(True, alpha=0.4)
+            plt.legend(loc="lower left", fontsize=9)
+            plt.tight_layout()
+            plt.savefig(os.path.join(ep_dir, "critic_plot.png"), dpi=150)
             plt.close()
 
         if not with_video:
@@ -306,12 +341,13 @@ def run_episode_critic_traces(
 
         # ── 4. Overlay video ─────────────────────────────────────────────────
         try:
+            # Critic point j sits at source frame j*step = video frame j*step/video_stride.
             save_video_with_critic_overlay(
                 ep_dir, critic_values,
                 camera_names=video_logging_cameras,
-                fps=fps,
+                fps=max(1.0, float(fps) / video_stride),
                 subtask_texts=subtask_texts,
-                subsample=step,
+                subsample=max(1, round(step / video_stride)),
             )
         except Exception as exc:
             logging.warning(
@@ -340,12 +376,17 @@ def run_predicted_distributions(
         logging.warning("[CRITIC] predicted_distributions: no samples")
         return None
 
-    labels = frame_metadata_lookup(val_dataset)
-    ep_to_indices = build_episode_index(val_dataset)
-    ep_last_frame = {
-        ep: max(val_dataset.hf_dataset[i]["frame_index"].item() for i in idxs)
-        for ep, idxs in ep_to_indices.items()
-    }
+    # Time to the end of the critic's segment (subtask boundary with the release fold, or
+    # the episode end), the horizon the reward rule actually scores, not the episode end.
+    targets = _training_targets(val_dataset, cfg, chunk_size)
+    labels = targets["labels"]
+    fps = float(cfg.env.fps)
+    ideal_all = _ideal_duration_value(
+        targets["frames_to_end"], chunk_size,
+        float(getattr(cfg.policy, "discount", 0.97)),
+        float(getattr(cfg.policy, "reward_normalization_constant", 1.0)),
+        float(getattr(cfg.policy, "value_support_min", -2.0)),
+    )
 
     n_cols = 3
     n_rows = (len(indices) + n_cols - 1) // n_cols
@@ -358,14 +399,17 @@ def run_predicted_distributions(
         v, probs, bin_centers = adapter.predict_value_and_probs(
             obs, task_str, gt_subtask, metadata=frame["metadata"]
         )
-        frames_to_end = ep_last_frame[ep_idx] - fr_idx
+        seconds_to_end = targets["frames_to_end"][idx] / fps
 
         ax = axes[i // n_cols, i % n_cols]
         ax.plot(bin_centers, probs, color="steelblue", linewidth=2)
         ax.fill_between(bin_centers, probs, alpha=0.2, color="steelblue")
         ax.axvline(v, color="crimson", linestyle="--", linewidth=1.5,
                    label=f"E[V] = {v:.3f}")
-        title = f"ep{ep_idx} f{fr_idx}  ({frames_to_end} to end)"
+        if targets["mode"] == "subtask":
+            ax.axvline(float(ideal_all[idx]), color="black", linestyle=":", linewidth=1.5,
+                       label=f"V* = {float(ideal_all[idx]):.3f}")
+        title = f"ep{ep_idx} f{fr_idx}  ({seconds_to_end:.1f} s to segment end)"
         if gt_subtask:
             title += f"\n{gt_subtask[:40]}"
         ax.set_title(title, fontsize=10)
@@ -501,11 +545,45 @@ def _ideal_duration_value(frames_to_end, chunk_size: int, discount: float, norm:
     return np.maximum(value, v_min)
 
 
-def _duration_plots(values, frames_to_end, ideal, quality, mistake, fps: float, output_dir: str) -> dict:
-    """value_vs_time_to_end.png and value_by_label.png; returns the numbers behind them."""
+def _pick_outliers(values, ideal, segment_ids, per_side: int = 2) -> list[tuple[str, int]]:
+    """The frames furthest below (P) and above (O) the duration ideal, as (tag, sample index),
+    at most one per segment so the panel shows different situations, not one segment twice."""
+    residual = values - ideal
+
+    def pick(order, sign):
+        chosen, seen = [], set()
+        for i in order:
+            i = int(i)
+            if sign * residual[i] <= 0 or segment_ids[i] in seen:
+                continue
+            chosen.append(i)
+            seen.add(segment_ids[i])
+            if len(chosen) == per_side:
+                break
+        return chosen
+
+    below = pick(np.argsort(residual), -1)
+    above = pick(np.argsort(residual)[::-1], +1)
+    return [(f"P{k + 1}", i) for k, i in enumerate(below)] + [(f"O{k + 1}", i) for k, i in enumerate(above)]
+
+
+def _frame_to_uint8(value) -> np.ndarray:
+    """Dataset image tensor (C,H,W or 1,C,H,W; uint8 or float) -> H,W,C uint8 for imshow."""
+    tensor = value[0] if value.ndim == 4 else value
+    if tensor.dtype == torch.uint8:
+        return tensor.numpy().transpose(1, 2, 0)
+    array = tensor.float().numpy().transpose(1, 2, 0)
+    if array.max() <= 5.0:
+        array = array * 255.0
+    return array.clip(0, 255).astype(np.uint8)
+
+
+def _duration_plots(values, frames_to_end, ideal, quality, mistake, fps: float, output_dir: str, segment_ids=None) -> tuple[dict, list]:
+    """value_vs_time_to_end.png and value_by_label.png; returns (numbers behind them, tagged outliers)."""
     seconds = frames_to_end / fps
     summary: dict = {"n_mistake": int(mistake.sum()), "n_clean": int((~mistake).sum())}
     residual = values - ideal if ideal is not None else values
+    outliers: list[tuple[str, int]] = []
 
     fig, ax = plt.subplots(figsize=(11, 6))
     ax.scatter(seconds[~mistake], values[~mistake], s=18, alpha=0.6, color="steelblue", label="clean frame")
@@ -518,6 +596,13 @@ def _duration_plots(values, frames_to_end, ideal, quality, mistake, fps: float, 
         summary["value_fit_corr"] = (
             float(np.corrcoef(values, ideal)[0, 1]) if values.std() > 0 and ideal.std() > 0 else float("nan")
         )
+        # Tag the frames furthest from the ideal on both sides; value_outliers.png shows them.
+        ids = np.arange(len(values)) if segment_ids is None else np.asarray(segment_ids)
+        outliers = _pick_outliers(values, ideal, ids)
+        for k, (tag, i) in enumerate(outliers):
+            ax.scatter([seconds[i]], [values[i]], s=160, facecolors="none", edgecolors="black", linewidths=1.8)
+            ax.annotate(tag, (seconds[i], values[i]), textcoords="offset points",
+                        xytext=(8, 8 if k % 2 == 0 else -16), fontsize=11, fontweight="bold")
     _style(ax, "V(s) against time to the segment end", "seconds until the segment (or episode) ends", "V(s)")
     ax.legend(fontsize=11)
     plt.tight_layout()
@@ -553,7 +638,47 @@ def _duration_plots(values, frames_to_end, ideal, quality, mistake, fps: float, 
     plt.savefig(out, dpi=200)
     plt.close(fig)
     logging.info(f"[CRITIC] saved {out}")
-    return summary
+    return summary, outliers
+
+
+def _render_outlier_frames(dataset, cfg, chunk_size: int, outliers, meta: list[dict], values, ideal, seconds, output_dir: str):
+    """value_outliers.png: one row per tagged frame, its cameras plus what the critic and the labels say."""
+    rows = []
+    for tag, i in outliers:
+        m = meta[i]
+        obs, _, _, _, _, _, _ = get_frame_data(dataset, m["global_idx"], chunk_size)
+        obs = canonical_camera_obs(obs, cfg)
+        images = [(key.split(".")[-1], _frame_to_uint8(obs[key])) for key in sorted(obs) if "images" in key]
+        rows.append((tag, i, m, images))
+    if not rows:
+        return
+    n_cams = max(len(r[3]) for r in rows)
+    fig, axes = plt.subplots(len(rows), n_cams + 1, figsize=(4.2 * (n_cams + 1), 3.3 * len(rows)), squeeze=False)
+    for r, (tag, i, m, images) in enumerate(rows):
+        for c in range(n_cams):
+            ax = axes[r, c]
+            ax.axis("off")
+            if c < len(images):
+                ax.imshow(images[c][1])
+                ax.set_title(f"{tag}  {images[c][0]}" if c == 0 else images[c][0], fontsize=11, fontweight="bold" if c == 0 else None)
+        ax = axes[r, n_cams]
+        ax.axis("off")
+        text = (
+            f"{tag}: {'pessimistic' if tag.startswith('P') else 'optimistic'}\n"
+            f"episode {m['episode_idx']}, frame {m['frame_idx']}\n"
+            f"{textwrap.fill(m['subtask'] or '(no subtask)', 30)}\n"
+            f"{seconds[i]:.1f} s to segment end\n"
+            f"V = {values[i]:.2f}    V* = {ideal[i]:.2f}\n"
+            f"quality {m['quality'] if m['quality'] >= 0 else '-'}, "
+            f"{'mistake window' if m['mistake'] else 'clean'}"
+        )
+        ax.text(0.0, 0.95, text, transform=ax.transAxes, fontsize=11, va="top", ha="left",
+                bbox=dict(facecolor="white", alpha=0.9, edgecolor="#ccc", boxstyle="round,pad=0.6"))
+    plt.tight_layout()
+    out = os.path.join(output_dir, "value_outliers.png")
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    logging.info(f"[CRITIC] saved {out}")
 
 
 def _gradient_plots(grad_mags, subtasks, episodes, output_dir):
@@ -617,6 +742,12 @@ def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float, extra:
             "value_vs_time_to_end.png",
             "$V(s)$ against seconds until the segment ends, with the duration-only ideal $V^*$",
             how="Under the subtask reward rule the critic is a clock: $V^*(s) = -(1-\\gamma^m)/((1-\\gamma)N)$ for the $m$ chunks left in the segment. Points hugging the black curve mean the critic has learnt the duration; red points (mistake windows) should sit below it by about the mistake penalty.",
+            primary=True,
+        ),
+        Panel(
+            "value_outliers.png",
+            "The frames furthest from the duration ideal: P = most pessimistic, O = most optimistic",
+            how="Tagged on the scatter with the same letters. A pessimistic frame mid-segment with the object plainly in hand says the critic is not reading progress off the image; an optimistic one right after a segment start says it took the scene for a finished step.",
             primary=True,
         ),
         Panel(
@@ -763,6 +894,7 @@ def run_critic_values_distribution(
     frames_to_end: list[int] = []
     qualities: list[int] = []
     mistakes: list[bool] = []
+    sample_meta: list[dict] = []
     for idx in adv_indices:
         metadata = labels.get(idx)
         fr_c = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=metadata)
@@ -782,6 +914,16 @@ def run_critic_values_distribution(
         frames_to_end.append(int(targets["frames_to_end"][idx]))
         qualities.append(int(metadata["quality"]) if metadata and "quality" in metadata else -1)
         mistakes.append(bool(metadata["mistake"]) if metadata and "mistake" in metadata else False)
+        sample_meta.append(
+            {
+                "global_idx": int(idx),
+                "episode_idx": int(fr_c["episode_idx"]),
+                "frame_idx": int(fr_c["frame_idx"]),
+                "subtask": gt_subtask or "",
+                "quality": qualities[-1],
+                "mistake": mistakes[-1],
+            }
+        )
 
     _td_error_plots(td_errors, squashed, adv_subtasks, output_dir)
 
@@ -791,10 +933,17 @@ def run_critic_values_distribution(
     ideal = (
         _ideal_duration_value(fte, chunk_size, discount, norm, v_min) if targets["mode"] == "subtask" else None
     )
-    duration_summary = _duration_plots(
-        values_arr, fte, ideal, np.asarray(qualities), np.asarray(mistakes, dtype=bool), float(cfg.env.fps), output_dir
+    # One outlier per critic segment: the segment is identified by its terminal frame.
+    segment_ids = np.asarray(adv_indices, dtype=np.int64) + fte
+    duration_summary, outliers = _duration_plots(
+        values_arr, fte, ideal, np.asarray(qualities), np.asarray(mistakes, dtype=bool), float(cfg.env.fps), output_dir,
+        segment_ids=segment_ids,
     )
     duration_summary["critic_reward_mode"] = targets["mode"]
+    if outliers:
+        _render_outlier_frames(
+            val_dataset, cfg, chunk_size, outliers, sample_meta, values_arr, ideal, fte / float(cfg.env.fps), output_dir
+        )
 
     # ── Part 2: gradient magnitudes (skip if adapter doesn't support it) ─────
     try:

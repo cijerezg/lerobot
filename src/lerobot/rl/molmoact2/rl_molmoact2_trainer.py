@@ -38,6 +38,16 @@ _MOLMOACT2_VIT_DEPTH = 25  # image_vit.transformer.resblocks.{0..24}
 _MOLMOACT2_LANGUAGE_DEPTH = 36  # transformer.blocks.{0..35}
 
 
+def _draw_transition_batch(online_iter, offline_iter, device: str) -> dict:
+    """One raw transition micro-batch on ``device`` (online sample, optional offline concat)."""
+    from lerobot.rl.buffer import concatenate_variable_dim_batch_transitions
+
+    raw = next(online_iter)
+    if offline_iter is not None:
+        raw = concatenate_variable_dim_batch_transitions(raw, next(offline_iter))
+    return move_transition_to_device(raw, device)
+
+
 def _layer_idx_after(name: str, marker: str) -> int:
     """Parse the integer layer index immediately after `marker` in `name`."""
     return int(name.split(marker)[1].split(".")[0])
@@ -675,16 +685,14 @@ class MolmoAct2Trainer(Trainer):
         next_batch = preprocessor({**next_observations, **critic_input})
         return curr_batch, next_batch, rewards, done
 
-    def _advantage_weights(
+    def _advantages(
         self, raw_policy: nn.Module, raw: dict, preprocessor, cfg
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """AWR weights for the actor loss: (weights [B], advantage over kept rows, weights over kept rows).
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Critic TD advantage of one transition micro-batch: (A [B], kept [B] bool).
 
         A = clamp(r + γ V_target(s')(1 − done), support) − V(s)   the critic's own TD error
-        Â = clip((A − mean A) / std A, ±advantage_clip)
-        w = exp(Â / advantage_beta) / mean w                       mean 1 keeps the LR of plain BC
-        w = (1 − advantage_lambda) + advantage_lambda · w          BC floor
-        Rows with critic_skip (diverse stand-in s') get w = 1 and stay out of the statistics.
+        Rows with critic_skip (diverse stand-in s') are not kept: they get w = 1 and stay
+        out of the weight statistics.
         """
         p = cfg.policy
         curr_batch, next_batch, rewards, done = self._critic_batches(raw, preprocessor, cfg)
@@ -697,13 +705,34 @@ class MolmoAct2Trainer(Trainer):
         advantage = td_target - v_curr
         skip = (raw.get("complementary_info") or {}).get("critic_skip")
         kept = torch.ones_like(advantage, dtype=torch.bool) if skip is None else ~skip.bool().view(-1)
-        a = advantage[kept]
+        return advantage, kept
+
+    @staticmethod
+    def _advantage_weights(
+        advantages: list[torch.Tensor], kepts: list[torch.Tensor], cfg
+    ) -> tuple[list[torch.Tensor], torch.Tensor, torch.Tensor]:
+        """AWR weights for the actor loss: one [B] tensor per micro-batch, plus (A, w) over all kept rows.
+
+        The statistics are pooled over the whole effective batch (every gradient-accumulation
+        micro-batch of one optimizer step), not per micro-batch: 32 rows give a noisy std that
+        exp() amplifies, and a micro-batch of mostly good rows would otherwise be renormalised
+        to mean 1 like any other.
+        Â = clip((A − mean A) / std A, ±advantage_clip)
+        w = exp(Â / advantage_beta) / mean w                       mean 1 keeps the LR of plain BC
+        w = (1 − advantage_lambda) + advantage_lambda · w          BC floor
+        Rows not kept (critic_skip) get w = 1.
+        """
+        p = cfg.policy
+        a = torch.cat([adv[k] for adv, k in zip(advantages, kepts)])
         a_hat = ((a - a.mean()) / a.std(correction=0).clamp_min(1e-6)).clamp(-p.advantage_clip, p.advantage_clip)
         w = torch.exp(a_hat / p.advantage_beta)
         w = w / w.mean()
         w = (1.0 - p.advantage_lambda) + p.advantage_lambda * w
-        weights = torch.ones_like(advantage)
-        weights[kept] = w
+        weights = []
+        for adv, k, w_kept in zip(advantages, kepts, torch.split(w, [int(k.sum()) for k in kepts])):
+            full = torch.ones_like(adv)
+            full[k] = w_kept
+            weights.append(full)
         return weights, a, w
 
     def update_critic(
@@ -984,7 +1013,6 @@ class MolmoAct2Trainer(Trainer):
 
         Handles gradient accumulation.  Only the "policy" optimizer is touched here.
         """
-        from lerobot.rl.buffer import concatenate_variable_dim_batch_transitions
         from lerobot.rl.training_runtime import TrainingRuntime
 
         runtime = kwargs.get("training_runtime") or TrainingRuntime(device=device)
@@ -1036,8 +1064,6 @@ class MolmoAct2Trainer(Trainer):
         discrete_ce_loss_list: list[torch.Tensor] = []
         reward_list: list[torch.Tensor] = []
         done_list: list[torch.Tensor] = []
-        advantage_list: list[torch.Tensor] = []
-        adv_weight_list: list[torch.Tensor] = []
         depth_on = getattr(raw_policy, "depth_visual", None) is not None
         optimization_step = kwargs.get("optimization_step")
         log_freq = max(1, int(getattr(cfg, "log_freq", 1)))
@@ -1055,12 +1081,25 @@ class MolmoAct2Trainer(Trainer):
             p for p in raw_policy.parameters() if p.requires_grad and id(p) not in critic_param_ids
         ]
 
+        # AWR: draw and critic-score every micro-batch of this step first, so the weights are
+        # standardised over the whole effective batch rather than over one micro-batch.
+        raws: list[dict] = []
+        adv_weights_per_batch: list[torch.Tensor] = []
+        all_adv: torch.Tensor | None = None
+        all_w: torch.Tensor | None = None
+        if advantage_weighting:
+            advantages: list[torch.Tensor] = []
+            kepts: list[torch.Tensor] = []
+            for _ in range(grad_accum):
+                raw = _draw_transition_batch(online_iter, offline_iter, device)
+                raws.append(raw)
+                advantage, kept = self._advantages(raw_policy, raw, preprocessor, cfg)
+                advantages.append(advantage)
+                kepts.append(kept)
+            adv_weights_per_batch, all_adv, all_w = self._advantage_weights(advantages, kepts, cfg)
+
         for accum_idx in range(grad_accum):
-            raw = next(online_iter)
-            if offline_iter is not None:
-                raw_off = next(offline_iter)
-                raw = concatenate_variable_dim_batch_transitions(raw, raw_off)
-            raw = move_transition_to_device(raw, device)
+            raw = raws[accum_idx] if advantage_weighting else _draw_transition_batch(online_iter, offline_iter, device)
 
             observations = raw.get("state", {})
             # Full native width, never sliced to the configured layout width. A mixed-DoF
@@ -1106,11 +1145,7 @@ class MolmoAct2Trainer(Trainer):
             if getattr(raw_policy, "future_visual", None) is not None:
                 raw_policy.prepare_future_visual(fwd_batch)
 
-            adv_weights = None
-            if advantage_weighting:
-                adv_weights, advantage_kept, weights_kept = self._advantage_weights(raw_policy, raw, preprocessor, cfg)
-                advantage_list.append(advantage_kept)
-                adv_weight_list.append(weights_kept)
+            adv_weights = adv_weights_per_batch[accum_idx] if advantage_weighting else None
 
             with runtime.no_sync(policy, accum_idx, grad_accum):
                 # Calling the wrapper enters DDP's reducer for this microbatch.
@@ -1349,9 +1384,7 @@ class MolmoAct2Trainer(Trainer):
             all_done = torch.cat(done_list)
             accum["done_fraction"] = all_done.float().mean().item()
 
-        if advantage_list:
-            all_adv = torch.cat(advantage_list)
-            all_w = torch.cat(adv_weight_list)
+        if all_adv is not None and all_w is not None and all_adv.numel() > 0:
             accum["advantage_mean"] = all_adv.mean().item()
             accum["advantage_std"] = all_adv.std().item() if all_adv.numel() > 1 else 0.0
             accum["advantage_histogram"] = all_adv.cpu().numpy()
@@ -1665,6 +1698,10 @@ class MolmoAct2Trainer(Trainer):
             "loss_subtask_ce",
             "actor_grad_norm",
             "loss_critic",
+            "advantage_mean",
+            "advantage_std",
+            "adv_weight_ess_frac",
+            "adv_weight_kl",
             "depth_rgb_rms_ratio",
             "depth_pre_bound_token_rms",
             "depth_injected_token_rms",
