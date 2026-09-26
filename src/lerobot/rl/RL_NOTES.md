@@ -172,6 +172,17 @@ frames, so nothing clips. Recheck this if either constant, `chunk_size`, or the
 annotation granularity changes — the asymptote is `-1/((1-γ)·N) = -2.78`, so the
 headroom is not large.
 
+### What the critic reads
+
+Since 2026-09-25 `_critic_batches` (rl/molmoact2/rl_molmoact2_trainer.py) hands the critic
+the same complementary columns the actor gets: subtask, embodiment and action layout,
+quality / mistake / speed / precision / contact, camera and depth presence. The critic
+prompt is the actor prompt clause for clause, so V(s) is measured on the input the actor
+is conditioned on, and the critic probe (probes/critic.py) can hold V against the reviewed
+labels. The subtask clause renders per row. s' reuses s's columns: the sampler has no
+next-state labels, and a boundary inside the chunk is terminal anyway. Episode reward
+mode still leaves the subtask clause out.
+
 ### The diverse half
 
 Active whenever `skip_critic: false` and `diverse.enabled: true`. `DiverseActorBuffer`

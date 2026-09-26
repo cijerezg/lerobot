@@ -7,10 +7,20 @@ implements ``predict_value`` and ``predict_value_and_probs``. Adapters that
 also implement ``value_gradient_magnitude`` get the gradient-based plots and
 percentile-exemplar frames; otherwise those sections are skipped.
 
+Every critic forward carries the frame's own reviewed labels (quality / mistake /
+speed / precision / contact) and subtask, because the training critic reads the
+actor's prompt (MolmoAct2Trainer._critic_batches). The TD error is built with the
+training sampler's reward rule (ReplayBuffer.sample): in subtask mode -1 per step,
+0 on the step whose chunk holds a segment or episode end, minus the mistake penalty
+at a mistake onset, over the normalization constant.
+
 Outputs (under ``probe_parameters.output_dir/critic/``):
   predicted_distributions.png   per-frame P(V) curves with E[V] overlay
   advantage_dist.png            TD-error histogram + CDF + by-subtask boxplot
   advantage_squashed_dist.png   tanh(TD-error / scaling) version of the above
+  value_vs_time_to_end.png      V(s) against seconds to the segment end, with the
+                                duration-only ideal V* the reward rule implies
+  value_by_label.png            mean V - V* by quality label and by mistake flag
   gradient_magnitudes.png       (if adapter supports it)
   frame_p{XX}.png               (if adapter supports it) percentile exemplars
 """
@@ -46,6 +56,7 @@ from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.utils import (
     build_episode_index,
+    frame_metadata_lookup,
     get_frame_data,
     load_probe_dataset,
     probe_frame_inputs,
@@ -171,8 +182,11 @@ def run_episode_critic_traces(
     """For each selected episode: save per-frame PNGs, run critic at a fixed
     stride, save the critic curve + JSON, and render a critic-overlay video.
 
-    The video plays at native fps; only the V(s) curve is sub-sampled
-    (stride = ``probe_parameters.attn_eval_subsample``, default 2). Reuses
+    The V(s) curve is sub-sampled (``probe_parameters.critic_trace_stride_frames``,
+    default 30 = one V per second at 30 fps, rounded up onto the image stride
+    grid). The per-frame PNG dump and the overlay video (native fps) are behind
+    ``probe_parameters.critic_trace_video``: decoding every frame one by one costs
+    about 8 minutes per episode, the curve alone about 40 seconds. Reuses
     :func:`lerobot.rl.utils.save_video_with_critic_overlay`, which is
     policy-agnostic (reads PNGs from disk + plots the supplied curve).
 
@@ -191,12 +205,14 @@ def run_episode_critic_traces(
 
     p = cfg.probe_parameters
     chunk_size = adapter.chunk_size
-    subsample = max(1, int(getattr(p, "attn_eval_subsample", 2)))
+    subsample = max(1, int(getattr(p, "critic_trace_stride_frames", 30)))
+    with_video = bool(getattr(p, "critic_trace_video", False))
     seed = int(getattr(p, "random_seed", 42))
     max_episodes = getattr(p, "max_episodes", None)
     video_logging_cameras = getattr(cfg, "video_logging_cameras", ["top", "side"])
     fps = cfg.env.fps
 
+    labels = frame_metadata_lookup(val_dataset)
     ep_to_indices = build_episode_index(val_dataset)
     if val_ep_indices is not None:
         ep_to_indices = {k: v for k, v in ep_to_indices.items() if k in val_ep_indices}
@@ -219,7 +235,7 @@ def run_episode_critic_traces(
 
         # ── 1. Save per-frame PNGs + collect subtask labels for overlay ──────
         subtask_texts: list[str] = []
-        for step_idx, global_idx in enumerate(indices):
+        for step_idx, global_idx in enumerate(indices if with_video else ()):
             obs, _, _, gt_subtask, _, _, _ = get_frame_data(
                 val_dataset, global_idx, chunk_size,
             )
@@ -251,36 +267,42 @@ def run_episode_critic_traces(
         # history_dropout is 0.0, so it sees them on every sample). Feeding a
         # history-free frame here is an out-of-distribution prompt. Depth is
         # included for parity, so anchors must stay on the image_stride grid.
-        # No metadata clause: update_critic builds the critic prompt from task
-        # + subtask_index only.
+        # The training critic reads the actor's prompt, metadata clause included
+        # (_critic_batches forwards the sampler's label columns), so every frame
+        # carries its own reviewed labels here.
         critic_values: list[float] = []
         stride = int(getattr(cfg.policy, "image_stride", 1))
         step = subsample + (-subsample % stride)
         critic_indices = list(range(0, len(indices), step))
         for ci in critic_indices:
             frame = probe_frame_inputs(
-                val_dataset, cfg, indices[ci], chunk_size, metadata=None,
+                val_dataset, cfg, indices[ci], chunk_size, metadata=labels.get(indices[ci]),
             )
             obs, gt_subtask, task_str = frame["obs"], frame["subtask"], frame["task"]
             try:
-                v = adapter.predict_value(obs, task_str, gt_subtask)
+                v = adapter.predict_value(obs, task_str, gt_subtask, metadata=frame["metadata"])
             except Exception as exc:
                 logging.warning(f"[CRITIC] ep{ep_idx} step{ci}: V(s) failed: {exc}")
                 v = 0.0
             critic_values.append(v)
 
         # ── 3. Save critic JSON + plot ───────────────────────────────────────
+        trace_seconds = [indices[ci] - indices[0] for ci in critic_indices]
+        trace_seconds = [frames / float(fps) for frames in trace_seconds]
         with open(os.path.join(ep_dir, "critic_values.json"), "w") as f:
-            json.dump(critic_values, f)
+            json.dump({"seconds": trace_seconds, "values": critic_values, "stride_frames": step}, f)
         if critic_values:
             plt.figure(figsize=(10, 5))
-            plt.plot(critic_values)
+            plt.plot(trace_seconds, critic_values, marker=".")
             plt.title(f"Critic Values - Episode {ep_idx}")
-            plt.xlabel("Step")
+            plt.xlabel("seconds into the episode")
             plt.ylabel("V(s)")
             plt.grid(True)
             plt.savefig(os.path.join(ep_dir, "critic_plot.png"))
             plt.close()
+
+        if not with_video:
+            continue
 
         # ── 4. Overlay video ─────────────────────────────────────────────────
         try:
@@ -289,7 +311,7 @@ def run_episode_critic_traces(
                 camera_names=video_logging_cameras,
                 fps=fps,
                 subtask_texts=subtask_texts,
-                subsample=subsample,
+                subsample=step,
             )
         except Exception as exc:
             logging.warning(
@@ -318,6 +340,7 @@ def run_predicted_distributions(
         logging.warning("[CRITIC] predicted_distributions: no samples")
         return None
 
+    labels = frame_metadata_lookup(val_dataset)
     ep_to_indices = build_episode_index(val_dataset)
     ep_last_frame = {
         ep: max(val_dataset.hf_dataset[i]["frame_index"].item() for i in idxs)
@@ -329,10 +352,12 @@ def run_predicted_distributions(
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 5, n_rows * 4), squeeze=False)
 
     for i, idx in enumerate(indices):
-        frame = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=None)
+        frame = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=labels.get(idx))
         obs, gt_subtask, task_str = frame["obs"], frame["subtask"], frame["task"]
         ep_idx, fr_idx = frame["episode_idx"], frame["frame_idx"]
-        v, probs, bin_centers = adapter.predict_value_and_probs(obs, task_str, gt_subtask)
+        v, probs, bin_centers = adapter.predict_value_and_probs(
+            obs, task_str, gt_subtask, metadata=frame["metadata"]
+        )
         frames_to_end = ep_last_frame[ep_idx] - fr_idx
 
         ax = axes[i // n_cols, i % n_cols]
@@ -400,6 +425,137 @@ def _td_error_plots(td_errors, squashed, subtasks, output_dir):
     logging.info(f"[CRITIC] saved {out}")
 
 
+def _training_targets(dataset, cfg, chunk_size: int) -> dict:
+    """The per-frame markers the training sampler derives rewards and terminals from.
+
+    Mirrors ReplayBuffer.sample: in subtask mode a transition from t is terminal when a
+    reviewed segment boundary (offline_dataset_utils._subtask_terminals_from_windows,
+    a release folded into its predecessor) or the episode end falls in [t, t + chunk);
+    a mistake onset inside that window costs critic_mistake_penalty once. Episode mode
+    keeps only the episode ends. ``frames_to_end`` counts frames to the next such
+    marker at or after each frame.
+    """
+    n = len(dataset)
+    episode_end = np.zeros(n, dtype=bool)
+    for idxs in build_episode_index(dataset).values():
+        episode_end[max(idxs)] = True
+    labels = frame_metadata_lookup(dataset)
+    mistake = np.zeros(n, dtype=bool)
+    for idx, row in labels.items():
+        mistake[idx] = bool(row.get("mistake", False))
+    onset = mistake.copy()
+    onset[1:] &= ~mistake[:-1]
+    terminals = None
+    mode = str(getattr(cfg.policy, "critic_reward_mode", "episode"))
+    if mode == "subtask":
+        from lerobot.rl.offline_dataset_utils import _subtask_terminals_from_windows
+
+        markers = _subtask_terminals_from_windows(dataset, n)
+        if markers is None:
+            logging.warning("[CRITIC] subtask reward mode but the dataset has no subtask_windows.json; episode ends only")
+            mode = "episode"
+        else:
+            terminals = markers.numpy().astype(bool)
+    boundary = episode_end if terminals is None else (terminals | episode_end)
+    next_boundary = np.empty(n, dtype=np.int64)
+    last = n - 1
+    for i in range(n - 1, -1, -1):
+        if boundary[i]:
+            last = i
+        next_boundary[i] = last
+    return {
+        "mode": mode,
+        "labels": labels,
+        "episode_end": episode_end,
+        "mistake_onset": onset,
+        "terminals": terminals,
+        "frames_to_end": next_boundary - np.arange(n),
+    }
+
+
+def _transition_target(targets: dict, dataset, idx: int, chunk_size: int, penalty: float, norm: float, cfg):
+    """(normalized reward, done) for the TD step from frame idx, as ReplayBuffer.sample builds it."""
+    stop = min(idx + chunk_size, len(dataset))
+    episode_end = bool(targets["episode_end"][idx:stop].any())
+    if targets["mode"] == "subtask":
+        done = episode_end or bool(targets["terminals"][idx:stop].any())
+        reward = 0.0 if done else -1.0
+        if penalty > 0 and targets["mistake_onset"][idx:stop].any():
+            reward -= penalty
+        return reward / norm, done
+    reward = -1.0
+    if episode_end:
+        end = idx + int(np.flatnonzero(targets["episode_end"][idx:stop])[0])
+        r = dataset.hf_dataset[end].get("next.reward", 0.0)
+        r = float(r.item() if isinstance(r, torch.Tensor) else r)
+        reward = 0.0 if r > 0.5 else float(getattr(cfg.policy, "terminal_failure_reward", -1.0))
+    return reward / norm, episode_end
+
+
+def _ideal_duration_value(frames_to_end, chunk_size: int, discount: float, norm: float, v_min: float):
+    """V the subtask reward rule implies for a frame with no mistake ahead: -1/N on each of
+    the m = frames_to_end // chunk non-terminal steps, 0 on the terminal one, discounted,
+    floored at the support minimum the TD target is clamped to."""
+    steps = np.asarray(frames_to_end, dtype=np.int64) // chunk_size
+    value = -(1.0 - discount**steps) / ((1.0 - discount) * norm)
+    return np.maximum(value, v_min)
+
+
+def _duration_plots(values, frames_to_end, ideal, quality, mistake, fps: float, output_dir: str) -> dict:
+    """value_vs_time_to_end.png and value_by_label.png; returns the numbers behind them."""
+    seconds = frames_to_end / fps
+    summary: dict = {"n_mistake": int(mistake.sum()), "n_clean": int((~mistake).sum())}
+    residual = values - ideal if ideal is not None else values
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    ax.scatter(seconds[~mistake], values[~mistake], s=18, alpha=0.6, color="steelblue", label="clean frame")
+    if mistake.any():
+        ax.scatter(seconds[mistake], values[mistake], s=22, alpha=0.8, color="crimson", label="mistake window")
+    if ideal is not None:
+        order = np.argsort(seconds)
+        ax.plot(seconds[order], ideal[order], color="black", linewidth=2, label="duration-only ideal $V^*$")
+        summary["value_fit_abs_err"] = float(np.abs(values - ideal).mean())
+        summary["value_fit_corr"] = (
+            float(np.corrcoef(values, ideal)[0, 1]) if values.std() > 0 and ideal.std() > 0 else float("nan")
+        )
+    _style(ax, "V(s) against time to the segment end", "seconds until the segment (or episode) ends", "V(s)")
+    ax.legend(fontsize=11)
+    plt.tight_layout()
+    out = os.path.join(output_dir, "value_vs_time_to_end.png")
+    plt.savefig(out, dpi=200)
+    plt.close(fig)
+    logging.info(f"[CRITIC] saved {out}")
+
+    ylabel = "V - V*" if ideal is not None else "V"
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    levels = sorted(int(q) for q in set(quality.tolist()) if q >= 1)
+    means = [float(residual[quality == q].mean()) for q in levels]
+    counts = [int((quality == q).sum()) for q in levels]
+    axes[0].bar([str(q) for q in levels], means, color="steelblue")
+    for x, (m, c) in enumerate(zip(means, counts)):
+        axes[0].annotate(f"n={c}", (x, m), ha="center", va="bottom" if m >= 0 else "top", fontsize=10)
+    _style(axes[0], f"mean {ylabel} by quality label", "quality (1-5)", f"mean {ylabel}")
+    for q, m in zip(levels, means):
+        summary[f"residual_mean_quality_{q}"] = m
+    if len(levels) >= 2:
+        summary["residual_quality_slope"] = float(np.polyfit(levels, means, 1)[0])
+    groups = [("clean", ~mistake), ("mistake", mistake)]
+    gmeans = [float(residual[mask].mean()) if mask.any() else float("nan") for _, mask in groups]
+    axes[1].bar([name for name, _ in groups], gmeans, color=["steelblue", "crimson"])
+    for x, ((_name, mask), m) in enumerate(zip(groups, gmeans)):
+        y = 0.0 if np.isnan(m) else m
+        axes[1].annotate(f"n={int(mask.sum())}", (x, y), ha="center", va="bottom" if y >= 0 else "top", fontsize=10)
+    _style(axes[1], f"mean {ylabel} by mistake flag", "frame label", f"mean {ylabel}")
+    summary["residual_mean_clean"], summary["residual_mean_mistake"] = gmeans
+    summary["residual_mistake_gap"] = gmeans[1] - gmeans[0]
+    plt.tight_layout(pad=3.0)
+    out = os.path.join(output_dir, "value_by_label.png")
+    plt.savefig(out, dpi=200)
+    plt.close(fig)
+    logging.info(f"[CRITIC] saved {out}")
+    return summary
+
+
 def _gradient_plots(grad_mags, subtasks, episodes, output_dir):
     fig, axes = plt.subplots(1, 2, figsize=(20, 8))
     sns.boxplot(x="grad_mag", y="subtask", hue="subtask", legend=False,
@@ -425,7 +581,7 @@ def _gradient_plots(grad_mags, subtasks, episodes, output_dir):
 _PERCENTILE_EXEMPLARS = (1, 10, 25, 50, 75, 90, 99)
 
 
-def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float) -> dict:
+def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float, extra: dict | None = None) -> dict:
     """Describe the critic's value and TD-error distributions to the viewer."""
     td = raw["td_errors"].float()
     squashed = raw["squashed_advantages"].float()
@@ -442,6 +598,7 @@ def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float) -> dic
         grads = raw["grad_mags"].float()
         summary["grad_mag_mean"] = float(grads.mean())
         summary["grad_mag_max"] = float(grads.max())
+    summary.update(extra or {})
 
     panels = [
         Panel(
@@ -453,8 +610,19 @@ def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float) -> dic
         Panel(
             "advantage_dist.png",
             "TD-error histogram, CDF, and by-subtask spread",
-            how="The TD error is $r + \\gamma V(s') (1-d) - V(s)$ over the training buffer's own window. A mean far from zero is a systematic value bias, not noise.",
+            how="The TD error is $r + \\gamma V(s') (1-d) - V(s)$ with the training sampler's own reward rule (subtask mode: $-1/N$ per step, $0$ once a segment or episode end falls inside the chunk, the mistake penalty at an onset). A mean far from zero is a systematic value bias, not noise.",
             primary=True,
+        ),
+        Panel(
+            "value_vs_time_to_end.png",
+            "$V(s)$ against seconds until the segment ends, with the duration-only ideal $V^*$",
+            how="Under the subtask reward rule the critic is a clock: $V^*(s) = -(1-\\gamma^m)/((1-\\gamma)N)$ for the $m$ chunks left in the segment. Points hugging the black curve mean the critic has learnt the duration; red points (mistake windows) should sit below it by about the mistake penalty.",
+            primary=True,
+        ),
+        Panel(
+            "value_by_label.png",
+            "Mean $V - V^*$ by quality label and by mistake flag",
+            how="Duration is removed, so what is left is what the critic reads off the labels. A negative mistake gap and a rising trend over quality mean the critic agrees with the reviewers; flat bars mean it ignores the clause.",
         ),
         Panel(
             "advantage_squashed_dist.png",
@@ -509,6 +677,24 @@ def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float) -> dic
                 note="Share of squashed advantages with $|\\tanh| > 0.99$. High means ``advantage_scaling`` is too small for this TD-error scale and the conditioning signal has collapsed to a sign.",
             ),
             Metric("td_error_std", "TD error spread", good="none", fmt=4),
+            Metric(
+                "value_fit_abs_err",
+                "Mean |V − V*| (duration fit)",
+                good="low",
+                fmt=4,
+                primary=True,
+                note="Subtask reward mode only: the gap between the critic and the value its own reward rule implies for a mistake-free segment.",
+            ),
+            Metric("value_fit_corr", "corr(V, V*)", good="high", fmt=3, warn=0.5),
+            Metric(
+                "residual_mistake_gap",
+                "Mean (V − V*): mistake − clean",
+                good="none",
+                fmt=4,
+                baseline=0.0,
+                note="Negative when the critic values mistake windows below what duration alone predicts.",
+            ),
+            Metric("residual_quality_slope", "Slope of mean (V − V*) over quality 1..5", good="none", fmt=4, baseline=0.0),
             Metric("grad_mag_mean", "Mean value-gradient magnitude", good="none", fmt=5),
             Metric("n_frames", "Frames sampled", good="none", fmt=0),
         ],
@@ -548,13 +734,22 @@ def run_critic_values_distribution(
     except Exception as exc:
         logging.warning(f"[CRITIC] predicted_distributions failed: {exc}", exc_info=True)
 
-    # ── Part 1: TD-error / squashed advantage ────────────────────────────────
-    # Mirrors training buffer: next_state = s_{t + chunk_size}; reward = max over
-    # [t + chunk, t + 2*chunk); done = any over the same window.
+    # ── Part 1: TD-error under the training sampler's reward rule ────────────
+    # s' = s_{t + chunk_size}; done when a segment boundary (subtask mode) or the
+    # episode end falls in [t, t + chunk); reward -1 per step, 0 on the terminal
+    # step, minus critic_mistake_penalty at a mistake onset, over the normalization
+    # constant; target clamped into the value support. The transition
+    # ReplayBuffer.sample builds for update_critic.
     logging.info(f"[CRITIC] sampling {n_adv} frames for TD-error")
+    targets = _training_targets(val_dataset, cfg, chunk_size)
+    labels = targets["labels"]
+    norm = float(getattr(cfg.policy, "reward_normalization_constant", 1.0))
+    penalty = float(getattr(cfg.policy, "critic_mistake_penalty", 0.0))
+    v_min = float(getattr(cfg.policy, "value_support_min", -2.0))
+    v_max = float(getattr(cfg.policy, "value_support_max", 0.0))
     adv_indices = get_random_valid_samples(
         val_dataset, n_adv, seed,
-        val_ep_indices=val_ep_indices, lookahead_frames=2 * chunk_size - 1,
+        val_ep_indices=val_ep_indices, lookahead_frames=chunk_size,
         stride=int(getattr(cfg.policy, "image_stride", 1)),
     )
     if not adv_indices:
@@ -564,31 +759,42 @@ def run_critic_values_distribution(
     td_errors: list[float] = []
     squashed: list[float] = []
     adv_subtasks: list[str] = []
+    values: list[float] = []
+    frames_to_end: list[int] = []
+    qualities: list[int] = []
+    mistakes: list[bool] = []
     for idx in adv_indices:
-        fr_c = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=None)
-        fr_n = probe_frame_inputs(val_dataset, cfg, idx + chunk_size, chunk_size, metadata=None)
+        metadata = labels.get(idx)
+        fr_c = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=metadata)
+        # s' rides s's subtask and labels, as _critic_batches does: the sampler has no
+        # next-state columns, and a boundary inside the chunk makes the step terminal.
+        fr_n = probe_frame_inputs(val_dataset, cfg, idx + chunk_size, chunk_size, metadata=metadata)
         obs, gt_subtask, task_str = fr_c["obs"], fr_c["subtask"], fr_c["task"]
-        next_obs, next_subtask, next_task_str = fr_n["obs"], fr_n["subtask"], fr_n["task"]
-        v_curr = adapter.predict_value(obs, task_str, gt_subtask)
-        v_next = adapter.predict_value(next_obs, next_task_str, next_subtask)
-
-        rewards, dones = [], []
-        for off in range(chunk_size):
-            w_idx = min(idx + chunk_size + off, len(val_dataset) - 1)
-            f = val_dataset.hf_dataset[w_idx]
-            r = f.get("reward", 0.0); d = f.get("next.done", False)
-            if isinstance(r, torch.Tensor): r = r.item()
-            if isinstance(d, torch.Tensor): d = d.item()
-            rewards.append(float(r)); dones.append(bool(d))
-        reward = max(rewards); done = any(dones)
-
-        target_v = reward + discount * v_next * (1.0 - float(done))
+        v_curr = adapter.predict_value(obs, task_str, gt_subtask, metadata=fr_c["metadata"])
+        v_next = adapter.predict_value(fr_n["obs"], task_str, gt_subtask, metadata=fr_c["metadata"])
+        reward, done = _transition_target(targets, val_dataset, idx, chunk_size, penalty, norm, cfg)
+        target_v = float(np.clip(reward + discount * v_next * (1.0 - float(done)), v_min, v_max))
         td = target_v - v_curr
         td_errors.append(td)
         squashed.append(float(np.tanh(td / advantage_scaling)))
         adv_subtasks.append(gt_subtask or "None")
+        values.append(v_curr)
+        frames_to_end.append(int(targets["frames_to_end"][idx]))
+        qualities.append(int(metadata["quality"]) if metadata and "quality" in metadata else -1)
+        mistakes.append(bool(metadata["mistake"]) if metadata and "mistake" in metadata else False)
 
     _td_error_plots(td_errors, squashed, adv_subtasks, output_dir)
+
+    # ── Part 1b: the duration critic against what its own reward rule implies ──
+    values_arr = np.asarray(values, dtype=np.float64)
+    fte = np.asarray(frames_to_end, dtype=np.int64)
+    ideal = (
+        _ideal_duration_value(fte, chunk_size, discount, norm, v_min) if targets["mode"] == "subtask" else None
+    )
+    duration_summary = _duration_plots(
+        values_arr, fte, ideal, np.asarray(qualities), np.asarray(mistakes, dtype=bool), float(cfg.env.fps), output_dir
+    )
+    duration_summary["critic_reward_mode"] = targets["mode"]
 
     # ── Part 2: gradient magnitudes (skip if adapter doesn't support it) ─────
     try:
@@ -613,6 +819,11 @@ def run_critic_values_distribution(
         "td_errors": torch.tensor(td_errors),
         "squashed_advantages": torch.tensor(squashed),
         "adv_subtasks": adv_subtasks,
+        "values": torch.tensor(values),
+        "frames_to_end": torch.tensor(frames_to_end),
+        "ideal_values": None if ideal is None else torch.tensor(ideal),
+        "qualities": torch.tensor(qualities),
+        "mistakes": torch.tensor(mistakes),
     }
 
     if grad_supported and _probe_value_grad is not None:
@@ -660,7 +871,7 @@ def run_critic_values_distribution(
                 "grad_subtasks": subtasks,
             })
 
-    _write_manifest(output_dir, raw, advantage_scaling)
+    _write_manifest(output_dir, raw, advantage_scaling, duration_summary)
     return raw
 
 

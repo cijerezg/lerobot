@@ -1053,6 +1053,31 @@ class ReplayBuffer:
             )
             logger.info(f"  {key}: memmap {replay_buffer.states[key].shape} {replay_buffer.states[key].dtype}")
 
+        # Row patches: a cache re-keyed from another by hardlinks cannot change bytes on
+        # disk without changing the source too, so corrected rows live in small side
+        # files (or are zero) and are copied into the copy-on-write mapping here. Every
+        # patched row becomes a private page of this process: rows * row_bytes of RSS.
+        for key, patches in (meta.get("row_patches") or {}).items():
+            safe_key = _sanitize(key)
+            np_dtype = np.dtype(meta["dtypes"][safe_key])
+            target = replay_buffer.states[key]
+            view = target.view(torch.uint16) if target.dtype == torch.bfloat16 else target
+            rows_np = view.numpy()
+            for patch in patches:
+                start, rows = int(patch["start_row"]), int(patch["rows"])
+                if patch.get("zero"):
+                    rows_np[start : start + rows] = 0
+                    logger.info(f"  {key}: rows [{start}, {start + rows}) zeroed")
+                    continue
+                source = np.memmap(
+                    str(cache_dir / patch["file"]),
+                    dtype=np_dtype,
+                    mode="r",
+                    shape=(rows, *meta["shapes"][safe_key]),
+                )
+                rows_np[start : start + rows] = source
+                logger.info(f"  {key}: rows [{start}, {start + rows}) patched from {patch['file']}")
+
         # Non-image state: small, clone into RAM
         for key in non_image_state_keys:
             replay_buffer.states[key] = _load_small(key, clone=True, as_torch_dtype=torch.bfloat16)

@@ -1358,23 +1358,28 @@ class MolmoAct2Adapter(ProbablePolicy):
 
     # ── Critic / value head ──────────────────────────────────────────────────
 
-    def _critic_batch(self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None) -> dict:
-        # No advantage clause: the critic is trained on prompts without one
-        # (update_critic never threads advantage into the
-        # critic forward). Injecting "positive"/"negative" here would feed the
-        # critic an out-of-distribution prompt it never saw during training.
-        return self._make_batch(obs, task_str, subtask=subtask)
+    def _critic_batch(
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None
+    ) -> dict:
+        # The training critic reads the actor's prompt (MolmoAct2Trainer._critic_batches
+        # forwards the sampler's subtask, metadata and presence columns), so the probe
+        # passes the frame's own labels. Never an advantage clause: update_critic never
+        # threads one into the critic forward, and an unseen clause is an
+        # out-of-distribution prompt.
+        return self._make_batch(obs, task_str, subtask=subtask, metadata=metadata)
 
     @torch.no_grad()
-    def predict_value(self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None) -> float:
-        out = self._policy.forward_critic(self._critic_batch(obs, task_str, subtask))
+    def predict_value(
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None
+    ) -> float:
+        out = self._policy.forward_critic(self._critic_batch(obs, task_str, subtask, metadata))
         return float(out["value"].mean().item())
 
     @torch.no_grad()
     def predict_value_and_probs(
-        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None,
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None
     ) -> tuple[float, np.ndarray, np.ndarray]:
-        out = self._policy.forward_critic(self._critic_batch(obs, task_str, subtask))
+        out = self._policy.forward_critic(self._critic_batch(obs, task_str, subtask, metadata))
         v = float(out["value"].mean().item())
         probs = out["probs"].squeeze(0).float().cpu().numpy()
         bin_centers = self._policy.critic.bin_centers.detach().float().cpu().numpy()

@@ -421,13 +421,16 @@ class Pi05Adapter(ProbablePolicy):
         return out, vision_features, critic_text_embs
 
     @torch.no_grad()
-    def predict_value(self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None) -> float:
+    def predict_value(
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None
+    ) -> float:
+        # metadata is unused: the pi05 critic prompt carries no metadata clause.
         out, _, _ = self._critic_forward(obs, task_str, subtask)
         return float(out["value"].item())
 
     @torch.no_grad()
     def predict_value_and_probs(
-        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None,
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None
     ) -> tuple[float, np.ndarray, np.ndarray]:
         out, _, _ = self._critic_forward(obs, task_str, subtask)
         v = float(out["value"].item())

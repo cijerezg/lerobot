@@ -648,34 +648,27 @@ class MolmoAct2Trainer(Trainer):
             next_observations, raw.get("complementary_info"), cfg, key_prefix="next_depth."
         )
 
-        # Critic and target must see the same task as the actor. In subtask
-        # reward mode, V(s, z) is additionally conditioned on the active
-        # semantic goal z; a terminal transition never bootstraps into z'.
+        # The critic reads the actor's prompt: the same task, embodiment, control-mode,
+        # subtask and metadata clauses (quality, mistake, speed, precision, contact) and
+        # the same camera / depth presence flags. V(s) is then measured on the input the
+        # actor is conditioned on, and the critic probe can hold V against the labels.
+        # The subtask clause renders per row (an unlabelled row simply has none). s'
+        # reuses s's columns: the sampler carries no next-state labels, and a segment
+        # boundary inside the chunk makes the step terminal, so V(s') never bootstraps
+        # across a label change. Episode reward mode keeps the subtask clause out.
         tasks = self._resolve_batch_tasks(raw, cfg.policy.task, rewards.shape[0])
         critic_input: dict[str, Any] = {"task": tasks}
         from lerobot.types import TransitionKey
 
         raw_comp = raw.get("complementary_info") or {}
-        critic_comp: dict[str, Any] = {}
-        # The embodiment clause is unconditional: V(s) must be told which robot it
-        # is valuing whatever the reward mode, or the critic reads a 6-DOF state
-        # through a 7-DOF prompt.
-        if "embodiment_index" in raw_comp:
-            critic_comp["embodiment_index"] = raw_comp["embodiment_index"]
-        # Same for the control-mode clause and the per-layout stats row it keys on.
-        if "action_layout_id" in raw_comp:
-            critic_comp["action_layout_id"] = raw_comp["action_layout_id"]
-        if str(getattr(cfg.policy, "critic_reward_mode", "episode")) == "subtask":
-            subtask_index = raw_comp.get("subtask_index")
-            if subtask_index is None or torch.any(torch.as_tensor(subtask_index) < 0):
-                if not getattr(self, "_warned_missing_critic_subtask", False):
-                    logging.warning(
-                        "[CRITIC] subtask reward mode received a batch without valid subtask labels; "
-                        "critic prompt will omit the subtask clause."
-                    )
-                    self._warned_missing_critic_subtask = True
-            else:
-                critic_comp["subtask_index"] = subtask_index
+        keys = [
+            key
+            for key in _forwarded_complementary_keys(raw_comp, cfg)
+            if not key.startswith("future.") and key != "future_visual_valid"
+        ]
+        if str(getattr(cfg.policy, "critic_reward_mode", "episode")) != "subtask":
+            keys = [key for key in keys if key != "subtask_index"]
+        critic_comp = {key: raw_comp[key] for key in keys}
         if critic_comp:
             critic_input[TransitionKey.COMPLEMENTARY_DATA] = critic_comp
         curr_batch = preprocessor({**observations, **critic_input})

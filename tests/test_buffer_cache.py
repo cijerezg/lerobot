@@ -280,3 +280,33 @@ class TestFromCache:
         buf = ReplayBuffer.from_cache(cache_dir, device="cpu")
         assert buf.position == 0  # 100 % 100 == 0
         assert buf.size == 100
+
+
+class TestRowPatches:
+    """metadata.json row_patches: corrected rows overlay the memmap without touching the .bin."""
+
+    def test_row_patches_apply_without_touching_the_bin(self, cache_dir):
+        keys = ["observation.images.a", "observation.images.b"]
+        raw = _write_synthetic_cache(
+            cache_dir, num_transitions=20, image_keys=keys, image_storage_dtype="uint8", image_size=(8, 8)
+        )
+        patch = torch.randint(0, 256, (3, 3, 8, 8), dtype=torch.uint8)
+        (cache_dir / "patches").mkdir()
+        patch.numpy().tofile(cache_dir / "patches" / "a.rows_4_7.bin")
+        meta = json.loads((cache_dir / "metadata.json").read_text())
+        meta["row_patches"] = {
+            keys[0]: [{"start_row": 4, "rows": 3, "file": "patches/a.rows_4_7.bin"}],
+            keys[1]: [{"start_row": 1, "rows": 2, "zero": True}],
+        }
+        (cache_dir / "metadata.json").write_text(json.dumps(meta))
+        expected_a = raw[keys[0]].clone()
+        expected_a[4:7] = patch
+        expected_b = raw[keys[1]].clone()
+        expected_b[1:3] = 0
+
+        buf = ReplayBuffer.from_cache(cache_dir, device="cpu")
+
+        assert torch.equal(buf.states[keys[0]], expected_a)
+        assert torch.equal(buf.states[keys[1]], expected_b)
+        on_disk = np.memmap(cache_dir / "observation.images.a.bin", dtype=np.uint8, mode="r", shape=(20, 3, 8, 8))
+        assert np.array_equal(np.asarray(on_disk), raw[keys[0]].numpy())
