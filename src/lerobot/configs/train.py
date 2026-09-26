@@ -497,6 +497,9 @@ class ProbeConfig:
     # Critic values distribution
     critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution
     critic_grad_frames: int = 200  # frames sampled for ||dV/dvision|| (forward+backward)
+    # A is standardized within its subtask before the AWR weights (lerobot.rl.advantage.subtask_table).
+    critic_adv_subtask_prior: float = 10.0  # pseudo-frames shrinking each subtask's variance toward the pooled within-subtask one; 0 = raw
+    critic_adv_std_floor: float = 0.25  # subtask std floor as a fraction of the pooled within-subtask std
     critic_trace_stride_frames: int = 30  # frames between V(s) evaluations in the per-episode traces
     critic_trace_video: bool = False  # render the V(s) overlay video per episode (every frame_stride-th frame, half size)
     critic_trace_video_frame_stride: int = 5  # decode every k-th frame for the video (5 -> 6 fps at 30 fps source, ~1 min/episode)

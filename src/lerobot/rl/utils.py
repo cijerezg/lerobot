@@ -4,6 +4,7 @@ import os
 import re
 
 import cv2
+import imageio
 import numpy as np
 import torch
 import torch.nn as nn
@@ -335,8 +336,8 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
     frame_height = 448
     video_path = os.path.join(log_dir, "episode_video.mp4")
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+    # H.264 through ffmpeg: OpenCV's mp4v (MPEG-4 Part 2) does not play in a browser <video>.
+    out = imageio.get_writer(video_path, fps=fps)
 
     # Prepare critic curve data for plotting
     # Normalize critic values for plotting (0 to frame_height)
@@ -439,9 +440,9 @@ def save_video_with_critic_overlay(log_dir, critic_values, camera_names=None, fp
         alpha = 0.8
         cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
 
-        out.write(frame)
+        out.append_data(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
-    out.release()
+    out.close()
 
     # Cleanup: Remove individual images after video generation
     all_temp_images = [img for imgs in camera_images for img in imgs]

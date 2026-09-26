@@ -18,9 +18,12 @@ Outputs (under ``probe_parameters.output_dir/critic/``):
   predicted_distributions.png   per-frame P(V) curves with E[V] overlay
   advantage_dist.png            advantage (TD-error) histogram with the percentile cuts,
                                 its CDF, the V(s) histogram, by-subtask spread
-  advantage_weights.png         the AWR weights the actor is trained with
-                                (lerobot.rl.advantage): standardized advantage, weight
-                                histogram, beta sweep
+  advantage_subtask_norm.png    A standardized within its subtask (z), by subtask, with
+                                n per subtask and which subtasks hit the std floor
+  advantage_subtask_stats.json  per subtask: n / mean / std over the probe frames and the
+                                shrunk center / floored scale used for z
+  advantage_weights.png         AWR weights over z (lerobot.rl.advantage): standardized
+                                advantage, weight histogram, beta sweep
   advantage_weight_where.png    mean weight by seconds to the segment end, by mistake
                                 flag and by quality label
   advantage_percentiles.png     camera frames nearest the p5/p10/p50/p90/p95 advantage
@@ -32,6 +35,9 @@ Outputs (under ``probe_parameters.output_dir/critic/``):
                                 optimistic frames (tagged P1/P2/O1/O2 on the scatter)
   gradient_magnitudes.png       (if adapter supports it)
   frame_p{XX}.png               (if adapter supports it) percentile exemplars
+  episode_traces/ep{NNNN}/critic_plot.png     V(s) along the episode with V* and segment ends
+  episode_traces/ep{NNNN}/episode_video.mp4   cameras with the V(s) curve drawn on
+                                (probe_parameters.critic_trace_video)
 """
 
 from __future__ import annotations
@@ -63,7 +69,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
-from lerobot.rl.advantage import advantage_weights
+from lerobot.rl.advantage import advantage_weights, subtask_normalize, subtask_stats, subtask_table
 from lerobot.probes.utils import (
     build_episode_index,
     canonical_camera_obs,
@@ -446,6 +452,25 @@ def _ess_frac(w: np.ndarray) -> float:
     return float(w.sum() ** 2 / (w.size * (w**2).sum()))
 
 
+_SUBTASK_VERBS = ("grasp", "move", "release")
+
+
+def _subtask_order(subtasks) -> list[str]:
+    """Rows of the by-subtask panels: grasps, moves, releases, the rest by verb, unlabeled "None" last; alphabetical within a verb."""
+    def key(s):
+        verb = s.split()[0]
+        rank = _SUBTASK_VERBS.index(verb) if verb in _SUBTASK_VERBS else len(_SUBTASK_VERBS) + (s == "None")
+        return (rank, verb, s)
+    return sorted(set(subtasks), key=key)
+
+
+def _separate_verbs(ax, order: list[str]) -> None:
+    """Thin dashed line between verb groups on a categorical y axis."""
+    for i in range(1, len(order)):
+        if order[i].split()[0] != order[i - 1].split()[0]:
+            ax.axhline(i - 0.5, color="0.6", linewidth=0.8, linestyle="--")
+
+
 def _advantage_plots(advantages, values, subtasks, cuts: dict[int, float], output_dir):
     """advantage_dist.png: A histogram with the percentile cuts, A CDF, V(s) histogram, A by subtask."""
     fig, axes = plt.subplots(2, 2, figsize=(22, 14))
@@ -461,9 +486,11 @@ def _advantage_plots(advantages, values, subtasks, cuts: dict[int, float], outpu
     sns.histplot(values, bins=50, kde=True, ax=axes[1, 0], color="steelblue", edgecolor="white")
     _style(axes[1, 0], "V(s) Histogram", "V(s)", "Count")
     data = {"advantage": advantages, "subtask": subtasks}
-    sns.boxplot(x="advantage", y="subtask", hue="subtask", legend=False, data=data,
+    order = _subtask_order(subtasks)
+    sns.boxplot(x="advantage", y="subtask", hue="subtask", legend=False, data=data, order=order, hue_order=order,
                 ax=axes[1, 1], palette="pastel", fliersize=0)
-    sns.stripplot(x="advantage", y="subtask", data=data, ax=axes[1, 1], color=".3", size=3, alpha=0.5, jitter=True)
+    sns.stripplot(x="advantage", y="subtask", data=data, order=order, ax=axes[1, 1], color=".3", size=3, alpha=0.5, jitter=True)
+    _separate_verbs(axes[1, 1], order)
     _style(axes[1, 1], "Advantage by Subtask", "A", "Subtask")
     axes[1, 1].tick_params(axis="y", labelsize=8)
     plt.tight_layout(pad=3.0)
@@ -472,11 +499,59 @@ def _advantage_plots(advantages, values, subtasks, cuts: dict[int, float], outpu
     logging.info(f"[CRITIC] saved {out}")
 
 
+def _subtask_norm_outputs(z, subtasks, pooled, per, table, prior: float, floor: float, output_dir) -> dict:
+    """advantage_subtask_norm.png (z by subtask) + advantage_subtask_stats.json; returns the summary numbers.
+
+    z = (A − μ̃_k) / s_k from lerobot.rl.advantage.subtask_table / subtask_normalize. The JSON
+    holds the pooled stats and, per subtask, the raw n / mean / std over the probe frames and
+    the center / scale actually used.
+    """
+    order = _subtask_order(subtasks)
+    floor_scale = floor * pooled["std_within"]
+    floored = [g for g in order if table[g][1] <= floor_scale]
+    labels = {g: f"{g}  (n={per[g][0]}{', floor' if g in floored else ''})" for g in order}
+    data = {"z": z, "subtask": [labels[g] for g in subtasks]}
+    label_order = [labels[g] for g in order]
+    fig, ax = plt.subplots(figsize=(12, max(6, 0.28 * len(order) + 2)))
+    sns.boxplot(x="z", y="subtask", hue="subtask", legend=False, data=data, order=label_order, hue_order=label_order,
+                ax=ax, palette="pastel", fliersize=0)
+    sns.stripplot(x="z", y="subtask", data=data, order=label_order, ax=ax, color=".3", size=3, alpha=0.5, jitter=True)
+    _separate_verbs(ax, order)
+    ax.axvline(0.0, color="black", linestyle=":", linewidth=1)
+    _style(ax, "Advantage standardized within subtask",
+           f"z = (A − μ̃_k) / s_k    (variance prior {prior:g} frames, std floor {floor:g} σ_w)", "Subtask")
+    ax.tick_params(axis="y", labelsize=8)
+    plt.tight_layout(pad=2.0)
+    out = os.path.join(output_dir, "advantage_subtask_norm.png")
+    plt.savefig(out, dpi=200); plt.close()
+    logging.info(f"[CRITIC] saved {out}")
+
+    stats = {
+        "prior": prior,
+        "std_floor": floor,
+        "pooled": pooled,
+        "subtasks": {
+            g: {"n": per[g][0], "mean": per[g][1], "std": per[g][2] ** 0.5, "center": table[g][0], "scale": table[g][1]}
+            for g in order
+        },
+    }
+    with open(os.path.join(output_dir, "advantage_subtask_stats.json"), "w") as f:
+        json.dump(stats, f, indent=2)
+    return {
+        "adv_subtask_prior": prior,
+        "adv_std_floor": floor,
+        "adv_n_subtasks": len(order),
+        "adv_subtask_floor_frac": len(floored) / len(order),
+        "adv_subtask_bias_ratio": pooled["tau"] / pooled["std_within"],
+    }
+
+
 def _weight_plots(advantages, a_hat, weights, beta: float, clip: float, lam: float, batch_rows: int, seed: int, output_dir) -> dict:
     """advantage_weights.png: Â and w histograms plus the beta sweep; returns the numbers behind them.
 
-    ESS/N and KL(target ‖ BC) = mean(w log w) are the trainer's adv_weight_ess_frac /
-    adv_weight_kl over the pooled probe frames. The ``_batch`` numbers are medians over
+    ``advantages`` is z, A standardized within its subtask (_subtask_norm_outputs). ESS/N and
+    KL(target ‖ BC) = mean(w log w) are the trainer's adv_weight_ess_frac / adv_weight_kl
+    over the pooled probe frames. The ``_batch`` numbers are medians over
     200 resampled batches of ``batch_rows`` frames (the trainer's effective batch, the
     set it actually standardizes over), so they are what one optimizer step sees.
     """
@@ -514,7 +589,7 @@ def _weight_plots(advantages, a_hat, weights, beta: float, clip: float, lam: flo
 
     fig, axes = plt.subplots(1, 3, figsize=(24, 6))
     sns.histplot(ah, bins=50, ax=axes[0], color="seagreen", edgecolor="white")
-    _style(axes[0], "Standardized advantage", f"Â = clip((A − mean A) / std A, ±{clip:g})", "Count")
+    _style(axes[0], "Standardized advantage", f"Â = clip((z − mean z) / std z, ±{clip:g}),  z = A within subtask", "Count")
     sns.histplot(w, bins=np.logspace(np.log10(w.min()), np.log10(w.max()), 50), ax=axes[1], color="seagreen", edgecolor="white")
     axes[1].set_xscale("log")
     axes[1].axvline(1.0, color="black", linestyle=":", linewidth=1)
@@ -804,12 +879,14 @@ def _render_tagged_frames(dataset, cfg, chunk_size: int, tagged, meta: list[dict
 
 def _gradient_plots(grad_mags, subtasks, episodes, output_dir):
     fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+    order = _subtask_order(subtasks)
     sns.boxplot(x="grad_mag", y="subtask", hue="subtask", legend=False,
-                data={"grad_mag": grad_mags, "subtask": subtasks},
+                data={"grad_mag": grad_mags, "subtask": subtasks}, order=order, hue_order=order,
                 ax=axes[0], palette="pastel", fliersize=0)
     sns.stripplot(x="grad_mag", y="subtask",
-                  data={"grad_mag": grad_mags, "subtask": subtasks},
+                  data={"grad_mag": grad_mags, "subtask": subtasks}, order=order,
                   ax=axes[0], color=".3", size=4, alpha=0.5, jitter=True)
+    _separate_verbs(axes[0], order)
     _style(axes[0], "Gradient Magnitude by Subtask", "Magnitude (L2 Norm)", "Subtask")
     sns.scatterplot(x=range(len(grad_mags)), y=grad_mags, hue=episodes,
                     palette="viridis", s=80, alpha=0.8,
@@ -856,9 +933,15 @@ def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> di
             primary=True,
         ),
         Panel(
+            "advantage_subtask_norm.png",
+            "Advantage standardized within its subtask, by subtask",
+            how="$z = (A - \\tilde\\mu_k)/s_k$. The subtask mean is shrunk by empirical Bayes, $\\tilde\\mu_k = \\mu + n_k\\tau^2/(n_k\\tau^2 + \\sigma_w^2)\\,(\\mu_k - \\mu)$, with $\\sigma_w^2$ the pooled within-subtask variance and $\\tau^2$ the spread of the subtask means net of their sampling noise; the variance is shrunk toward $\\sigma_w^2$ by critic_adv_subtask_prior pseudo-frames, $\\tilde\\sigma_k^2 = (n_k\\sigma_k^2 + n_0\\sigma_w^2)/(n_k + n_0)$; and $s_k = \\max(\\tilde\\sigma_k, f\\sigma_w)$ with $f$ = critic_adv_std_floor. This removes the per-subtask critic bias visible in advantage_dist.png, so no subtask is up-weighted wholesale. Boxes should sit on zero; a narrow box marked floor is a subtask whose advantages barely vary, kept near weight 1. Numbers are in advantage_subtask_stats.json.",
+            primary=True,
+        ),
+        Panel(
             "advantage_weights.png",
-            "The AWR weights the actor is trained with: standardized advantage, weight histogram, beta sweep",
-            how="Same formula as the trainer (lerobot.rl.advantage): $\\hat A = \\mathrm{clip}((A - \\bar A)/\\sigma_A, \\pm c)$, $w = e^{\\hat A/\\beta} / \\bar w$, then the $\\lambda$ BC mix, with the statistics pooled over every sampled frame. A weight histogram with a long right tail on the log axis means a few frames carry the update; the sweep shows how ESS and the top-5 % share move with $\\beta$ on these same advantages.",
+            "AWR weights over the subtask-standardized advantage: standardized advantage, weight histogram, beta sweep",
+            how="The trainer's formula (lerobot.rl.advantage) applied to $z$, the advantage standardized within its subtask (advantage_subtask_norm.png): $\\hat A = \\mathrm{clip}((z - \\bar z)/\\sigma_z, \\pm c)$, $w = e^{\\hat A/\\beta} / \\bar w$, then the $\\lambda$ BC mix, with the statistics pooled over every sampled frame. The actor trainer does not standardize within subtask yet. A weight histogram with a long right tail on the log axis means a few frames carry the update; the sweep shows how ESS and the top-5 % share move with $\\beta$ on these same advantages.",
             primary=True,
         ),
         Panel(
@@ -903,6 +986,24 @@ def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> di
         )
         for percentile in _PERCENTILE_EXEMPLARS
     ]
+    # Per-episode traces from run_episode_critic_traces; write_index drops the videos
+    # when critic_trace_video is off.
+    trace_dir = os.path.join(output_dir, "episode_traces")
+    episodes = sorted(os.listdir(trace_dir)) if os.path.isdir(trace_dir) else []
+    for k, ep in enumerate(episodes):
+        panels += [
+            Panel(
+                f"episode_traces/{ep}/episode_video.mp4",
+                f"Episode {int(ep[2:])}: cameras with $V(s)$ drawn along the episode",
+                how="Faint: the whole curve; bold: up to the current frame, on a fixed $[-2, 0]$ axis; the subtask is in the corner. $V$ should climb towards $0$ within each segment and drop back at the segment end; a flat curve while the arm plainly makes progress means the critic is not reading the images.",
+                primary=k == 0,
+            ),
+            Panel(
+                f"episode_traces/{ep}/critic_plot.png",
+                f"Episode {int(ep[2:])}: $V(s)$ against time with the duration ideal $V^*$ and the segment ends",
+                how="Black is the duration-only ideal; dashed lines are the segment ends the reward rule uses. A sawtooth that tracks the black curve means the critic has learnt the clock; dips below it should line up with mistakes.",
+            ),
+        ]
     return write_index(
         output_dir,
         sys.modules[__name__],
@@ -982,6 +1083,21 @@ def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> di
             ),
             Metric("adv_weight_max_batch", "Largest weight per effective batch (median)", good="none", fmt=2),
             Metric(
+                "adv_subtask_floor_frac",
+                "Share of subtasks whose std hits the floor",
+                good="none",
+                fmt=3,
+                note="Those subtasks get scale critic_adv_std_floor × pooled within-subtask std, so their z stays small. In the probe the variance prior usually binds first; the floor matters for subtasks with far more frames than the prior. Many floored subtasks means the critic separates little within them.",
+            ),
+            Metric(
+                "adv_subtask_bias_ratio",
+                "Spread of subtask mean A / within-subtask std (τ / σ_w)",
+                good="low",
+                fmt=3,
+                note="How much of the advantage is a per-subtask offset, the critic's subtask bias. Near 0 the within-subtask standardization changes little; around 1 or more, pooled weights would favour whole subtasks.",
+            ),
+            Metric("adv_n_subtasks", "Subtasks in the advantage sample", good="none", fmt=0),
+            Metric(
                 "value_fit_abs_err",
                 "Mean |V − V*| (duration fit)",
                 good="low",
@@ -1025,6 +1141,8 @@ def run_critic_values_distribution(
     clip = float(getattr(cfg.policy, "advantage_clip", 3.0))
     lam = float(getattr(cfg.policy, "advantage_lambda", 1.0))
     batch_rows = int(cfg.batch_size) * int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
+    prior = float(getattr(p, "critic_adv_subtask_prior", 10.0))
+    floor = float(getattr(p, "critic_adv_std_floor", 0.25))
 
     # ── Part 0: per-episode V(s) traces + overlay video ──────────────────────
     try:
@@ -1110,10 +1228,18 @@ def run_critic_values_distribution(
     segment_ids = np.asarray(adv_indices, dtype=np.int64) + fte
     cuts, percentile_frames = _pick_percentile_frames(td_arr, segment_ids)
     _advantage_plots(td_errors, values, adv_subtasks, cuts, output_dir)
-    w_t, a_hat_t = advantage_weights(torch.tensor(td_errors, dtype=torch.float32), beta, clip, lam)
+    # Standardize within each subtask first, then the trainer's pooled formula over z.
+    td_t = torch.tensor(td_errors, dtype=torch.float32)
+    per_subtask = subtask_stats(td_t, adv_subtasks)
+    norm_table, pooled = subtask_table(per_subtask, prior, floor)
+    z_t = subtask_normalize(td_t, adv_subtasks, norm_table, pooled)
+    z_arr = z_t.numpy().astype(np.float64)
+    subtask_summary = _subtask_norm_outputs(z_arr, adv_subtasks, pooled, per_subtask, norm_table, prior, floor, output_dir)
+    w_t, a_hat_t = advantage_weights(z_t, beta, clip, lam)
     weights = w_t.numpy()
     a_hat = a_hat_t.numpy()
-    weight_summary = _weight_plots(td_arr, a_hat, weights, beta, clip, lam, batch_rows, seed, output_dir)
+    weight_summary = _weight_plots(z_arr, a_hat, weights, beta, clip, lam, batch_rows, seed, output_dir)
+    weight_summary.update(subtask_summary)
     weight_summary.update(_weight_where_plots(weights, seconds, mistakes_arr, qualities_arr, output_dir))
 
     # ── Part 1b: the duration critic against what its own reward rule implies ──
@@ -1150,7 +1276,7 @@ def run_critic_values_distribution(
         val_dataset, cfg, chunk_size, percentile_frames, sample_meta,
         lambda tag, i: (
             f"{tag}: advantage percentile {int(tag[1:3])} (cut {cuts[int(tag[1:3])]:+.3f})\n"
-            f"A = {td_arr[i]:+.3f}   Â = {a_hat[i]:+.2f}   w = {weights[i]:.2f}\n"
+            f"A = {td_arr[i]:+.3f}   z = {z_arr[i]:+.2f}   Â = {a_hat[i]:+.2f}   w = {weights[i]:.2f}\n"
             f"{value_line(i)}\n{frame_text(i)}"
         ),
         os.path.join(output_dir, "advantage_percentiles.png"),
@@ -1177,6 +1303,7 @@ def run_critic_values_distribution(
 
     raw: dict = {
         "td_errors": torch.tensor(td_errors),
+        "advantages_subtask_norm": z_t,
         "advantages_standardized": torch.tensor(a_hat),
         "advantage_weights": torch.tensor(weights),
         "adv_subtasks": adv_subtasks,
