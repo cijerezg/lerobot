@@ -281,8 +281,13 @@ Outputs (under `{output_dir}/critic/`):
 | File | Description |
 |------|-------------|
 | `predicted_distributions.png` | Per-frame $P(V)$ curves with $\mathbb{E}[V]$ overlay |
-| `advantage_dist.png` | TD-error histogram + CDF + by-subtask boxplot |
-| `advantage_squashed_dist.png` | $\tanh(\text{TD-error}/\text{scaling})$ version of the above |
+| `advantage_dist.png` | Advantage ($r + \gamma V(s') - V(s)$) histogram with the p5/p10/p50/p90/p95 cuts, CDF, $V(s)$ histogram, by-subtask boxplot |
+| `advantage_weights.png` | The AWR weights the actor trains with (`lerobot.rl.advantage`, the trainer's own formula): standardized advantage, weight histogram, beta sweep |
+| `advantage_weight_where.png` | Mean weight by seconds to the segment end, by mistake flag, by quality label |
+| `advantage_percentiles.png` | Camera frames nearest each percentile cut, two per cut from different segments, with $A$, $\hat A$, $w$, $V$, $V^*$ |
+| `value_vs_time_to_end.png` | $V(s)$ against seconds to the segment end with the duration-only ideal $V^*$ |
+| `value_by_label.png` | Mean $V - V^*$ by quality label and mistake flag |
+| `value_outliers.png` | The two most pessimistic and two most optimistic frames against $V^*$ |
 | `gradient_magnitudes.png` | $\|\nabla_\text{vision} V\|$ distribution (only when the adapter supports it) |
 | `frame_p{XX}.png` | Percentile-exemplar frames at $V$ deciles (only when the adapter supports it) |
 
@@ -299,7 +304,7 @@ python -m lerobot.probes.critic --config path/to/config.yaml
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `enable_critic_values_distribution` | `false` | Enable this probe (off by default — requires backward when the gradient sections are active) |
-| `critic_adv_frames` | `1000` | Frames sampled for $V(s)$ / TD-error distributions |
+| `critic_adv_frames` | `1000` | Frames sampled for the advantage, weight and $V(s)$ distributions and the percentile frames (two critic forwards each; `config_rl_validate.yaml` uses 512) |
 | `critic_grad_frames` | `200` | Frames sampled for $\|\nabla_\text{vision} V\|$ (forward + backward) |
 
 ---

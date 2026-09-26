@@ -16,8 +16,15 @@ at a mistake onset, over the normalization constant.
 
 Outputs (under ``probe_parameters.output_dir/critic/``):
   predicted_distributions.png   per-frame P(V) curves with E[V] overlay
-  advantage_dist.png            TD-error histogram + CDF + by-subtask boxplot
-  advantage_squashed_dist.png   tanh(TD-error / scaling) version of the above
+  advantage_dist.png            advantage (TD-error) histogram with the percentile cuts,
+                                its CDF, the V(s) histogram, by-subtask spread
+  advantage_weights.png         the AWR weights the actor is trained with
+                                (lerobot.rl.advantage): standardized advantage, weight
+                                histogram, beta sweep
+  advantage_weight_where.png    mean weight by seconds to the segment end, by mistake
+                                flag and by quality label
+  advantage_percentiles.png     camera frames nearest the p5/p10/p50/p90/p95 advantage
+                                cuts (two per cut, different segments)
   value_vs_time_to_end.png      V(s) against seconds to the segment end, with the
                                 duration-only ideal V* the reward rule implies
   value_by_label.png            mean V - V* by quality label and by mistake flag
@@ -56,6 +63,7 @@ from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
+from lerobot.rl.advantage import advantage_weights
 from lerobot.probes.utils import (
     build_episode_index,
     canonical_camera_obs,
@@ -429,44 +437,168 @@ def run_predicted_distributions(
     return {"indices": indices}
 
 
-def _td_error_plots(td_errors, squashed, subtasks, output_dir):
-    fig, axes = plt.subplots(1, 3, figsize=(24, 6))
-    sns.histplot(td_errors, bins=50, kde=True, ax=axes[0],
-                 color="coral", edgecolor="white")
-    _style(axes[0], "TD-Error (Advantage) Histogram", "TD-Error", "Count")
-    sns.ecdfplot(td_errors, ax=axes[1], color="coral", linewidth=3)
-    _style(axes[1], "TD-Error (Advantage) CDF", "TD-Error", "Cumulative Probability")
-    axes[1].margins(y=0.05)
-    sns.boxplot(x="td_error", y="subtask", hue="subtask", legend=False,
-                data={"td_error": td_errors, "subtask": subtasks},
-                ax=axes[2], palette="pastel", fliersize=0)
-    sns.stripplot(x="td_error", y="subtask",
-                  data={"td_error": td_errors, "subtask": subtasks},
-                  ax=axes[2], color=".3", size=3, alpha=0.5, jitter=True)
-    _style(axes[2], "TD-Error by Subtask", "TD-Error", "Subtask")
+_ADVANTAGE_PERCENTILES = (5, 10, 50, 90, 95)
+_BETA_SWEEP = (0.25, 0.5, 1.0, 2.0, 4.0)
+
+
+def _ess_frac(w: np.ndarray) -> float:
+    """ESS / N = (Σw)² / (N Σw²), as the trainer logs adv_weight_ess_frac."""
+    return float(w.sum() ** 2 / (w.size * (w**2).sum()))
+
+
+def _advantage_plots(advantages, values, subtasks, cuts: dict[int, float], output_dir):
+    """advantage_dist.png: A histogram with the percentile cuts, A CDF, V(s) histogram, A by subtask."""
+    fig, axes = plt.subplots(2, 2, figsize=(22, 14))
+    sns.histplot(advantages, bins=50, kde=True, ax=axes[0, 0], color="coral", edgecolor="white")
+    top = axes[0, 0].get_ylim()[1]
+    for k, (pct, cut) in enumerate(cuts.items()):
+        axes[0, 0].axvline(cut, color="black", linestyle=":", linewidth=1)
+        axes[0, 0].annotate(f"p{pct}", (cut, top * (1.0 if k % 2 == 0 else 0.96)), ha="center", va="bottom", fontsize=9)
+    _style(axes[0, 0], "Advantage (TD-error) Histogram", "A = r + γ V(s') − V(s)", "Count")
+    sns.ecdfplot(advantages, ax=axes[0, 1], color="coral", linewidth=3)
+    _style(axes[0, 1], "Advantage CDF", "A", "Cumulative Probability")
+    axes[0, 1].margins(y=0.05)
+    sns.histplot(values, bins=50, kde=True, ax=axes[1, 0], color="steelblue", edgecolor="white")
+    _style(axes[1, 0], "V(s) Histogram", "V(s)", "Count")
+    data = {"advantage": advantages, "subtask": subtasks}
+    sns.boxplot(x="advantage", y="subtask", hue="subtask", legend=False, data=data,
+                ax=axes[1, 1], palette="pastel", fliersize=0)
+    sns.stripplot(x="advantage", y="subtask", data=data, ax=axes[1, 1], color=".3", size=3, alpha=0.5, jitter=True)
+    _style(axes[1, 1], "Advantage by Subtask", "A", "Subtask")
+    axes[1, 1].tick_params(axis="y", labelsize=8)
     plt.tight_layout(pad=3.0)
     out = os.path.join(output_dir, "advantage_dist.png")
     plt.savefig(out, dpi=200); plt.close()
     logging.info(f"[CRITIC] saved {out}")
 
+
+def _weight_plots(advantages, a_hat, weights, beta: float, clip: float, lam: float, batch_rows: int, seed: int, output_dir) -> dict:
+    """advantage_weights.png: Â and w histograms plus the beta sweep; returns the numbers behind them.
+
+    ESS/N and KL(target ‖ BC) = mean(w log w) are the trainer's adv_weight_ess_frac /
+    adv_weight_kl over the pooled probe frames. The ``_batch`` numbers are medians over
+    200 resampled batches of ``batch_rows`` frames (the trainer's effective batch, the
+    set it actually standardizes over), so they are what one optimizer step sees.
+    """
+    a = torch.as_tensor(np.asarray(advantages), dtype=torch.float32)
+    w = np.asarray(weights, dtype=np.float64)
+    ah = np.asarray(a_hat, dtype=np.float64)
+    top = max(1, int(round(0.05 * w.size)))
+    summary = {
+        "advantage_beta": beta,
+        "advantage_clip": clip,
+        "advantage_lambda": lam,
+        "adv_weight_ess_frac": _ess_frac(w),
+        "adv_weight_kl": float((w * np.log(np.clip(w, 1e-12, None))).mean()),
+        "adv_weight_max": float(w.max()),
+        "adv_clip_frac": float((np.abs(ah) >= clip - 1e-6).mean()),
+        "adv_top5_weight_share": float(np.sort(w)[::-1][:top].sum() / w.sum()),
+        "adv_batch_rows": int(batch_rows),
+    }
+    rng = np.random.default_rng(seed)
+    ess_batch, max_batch = [], []
+    for _ in range(200):
+        wb, _ = advantage_weights(a[rng.integers(0, a.numel(), size=batch_rows)], beta, clip, lam)
+        wb = wb.numpy().astype(np.float64)
+        ess_batch.append(_ess_frac(wb))
+        max_batch.append(float(wb.max()))
+    summary["adv_weight_ess_frac_batch"] = float(np.median(ess_batch))
+    summary["adv_weight_max_batch"] = float(np.median(max_batch))
+
+    sweep_ess, sweep_top = [], []
+    for b in _BETA_SWEEP:
+        wb, _ = advantage_weights(a, b, clip, lam)
+        wb = wb.numpy().astype(np.float64)
+        sweep_ess.append(_ess_frac(wb))
+        sweep_top.append(float(np.sort(wb)[::-1][:top].sum() / wb.sum()))
+
     fig, axes = plt.subplots(1, 3, figsize=(24, 6))
-    sns.histplot(squashed, bins=50, kde=True, ax=axes[0],
-                 color="seagreen", edgecolor="white")
-    _style(axes[0], "Squashed Advantage Histogram", "tanh(adv / scale)", "Count")
-    sns.ecdfplot(squashed, ax=axes[1], color="seagreen", linewidth=3)
-    _style(axes[1], "Squashed Advantage CDF", "tanh(adv / scale)", "Cumulative Probability")
-    axes[1].margins(y=0.05)
-    sns.boxplot(x="squashed", y="subtask", hue="subtask", legend=False,
-                data={"squashed": squashed, "subtask": subtasks},
-                ax=axes[2], palette="pastel", fliersize=0)
-    sns.stripplot(x="squashed", y="subtask",
-                  data={"squashed": squashed, "subtask": subtasks},
-                  ax=axes[2], color=".3", size=3, alpha=0.5, jitter=True)
-    _style(axes[2], "Squashed Advantage by Subtask", "tanh(adv / scale)", "Subtask")
+    sns.histplot(ah, bins=50, ax=axes[0], color="seagreen", edgecolor="white")
+    _style(axes[0], "Standardized advantage", f"Â = clip((A − mean A) / std A, ±{clip:g})", "Count")
+    sns.histplot(w, bins=np.logspace(np.log10(w.min()), np.log10(w.max()), 50), ax=axes[1], color="seagreen", edgecolor="white")
+    axes[1].set_xscale("log")
+    axes[1].axvline(1.0, color="black", linestyle=":", linewidth=1)
+    _style(axes[1], f"AWR weight (β = {beta:g}, λ = {lam:g})", "w = exp(Â / β) / mean w", "Count")
+    axes[2].plot(_BETA_SWEEP, sweep_ess, marker="o", color="steelblue", label="ESS / N")
+    axes[2].plot(_BETA_SWEEP, sweep_top, marker="s", color="crimson", label="weight share of the top 5 % frames")
+    axes[2].axvline(beta, color="black", linestyle=":", linewidth=1, label=f"configured β = {beta:g}")
+    axes[2].set_xscale("log")
+    axes[2].set_ylim(0, 1)
+    _style(axes[2], "Beta sweep on the same advantages", "advantage_beta", "fraction")
+    axes[2].legend(fontsize=11)
     plt.tight_layout(pad=3.0)
-    out = os.path.join(output_dir, "advantage_squashed_dist.png")
+    out = os.path.join(output_dir, "advantage_weights.png")
     plt.savefig(out, dpi=200); plt.close()
     logging.info(f"[CRITIC] saved {out}")
+    return summary
+
+
+def _weight_where_plots(weights, seconds_to_end, mistake, quality, output_dir) -> dict:
+    """advantage_weight_where.png: mean w by seconds to the segment end, by mistake flag, by quality label."""
+    w = np.asarray(weights, dtype=np.float64)
+    s = np.asarray(seconds_to_end, dtype=np.float64)
+    mistake = np.asarray(mistake, dtype=bool)
+    quality = np.asarray(quality)
+    edges = [0, 1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, np.inf]
+    bin_labels = [f"{lo:g}-{hi:g}" if np.isfinite(hi) else f"{lo:g}+" for lo, hi in zip(edges[:-1], edges[1:])]
+    bin_masks = [(s >= lo) & (s < hi) for lo, hi in zip(edges[:-1], edges[1:])]
+
+    def annotate_bars(ax, names, masks):
+        means = [float(w[m].mean()) if m.any() else float("nan") for m in masks]
+        ax.bar(names, [0.0 if np.isnan(v) else v for v in means], color="steelblue")
+        for x, (m, v) in enumerate(zip(masks, means)):
+            ax.annotate(f"n={int(m.sum())}", (x, 0.0 if np.isnan(v) else v), ha="center", va="bottom", fontsize=9)
+        ax.axhline(1.0, color="black", linestyle=":", linewidth=1)
+        return means
+
+    fig, axes = plt.subplots(1, 3, figsize=(24, 6))
+    annotate_bars(axes[0], bin_labels, bin_masks)
+    _style(axes[0], "Mean weight by time to the segment end", "seconds until the segment ends", "mean w")
+    axes[0].tick_params(axis="x", labelsize=9)
+    gmeans = annotate_bars(axes[1], ["clean", "mistake"], [~mistake, mistake])
+    axes[1].patches[1].set_color("crimson")
+    _style(axes[1], "Mean weight by mistake flag", "frame label", "mean w")
+    levels = sorted(int(q) for q in set(quality.tolist()) if q >= 1)
+    qmeans = annotate_bars(axes[2], [str(q) for q in levels], [quality == q for q in levels])
+    _style(axes[2], "Mean weight by quality label", "quality (1-5)", "mean w")
+    plt.tight_layout(pad=3.0)
+    out = os.path.join(output_dir, "advantage_weight_where.png")
+    plt.savefig(out, dpi=200); plt.close()
+    logging.info(f"[CRITIC] saved {out}")
+
+    near = s < 2.0
+    summary = {
+        "adv_weight_end_ratio": float(w[near].mean() / w[~near].mean()) if near.any() and (~near).any() else float("nan"),
+        "adv_weight_mistake_ratio": gmeans[1] / gmeans[0] if mistake.any() and (~mistake).any() else float("nan"),
+    }
+    for q, m in zip(levels, qmeans):
+        summary[f"adv_weight_mean_quality_{q}"] = m
+    if len(levels) >= 2:
+        summary["adv_weight_quality_slope"] = float(np.polyfit(levels, qmeans, 1)[0])
+    return summary
+
+
+def _pick_percentile_frames(advantages, segment_ids, percentiles=_ADVANTAGE_PERCENTILES, per_cut: int = 2) -> tuple[dict[int, float], list[tuple[str, int]]]:
+    """The frames nearest each percentile cut of the advantage, ``per_cut`` per cut, at most one
+    per segment and none twice: (cut value per percentile, [(tag, sample index)])."""
+    a = np.asarray(advantages, dtype=np.float64)
+    cuts = {pct: float(np.percentile(a, pct)) for pct in percentiles}
+    used_frames: set[int] = set()
+    used_segments: set = set()
+    tagged: list[tuple[str, int]] = []
+    for pct, cut in cuts.items():
+        k = 0
+        for i in np.argsort(np.abs(a - cut)):
+            i = int(i)
+            if i in used_frames or segment_ids[i] in used_segments:
+                continue
+            k += 1
+            tagged.append((f"p{pct:02d}-{k}", i))
+            used_frames.add(i)
+            used_segments.add(segment_ids[i])
+            if k == per_cut:
+                break
+    return cuts, tagged
 
 
 def _training_targets(dataset, cfg, chunk_size: int) -> dict:
@@ -641,20 +773,19 @@ def _duration_plots(values, frames_to_end, ideal, quality, mistake, fps: float, 
     return summary, outliers
 
 
-def _render_outlier_frames(dataset, cfg, chunk_size: int, outliers, meta: list[dict], values, ideal, seconds, output_dir: str):
-    """value_outliers.png: one row per tagged frame, its cameras plus what the critic and the labels say."""
+def _render_tagged_frames(dataset, cfg, chunk_size: int, tagged, meta: list[dict], text_fn, out_path: str):
+    """One row per tagged frame: its cameras plus what ``text_fn(tag, i)`` says about it."""
     rows = []
-    for tag, i in outliers:
-        m = meta[i]
-        obs, _, _, _, _, _, _ = get_frame_data(dataset, m["global_idx"], chunk_size)
+    for tag, i in tagged:
+        obs, _, _, _, _, _, _ = get_frame_data(dataset, meta[i]["global_idx"], chunk_size)
         obs = canonical_camera_obs(obs, cfg)
         images = [(key.split(".")[-1], _frame_to_uint8(obs[key])) for key in sorted(obs) if "images" in key]
-        rows.append((tag, i, m, images))
+        rows.append((tag, i, images))
     if not rows:
         return
-    n_cams = max(len(r[3]) for r in rows)
+    n_cams = max(len(r[2]) for r in rows)
     fig, axes = plt.subplots(len(rows), n_cams + 1, figsize=(4.2 * (n_cams + 1), 3.3 * len(rows)), squeeze=False)
-    for r, (tag, i, m, images) in enumerate(rows):
+    for r, (tag, i, images) in enumerate(rows):
         for c in range(n_cams):
             ax = axes[r, c]
             ax.axis("off")
@@ -663,22 +794,12 @@ def _render_outlier_frames(dataset, cfg, chunk_size: int, outliers, meta: list[d
                 ax.set_title(f"{tag}  {images[c][0]}" if c == 0 else images[c][0], fontsize=11, fontweight="bold" if c == 0 else None)
         ax = axes[r, n_cams]
         ax.axis("off")
-        text = (
-            f"{tag}: {'pessimistic' if tag.startswith('P') else 'optimistic'}\n"
-            f"episode {m['episode_idx']}, frame {m['frame_idx']}\n"
-            f"{textwrap.fill(m['subtask'] or '(no subtask)', 30)}\n"
-            f"{seconds[i]:.1f} s to segment end\n"
-            f"V = {values[i]:.2f}    V* = {ideal[i]:.2f}\n"
-            f"quality {m['quality'] if m['quality'] >= 0 else '-'}, "
-            f"{'mistake window' if m['mistake'] else 'clean'}"
-        )
-        ax.text(0.0, 0.95, text, transform=ax.transAxes, fontsize=11, va="top", ha="left",
+        ax.text(0.0, 0.95, text_fn(tag, i), transform=ax.transAxes, fontsize=11, va="top", ha="left",
                 bbox=dict(facecolor="white", alpha=0.9, edgecolor="#ccc", boxstyle="round,pad=0.6"))
     plt.tight_layout()
-    out = os.path.join(output_dir, "value_outliers.png")
-    fig.savefig(out, dpi=150)
+    fig.savefig(out_path, dpi=150)
     plt.close(fig)
-    logging.info(f"[CRITIC] saved {out}")
+    logging.info(f"[CRITIC] saved {out_path}")
 
 
 def _gradient_plots(grad_mags, subtasks, episodes, output_dir):
@@ -706,18 +827,14 @@ def _gradient_plots(grad_mags, subtasks, episodes, output_dir):
 _PERCENTILE_EXEMPLARS = (1, 10, 25, 50, 75, 90, 99)
 
 
-def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float, extra: dict | None = None) -> dict:
-    """Describe the critic's value and TD-error distributions to the viewer."""
+def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> dict:
+    """Describe the critic's value, advantage and weight distributions to the viewer."""
     td = raw["td_errors"].float()
-    squashed = raw["squashed_advantages"].float()
     summary = {
         "n_frames": int(td.numel()),
         "td_error_mean": float(td.mean()),
         "td_error_abs_mean": float(td.abs().mean()),
         "td_error_std": float(td.std()),
-        "advantage_scaling": advantage_scaling,
-        "squashed_abs_mean": float(squashed.abs().mean()),
-        "squashed_saturated_fraction": float((squashed.abs() > 0.99).float().mean()),
     }
     if "grad_mags" in raw:
         grads = raw["grad_mags"].float()
@@ -734,8 +851,26 @@ def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float, extra:
         ),
         Panel(
             "advantage_dist.png",
-            "TD-error histogram, CDF, and by-subtask spread",
-            how="The TD error is $r + \\gamma V(s') (1-d) - V(s)$ with the training sampler's own reward rule (subtask mode: $-1/N$ per step, $0$ once a segment or episode end falls inside the chunk, the mistake penalty at an onset). A mean far from zero is a systematic value bias, not noise.",
+            "Advantage (TD error) histogram with the percentile cuts, its CDF, the $V(s)$ histogram, and the by-subtask spread",
+            how="The advantage is $r + \\gamma V(s') (1-d) - V(s)$ with the training sampler's own reward rule (subtask mode: $-1/N$ per step, $0$ once a segment or episode end falls inside the chunk, the mistake penalty at an onset) and $V(s')$ from the same critic, as the actor run computes it. A mean far from zero is a systematic value bias, not noise. The dotted cuts are the percentiles shown in advantage_percentiles.png.",
+            primary=True,
+        ),
+        Panel(
+            "advantage_weights.png",
+            "The AWR weights the actor is trained with: standardized advantage, weight histogram, beta sweep",
+            how="Same formula as the trainer (lerobot.rl.advantage): $\\hat A = \\mathrm{clip}((A - \\bar A)/\\sigma_A, \\pm c)$, $w = e^{\\hat A/\\beta} / \\bar w$, then the $\\lambda$ BC mix, with the statistics pooled over every sampled frame. A weight histogram with a long right tail on the log axis means a few frames carry the update; the sweep shows how ESS and the top-5 % share move with $\\beta$ on these same advantages.",
+            primary=True,
+        ),
+        Panel(
+            "advantage_weight_where.png",
+            "Mean weight by seconds to the segment end, by mistake flag, by quality label",
+            how="Where the actor's gradient goes under the weighting. Mass in the last 2 s of the segments means AWR is up-weighting the terminal steps the critic under-predicts (a duration effect), not good behaviour; the mistake bar should sit below the clean bar and the quality bars should rise.",
+            primary=True,
+        ),
+        Panel(
+            "advantage_percentiles.png",
+            "Camera frames nearest the p5 / p10 / p50 / p90 / p95 advantage cuts, two per cut from different segments",
+            how="What a low-, median- and high-advantage frame looks like, away from the extremes so they are typical of their tail. Each row states $A$, $\\hat A$, the weight $w$, $V$ and $V^*$.",
             primary=True,
         ),
         Panel(
@@ -748,17 +883,11 @@ def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float, extra:
             "value_outliers.png",
             "The frames furthest from the duration ideal: P = most pessimistic, O = most optimistic",
             how="Tagged on the scatter with the same letters. A pessimistic frame mid-segment with the object plainly in hand says the critic is not reading progress off the image; an optimistic one right after a segment start says it took the scene for a finished step.",
-            primary=True,
         ),
         Panel(
             "value_by_label.png",
             "Mean $V - V^*$ by quality label and by mistake flag",
             how="Duration is removed, so what is left is what the critic reads off the labels. A negative mistake gap and a rising trend over quality mean the critic agrees with the reviewers; flat bars mean it ignores the clause.",
-        ),
-        Panel(
-            "advantage_squashed_dist.png",
-            "The same after $\\tanh(\\delta / \\text{advantage\\_scaling})$",
-            how="This is the form the policy is actually conditioned on. Mass piled at $\\pm 1$ means the scaling is too small and the conditioning has collapsed to a sign bit.",
         ),
         Panel(
             "gradient_magnitudes.png",
@@ -779,7 +908,7 @@ def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float, extra:
         sys.modules[__name__],
         title="Critic Values",
         group="Critic",
-        claim="What values does the critic assign, and is its TD error centred and unsaturated?",
+        claim="What values does the critic assign, and where do its advantage weights put the actor's gradient?",
         summary=summary,
         metrics=[
             Metric(
@@ -799,15 +928,59 @@ def _write_manifest(output_dir: str, raw: dict, advantage_scaling: float, extra:
                 primary=True,
                 note="Away from zero the critic is systematically optimistic or pessimistic, which the absolute mean above cannot show.",
             ),
+            Metric("td_error_std", "TD error spread", good="none", fmt=4),
             Metric(
-                "squashed_saturated_fraction",
-                "Fraction of advantages at $\\pm 1$",
+                "adv_weight_ess_frac",
+                "ESS / N of the AWR weights",
+                good="high",
+                fmt=3,
+                primary=True,
+                note="Pooled over the sampled frames with the configured beta/clip/lambda. A Gaussian standardized advantage at beta 1 gives about 0.37; far below that a heavy tail is carrying the update.",
+            ),
+            Metric(
+                "adv_top5_weight_share",
+                "Weight share of the top 5 % frames",
                 good="low",
                 fmt=3,
-                warn=0.1,
-                note="Share of squashed advantages with $|\\tanh| > 0.99$. High means ``advantage_scaling`` is too small for this TD-error scale and the conditioning signal has collapsed to a sign.",
+                primary=True,
+                note="Uniform weights give 0.05; a Gaussian standardized advantage at beta 1 gives about 0.26. Higher means the update is a handful of frames.",
             ),
-            Metric("td_error_std", "TD error spread", good="none", fmt=4),
+            Metric(
+                "adv_weight_end_ratio",
+                "Mean w within 2 s of the segment end / elsewhere",
+                good="none",
+                fmt=3,
+                baseline=1.0,
+                primary=True,
+                note="Above 1 the weighting favours the terminal steps, which is the critic's duration error, not behaviour quality.",
+            ),
+            Metric(
+                "adv_weight_mistake_ratio",
+                "Mean w on mistake windows / clean frames",
+                good="low",
+                fmt=3,
+                baseline=1.0,
+                primary=True,
+                note="The weighting should put this below 1: mistake frames get less of the actor's gradient.",
+            ),
+            Metric("adv_weight_quality_slope", "Slope of mean w over quality 1..5", good="high", fmt=4, baseline=0.0),
+            Metric("adv_weight_kl", "KL(weighted ‖ BC) = mean w log w", good="none", fmt=3),
+            Metric("adv_weight_max", "Largest weight", good="none", fmt=2),
+            Metric(
+                "adv_clip_frac",
+                "Fraction of frames at the clip",
+                good="low",
+                fmt=3,
+                note="Share with |Â| at advantage_clip. A Gaussian at clip 3 gives 0.003; more means the tail is wider than the clip assumes.",
+            ),
+            Metric(
+                "adv_weight_ess_frac_batch",
+                "ESS / N per effective batch (median)",
+                good="high",
+                fmt=3,
+                note="Median over 200 resampled batches of adv_batch_rows frames, the set the trainer standardizes over, so it matches the adv_weight_ess_frac the console prints.",
+            ),
+            Metric("adv_weight_max_batch", "Largest weight per effective batch (median)", good="none", fmt=2),
             Metric(
                 "value_fit_abs_err",
                 "Mean |V − V*| (duration fit)",
@@ -838,7 +1011,7 @@ def run_critic_values_distribution(
     adapter: ProbablePolicy, val_dataset, val_ep_indices,
     cfg, output_dir: str,
 ):
-    """TD-error / advantage distributions + (optional) gradient exemplars."""
+    """Advantage / AWR-weight distributions, percentile frames + (optional) gradient exemplars."""
     sns.set_theme(style="whitegrid", palette="muted")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -848,7 +1021,10 @@ def run_critic_values_distribution(
     n_grad = int(getattr(p, "critic_grad_frames", 200))
     seed = int(getattr(p, "random_seed", 42))
     discount = float(getattr(adapter.policy.config, "discount", 0.99))
-    advantage_scaling = float(getattr(cfg.policy, "advantage_scaling", 1.0))
+    beta = float(getattr(cfg.policy, "advantage_beta", 1.0))
+    clip = float(getattr(cfg.policy, "advantage_clip", 3.0))
+    lam = float(getattr(cfg.policy, "advantage_lambda", 1.0))
+    batch_rows = int(cfg.batch_size) * int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
 
     # ── Part 0: per-episode V(s) traces + overlay video ──────────────────────
     try:
@@ -871,7 +1047,7 @@ def run_critic_values_distribution(
     # step, minus critic_mistake_penalty at a mistake onset, over the normalization
     # constant; target clamped into the value support. The transition
     # ReplayBuffer.sample builds for update_critic.
-    logging.info(f"[CRITIC] sampling {n_adv} frames for TD-error")
+    logging.info(f"[CRITIC] sampling {n_adv} frames for the advantage")
     targets = _training_targets(val_dataset, cfg, chunk_size)
     labels = targets["labels"]
     norm = float(getattr(cfg.policy, "reward_normalization_constant", 1.0))
@@ -888,7 +1064,6 @@ def run_critic_values_distribution(
         return None
 
     td_errors: list[float] = []
-    squashed: list[float] = []
     adv_subtasks: list[str] = []
     values: list[float] = []
     frames_to_end: list[int] = []
@@ -908,7 +1083,6 @@ def run_critic_values_distribution(
         target_v = float(np.clip(reward + discount * v_next * (1.0 - float(done)), v_min, v_max))
         td = target_v - v_curr
         td_errors.append(td)
-        squashed.append(float(np.tanh(td / advantage_scaling)))
         adv_subtasks.append(gt_subtask or "None")
         values.append(v_curr)
         frames_to_end.append(int(targets["frames_to_end"][idx]))
@@ -925,25 +1099,62 @@ def run_critic_values_distribution(
             }
         )
 
-    _td_error_plots(td_errors, squashed, adv_subtasks, output_dir)
-
-    # ── Part 1b: the duration critic against what its own reward rule implies ──
+    # ── Part 1a: advantage distribution, the AWR weights it gives, percentile frames ──
+    td_arr = np.asarray(td_errors, dtype=np.float64)
     values_arr = np.asarray(values, dtype=np.float64)
     fte = np.asarray(frames_to_end, dtype=np.int64)
+    seconds = fte / float(cfg.env.fps)
+    qualities_arr = np.asarray(qualities)
+    mistakes_arr = np.asarray(mistakes, dtype=bool)
+    # One frame per critic segment: the segment is identified by its terminal frame.
+    segment_ids = np.asarray(adv_indices, dtype=np.int64) + fte
+    cuts, percentile_frames = _pick_percentile_frames(td_arr, segment_ids)
+    _advantage_plots(td_errors, values, adv_subtasks, cuts, output_dir)
+    w_t, a_hat_t = advantage_weights(torch.tensor(td_errors, dtype=torch.float32), beta, clip, lam)
+    weights = w_t.numpy()
+    a_hat = a_hat_t.numpy()
+    weight_summary = _weight_plots(td_arr, a_hat, weights, beta, clip, lam, batch_rows, seed, output_dir)
+    weight_summary.update(_weight_where_plots(weights, seconds, mistakes_arr, qualities_arr, output_dir))
+
+    # ── Part 1b: the duration critic against what its own reward rule implies ──
     ideal = (
         _ideal_duration_value(fte, chunk_size, discount, norm, v_min) if targets["mode"] == "subtask" else None
     )
-    # One outlier per critic segment: the segment is identified by its terminal frame.
-    segment_ids = np.asarray(adv_indices, dtype=np.int64) + fte
     duration_summary, outliers = _duration_plots(
-        values_arr, fte, ideal, np.asarray(qualities), np.asarray(mistakes, dtype=bool), float(cfg.env.fps), output_dir,
+        values_arr, fte, ideal, qualities_arr, mistakes_arr, float(cfg.env.fps), output_dir,
         segment_ids=segment_ids,
     )
     duration_summary["critic_reward_mode"] = targets["mode"]
-    if outliers:
-        _render_outlier_frames(
-            val_dataset, cfg, chunk_size, outliers, sample_meta, values_arr, ideal, fte / float(cfg.env.fps), output_dir
+    duration_summary.update(weight_summary)
+
+    def frame_text(i: int) -> str:
+        m = sample_meta[i]
+        return (
+            f"episode {m['episode_idx']}, frame {m['frame_idx']}\n"
+            f"{textwrap.fill(m['subtask'] or '(no subtask)', 30)}\n"
+            f"{seconds[i]:.1f} s to segment end\n"
+            f"quality {m['quality'] if m['quality'] >= 0 else '-'}, "
+            f"{'mistake window' if m['mistake'] else 'clean'}"
         )
+
+    def value_line(i: int) -> str:
+        return f"V = {values_arr[i]:.2f}" + ("" if ideal is None else f"    V* = {ideal[i]:.2f}")
+
+    if outliers:
+        _render_tagged_frames(
+            val_dataset, cfg, chunk_size, outliers, sample_meta,
+            lambda tag, i: f"{tag}: {'pessimistic' if tag.startswith('P') else 'optimistic'}\n{frame_text(i)}\n{value_line(i)}",
+            os.path.join(output_dir, "value_outliers.png"),
+        )
+    _render_tagged_frames(
+        val_dataset, cfg, chunk_size, percentile_frames, sample_meta,
+        lambda tag, i: (
+            f"{tag}: advantage percentile {int(tag[1:3])} (cut {cuts[int(tag[1:3])]:+.3f})\n"
+            f"A = {td_arr[i]:+.3f}   Â = {a_hat[i]:+.2f}   w = {weights[i]:.2f}\n"
+            f"{value_line(i)}\n{frame_text(i)}"
+        ),
+        os.path.join(output_dir, "advantage_percentiles.png"),
+    )
 
     # ── Part 2: gradient magnitudes (skip if adapter doesn't support it) ─────
     try:
@@ -966,7 +1177,8 @@ def run_critic_values_distribution(
 
     raw: dict = {
         "td_errors": torch.tensor(td_errors),
-        "squashed_advantages": torch.tensor(squashed),
+        "advantages_standardized": torch.tensor(a_hat),
+        "advantage_weights": torch.tensor(weights),
         "adv_subtasks": adv_subtasks,
         "values": torch.tensor(values),
         "frames_to_end": torch.tensor(frames_to_end),
@@ -1020,7 +1232,7 @@ def run_critic_values_distribution(
                 "grad_subtasks": subtasks,
             })
 
-    _write_manifest(output_dir, raw, advantage_scaling, duration_summary)
+    _write_manifest(output_dir, raw, duration_summary)
     return raw
 
 
