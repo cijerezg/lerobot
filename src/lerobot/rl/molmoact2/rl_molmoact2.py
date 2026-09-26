@@ -18,13 +18,13 @@ import os
 from dataclasses import dataclass, field
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
 from lerobot.datasets.contact_vocab import code_for
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
-from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
-from lerobot.rl.molmoact2.hybrid_critic import MolmoAct2Critic
+from lerobot.policies.molmoact2.modeling_molmoact2 import _MODEL_INPUT_KEYS, MolmoAct2Policy, _torch_dtype
+from lerobot.rl.molmoact2.hybrid_critic import CriticFusion, MolmoAct2Critic
 from lerobot.rl.shared_config import ActorLearnerConfig, ConcurrencyConfig, MemoryConfig
 
 # ── Config ─────────────────────────────────────────────────────────────────
@@ -97,14 +97,12 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
 
     # ── Distributional critic ──────────────────────────────────────────────
-    # Hybrid critic: policy modality encoders supply detached 2560-wide prefix
-    # tokens; a compact critic-owned transformer performs multimodal fusion.
-    # critic_llm_depth keeps its old config name for checkpoint/YAML compatibility,
-    # but now means the number of critic fusion blocks (not copied LLM blocks).
-    critic_llm_depth: int = 4
-    critic_input_hidden_size: int = 2560
-    critic_hidden_size: int = 768
-    critic_num_attention_heads: int = 12
+    # The critic owns its inputs: frozen copies of the backbone's token embedding and
+    # vision backbone (CriticEncoder) feed a fusion transformer at the encoder's native
+    # width (2560, no projection), read out through a value token into HL-Gauss bins.
+    # critic_llm_depth keeps its old config name; it is the number of fusion blocks.
+    critic_llm_depth: int = 12
+    critic_num_attention_heads: int = 20
     critic_mlp_ratio: float = 4.0
     critic_dropout: float = 0.0
     critic_max_tokens: int = 2048
@@ -122,6 +120,11 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     utd_ratio: int = 1
     critic_warmup_steps: int = 0
     policy_update_freq: int = 1
+    # Saved pretrained_model dir whose critic.* tensors (encoder + fusion) replace the fresh
+    # critic after init_critic, while the actor comes from base_path (or pretrained_path).
+    # With skip_critic: true this is the actor run's frozen critic: loaded without a target,
+    # never stepped, used only to weight the actor loss (advantage_weighting).
+    critic_pretrained_path: str | None = None
 
     # ── Advantage-weighted actor loss (AWR) ────────────────────────────────
     # Off: the actor loss is loss.mean(), plain BC. On: per-sample weights
@@ -248,15 +251,8 @@ class MolmoAct2RLConfig(MolmoAct2Config):
 
         if self.critic_llm_depth < 1:
             raise ValueError("critic_llm_depth must be >= 1.")
-        if self.critic_hidden_size < 1:
-            raise ValueError("critic_hidden_size must be >= 1.")
         if self.critic_num_attention_heads < 1:
             raise ValueError("critic_num_attention_heads must be >= 1.")
-        if self.critic_hidden_size % self.critic_num_attention_heads != 0:
-            raise ValueError(
-                "critic_hidden_size must be divisible by critic_num_attention_heads, got "
-                f"{self.critic_hidden_size} and {self.critic_num_attention_heads}."
-            )
         if self.critic_mlp_ratio <= 0:
             raise ValueError("critic_mlp_ratio must be > 0.")
         if not 0 <= self.critic_dropout < 1:
@@ -343,64 +339,90 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
         with safe_open(model_file, framework="pt", device="cpu") as _sf:
             file_keys = set(_sf.keys())
         has_critic = any(k.startswith("critic.") for k in file_keys)
+        has_target = any(k.startswith("critic_target.") for k in file_keys)
         if has_critic and not hasattr(model, "critic"):
-            model.init_critic()
+            model.init_critic(with_target=has_target)
         return super()._load_as_safetensor(model, model_file, map_location, strict)
 
-    def init_critic(self) -> None:
-        """
-        Instantiate and initialise the distributional critic + its frozen target.
+    def init_critic(self, with_target: bool = True) -> None:
+        """Build the critic (own frozen encoder + fresh fusion stack) and, for critic training, its target.
 
-        Called by the trainer only when skip_critic=False; lazy to avoid 2×
-        memory overhead during actor-only runs.
+        Lazy so actor-only runs pay nothing. The target is a copy of the fusion stack only:
+        the encoder is frozen, so critic and target share it. An actor run that merely
+        scores its batch with a loaded critic (critic_pretrained_path) passes
+        with_target=False and takes V(s') from the same frozen critic.
         """
         device = self.config.device
         dtype = torch.bfloat16 if getattr(self.config, "dtype", "bfloat16") == "bfloat16" else torch.float32
 
-        self.critic: MolmoAct2Critic = MolmoAct2Critic(self.config)
-        self.critic = self.critic.to(device=device, dtype=dtype)
+        self.critic: MolmoAct2Critic = MolmoAct2Critic(self.config, self._backbone()).to(device=device)
+        self.critic.fusion.to(dtype=dtype)
+        if with_target:
+            self.critic_target: CriticFusion = copy.deepcopy(self.critic.fusion)
+            for p in self.critic_target.parameters():
+                p.requires_grad_(False)
+            self.critic_target.eval()
 
-        self.critic_target: MolmoAct2Critic = copy.deepcopy(self.critic)
-        for p in self.critic_target.parameters():
-            p.requires_grad_(False)
-        self.critic_target.eval()
+    def load_critic(self, pretrained_model_dir: str) -> None:
+        """Replace the critic (encoder + fusion) and, when present, critic_target from ``pretrained_model_dir``.
+
+        Reads only the critic.* / critic_target.* entries of model.safetensors, so the
+        actor weights in that checkpoint are never touched. Strict: the critic
+        hyperparameters must match the checkpoint's. A model built without a target
+        (with_target=False) ignores the checkpoint's target tensors.
+        """
+        from safetensors import safe_open
+
+        critic_state: dict[str, Tensor] = {}
+        target_state: dict[str, Tensor] = {}
+        with safe_open(os.path.join(pretrained_model_dir, "model.safetensors"), framework="pt", device="cpu") as f:
+            for key in f.keys():
+                if key.startswith("critic."):
+                    critic_state[key[len("critic.") :]] = f.get_tensor(key)
+                elif key.startswith("critic_target."):
+                    target_state[key[len("critic_target.") :]] = f.get_tensor(key)
+        if not critic_state:
+            raise ValueError(f"{pretrained_model_dir} holds no critic.* tensors")
+        self.critic.load_state_dict(critic_state, strict=True)
+        if hasattr(self, "critic_target"):
+            self.critic_target.load_state_dict(target_state or self.critic.fusion.state_dict(), strict=True)
 
     # ── Critic forward ────────────────────────────────────────────────────────
 
-    def _forward_critic_impl(
-        self,
-        critic_module,
-        batch: dict,
-    ) -> dict[str, torch.Tensor]:
-        """
-        Shared forward path for critic and critic_target.
+    def _forward_critic_impl(self, fusion: nn.Module | None, batch: dict) -> dict[str, torch.Tensor]:
+        """Shared forward path for the critic (fusion=None) and critic_target.
 
-        The policy's normal input builder is the shared encoder boundary. It
-        assembles RGB-temporal, depth-history, state-history, and language tokens
-        exactly as it does for the actor, but under no_grad. The critic sees only
-        detached tokens and cannot update the policy encoders.
+        The critic owns its encoder (frozen copies of the token embedding and vision
+        backbone), so V(s) is a fixed function of the observation and prompt whatever the
+        actor learns. The policy backbone contributes only merge_visual_inputs, its
+        stateless crop bookkeeping. History/depth stashes are not consulted here.
         """
+        compute_dtype = _torch_dtype(self.config.dtype)
+        inputs = {
+            key: value.to(dtype=compute_dtype) if value.is_floating_point() else value
+            for key, value in batch.items()
+            if key in _MODEL_INPUT_KEYS and value is not None
+        }
+        input_ids = inputs["input_ids"]
         with torch.no_grad():
-            model_inputs = self._model_inputs(batch)
-            encoder_tokens, _, _, _ = self._prepare_joint_training_backbone_inputs(model_inputs)
-
-        attention_mask = model_inputs.get("attention_mask")
-        if not isinstance(attention_mask, Tensor) or attention_mask.ndim != 2:
-            input_ids = model_inputs.get("input_ids")
-            attention_mask = (
-                input_ids != -1
-                if input_ids is not None
-                else torch.ones(
-                    encoder_tokens.shape[:2],
-                    dtype=torch.bool,
-                    device=encoder_tokens.device,
-                )
+            images, token_pooling = self._backbone().merge_visual_inputs(
+                input_ids=input_ids,
+                pixel_values=inputs.get("pixel_values"),
+                image_token_pooling=inputs.get("image_token_pooling"),
+                image_grids=inputs.get("image_grids"),
+                image_num_crops=inputs.get("image_num_crops"),
+                pixel_values_videos=inputs.get("pixel_values_videos"),
+                video_token_pooling=inputs.get("video_token_pooling"),
+                video_grids=inputs.get("video_grids"),
             )
-        return critic_module(encoder_tokens.detach(), attention_mask.to(torch.bool))
+        attention_mask = inputs.get("attention_mask")
+        if not isinstance(attention_mask, Tensor) or attention_mask.ndim != 2:
+            attention_mask = input_ids != -1
+        return self.critic(input_ids, images, token_pooling, attention_mask.to(torch.bool), fusion=fusion)
 
     def forward_critic(self, batch: dict) -> dict[str, torch.Tensor]:
         """V(s) with gradient — used for critic updates."""
-        return self._forward_critic_impl(self.critic, batch)
+        return self._forward_critic_impl(None, batch)
 
     def forward_critic_target(self, batch: dict) -> dict[str, torch.Tensor]:
         """V(s') with frozen target network — used inside torch.no_grad()."""

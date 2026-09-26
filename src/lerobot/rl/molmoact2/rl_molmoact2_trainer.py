@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from lerobot.rl.advantage import advantage_weights
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.stochastic_rounding_adamw import StochasticRoundingAdamW
 from lerobot.utils.constants import (
@@ -467,10 +468,9 @@ class MolmoAct2Trainer(Trainer):
            embeddings governed by `freeze_embedding`; everything else gated
            by the schedule (unknown params default to frozen).
 
-        Critic-trained mode (skip_critic=False): every critic-owned projection,
-        fusion, and head parameter trains. Policy modality encoders remain governed
-        by the actor schedule and are detached at the critic boundary.
-        critic_target stays frozen.
+        Critic-trained mode (skip_critic=False): the critic's fusion stack trains; its
+        own encoder copy stays frozen, as does critic_target. A critic present under
+        skip_critic=True (critic_pretrained_path in an actor run) is frozen whole.
         """
         skip_critic: bool = bool(getattr(cfg, "skip_critic", True))
         tp = getattr(cfg.policy, "trainable_params", None)
@@ -479,21 +479,13 @@ class MolmoAct2Trainer(Trainer):
         if tp is not None:
             self._apply_actor_freeze(policy, tp, freeze_embedding=freeze_embedding)
 
-        if not skip_critic and hasattr(policy, "critic"):
+        if hasattr(policy, "critic"):
             critic_net: nn.Module = getattr(policy, "critic")
-            if tp is not None:
-                self._apply_critic_freeze(critic_net, tp, cfg)
-            else:
+            if skip_critic:
                 for p in critic_net.parameters():
-                    p.requires_grad_(True)
-
-            # Share frozen actor layers with critic_target to save VRAM.
-            # Only valid for params that neither the critic nor actor will update.
-            if hasattr(policy, "critic_target"):
-                critic_target: nn.Module = getattr(policy, "critic_target")
-                for p, p_tgt in zip(critic_net.parameters(), critic_target.parameters()):
-                    if not p.requires_grad:
-                        p_tgt.data = p.data
+                    p.requires_grad_(False)
+            else:
+                self._apply_critic_freeze(critic_net, tp, cfg)
 
         trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
         total = sum(p.numel() for p in policy.parameters())
@@ -556,11 +548,9 @@ class MolmoAct2Trainer(Trainer):
 
     @staticmethod
     def _apply_critic_freeze(critic_net: nn.Module, tp, cfg) -> None:
-        # The hybrid critic contains only critic-owned, randomly initialized
-        # projection/fusion/head parameters. Policy encoders are outside this module
-        # and detached at the feature boundary, so copied-layer schedules no longer apply.
+        # The fusion stack trains; the critic's encoder copy (CriticEncoder) stays frozen.
         del tp, cfg
-        for param in critic_net.parameters():
+        for param in critic_net.fusion.parameters():
             param.requires_grad = True
 
     def get_optimizer_groups(self, policy: nn.Module, cfg) -> list[dict]:
@@ -584,7 +574,7 @@ class MolmoAct2Trainer(Trainer):
         critic_net: nn.Module = getattr(policy, "critic")
         critic_param_ids = {id(p) for p in critic_net.parameters()}
         actor_params = [p for p in policy.parameters() if p.requires_grad and id(p) not in critic_param_ids]
-        critic_params = list(critic_net.parameters())
+        critic_params = [p for p in critic_net.parameters() if p.requires_grad]
         return self._split_depth_group(
             policy,
             cfg,
@@ -690,14 +680,16 @@ class MolmoAct2Trainer(Trainer):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Critic TD advantage of one transition micro-batch: (A [B], kept [B] bool).
 
-        A = clamp(r + γ V_target(s')(1 − done), support) − V(s)   the critic's own TD error
+        A = clamp(r + γ V(s')(1 − done), support) − V(s)   the frozen critic's own TD error
+        The actor run carries no target network (init_critic(with_target=False)): the
+        critic is frozen, so V(s') comes from the same network.
         Rows with critic_skip (diverse stand-in s') are not kept: they get w = 1 and stay
         out of the weight statistics.
         """
         p = cfg.policy
         curr_batch, next_batch, rewards, done = self._critic_batches(raw, preprocessor, cfg)
         with torch.no_grad():
-            v_next = raw_policy.forward_critic_target(next_batch)["value"].float().view(-1)
+            v_next = raw_policy.forward_critic(next_batch)["value"].float().view(-1)
             v_curr = raw_policy.forward_critic(curr_batch)["value"].float().view(-1)
         rewards = rewards.float().view(-1)
         done = done.float().view(-1)
@@ -724,10 +716,7 @@ class MolmoAct2Trainer(Trainer):
         """
         p = cfg.policy
         a = torch.cat([adv[k] for adv, k in zip(advantages, kepts)])
-        a_hat = ((a - a.mean()) / a.std(correction=0).clamp_min(1e-6)).clamp(-p.advantage_clip, p.advantage_clip)
-        w = torch.exp(a_hat / p.advantage_beta)
-        w = w / w.mean()
-        w = (1.0 - p.advantage_lambda) + p.advantage_lambda * w
+        w, _ = advantage_weights(a, p.advantage_beta, p.advantage_clip, p.advantage_lambda)
         weights = []
         for adv, k, w_kept in zip(advantages, kepts, torch.split(w, [int(k.sum()) for k in kepts])):
             full = torch.ones_like(adv)
@@ -1019,7 +1008,10 @@ class MolmoAct2Trainer(Trainer):
         raw_policy = runtime.unwrap_model(policy)
         advantage_weighting = bool(getattr(cfg.policy, "advantage_weighting", False))
         if advantage_weighting and not hasattr(raw_policy, "critic"):
-            raise ValueError("policy.advantage_weighting needs skip_critic: false (no critic to score the batch)")
+            raise ValueError(
+                "policy.advantage_weighting needs a critic: critic_pretrained_path (frozen, skip_critic: true) "
+                "or skip_critic: false"
+            )
         subtask_loss_weight = float(getattr(cfg.policy, "subtask_loss_weight", 0.0))
         if runtime.num_processes > 1 and subtask_loss_weight > 0:
             raise ValueError(
@@ -1420,9 +1412,7 @@ class MolmoAct2Trainer(Trainer):
         critic_target: nn.Module = getattr(policy, "critic_target")
         tau = float(getattr(policy.config, "critic_target_update_weight", 0.005))
         with torch.no_grad():
-            for p, p_tgt in zip(critic_net.parameters(), critic_target.parameters()):
-                if not p.requires_grad:
-                    continue
+            for p, p_tgt in zip(critic_net.fusion.parameters(), critic_target.parameters(), strict=True):
                 p_tgt.data.lerp_(p.data, tau)
 
     # ── Inference ─────────────────────────────────────────────────────────────

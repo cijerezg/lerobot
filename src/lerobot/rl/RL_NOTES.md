@@ -78,14 +78,22 @@ rl_actor_async.py  ←gRPC→  rl_learner.py
 
 ## MolmoAct2 Critic — Design
 
-- Full deepcopy of actor's ViT + adapter (vision_backbone).
-- First `critic_llm_depth` (default 12) text transformer blocks from the actor.
-- Learnable value queries `[1, num_value_bins, 2560]` appended to token sequence.
-- Bidirectional 4D attention (no causal mask).
-- `bin_logit_head Linear(2560 → 1)` per query → `[B, num_bins]` logits.
-- **HL-Gauss** soft target: Gaussian CDF over bin edges.
-- Critic parameters inherit `requires_grad=False` from the frozen backbone deepcopy.  
-  `freeze_model()` explicitly calls `requires_grad_(True)` on all critic params after `init_critic()`.
+- The critic owns its inputs: `CriticEncoder` = frozen deep copies of the backbone's token
+  embedding (`transformer.wte`, 396 M) and `vision_backbone` (ViT + pooling + projector, 439 M),
+  taken from the actor at `init_critic` and saved under `critic.encoder.*`. Its tokens are the
+  LLM prefix (text embeddings + image features on the `<im_patch>` positions), so V(s) is a
+  fixed function of the observation and prompt whatever the actor learns.
+- `CriticFusion`: pre-norm transformer at the encoder's native width (2560, no projection),
+  `critic_llm_depth` (12) blocks, `critic_num_attention_heads` (20), MLP ratio 4; a learned value
+  token is prepended and read out through `final_norm` + `distribution_head` into
+  `num_value_bins` (201) logits. ~950 M params, all trainable in a critic run.
+- **HL-Gauss** soft target: Gaussian CDF over bin edges; exact one-hot on terminal rows.
+- `critic_target` is a copy of the fusion stack only (the encoder is frozen and shared);
+  `update_target_networks` lerps fusion ↔ target. An actor run that only weights its loss
+  with a loaded critic (`critic_pretrained_path`, `skip_critic: true`) builds no target and
+  takes V(s') from the same frozen critic.
+- Training is separate: critic-only run first (actor frozen, `critic_warmup_steps = offline_steps`),
+  then the actor run loads `critic.*` from that checkpoint onto a raw-MolmoAct2 actor.
 
 Key config fields (in `MolmoAct2RLConfig`):
 ```yaml

@@ -700,10 +700,18 @@ def run_offline_training(
     # A checkpoint that carries critic.* tensors already built and loaded its critic
     # in _load_as_safetensor; re-running init_critic here would replace those weights
     # with a fresh random head (probe passes and resumes read the trained critic).
-    if not skip_critic and not hasattr(policy, "critic"):
+    # A critic-training run (skip_critic: false) gets a target; an actor run that only
+    # scores its batch with a loaded critic (critic_pretrained_path) gets none.
+    critic_pretrained_path = getattr(cfg.policy, "critic_pretrained_path", None)
+    if (not skip_critic or critic_pretrained_path is not None) and not hasattr(policy, "critic"):
         _init_critic = getattr(policy, "init_critic", None)
         if callable(_init_critic):
-            _init_critic()
+            _init_critic(with_target=not skip_critic)
+    # Critic from another checkpoint (e.g. a critic-only run) on top of whatever actor
+    # was just built; explicit, so it also wins over a critic that came with pretrained_path.
+    if critic_pretrained_path is not None:
+        policy.load_critic(str(critic_pretrained_path))
+        logging.info(f"[RL_OFFLINE] critic loaded from {critic_pretrained_path} (target: {not skip_critic})")
 
     # ── Freeze layers ─────────────────────────────────────────────────────────
     trainer.freeze_model(policy, cfg)
@@ -883,16 +891,6 @@ def run_offline_training(
         f"[RL_OFFLINE] Buffer: {sum(len(b) for b in offline_buffers)} samples "
         f"({len(offline_buffers)} sources)"
     )
-
-    # Share frozen critic-target params to save VRAM
-    if not skip_critic and hasattr(raw_policy, "critic") and hasattr(raw_policy, "critic_target"):
-        for p, p_tgt in zip(
-            raw_policy.critic.parameters(),
-            raw_policy.critic_target.parameters(),
-            strict=True,
-        ):
-            if not p.requires_grad:
-                p_tgt.data = p.data
 
     # ── Training info ─────────────────────────────────────────────────────────
     n_trainable = sum(p.numel() for p in raw_policy.parameters() if p.requires_grad)

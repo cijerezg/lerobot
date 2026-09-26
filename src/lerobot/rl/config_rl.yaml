@@ -106,6 +106,7 @@ policy:
   offline_steps: 2000
   policy_update_freq: 1
   critic_warmup_steps: 0
+  critic_pretrained_path: null  # pretrained_model dir whose critic.* replaces the fresh critic
   utd_ratio: 1
   advantage_weighting: false   # AWR weight on the actor loss; needs skip_critic: false
   advantage_beta: 1.0
