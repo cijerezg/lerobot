@@ -182,9 +182,15 @@ def load_probe_dataset(cfg) -> LeRobotDataset:
 def build_episode_index(dataset) -> dict[int, list[int]]:
     """Map episode_index → sorted list of global frame indices."""
     ep_to_indices: dict[int, list[int]] = {}
-    for global_idx in range(len(dataset)):
-        ep_idx = dataset.hf_dataset[global_idx]["episode_index"].item()
-        ep_to_indices.setdefault(ep_idx, []).append(global_idx)
+    hf = dataset.hf_dataset
+    if hasattr(hf, "select_columns"):
+        # Read one column in bulk instead of materializing every rich frame row.
+        # This respects HF row selections and avoids decoding any observations.
+        episode_ids = hf.select_columns(["episode_index"]).with_format(None)[:]["episode_index"]
+    else:
+        episode_ids = [hf[i]["episode_index"].item() for i in range(len(dataset))]
+    for global_idx, ep_idx in enumerate(episode_ids):
+        ep_to_indices.setdefault(int(ep_idx), []).append(global_idx)
     for ep_idx in ep_to_indices:
         ep_to_indices[ep_idx].sort()
     return ep_to_indices
@@ -625,7 +631,7 @@ def probe_frame_inputs(
         dataset, global_idx, chunk_size
     )
 
-    from lerobot.rl.data_sources.prepared_rebot import prepared_episode_depth
+    from lerobot.rl.data_sources.prepared_rebot import prepared_episode_depth, prepared_rebot_contract
     depth_entry = prepared_episode_depth(getattr(dataset, "root", None), episode_idx)
     depth_present = depth_entry is None or depth_entry["present"]
     pointmap_cfg = getattr(cfg.policy, "pointmap_config", None)
@@ -656,6 +662,22 @@ def probe_frame_inputs(
         obs.update(assemble_frame_history(dataset, global_idx, memory_cfg, cfg.env.fps, keys))
 
     obs = canonical_camera_obs(obs, cfg)
+    contract = prepared_rebot_contract(getattr(dataset, "root", None))
+    if contract is not None:
+        # Prepared multi-source roots store union-camera videos, including blank
+        # placeholders. Training masks by the episode contract, not column existence.
+        episode_contract = contract.get("episode_contracts", {}).get(str(episode_idx), contract)
+        roles = set(episode_contract["camera_roles"])
+        for key in list(obs):
+            if key.startswith("observation.images."):
+                present = key.rsplit(".", 1)[-1] in roles
+                obs[f"probe_complementary.camera_is_present.{key}"] = torch.tensor([present])
+                if not present:
+                    del obs[key]  # also keep absent-camera placeholders out of snapshots
+            elif key.startswith("history.observation.images."):
+                role = key.rsplit(".", 1)[-1].removesuffix("_is_pad")
+                if role not in roles:
+                    del obs[key]
 
     result = {
         "obs": obs,
@@ -670,11 +692,8 @@ def probe_frame_inputs(
     }
     depth_event_config = getattr(cfg.policy, "depth_gripper_event_loss", None)
     if with_gripper_event_targets and getattr(depth_event_config, "enabled", False):
-        from lerobot.rl.data_sources.prepared_rebot import prepared_rebot_contract
-
         # An RGB-only prepared source carries no event labels: zero targets, as in training,
         # where the loss is masked by the encoder's depth-valid flag anyway.
-        contract = prepared_rebot_contract(dataset.root)
         if contract is not None and contract["depth_key"] is None:
             result.update({key: torch.zeros(()) for key in DEPTH_GRIPPER_EVENT_TARGET_KEYS})
         else:

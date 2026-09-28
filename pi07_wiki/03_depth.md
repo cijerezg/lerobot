@@ -484,16 +484,30 @@ actor probes cannot catch it.
 
 ### B.6 Critic depth read
 
-The critic **owns its own** depth modules (not shared with the actor — isolates the
-TD gradient) and consumes depth adapted to its architecture: bidirectional, single
-end-of-stack read, no gate/sink (the critic isn't frozen).
-`MolmoAct2Critic.compute_depth_tokens`
-([rl_molmoact2.py:326](../src/lerobot/rl/molmoact2/rl_molmoact2.py#L326)):
-encoder → its own `DepthStreamBlock × critic_llm_depth` attending the critic's
-wrist-cam obs embeds → `depth_read_proj` → the final state is appended to the
-critic sequence `[obs | depth | value-queries]`. V(s) uses the live modules,
-V(s′) the EMA copy (depth modules are critic parameters, so they ride
-`critic_target`'s generic lerp). `_apply_critic_freeze` keeps `depth_*` trainable.
+The critic owns independent trainable depth modules in
+[`CriticFusion`](../src/lerobot/rl/molmoact2/hybrid_critic.py). It uses the same
+architecture as the actor: metric point map → patch CNN → copied RGB ViT blocks
+→ two feature taps → spatial attention pooling → projection to the fusion width.
+A trainable marker initialized from the RGB patch embedding is added, and the
+complete token is softly bounded before replacing each `<extra_1>` depth
+placeholder. With the current configuration, 768 fine tokens become 192 prefix
+tokens. Missing depth uses the encoder's learned null bank, including per-row
+presence masks in mixed datasets.
+
+Continuous proprioception uses an independent trainable linear `state_projector`:
+normalized current/history state rows are projected to the fusion width and added
+to their `<extra_0>` placeholders. `state_values_mask` selects the rows rendered in
+the prompt. The active training and validation configs use `state_format: continuous`.
+
+Text embeddings and RGB features come from the critic's own frozen encoder, kept
+in eval mode. State/depth injection happens after that frozen boundary, so TD
+loss trains the input adapters along with the fusion transformer. These modules
+all live under `critic.fusion`: the critic optimizer, checkpoint, and Polyak target
+therefore include them together. V(s′) uses the target's state/depth weights and
+sampled next-state depth, independently of the actor. Old critics without these
+weights need training of the new inputs; they are not strict-load compatible with
+this architecture. The legacy stream/grid settings in `DepthPointmapConfig` remain
+readable for saved-config compatibility but no longer select a critic depth path.
 
 ### B.7 Cost and parked work
 

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Critic input sensitivity — frames</title>
+<style>
+:root{font:15px system-ui,sans-serif;color:#233248;background:#f5f7fa}*{box-sizing:border-box}body{margin:0;padding:20px}main{max-width:1450px;margin:auto}h1{font-size:23px;margin:0 0 7px}h2{font-size:18px;margin:0 0 8px}p{line-height:1.5;margin:6px 0}.muted{color:#607086;font-size:13px}.card{background:white;border:1px solid #dde3eb;border-radius:10px;padding:18px;margin:14px 0}.controls{display:flex;gap:16px;align-items:end;flex-wrap:wrap}label{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:600}select{max-width:380px}select,button{font:inherit;color:inherit;border:1px solid #bac6d5;border-radius:6px;background:white;padding:8px 10px}button{cursor:pointer}button:hover{background:#edf4fd}button:focus-visible,select:focus-visible{outline:3px solid #c37622}.buttons{display:flex;gap:7px}.chart-scroll{overflow:auto}svg{display:block;width:100%;min-width:760px}.details-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(340px,1fr);gap:20px}.cameras{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}figure{margin:0}figure img{width:100%;display:block;border-radius:6px}figcaption{font-size:12px;color:#607086;margin-top:5px}.selected{color:#97520a;font-weight:600}.stat{font-variant-numeric:tabular-nums}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:right;padding:6px 4px;border-bottom:1px solid #edf0f4}th:first-child,td:first-child{text-align:left}th{color:#607086;font-weight:500}.bar{height:4px;max-width:100%;background:#477fac;border-radius:2px;margin-top:3px}.tokens{line-height:2.1;margin-top:10px;word-break:break-word}.token{font:12px ui-monospace,monospace;border-radius:3px;padding:3px 2px;margin:1px;white-space:pre-wrap}summary{cursor:pointer;font-weight:600}details p{font-size:13px}#point-info{margin:8px 0 14px}#empty{padding:25px}a{color:#245b91}@media(max-width:1000px){.details-grid{grid-template-columns:1fr}.cameras{max-width:900px}}@media(max-width:550px){body{padding:10px}.cameras{grid-template-columns:1fr}}
+</style></head><body><main>
+<h1>Critic input sensitivity</h1>
+<section class="card" id="episode-controls" hidden><div class="controls"><label>Source<select id="source"></select></label><label>Episode<select id="episode"></select></label><div class="buttons"><button id="previous-episode">← Previous</button><button id="next-episode">Next →</button></div></div><p id="episode-info" class="muted" aria-live="polite"></p></section>
+<p>Click a point to inspect its frames. Each point is one frame; each row keeps the exact subtask fixed.</p>
+<p class="muted">The default gradient covers RGB image features, state-value embeddings and real depth features when consumed, holding text and metadata fixed. Its norm measures local sensitivity, not the chance of an execution mistake.</p>
+<section class="card" id="distribution">
+<div class="controls"><label>Gradient over<select id="component"></select></label><label>Subtask<select id="subtask"></select></label><label>Frame<select id="frame-select"></select></label><div class="buttons"><button data-q="0.1">Low · p10</button><button data-q="0.5">Median · p50</button><button data-q="0.9">High · p90</button></div></div>
+<div class="chart-scroll"><svg id="chart" aria-label="Gradient norms by subtask; select a dot to see that frame"></svg></div>
+<p class="muted">Boxes span p25–p75; the line is the median. The selected point is orange. Missing input groups have no point.</p>
+</section>
+<section class="card" id="frame-card"><button id="back-to-distribution" style="float:right">↑ Distribution</button><h2 id="frame-title"></h2><p id="point-info" class="stat"></p>
+<div class="details-grid"><div><div class="cameras" id="cameras"></div><p id="metadata" class="muted"></p><details><summary>Frame context</summary><p id="context"></p></details></div>
+<div><h2>What contributes to this frame’s gradient?</h2><table><thead><tr><th>Input</th><th>L2 norm</th><th>Share¹</th><th>Tokens</th><th>RMS²</th></tr></thead><tbody id="groups"></tbody></table><p class="muted">¹ Share of the squared total norm; groups partition every active input token. ² Norm divided by √(tokens × embedding width), to account for group size.</p><p id="absent" class="muted"></p></div></div>
+<details style="margin-top:14px"><summary>Prompt tokens and their gradients</summary><p class="muted">Stronger colour means a larger token-gradient norm. Hover for the input group and exact norm. Camera patches are summarized above. Text groups include the wording of their prompt clause.</p><div id="tokens" class="tokens"></div></details>
+</section>
+<details class="card"><summary>What is being differentiated?</summary><p id="boundary"></p><p>Robot state is measured at its discrete value embeddings or projected continuous-state embedding, according to the checkpoint. State and categorical metadata gradients are with respect to their embeddings, not joint angles or integer label IDs. Images are measured at the frozen encoder’s output. Padding and the learned value token are excluded.</p><p>The depth component includes consumed projected depth features. Missing-depth null tokens and unfilled placeholders are excluded. Continuous state requires the critic’s own state projection; older checkpoints use discrete state-value embeddings.</p><p>Large gradients can occur where an accurate critic responds sharply. This view does not infer failure-prone execution from critic prediction error. Norms depend on representation scale and token count; compare frames within the same subtask and input group.</p></details>
+<p class="muted" id="coverage"></p>
+</main><script type="application/json" id="probe-data">__PROBE_DATA__</script><script>
+'use strict';
+const data=JSON.parse(document.getElementById('probe-data').textContent);
+const el=id=>document.getElementById(id);
+let rows=data.records||[],names=[],selected=0,loadToken=0;
+const labels={observation:'RGB + state + depth',depth_only:'Depth features only',depth:'Depth features',depth_null:'Missing-depth null tokens',images_state:'Images + state values',images_only:'Image features only',state_values:'State-value embeddings',total:'All encoded inputs',external_0:'Camera · external 0',external_1:'Camera · external 1',img_external_1:'Camera · external 1',wrist_0:'Camera · wrist',img_external_0:'Camera · external',img_wrist_0:'Camera · wrist',state:'State clause (including wording)',task:'Task',subtask:'Subtask',metadata:'Metadata',embodiment:'Embodiment',control_mode:'Control mode',question:'Question',template:'Template',action_output:'Action-output marker',depth_placeholders:'Depth placeholders',history_placeholders:'History placeholders',other_prompt:'Other prompt',other_image_patches:'Other image patches'};
+const label=k=>labels[k]||k;
+function option(node,value,text){const o=document.createElement('option');o.value=value;o.textContent=text;node.append(o);}
+function setRows(nextRows){
+ const component=el('component').value;
+ rows=nextRows;names=[...new Set(rows.map(r=>r.subtask))].sort();selected=0;
+ el('component').replaceChildren();el('subtask').replaceChildren();
+ const groupNames=[...new Set(rows.flatMap(r=>Object.keys(r.gradient.groups)))].filter(k=>rows.some(r=>r.gradient.groups[k]?.norm!=null));
+ [...(rows.some(r=>Number.isFinite(r.observation_grad_norm))?['observation','depth_only']:[]),'images_state','images_only','state_values','total'].forEach(k=>option(el('component'),k,label(k)));groupNames.forEach(k=>option(el('component'),k,label(k)));
+ if(['observation','images_state','images_only','state_values','depth_only','total',...groupNames].includes(component))el('component').value=component;
+ names.forEach(n=>option(el('subtask'),n,n));
+ if(rows.length)choose(.5);
+}
+function value(r){
+ const key=el('component').value;
+ if(key==='total')return r.grad_norm;
+ if(key==='observation')return r.observation_grad_norm??null;
+ if(key==='depth_only')return r.raw_depth_consumed?r.depth_grad_norm:null;
+ if(!['images_state','images_only','state_values'].includes(key))return r.gradient.groups[key]?.norm??null;
+ const field={images_state:'image_state_grad_norm',images_only:'image_grad_norm',state_values:'state_value_grad_norm'}[key];
+ if(Number.isFinite(r[field]))return r[field];
+ // Older episode files saved complete token gradients but no restricted norms.
+ if(r.gradient.state_format!=='discrete')return null;
+ const state=(r.gradient.tokens||[]).filter(t=>t.group==='state'&&/^<state_\d+>$/.test(t.text)).map(t=>t.norm);
+ const images=Object.entries(r.gradient.groups).filter(([k,g])=>(k.startsWith('img_')||k==='other_image_patches')&&g.norm!=null).map(([k,g])=>g.norm);
+ if(!state.length||!images.length)return null;
+ return Math.hypot(...(key==='images_only'?images:key==='state_values'?state:[...images,...state]));
+}
+function fmt(x){if(x==null)return '—';return x===0?'0':Math.abs(x)<0.001?x.toExponential(2):Number(x).toPrecision(4);}
+function group(){return rows.map((r,i)=>({r,i,v:value(r)})).filter(x=>x.r.subtask===el('subtask').value&&x.v!=null).sort((a,b)=>a.v-b.v||a.i-b.i);}
+function quantile(a,q){if(!a.length)return 0;const at=(a.length-1)*q,lo=Math.floor(at);return a[lo]+(a[Math.ceil(at)]-a[lo])*(at-lo);}
+function choose(q){const g=group();selected=g.length?g[Math.round(q*(g.length-1))].i:Math.max(0,rows.findIndex(r=>r.subtask===el('subtask').value));render();}
+function revealFrame(){el('frame-card').scrollIntoView({behavior:'smooth',block:'start'});}
+function pick(i){selected=i;el('subtask').value=rows[i].subtask;render();revealFrame();}
+function svg(tag,attrs,parent=el('chart'),text){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!=null)n.textContent=text;parent.append(n);return n;}
+function draw(){
+ const chart=el('chart');chart.replaceChildren();const W=1100,L=380,R=30,T=25,H=names.length*52+75;
+ chart.setAttribute('viewBox',`0 0 ${W} ${H}`);
+ const values=rows.map(value).filter(v=>v!=null),positive=values.filter(v=>v>0);
+ const floor=positive.length?Math.min(...positive)*0.6:1e-8;
+ const lo=Math.log10(floor),hi=Math.max(lo+0.4,Math.log10(Math.max(floor,...values)*1.4));
+ const x=v=>L+(Math.log10(Math.max(v,floor))-lo)/(hi-lo)*(W-L-R);
+ for(let k=0;k<5;k++){const v=Math.pow(10,lo+(hi-lo)*k/4),at=x(v);svg('line',{x1:at,x2:at,y1:8,y2:H-42,stroke:'#e5eaf0'});svg('text',{x:at,y:H-23,'text-anchor':'middle','font-size':12,fill:'#607086'},chart,fmt(v));}
+ names.forEach((name,j)=>{
+  const y=T+j*52,pts=rows.map((r,i)=>({r,i,v:value(r)})).filter(p=>p.r.subtask===name&&p.v!=null);
+  const textLabel=svg('text',{x:L-16,y:y+5,'text-anchor':'end','font-size':13,fill:name===el('subtask').value?'#233248':'#607086'},chart,`${name.length>47?name.slice(0,46)+'…':name} (n=${pts.length})`);
+  svg('title',{},textLabel,name);
+  if(!pts.length)return;
+  const a=pts.map(p=>p.v).sort((a,b)=>a-b),q1=quantile(a,.25),q3=quantile(a,.75),med=quantile(a,.5);
+  svg('line',{x1:x(a[0]),x2:x(a[a.length-1]),y1:y,y2:y,stroke:'#94a6b9'});
+  svg('rect',{x:x(q1),y:y-13,width:Math.max(1,x(q3)-x(q1)),height:26,fill:'#b7d4e1',stroke:'#879dad',rx:2});
+  svg('line',{x1:x(med),x2:x(med),y1:y-13,y2:y+13,stroke:'#466075'});
+  const placed=[];
+  pts.sort((a,b)=>a.v-b.v||a.i-b.i).forEach(p=>{
+   const at=x(p.v),offsets=[0,-10,10,-20,20];
+   p.dy=offsets.find(d=>placed.every(q=>Math.hypot(at-q.x,d-q.dy)>=10));
+   if(p.dy==null)p.dy=offsets.reduce((best,d)=>placed.reduce((n,q)=>n+(Math.hypot(at-q.x,d-q.dy)<10),0)<placed.reduce((n,q)=>n+(Math.hypot(at-q.x,best-q.dy)<10),0)?d:best,0);
+   placed.push({x:at,dy:p.dy});
+  });
+  pts.sort((a,b)=>(a.i===selected)-(b.i===selected)).forEach(p=>{
+   const dot=svg('circle',{cx:x(p.v),cy:y+p.dy,r:p.i===selected?5.5:3.7,fill:p.i===selected?'#ce741a':'#365775',opacity:p.i===selected?1:.72,tabindex:0,role:'button','data-index':p.i,'aria-label':`${name}, episode ${p.r.episode_idx}, frame ${p.r.frame_idx}, norm ${fmt(p.v)}`,style:'cursor:pointer'});
+   svg('title',{},dot,`Episode ${p.r.episode_idx}, frame ${p.r.frame_idx}\n${label(el('component').value)}: ${fmt(p.v)}\nV: ${fmt(p.r.value)}`);
+   dot.addEventListener('click',()=>pick(p.i));dot.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();pick(p.i);}});
+  });
+ });
+ svg('text',{x:(L+W-R)/2,y:H-3,'text-anchor':'middle','font-size':12,fill:'#607086'},chart,`${label(el('component').value)} · L2 gradient norm (log scale; zeros at left edge)`);
+}
+function render(){
+ draw();const r=rows[selected],v=value(r),g=group(),rank=g.length?100*(g.filter(p=>p.v<v).length+g.filter(p=>p.v===v).length/2)/g.length:null;
+ el('frame-select').replaceChildren();
+ rows.map((r,i)=>({r,i})).filter(p=>p.r.subtask===r.subtask).sort((a,b)=>a.r.global_idx-b.r.global_idx).forEach(p=>option(el('frame-select'),String(p.i),`ep ${p.r.episode_idx} · frame ${p.r.frame_idx} · norm ${fmt(value(p.r))}`));
+ el('frame-select').value=String(selected);
+ el('frame-title').textContent=r.subtask;
+ const left=r.seconds_to_end??null;
+ el('point-info').textContent=`Episode ${r.episode_idx} · frame ${r.frame_idx} · ${left==null?'':left.toFixed(1)+' s to completion · '}V = ${fmt(r.value)} · ${label(el('component').value)} = ${fmt(v)} · percentile ${rank==null?'—':rank.toFixed(0)} within this subtask${data.episodes?' and episode':''}`;
+ el('cameras').replaceChildren();for(const im of r.images||[]){const fig=document.createElement('figure'),a=document.createElement('a'),img=document.createElement('img'),caption=document.createElement('figcaption');a.href=im.path;a.target='_blank';img.src=im.path;img.alt=`${im.camera}: episode ${r.episode_idx}, frame ${r.frame_idx}`;caption.textContent=im.camera;a.append(img);fig.append(a,caption);el('cameras').append(fig);}
+ el('metadata').textContent=Object.entries(r.metadata||{}).map(([k,v])=>`${k}: ${v}`).join(' · ');
+ el('context').textContent=`Task: ${r.task}. Source: ${r.source}. Episode time: ${Number(r.seconds).toFixed(1)} s. The displayed gradient and V come from the same forward at this frame.`;
+ el('groups').replaceChildren();const absent=[];
+ for(const [name,item]of Object.entries(r.gradient.groups)){
+  if(item.norm==null){absent.push(label(name));continue;}
+  const tr=document.createElement('tr');for(const text of [label(name),fmt(item.norm),item.squared_norm_share>0&&item.squared_norm_share<0.0001?'<0.01%':`${(100*item.squared_norm_share).toFixed(item.squared_norm_share<0.01?2:1)}%`,String(item.n_tokens),fmt(item.rms)]){const td=document.createElement('td');td.textContent=text;tr.append(td);}
+  const bar=document.createElement('div');bar.className='bar';bar.style.width=`${item.squared_norm_share*100}%`;tr.children[2].append(bar);el('groups').append(tr);
+ }
+ el('absent').textContent=absent.length?'Absent groups: '+absent.join(', '):'';
+ el('tokens').replaceChildren();const tokens=r.gradient.tokens||[],max=Math.max(1e-12,...tokens.map(t=>t.norm));for(const t of tokens){const span=document.createElement('span');span.className='token';span.textContent=t.text;span.title=`${label(t.group)} · token ${t.position} · norm ${fmt(t.norm)}`;span.style.background=`rgba(47,128,173,${0.05+0.55*Math.sqrt(t.norm/max)})`;el('tokens').append(span);}
+ el('boundary').textContent=`Differentiation boundary: ${r.gradient.boundary}. State format: ${r.gradient.state_format||'adapter-defined'}.`;
+}
+el('component').addEventListener('change',()=>{if(value(rows[selected])==null)choose(.5);else render();});
+el('subtask').addEventListener('change',()=>choose(.5));
+el('frame-select').addEventListener('change',()=>pick(Number(el('frame-select').value)));
+el('back-to-distribution').addEventListener('click',()=>el('distribution').scrollIntoView({behavior:'smooth',block:'start'}));
+document.querySelectorAll('button[data-q]').forEach(b=>b.addEventListener('click',()=>{choose(Number(b.dataset.q));revealFrame();}));
+el('coverage').textContent=`${data.summary.grad_n_frames} frames · ${data.summary.grad_n_subtasks} exact subtasks${data.summary.grad_n_episodes!=null?' · '+data.summary.grad_n_episodes+' episodes':''} · ${data.summary.grad_n_failed} failed evaluations. Primary norm: RGB + state + available depth; full-input breakdown retained.${data.summary.grad_status==='partial'?' Evaluation is still in progress; refresh for completed episodes.':''}`;
+let episodeOptions=[];
+async function loadEpisode(){
+ const info=episodeOptions.find(ep=>ep.id===el('episode').value);if(!info)return;
+ const token=++loadToken;
+ el('distribution').hidden=true;el('frame-card').hidden=true;
+ el('episode-info').textContent=`Loading ${info.source}, episode ${info.episode}…`;
+ const at=episodeOptions.indexOf(info);el('previous-episode').disabled=at===0;el('next-episode').disabled=at===episodeOptions.length-1;
+ try{
+  const url=new URL(info.file,window.location.href),response=await fetch(url);
+  if(!response.ok)throw new Error(`HTTP ${response.status}`);
+  const payload=await response.json();if(token!==loadToken)return;
+  const nextRows=payload.records.map(r=>({...r,images:(r.images||[]).map(im=>({...im,path:new URL(im.path,url).href}))}));
+  el('distribution').hidden=false;el('frame-card').hidden=false;
+  setRows(nextRows);
+  el('episode-info').textContent=`${info.source} · episode ${info.episode} · ${info.task} · ${rows.length} measured frames · checkpoint ${data.summary.checkpoint_step}`;
+ }catch(error){if(token===loadToken)el('episode-info').textContent=`Could not load this episode: ${error.message}`;}
+}
+function listEpisodes(){
+ episodeOptions=data.episodes.filter(ep=>!el('source').value||ep.source===el('source').value);
+ el('episode').replaceChildren();
+ episodeOptions.forEach(ep=>option(el('episode'),ep.id,`${el('source').value?'':ep.source+' · '}ep ${ep.episode} · ${ep.task}`));
+ loadEpisode();
+}
+if(data.episodes){
+ el('episode-controls').hidden=false;
+ option(el('source'),'','All sources');
+ [...new Set(data.episodes.map(ep=>ep.source))].forEach(source=>option(el('source'),source,source==='validation'?'Validation (held out)':source));
+ el('source').value=data.episodes.some(ep=>ep.source==='validation')?'validation':'';
+ el('source').addEventListener('change',listEpisodes);el('episode').addEventListener('change',loadEpisode);
+ for(const [id,delta]of [['previous-episode',-1],['next-episode',1]])el(id).addEventListener('click',()=>{const i=episodeOptions.findIndex(ep=>ep.id===el('episode').value)+delta;if(episodeOptions[i]){el('episode').value=episodeOptions[i].id;loadEpisode();}});
+ listEpisodes();
+}else setRows(rows);
+</script></body></html>

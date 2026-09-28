@@ -100,6 +100,8 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # The critic owns its inputs: frozen copies of the backbone's token embedding and
     # vision backbone (CriticEncoder) feed a fusion transformer at the encoder's native
     # width (2560, no projection), read out through a value token into HL-Gauss bins.
+    # Fusion owns a trainable state projector and the independent pointmap/visual depth
+    # path, so both are optimized, saved and Polyak-updated with the transformer.
     # critic_llm_depth keeps its old config name; it is the number of fusion blocks.
     critic_llm_depth: int = 12
     critic_num_attention_heads: int = 20
@@ -110,7 +112,7 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     value_support_min: float = -2.0
     value_support_max: float = 0.0
     hl_gauss_sigma_ratio: float = 5.0
-    critic_lr: float = 1e-4
+    critic_lr: float = 5e-5
     # Actor depth keeps a separate optimizer object only so pretrained merging cannot
     # touch parameters absent from the base checkpoint. None means exactly optimizer_lr.
     depth_lr: float | None = None
@@ -127,19 +129,21 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     critic_pretrained_path: str | None = None
 
     # ── Advantage-weighted actor loss (AWR) ────────────────────────────────
-    # Off: the actor loss is loss.mean(), plain BC. On: per-sample weights
-    #   A  = clamp(r + γ V_target(s')(1 − done), support) − V(s)   the critic's TD error
-    #   Â  = clip((A − mean A) / std A, ±advantage_clip)             stats over the effective batch
-    #                                                                 (all grad-accum micro-batches)
-    #   w  = exp(Â / advantage_beta) / mean w                        mean 1 = same LR as BC
-    #   w  = (1 − advantage_lambda) + advantage_lambda · w           BC floor; 1 = pure AWR
-    # Rows with critic_skip get w = 1. Needs skip_critic: false. Logged: advantage_*,
-    # adv_weight_ess_frac (fraction of the batch driving the gradient) and
-    # adv_weight_kl (nats of the target policy from BC); beta 1–2 keeps KL in 0.1–0.5.
+    # A = clamp(r + gamma * V(s') * (1-done), support) - V(s).
+    # "subtask": frozen training-calibration mean per (embodiment, exact text),
+    # one shared residual scale, exp(clipped z / beta), divided by its group's
+    # calibrated mean exp. Only the final mean-one normalization is per effective
+    # batch (all accumulation batches AND ranks). Requires a frozen critic.
+    # "batch": historical pooled-batch standardization, retained for old runs.
+    # critic_skip rows have weight 1 and are excluded from all weight statistics.
     advantage_weighting: bool = False
     advantage_beta: float = 1.0
     advantage_clip: float = 3.0
     advantage_lambda: float = 1.0
+    advantage_normalization: str = "batch"  # batch | subtask
+    advantage_calibration_path: str | None = None
+    advantage_calibration_batches: int = 2048  # training draws per rank, before actor steps
+    advantage_calibration_only: bool = False
 
     # ── LR schedule ───────────────────────────────────────────────────────
     # Names of the optimizer groups ("policy", "critic", "depth") that get the
@@ -197,6 +201,18 @@ class MolmoAct2RLConfig(MolmoAct2Config):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+
+        from lerobot.rl.awr import validate_weight_parameters
+
+        validate_weight_parameters(self.advantage_beta, self.advantage_clip, self.advantage_lambda)
+        if self.advantage_normalization not in {"batch", "subtask"}:
+            raise ValueError("advantage_normalization must be 'batch' or 'subtask'.")
+        if self.advantage_calibration_batches < 1:
+            raise ValueError("advantage_calibration_batches must be positive.")
+        if self.advantage_calibration_only and not (
+            self.advantage_weighting and self.advantage_normalization == "subtask"
+        ):
+            raise ValueError("advantage_calibration_only requires subtask-normalized advantage_weighting.")
 
         if self.action_encoding not in {"absolute", "anchor", "delta"}:
             raise ValueError(
@@ -347,8 +363,8 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
     def init_critic(self, with_target: bool = True) -> None:
         """Build the critic (own frozen encoder + fresh fusion stack) and, for critic training, its target.
 
-        Lazy so actor-only runs pay nothing. The target is a copy of the fusion stack only:
-        the encoder is frozen, so critic and target share it. An actor run that merely
+        Lazy so actor-only runs pay nothing. The target copies fusion, including the
+        trainable state/depth adapters; only the frozen text/RGB encoder is shared. An actor run that merely
         scores its batch with a loaded critic (critic_pretrained_path) passes
         with_target=False and takes V(s') from the same frozen critic.
         """
@@ -389,13 +405,15 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
 
     # ── Critic forward ────────────────────────────────────────────────────────
 
-    def _forward_critic_impl(self, fusion: nn.Module | None, batch: dict) -> dict[str, torch.Tensor]:
+    def _forward_critic_impl(
+        self, fusion: nn.Module | None, batch: dict, *, vision_grad: bool = False, input_grad: bool = False,
+    ) -> dict[str, torch.Tensor]:
         """Shared forward path for the critic (fusion=None) and critic_target.
 
         The critic owns its encoder (frozen copies of the token embedding and vision
-        backbone), so V(s) is a fixed function of the observation and prompt whatever the
-        actor learns. The policy backbone contributes only merge_visual_inputs, its
-        stateless crop bookkeeping. History/depth stashes are not consulted here.
+        backbone) plus trainable state/depth adapters inside fusion, independently of
+        the actor. The policy backbone contributes only merge_visual_inputs, its
+        stateless crop bookkeeping. Continuous inputs come directly from this batch.
         """
         compute_dtype = _torch_dtype(self.config.dtype)
         inputs = {
@@ -418,7 +436,10 @@ class MolmoAct2RLPolicy(MolmoAct2Policy):
         attention_mask = inputs.get("attention_mask")
         if not isinstance(attention_mask, Tensor) or attention_mask.ndim != 2:
             attention_mask = input_ids != -1
-        return self.critic(input_ids, images, token_pooling, attention_mask.to(torch.bool), fusion=fusion)
+        return self.critic(
+            input_ids, images, token_pooling, attention_mask.to(torch.bool), fusion=fusion,
+            batch=batch, vision_grad=vision_grad, input_grad=input_grad,
+        )
 
     def forward_critic(self, batch: dict) -> dict[str, torch.Tensor]:
         """V(s) with gradient — used for critic updates."""

@@ -438,11 +438,13 @@ class Pi05Adapter(ProbablePolicy):
         bin_centers = self._policy.critic.bin_centers.detach().float().cpu().numpy()
         return v, probs, bin_centers
 
-    def value_gradient_magnitude(self, obs: dict[str, Tensor], task_str: str) -> float:
-        out, vision_features, _ = self._critic_forward(obs, task_str, with_grad=True)
-        self._policy.critic.zero_grad()
-        out["value"].sum().backward()
-        return float(vision_features.grad.norm().item())
+    @torch.enable_grad()
+    def value_gradient_magnitude(
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None,
+    ) -> float:
+        out, vision_features, _ = self._critic_forward(obs, task_str, subtask, with_grad=True)
+        grad, = torch.autograd.grad(out["value"].sum(), vision_features)
+        return float(grad.float().norm().item())
 
     # ── Representations ──────────────────────────────────────────────────────
 

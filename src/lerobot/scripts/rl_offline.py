@@ -120,6 +120,13 @@ def _save_checkpoint(
         preprocessor=preprocessor,
         postprocessor=postprocessor,
     )
+    if (getattr(cfg.policy, "advantage_weighting", False)
+            and getattr(cfg.policy, "advantage_normalization", "batch") == "subtask"):
+        import shutil
+        from lerobot.rl.awr_calibration import resolve_calibration_path
+
+        shutil.copy2(resolve_calibration_path(cfg), checkpoint_dir / "pretrained_model" / "awr_calibration.json")
+
 
     training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
     training_state_dir.mkdir(parents=True, exist_ok=True)
@@ -152,6 +159,13 @@ def _save_pretrained_merge_checkpoint(
         preprocessor=preprocessor,
         postprocessor=postprocessor,
     )
+    if (getattr(cfg.policy, "advantage_weighting", False)
+            and getattr(cfg.policy, "advantage_normalization", "batch") == "subtask"):
+        import shutil
+        from lerobot.rl.awr_calibration import resolve_calibration_path
+
+        shutil.copy2(resolve_calibration_path(cfg), checkpoint_dir / "pretrained_model" / "awr_calibration.json")
+
 
     training_state_dir = checkpoint_dir / TRAINING_STATE_DIR
     training_state_dir.mkdir(parents=True, exist_ok=True)
@@ -681,6 +695,11 @@ def run_offline_training(
 
     cast_to_bf16_fn = cast_to_bf16 if getattr(cfg.policy, "dtype", None) == "bfloat16" else None
 
+    if (getattr(cfg.policy, "advantage_weighting", False)
+            and getattr(cfg.policy, "advantage_normalization", "batch") == "subtask"
+            and not skip_critic):
+        raise ValueError("Subtask AWR uses a frozen critic; set skip_critic: true and critic_pretrained_path.")
+
     logging.info(f"[RL_OFFLINE] offline_steps={offline_steps}  skip_critic={skip_critic}")
 
     # ── Build policy via Trainer ──────────────────────────────────────────────
@@ -912,6 +931,7 @@ def run_offline_training(
     logging.info(colored("=" * 70, "yellow", attrs=["bold"]))
 
     # ── Iterator ─────────────────────────────────────────────────────────────
+    diverse_buffer = None
     diverse_cfg = getattr(cfg, "diverse", None)
     if diverse_cfg is not None and diverse_cfg.enabled:
         from lerobot.rl.data_sources.diverse_integration import (
@@ -1019,6 +1039,18 @@ def run_offline_training(
             action_chunk_size=cfg.policy.n_action_steps,
             weights=get_offline_dataset_weights(cfg),
         )
+
+    # Frozen AWR statistics come only from training draws, after the complete
+    # collection vocabulary and the real successor-state sampler are installed.
+    if (getattr(cfg.policy, "advantage_weighting", False)
+            and getattr(cfg.policy, "advantage_normalization", "batch") == "subtask"):
+        from lerobot.rl.awr_calibration import expected_training_groups, prepare_calibration
+
+        expected = expected_training_groups(offline_buffers, diverse_buffer, trainer, preprocessor, cfg)
+        prepare_calibration(trainer, raw_policy, buf_iter, preprocessor, cfg, runtime, expected)
+        if cfg.policy.advantage_calibration_only:
+            logging.info("[AWR] Calibration complete; no actor or critic optimizer steps were taken.")
+            return
 
     # ── Validation dataset (used by probes) ───────────────────────────────────
     # Deliberately ReBot-only. This run trains on every accepted diverse episode, so

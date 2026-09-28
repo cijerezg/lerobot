@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Critic text-swap survey</title>
+<style>
+:root{font:15px/1.45 system-ui,sans-serif;color:#243044;background:#f4f6f9}body{margin:0;padding:20px}main{max-width:1220px;margin:auto}h1{font-size:24px;margin:0 0 8px}h2{font-size:18px;margin:0 0 12px}p{margin:8px 0}small,.muted{color:#647084}.card{background:white;border:1px solid #dce1e8;border-radius:10px;padding:18px;margin-bottom:16px}.controls{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:#536077}select,button{font:inherit;border:1px solid #bfc9d5;border-radius:5px;background:white;color:#26384b;padding:7px;cursor:pointer}select{max-width:100%}#source{width:255px}#task{width:400px}#episode{min-width:175px}button.active{background:#007e84;color:white;border-color:#007e84}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:8px;text-align:right;border-bottom:1px solid #e6ebf0}td:first-child,th:first-child{text-align:left}th{font-weight:600}#overview{overflow:auto}.split{font-weight:600;background:#f7f9fc}.legend{display:flex;flex-wrap:wrap;gap:18px;font-size:13px}.legend span::before{content:'';display:inline-block;width:22px;border-top:3px solid var(--color);margin-right:5px;vertical-align:middle}.legend .dashed::before{border-top-style:dashed}#chart{display:block;width:100%;height:auto;min-height:310px;touch-action:pan-y}#hover{padding:10px 12px;background:#f6f8fa;border-radius:5px;min-height:64px;font-size:13px;white-space:pre-line}#snapshots{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.images{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.images figure{margin:0}.images img{display:block;width:100%;height:auto;border-radius:6px}.images figcaption{font-size:13px;margin:4px 0}.frame-text{font-size:14px;white-space:pre-line;overflow-wrap:anywhere}details{margin:14px 0;font-size:13px}pre{white-space:pre-wrap;overflow-wrap:anywhere}a{color:#126f92}.note{font-size:13px;color:#536077}#empty{padding:30px}.range{width:120px}@media(max-width:700px){body{padding:8px}.card{padding:12px}.images{grid-template-columns:1fr}.controls>*{width:100%}#task,#source,#episode{width:100%}}
+</style></head><body><main>
+<div class="card"><h1 id="title">Critic text-swap survey</h1><p id="coverage"></p>
+<p><b>Same current frame; different subtask text.</b> Image, state, task and metadata stay fixed. “Next” means the next critic segment’s text, not the next video frame.</p>
+<div id="overview"></div><p class="note">Gaps and percentages are averaged within episodes, then equally across episodes with valid pairs. The training sample balances source/task coverage; it does not represent the training mixture’s prevalence. Gaps measure text sensitivity, not correctness.</p>
+<details><summary>Sampling and reference details</summary><p id="sampling"></p><p id="control"></p><p>Dashed orange: time to the next segment’s end if the robot must finish the intervening work. This is a hypothesis, not a supervised target. Grey vertical lines: critic segment ends (release folded into the preceding segment). The purple floor is the support bound, not a measured control target.</p><p id="checkpoint"></p></details>
+</div>
+<div class="card"><h2>Episode explorer</h2><div class="controls">
+<label>Source<select id="source"></select></label><label>Task<select id="task"></select></label><label>Episode<select id="episode"></select></label>
+</div><div id="empty" hidden>No episodes match these filters.</div><div id="episode-content">
+<p id="episode-info"></p><div class="legend"><span style="--color:#999">V(current text)</span><span style="--color:#e57f0d">V(next-segment text)</span><span style="--color:#8652a5">V(control text)</span><span class="dashed" style="--color:#e8af6b">Time-to-next-end reference</span></div>
+<svg id="chart" viewBox="0 0 1100 480" role="img" aria-label="Values over time, with next-text and control-text panels"></svg>
+<div id="hover" aria-live="polite"></div>
+<p class="note">Hover over the curves for the exact texts and values. Teal markers select saved frames. Three snapshots per episode were selected by time (20%, 50%, 80%), before inspecting predictions.</p>
+<div id="snapshots"></div><div class="frame-text" id="frame-info"></div><div class="images" id="images"></div>
+<details><summary>Selected frame metadata and saved data</summary><pre id="metadata"></pre><a id="raw" target="_blank" rel="noopener">Episode JSON</a> · <a id="static" target="_blank" rel="noopener">Static plot</a></details>
+</div></div></main>
+<script type="application/json" id="probe-data">__PROBE_DATA__</script>
+<script>
+'use strict';
+const data=JSON.parse(document.getElementById('probe-data').textContent), all=data.episodes, summary=data.summary;
+const $=id=>document.getElementById(id), fmt=(v,n=3)=>v===null||v===undefined?'—':Number(v).toFixed(n);
+const percent=v=>v===null||v===undefined?'—':`${(100*v).toFixed(1)}%`;
+const opt=(value,text)=>{const o=document.createElement('option');o.value=value;o.textContent=text;return o};
+$('title').textContent=`Critic text-swap survey · checkpoint ${data.provenance.step}`;
+$('coverage').textContent=`${summary.by_split.training.episodes} training + ${summary.by_split.validation.episodes} validation episodes · ${summary.points.toLocaleString()} one-second anchors · ${summary.exact_texts} distinct current texts${summary.complete?'':' · PARTIAL RUN'}`;
+$('sampling').textContent=data.provenance.sampling+` (seed ${data.provenance.seed}). This survey covers the five configured ReBot sources; the separate diverse-robot corpus is not included.`;
+$('control').textContent=`Fixed control: “${data.provenance.control_text}” (${data.provenance.control_train_episodes} training episodes). It is absent from selected annotation labels; feasibility in each scene is not established.`;
+$('checkpoint').textContent=data.provenance.checkpoint;
+const table=document.createElement('table'), head=document.createElement('tr');
+for(const name of ['Cohort / source','Episodes','Anchors','Next gap (eligible ep)','Control gap','Next < current']){const th=document.createElement('th');th.textContent=name;head.append(th)}
+table.append(head);
+for(const [name,m,split] of [['Training (all selected)',summary.by_split.training,true],...Object.entries(summary.by_source).filter(([s])=>s!=='validation').map(([s,m])=>[s,m,false]),['Validation',summary.by_split.validation,true]]){
+ const tr=document.createElement('tr');if(split)tr.className='split';
+ for(const v of [name,m.episodes,m.points,`${fmt(m.next_gap)} (${m.next_episodes}/${m.episodes})`,fmt(m.unrelated_gap),percent(m.next_lower)]){const td=document.createElement('td');td.textContent=v;tr.append(td)} table.append(tr);
+}
+$('overview').append(table);
+$('source').append(opt('','All sources'),...Object.keys(summary.by_source).map(s=>opt(s,s==='validation'?'Validation (held out)':s)));
+let filtered=[], current=null, selected=0;
+function tasks(){
+ const old=$('task').value, set=[...new Set(all.filter(e=>!$('source').value||e.source===$('source').value).map(e=>e.task))].sort();
+ $('task').replaceChildren(opt('','All tasks'),...set.map(t=>opt(t,t))); if(set.includes(old))$('task').value=old;
+ episodes();
+}
+function episodes(){
+ filtered=all.filter(e=>(!$('source').value||e.source===$('source').value)&&(!$('task').value||e.task===$('task').value));
+ $('episode').replaceChildren(...filtered.map(e=>opt(e.id,`${e.split==='validation'?'Val':'Train'} · ${e.source} · ep ${e.episode}`)));
+ chooseEpisode();
+}
+function chooseEpisode(){
+ current=filtered.find(e=>e.id===$('episode').value);$('empty').hidden=!!current;$('episode-content').hidden=!current;if(!current)return;
+ const snapshots=current.records.map((r,i)=>r.images?.length?i:null).filter(i=>i!==null);selected=snapshots[Math.floor(snapshots.length/2)]??0;
+ $('episode-info').textContent=`${current.source} · episode ${current.episode} · ${current.task} · ${current.records.length} anchors · ${current.metrics.next_pairs} valid next pairs · next gap ${fmt(current.metrics.next_gap)} · control gap ${fmt(current.metrics.unrelated_gap)}`;
+ $('snapshots').replaceChildren(...snapshots.map(i=>{const b=document.createElement('button');b.textContent=`${current.records[i].snapshot} · ${fmt(current.records[i].seconds,0)} s`;b.dataset.index=i;b.onclick=()=>selectFrame(i);return b}));
+ $('raw').href=current.file;$('static').href=current.plot;selectFrame(selected);
+}
+function pointText(r){return `${fmt(r.seconds,1)} s · frame ${r.frame_idx}\nCurrent: ${r.subtask} · V ${fmt(r.value)}\nNext: ${r.swaps.next?.text??'(no distinct next segment)'} · V ${fmt(r.swaps.next?.value)}    |    Control V ${fmt(r.swaps.unrelated?.value)}`}
+function selectFrame(i){
+ selected=i;const r=current.records[i];$('frame-info').textContent=pointText(r);$('hover').textContent=pointText(r);
+ for(const b of $('snapshots').children)b.classList.toggle('active',Number(b.dataset.index)===i);
+ $('images').replaceChildren(...(r.images??[]).map(im=>{const fig=document.createElement('figure'),img=document.createElement('img'),cap=document.createElement('figcaption');img.src=im.path;img.alt=`${im.camera}, episode ${current.episode}, frame ${r.frame_idx}`;cap.textContent=`${im.camera} · ${fmt(r.seconds,1)} s`;fig.append(img,cap);return fig}));
+ $('metadata').textContent=JSON.stringify(r.metadata,null,2);draw();
+}
+const svgNS='http://www.w3.org/2000/svg';
+function node(tag,attrs,text){const n=document.createElementNS(svgNS,tag);for(const [k,v] of Object.entries(attrs??{}))n.setAttribute(k,v);if(text!==undefined)n.textContent=text;return n}
+function draw(){
+ const svg=$('chart');svg.replaceChildren();const rows=current.records, left=58,right=1080,width=right-left,maxT=Math.max(1,...rows.map(r=>r.seconds)),x=t=>left+t/maxT*width;
+ const top=[35,262],h=172,y=(v,p)=>top[p]-v/2*h;
+ for(let p=0;p<2;p++){
+  const variant=p===0?'next':'unrelated',color=p===0?'#e57f0d':'#8652a5';
+  svg.append(node('text',{x:left,y:top[p]-13,fill:color,'font-size':14},p===0?'Next-segment text':'Fixed control text'));
+  for(const v of [0,-.5,-1,-1.5,-2]){svg.append(node('line',{x1:left,x2:right,y1:y(v,p),y2:y(v,p),stroke:'#e7ebf0'}));svg.append(node('text',{x:left-10,y:y(v,p)+4,'text-anchor':'end','font-size':12,fill:'#677489'},v.toFixed(1)))}
+  for(const t of current.boundaries)svg.append(node('line',{x1:x(t),x2:x(t),y1:top[p],y2:top[p]+h,stroke:'#ddd','stroke-dasharray':'2 3'}));
+  function line(get,c,dash){let path='',active=false;for(const r of rows){const v=get(r);if(v===null||v===undefined||!Number.isFinite(v)){active=false;continue}path+=`${active?'L':'M'}${x(r.seconds).toFixed(2)},${y(v,p).toFixed(2)} `;active=true}svg.append(node('path',{d:path,fill:'none',stroke:c,'stroke-width':2,'stroke-dasharray':dash??''}))}
+  line(r=>r.value,'#999');if(p===0)line(r=>r.swaps.next?.reference,'#e8af6b','6 4');
+  line(r=>r.swaps[variant]?.value,color);
+  if(p===1)svg.append(node('line',{x1:left,x2:right,y1:y(-2,p),y2:y(-2,p),stroke:color,'stroke-dasharray':'3 3',opacity:.5}));
+  const hit=node('rect',{x:left,y:top[p],width,height:h,fill:'transparent'});hit.onmousemove=e=>{const pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;const local=pt.matrixTransform(svg.getScreenCTM().inverse()),t=(local.x-left)/width*maxT;let i=0;for(let j=1;j<rows.length;j++)if(Math.abs(rows[j].seconds-t)<Math.abs(rows[i].seconds-t))i=j;$('hover').textContent=pointText(rows[i])};hit.onmouseleave=()=>{$('hover').textContent=pointText(rows[selected])};svg.append(hit);
+  for(let i=0;i<rows.length;i++)if(rows[i].images?.length){
+   const g=node('g',{'data-snapshot':i,role:'button',tabindex:0,'aria-label':`Show frames at ${rows[i].seconds} seconds`,style:'cursor:pointer'});
+   g.append(node('line',{x1:x(rows[i].seconds),x2:x(rows[i].seconds),y1:top[p],y2:top[p]+h,stroke:'#00898f','stroke-width':i===selected?2:1,opacity:i===selected ? .9 : .35}));
+   g.append(node('circle',{cx:x(rows[i].seconds),cy:top[p]+h+7,r:i===selected?6:4,fill:'#00898f'}));
+   g.append(node('rect',{x:x(rows[i].seconds)-7,y:top[p],width:14,height:h+14,fill:'transparent'}));g.onclick=()=>selectFrame(i);g.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();selectFrame(i)}};svg.append(g);
+  }
+ }
+ for(let j=0;j<=6;j++){const t=maxT*j/6;svg.append(node('text',{x:x(t),y:459,'text-anchor':'middle','font-size':12,fill:'#677489'},fmt(t,0)))}
+ svg.append(node('text',{x:(left+right)/2,y:478,'text-anchor':'middle','font-size':12,fill:'#677489'},'Seconds into episode'));
+}
+$('source').onchange=tasks;$('task').onchange=episodes;$('episode').onchange=chooseEpisode;tasks();
+</script></body></html>

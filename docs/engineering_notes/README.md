@@ -17,6 +17,8 @@ The goal is to make the repo easier to reason about later: why choices were made
 
 | Topic | File | Why it matters |
 | --- | --- | --- |
+| Critic gradient report v2 with depth, checkpoint 2000 | [Runbook](reports/critic_gradients_v2_2000/README.md) · [HTML](reports/critic_gradients_v2_2000/index.html) · [Comparison](reports/critic_gradients_v2_2000/comparison.html) | Same frames; continuous state + depth, component gradients and depth checks. |
+| Critic gradient numerical report, checkpoint 2000 | [Report and runbook](reports/critic_gradients_2000/README.md) · [Interactive HTML](reports/critic_gradients_2000/index.html) | Saved curves, exact bin statistics, frame links, definitions and rebuild commands. |
 | Linux overcommit and probe MP4 failures | `runbooks/system_overcommit.md` | Explains `[Errno 12] Cannot allocate memory` from imageio/ffmpeg during attention probes. |
 
 ## Conventions

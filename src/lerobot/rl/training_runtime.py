@@ -163,6 +163,10 @@ class TrainingRuntime:
 
         return gather_object(wrapped)
 
+    def gather_objects(self, value: Any) -> list[Any]:
+        """Gather small variable-length calibration/telemetry records from all ranks."""
+        return self._gather_object(value)
+
     def gather_equal(self, value: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
         """Gather equal-shaped histogram tensors by concatenating dimension zero."""
         if self.num_processes == 1:

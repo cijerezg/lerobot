@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Critic gradient patterns</title><style>
+:root{font:15px/1.4 system-ui,sans-serif;color:#233248;background:#f5f7fa}*{box-sizing:border-box}body{margin:0;padding:18px}main{max-width:1400px;margin:auto}h1{font-size:23px;margin:0 0 6px}h2{font-size:18px;margin:0 0 6px}p{margin:6px 0}.muted{color:#63738a;font-size:13px}.card{background:white;border:1px solid #dce3eb;border-radius:10px;padding:16px;margin:14px 0}.controls,.browse{display:flex;align-items:center;gap:10px;flex-wrap:wrap}label{font-size:13px}select,button,input[type=number]{font:inherit;color:inherit;border:1px solid #b8c5d3;border-radius:5px;background:white;padding:6px 9px}button{cursor:pointer}button:hover{background:#edf4fb}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #bc721a}button:disabled{opacity:.4;cursor:default}#rank{width:90px}#rank-slider{flex:1;min-width:180px;accent-color:#d27717}#chart{width:100%;display:block;touch-action:pan-y}#hover{height:22px;font-size:12px;color:#54667f;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.browse{margin-top:12px}#frame-info{font-variant-numeric:tabular-nums}.images{display:flex;gap:12px;flex-wrap:wrap}.images figure{margin:6px 0 0;flex:1;min-width:260px;max-width:650px}.images img{width:100%;display:block;border-radius:5px}.images figcaption{font-size:12px;color:#65748a;margin:4px 0}details{margin-top:14px}summary{cursor:pointer;font-size:13px;font-weight:600}table{font-size:13px;width:100%;max-width:900px;border-collapse:collapse;margin-top:12px}th,td{padding:5px 9px;text-align:right;border-bottom:1px solid #e6ebf1}th:first-child,td:first-child{text-align:left}a{color:#225b94}#status{font-size:13px}.tokens{line-height:2;word-break:break-word}.token{font:12px ui-monospace,monospace;white-space:pre-wrap;padding:2px}.saved{font-size:13px;margin:12px 0}#no-data{padding:20px}@media(max-width:650px){body{padding:8px}.card{padding:10px}.images figure{min-width:100%}#component{max-width:210px}}
+
+[hidden]{display:none!important}.controls{margin-bottom:10px;gap:12px}.controls label{display:flex;gap:6px;align-items:center}input[type=search]{font:inherit;border:1px solid #b8c5d3;border-radius:5px;padding:6px 9px;width:210px}#legend{display:flex;gap:7px 16px;flex-wrap:wrap;font-size:12px;max-height:90px;overflow:auto;margin:8px 0}#legend span{display:inline-flex;align-items:center;gap:5px}#legend i{width:10px;height:10px;border-radius:2px;display:inline-block}#legend .ramp{width:150px;height:12px}#hover{height:auto;min-height:22px;white-space:normal}#plot-note{min-height:20px}#bin-note{background:#fff4e8;border-radius:5px;padding:7px 10px;font-size:13px}#bin-note button{padding:3px 8px;margin-left:10px}#transition-info{font-size:13px}.density-bin{cursor:pointer}.density-bin:hover{stroke:#152b45;stroke-width:1.5}
+</style></head><body><main>
+<h1>Critic gradient patterns</h1><p><a href="gradient_binned_summary.html">Numerical report: all curves and action comparisons</a></p><p id="coverage" class="muted"></p>
+<section class="card" id="distribution">
+<div class="controls">
+<label>View <select id="view"><option value="curves" selected>Binned curves</option><option value="sorted">Sorted gradients</option><option value="density">2D histogram</option></select></label>
+<label>Gradient over <select id="component"></select></label>
+<label id="color-control">Colour by <select id="colour"></select></label>
+<label id="axis-control" hidden>Compare with <select id="axis"></select></label>
+<label id="bins-control">Bins <select id="n-bins"><option>10</option><option>20</option><option selected>40</option><option>80</option></select></label>
+<label id="normalization-control" hidden>Density <select id="normalization"><option value="count">Frame count</option><option value="conditional">Fraction within gradient bin</option></select></label>
+</div>
+<div class="controls">
+<label>Action <select id="phase"><option value="">All actions</option></select></label>
+<label>Subtask <input id="text-filter" type="search" placeholder="e.g. shirt, grasp the navy" aria-label="Filter subtask text"></label>
+<label>Source <select id="source"><option value="">All sources</option></select></label>
+<label>Transitions <select id="transition"><option value="all">All</option><option value="interior">Within segment</option><option value="terminal">Terminal</option></select></label>
+<button id="clear-filters">Clear filters</button>
+</div>
+<svg id="chart" viewBox="0 0 1200 390" role="img" aria-label="Critic gradient patterns. Click a point or histogram bin to inspect frames."></svg>
+<div id="legend"></div><p id="numeric-summary" class="muted" hidden></p><div id="hover" aria-live="polite"></div><p id="plot-note" class="muted"></p>
+<p id="bin-note" hidden><span></span><button id="clear-bin">Browse all plotted frames</button></p>
+<div class="controls"><button data-q="0.1">Low · p10</button><button data-q="0.5">Middle · p50</button><button data-q="0.9">High · p90</button><button id="zoom">Zoom near selected</button><button id="reset">Full range</button><span id="status" class="muted"></span></div>
+<div class="browse"><button id="lower">← Lower</button><label><span id="rank-label">Rank</span> <input id="rank" type="number" min="1" step="1"></label><span id="rank-total" class="muted"></span><input id="rank-slider" type="range" min="0" step="1" aria-label="Frame rank from lowest to highest gradient"><button id="higher">Higher →</button></div>
+<p id="no-data" hidden>No frames match these filters and measurements.</p>
+</section>
+<section class="card" id="numeric-card" hidden><div class="controls"><h2>Numbers behind the curve</h2><button id="export-bins">Download this table (CSV)</button></div>
+<p class="muted">Frame median and middle 50% describe the observed distribution; the band is not a confidence interval. The dashed curve gives each episode one vote: median of its within-bin medians. Counts show support for each bin. Change bin resolution to check whether a pattern persists; sparse bins remain visible. Click a row to browse its frames.</p>
+<div style="overflow-x:auto"><table id="bin-table" style="max-width:none"><thead><tr><th>X bin</th><th>Frames</th><th>Episodes</th><th>Median gradient</th><th>25th %</th><th>75th %</th><th>Mean gradient</th><th>Median of episode medians</th></tr></thead><tbody></tbody></table></div>
+<p class="saved"><a href="gradient_binned_summary.html" target="_blank">Saved numerical report by action</a> · <a href="gradient_binned_summary.csv" target="_blank">All report bins (CSV)</a></p>
+</section>
+<section class="card" id="frame-card"><h2 id="frame-title"></h2><p id="frame-info"></p><p id="identity" class="muted"></p><p id="task" class="muted"></p><p id="transition-info"></p><div class="images" id="images"></div><p id="metadata" class="muted"></p>
+<details id="breakdown"><summary>Input-gradient breakdown and saved record</summary><p id="detail-status" class="muted"></p><table><thead><tr><th>Input</th><th>L2 norm</th><th>Squared-norm share</th><th>Tokens</th><th>RMS</th></tr></thead><tbody id="groups"></tbody></table><p class="saved"><a id="record-file" target="_blank" rel="noopener">Full saved episode JSON</a> · <span id="record-index"></span></p><details><summary>Prompt-token gradients</summary><div id="tokens" class="tokens"></div></details></details>
+</section>
+<details class="card"><summary>Quantities and coverage</summary>
+<p class="muted">The default gradient covers RGB image features, state-value embeddings, and real depth features when consumed, at the input to critic fusion. Fixed prompt wording, task/subtask text, metadata and missing-modality placeholders are excluded. The critic retains its original conditioning. Image-only, state-only and depth-only norms remain selectable. These are embedding derivatives, not raw-pixel, metric-depth or physical joint-coordinate derivatives. Representation scale and input size affect the norm; gradient magnitude alone is not directly comparable across architectures.</p>
+<p class="muted">ΔV = V(next frame) − V(current frame), one action chunk apart with identical task, subtask, metadata and cameras, without crossing a critic terminal. Raw advantage = clip(reward + γ(1 − terminal)V(next frame), value support) − V(current frame). Terminal advantage needs no next value. Missing matching forwards are marked unavailable. V and gradients are from the saved gradient-enabled forwards.</p>
+<p class="muted">Time remaining and segment progress use critic terminals, with release folded into the preceding move. Colour-free subtask removes common colour words for display only. Histogram counts weight every sampled frame equally. Conditional density normalizes each gradient column independently; hover shows its sample count.</p>
+<p id="transition-coverage" class="muted"></p>
+</details>
+<p class="saved"><a href="gradient_points.json" target="_blank" rel="noopener">Saved values for all plotted points (JSON)</a></p>
+</main><script type="application/json" id="probe-data">__PROBE_DATA__</script><script>__PROBE_SCRIPT__</script></body></html>

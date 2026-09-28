@@ -95,7 +95,7 @@ policy:
   value_support_min: -2.0
   value_support_max: 0.0
   hl_gauss_sigma_ratio: 8.0
-  critic_lr: 0.0001
+  critic_lr: 5.0e-05
   critic_target_update_weight: 0.05
   critic_target_update_every: 4
   discount: 0.97

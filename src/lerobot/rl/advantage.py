@@ -13,6 +13,8 @@ def advantage_weights(advantage: torch.Tensor, beta: float, clip: float, lam: fl
     w = exp(Â / beta) / mean w          mean 1 keeps the LR of plain BC
     w = (1 − lam) + lam · w             BC floor; lam 1 = pure AWR, 0 = BC
     """
+    if advantage.numel() == 0:
+        return advantage.clone(), advantage.clone()
     a_hat = ((advantage - advantage.mean()) / advantage.std(correction=0).clamp_min(1e-6)).clamp(-clip, clip)
     w = torch.exp(a_hat / beta)
     w = w / w.mean()

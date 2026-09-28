@@ -14,6 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
+# Local research reports
+
+- [Critic gradient report — v2 with depth, checkpoint 2000](engineering_notes/reports/critic_gradients_v2_2000/README.md):
+  [numerical report](engineering_notes/reports/critic_gradients_v2_2000/index.html) · [comparison](engineering_notes/reports/critic_gradients_v2_2000/comparison.html).
+- [Critic gradient report — checkpoint 2000](engineering_notes/reports/critic_gradients_2000/README.md):
+  [open the saved interactive HTML](engineering_notes/reports/critic_gradients_2000/index.html).
+- [Engineering notes index](engineering_notes/README.md).
+
 # Generating the documentation
 
 To generate the documentation, you first have to build it. Several packages are necessary to build the doc,

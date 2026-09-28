@@ -96,14 +96,12 @@ class DepthPointmapConfig:
     # its trainable marker from growing the fusion input without limit.
     output_bound: float = 128.0
 
-    # CRITIC-ONLY (rl_molmoact2.py): the critic still runs its own co-evolving
-    # DepthStreamBlocks over its own encoder's tokens. The actor no longer does —
-    # its depth goes through the VLM prefix. These two knobs exist solely for that
-    # remaining critic path and go away when it is migrated to the same seam.
+    # Legacy stream settings retained for saved-config compatibility. The current
+    # actor and critic both use token_width/patch_size and the copied visual path;
+    # neither builds DepthStreamBlocks.
     stream_num_heads: int = 8
     stream_mlp_ratio: float = 4.0
-    # Preserve the critic's existing, cheaper point-map stream while the actor uses
-    # the new fine visual grid. These knobs do not affect the actor path.
+    # Legacy critic grid settings, likewise unused by the current architecture.
     critic_patch_size: int = 40
     critic_token_width: int = 512
 
@@ -183,7 +181,7 @@ class DepthPointmapConfig:
         if self.token_width <= 0 or self.token_width % self.stream_num_heads:
             raise ValueError(
                 f"token_width {self.token_width} must be > 0 and divisible by "
-                f"stream_num_heads {self.stream_num_heads} (the critic's stream blocks)."
+                f"stream_num_heads {self.stream_num_heads} (legacy stream setting)."
             )
         if self.stream_mlp_ratio <= 0:
             raise ValueError(f"stream_mlp_ratio must be > 0, got {self.stream_mlp_ratio}.")

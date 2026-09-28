@@ -1385,13 +1385,72 @@ class MolmoAct2Adapter(ProbablePolicy):
         bin_centers = self._policy.critic.bin_centers.detach().float().cpu().numpy()
         return v, probs, bin_centers
 
-    # NOTE: value_gradient_magnitude is deferred. The pi05 version puts
-    # requires_grad_ on vision_features extracted via policy.critic.embed_image(),
-    # which has no equivalent in molmoact2's forward_critic path (the encoder
-    # forward is opaque from outside). Implementing it requires plumbing
-    # requires_grad through MolmoAct2RLPolicy._forward_critic_impl onto
-    # inputs_embeds. The base class raises NotImplementedError, and the probe
-    # skips gradient-based plots when this isn't supported.
+    @torch.enable_grad()
+    def value_gradient_magnitude(
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None,
+    ) -> float:
+        out = self._policy._forward_critic_impl(
+            None, self._critic_batch(obs, task_str, subtask, metadata), vision_grad=True,
+        )
+        return float(out["vision_grad_norm"].item())
+
+    @torch.enable_grad()
+    def critic_input_gradients(
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None,
+    ) -> dict:
+        """Gradient over EVERY active encoded input, with an exhaustive partition."""
+        from lerobot.probes.critic_subtasks import gradient_group_summary
+
+        batch = self._critic_batch(obs, task_str, subtask, metadata)
+        if batch["input_ids"].shape[0] != 1:
+            raise ValueError("Frame diagnostics require a single observation.")
+        out = self._policy._forward_critic_impl(None, batch, input_grad=True)
+        obs_for_groups, prepared = split_probe_complementary(obs)
+        obs_for_groups, flags = self._fill_absent_cameras(obs_for_groups)
+        flags = {**flags, **prepared}
+        presence = {
+            key: bool(torch.as_tensor(flags.get(f"camera_is_present.{key}", True)).reshape(-1)[0])
+            for key in self._configured_image_keys()
+        }
+        groups = self._prompt_token_groups(batch, obs_for_groups, presence)
+        fusion = self._policy.critic.fusion
+        projected_inputs = callable(getattr(fusion, "prepare_inputs", None))
+        pointmap = getattr(fusion, "pointmap_config", None)
+        depth_injected = projected_inputs and pointmap is not None and batch.get("depth_token_id") is not None
+        depth_consumed = False
+        if depth_injected:
+            depth_key = pointmap.depth_key
+            depth_consumed = torch.is_tensor(batch.get(f"observation.depth.{depth_key}")) and bool(
+                torch.as_tensor(batch.get(f"depth.{depth_key}.depth_is_present", True)).all())
+        if "depth" in groups and not depth_consumed:
+            groups["depth_null" if depth_injected else "depth_placeholders"] = groups.pop("depth")
+        if "history" in groups:
+            groups["history_placeholders"] = groups.pop("history")
+        row = batch["input_ids"][0].detach().cpu()
+        mask = batch.get("attention_mask")
+        active = ((row != -1) if mask is None else mask[0].detach().cpu().bool()).nonzero().flatten().tolist()
+        patches = set((row == self._policy.critic.encoder.image_patch_id).nonzero().flatten().tolist())
+        claimed = {i for positions in groups.values() for i in positions}
+        if patches - claimed:
+            groups["other_image_patches"] = sorted(patches - claimed)
+        norms = out["input_token_grad_norms"][0].cpu().numpy()
+        result = gradient_group_summary(norms, groups, active, self._policy.critic.encoder.hidden_size)
+        expected = float(out["input_grad_norm"].item())
+        if not np.isclose(result["norm"], expected, rtol=1e-5, atol=1e-8):
+            raise ValueError("Gradient groups do not cover the complete critic input.")
+        owners = result.pop("token_groups")
+        tokenizer = self._tokenizer()
+        result["tokens"] = [
+            {"position": i, "text": tokenizer.decode([int(row[i])]), "group": owners[i], "norm": float(norms[i])}
+            for i in active if i not in patches
+        ]
+        result["value"] = float(out["value"].item())
+        result["boundary"] = "encoded RGB/text and projected state/depth tokens entering critic fusion" if projected_inputs else "all active frozen-encoder output tokens entering critic fusion"
+        result["state_format"] = str(getattr(self._cfg.policy, "state_format", "discrete"))
+        result["raw_depth_consumed"] = depth_consumed
+        result["continuous_state_consumed"] = projected_inputs and torch.is_tensor(batch.get("state_values"))
+        result["raw_history_consumed"] = False
+        return result
 
     # ── Representations ──────────────────────────────────────────────────────
 

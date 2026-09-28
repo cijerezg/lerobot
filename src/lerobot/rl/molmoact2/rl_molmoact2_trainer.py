@@ -11,6 +11,7 @@ Advantage enters only as an optional per-sample weight on the actor loss
 from __future__ import annotations
 
 import collections
+import json
 import logging
 from copy import deepcopy
 from pathlib import Path
@@ -21,6 +22,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from lerobot.rl.advantage import advantage_weights
+from lerobot.rl.awr import group_key, normalize_log_weights, td_advantage, weight_telemetry
 from lerobot.rl.rl_trainer import Trainer
 from lerobot.rl.stochastic_rounding_adamw import StochasticRoundingAdamW
 from lerobot.utils.constants import (
@@ -484,6 +486,7 @@ class MolmoAct2Trainer(Trainer):
             if skip_critic:
                 for p in critic_net.parameters():
                     p.requires_grad_(False)
+                critic_net.eval()
             else:
                 self._apply_critic_freeze(critic_net, tp, cfg)
 
@@ -548,7 +551,7 @@ class MolmoAct2Trainer(Trainer):
 
     @staticmethod
     def _apply_critic_freeze(critic_net: nn.Module, tp, cfg) -> None:
-        # The fusion stack trains; the critic's encoder copy (CriticEncoder) stays frozen.
+        # Fusion includes the trainable state/depth adapters. Text/RGB stays frozen.
         del tp, cfg
         for param in critic_net.fusion.parameters():
             param.requires_grad = True
@@ -642,7 +645,6 @@ class MolmoAct2Trainer(Trainer):
 
         # Lift depth into both critic batches (no-op unless pointmap_config is set): current-state
         # depth for V(s), and the sampled next-state depth (next_depth.*) for the target V(s').
-        # Unconsumed until the critic-side depth read lands (TODO(pointmap-critic), rl_molmoact2.py).
         observations = self._inject_depth_observations(observations, raw.get("complementary_info"), cfg)
         next_observations = self._inject_depth_observations(
             next_observations, raw.get("complementary_info"), cfg, key_prefix="next_depth."
@@ -688,41 +690,96 @@ class MolmoAct2Trainer(Trainer):
         """
         p = cfg.policy
         curr_batch, next_batch, rewards, done = self._critic_batches(raw, preprocessor, cfg)
-        with torch.no_grad():
-            v_next = raw_policy.forward_critic(next_batch)["value"].float().view(-1)
-            v_curr = raw_policy.forward_critic(curr_batch)["value"].float().view(-1)
-        rewards = rewards.float().view(-1)
-        done = done.float().view(-1)
-        td_target = (rewards + p.discount * v_next * (1.0 - done)).clamp(p.value_support_min, p.value_support_max)
-        advantage = td_target - v_curr
+        critic = raw_policy.critic
+        was_training = critic.training
+        critic.eval()
+        try:
+            with torch.no_grad():
+                v_next = raw_policy.forward_critic(next_batch)["value"]
+                v_curr = raw_policy.forward_critic(curr_batch)["value"]
+        finally:
+            critic.train(was_training if not getattr(cfg, "skip_critic", False) else False)
+        advantage = td_advantage(v_curr, v_next, rewards, done, p.discount, p.value_support_min, p.value_support_max)
         skip = (raw.get("complementary_info") or {}).get("critic_skip")
         kept = torch.ones_like(advantage, dtype=torch.bool) if skip is None else ~skip.bool().view(-1)
         return advantage, kept
 
+    def _advantage_groups(self, raw, preprocessor):
+        """Stable text identities; global subtask IDs can change across collections."""
+        names = self.subtask_vocabulary(preprocessor)
+        n = torch.as_tensor(raw["reward"]).numel()
+        comp = raw.get("complementary_info") or {}
+        def indices(key):
+            values = torch.as_tensor(comp[key]).reshape(-1).cpu().tolist() if key in comp else [-1] * n
+            if len(values) != n:
+                raise ValueError(f"Expected {n} {key} values for AWR, got {len(values)}.")
+            return values
+        groups = []
+        for robot, label in zip(indices("embodiment_index"), indices("subtask_index"), strict=True):
+            if label >= len(names):
+                raise ValueError(f"Unknown subtask index {label} in AWR batch.")
+            groups.append(group_key(robot, names[int(label)] if label >= 0 else ""))
+        return groups
+
     @staticmethod
     def _advantage_weights(
-        advantages: list[torch.Tensor], kepts: list[torch.Tensor], cfg
+        advantages: list[torch.Tensor], kepts: list[torch.Tensor], cfg,
+        *, groups=None, calibration=None, runtime=None,
     ) -> tuple[list[torch.Tensor], torch.Tensor, torch.Tensor]:
-        """AWR weights for the actor loss: one [B] tensor per micro-batch, plus (A, w) over all kept rows.
+        """Scatter mean-one effective-batch weights back to the microbatches.
 
-        The statistics are pooled over the whole effective batch (every gradient-accumulation
-        micro-batch of one optimizer step), not per micro-batch: 32 rows give a noisy std that
-        exp() amplifies, and a micro-batch of mostly good rows would otherwise be renormalised
-        to mean 1 like any other.
-        Â = clip((A − mean A) / std A, ±advantage_clip)
-        w = exp(Â / advantage_beta) / mean w                       mean 1 keeps the LR of plain BC
-        w = (1 − advantage_lambda) + advantage_lambda · w          BC floor
-        Rows not kept (critic_skip) get w = 1.
+        Subtask mode uses frozen centers, shared scale and group exponential
+        normalizers; the final normalization spans accumulation and ranks. Legacy
+        batch mode retains its pooled standardization. Skipped rows stay at one.
         """
         p = cfg.policy
         a = torch.cat([adv[k] for adv, k in zip(advantages, kepts)])
-        w, _ = advantage_weights(a, p.advantage_beta, p.advantage_clip, p.advantage_lambda)
+        if getattr(p, "advantage_normalization", "batch") == "subtask":
+            if calibration is None or groups is None:
+                raise ValueError("Subtask AWR requires frozen training calibration before actor updates.")
+            invalid = not bool(torch.isfinite(a).all()) or bool(set(groups) - calibration.centers.keys())
+            if (runtime.any_process(invalid) if runtime is not None else invalid):
+                raise ValueError("AWR batch has non-finite advantages or an uncalibrated group on at least one rank.")
+            log_q, _ = calibration.log_weights(a, groups)
+            w = normalize_log_weights(log_q, p.advantage_lambda, runtime)
+        else:
+            w, _ = advantage_weights(a, p.advantage_beta, p.advantage_clip, p.advantage_lambda)
         weights = []
         for adv, k, w_kept in zip(advantages, kepts, torch.split(w, [int(k.sum()) for k in kepts])):
             full = torch.ones_like(adv)
             full[k] = w_kept
             weights.append(full)
         return weights, a, w
+
+    def _log_awr_weights(self, advantages, weights, groups, raws, kepts, cfg, runtime, step):
+        """Periodic scalars in Aim and a readable per-subtask JSONL audit."""
+        terminal = torch.cat([raw["done"].reshape(-1)[k] for raw, k in zip(raws, kepts)]).bool()
+        reward = torch.cat([raw["reward"].reshape(-1)[k] for raw, k in zip(raws, kepts)])
+        baseline = (terminal.float() - 1) / cfg.policy.reward_normalization_constant
+        mistake = reward < baseline - 1e-6
+        z = self._awr_calibration.standardized(advantages, groups)
+        shards = runtime.gather_objects({
+            "a": advantages.cpu().tolist(), "w": weights.cpu().tolist(), "z": z.cpu().tolist(),
+            "groups": groups, "terminal": terminal.cpu().tolist(), "mistake": mistake.cpu().tolist(),
+            "rows": sum(k.numel() for k in kepts),
+        })
+        combined = {key: [item for shard in shards for item in shard[key]]
+                    for key in ("a", "w", "z", "groups", "terminal", "mistake")}
+        metrics, rows = weight_telemetry(
+            combined["a"], combined["w"], combined["z"], combined["groups"],
+            combined["terminal"], combined["mistake"], sum(shard["rows"] for shard in shards), cfg.policy.advantage_clip,
+        )
+        # Critic-valid row counts can differ across ranks. Global scalars above
+        # remain valid; the runtime's equal-shaped histogram gather is single-rank here.
+        if runtime.num_processes == 1 and advantages.numel():
+            metrics["advantage_histogram"] = advantages.cpu().numpy()
+            metrics["adv_weight_histogram"] = weights.cpu().numpy()
+        if runtime.is_main_process and getattr(cfg, "output_dir", None):
+            path = Path(cfg.output_dir) / "awr_subtask_weights.jsonl"
+            with path.open("a") as stream:
+                stream.write(json.dumps({"step": step, "metrics": {k: v for k, v in metrics.items() if not k.endswith("histogram")},
+                                         "groups": rows}, ensure_ascii=False, allow_nan=False) + "\n")
+        return metrics
 
     def update_critic(
         self,
@@ -1007,6 +1064,9 @@ class MolmoAct2Trainer(Trainer):
         runtime = kwargs.get("training_runtime") or TrainingRuntime(device=device)
         raw_policy = runtime.unwrap_model(policy)
         advantage_weighting = bool(getattr(cfg.policy, "advantage_weighting", False))
+        subtask_awr = advantage_weighting and getattr(cfg.policy, "advantage_normalization", "batch") == "subtask"
+        if subtask_awr and not hasattr(self, "_awr_calibration"):
+            raise ValueError("Prepare frozen AWR calibration before the first actor update.")
         if advantage_weighting and not hasattr(raw_policy, "critic"):
             raise ValueError(
                 "policy.advantage_weighting needs a critic: critic_pretrained_path (frozen, skip_critic: true) "
@@ -1073,12 +1133,13 @@ class MolmoAct2Trainer(Trainer):
             p for p in raw_policy.parameters() if p.requires_grad and id(p) not in critic_param_ids
         ]
 
-        # AWR: draw and critic-score every micro-batch of this step first, so the weights are
-        # standardised over the whole effective batch rather than over one micro-batch.
+        # Score every accumulation microbatch before normalizing weights over the
+        # effective batch. Calibrated subtask centers and scale remain fixed.
         raws: list[dict] = []
         adv_weights_per_batch: list[torch.Tensor] = []
         all_adv: torch.Tensor | None = None
         all_w: torch.Tensor | None = None
+        all_groups: list[str] = []
         if advantage_weighting:
             advantages: list[torch.Tensor] = []
             kepts: list[torch.Tensor] = []
@@ -1088,7 +1149,13 @@ class MolmoAct2Trainer(Trainer):
                 advantage, kept = self._advantages(raw_policy, raw, preprocessor, cfg)
                 advantages.append(advantage)
                 kepts.append(kept)
-            adv_weights_per_batch, all_adv, all_w = self._advantage_weights(advantages, kepts, cfg)
+                if subtask_awr:
+                    keys = self._advantage_groups(raw, preprocessor)
+                    all_groups.extend(key for key, keep in zip(keys, kept.cpu().tolist(), strict=True) if keep)
+            adv_weights_per_batch, all_adv, all_w = self._advantage_weights(
+                advantages, kepts, cfg, groups=all_groups,
+                calibration=getattr(self, "_awr_calibration", None), runtime=runtime,
+            )
 
         for accum_idx in range(grad_accum):
             raw = raws[accum_idx] if advantage_weighting else _draw_transition_batch(online_iter, offline_iter, device)
@@ -1376,7 +1443,9 @@ class MolmoAct2Trainer(Trainer):
             all_done = torch.cat(done_list)
             accum["done_fraction"] = all_done.float().mean().item()
 
-        if all_adv is not None and all_w is not None and all_adv.numel() > 0:
+        if subtask_awr and capture_modality_telemetry:
+            accum.update(self._log_awr_weights(all_adv, all_w, all_groups, raws, kepts, cfg, runtime, optimization_step))
+        elif not subtask_awr and all_adv is not None and all_w is not None and all_adv.numel() > 0:
             accum["advantage_mean"] = all_adv.mean().item()
             accum["advantage_std"] = all_adv.std().item() if all_adv.numel() > 1 else 0.0
             accum["advantage_histogram"] = all_adv.cpu().numpy()
@@ -1660,7 +1729,7 @@ class MolmoAct2Trainer(Trainer):
         return {
             key: value
             for key, value in training_infos.items()
-            if key in cls._AIM_METRIC_KEYS or key.startswith("optim/")
+            if key in cls._AIM_METRIC_KEYS or key.startswith(("optim/", "awr/"))
         }
 
     def log_metrics(
@@ -1692,6 +1761,11 @@ class MolmoAct2Trainer(Trainer):
             "advantage_std",
             "adv_weight_ess_frac",
             "adv_weight_kl",
+            "awr/kept_fraction",
+            "awr/clip_fraction",
+            "awr/top5_weight_share",
+            "awr/terminal_weight_share",
+            "awr/mistake_onset_weight_share",
             "depth_rgb_rms_ratio",
             "depth_pre_bound_token_rms",
             "depth_injected_token_rms",

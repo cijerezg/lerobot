@@ -316,7 +316,7 @@ class ProbablePolicy(ABC):
         """
 
     def value_gradient_magnitude(
-        self, obs: dict[str, Tensor], task_str: str,
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None,
     ) -> float:
         """L2 norm of ∂V/∂(vision_features) for sensitivity diagnostics.
 
@@ -327,6 +327,16 @@ class ProbablePolicy(ABC):
             f"{type(self).__name__} does not implement value_gradient_magnitude. "
             f"The critic probe will skip gradient-based plots for this policy."
         )
+
+    def critic_input_gradients(
+        self, obs: dict[str, Tensor], task_str: str, subtask: str | None = None, metadata: dict | None = None,
+    ) -> dict:
+        """Full input gradient norm and an exhaustive, disjoint group breakdown.
+
+        The adapter must describe its differentiation boundary explicitly.
+        A partial modality gradient must not be reported as the full gradient.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not expose a complete critic input gradient.")
 
     # ── Attention capture ────────────────────────────────────────────────────
 

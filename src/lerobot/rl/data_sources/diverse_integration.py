@@ -155,7 +155,7 @@ def build_diverse_buffer(
         task_indices=task_indices,
         subtask_indices=subtask_indices,
         render_automatic_quality=diverse_cfg.render_automatic_quality,
-        serve_critic=not cfg.skip_critic,
+        serve_critic=not cfg.skip_critic or bool(getattr(cfg.policy, "advantage_weighting", False)),
         reward_normalization_constant=float(cfg.policy.reward_normalization_constant),
         critic_mistake_penalty=float(getattr(cfg.policy, "critic_mistake_penalty", 0.0)),
     )

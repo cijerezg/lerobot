@@ -4,8 +4,8 @@ Generic critic probe — visualise the distributional critic's value estimates.
 
 Policy-agnostic: works with any policy whose ``ProbablePolicy`` adapter
 implements ``predict_value`` and ``predict_value_and_probs``. Adapters that
-also implement ``value_gradient_magnitude`` get the gradient-based plots and
-percentile-exemplar frames; otherwise those sections are skipped.
+implement ``critic_input_gradients`` also get a separate Critic Input Sensitivity
+probe, with complete input gradients and interactive frame inspection.
 
 Every critic forward carries the frame's own reviewed labels (quality / mistake /
 speed / precision / contact) and subtask, because the training critic reads the
@@ -18,12 +18,10 @@ Outputs (under ``probe_parameters.output_dir/critic/``):
   predicted_distributions.png   per-frame P(V) curves with E[V] overlay
   advantage_dist.png            advantage (TD-error) histogram with the percentile cuts,
                                 its CDF, the V(s) histogram, by-subtask spread
-  advantage_subtask_norm.png    A standardized within its subtask (z), by subtask, with
-                                n per subtask and which subtasks hit the std floor
-  advantage_subtask_stats.json  per subtask: n / mean / std over the probe frames and the
-                                shrunk center / floored scale used for z
-  advantage_weights.png         AWR weights over z (lerobot.rl.advantage): standardized
-                                advantage, weight histogram, beta sweep
+  advantage_subtask_norm.png    actor-standardized advantage (z), grouped by subtask
+  advantage_subtask_stats.json  observed statistics and the actor's actual centers/scales
+  advantage_weights.png         exact actor weights, including frozen training group
+                                normalizers in subtask mode; histogram and beta sweep
   advantage_weight_where.png    mean weight by seconds to the segment end, by mistake
                                 flag and by quality label
   advantage_percentiles.png     camera frames nearest the p5/p10/p50/p90/p95 advantage
@@ -33,8 +31,8 @@ Outputs (under ``probe_parameters.output_dir/critic/``):
   value_by_label.png            mean V - V* by quality label and by mistake flag
   value_outliers.png            camera frames of the 2 most pessimistic + 2 most
                                 optimistic frames (tagged P1/P2/O1/O2 on the scatter)
-  gradient_magnitudes.png       (if adapter supports it)
-  frame_p{XX}.png               (if adapter supports it) percentile exemplars
+  critic_fit_vs_count.png/json  true-text value/progress error versus training episodes
+  critic_shirt_family.png/json  colour comparisons at matched time/mistake status
   episode_traces/ep{NNNN}/critic_plot.png     V(s) along the episode with V* and segment ends
   episode_traces/ep{NNNN}/episode_video.mp4   cameras with the V(s) curve drawn on
                                 (probe_parameters.critic_trace_video)
@@ -60,7 +58,6 @@ warnings.filterwarnings(
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
 import numpy as np
 import seaborn as sns
 import torch
@@ -68,13 +65,23 @@ import torch
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
 from lerobot.probes.base import ProbablePolicy
+from lerobot.probes.critic_subtasks import (
+    diverse_fit_records, fit_report, load_text_counts, progress_error,
+    reference_returns, sample_text_groups, swap_plot,
+)
 from lerobot.probes.manifest import Metric, Panel, write_index
-from lerobot.rl.advantage import advantage_weights, subtask_normalize, subtask_stats, subtask_table
+from lerobot.probes.critic_sensitivity import run_critic_gradients  # compatibility for direct callers
+from lerobot.rl.advantage import advantage_weights, subtask_stats
+from lerobot.rl.awr import AWRCalibration, group_key, normalize_log_weights, td_advantage
+from lerobot.rl.awr_calibration import resolve_calibration_path
 from lerobot.probes.utils import (
     build_episode_index,
     canonical_camera_obs,
+    dataset_identity_columns,
     frame_metadata_lookup,
     get_frame_data,
+    get_subtask_idx,
+    get_subtask_str,
     load_probe_dataset,
     probe_frame_inputs,
     register_config_choices,
@@ -145,49 +152,6 @@ def _style(ax, title: str, xlabel: str, ylabel: str) -> None:
     sns.despine(ax=ax, offset=10, trim=True)
 
 
-def _render_percentile_frame(obs, ep_idx, fr_idx, subtask, mag, p, output_dir):
-    camera_keys = sorted(k for k in obs if "images" in k)
-    n_cameras = len(camera_keys)
-
-    fig = plt.figure(figsize=(12 + 3, 5))
-    gs = GridSpec(1, n_cameras + 1, figure=fig,
-                  width_ratios=[1] * n_cameras + [0.8])
-    for i, key in enumerate(camera_keys):
-        ax = fig.add_subplot(gs[0, i])
-        img = obs[key].squeeze(0).cpu()
-        if img.dim() == 3 and img.shape[0] in (1, 3):
-            img = img.permute(1, 2, 0)
-        img = img.float().numpy()
-        if img.max() <= 1.0:
-            img = (img * 255).clip(0, 255).astype(np.uint8)
-        ax.imshow(img)
-        ax.set_title(key.split(".")[-1], fontsize=12, fontweight="bold", pad=8)
-        ax.axis("off")
-
-    ax_info = fig.add_subplot(gs[0, n_cameras])
-    ax_info.axis("off")
-    ax_info.set_xlim(0, 1)
-    ax_info.set_ylim(0, 1)
-    wrapped = "\n  ".join(textwrap.wrap(subtask or "None", width=25))
-    info = (
-        f"Gradient percentile:\n  p{p}\n\n"
-        f"Magnitude:\n  {mag:.4f}\n\n"
-        f"Episode:\n  {ep_idx}\n\n"
-        f"Frame:\n  {fr_idx}\n\n"
-        f"Subtask:\n  {wrapped}"
-    )
-    ax_info.text(
-        0.1, 0.8, info, transform=ax_info.transAxes,
-        fontsize=13, va="top", ha="left", color="#333",
-        bbox=dict(facecolor="white", alpha=0.8, edgecolor="#ccc",
-                  boxstyle="round,pad=1"),
-    )
-    plt.tight_layout()
-    fig.savefig(os.path.join(output_dir, f"frame_p{p:02d}.png"),
-                dpi=200, bbox_inches="tight")
-    plt.close(fig)
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Probe sections
 # ──────────────────────────────────────────────────────────────────────────────
@@ -195,6 +159,7 @@ def _render_percentile_frame(obs, ep_idx, fr_idx, subtask, mag, p, output_dir):
 def run_episode_critic_traces(
     adapter: ProbablePolicy, val_dataset, val_ep_indices,
     cfg, output_dir: str,
+    *, unrelated_text: str | None = None, on_record=None, include_fit: bool = True,
 ):
     """For each selected episode: run the critic at a fixed stride, save the V(s)
     curve with the segment ends (subtask boundaries after the release fold, the
@@ -214,10 +179,11 @@ def run_episode_critic_traces(
         {output_dir}/ep{NNNN}/critic_plot.png
         {output_dir}/ep{NNNN}/episode_video.mp4
 
-    TODO(future): gradient-magnitude variant (``run_episode_gradient_traces`` in
-    the reference) — overlays L2 norm of dV/d(vision) onto the same video. Needs
-    ``adapter.value_gradient_magnitude`` and is currently pi05-only because
-    molmoact2 hasn't plumbed requires_grad through forward_critic yet.
+    With critic_subtask_swap, reuse each decoded observation for next/unrelated
+    text interventions. The returned true-text records also feed grouped gradients.
+    An optional observer can save sparse frame examples from the already decoded
+    observation. A fixed control can be shared across sources; include_fit=False
+    skips the separate fit/count pass when collecting text-swap traces only.
     """
     from lerobot.rl.utils import save_video_with_critic_overlay
     from PIL import Image as PILImage
@@ -241,6 +207,17 @@ def run_episode_critic_traces(
         float(getattr(cfg.policy, "value_support_min", -2.0)),
     )
     boundary_all = targets["episode_end"] if targets["terminals"] is None else (targets["terminals"] | targets["episode_end"])
+    v_min = float(getattr(cfg.policy, "value_support_min", -2.0))
+    returns = reference_returns(
+        boundary_all, targets["mistake_onset"], chunk_size, cfg.policy.discount,
+        cfg.policy.reward_normalization_constant, cfg.policy.critic_mistake_penalty,
+        v_min, cfg.policy.value_support_max,
+    ) if targets["mode"] == "subtask" else None
+    with_swaps = bool(getattr(p, "critic_subtask_swap", False))
+    if with_swaps and returns is None:
+        raise ValueError("critic_subtask_swap requires subtask reward mode and terminal annotations.")
+    counts = load_text_counts(getattr(p, "critic_text_counts_path", None)) if with_swaps else {}
+    records = []
     ep_to_indices = build_episode_index(val_dataset)
     if val_ep_indices is not None:
         ep_to_indices = {k: v for k, v in ep_to_indices.items() if k in val_ep_indices}
@@ -255,6 +232,24 @@ def run_episode_critic_traces(
         return None
 
     os.makedirs(output_dir, exist_ok=True)
+    stride = int(getattr(cfg.policy, "image_stride", 1))
+    step = subsample + (-subsample % stride)
+    unrelated = None
+    if with_swaps:
+        # Inspect label indices, not images; keep one fixed control for the pass.
+        val_texts = {
+            get_subtask_str(val_dataset, get_subtask_idx(val_dataset, g))
+            for ep in selected_eps for g in ep_to_indices[ep][::step]
+        }
+        candidates = [text for text, count in counts.items() if count > 0 and text not in val_texts]
+        if unrelated_text is not None:
+            if unrelated_text not in candidates:
+                raise ValueError("The fixed control must be a training text absent from selected true labels.")
+            unrelated = unrelated_text
+        else:
+            unrelated = min(candidates, key=lambda text: (-counts[text], text)) if candidates else None
+        if unrelated is None:
+            logging.warning("[CRITIC] no unrelated training text outside validation labels")
 
     for ep_idx in selected_eps:
         indices = ep_to_indices[ep_idx]
@@ -292,30 +287,71 @@ def run_episode_critic_traces(
                 image.save(os.path.join(ep_dir, f"step_{step_idx:06d}_{cam_name}.png"))
 
         # ── 2. Subsampled V(s) via adapter ───────────────────────────────────
-        # Must use probe_frame_inputs, not get_frame_data: the training critic
-        # reads the encoder token sequence, which carries the state/RGB/depth
-        # history windows (buffer.py puts them in batch_state, and
-        # history_dropout is 0.0, so it sees them on every sample). Feeding a
-        # history-free frame here is an out-of-distribution prompt. Depth is
-        # included for parity, so anchors must stay on the image_stride grid.
-        # The training critic reads the actor's prompt, metadata clause included
-        # (_critic_batches forwards the sampler's label columns), so every frame
-        # carries its own reviewed labels here.
-        critic_values: list[float] = []
-        stride = int(getattr(cfg.policy, "image_stride", 1))
-        step = subsample + (-subsample % stride)
+        # Use the shared input builder, including the frame's reviewed metadata
+        # and modality-presence columns, to match the training prompt. Each adapter
+        # determines which modalities its critic consumes. Anchors stay on the
+        # image-stride grid so any requested sidecars are addressable.
+        critic_values = []
+        episode_records = []
+        ends = [g for g in indices if boundary_all[g]]
         critic_indices = list(range(0, len(indices), step))
+        logging.info("[CRITIC] %s episode %s: %s trace points", getattr(val_dataset, "root", "dataset"), ep_idx, len(critic_indices))
         for ci in critic_indices:
             frame = probe_frame_inputs(
                 val_dataset, cfg, indices[ci], chunk_size, metadata=labels.get(indices[ci]),
             )
             obs, gt_subtask, task_str = frame["obs"], frame["subtask"], frame["task"]
             try:
-                v = adapter.predict_value(obs, task_str, gt_subtask, metadata=frame["metadata"])
+                v = float(adapter.predict_value(obs, task_str, gt_subtask, metadata=frame["metadata"]))
+                if not np.isfinite(v):
+                    raise ValueError("non-finite value")
             except Exception as exc:
                 logging.warning(f"[CRITIC] ep{ep_idx} step{ci}: V(s) failed: {exc}")
-                v = 0.0
+                v = None
             critic_values.append(v)
+            g = indices[ci]
+            segment = int(np.searchsorted(ends, g))
+            row = {
+                "domain": "rebot", "source": "rebot", "episode": int(ep_idx), "episode_idx": int(ep_idx),
+                "frame_idx": int(frame["frame_idx"]), "global_idx": int(g),
+                "seconds": (g - indices[0]) / float(fps), "task": task_str, "subtask": gt_subtask or "",
+                "metadata": frame["metadata"], "value": v,
+                "reference": float(returns[g]) if returns is not None else None,
+                "segment_end": int(ends[segment]), "seconds_to_end": float(targets["frames_to_end"][g]) / float(fps),
+                "progress_error": None, "swaps": {},
+            }
+            if with_swaps:
+                next_text = None
+                next_ref = None
+                if segment + 1 < len(ends):
+                    # A folded move/release segment has multiple labels. Choose
+                    # its FIRST frame's label, never infer a label from terminals.
+                    next_start = ends[segment] + 1
+                    next_text = get_subtask_str(val_dataset, get_subtask_idx(val_dataset, next_start))
+                    next_ref = float(_ideal_duration_value(
+                        ends[segment + 1] - g, chunk_size, cfg.policy.discount,
+                        cfg.policy.reward_normalization_constant, v_min,
+                    ))
+                for variant, text, ref in (("next", next_text, next_ref), ("unrelated", unrelated, None)):
+                    if not text or text == gt_subtask:
+                        row["swaps"][variant] = None
+                        continue
+                    swapped = None
+                    try:
+                        swapped = float(adapter.predict_value(obs, task_str, text, metadata=frame["metadata"]))
+                        if not np.isfinite(swapped):
+                            raise ValueError("non-finite value")
+                    except Exception as exc:
+                        swapped = None
+                        logging.warning("[CRITIC] ep%s frame%s %s swap failed: %s", ep_idx, ci, variant, exc)
+                    row["swaps"][variant] = {"text": text, "value": swapped, "reference": ref}
+            if on_record is not None:
+                on_record(row, obs)
+            episode_records.append(row)
+        if returns is not None:
+            for a, b in zip(episode_records, episode_records[1:]):
+                a["progress_error"] = progress_error(a, b, chunk_size, v_min)
+        records.extend(episode_records)
 
         # ── 3. Save critic JSON + plot ───────────────────────────────────────
         trace_seconds = [(indices[ci] - indices[0]) / float(fps) for ci in critic_indices]
@@ -331,6 +367,7 @@ def run_episode_critic_traces(
                     "ideal_values": trace_ideal if targets["mode"] == "subtask" else None,
                     "segment_end_seconds": boundary_seconds,
                     "stride_frames": step,
+                    "records": episode_records,
                 },
                 f,
             )
@@ -350,6 +387,11 @@ def run_episode_critic_traces(
             plt.savefig(os.path.join(ep_dir, "critic_plot.png"), dpi=150)
             plt.close()
 
+        if with_swaps and episode_records:
+            swap_plot(
+                episode_records, boundary_seconds, ep_idx,
+                os.path.join(ep_dir, "critic_subtask_swap.png"), v_min, counts.get(unrelated, 0),
+            )
         if not with_video:
             continue
 
@@ -357,7 +399,7 @@ def run_episode_critic_traces(
         try:
             # Critic point j sits at source frame j*step = video frame j*step/video_stride.
             save_video_with_critic_overlay(
-                ep_dir, critic_values,
+                ep_dir, [float("nan") if v is None else v for v in critic_values],
                 camera_names=video_logging_cameras,
                 fps=max(1.0, float(fps) / video_stride),
                 subtask_texts=subtask_texts,
@@ -368,7 +410,17 @@ def run_episode_critic_traces(
                 f"[CRITIC] ep{ep_idx}: overlay video failed: {exc}", exc_info=True,
             )
 
-    return {"episodes": selected_eps, "subsample": subsample}
+    summary = {}
+    if with_swaps and include_fit:
+        fit_records = list(records)
+        try:
+            fit_records.extend(diverse_fit_records(adapter, cfg))
+        except Exception as exc:
+            logging.warning("[CRITIC] diverse fit failed: %s", exc, exc_info=True)
+            summary["critic_diverse_status"] = f"failed: {exc}"
+        summary.update(fit_report(fit_records, counts, os.path.dirname(output_dir)))
+        summary["critic_diverse_points"] = sum(r["domain"] == "diverse" for r in fit_records)
+    return {"episodes": selected_eps, "subsample": subsample, "records": records, "summary": summary}
 
 
 def run_predicted_distributions(
@@ -499,13 +551,8 @@ def _advantage_plots(advantages, values, subtasks, cuts: dict[int, float], outpu
     logging.info(f"[CRITIC] saved {out}")
 
 
-def _subtask_norm_outputs(z, subtasks, pooled, per, table, prior: float, floor: float, output_dir) -> dict:
-    """advantage_subtask_norm.png (z by subtask) + advantage_subtask_stats.json; returns the summary numbers.
-
-    z = (A − μ̃_k) / s_k from lerobot.rl.advantage.subtask_table / subtask_normalize. The JSON
-    holds the pooled stats and, per subtask, the raw n / mean / std over the probe frames and
-    the center / scale actually used.
-    """
+def _subtask_norm_outputs(z, subtasks, pooled, per, table, prior: float, floor: float, output_dir, *, calibrated=False) -> dict:
+    """Plot the actor's standardization and save the centers/scales actually used."""
     order = _subtask_order(subtasks)
     floor_scale = floor * pooled["std_within"]
     floored = [g for g in order if table[g][1] <= floor_scale]
@@ -518,8 +565,9 @@ def _subtask_norm_outputs(z, subtasks, pooled, per, table, prior: float, floor: 
     sns.stripplot(x="z", y="subtask", data=data, order=label_order, ax=ax, color=".3", size=3, alpha=0.5, jitter=True)
     _separate_verbs(ax, order)
     ax.axvline(0.0, color="black", linestyle=":", linewidth=1)
-    _style(ax, "Advantage standardized within subtask",
-           f"z = (A − μ̃_k) / s_k    (variance prior {prior:g} frames, std floor {floor:g} σ_w)", "Subtask")
+    _style(ax, "Advantage on the actor's scale",
+           "z = (A − training subtask mean) / shared training scale" if calibrated
+           else "z = (A − pooled sample mean) / pooled sample std", "Subtask")
     ax.tick_params(axis="y", labelsize=8)
     plt.tight_layout(pad=2.0)
     out = os.path.join(output_dir, "advantage_subtask_norm.png")
@@ -527,8 +575,7 @@ def _subtask_norm_outputs(z, subtasks, pooled, per, table, prior: float, floor: 
     logging.info(f"[CRITIC] saved {out}")
 
     stats = {
-        "prior": prior,
-        "std_floor": floor,
+        "normalization": "frozen_training_subtask" if calibrated else "pooled_batch",
         "pooled": pooled,
         "subtasks": {
             g: {"n": per[g][0], "mean": per[g][1], "std": per[g][2] ** 0.5, "center": table[g][0], "scale": table[g][1]}
@@ -546,16 +593,18 @@ def _subtask_norm_outputs(z, subtasks, pooled, per, table, prior: float, floor: 
     }
 
 
-def _weight_plots(advantages, a_hat, weights, beta: float, clip: float, lam: float, batch_rows: int, seed: int, output_dir) -> dict:
-    """advantage_weights.png: Â and w histograms plus the beta sweep; returns the numbers behind them.
+def _weight_plots(advantages, a_hat, weights, beta: float, clip: float, lam: float, batch_rows: int, seed: int, output_dir, *, weight_fn=None) -> dict:
+    """Actor weights and temperature sweep using the same scoring function.
 
-    ``advantages`` is z, A standardized within its subtask (_subtask_norm_outputs). ESS/N and
-    KL(target ‖ BC) = mean(w log w) are the trainer's adv_weight_ess_frac / adv_weight_kl
-    over the pooled probe frames. The ``_batch`` numbers are medians over
-    200 resampled batches of ``batch_rows`` frames (the trainer's effective batch, the
-    set it actually standardizes over), so they are what one optimizer step sees.
+    Calibrated callers supply a weight function backed by frozen training samples;
+    every sweep temperature recomputes its training group normalizers. Batch
+    estimates resample effective batches and apply only the final normalization.
+    Without a callback this uses the legacy pooled raw-advantage formula.
     """
     a = torch.as_tensor(np.asarray(advantages), dtype=torch.float32)
+    calibrated = weight_fn is not None
+    if weight_fn is None:
+        weight_fn = lambda indices, temperature: advantage_weights(a[indices], temperature, clip, lam)
     w = np.asarray(weights, dtype=np.float64)
     ah = np.asarray(a_hat, dtype=np.float64)
     top = max(1, int(round(0.05 * w.size)))
@@ -573,7 +622,7 @@ def _weight_plots(advantages, a_hat, weights, beta: float, clip: float, lam: flo
     rng = np.random.default_rng(seed)
     ess_batch, max_batch = [], []
     for _ in range(200):
-        wb, _ = advantage_weights(a[rng.integers(0, a.numel(), size=batch_rows)], beta, clip, lam)
+        wb, _ = weight_fn(rng.integers(0, a.numel(), size=batch_rows), beta)
         wb = wb.numpy().astype(np.float64)
         ess_batch.append(_ess_frac(wb))
         max_batch.append(float(wb.max()))
@@ -582,18 +631,18 @@ def _weight_plots(advantages, a_hat, weights, beta: float, clip: float, lam: flo
 
     sweep_ess, sweep_top = [], []
     for b in _BETA_SWEEP:
-        wb, _ = advantage_weights(a, b, clip, lam)
+        wb, _ = weight_fn(np.arange(a.numel()), b)
         wb = wb.numpy().astype(np.float64)
         sweep_ess.append(_ess_frac(wb))
         sweep_top.append(float(np.sort(wb)[::-1][:top].sum() / wb.sum()))
 
     fig, axes = plt.subplots(1, 3, figsize=(24, 6))
     sns.histplot(ah, bins=50, ax=axes[0], color="seagreen", edgecolor="white")
-    _style(axes[0], "Standardized advantage", f"Â = clip((z − mean z) / std z, ±{clip:g}),  z = A within subtask", "Count")
-    sns.histplot(w, bins=np.logspace(np.log10(w.min()), np.log10(w.max()), 50), ax=axes[1], color="seagreen", edgecolor="white")
+    _style(axes[0], "Standardized advantage", f"clip(z, ±{clip:g}); frozen training scale" if calibrated else f"clip((A − mean A) / std A, ±{clip:g})", "Count")
+    sns.histplot(w, bins=np.logspace(np.log10(max(w.min(), 1e-12)), np.log10(max(w.max(), w.min() * 1.01, 1e-11)), 50), ax=axes[1], color="seagreen", edgecolor="white")
     axes[1].set_xscale("log")
     axes[1].axvline(1.0, color="black", linestyle=":", linewidth=1)
-    _style(axes[1], f"AWR weight (β = {beta:g}, λ = {lam:g})", "w = exp(Â / β) / mean w", "Count")
+    _style(axes[1], f"AWR weight (β = {beta:g}, λ = {lam:g})", "w = (exp(Â / β) / Z_subtask) / batch mean" if calibrated else "w = exp(Â / β) / mean w", "Count")
     axes[2].plot(_BETA_SWEEP, sweep_ess, marker="o", color="steelblue", label="ESS / N")
     axes[2].plot(_BETA_SWEEP, sweep_top, marker="s", color="crimson", label="weight share of the top 5 % frames")
     axes[2].axvline(beta, color="black", linestyle=":", linewidth=1, label=f"configured β = {beta:g}")
@@ -877,33 +926,6 @@ def _render_tagged_frames(dataset, cfg, chunk_size: int, tagged, meta: list[dict
     logging.info(f"[CRITIC] saved {out_path}")
 
 
-def _gradient_plots(grad_mags, subtasks, episodes, output_dir):
-    fig, axes = plt.subplots(1, 2, figsize=(20, 8))
-    order = _subtask_order(subtasks)
-    sns.boxplot(x="grad_mag", y="subtask", hue="subtask", legend=False,
-                data={"grad_mag": grad_mags, "subtask": subtasks}, order=order, hue_order=order,
-                ax=axes[0], palette="pastel", fliersize=0)
-    sns.stripplot(x="grad_mag", y="subtask",
-                  data={"grad_mag": grad_mags, "subtask": subtasks}, order=order,
-                  ax=axes[0], color=".3", size=4, alpha=0.5, jitter=True)
-    _separate_verbs(axes[0], order)
-    _style(axes[0], "Gradient Magnitude by Subtask", "Magnitude (L2 Norm)", "Subtask")
-    sns.scatterplot(x=range(len(grad_mags)), y=grad_mags, hue=episodes,
-                    palette="viridis", s=80, alpha=0.8,
-                    edgecolor="white", ax=axes[1])
-    _style(axes[1], "Gradient Magnitude per Frame (colored by Episode)",
-           "Sample Index", "Magnitude (L2 Norm)")
-    axes[1].legend(title="Episode Index", bbox_to_anchor=(1.05, 1),
-                   loc="upper left", frameon=True)
-    plt.tight_layout(pad=3.0)
-    out = os.path.join(output_dir, "gradient_magnitudes.png")
-    plt.savefig(out, dpi=200); plt.close()
-    logging.info(f"[CRITIC] saved {out}")
-
-
-_PERCENTILE_EXEMPLARS = (1, 10, 25, 50, 75, 90, 99)
-
-
 def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> dict:
     """Describe the critic's value, advantage and weight distributions to the viewer."""
     td = raw["td_errors"].float()
@@ -913,10 +935,6 @@ def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> di
         "td_error_abs_mean": float(td.abs().mean()),
         "td_error_std": float(td.std()),
     }
-    if "grad_mags" in raw:
-        grads = raw["grad_mags"].float()
-        summary["grad_mag_mean"] = float(grads.mean())
-        summary["grad_mag_max"] = float(grads.max())
     summary.update(extra or {})
 
     panels = [
@@ -935,13 +953,13 @@ def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> di
         Panel(
             "advantage_subtask_norm.png",
             "Advantage standardized within its subtask, by subtask",
-            how="$z = (A - \\tilde\\mu_k)/s_k$. The subtask mean is shrunk by empirical Bayes, $\\tilde\\mu_k = \\mu + n_k\\tau^2/(n_k\\tau^2 + \\sigma_w^2)\\,(\\mu_k - \\mu)$, with $\\sigma_w^2$ the pooled within-subtask variance and $\\tau^2$ the spread of the subtask means net of their sampling noise; the variance is shrunk toward $\\sigma_w^2$ by critic_adv_subtask_prior pseudo-frames, $\\tilde\\sigma_k^2 = (n_k\\sigma_k^2 + n_0\\sigma_w^2)/(n_k + n_0)$; and $s_k = \\max(\\tilde\\sigma_k, f\\sigma_w)$ with $f$ = critic_adv_std_floor. This removes the per-subtask critic bias visible in advantage_dist.png, so no subtask is up-weighted wholesale. Boxes should sit on zero; a narrow box marked floor is a subtask whose advantages barely vary, kept near weight 1. Numbers are in advantage_subtask_stats.json.",
+            how="The actor normalization shown by subtask. In calibrated mode, centers, shared scale and exponential group normalizers come from the frozen training calibration artifact. In legacy batch mode, a single pooled mean and scale are used. Validation samples never fit training calibration.",
             primary=True,
         ),
         Panel(
             "advantage_weights.png",
             "AWR weights over the subtask-standardized advantage: standardized advantage, weight histogram, beta sweep",
-            how="The trainer's formula (lerobot.rl.advantage) applied to $z$, the advantage standardized within its subtask (advantage_subtask_norm.png): $\\hat A = \\mathrm{clip}((z - \\bar z)/\\sigma_z, \\pm c)$, $w = e^{\\hat A/\\beta} / \\bar w$, then the $\\lambda$ BC mix, with the statistics pooled over every sampled frame. The actor trainer does not standardize within subtask yet. A weight histogram with a long right tail on the log axis means a few frames carry the update; the sweep shows how ESS and the top-5 % share move with $\\beta$ on these same advantages.",
+            how="The exact actor weighting function on these frames. Calibrated mode uses z=(A-mu_subtask)/shared_scale, then exp(clip(z)/beta)/Z_subtask, final batch mean-one normalization and the configured BC mixture. The beta sweep recomputes Z_subtask from the saved training advantages for each temperature. Legacy mode uses pooled raw-advantage standardization.",
             primary=True,
         ),
         Panel(
@@ -972,20 +990,17 @@ def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> di
             "Mean $V - V^*$ by quality label and by mistake flag",
             how="Duration is removed, so what is left is what the critic reads off the labels. A negative mistake gap and a rising trend over quality mean the critic agrees with the reviewers; flat bars mean it ignores the clause.",
         ),
-        Panel(
-            "gradient_magnitudes.png",
-            "$\\|\\partial V / \\partial \\text{vision}\\|$ across frames, by subtask and episode",
-            how="Which observations move the value estimate. Near-zero everywhere means the critic is reading the state vector and ignoring the cameras.",
-        ),
     ]
-    panels += [
-        Panel(
-            f"frame_p{percentile:02d}.png",
-            f"p{percentile} gradient-magnitude exemplar frame",
-            how="The scene at this percentile of value sensitivity. Compare the p01 and p99 frames: if they are indistinguishable, the gradient ranking is noise.",
-        )
-        for percentile in _PERCENTILE_EXEMPLARS
-    ]
+    panels.append(Panel(
+        "critic_fit_vs_count.png", "True-text value and progress error versus training exposure",
+        how="One dot per text and domain; size counts points (left) or valid pairs (right). G is the recorded return under the training reward, mistake penalties and support clipping. Progress compares one-chunk pairs with identical text and metadata, no terminal crossing and no double-floor saturation. Counts exclude held-out episodes and critic-skipped anchors. A low-count slope can reflect source or task difficulty; it does not by itself establish memorisation.",
+        primary=True,
+    ))
+    panels.append(Panel(
+        "critic_shirt_family.png", "Grasp-shirt family: colour comparisons at similar progress",
+        how="Exact prompts remain unchanged. Cells match time to completion and current mistake status; means weight validation episodes equally. The JSON's comparable colour scores use only cells with at least two usable points for every colour. Sparse cells and single-episode colours are exploratory; quality and scene can still differ.",
+        primary=True,
+    ))
     # Per-episode traces from run_episode_critic_traces; write_index drops the videos
     # when critic_trace_video is off.
     trace_dir = os.path.join(output_dir, "episode_traces")
@@ -1007,7 +1022,7 @@ def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> di
     return write_index(
         output_dir,
         sys.modules[__name__],
-        title="Critic Values",
+        title="Critic Values & Weights",
         group="Critic",
         claim="What values does the critic assign, and where do its advantage weights put the actor's gradient?",
         summary=summary,
@@ -1115,11 +1130,16 @@ def _write_manifest(output_dir: str, raw: dict, extra: dict | None = None) -> di
                 note="Negative when the critic values mistake windows below what duration alone predicts.",
             ),
             Metric("residual_quality_slope", "Slope of mean (V − V*) over quality 1..5", good="none", fmt=4, baseline=0.0),
-            Metric("grad_mag_mean", "Mean value-gradient magnitude", good="none", fmt=5),
+            Metric("critic_rare_value_error", "Rare texts (≤3 episodes): median value error", good="low", fmt=4, trend=True),
+            Metric("critic_common_value_error", "Common texts (≥10 episodes): median value error", good="low", fmt=4, trend=True),
+            Metric("critic_rare_progress_error", "Rare texts: median progress error", good="low", fmt=4, trend=True),
+            Metric("critic_common_progress_error", "Common texts: median progress error", good="low", fmt=4, trend=True),
+            Metric("critic_shirt_colour_bias_range", "Shirt colours: spread of matched value bias", good="none", fmt=4,
+                   note="Max minus min colour mean (V − G), on shared time/mistake cells. Episode-balanced; this is descriptive, not a causal colour effect."),
             Metric("n_frames", "Frames sampled", good="none", fmt=0),
         ],
         panels=panels,
-        see_also=["action_trace"],
+        see_also=["critic_sensitivity", "action_trace"],
     )
 
 
@@ -1127,26 +1147,24 @@ def run_critic_values_distribution(
     adapter: ProbablePolicy, val_dataset, val_ep_indices,
     cfg, output_dir: str,
 ):
-    """Advantage / AWR-weight distributions, percentile frames + (optional) gradient exemplars."""
+    """Value / AWR diagnostics, plus a separate input-sensitivity report sharing traces."""
     sns.set_theme(style="whitegrid", palette="muted")
     os.makedirs(output_dir, exist_ok=True)
 
     p = cfg.probe_parameters
     chunk_size = adapter.chunk_size
     n_adv = int(getattr(p, "critic_adv_frames", 1000))
-    n_grad = int(getattr(p, "critic_grad_frames", 200))
     seed = int(getattr(p, "random_seed", 42))
     discount = float(getattr(adapter.policy.config, "discount", 0.99))
     beta = float(getattr(cfg.policy, "advantage_beta", 1.0))
     clip = float(getattr(cfg.policy, "advantage_clip", 3.0))
     lam = float(getattr(cfg.policy, "advantage_lambda", 1.0))
     batch_rows = int(cfg.batch_size) * int(getattr(cfg.policy, "gradient_accumulation_steps", 1))
-    prior = float(getattr(p, "critic_adv_subtask_prior", 10.0))
-    floor = float(getattr(p, "critic_adv_std_floor", 0.25))
 
     # ── Part 0: per-episode V(s) traces + overlay video ──────────────────────
+    trace = None
     try:
-        run_episode_critic_traces(
+        trace = run_episode_critic_traces(
             adapter, val_dataset, val_ep_indices, cfg,
             output_dir=os.path.join(output_dir, "episode_traces"),
         )
@@ -1198,8 +1216,10 @@ def run_critic_values_distribution(
         v_curr = adapter.predict_value(obs, task_str, gt_subtask, metadata=fr_c["metadata"])
         v_next = adapter.predict_value(fr_n["obs"], task_str, gt_subtask, metadata=fr_c["metadata"])
         reward, done = _transition_target(targets, val_dataset, idx, chunk_size, penalty, norm, cfg)
-        target_v = float(np.clip(reward + discount * v_next * (1.0 - float(done)), v_min, v_max))
-        td = target_v - v_curr
+        td = td_advantage(
+            torch.tensor([v_curr]), torch.tensor([v_next]), torch.tensor([reward]),
+            torch.tensor([done]), discount, v_min, v_max,
+        ).item()
         td_errors.append(td)
         adv_subtasks.append(gt_subtask or "None")
         values.append(v_curr)
@@ -1228,17 +1248,43 @@ def run_critic_values_distribution(
     segment_ids = np.asarray(adv_indices, dtype=np.int64) + fte
     cuts, percentile_frames = _pick_percentile_frames(td_arr, segment_ids)
     _advantage_plots(td_errors, values, adv_subtasks, cuts, output_dir)
-    # Standardize within each subtask first, then the trainer's pooled formula over z.
+    # The probe uses the actor's exact weighting mode. Frozen normalization is
+    # loaded from training calibration, never estimated from validation frames.
     td_t = torch.tensor(td_errors, dtype=torch.float32)
     per_subtask = subtask_stats(td_t, adv_subtasks)
-    norm_table, pooled = subtask_table(per_subtask, prior, floor)
-    z_t = subtask_normalize(td_t, adv_subtasks, norm_table, pooled)
+    calibrated = getattr(cfg.policy, "advantage_normalization", "batch") == "subtask"
+    weight_fn = None
+    if calibrated:
+        calibration = AWRCalibration.load(resolve_calibration_path(cfg), beta, clip)
+        robot = dataset_identity_columns(val_dataset, cfg)["embodiment_index"]
+        keys = [group_key(robot, text if text != "None" else "") for text in adv_subtasks]
+        tables = {beta: calibration}
+        def weight_fn(indices, temperature):
+            if temperature not in tables:
+                tables[temperature] = calibration.with_beta(temperature)
+            selected_keys = [keys[int(index)] for index in indices]
+            log_q, z = tables[temperature].log_weights(td_t[indices], selected_keys)
+            return normalize_log_weights(log_q, lam), z.clamp(-clip, clip)
+        z_t = calibration.standardized(td_t, keys)
+        norm_table = {text: (calibration.centers[key], calibration.scale)
+                      for text, key in zip(adv_subtasks, keys, strict=True)}
+        pooled = {"n": calibration.n, "mean": float(td_t.mean()), "std_within": calibration.scale,
+                  "tau": float(torch.tensor(list(calibration.centers.values())).std(correction=0))}
+        w_t, a_hat_t = weight_fn(np.arange(len(keys)), beta)
+    else:
+        scale = float(td_t.std(correction=0).clamp_min(1e-6))
+        center = float(td_t.mean())
+        z_t = (td_t - center) / scale
+        norm_table = {text: (center, scale) for text in per_subtask}
+        pooled = {"n": td_t.numel(), "mean": center, "std_within": scale, "tau": 0.0}
+        w_t, a_hat_t = advantage_weights(td_t, beta, clip, lam)
     z_arr = z_t.numpy().astype(np.float64)
-    subtask_summary = _subtask_norm_outputs(z_arr, adv_subtasks, pooled, per_subtask, norm_table, prior, floor, output_dir)
-    w_t, a_hat_t = advantage_weights(z_t, beta, clip, lam)
+    subtask_summary = _subtask_norm_outputs(
+        z_arr, adv_subtasks, pooled, per_subtask, norm_table, 0, 0, output_dir, calibrated=calibrated,
+    )
     weights = w_t.numpy()
     a_hat = a_hat_t.numpy()
-    weight_summary = _weight_plots(z_arr, a_hat, weights, beta, clip, lam, batch_rows, seed, output_dir)
+    weight_summary = _weight_plots(td_arr, a_hat, weights, beta, clip, lam, batch_rows, seed, output_dir, weight_fn=weight_fn)
     weight_summary.update(subtask_summary)
     weight_summary.update(_weight_where_plots(weights, seconds, mistakes_arr, qualities_arr, output_dir))
 
@@ -1282,25 +1328,6 @@ def run_critic_values_distribution(
         os.path.join(output_dir, "advantage_percentiles.png"),
     )
 
-    # ── Part 2: gradient magnitudes (skip if adapter doesn't support it) ─────
-    try:
-        _probe_value_grad = adapter.value_gradient_magnitude  # type: ignore[attr-defined]
-    except AttributeError:
-        _probe_value_grad = None
-
-    # Touch-test that gradient mag works on this adapter before sampling many.
-    grad_supported = True
-    if _probe_value_grad is not None and adv_indices:
-        try:
-            test_obs, _, _, _, test_task, _, _ = get_frame_data(val_dataset, adv_indices[0], chunk_size)
-            adapter.value_gradient_magnitude(test_obs, test_task)
-        except NotImplementedError:
-            grad_supported = False
-            logging.info("[CRITIC] adapter does not support value_gradient_magnitude; skipping.")
-        except Exception as exc:
-            grad_supported = False
-            logging.warning(f"[CRITIC] gradient probe touch-test failed: {exc}", exc_info=True)
-
     raw: dict = {
         "td_errors": torch.tensor(td_errors),
         "advantages_subtask_norm": z_t,
@@ -1314,50 +1341,12 @@ def run_critic_values_distribution(
         "mistakes": torch.tensor(mistakes),
     }
 
-    if grad_supported and _probe_value_grad is not None:
-        logging.info(f"[CRITIC] sampling {n_grad} frames for gradients")
-        grad_indices = get_random_valid_samples(
-            val_dataset, n_grad, seed + 1,
-            val_ep_indices=val_ep_indices,
-            stride=int(getattr(cfg.policy, "image_stride", 1)),
-        )
-        grad_mags, episodes, subtasks, frames = [], [], [], []
-        frame_cache: dict[int, dict] = {}
-        for idx in grad_indices:
-            _fr = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=None)
-            obs, gt_subtask, task_str = _fr["obs"], _fr["subtask"], _fr["task"]
-            ep_idx, fr_idx = _fr["episode_idx"], _fr["frame_idx"]
-            frame_cache[idx] = {k: v.clone() for k, v in obs.items() if "image" in k}
-            try:
-                mag = adapter.value_gradient_magnitude(obs, task_str)
-            except Exception as exc:
-                logging.warning(f"[CRITIC] grad mag failed at idx={idx}: {exc}")
-                mag = 0.0
-            grad_mags.append(mag)
-            episodes.append(ep_idx); subtasks.append(gt_subtask or "None"); frames.append(fr_idx)
-
-        if grad_mags:
-            _gradient_plots(grad_mags, subtasks, episodes, output_dir)
-
-            # Percentile exemplar frames
-            percentiles = [1, 10, 25, 50, 75, 90, 99]
-            grad_arr = np.array(grad_mags)
-            for pct in percentiles:
-                val = float(np.percentile(grad_arr, pct))
-                closest = int(np.argmin(np.abs(grad_arr - val)))
-                ds_idx = grad_indices[closest]
-                if ds_idx in frame_cache:
-                    _render_percentile_frame(
-                        frame_cache[ds_idx], episodes[closest], frames[closest],
-                        subtasks[closest], float(grad_arr[closest]), pct, output_dir,
-                    )
-
-            raw.update({
-                "grad_mags": torch.tensor(grad_mags),
-                "grad_episodes": torch.tensor(episodes),
-                "grad_frames": torch.tensor(frames),
-                "grad_subtasks": subtasks,
-            })
+    if trace:
+        duration_summary.update(trace["summary"])
+        from lerobot.probes.critic_sensitivity import run as run_sensitivity
+        run_sensitivity(adapter, val_dataset, cfg,
+                        os.path.join(os.path.dirname(os.path.normpath(output_dir)), "critic_sensitivity"),
+                        val_ep_indices=val_ep_indices, records=trace["records"])
 
     _write_manifest(output_dir, raw, duration_summary)
     return raw
@@ -1396,10 +1385,20 @@ def probe_cli(cfg: ProbeCriticConfig):
     os.makedirs(output_dir, exist_ok=True)
     logging.info(f"Output dir: {output_dir}")
 
+    if cfg.val_dataset_path:
+        cfg.dataset.root = cfg.val_dataset_path
     dataset = load_probe_dataset(cfg)
 
     logging.info("Loading policy adapter …")
     adapter = ProbablePolicy.for_config(cfg, device, dataset=dataset)
+    if cfg.policy.type == "molmoact2_rl" and hasattr(adapter.policy, "critic"):
+        # This critic owns its encoder. Standalone value probes need only the
+        # actor backbone's stateless crop bookkeeping, not its weights on GPU.
+        adapter.policy.model.to("cpu")
+        if hasattr(adapter.policy, "critic_target"):
+            adapter.policy.critic_target.to("cpu")
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
     if not hasattr(adapter.policy, "critic"):
         raise ValueError(
             f"Policy of type {type(adapter.policy).__name__} has no .critic attribute. "

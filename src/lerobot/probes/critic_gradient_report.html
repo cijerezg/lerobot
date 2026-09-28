@@ -1,0 +1,106 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Critic image + state gradients — numerical report</title>
+<style>
+:root{font:15px/1.45 system-ui,sans-serif;color:#24354a;background:#f5f7fa}*{box-sizing:border-box}body{margin:0;padding:20px}main{max-width:1500px;margin:auto}h1{font-size:25px;margin:0 0 5px}h2{font-size:18px;margin:0 0 8px}p{margin:7px 0}a{color:#17629a}.muted{font-size:13px;color:#5e7087}.card{background:white;border:1px solid #dae2eb;border-radius:9px;padding:17px;margin:14px 0}.controls{display:flex;gap:20px;flex-wrap:wrap;align-items:center}label{display:flex;align-items:center;gap:8px}select{font:inherit;padding:6px;border:1px solid #aebdcc;border-radius:5px;background:white;color:inherit}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.grid .card{margin:0;min-width:0}.plot{width:100%;display:block}.hover{min-height:40px;font-size:12px;color:#5e7087}.legend{display:flex;gap:15px;flex-wrap:wrap;font-size:12px}.legend span:before{content:'';display:inline-block;width:20px;border-top:3px solid #0072b2;vertical-align:middle;margin-right:5px}.legend .balanced:before{border-color:#d55e00;border-top-style:dashed}.legend .band:before{border-top:10px solid #0072b233}details{margin-top:12px}summary{cursor:pointer;font-size:13px;font-weight:600}.scroll{overflow:auto;max-height:420px}table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;margin-top:9px}th,td{text-align:right;padding:6px 8px;border-bottom:1px solid #e3e9ef;white-space:nowrap}th{position:sticky;top:0;background:white}th:first-child,td:first-child{text-align:left}.matrix a{text-decoration:none;font-weight:600}.matrix small{display:block;color:#68798b;font-weight:400}.matrix tbody tr:hover{background:#f0f5f9}code{font-size:13px}.badge{background:#edf4fa;padding:3px 7px;border-radius:4px}.curve-point{cursor:pointer}.curve-point:hover{stroke:#172f49;stroke-width:2}@media(max-width:900px){.grid{grid-template-columns:1fr}body{padding:10px}}
+</style></head><body><main>
+<h1 id="report-title">Critic observation gradients — numerical report</h1><p id="coverage" class="muted"></p><p id="gradient-definition" class="muted"></p>
+<p><a href="gradient_explorer.html">Open frame explorer</a> · <a href="gradient_binned_summary.csv">Download all bins (CSV)</a> · <a href="gradient_binned_summary.json">Full numerical results (JSON)</a></p>
+<section class="card"><h2>Elapsed fraction and seconds remaining</h2>
+<p><code>elapsed fraction = (frame − segment start) / (segment end − segment start)</code><br><code>seconds remaining = (1 − elapsed fraction) × segment duration</code></p>
+<p>Within one segment these are equivalent timing coordinates. Across segments the scale changes: at 50%, a 4-second segment has 2 seconds left; a 40-second segment has 20 seconds left. Pooling segments can therefore give different curves and correlations.</p>
+<p class="muted">This is elapsed recorded time, not a physical completion estimate. Critic segments fold release into the preceding move, so “move” and “release” labels occupy different portions of the same timing interval. Filtering to an action can leave sparse late or early bins.</p>
+<p id="duration-note" class="muted"></p>
+</section>
+<section class="card"><div class="controls"><label>Action <select id="action"></select></label><label>Bins <select id="resolution"><option>10</option><option>20</option><option selected>40</option><option>80</option></select></label><label>Transitions <select id="regime"><option value="all">All</option><option value="interior">Within segment</option></select></label></div>
+<p class="muted">All six curves update together. No smoothing. Progress uses fixed-width bins; other quantities use shared pooled quantile edges, with tied edges merged. Sparse bins stay visible and empty bins break the line. Hover for counts and click a curve point or table link to inspect its frames.</p>
+<div class="legend"><span>Frame median</span><span class="band">Frame 25th–75th percentiles</span><span class="balanced">Median of within-bin episode medians</span></div>
+<p class="muted">The band shows spread, not a confidence interval. The dashed curve gives each contributing episode equal weight within a bin. Correlations are frame-weighted Spearman associations and do not depend on the bin resolution.</p>
+</section>
+<div class="grid" id="curves"></div>
+<section class="card"><h2>All actions: rank associations</h2><p class="muted">Each cell shows correlation, paired frame count, and episode count for that quantity. Click a cell to select the action and inspect its curve. Small action groups remain visible; no significance claim is attached.</p><div class="scroll"><table class="matrix" id="matrix"></table></div></section>
+</main><script type="application/json" id="report-data">__REPORT_DATA__</script><script>
+'use strict';
+const report=JSON.parse(document.getElementById('report-data').textContent),$=id=>document.getElementById(id);
+if(report.comparison_url){const p=document.createElement('p'),a=document.createElement('a');a.href=report.comparison_url;a.textContent='Compare with the previous critic: matched frames, progress curves and depth checks';p.append(a);$('coverage').after(p);}
+const axisNames={segment_progress:'Elapsed segment fraction',seconds_to_end:'Seconds to segment end',value:'Critic value V',delta_value:'Signed ΔV',advantage:'Signed raw advantage',abs_advantage:'|Raw advantage|'};
+const axes=Object.keys(axisNames),actions=[...new Set(report.reports.map(r=>r.action))];
+const fmt=v=>v==null?'—':v===0?'0':Math.abs(v)<.001?v.toExponential(2):Number(v).toPrecision(4);
+for(const action of actions){const o=document.createElement('option');o.value=action;o.textContent=action==='all'?'All actions':action;$('action').append(o);}
+const lookup=new Map(report.reports.map(r=>[[r.action,r.transition,r.axis,r.requested_bins].join('|'),r]));
+const get=(action,axis)=>lookup.get([action,$('regime').value,axis,Number($('resolution').value)].join('|'));
+const ns='http://www.w3.org/2000/svg';
+function svg(parent,tag,attrs,text){const n=document.createElementNS(ns,tag);for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);if(text!=null)n.textContent=text;parent.append(n);return n;}
+function el(tag,text,parent){const n=document.createElement(tag);if(text!=null)n.textContent=text;if(parent)parent.append(n);return n;}
+function inspectURL(axis,bin){const q=new URLSearchParams({view:'curves',component:report.gradient_scope||'images_state',axis,phase:$('action').value==='all'?'':$('action').value,transition:$('regime').value,bins:$('resolution').value,lo:bin.lo,hi:bin.hi,inclusive:String(bin.upper_inclusive)});return `gradient_explorer.html?${q}`;}
+function binText(b){return `[${fmt(b.lo)}, ${fmt(b.hi)}${b.upper_inclusive?']':')'}`;}
+function draw(card,axis,r){
+ const chart=card.querySelector('svg'),hover=card.querySelector('.hover'),body=card.querySelector('tbody');chart.replaceChildren();body.replaceChildren();
+ card.querySelector('.stats').textContent=`${r.n_frames.toLocaleString()} frames · ${r.n_episodes} episodes · Spearman ρ = ${fmt(r.spearman)} · ${r.bins.length} bins`;
+ const present=r.bins.filter(b=>b.n_frames);
+ if(!present.length){hover.textContent='No matching measurements.';return;}
+ const W=680,H=325,L=62,R=18,T=17,B=272;
+ let x0=r.edges[0],x1=r.edges.at(-1);if(x0===x1){x0-=.5;x1+=.5;}
+ const positive=present.flatMap(b=>[b.q25,b.q75,b.episode_median,b.median]).filter(v=>v>0);
+ const floor=positive.length?Math.min(...positive)*.5:1e-8;
+ const log=v=>Math.log10(Math.max(floor,v));
+ let y0=Math.min(...present.flatMap(b=>[log(b.q25),log(b.episode_median)])),y1=Math.max(...present.flatMap(b=>[log(b.q75),log(b.episode_median)]));
+ const pad=Math.max(.05,(y1-y0)*.08);y0-=pad;y1+=pad;
+ const x=v=>L+(v-x0)/(x1-x0)*(W-L-R),y=v=>B-(log(v)-y0)/(y1-y0)*(B-T);
+ for(let k=0;k<=4;k++){
+  const xv=x0+(x1-x0)*k/4,yv=10**(y0+(y1-y0)*k/4);
+  svg(chart,'line',{x1:L,x2:W-R,y1:y(yv),y2:y(yv),stroke:'#e5ebf0'});
+  svg(chart,'text',{x:L-7,y:y(yv)+4,'text-anchor':'end','font-size':11,fill:'#596d85'},fmt(yv));
+  svg(chart,'text',{x:x(xv),y:B+19,'text-anchor':'middle','font-size':11,fill:'#596d85'},fmt(xv));
+ }
+ svg(chart,'text',{x:(L+W-R)/2,y:H-10,'text-anchor':'middle','font-size':12,fill:'#425973'},axisNames[axis]);
+ svg(chart,'text',{transform:`translate(14 ${(T+B)/2}) rotate(-90)`,'text-anchor':'middle','font-size':12,fill:'#425973'},'Gradient norm (log)');
+ if(x0<0&&x1>0)svg(chart,'line',{x1:x(0),x2:x(0),y1:T,y2:B,stroke:'#aebdca','stroke-dasharray':'3 4'});
+ const runs=[];let run=[];
+ for(const b of r.bins){if(b.n_frames)run.push(b);else if(run.length){runs.push(run);run=[];}}if(run.length)runs.push(run);
+ for(const group of runs){
+  svg(chart,'polygon',{points:[...group.map(b=>`${x(b.x_median)},${y(b.q25)}`),...group.slice().reverse().map(b=>`${x(b.x_median)},${y(b.q75)}`)].join(' '),fill:'#0072b2',opacity:.12,'pointer-events':'none'});
+  for(const [stat,colour,dash]of [['median','#0072b2',''],['episode_median','#d55e00','5 4']])svg(chart,'polyline',{points:group.map(b=>`${x(b.x_median)},${y(b[stat])}`).join(' '),fill:'none',stroke:colour,'stroke-width':1.8,'stroke-dasharray':dash,'pointer-events':'none'});
+ }
+ for(const [i,b]of r.bins.entries()){
+  const tr=el('tr',null,body);el('td',binText(b),tr);
+  for(const value of [b.n_frames,b.n_episodes,fmt(b.median),fmt(b.q25),fmt(b.q75),fmt(b.mean),fmt(b.episode_median)])el('td',value,tr);
+  const td=el('td',null,tr);
+  if(!b.n_frames){el('span','—',td);continue;}
+  const href=inspectURL(axis,b),link=el('a','Frames ↗',td);link.href=href;link.target='_blank';link.rel='noopener';
+  const a=svg(chart,'a',{href,target:'_blank',rel:'noopener'});
+  const dot=svg(a,'circle',{cx:x(b.x_median),cy:y(b.median),r:4,fill:'#0072b2',class:'curve-point','data-bin':i});
+  const text=`${binText(b)}: median ${fmt(b.median)} · IQR ${fmt(b.q25)}–${fmt(b.q75)} · episode median ${fmt(b.episode_median)} · ${b.n_frames} frames / ${b.n_episodes} episodes`;
+  dot.addEventListener('mouseenter',()=>hover.textContent=text);svg(dot,'title',{},text);
+ }
+ hover.textContent='Hover a point for its exact values and sample counts; click to inspect frames.';
+}
+for(const axis of axes){
+ const card=el('section',null,$('curves'));card.className='card';card.id=`curve-${axis}`;
+ el('h2',axisNames[axis],card);const stats=el('p',null,card);stats.className='stats muted';
+ svg(card,'svg',{viewBox:'0 0 680 325',class:'plot',role:'img','aria-label':`Binned gradient against ${axisNames[axis]}`});
+ el('div',null,card).className='hover';
+ const details=el('details',null,card);el('summary','Inspect bin values',details);const scroll=el('div',null,details);scroll.className='scroll';
+ const table=el('table',null,scroll),head=el('tr',null,el('thead',null,table));
+ for(const name of ['X bin','Frames','Episodes','Median','25th %','75th %','Mean','Episode median','Inspect'])el('th',name,head);
+ el('tbody',null,table);
+}
+function update(){
+ const action=$('action').value;
+ for(const axis of axes)draw($(`curve-${axis}`),axis,get(action,axis));
+ const duration=report.durations[action];
+ $('duration-note').textContent=duration?`Selected action occurs in ${duration.n_segments} distinct sampled critic segments. Their durations: 10th percentile ${fmt(duration.p10)} s · median ${fmt(duration.median)} s · 90th percentile ${fmt(duration.p90)} s. Each segment is counted once.`:'';
+ const table=$('matrix');table.replaceChildren();const head=el('tr',null,el('thead',null,table));
+ for(const title of ['Action',...axes.map(a=>axisNames[a])])el('th',title,head);
+ const body=el('tbody',null,table);
+ for(const action of actions){const tr=el('tr',null,body);el('td',action,tr);
+  for(const axis of axes){const r=get(action,axis),td=el('td',null,tr),a=el('a',fmt(r.spearman),td);a.href=`#curve-${axis}`;
+   el('small',`${r.n_frames} frames / ${r.n_episodes} ep`,td);
+   a.addEventListener('click',()=>{$('action').value=action;update();});
+  }
+ }
+}
+for(const id of ['action','resolution','regime'])$(id).addEventListener('change',update);
+$('report-title').textContent=`Critic ${report.gradient_label} gradients — numerical report`;
+$('gradient-definition').textContent=report.definition;
+$('coverage').textContent=`Checkpoint ${report.checkpoint} · ${report.frames.toLocaleString()} frames · ${report.episodes} episodes · ${report.gradient_label} gradient norms · ${report.depth_frames??0} frames with real depth. Saved measurements only.`;
+update();
+</script></body></html>

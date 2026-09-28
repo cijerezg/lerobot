@@ -496,8 +496,13 @@ class ProbeConfig:
 
     # Critic values distribution
     critic_adv_frames: int = 1000  # frames sampled for V(s) / TD-error distribution
-    critic_grad_frames: int = 200  # frames sampled for ||dV/dvision|| (forward+backward)
-    # A is standardized within its subtask before the AWR weights (lerobot.rl.advantage.subtask_table).
+    critic_grad_frames: int = 200  # full encoded-input gradients in critic_sensitivity; 0 disables
+    critic_grad_frames_per_subtask: int = 32  # exact-text groups; separate gradient per frame
+    critic_subtask_swap: bool = False  # next + unrelated text, fit/progress versus training count
+    critic_text_counts_path: str | None = None  # migration/critic_text_counts.py output
+    critic_diverse_frames: int = 96  # fixed holdout anchors for true-text fit; 0 disables
+    # Legacy probe-only fields retained for old configs. Actor/probe AWR now follows
+    # policy.advantage_normalization and its frozen training calibration artifact.
     critic_adv_subtask_prior: float = 10.0  # pseudo-frames shrinking each subtask's variance toward the pooled within-subtask one; 0 = raw
     critic_adv_std_floor: float = 0.25  # subtask std floor as a fraction of the pooled within-subtask std
     critic_trace_stride_frames: int = 30  # frames between V(s) evaluations in the per-episode traces
