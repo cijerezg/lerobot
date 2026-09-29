@@ -289,3 +289,123 @@ def test_probe_resampling_and_beta_sweep_use_frozen_training_calibration(tmp_pat
     assert len(tables) > 1
     assert all(table.centers == train.centers and table.scale == train.scale for table in tables.values())
     assert (tmp_path / "advantage_weights.png").is_file()
+
+
+def test_coverage_samples_preserve_mixture_scale_and_survive_beta_reload(tmp_path):
+    original = AWRCalibration.fit([-1., 1.], ["common"] * 2, .5, 3.)
+    filled = original.with_coverage({"rare": [-100., 100.]})
+    assert filled.scale == original.scale == 1.
+    assert filled.centers["common"] == original.centers["common"]
+    assert filled.log_normalizers["common"] == original.log_normalizers["common"]
+    assert filled.n == 4 and filled.mixture_n == 2
+    path = tmp_path / "calibration.json"
+    filled.save(path)
+    loaded = AWRCalibration.load(path, beta=1.)
+    assert loaded.scale == 1. and loaded.coverage_samples == {"rare": [-100., 100.]}
+    assert loaded.log_normalizers == filled.with_beta(1.).log_normalizers
+    with pytest.raises(ValueError, match="absent from the mixture"):
+        original.with_coverage({"common": [3.]})
+    # The already-computed schema-1 artifacts remain readable.
+    original.save(path)
+    old = json.loads(path.read_text())
+    old["schema"] = 1
+    old.pop("coverage_groups")
+    old.pop("mixture_n")
+    path.write_text(json.dumps(old))
+    assert AWRCalibration.load(path).samples == original.samples
+
+
+def test_incomplete_calibration_recovers_only_missing_groups_and_resumes_each_batch(tmp_path, monkeypatch):
+    from lerobot.rl import awr_calibration as module
+    monkeypatch.setattr(module, "calibration_provenance", lambda cfg: {"critic": "fixed"})
+    common, rare = group_key(4, "common"), group_key(0, "rare")
+    original = AWRCalibration.fit([-1., 1.], [common] * 2, .5, 3., {"critic": "fixed"})
+    path = tmp_path / "awr_calibration.json"
+    original.save(path)
+    policy = NS(critic=nn.Linear(1, 1).requires_grad_(False))
+    p = NS(advantage_beta=.5, advantage_clip=3., advantage_lambda=1., advantage_calibration_path=None,
+           advantage_calibration_batches=2048, reward_normalization_constant=12., pretrained_path=None)
+    cfg = NS(policy=p, skip_critic=True, output_dir=str(tmp_path), batch_size=3, seed=42)
+    trainer = NS(_advantages=lambda policy, raw, *args: (raw["reward"], torch.ones(len(raw["reward"]), dtype=torch.bool)),
+                 _advantage_groups=lambda raw, *args: [rare] * len(raw["reward"]))
+    requests_seen = []
+
+    def sampler(requests, seed):
+        requests_seen.append(list(requests))
+        for start in range(0, len(requests), cfg.batch_size):
+            if len(requests_seen) == 1 and start == 3:
+                raise RuntimeError("interrupted recovery")
+            n = min(cfg.batch_size, len(requests) - start)
+            yield {"reward": torch.arange(n).float(), "done": torch.zeros(n), "action": torch.zeros(n, 1, 1),
+                   "truncated": torch.zeros(n), "state": {}, "next_state": {}, "complementary_info": {}}
+
+    with pytest.raises(RuntimeError, match="interrupted recovery"):
+        prepare_calibration(trainer, policy, iter(()), None, cfg, TrainingRuntime(), {common, rare}, coverage_sampler=sampler)
+    partial = AWRCalibration.load(path)
+    assert partial.mixture_samples == original.samples
+    assert len(partial.coverage_samples[rare]) == 3
+    recovered = prepare_calibration(trainer, policy, iter(()), None, cfg, TrainingRuntime(), {common, rare}, coverage_sampler=sampler)
+    assert requests_seen == [[rare] * 8, [rare] * 5]
+    assert recovered.mixture_samples == original.samples
+    assert len(recovered.coverage_samples[rare]) == 8
+    assert recovered.scale == original.scale
+    coverage = json.loads(path.with_name("awr_calibration_coverage.json").read_text())
+    assert coverage["missing_groups"] == [] and coverage["coverage_samples"] == 8
+    prepare_calibration(trainer, policy, iter(()), None, cfg, TrainingRuntime(), {common, rare}, coverage_sampler=sampler)
+    assert len(requests_seen) == 2  # A complete artifact performs no new critic evaluations.
+
+
+def test_conditional_coverage_keeps_source_episode_anchor_probabilities():
+    import numpy as np
+    from lerobot.rl.awr_coverage import TrainingCoverageSampler
+    from lerobot.rl.data_sources.diverse_mixture import MixtureGroup
+    key = group_key(0, "rare")
+    diverse = NS(size=4, _identity=[NS(embodiment_index=0, subtask_index=0)] * 4,
+                 _critic=NS(skip=[True, False, False, False]), collate=lambda rows: rows,
+                 _sampler=NS(groups=["a", "b"], probabilities=[.75, .25],
+                             episode_rows={"a": [np.array([0, 1]), np.array([2])], "b": [np.array([3])]}))
+    sampler = TrainingCoverageSampler([MixtureGroup("diverse", [diverse])],
+                                      NS(subtask_vocabulary=lambda _: ["rare"]), None,
+                                      NS(batch_size=32, policy=NS(n_action_steps=30)))
+    entries = sampler._candidates({key})[key]
+    assert [row for _, row, _ in entries] == [1, 2, 3]
+    assert [mass for _, _, mass in entries] == pytest.approx([.1875, .375, .25])
+    with pytest.raises(ValueError, match="No eligible training rows"):
+        sampler._candidates({group_key(0, "unreachable")})
+
+
+def test_explicit_replay_starts_use_normal_chunks_and_reject_invalid_boundaries():
+    from lerobot.rl.buffer import ReplayBuffer
+    buffer = ReplayBuffer(capacity=10, device="cpu", state_keys=["observation.state"],
+                          optimize_memory=True, use_drq=False)
+    for index in range(10):
+        buffer.add({"observation.state": torch.tensor([[float(index)]])}, torch.tensor([[float(index)]]),
+                   1., next_state=None, done=index in (4, 9), truncated=False)
+    batch = buffer.sample(2, action_chunk_size=3, indices=[0, 2])
+    assert batch["action"].reshape(2, 3).tolist() == [[0., 1., 2.], [2., 3., 4.]]
+    assert batch["next_state"]["observation.state"].reshape(-1).tolist() == [3., 5.]
+    with pytest.raises(ValueError, match="physical episode boundary"):
+        buffer.sample(1, action_chunk_size=3, indices=[3])
+    with pytest.raises(ValueError, match="in range"):
+        buffer.sample(1, action_chunk_size=3, indices=[-1])
+    buffer.image_stride = 2
+    with pytest.raises(ValueError, match="stride aligned"):
+        buffer.sample(1, action_chunk_size=2, indices=[1])
+
+
+def test_conditional_rebot_coverage_preserves_source_mass_when_rows_are_skipped():
+    from lerobot.rl.awr_coverage import TrainingCoverageSampler
+    from lerobot.rl.data_sources.diverse_mixture import MixtureGroup
+    def buffer(skips):
+        n = len(skips)
+        return NS(size=n, capacity=n, optimize_memory=True, storage_device="cpu", image_stride=1,
+                  actions=torch.zeros(n, 1), dones=torch.zeros(n, dtype=torch.bool),
+                  complementary_info={"subtask_index": torch.zeros(n, dtype=torch.long),
+                                      "embodiment_index": torch.zeros(n, dtype=torch.long),
+                                      "critic_skip": torch.tensor(skips)})
+    first, second = buffer([True, True, True, False]), buffer([False])
+    sampler = TrainingCoverageSampler([MixtureGroup("rebot", [first, second])],
+                                      NS(subtask_vocabulary=lambda _: ["rare"]), None,
+                                      NS(batch_size=4, policy=NS(n_action_steps=1)))
+    entries = sampler._candidates({group_key(0, "rare")})[group_key(0, "rare")]
+    assert [(row, mass) for _, row, mass in entries] == [(3, .125), (0, .5)]

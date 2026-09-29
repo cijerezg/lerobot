@@ -655,9 +655,9 @@ class MolmoAct2Trainer(Trainer):
         # the same camera / depth presence flags. V(s) is then measured on the input the
         # actor is conditioned on, and the critic probe can hold V against the labels.
         # The subtask clause renders per row (an unlabelled row simply has none). s'
-        # reuses s's columns: the sampler carries no next-state labels, and a segment
-        # boundary inside the chunk makes the step terminal, so V(s') never bootstraps
-        # across a label change. Episode reward mode keeps the subtask clause out.
+        # reuses s's columns even when AWR bootstraps across a subtask boundary.
+        # Only the observations/depth advance; task, subtask and metadata stay fixed.
+        # Episode reward mode keeps the subtask clause out.
         tasks = self._resolve_batch_tasks(raw, cfg.policy.task, rewards.shape[0])
         critic_input: dict[str, Any] = {"task": tasks}
         from lerobot.types import TransitionKey

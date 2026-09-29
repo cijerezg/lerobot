@@ -258,8 +258,9 @@ def _factor_keys(obs: dict, cube: Cube) -> tuple[dict[str, list[str]], list[str]
         name = str(key)
         # MEM history rides with the stream it remembers: the image switch moves the
         # cameras' past with their present, the state switch the past states with the
-        # current one, and depth history stays the anchor's like the depth frame.
-        stream = name.removeprefix("history.")
+        # current one, and depth history stays the anchor's like the depth frame. A
+        # camera's present flag rides with its image.
+        stream = name.removeprefix("history.").removeprefix("probe_complementary.camera_is_present.")
         if stream == OBS_STATE:
             groups["state"].append(key)
         elif stream.startswith("observation.images."):

@@ -5,11 +5,14 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import math
+from collections import defaultdict
 from pathlib import Path
 
 import torch
 
 from lerobot.rl.awr import AWRCalibration, group_key, normalize_log_weights, weight_telemetry
+from lerobot.rl.awr_coverage import COVERAGE_SAMPLES_PER_GROUP, rebot_group_rows
 from lerobot.utils.transition import move_transition_to_device
 
 
@@ -37,6 +40,10 @@ def calibration_provenance(cfg):
         "policy": {key: plain(getattr(p, key, None)) for key in policy_fields},
         "dataset": plain(cfg.dataset), "diverse": plain(getattr(cfg, "diverse", None)),
     }
+    # Keep old artifacts compatible with the old rule, but never reuse their
+    # scalar advantages when subtask boundaries now bootstrap.
+    if getattr(p, "advantage_bootstrap_subtasks", False):
+        result["policy"]["advantage_bootstrap_subtasks"] = True
     return json.loads(json.dumps(result, default=str))
 
 
@@ -61,23 +68,7 @@ def expected_training_groups(buffers, diverse_buffer, trainer, preprocessor, cfg
     names = trainer.subtask_vocabulary(preprocessor)
     groups = set()
     for buffer in buffers:
-        comp = buffer.complementary_info
-        high = max(0, buffer.size - 1) if buffer.optimize_memory and buffer.size < buffer.capacity else buffer.size
-        indices = torch.arange(0, high, buffer.image_stride, device=buffer.storage_device)
-        if buffer.actions.ndim == 2 and cfg.policy.n_action_steps > 1:
-            valid = torch.ones_like(indices, dtype=torch.bool)
-            for offset in range(cfg.policy.n_action_steps - 1):
-                valid &= ~buffer.dones[(indices + offset) % buffer.capacity].bool()
-            indices = indices[valid]
-        embodiment = comp.get("embodiment_index")
-        subtask = comp.get("subtask_index")
-        embodiment = torch.full_like(indices, -1) if embodiment is None else embodiment[indices].reshape(-1).long()
-        subtask = torch.full_like(indices, -1) if subtask is None else subtask[indices].reshape(-1).long()
-        pairs = torch.stack((embodiment, subtask), dim=1).unique(dim=0).cpu().tolist()
-        for robot, label in pairs:
-            if label >= len(names):
-                raise ValueError(f"Unknown subtask index {label} in AWR training buffer.")
-            groups.add(group_key(robot, names[label] if label >= 0 else ""))
+        groups.update(rebot_group_rows(buffer, names, cfg.policy.n_action_steps))
     if diverse_buffer is not None:
         for identity, skip in zip(diverse_buffer._identity, diverse_buffer._critic.skip, strict=True):
             if not skip:
@@ -86,7 +77,7 @@ def expected_training_groups(buffers, diverse_buffer, trainer, preprocessor, cfg
     return groups
 
 
-def prepare_calibration(trainer, policy, iterator, preprocessor, cfg, runtime, expected_groups):
+def prepare_calibration(trainer, policy, iterator, preprocessor, cfg, runtime, expected_groups, *, coverage_sampler=None):
     """Fit once on training draws, or load exactly matching frozen statistics."""
     p = cfg.policy
     if not cfg.skip_critic or not hasattr(policy, "critic") or any(x.requires_grad for x in policy.critic.parameters()):
@@ -96,11 +87,8 @@ def prepare_calibration(trainer, policy, iterator, preprocessor, cfg, runtime, e
     calibration = None
     if path.is_file():
         calibration = AWRCalibration.load(path, p.advantage_beta, p.advantage_clip, provenance)
-        if not p.advantage_calibration_path and expected_groups - calibration.centers.keys():
-            logging.info("[AWR] Existing calibration is incomplete; rebuilding with %d batches", p.advantage_calibration_batches)
-            calibration = None
-        else:
-            logging.info("[AWR] Loaded frozen calibration from %s", path)
+        logging.info("[AWR] Loaded saved calibration from %s (%d mixture samples, %d coverage samples)",
+                     path, calibration.mixture_n, calibration.n - calibration.mixture_n)
     if calibration is None:
         if p.advantage_calibration_path:
             raise FileNotFoundError(f"Requested AWR calibration does not exist: {path}")
@@ -142,9 +130,59 @@ def prepare_calibration(trainer, policy, iterator, preprocessor, cfg, runtime, e
         runtime.wait_for_everyone()
 
     missing = expected_groups - calibration.centers.keys()
+    incomplete = missing | {key for key, values in calibration.coverage_samples.items()
+                            if key in expected_groups and len(values) < COVERAGE_SAMPLES_PER_GROUP}
+    if incomplete and coverage_sampler is not None:
+        # A pinned/checkpoint calibration is an input artifact: repairs belong to
+        # this run, so another run's copy is never rewritten.
+        output_path = Path(cfg.output_dir) / "awr_calibration.json"
+        if path.resolve() != output_path.resolve():
+            path = output_path
+        requests = [key for key in sorted(incomplete)
+                    for _ in range(COVERAGE_SAMPLES_PER_GROUP - len(calibration.coverage_samples.get(key, [])))]
+        logging.info("[AWR] Completing %d rare groups with %d conditional training draws; retaining all %d mixture samples",
+                     len(incomplete), len(requests), calibration.mixture_n)
+        local_requests = requests[runtime.process_index::runtime.num_processes]
+        seed = int(getattr(cfg, "seed", 0) or 0) + runtime.process_index + calibration.n
+        batches = iter(coverage_sampler(local_requests, seed))
+        rounds = math.ceil(len(requests) / (cfg.batch_size * runtime.num_processes))
+        for index in range(rounds):
+            additions = defaultdict(list)
+            raw = next(batches, None)
+            if raw is not None:
+                raw = move_transition_to_device(raw, runtime.device)
+                values, kept = trainer._advantages(policy, raw, preprocessor, cfg)
+                keys = trainer._advantage_groups(raw, preprocessor)
+                if not bool(kept.all()) or not torch.isfinite(values).all():
+                    raise ValueError("AWR coverage draws must all have valid finite critic advantages.")
+                for key, value in zip(keys, values.detach().cpu().tolist(), strict=True):
+                    if key not in incomplete:
+                        raise ValueError(f"Unexpected group in targeted AWR coverage: {key}")
+                    additions[key].append(value)
+            gathered = defaultdict(list)
+            for shard in runtime.gather_objects(dict(additions)):
+                for key, values in shard.items():
+                    gathered[key].extend(values)
+            calibration = calibration.with_coverage(gathered)
+            if runtime.is_main_process:
+                calibration.save(path)  # Atomic save after every recovery batch.
+            runtime.wait_for_everyone()
+            logging.info("[AWR] coverage batch %d/%d: %d/%d groups, %d saved coverage samples",
+                         index + 1, rounds, len(calibration.centers.keys() & expected_groups),
+                         len(expected_groups), calibration.n - calibration.mixture_n)
+        missing = expected_groups - calibration.centers.keys()
+        remaining = {key for key in incomplete
+                     if len(calibration.coverage_samples.get(key, [])) < COVERAGE_SAMPLES_PER_GROUP}
+        if remaining:
+            raise ValueError(f"AWR coverage sampler did not fill {len(remaining)} requested groups; progress was saved.")
+
     coverage = {
         "expected_groups": len(expected_groups), "calibrated_groups": len(calibration.centers),
         "missing_groups": sorted(missing), "valid_samples": calibration.n, "shared_scale": calibration.scale,
+        "mixture_samples": calibration.mixture_n,
+        "coverage_samples": calibration.n - calibration.mixture_n,
+        "coverage_groups": {key: len(values) for key, values in sorted(calibration.coverage_samples.items())},
+        "shared_scale_source": "original training mixture; conditional coverage draws excluded",
         "minimum_group_samples": min(map(len, calibration.samples.values())),
         "groups_under_8_samples": sum(len(values) < 8 for values in calibration.samples.values()),
     }
@@ -154,7 +192,7 @@ def prepare_calibration(trainer, policy, iterator, preprocessor, cfg, runtime, e
         raise ValueError(
             f"AWR calibration is missing {len(missing)}/{len(expected_groups)} training groups. "
             f"See {path.with_name('awr_calibration_coverage.json')}. "
-            "Generate a fresh calibration with more advantage_calibration_batches before actor updates."
+            "Saved calibration was retained. Complete the missing groups with the training coverage sampler."
         )
     logging.info("[AWR] calibration coverage %d/%d groups, %d samples, shared scale %.6f, min group n=%d",
                  len(expected_groups), len(expected_groups), calibration.n, calibration.scale, coverage["minimum_group_samples"])

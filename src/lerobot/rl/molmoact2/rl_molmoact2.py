@@ -138,6 +138,9 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     # critic_skip rows have weight 1 and are excluded from all weight statistics.
     advantage_weighting: bool = False
     advantage_beta: float = 1.0
+    # Score the next chunk under current metadata across subtask boundaries.
+    # Physical episode ends still terminate; unavailable cached successors skip AWR.
+    advantage_bootstrap_subtasks: bool = False
     advantage_clip: float = 3.0
     advantage_lambda: float = 1.0
     advantage_normalization: str = "batch"  # batch | subtask
@@ -207,6 +210,10 @@ class MolmoAct2RLConfig(MolmoAct2Config):
         validate_weight_parameters(self.advantage_beta, self.advantage_clip, self.advantage_lambda)
         if self.advantage_normalization not in {"batch", "subtask"}:
             raise ValueError("advantage_normalization must be 'batch' or 'subtask'.")
+        if self.advantage_bootstrap_subtasks and not (
+            self.advantage_weighting and self.critic_reward_mode == "subtask"
+        ):
+            raise ValueError("advantage_bootstrap_subtasks requires AWR with subtask rewards.")
         if self.advantage_calibration_batches < 1:
             raise ValueError("advantage_calibration_batches must be positive.")
         if self.advantage_calibration_only and not (

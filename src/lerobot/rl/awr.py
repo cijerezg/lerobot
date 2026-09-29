@@ -48,11 +48,16 @@ class AWRCalibration:
     Missing groups are an error: a pooled fallback would silently undo balancing.
     """
 
-    def __init__(self, samples: dict[str, list[float]], beta: float, clip: float, provenance=None):
+    def __init__(self, samples: dict[str, list[float]], beta: float, clip: float, provenance=None, *, coverage_samples=None):
         validate_weight_parameters(beta, clip)
         self.beta, self.clip = float(beta), float(clip)
         self.provenance = provenance or {}
-        self.samples = {key: list(values) for key, values in samples.items()}
+        self.mixture_samples = {key: list(values) for key, values in samples.items()}
+        self.coverage_samples = {key: list(values) for key, values in (coverage_samples or {}).items()}
+        if self.mixture_samples.keys() & self.coverage_samples.keys():
+            raise ValueError("Coverage samples must belong to groups absent from the mixture calibration.")
+        self.samples = {**self.mixture_samples, **self.coverage_samples}
+        self.mixture_n = sum(map(len, self.mixture_samples.values()))
         self.centers: dict[str, float] = {}
         tensors = {}
         residual_sum = 0.0
@@ -62,12 +67,15 @@ class AWRCalibration:
             if not a.numel() or not torch.isfinite(a).all():
                 raise ValueError(f"Nonempty finite calibration advantages required for {key}.")
             self.centers[key] = a.mean().item()
-            residual_sum += (a - self.centers[key]).square().sum().item()
+            if key in self.mixture_samples:
+                residual_sum += (a - self.centers[key]).square().sum().item()
             self.n += a.numel()
             tensors[key] = a
-        if not self.n:
+        if not self.mixture_n:
             raise ValueError("AWR calibration has no critic-valid training samples.")
-        self.scale = max(math.sqrt(residual_sum / self.n), 1e-6)
+        # Conditional coverage draws estimate only the missing group's statistics.
+        # Keep the pooled scale tied to the original training-mixture distribution.
+        self.scale = max(math.sqrt(residual_sum / self.mixture_n), 1e-6)
         self.log_normalizers = {}
         for key, a in tensors.items():
             logits = ((a - self.centers[key]) / self.scale).clamp(-clip, clip) / beta
@@ -91,7 +99,7 @@ class AWRCalibration:
         if missing:
             raise ValueError(
                 f"AWR calibration is missing {len(missing)} group(s): {sorted(missing)[:5]}. "
-                "Increase advantage_calibration_batches and regenerate the calibration before training."
+                "Complete training-group coverage before actor updates."
             )
         if not torch.isfinite(a).all():
             raise ValueError("Critic-valid AWR advantages must be finite.")
@@ -104,14 +112,24 @@ class AWRCalibration:
         return z.clamp(-self.clip, self.clip) / self.beta - log_z, z
 
     def with_beta(self, beta):
-        return type(self)(self.samples, beta, self.clip, self.provenance)
+        return type(self)(self.mixture_samples, beta, self.clip, self.provenance,
+                          coverage_samples=self.coverage_samples)
+
+    def with_coverage(self, samples):
+        """Add conditional training draws without changing the fitted mixture scale."""
+        merged = {key: list(values) for key, values in self.coverage_samples.items()}
+        for key, values in samples.items():
+            merged.setdefault(key, []).extend(values)
+        return type(self)(self.mixture_samples, self.beta, self.clip, self.provenance,
+                          coverage_samples=merged)
 
     def save(self, path):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "schema": 1, "score": "clipped_td", "beta": self.beta, "clip": self.clip,
+            "schema": 2, "score": "clipped_td", "beta": self.beta, "clip": self.clip,
             "scale": self.scale, "n": self.n, "provenance": self.provenance,
+            "mixture_n": self.mixture_n, "coverage_groups": sorted(self.coverage_samples),
             "groups": {
                 key: {"n": len(values), "center": self.centers[key],
                       "log_normalizer": self.log_normalizers[key], "advantages": values}
@@ -125,15 +143,19 @@ class AWRCalibration:
     @classmethod
     def load(cls, path, beta=None, clip=None, provenance=None):
         payload = json.loads(Path(path).read_text())
-        if payload.get("schema") != 1 or payload.get("score") != "clipped_td":
+        if payload.get("schema") not in (1, 2) or payload.get("score") != "clipped_td":
             raise ValueError("Unsupported AWR calibration schema or advantage definition.")
         if provenance is not None and provenance != payload["provenance"]:
             raise ValueError("AWR calibration does not match this critic, reward rule, or training mixture.")
+        coverage_keys = set(payload.get("coverage_groups", []))
+        if not coverage_keys <= payload["groups"].keys():
+            raise ValueError("Calibration coverage groups are absent from its saved samples.")
         return cls(
-            {key: row["advantages"] for key, row in payload["groups"].items()},
+            {key: row["advantages"] for key, row in payload["groups"].items() if key not in coverage_keys},
             payload["beta"] if beta is None else beta,
             payload["clip"] if clip is None else clip,
             payload["provenance"],
+            coverage_samples={key: payload["groups"][key]["advantages"] for key in coverage_keys},
         )
 
 

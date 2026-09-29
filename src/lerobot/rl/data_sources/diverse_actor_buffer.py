@@ -293,7 +293,10 @@ class _CriticView:
     skip: np.ndarray  # not terminal and no next row: the critic loss leaves it out
 
 
-def critic_view(rows: Sequence[dict[str, Any]], chunk_seconds: float) -> _CriticView:
+def critic_view(
+    rows: Sequence[dict[str, Any]], chunk_seconds: float, *,
+    bootstrap_subtasks: bool = False, episode_frames: dict[str, int] | None = None,
+) -> _CriticView:
     """ReBot's subtask-critic rules (``ReplayBuffer.sample``) on anchor rows.
 
     A transition is terminal when the chunk window after the anchor holds the end of
@@ -302,7 +305,11 @@ def critic_view(rows: Sequence[dict[str, Any]], chunk_seconds: float) -> _Critic
     holds its onset. The next state is the anchor exactly one chunk later in native
     frames. It is missing when the episode's anchors stop before it or the selection
     did not retain it; that transition has nothing to bootstrap from and is skipped.
+    With bootstrap_subtasks, only the physical episode end terminates the chunk;
+    a missing selected successor before that end remains skipped.
     """
+    if bootstrap_subtasks and episode_frames is None:
+        raise ValueError("Physical episode lengths are required to bootstrap across subtasks.")
     count = len(rows)
     done = np.zeros(count, dtype=bool)
     mistake = np.zeros(count, dtype=bool)
@@ -311,7 +318,8 @@ def critic_view(rows: Sequence[dict[str, Any]], chunk_seconds: float) -> _Critic
     for index, row in enumerate(rows):
         window = int(round(float(row["native_rate_hz"]) * chunk_seconds))
         start = int(row["anchor_frame"])
-        end = int(row["critic_end_timestep_exclusive"])
+        end = (int(episode_frames[str(row["episode_id"])]) if bootstrap_subtasks
+               else int(row["critic_end_timestep_exclusive"]))
         done[index] = start < end <= start + window
         mistake[index] = any(start <= onset < start + window for onset in row["mistake_onset_timesteps"])
         next_row[index] = by_frame.get((str(row["episode_id"]), start + window), -1)
@@ -336,6 +344,7 @@ class DiverseActorBuffer:
         serve_critic: bool = False,
         reward_normalization_constant: float = 1.0,
         critic_mistake_penalty: float = 0.0,
+        bootstrap_subtasks: bool = False,
     ) -> None:
         self.selection = selection
         self.spec = spec or DiverseSampleSpec()
@@ -346,7 +355,17 @@ class DiverseActorBuffer:
         self.serve_critic = bool(serve_critic)
         self.reward_normalization_constant = float(reward_normalization_constant)
         self.critic_mistake_penalty = float(critic_mistake_penalty)
-        self._critic = critic_view(self.rows, self.spec.action_horizon / self.spec.action_rate_hz)
+        episode_frames = None
+        if bootstrap_subtasks:
+            episode_frames = {
+                str(episode_id): int(record["frames"] if "frames" in record
+                                     else record["arrays"]["obs/q"]["shape"][0])
+                for episode_id, record in selection.episode_records.items()
+            }
+        self._critic = critic_view(
+            self.rows, self.spec.action_horizon / self.spec.action_rate_hz,
+            bootstrap_subtasks=bootstrap_subtasks, episode_frames=episode_frames,
+        )
         self._rng = np.random.default_rng(seed)
         self._sampler = sampler
 
@@ -735,7 +754,7 @@ class DiverseActorBuffer:
 
         done = torch.from_numpy(self._critic.done[rows])
         mistake = torch.from_numpy(self._critic.mistake[rows])
-        # ReBot's subtask reward: -1 per chunk step, 0 on the step that ends the segment,
+        # ReBot's reward: -1 per chunk step, 0 on a terminal step under the selected rule,
         # the mistake penalty once at its onset, all over the normalizer.
         reward = (done.float() - 1.0 - self.critic_mistake_penalty * mistake.float()) / (
             self.reward_normalization_constant

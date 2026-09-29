@@ -890,7 +890,10 @@ def run_offline_training(
     critic_reward_mode = str(getattr(cfg.policy, "critic_reward_mode", "episode"))
     critic_mistake_penalty = float(getattr(cfg.policy, "critic_mistake_penalty", 0.0))
     for buffer in offline_buffers:
-        buffer.configure_critic_rewards(critic_reward_mode, critic_mistake_penalty)
+        buffer.configure_critic_rewards(
+            critic_reward_mode, critic_mistake_penalty,
+            bootstrap_subtasks=bool(getattr(cfg.policy, "advantage_bootstrap_subtasks", False)),
+        )
         if future_cfg is not None and future_cfg.enabled:
             source_fps = float(getattr(buffer.dataset, "fps", fps))
             offset_float = future_cfg.horizon_seconds * source_fps
@@ -904,7 +907,8 @@ def run_offline_training(
         logging.info(
             "[RL_OFFLINE] Critic reward mode: subtask "
             f"(normalizer={cfg.policy.reward_normalization_constant}, "
-            f"mistake-entry penalty={critic_mistake_penalty})"
+            f"mistake-entry penalty={critic_mistake_penalty}, "
+            f"bootstrap subtasks={getattr(cfg.policy, 'advantage_bootstrap_subtasks', False)})"
         )
     logging.info(
         f"[RL_OFFLINE] Buffer: {sum(len(b) for b in offline_buffers)} samples "
@@ -932,6 +936,7 @@ def run_offline_training(
 
     # ── Iterator ─────────────────────────────────────────────────────────────
     diverse_buffer = None
+    calibration_groups = None
     diverse_cfg = getattr(cfg, "diverse", None)
     if diverse_cfg is not None and diverse_cfg.enabled:
         from lerobot.rl.data_sources.diverse_integration import (
@@ -990,6 +995,7 @@ def run_offline_training(
             diverse_buffer,
             rebot_weights=get_offline_dataset_weights(cfg),
         )
+        calibration_groups = groups
         mixture_telemetry = MixtureTelemetry()
         buf_iter = observed(
             make_hierarchical_offline_iterator(
@@ -1047,7 +1053,16 @@ def run_offline_training(
         from lerobot.rl.awr_calibration import expected_training_groups, prepare_calibration
 
         expected = expected_training_groups(offline_buffers, diverse_buffer, trainer, preprocessor, cfg)
-        prepare_calibration(trainer, raw_policy, buf_iter, preprocessor, cfg, runtime, expected)
+        from lerobot.rl.awr_coverage import TrainingCoverageSampler
+        if calibration_groups is None:
+            from lerobot.rl.data_sources.diverse_mixture import MixtureGroup
+            from lerobot.rl.offline_dataset_utils import _weighted_batch_sizes
+            # Legacy non-diverse replay uses fixed quotas rather than multinomial draws.
+            quotas = _weighted_batch_sizes(cfg.batch_size, get_offline_dataset_weights(cfg))
+            calibration_groups = [MixtureGroup("rebot", offline_buffers, inner_weights=quotas)]
+        coverage_sampler = TrainingCoverageSampler(calibration_groups, trainer, preprocessor, cfg)
+        prepare_calibration(trainer, raw_policy, buf_iter, preprocessor, cfg, runtime, expected,
+                            coverage_sampler=coverage_sampler)
         if cfg.policy.advantage_calibration_only:
             logging.info("[AWR] Calibration complete; no actor or critic optimizer steps were taken.")
             return

@@ -158,6 +158,7 @@ def build_diverse_buffer(
         serve_critic=not cfg.skip_critic or bool(getattr(cfg.policy, "advantage_weighting", False)),
         reward_normalization_constant=float(cfg.policy.reward_normalization_constant),
         critic_mistake_penalty=float(getattr(cfg.policy, "critic_mistake_penalty", 0.0)),
+        bootstrap_subtasks=bool(getattr(cfg.policy, "advantage_bootstrap_subtasks", False)),
     )
     if is_main_process:
         view = buffer._critic  # noqa: SLF001 - reported once at startup

@@ -12,10 +12,13 @@ probe_config="${3:-config_rl_validate.yaml}"
 echo "Probe config: $probe_config"
 export PYTHONPATH="lerobot/src${PYTHONPATH:+:$PYTHONPATH}"
 .venv/bin/python lerobot/scripts/probes/preflight.py --config "$probe_config"
-# Stacks of every thread go to the log every 15 min, so a pass that stalls (Spark, 2026-09-25:
-# 100 % CPU, no I/O, no GPU load, no ptrace access) shows where; 4 h caps what a stall costs.
-timeout 14400 .venv/bin/python -c 'import faulthandler, runpy, sys
-faulthandler.dump_traceback_later(900, repeat=True)
+# A fatal signal prints every thread's stack to the log; a pass that stalls (Spark, 2026-09-25:
+# 100 % CPU, no I/O, no GPU load, no ptrace access) dumps them on `kill -USR1 <python pid>`.
+# No periodic dump_traceback_later: its watchdog thread walks the other threads' frames without
+# the GIL and segfaulted the 2026-09-28 pass mid-dump. 6 h caps what a stall costs (suite ~3-4 h).
+timeout 21600 .venv/bin/python -c 'import faulthandler, runpy, signal, sys
+faulthandler.enable()
+faulthandler.register(signal.SIGUSR1)
 sys.argv = ["rl_offline"] + sys.argv[1:]
 runpy.run_module("lerobot.scripts.rl_offline", run_name="__main__")' \
   --config_path="$probe_config" \

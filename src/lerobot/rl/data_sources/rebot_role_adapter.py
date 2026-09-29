@@ -307,8 +307,9 @@ class RoleAlignedBuffer:
     def size(self) -> int:
         return self.buffer.size
 
-    def sample(self, batch_size: int, action_chunk_size: int = 30):
-        batch = self.buffer.sample(batch_size, action_chunk_size=action_chunk_size)
+    def sample(self, batch_size: int, action_chunk_size: int = 30, *, indices=None):
+        kwargs = {} if indices is None else {"indices": indices}
+        batch = self.buffer.sample(batch_size, action_chunk_size=action_chunk_size, **kwargs)
         return self.decorate(batch)
 
     def decorate(self, batch) -> Any:

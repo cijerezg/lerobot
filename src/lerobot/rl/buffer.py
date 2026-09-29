@@ -199,6 +199,7 @@ class ReplayBuffer:
         # terminals, while physical episode boundaries still govern history.
         self.critic_reward_mode = "episode"
         self.critic_mistake_penalty = 0.0
+        self.critic_bootstrap_subtasks = False
         self._warned_missing_subtask_critic_labels = False
         self.image_storage_dtype = self._normalize_image_storage_dtype(image_storage_dtype)
         self.image_storage_size = self._normalize_image_storage_size(image_storage_size)
@@ -224,14 +225,19 @@ class ReplayBuffer:
             self.image_augmentation_function = torch.compile(base_function)
         self.use_drq = use_drq
 
-    def configure_critic_rewards(self, mode: str = "episode", mistake_penalty: float = 0.0) -> None:
-        """Select the critic's episode-level or subtask-level reward view."""
+    def configure_critic_rewards(
+        self, mode: str = "episode", mistake_penalty: float = 0.0, *, bootstrap_subtasks: bool = False
+    ) -> None:
+        """Select rewards, optionally continuing through subtask boundaries for AWR."""
         if mode not in {"episode", "subtask"}:
             raise ValueError(f"Unsupported critic_reward_mode {mode!r}; expected 'episode' or 'subtask'.")
         if mistake_penalty < 0:
             raise ValueError("critic_mistake_penalty must be a non-negative magnitude.")
+        if bootstrap_subtasks and mode != "subtask":
+            raise ValueError("Bootstrapping subtasks requires subtask rewards.")
         self.critic_reward_mode = mode
         self.critic_mistake_penalty = float(mistake_penalty)
+        self.critic_bootstrap_subtasks = bool(bootstrap_subtasks)
 
     @staticmethod
     def _normalize_image_storage_dtype(dtype: str) -> str:
@@ -609,13 +615,13 @@ class ReplayBuffer:
                 result[f"future.{presence_key}"] = self.complementary_info[presence_key][endpoint].to(self.device)
         return result
 
-    def sample(self, batch_size: int, action_chunk_size: int = 50) -> BatchTransition:
-        """Sample a random batch of transitions and collate them into batched tensors."""
+    def sample(self, batch_size: int, action_chunk_size: int = 50, *, indices=None) -> BatchTransition:
+        """Sample random transitions, or collate explicit valid starts for calibration."""
         if not self.initialized:
             raise RuntimeError("Cannot sample from an empty buffer. Add transitions first.")
 
         with self._lock:
-            batch_size = min(batch_size, self.size)
+            batch_size = min(batch_size, self.size) if indices is None else batch_size
             high = max(0, self.size - 1) if self.optimize_memory and self.size < self.capacity else self.size
 
             stride = self.image_stride
@@ -625,47 +631,61 @@ class ReplayBuffer:
                     f"image_stride={stride} so idx + chunk lands on a stored image row."
                 )
 
-            valid_indices = []
-            collected_count = 0
-            max_retries = 200  # Safety hatch to prevent infinite loops
-            attempts = 0
+            if indices is not None:
+                idx = torch.as_tensor(indices, device=self.storage_device)
+                if idx.ndim != 1 or len(idx) != batch_size or batch_size < 1:
+                    raise ValueError("Explicit replay indices must match a positive batch size.")
+                if idx.dtype not in (torch.int32, torch.int64):
+                    raise ValueError("Explicit replay indices must be integers.")
+                idx = idx.long()
+                if bool(((idx < 0) | (idx >= high) | (idx % stride != 0)).any()):
+                    raise ValueError("Explicit replay indices must be in range and image-stride aligned.")
+                if self.actions.ndim == 2 and action_chunk_size > 1:
+                    check = (idx[:, None] + torch.arange(action_chunk_size - 1, device=self.storage_device)) % self.capacity
+                    if bool(self.dones[check].any()):
+                        raise ValueError("Explicit replay action chunks cross a physical episode boundary.")
+            else:
+                valid_indices = []
+                collected_count = 0
+                max_retries = 200  # Safety hatch to prevent infinite loops
+                attempts = 0
 
-            # This while loop is to ensure frames are valid
-            while collected_count < batch_size:
-                if attempts >= max_retries:
-                    raise RuntimeError(
-                        "Failed to sample enough valid chunks. Is action_chunk_size larger than your episodes?"
-                    )
-                attempts += 1
+                # This while loop is to ensure frames are valid
+                while collected_count < batch_size:
+                    if attempts >= max_retries:
+                        raise RuntimeError(
+                            "Failed to sample enough valid chunks. Is action_chunk_size larger than your episodes?"
+                        )
+                    attempts += 1
 
-                # Only sample enough to fill the remaining needed batch size (times a safety factor)
-                remaining = batch_size - collected_count
-                if stride > 1:
-                    # Images/depth exist only every stride-th frame: draw image-aligned
-                    # starts so observations are exact (image row = idx // stride).
-                    idx = stride * torch.randint(
-                        low=0, high=(high + stride - 1) // stride, size=(4 * remaining,), device=self.storage_device
-                    )
-                else:
-                    idx = torch.randint(low=0, high=high, size=(4 * remaining,), device=self.storage_device)
+                    # Only sample enough to fill the remaining needed batch size (times a safety factor)
+                    remaining = batch_size - collected_count
+                    if stride > 1:
+                        # Images/depth exist only every stride-th frame: draw image-aligned
+                        # starts so observations are exact (image row = idx // stride).
+                        idx = stride * torch.randint(
+                            low=0, high=(high + stride - 1) // stride, size=(4 * remaining,), device=self.storage_device
+                        )
+                    else:
+                        idx = torch.randint(low=0, high=high, size=(4 * remaining,), device=self.storage_device)
 
-                if len(self.actions.shape) == 2 and action_chunk_size > 1:
-                    # Use action_chunk_size - 1 if you don't want to check the final step's done flag
-                    check_length = action_chunk_size - 1
-                    chunk_indices = (
-                        idx.unsqueeze(1) + torch.arange(check_length, device=self.storage_device)
-                    ) % self.capacity
+                    if len(self.actions.shape) == 2 and action_chunk_size > 1:
+                        # Use action_chunk_size - 1 if you don't want to check the final step's done flag
+                        check_length = action_chunk_size - 1
+                        chunk_indices = (
+                            idx.unsqueeze(1) + torch.arange(check_length, device=self.storage_device)
+                        ) % self.capacity
 
-                    chunk_dones = self.dones[chunk_indices]
-                    invalid_mask = chunk_dones.any(dim=1)
-                    idx = idx[~invalid_mask]
+                        chunk_dones = self.dones[chunk_indices]
+                        invalid_mask = chunk_dones.any(dim=1)
+                        idx = idx[~invalid_mask]
 
-                if len(idx) > 0:
-                    valid_indices.append(idx)
-                    collected_count += len(idx)
+                    if len(idx) > 0:
+                        valid_indices.append(idx)
+                        collected_count += len(idx)
 
-            # Concatenate all collected indices and slice exactly to batch_size
-            idx = torch.cat(valid_indices)[:batch_size]
+                # Concatenate all collected indices and slice exactly to batch_size
+                idx = torch.cat(valid_indices)[:batch_size]
 
             # Identify image keys that need augmentation
             image_keys = [k for k in self.states if k.startswith(OBS_IMAGE)] if self.use_drq else []
@@ -673,6 +693,18 @@ class ReplayBuffer:
             # Create batched state and next_state
             batch_state = {}
             batch_next_state = {}
+            next_idx = (idx + action_chunk_size) % self.capacity
+            if self.critic_bootstrap_subtasks:
+                bootstrap_window = (idx[:, None] + torch.arange(
+                    action_chunk_size, device=self.storage_device
+                )) % self.capacity
+                bootstrap_done = (self.dones[bootstrap_window] | self.truncateds[bootstrap_window]).any(dim=1)
+                if self.optimize_memory:
+                    remaining = (self.size - 1 - idx if self.size < self.capacity
+                                 else (self.position - 1 - idx) % self.capacity)
+                    bootstrap_done |= action_chunk_size > remaining
+                    # Terminals use an ignored stand-in, never another episode or unfilled storage.
+                    next_idx = torch.where(bootstrap_done, idx, next_idx)
 
             # First pass: load all state tensors to target device.
             # Image tensors hold one row per stride-th frame, so their row index is
@@ -687,7 +719,6 @@ class ReplayBuffer:
                     batch_next_state[key] = self.next_states[key][row].to(self.device)
                 else:
                     # Memory-optimized approach - get next_state from the next index
-                    next_idx = (idx + action_chunk_size) % self.capacity
                     next_row = next_idx // stride if self._is_image_key(key) else next_idx
                     batch_next_state[key] = self.states[key][next_row].to(self.device)
 
@@ -708,7 +739,7 @@ class ReplayBuffer:
                 # action_chunk_size is a multiple of image_stride -- so its lookback
                 # is _gather_history at that index. Same reasoning as the
                 # next_depth.{key} columns emitted for complementary_info below.
-                next_hist_idx = (idx + action_chunk_size) % self.capacity
+                next_hist_idx = next_idx
                 next_history, next_pad = self._gather_history(next_hist_idx)
                 for key in next_history:
                     batch_next_state[f"history.{key}"] = next_history[key].to(self.device)
@@ -750,9 +781,7 @@ class ReplayBuffer:
                 # Depth for the critic target V(s'): next_state is derived at sample time
                 # (optimize_memory), so its depth is the same column at the same next_idx.
                 # Emitted as next_depth.{key} so online/offline batches concatenate symmetrically.
-                depth_next_idx = (
-                    (idx + action_chunk_size) % self.capacity if self.optimize_memory else None
-                )
+                depth_next_idx = next_idx if self.optimize_memory else None
                 for key in self.complementary_info_keys:
                     row = idx // stride if key.startswith("depth.") else idx
                     batch_complementary_info[key] = self.complementary_info[key][row].to(self.device)
@@ -794,21 +823,28 @@ class ReplayBuffer:
                 batch_next_state[key] = augmented_images[(i * 2 + 1) * batch_size : (i + 1) * 2 * batch_size]
 
         # Apply reward transformation outside the lock (works on local batch tensors).
-        # A subtask critic uses the action chunk from s to s' directly: a semantic
-        # boundary in that window makes this TD transition terminal. This never
-        # alters self.dones, which remain the physical episode boundaries.
+        # Legacy critic training terminates at semantic boundaries. AWR can instead
+        # continue to the chunk successor, terminating only at physical episode ends
+        # or the end of available replay. Stored episode markers are never changed.
         subtask_terminal = None
         if self.critic_reward_mode == "subtask":
             subtask_terminal = self.complementary_info.get("critic_subtask_terminal")
 
-        if subtask_terminal is not None:
-            critic_window = idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)
-            critic_window = torch.clamp(critic_window, max=self.size - 1)
-            boundary_mask = subtask_terminal[critic_window].bool().any(dim=1).to(self.device)
-            episode_mask = self.dones[critic_window].any(dim=1).to(self.device)
-            batch_dones = (boundary_mask | episode_mask).float()
+        if subtask_terminal is not None or self.critic_bootstrap_subtasks:
+            if self.critic_bootstrap_subtasks:
+                critic_window = bootstrap_window
+                batch_dones = bootstrap_done.to(self.device).float()
+            else:
+                critic_window = idx.unsqueeze(1) + torch.arange(action_chunk_size, device=self.storage_device)
+                critic_window = torch.clamp(critic_window, max=self.size - 1)
+                boundary_mask = subtask_terminal[critic_window].bool().any(dim=1).to(self.device)
+                episode_mask = self.dones[critic_window].any(dim=1).to(self.device)
+                batch_dones = (boundary_mask | episode_mask).float()
 
-            new_rewards = torch.full_like(batch_rewards, -1.0)
+            # Keep reward arithmetic in float32: bf16 rounds -1/12 below the
+            # unpenalized baseline and falsely flags ordinary steps as mistakes.
+            reward_dtype = torch.float32 if self.critic_bootstrap_subtasks else batch_rewards.dtype
+            new_rewards = torch.full_like(batch_rewards, -1.0, dtype=reward_dtype)
             new_rewards[batch_dones > 0.5] = 0.0
             mistake_onset = self.complementary_info.get("critic_mistake_onset")
             if mistake_onset is not None and self.critic_mistake_penalty > 0:

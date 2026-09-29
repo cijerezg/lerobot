@@ -756,7 +756,8 @@ def _training_targets(dataset, cfg, chunk_size: int) -> dict:
             mode = "episode"
         else:
             terminals = markers.numpy().astype(bool)
-    boundary = episode_end if terminals is None else (terminals | episode_end)
+    bootstrap_subtasks = bool(getattr(cfg.policy, "advantage_bootstrap_subtasks", False))
+    boundary = episode_end if terminals is None or bootstrap_subtasks else (terminals | episode_end)
     next_boundary = np.empty(n, dtype=np.int64)
     last = n - 1
     for i in range(n - 1, -1, -1):
@@ -778,7 +779,10 @@ def _transition_target(targets: dict, dataset, idx: int, chunk_size: int, penalt
     stop = min(idx + chunk_size, len(dataset))
     episode_end = bool(targets["episode_end"][idx:stop].any())
     if targets["mode"] == "subtask":
-        done = episode_end or bool(targets["terminals"][idx:stop].any())
+        if getattr(cfg.policy, "advantage_bootstrap_subtasks", False):
+            done = episode_end or idx + chunk_size >= len(dataset)
+        else:
+            done = episode_end or bool(targets["terminals"][idx:stop].any())
         reward = 0.0 if done else -1.0
         if penalty > 0 and targets["mistake_onset"][idx:stop].any():
             reward -= penalty
@@ -1209,8 +1213,8 @@ def run_critic_values_distribution(
     for idx in adv_indices:
         metadata = labels.get(idx)
         fr_c = probe_frame_inputs(val_dataset, cfg, idx, chunk_size, metadata=metadata)
-        # s' rides s's subtask and labels, as _critic_batches does: the sampler has no
-        # next-state columns, and a boundary inside the chunk makes the step terminal.
+        # Match _critic_batches: advance observations while keeping the current
+        # subtask and metadata, including when AWR crosses a subtask boundary.
         fr_n = probe_frame_inputs(val_dataset, cfg, idx + chunk_size, chunk_size, metadata=metadata)
         obs, gt_subtask, task_str = fr_c["obs"], fr_c["subtask"], fr_c["task"]
         v_curr = adapter.predict_value(obs, task_str, gt_subtask, metadata=fr_c["metadata"])
