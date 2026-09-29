@@ -407,10 +407,23 @@ def test_generation_prompt_carries_no_memory_clause():
 
 
 def test_continuous_state_clause_renders_one_placeholder_before_history():
-    from lerobot.policies.molmoact2.processor_molmoact2 import CONTINUOUS_STATE_TOKEN
+    from types import SimpleNamespace
 
-    prompt = build(state_string=CONTINUOUS_STATE_TOKEN, num_history_states=2)
-    assert f"The current state of the robot is {CONTINUOUS_STATE_TOKEN}." in prompt
+    from lerobot.policies.molmoact2.processor_molmoact2 import (
+        CONTINUOUS_STATE_TOKEN,
+        MolmoAct2PackInputsProcessorStep,
+    )
+
+    state_string = MolmoAct2PackInputsProcessorStep._state_string(
+        SimpleNamespace(state_format="continuous"), np.zeros(8, dtype=np.float32)
+    )
+    prompt = build(state_string=state_string, num_history_states=2)
+    state_clause = "The current state of the robot is <state_start><extra_0><state_end>."
+    assert state_clause in prompt
+    generation_prompt = _build_subtask_generation_text(
+        task="fold the towel", state_string=state_string, num_images=0
+    )
+    assert state_clause in generation_prompt
     # Current, then the past states: the row order _emit_state_values ships.
     assert prompt.count(CONTINUOUS_STATE_TOKEN) == 3
     assert prompt.index("The current state") < prompt.index("The recent states")

@@ -23,7 +23,8 @@ of visual grounding.
 
 **Vectors.** Per layer and token group, the pooled hidden state from the adapter seam
 ``capture_layer_representations`` (flow time t = 0, one fixed noise draw for every frame).
-Groups: img_wrist_0, img_external_0, subtask, action_output (encoder) and action (expert).
+Groups: img_wrist_0, img_external_0, subtask, state, action_output (encoder) and action
+(expert).
 Per robot the vectors are centred on that robot's training-frame mean and unit-normalised,
 so the between-robot offset never enters.
 
@@ -61,9 +62,11 @@ its true cell.
 
 **Output** (``<output_dir>/conditions_matrix/``): ``sharing_by_layer.png`` (raw rho
 against depth, one panel per robot pair x text condition, null line), ``matrices.png``
-(every robot's class-level matrix at the fixed headline layer, action and wrist groups),
+(every robot's class-level matrix at the fixed headline layer, action and top-view
+groups), ``matrices_wrist_state.png`` (the same for the wrist-view and state groups),
 ``rebot_instances.png`` (ReBot's instance-level matrix at the fixed headline layer),
-``matrices_L<n>.png`` (the same at ``conditions_layers``, default 14, 28 and 32),
+``matrices_L<n>.png`` / ``matrices_wrist_state_L<n>.png`` (the same at
+``conditions_layers``, default 14, 28 and 32),
 ``decoding.png`` (ReBot pairs, both directions: cross-robot class and phase accuracy
 against the within-robot ceiling and chance, action and wrist groups, both texts, at the
 headline and ``conditions_layers`` layers) with ``decoding.csv`` behind it,
@@ -144,8 +147,11 @@ CLASS_PATTERNS = (
 # (site, group) read out of the capture.
 GROUPS = (
     ("encoder", "img_wrist_0"), ("encoder", "img_external_0"), ("encoder", "subtask"),
-    ("encoder", "action_output"), ("action_expert", "action"),
+    ("encoder", "state"), ("encoder", "action_output"), ("action_expert", "action"),
 )
+# Rows of matrices.png and of matrices_wrist_state.png.
+MAIN_GROUPS = ("action", "img_external_0")
+SECOND_GROUPS = ("img_wrist_0", "state")
 GROUP_NAMES = tuple(g for _, g in GROUPS)
 TEXT_CONDITIONS = ("real", "neutral")
 PROTOCOL = "bounded_v1_constant_text"
@@ -734,12 +740,16 @@ def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str)
     if headline_layer < 0:
         raise ValueError("conditions_headline_layer must be nonnegative")
     totals = {r: _robot_totals(rows, r, class_cells[r]) for r in robots}
-    plot_matrices(matrices, robots, totals, headline_layer, os.path.join(output_dir, "matrices.png"))
+    plot_matrices(matrices, robots, totals, headline_layer, MAIN_GROUPS, os.path.join(output_dir, "matrices.png"))
+    plot_matrices(matrices, robots, totals, headline_layer, SECOND_GROUPS,
+                  os.path.join(output_dir, "matrices_wrist_state.png"))
     n_layers = max((k[2] for k in matrices), default=-1) + 1
     extra_layers = [int(l) for l in str(cfg.probe_parameters.conditions_layers or "").split(",") if l.strip()]
     extra_layers = [l for l in extra_layers if l != headline_layer and 0 <= l < n_layers]
     for layer in extra_layers:
-        plot_matrices(matrices, robots, totals, layer, os.path.join(output_dir, f"matrices_L{layer}.png"))
+        plot_matrices(matrices, robots, totals, layer, MAIN_GROUPS, os.path.join(output_dir, f"matrices_L{layer}.png"))
+        plot_matrices(matrices, robots, totals, layer, SECOND_GROUPS,
+                      os.path.join(output_dir, f"matrices_wrist_state_L{layer}.png"))
     plot_decoding(decoding, pairs, [headline_layer, *extra_layers], os.path.join(output_dir, "decoding.png"))
     if rebot_instance_cells:
         plot_rebot_instances(matrices, totals, headline_layer, os.path.join(output_dir, "rebot_instances.png"))
@@ -842,7 +852,7 @@ def _summary(rows, metrics, organisation, holdout_rows, decoding, pairs, robots,
 # ──────────────────────────────────────────────────────────────────────────────
 
 GROUP_COLORS = {"img_wrist_0": "#2ca02c", "img_external_0": "#d62728", "subtask": "#ff7f0e",
-                "action_output": "#9467bd", "action": "#1f77b4"}
+                "state": "#8c564b", "action_output": "#9467bd", "action": "#1f77b4"}
 
 
 def plot_by_layer(metrics: list[dict], pairs, path: str) -> None:
@@ -903,10 +913,10 @@ def _heatmap(ax, m: np.ndarray, labels: list[str], counts: list[tuple[int, int]]
     ax.set_title(title, fontsize=8)
 
 
-def plot_matrices(matrices: dict, robots: list[str], totals: dict, layer: int, path: str) -> None:
-    """Class-level matrices of every robot at ``layer``, real text: rows action / wrist.
+def plot_matrices(matrices: dict, robots: list[str], totals: dict, layer: int, groups: tuple, path: str) -> None:
+    """Class-level matrices of every robot at ``layer``, real text: one row per group.
     ``totals`` = (frames, episodes) per robot for the panel titles."""
-    groups = [g for g in ("action", "img_wrist_0") if any(k[0] == g for k in matrices)]
+    groups = [g for g in groups if any(k[0] == g for k in matrices)]
     if not groups or not robots:
         return
     fig, axes = plt.subplots(len(groups), len(robots), figsize=(3.4 * len(robots), 3.4 * len(groups)), squeeze=False)
@@ -1077,10 +1087,13 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
               how="Spearman correlation of the shared cells' similarity matrices; dotted = label-permutation null. "
                   "Neutral text is identical across objects and phases. Remaining structure can use images or state. "
                   "The reliability ratio in metrics.csv is a secondary diagnostic, not a fraction of shared code.", primary=True),
-        Panel("matrices.png", "Each robot's class-level similarity matrix at the headline layer (action and wrist groups)",
+        Panel("matrices.png", "Each robot's class-level similarity matrix at the headline layer (action and top-view groups)",
               how="Cells are object/phase; entries are mean cosine between frames of different episodes, after per-robot "
                   "centering. Similar block patterns suggest similar relational geometry; they do not establish "
                   "a common code or successful transfer.", primary=True),
+        Panel("matrices_wrist_state.png", "The same matrices for the wrist-view and state groups",
+              how="Same reading as matrices.png. The state group is the state clause of the prompt, which sits after "
+                  "the task and step text.", primary=True),
         Panel("rebot_instances.png", "ReBot's instance-level matrix at the headline layer",
               how="Compare within-class instances (spray/pill bottles, socks/shirts). Similarity is descriptive "
                   "and can reflect language, scene, or object appearance."),
@@ -1094,6 +1107,8 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
                         primary=True))
     for l in extra_layers:
         panels.append(Panel(f"matrices_L{l}.png", f"The same class-level matrices at layer {l}",
+                            how="Same reading as the headline figure; compare block patterns across depth."))
+        panels.append(Panel(f"matrices_wrist_state_L{l}.png", f"The wrist-view and state matrices at layer {l}",
                             how="Same reading as the headline figure; compare block patterns across depth."))
     for robot in frames_written:
         panels.append(Panel(f"frames_{robot}.png", f"{robot}: the frames behind its matrix, one tile per cell",

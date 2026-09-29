@@ -274,7 +274,8 @@ def _build_robot_text(
 
     state_string: the current state's rendering — the <state_k> digit string
     (state_format "discrete") or one CONTINUOUS_STATE_TOKEN placeholder
-    ("continuous"); the clause's words are the same either way.
+    ("continuous"), both enclosed in STATE_START_TOKEN / STATE_END_TOKEN;
+    the clause's words are the same either way.
 
     num_history_states: past proprio states rendered as continuous placeholder
     positions (one CONTINUOUS_STATE_TOKEN per timestep, oldest to newest; the model
@@ -1689,11 +1690,13 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         return present
 
     def _state_string(self, state: np.ndarray) -> str:
-        """The current state as the prompt renders it: the digit string under
-        state_format "discrete", one CONTINUOUS_STATE_TOKEN placeholder under
-        "continuous" (its projected value rides in complementary state_values)."""
+        """Render the current state inside the pretrained state boundary tokens.
+
+        Discrete state uses one bin token per coordinate; continuous state uses
+        one placeholder whose projected value rides in complementary state_values.
+        """
         if self.state_format == "continuous":
-            return CONTINUOUS_STATE_TOKEN
+            return f"{STATE_START_TOKEN}{CONTINUOUS_STATE_TOKEN}{STATE_END_TOKEN}"
         return _build_discrete_state_string(state, self.num_state_tokens)
 
     def _emit_state_values(

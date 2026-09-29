@@ -324,7 +324,8 @@ class MolmoAct2Config(PreTrainedConfig):
     # (π0.7: "embeds the state using a linear projection that maps the state
     # dimension to the backbone dimension"), through the SAME projector and
     # placeholder the state history uses, so current and past states share one
-    # representation. Checkpoints written before the field load and run unchanged
+    # representation. Both current-state formats retain <state_start>/<state_end>.
+    # Checkpoints written before the field load and run unchanged
     # under the default.
     state_format: str = "discrete"
     # Leave unset for the default MolmoAct2 sequence budget inferred from the fixed
