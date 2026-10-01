@@ -340,6 +340,7 @@ class ProbeConfig:
     enable_input_swap: bool = False  # inject another frame's state / images / subtask text: 2^3 cube per anchor
     enable_domain_representations: bool = False  # ReBot vs diverse hidden states per layer and token group (probes/domain_representations.py)
     enable_conditions_matrix: bool = False  # object x phase similarity matrix per robot, compared across robots (probes/conditions_matrix.py)
+    enable_subspace_spans: bool = False  # raw representation ranks, cross-robot spans, and principal angles
     enable_embodiment_swap: bool = False  # "The robot is a ..." swapped: other names on ReBot frames, the ReBot name on diverse holdout frames (probes/embodiment_swap.py)
 
     # Common
@@ -391,6 +392,14 @@ class ProbeConfig:
     conditions_headline_layer: int = 28
     conditions_rebot_roots: str | None = None
     conditions_layers: str = "14,28,32"  # matrices_L<n>.png besides the fixed headline layer; every layer is analysed regardless
+    # Subspace spans reuse the conditions-matrix capture and sampling budget above.
+    # All layers are analyzed; detailed layers also get spectra, angles, and pivots.
+    subspace_text: str = "real"
+    subspace_tolerances: str = "0.1,0.01,0.001"
+    subspace_layers: str = "14,15,16,28,32"
+    subspace_n_null: int = 100
+    subspace_n_pivots: int = 12
+    subspace_pivot_group: str = "img_external_0"
     umap_n_neighbors: int = 15
     umap_min_dist: float = 0.1
     umap_seed: int = 42

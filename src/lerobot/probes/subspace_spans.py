@@ -10,8 +10,10 @@ sees. Centring would remove the mean direction from every span; here it is kept 
 
 **Input.** A ``conditions_matrix`` cache: per token group one fp16 memmap of shape
 (rows, layers, D) holding the pooled hidden state of every captured frame, plus meta.json
-(robot, episode, class, phase, text condition, holdout flag) and thumbnails. No forward pass
-is run. Rows are taken under one text condition (``--text``, default real; the image groups
+(robot, episode, class, phase, text condition, holdout flag) and thumbnails. The analysis
+runs no forward pass. In the official suite, ``enable_subspace_spans`` reuses the
+conditions-matrix capture, or collects it when that probe is disabled. The standalone
+cache command always reads saved representations. Rows are taken under one text condition (``--text``, default real; the image groups
 are identical under both). Training rows (holdout = False) define a robot's span; the
 robot's holdout rows are tested against it.
 
@@ -32,7 +34,7 @@ are the frames that define the span, the tail falls inside it.
 
 **Between robots.** With Q_A (D x p) and Q_B (D x q) orthonormal bases of two tau-spans, the
 singular values of Q_A^T Q_B are cos(theta_i), the principal angles (Bjorck & Golub 1973).
-All near 1: the same subspace; all near 0: orthogonal. Per layer and tau:
+All near 1: the smaller span lies in the larger; all near 0: orthogonal. Per layer and tau:
 overlap = sum_i cos^2(theta_i) / min(p, q), in [0, 1], read against the random-subspace
 expectation E[sum_i cos^2(theta_i)] = p q / D, which is max(p, q) / D after the division;
 the number of angles with cos > 0.9; and the energy of B's frames outside A's span,
@@ -41,16 +43,14 @@ angle spectrum of every ReBot pair is drawn against the 95th percentile over ``-
 random subspace pairs with the same (p, q, D). Two subspaces of dimensions p and q in R^D intersect in at least
 p + q - D dimensions whatever the network did; pairs.csv records p and q for that check.
 
-**Output** (``<output_dir>``, default ``<step>/subspace_spans/`` beside the cache's probe dir):
-``spectra.png`` (log10 s_i / s_1 solid and |R_jj| / |R_11| dotted per robot, tolerances and
-the fp16 floor as horizontal lines; rows = groups, columns = ``--layers``),
-``dimension_by_layer.png`` (k(tau) against depth per robot, the frame count dotted where k reaches it; columns = tau),
-``overlap_by_layer.png`` (ReBot pairs: overlap against depth, random-subspace expectation
-dashed; columns = tau), ``angles.png`` (ReBot pairs: cos theta_i at the ``--layers`` layers,
-null band dashed), ``pivot_frames.png`` (the first ``--n_pivots`` pivot frames per robot for
-``--pivot_group`` at the last of ``--layers``, external camera, caption = residual and
-class/phase), ``spans.csv`` (group, layer, robot, tau), ``pairs.csv`` (group, layer, pair,
-tau), ``pivots.csv`` (pivot order at the ``--layers`` layers), ``summary.json``, ``index.json``.
+**Output.** ``explorer.html`` is a wide, offline report with question, token-group,
+tolerance, layer, robot and pair selectors. One chart is shown at a time, with exact
+values, count tables and explanations. ``report_details.json`` preserves reconstructed
+spectra and pointwise random references. ``spans.csv``, ``pairs.csv``, ``pivots.csv`` and
+``summary.json`` retain all measurements. ``index.json`` integrates the report with the
+regular viewer. Existing legacy PNGs are preserved, but the manifest uses the explorer.
+Use ``--report_only`` to rebuild from existing CSVs and caches without recomputing every
+layer's measurements. This mode never runs model inference.
 
     uv run python -m lerobot.probes.subspace_spans \\
         --cache_dir outputs/<run>/validation/step_<n>/conditions_matrix/cache
@@ -485,31 +485,58 @@ def analyze(cache_dir: str, output_dir: str, text: str, tolerances: list[float],
     _write_csv(os.path.join(output_dir, "spans.csv"), out["spans"])
     _write_csv(os.path.join(output_dir, "pairs.csv"), out["pairs"])
     _write_csv(os.path.join(output_dir, "pivots.csv"), _pivot_rows(out["pivots"], rows))
-    plot_spectra(out["spectra"], groups, layers, robots, tolerances, os.path.join(output_dir, "spectra.png"))
-    plot_dimension(out["spans"], groups, robots, tolerances, os.path.join(output_dir, "dimension_by_layer.png"))
-    plot_overlap(out["pairs"], groups, tolerances, os.path.join(output_dir, "overlap_by_layer.png"))
-    plot_angles(out["angles"], groups, layers, _rebot_pairs(out["pairs"]), tau, os.path.join(output_dir, "angles.png"))
-    pivot_written = False
-    if headline_group in sel_by_group:
-        pivot_written = plot_pivot_frames(out["pivots"], rows, cache_dir, headline_group, headline_layer,
-                                          list(sel_by_group[headline_group]), n_pivots, os.path.join(output_dir, "pivot_frames.png"))
-        if not pivot_written:
-            logging.warning("  no cache/thumbs: pivot_frames.png skipped")
     summary = _summary(out["spans"], out["pairs"], sel_by_group, text, tolerances, layers, headline_layer, tau, headline_group)
     with open(os.path.join(output_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2, default=float)
-    _write_manifest(output_dir, summary, groups, headline_group, pivot_written)
+    from lerobot.probes.subspace_report import render
+    render(output_dir, cache_dir, n_null=n_null, seed=seed, n_pivots=n_pivots)
     logging.info(f"wrote {output_dir}")
     return summary
+
+
+def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
+    """Official suite entry; share the same-step conditions cache, or collect it alone."""
+    from threadpoolctl import threadpool_limits
+    from lerobot.probes.conditions_matrix import collect_cache
+
+    p = cfg.probe_parameters
+    if p.mode not in ("collect", "plot", "all"):
+        raise ValueError(f"Unknown subspace probe mode: {p.mode!r}")
+    tolerances = sorted((float(t) for t in p.subspace_tolerances.split(",")), reverse=True)
+    layers = [int(layer) for layer in p.subspace_layers.split(",")]
+    if p.subspace_text not in TEXT_CONDITIONS:
+        raise ValueError(f"subspace_text must be one of {TEXT_CONDITIONS}")
+    if not tolerances or any(not 0 < t < 1 for t in tolerances):
+        raise ValueError("subspace_tolerances must be between zero and one")
+    if not layers or min(layers) < 0 or p.subspace_n_null < 1 or p.subspace_n_pivots < 1:
+        raise ValueError("Subspace layers must be nonnegative and null/pivot counts positive")
+
+    conditions_dir = os.path.join(os.path.dirname(output_dir), "conditions_matrix")
+    cache_dir = os.path.join(conditions_dir, "cache")
+    if p.mode in ("collect", "all") and not p.enable_conditions_matrix:
+        collect_cache(adapter, dataset, cfg, conditions_dir)
+    # Validate even in collect mode: an enabled conditions probe may have failed earlier.
+    _, arrays, _ = _load_cache(cache_dir)
+    if not arrays or any(max(layers) >= array.shape[1] for array in arrays.values()):
+        raise ValueError("subspace_layers must index the captured blocks of every token group")
+    if p.mode == "collect":
+        return None
+    # NumPy is already loaded in the validation process, so environment defaults alone
+    # cannot constrain its BLAS pool here.
+    with threadpool_limits(limits=4, user_api="blas"):
+        return analyze(cache_dir, output_dir, p.subspace_text, tolerances, layers,
+                       p.subspace_n_null, p.subspace_n_pivots, p.subspace_pivot_group,
+                       int(p.random_seed))
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cache_dir", required=True, help="a conditions_matrix cache directory (meta.json + <group>.npy)")
     ap.add_argument("--output_dir", default=None, help="default: <step>/subspace_spans[_<text>] beside the cache's probe dir")
+    ap.add_argument("--report_only", action="store_true", help="rebuild report from saved CSVs and cache; no inference")
     ap.add_argument("--text", default="real", choices=TEXT_CONDITIONS)
     ap.add_argument("--tolerances", default="0.1,0.01,0.001", help="relative singular-value cutoffs tau; the middle one is the headline")
-    ap.add_argument("--layers", default="14,28,32", help="zero-based layers for spectra, angles and pivots; the last one is the headline")
+    ap.add_argument("--layers", default="14,15,16,28,32", help="zero-based layers for spectra, angles and pivots; the last one is the headline")
     ap.add_argument("--n_null", type=int, default=100, help="random subspace pairs behind the angle null band")
     ap.add_argument("--n_pivots", type=int, default=12)
     ap.add_argument("--pivot_group", default="img_external_0")
@@ -519,6 +546,10 @@ def main() -> None:
     cache_dir = os.path.normpath(args.cache_dir)
     output_dir = args.output_dir or os.path.join(
         os.path.dirname(os.path.dirname(cache_dir)), "subspace_spans" if args.text == "real" else f"subspace_spans_{args.text}")
+    if args.report_only:
+        from lerobot.probes.subspace_report import render
+        render(output_dir, cache_dir, n_null=args.n_null, seed=args.seed, n_pivots=args.n_pivots)
+        return
     tolerances = sorted((float(t) for t in args.tolerances.split(",")), reverse=True)
     layers = [int(l) for l in args.layers.split(",")]
     analyze(cache_dir, output_dir, args.text, tolerances, layers, args.n_null, args.n_pivots, args.pivot_group, args.seed)

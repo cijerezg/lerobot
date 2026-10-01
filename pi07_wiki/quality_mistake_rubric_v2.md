@@ -34,6 +34,37 @@ values and worked cases. The annotator looks at the frames and decides.
 - **A case that fits nothing here** gets your best judgement, a note, and a line in the
   case library so the next annotator has it.
 
+### 1.1 Where the annotation work runs (user decision 2026-09-30)
+
+Keep the annotating agent and conversation in the current session. Run annotation
+rendering, video decoding, trace generation, compilation and validation on the Spark
+through SSH (`dgx`, also aliased `spark`). The workspace on both machines is
+`/home/user/Documents/Research/RL/LeRobot`. This computer is for orchestration,
+viewing retrieved images and writing review decisions; keep the substantial CPU,
+memory and disk work on Spark so this computer is free for other work. No separate
+agent installation or session on Spark is needed.
+
+- Use the existing `pilot_build.py` and `pilot_dense.py` on Spark, CPU only. Preserve
+  their 12-worker/slot limits and avoid overlapping builders that multiply that load.
+  Do not silently fall back to local rendering if Spark is unavailable.
+- Before the first remote batch, copy the current rubric, handoff instructions,
+  annotation work files and supporting scripts. Check the required dataset metadata,
+  arrays and video targets on Spark; transfer only missing material, preserving
+  existing datasets and caches. Render and inspect a small sample before continuing.
+- Fetch the needed sheets, strips, traces or short clips with `rsync`/`scp` and inspect
+  them in this session. Remote rendering does not replace visual review or change
+  any grading, confidence or second-reader requirement.
+- Save decisions and labels here, then copy only those changed files to Spark before
+  compilation or validation. Fetch the generated results and updated progress back
+  after each completed batch. Keep one writer per file: local review decisions and
+  instructions go to Spark; remote generated material and reports come back here.
+  Do not run competing annotation passes on the same files on both machines or use
+  a blanket two-way directory sync.
+- Hand over at a completed batch boundary. Preserve completed labels, strategy
+  decisions and progress, and resume from `PROGRESS.md` rather than stale counts in
+  an older prompt. Existing restrictions on dataset roots, caches and training code
+  still apply. This arrangement requires the current session to remain running.
+
 ## 2. What changed from v1
 
 | | v1 | v2 |
@@ -172,6 +203,10 @@ There is no segment-wide grade. Quality is local.
 |---|---|
 | `exemplary` (5) | from the start of the final approach (arm lined up on its grip point, heading in) to the lift. Back to the segment start only when the whole motion from there is one clean move. Never over a hover, a correction or a failed close. |
 | `strategy` (3) | a worse grip point for the class (its 3 row, 5.4), from the start of the final approach to the lift. The travel before it stays 4. |
+| release | both kinds: from the start of the final approach over the target to 0.5 s after the gripper is open |
+| carry | both kinds: the whole carry, from the lift to the arrival over the target; a grip already judged at the grasp is not judged again |
+| return | both kinds: the whole return, ending at arrival; time still at home after it is `idle` or `stall` |
+| after a failed close | the fresh final approach can be `exemplary` if it is clean; the failed close keeps its `attempt` span, which wins over the 5 |
 
 There are no grade-4 stretches: anything that only deserves 4 is left unmarked.
 
@@ -187,6 +222,11 @@ direction it comes, where it lets go. Judge it at the commit, from the wrist vie
 | How much margin? | a small error would still catch the object | a small error would miss it or knock it |
 | Approach direction? | fingers line up with the object before the descent | wrist twisted late, or the arm reaches across the object |
 | Release point? | over the middle of the container, low enough to land inside | at the rim, or from a height where it can bounce out |
+
+Apply the intent, not a per-task technique (user, 2026-09-29): 5 is the best practice
+for the object, done cleanly; 3 is a choice that makes a failure (miss, slip, knock,
+bounce-out, drape) more likely; everything else is 4. Class specifics are the
+annotator's judgement, recorded in the class file.
 
 Two examples from the user, to show the kind of call. They are not the rule: the
 general questions above are. The annotator works out the order for each object family
@@ -613,11 +653,11 @@ Written to new dataset directories, never in place.
 | item | state |
 |---|---|
 | loader: frame grade from the stretches (5.1); precision from windows | not built |
-| jug or pitcher taken by the lid from the top | 4 or 3, not decided |
-| clean final close right after a failed close: can it be exemplary | not decided |
-| dense-strip tool | `render_strips.strip` on a 1 to 2 s window; no new renderer needed |
-| side-by-side sheets | `render_strips.strip` per instance, stacked (`idle_and_sheets.py`); no new renderer needed |
-| strategy order per object family | sock and spray bottle given by the user (5.4); the rest proposed by the annotator, confirmed by the user |
+| jug or pitcher taken by the lid from the top | decided 2026-09-29: 4 when the hold looks secure, 3 when it hangs or tilts (the spray-bottle rule) |
+| clean final close right after a failed close: can it be exemplary | decided 2026-09-29: yes, over the fresh final approach (5.3) |
+| dense-strip tool | built: `migration/annotation_v2_2026-09-29/pilot_dense.py` (`render_strips.strip`, max 12 renders at once) |
+| side-by-side sheets, traces, coarse strips | built: `migration/annotation_v2_2026-09-29/pilot_build.py` (per class) |
+| strategy order per object family | sock and spray bottle given by the user (5.4); the rest set by the annotator from the intent in 5.4 (`classes/<class>/strategy/FINAL.md`); the user sees only recurring issues |
 | idle threshold per diverse source | state units differ; set on the first episodes of each source |
 | hover norms for the diverse sources | measure on the first annotated episodes |
 | the 09-28 hovering recording | not found on disk; not checked against the rubric |

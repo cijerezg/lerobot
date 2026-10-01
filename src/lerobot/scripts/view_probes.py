@@ -201,6 +201,7 @@ def build_index(val_dir: Path) -> dict:
                 {
                     "id": index["id"], "title": index["title"], "group": index["group"],
                     "claim": index.get("claim", ""), "doc": index.get("doc", ""),
+                    "claims": {}, "docs": {},
                     "has_manifest": index["has_manifest"],
                     "metrics": [], "panels": {}, "status": {}, "steps": [], "log": {},
                     "see_also": [], "extra": {},
@@ -214,6 +215,8 @@ def build_index(val_dir: Path) -> dict:
                     title=index["title"], group=index["group"], claim=index.get("claim", ""),
                     doc=index.get("doc", ""), has_manifest=True,
                 )
+            probe["docs"][str(step_num)] = index.get("doc", "")
+            probe["claims"][str(step_num)] = index.get("claim", "")
             probe["steps"].append(step_num)
             probe["status"][str(step_num)] = index.get("status", "info")
             probe["panels"][str(step_num)] = [
@@ -880,6 +883,7 @@ function orderedMetrics(p){ return [...p.metrics].sort((a, b) => (b.primary ? 1 
 // Primary metrics as stat tiles above the figures. Label, value, delta against the
 // previous step that has one, sparkline across steps, threshold status.
 function headlineTiles(p){
+  if(viewerOptions(p).show_headlines === false) return "";
   const primary = p.metrics.filter(m => m.primary);
   if(!primary.length) return "";
   return `<div class="tiles">${primary.map(m => {
@@ -953,7 +957,7 @@ function provenanceBox(p){
     ["Per episode", prov.frames_per_episode === undefined ? ""
       : `${prov.frames_per_episode} frames, evenly spaced` +
         (prov.image_stride ? `, snapped onto the stride-${prov.image_stride} grid` : "")],
-    ["Episode budget", prov.episode_budget === null || prov.episode_budget === undefined
+    ["Episode budget", prov.episode_budget === undefined ? "" : prov.episode_budget === null
       ? "every episode" : `${prov.episode_budget} episodes`],
     ["Per forward", forward],
     ...(prov.details || []).map(([k, v]) => [k, inline(v)]),
@@ -1234,7 +1238,7 @@ function drawMain(){
       directory is listed, documentation is the module docstring read off disk, and the numbers are
       raw summary keys with no labels, direction or thresholds.</div>`}
     <h4>What this probe measures</h4>
-    <div class="doc">${md(p.doc) || "<p>no module docstring</p>"}</div>
+    <div class="doc">${md((p.docs || {})[stepKey(si)] ?? p.doc) || "<p>no module docstring</p>"}</div>
     ${p.see_also && p.see_also.length ? `<h4>Read alongside</h4>${refChips(p.see_also)}` : ""}
     ${p.log[stepKey(si)] ? `<h4>Probe log</h4>
       <button onclick="showLog('${p.log[stepKey(si)]}')">Load probe.log</button>
@@ -1244,7 +1248,7 @@ function drawMain(){
   const canZoom = shown.some(pn => pn.kind === "image");
   main.innerHTML = `
     <div class="probehead"><h2>${esc(p.title)}</h2>
-      ${p.claim ? `<p class="claim">${inline(p.claim)}</p>` : ""}</div>
+      ${((p.claims || {})[stepKey(si)] ?? p.claim) ? `<p class="claim">${inline((p.claims || {})[stepKey(si)] ?? p.claim)}</p>` : ""}</div>
     <div class="figbar">${figureSelect(plan)}${facets}
       ${canZoom ? `<label>Zoom<select onchange="setZoom(this.value)">
         <option value="auto" ${zoom==="auto"?"selected":""}>auto</option>

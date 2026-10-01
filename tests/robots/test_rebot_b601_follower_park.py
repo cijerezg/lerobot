@@ -116,7 +116,7 @@ def test_park_on_step_receives_every_ramp_target(monkeypatch):
     # one call per ramp tick after the freeze command (not a ramp target), plus the settle
     # ticks of the single arrival check an instantly-arriving arm needs
     settle_ticks = int(module._PARK_FPS * module._PARK_SETTLE_CHECK_SEC)
-    assert len(seen) == len(robot.motors["shoulder_pan"].sent) - 1 + settle_ticks
+    assert len(seen) == len(robot.motors["shoulder_pan"].sent) - 1
     assert set(seen[0]) == {f"{name}.pos" for name in robot.motor_names}
     assert all(abs(seen[-1][f"{name}.pos"] - robot.config.park_pose[name]) < 1e-9 for name in robot.motor_names)
     ramp = len(seen) - settle_ticks
@@ -213,3 +213,23 @@ def test_configure_confirms_every_motor_enabled(monkeypatch):
     robot.motors["wrist_yaw"].status = 0
     with pytest.raises(RuntimeError, match="wrist_yaw reports status 0x0"):
         robot.configure()
+
+
+@pytest.mark.parametrize("fps", [10, 30, 60])
+def test_park_callback_rate_and_sent_actions(monkeypatch, fps):
+    robot = _robot(monkeypatch, moves=True)
+    seen = []
+    robot.park(on_step=seen.append, fps=fps)
+    ramp_ticks = math.ceil(fps * max(abs(v) for v in START.values()) / robot.config.park_deg_per_s)
+    assert len(seen) == ramp_ticks + math.ceil(fps * module._PARK_SETTLE_CHECK_SEC)
+    for name, motor in robot.motors.items():
+        assert [action[f"{name}.pos"] for action in seen] == pytest.approx(motor.sent[1:])
+        assert max(abs(b - a) for a, b in zip(motor.sent, motor.sent[1:])) <= robot.config.park_deg_per_s / fps + 1e-6
+
+
+def test_park_rejects_invalid_fps_before_moving(monkeypatch):
+    robot = _robot(monkeypatch, moves=True)
+    for fps in (0, -1, math.nan, math.inf):
+        with pytest.raises(ValueError, match="fps"):
+            robot.park(fps=fps)
+    assert not any(motor.sent for motor in robot.motors.values())

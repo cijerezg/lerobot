@@ -285,6 +285,8 @@ _VALIDATION_PROBES = (
         "enable_domain_representations", "lerobot.probes.domain_representations", "domain_representations"
     ),
     _ValidationProbeSpec("enable_conditions_matrix", "lerobot.probes.conditions_matrix", "conditions_matrix"),
+    # Must follow conditions_matrix so both probes share one capture.
+    _ValidationProbeSpec("enable_subspace_spans", "lerobot.probes.subspace_spans", "subspace_spans"),
     _ValidationProbeSpec("enable_embodiment_swap", "lerobot.probes.embodiment_swap", "embodiment_swap"),
 )
 

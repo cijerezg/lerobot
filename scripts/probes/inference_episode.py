@@ -60,7 +60,7 @@ def write_config(input_dir: Path, run_dir: Path) -> Path:
     for key in p:
         if key.startswith("enable_"):
             p[key] = key.removeprefix("enable_") in args.probes
-    p["max_episodes"] = 1
+    p["max_episodes"] = json.loads((input_dir / "meta/info.json").read_text())["total_episodes"]
     p["trace_anchor_stride_s"] = args.trace_stride_s
     p["trace_max_anchors_per_episode"] = 64
     path = input_dir / f"config_probe-{step}.yaml"

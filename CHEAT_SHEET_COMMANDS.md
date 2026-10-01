@@ -27,14 +27,15 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/push-book-open-box-v1 \
-    --dataset.single_task="push off the books and open the box" \
+    --dataset.repo_id=cijerezg/close-case-v1 \
+    --dataset.single_task="close the headphone case" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \
     --dataset.episode_time_s=600 \
     --dataset.reset_time_s=120 \
     --dataset.push_to_hub=false \
+    --teleop.variant=102HD \
     --display_data=true
 
 ## New dataset prep (once per dataset)

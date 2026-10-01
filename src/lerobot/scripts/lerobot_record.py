@@ -17,6 +17,12 @@ Records a dataset via teleoperation.  This is a pure data-collection
 tool — no policy inference.  For deploying trained policies, use
 ``lerobot-rollout`` instead.
 
+For the ReBot B601 follower, press H while recording to park and end the episode.
+The return motion (including RGB/depth) is recorded. With --teleop.variant=102HD,
+the leader follows the park ramp and is released after arrival. The follower holds
+during reset; an encoder-only leader must be returned to the matching pose by hand.
+Right/left arrows and Escape retain their normal end/re-record/stop controls.
+
 Requires: pip install 'lerobot[core_scripts]'  (includes dataset + hardware + viz extras)
 
 Example:
@@ -87,6 +93,7 @@ lerobot-record \\
 """
 
 import logging
+import math
 import time
 from dataclasses import asdict, dataclass
 from pprint import pformat
@@ -152,6 +159,7 @@ from lerobot.teleoperators import (  # noqa: F401
     unitree_g1,
 )
 from lerobot.teleoperators.keyboard import KeyboardTeleop
+from lerobot.teleoperators.utils import TeleopFeedbackError
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.feature_utils import build_dataset_frame, combine_feature_dicts
 from lerobot.utils.import_utils import register_third_party_plugins
@@ -217,6 +225,102 @@ class RecordConfig:
 """
 
 
+class _HomeInterrupted(Exception):
+    """An existing recording hotkey interrupted the return motion."""
+
+
+def _park_and_record(
+    robot: rebot_b601_follower.RebotB601Follower,
+    teleop: Teleoperator | list[Teleoperator] | None,
+    events: dict,
+    fps: int,
+    dataset: LeRobotDataset,
+    robot_observation_processor: RobotProcessorPipeline,
+    single_task: str | None,
+    display_data: bool,
+    display_compressed_images: bool,
+    depth_stride: int,
+) -> RobotAction:
+    """Record the existing ReBot park routine, then return the pose to hold at reset."""
+
+    def on_step(action):
+        if events["exit_early"] or events["stop_recording"]:
+            raise _HomeInterrupted
+        obs = robot.get_observation()
+        obs_processed = robot_observation_processor(obs)
+        observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
+        action_frame = build_dataset_frame(dataset.features, action, prefix=ACTION)
+        dataset.add_frame({**observation_frame, **action_frame, "task": single_task})
+        write_depth(dataset, obs, depth_stride)
+        if display_data:
+            log_rerun_data(
+                observation=obs_processed, action=action, compress_images=display_compressed_images
+            )
+
+    mirror_leader = (
+        isinstance(teleop, rebot_102_leader.RebotArm102Leader) and teleop.config.variant == "102HD"
+    )
+    leader_alive = mirror_leader
+
+    def feed_leader(action):
+        nonlocal leader_alive
+        if leader_alive:
+            try:
+                teleop.send_feedback(action)
+            except TeleopFeedbackError:
+                leader_alive = False
+                logging.exception("Leader feedback fault; continuing to park the follower.")
+
+    def park_step(action):
+        feed_leader(action)
+        on_step(action)
+
+    logging.info("Returning home; recording the park motion until arrival is confirmed.")
+    try:
+        if mirror_leader:
+            # Hold the follower and smoothly close any tracking gap before mirroring.
+            obs = robot.get_observation()
+            target = {key: obs[key] for key in robot.action_features}
+            robot.send_action(target)
+            try:
+                teleop.enable_torque()
+                current = teleop.get_action()
+                gap = max(abs(target[key] - current[key]) for key in target)
+                steps = max(math.ceil(fps), math.ceil(fps * gap / robot.config.park_deg_per_s))
+                for step in range(1, steps + 1):
+                    tick_start = time.perf_counter()
+                    if events["exit_early"] or events["stop_recording"]:
+                        raise _HomeInterrupted
+                    t = step / steps
+                    feed_leader({key: current[key] + (target[key] - current[key]) * t for key in target})
+                    on_step(target)
+                    precise_sleep(max(0.0, 1 / fps - (time.perf_counter() - tick_start)))
+                    if not leader_alive:
+                        break
+            except TeleopFeedbackError:
+                leader_alive = False
+                logging.exception("Leader could not engage feedback; parking the follower alone.")
+        robot.park(on_step=park_step, fps=fps)
+    except _HomeInterrupted:
+        # Cancel the in-flight target, then preserve normal stop/re-record semantics.
+        events["exit_early"] = False
+        obs = robot.get_observation()
+        hold_position = {key: obs[key] for key in robot.action_features}
+        robot.send_action(hold_position)
+        logging.info("Return home interrupted by recording hotkey; holding current position.")
+        return hold_position
+    finally:
+        events["return_home"] = False
+        if mirror_leader:
+            teleop.disable_torque()
+    logging.info(
+        "Home reached. Leader released; episode ended."
+        if mirror_leader
+        else "Home reached. Episode ended; return the leader to home before the next episode."
+    )
+    return {f"{name}.pos": value for name, value in robot.config.park_pose.items()}
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -238,7 +342,8 @@ def record_loop(
     display_data: bool = False,
     display_compressed_images: bool = False,
     depth_stride: int = 1,
-):
+    hold_position: RobotAction | None = None,
+) -> RobotAction | None:
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
@@ -279,6 +384,22 @@ def record_loop(
             events["exit_early"] = False
             break
 
+        if events.get("return_home"):
+            events["return_home"] = False
+            if dataset is not None and isinstance(robot, rebot_b601_follower.RebotB601Follower):
+                return _park_and_record(
+                    robot=robot,
+                    teleop=teleop,
+                    events=events,
+                    fps=fps,
+                    dataset=dataset,
+                    robot_observation_processor=robot_observation_processor,
+                    single_task=single_task,
+                    display_data=display_data,
+                    display_compressed_images=display_compressed_images,
+                    depth_stride=depth_stride,
+                )
+
         # Get robot observation
         obs = robot.get_observation()
 
@@ -289,7 +410,11 @@ def record_loop(
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
         # Get action from teleop
-        if isinstance(teleop, Teleoperator):
+        if hold_position is not None:
+            # Keep the follower parked while the user resets the scene and leader.
+            action_values = hold_position
+            robot_action_to_send = hold_position
+        elif isinstance(teleop, Teleoperator):
             act = teleop.get_action()
             if robot.name == "unitree_g1":
                 teleop.send_feedback(obs)
@@ -444,7 +569,12 @@ def record(
         if teleop is not None:
             teleop.connect()
 
-        listener, events = init_keyboard_listener()
+        enable_return_home = isinstance(robot, rebot_b601_follower.RebotB601Follower)
+        listener, events = init_keyboard_listener(enable_return_home=enable_return_home)
+        if enable_return_home:
+            logging.info(
+                "Recording controls: H = park and end episode, right = end, left = re-record, Esc = stop."
+            )
 
         if not cfg.dataset.streaming_encoding:
             logging.info(
@@ -455,7 +585,7 @@ def record(
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-                record_loop(
+                hold_position = record_loop(
                     robot=robot,
                     events=events,
                     fps=cfg.dataset.fps,
@@ -477,6 +607,11 @@ def record(
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
+                    if hold_position is not None:
+                        logging.info(
+                            "Follower holding. Reset the scene and return the leader to the matching pose "
+                            "before the reset timer expires (right arrow skips the remaining reset time)."
+                        )
 
                     record_loop(
                         robot=robot,
@@ -489,6 +624,7 @@ def record(
                         control_time_s=cfg.dataset.reset_time_s,
                         single_task=cfg.dataset.single_task,
                         display_data=cfg.display_data,
+                        hold_position=hold_position,
                     )
 
                 if events["rerecord_episode"]:

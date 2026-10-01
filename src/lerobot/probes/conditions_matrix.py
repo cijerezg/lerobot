@@ -1123,7 +1123,7 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
               "with real versus constant task and step text?",
         summary=summary, metrics=metrics, panels=panels, status="info",
         extra={"headline_layer": layer, "peak_layer_exploratory": summary["peak_layer"], "cells": summary["cells"]},
-        see_also=["domain_representations", "input_swap", "subtask_sweep"],
+        see_also=["subspace_spans", "domain_representations", "input_swap", "subtask_sweep"],
     )
 
 
@@ -1166,6 +1166,45 @@ def _has_windows(root) -> bool:
     return os.path.isfile(os.path.join(str(root), "meta", "subtask_windows.json"))
 
 
+def collect_cache(adapter, dataset, cfg, output_dir: str) -> None:
+    """Collect the shared conditions/subspace representations without either analysis."""
+    p = cfg.probe_parameters
+    makedirs(output_dir)
+    cache_dir = os.path.join(output_dir, "cache")
+    rng = np.random.RandomState(int(p.random_seed))
+    datasets: dict = {}
+    samples: list[dict] = []
+    for root in _rebot_roots(cfg):
+        if not _has_windows(root):
+            logging.warning(f"  {root}: no meta/subtask_windows.json, skipped")
+            continue
+        name = os.path.basename(os.path.normpath(root))
+        datasets[name] = load_extra_dataset(cfg.dataset.repo_id, root)
+        samples += _rebot_samples(datasets[name], cfg, name, holdout=False, rng=rng)
+    if dataset is not None and _has_windows(dataset.root):
+        name = f"holdout:{os.path.basename(os.path.normpath(str(dataset.root)))}"
+        datasets[name] = dataset
+        samples += _rebot_samples(dataset, cfg, name, holdout=True, rng=rng)
+    buffers: dict = {}
+    if getattr(cfg, "diverse", None) is not None and cfg.diverse.enabled:
+        buffers = _open_diverse_buffers(cfg)
+        samples += _diverse_samples(buffers["diverse"], cfg, "diverse", holdout=False, rng=rng)
+        if "diverse_holdout" in buffers:
+            samples += _diverse_samples(buffers["diverse_holdout"], cfg, "diverse_holdout", holdout=True, rng=rng)
+    # Which frames are collected is decided above; this only fixes the order they are
+    # read in. Cell-major order walks every episode once per cell, and each hop is a
+    # fresh video seek — storage order keeps the decoder moving forward.
+    samples = _bound_samples(samples, int(p.conditions_max_frames), int(p.conditions_episodes_per_cell), int(p.random_seed))
+    samples.sort(key=lambda s: (s["kind"], s["source_key"], s["index"]))
+    plan = _plan_summary(samples)
+    for robot, cells in plan.items():
+        logging.info(f"  {robot}: " + "  ".join(f"{c} {v['frames']}f/{v['episodes']}e" for c, v in cells.items()))
+    logging.info(f"  {len(samples)} frames x {len(TEXT_CONDITIONS)} text conditions")
+    with open(os.path.join(output_dir, "sampling_plan.json"), "w") as f:
+        json.dump({"protocol": PROTOCOL, "max_frames": p.conditions_max_frames, "captures": len(samples) * 2, "cells": plan, "samples": samples}, f, indent=2)
+    collect(adapter, cfg, samples, datasets, buffers, cache_dir)
+
+
 def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     """``dataset`` is the held-out ReBot set (its windows are scored, never fitted); the
     ReBot training roots come from ``conditions_rebot_roots`` or the config's sources; the
@@ -1174,38 +1213,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     makedirs(output_dir)
     cache_dir = os.path.join(output_dir, "cache")
     if p.mode in ("collect", "all"):
-        rng = np.random.RandomState(int(p.random_seed))
-        datasets: dict = {}
-        samples: list[dict] = []
-        for root in _rebot_roots(cfg):
-            if not _has_windows(root):
-                logging.warning(f"  {root}: no meta/subtask_windows.json, skipped")
-                continue
-            name = os.path.basename(os.path.normpath(root))
-            datasets[name] = load_extra_dataset(cfg.dataset.repo_id, root)
-            samples += _rebot_samples(datasets[name], cfg, name, holdout=False, rng=rng)
-        if dataset is not None and _has_windows(dataset.root):
-            name = f"holdout:{os.path.basename(os.path.normpath(str(dataset.root)))}"
-            datasets[name] = dataset
-            samples += _rebot_samples(dataset, cfg, name, holdout=True, rng=rng)
-        buffers: dict = {}
-        if getattr(cfg, "diverse", None) is not None and cfg.diverse.enabled:
-            buffers = _open_diverse_buffers(cfg)
-            samples += _diverse_samples(buffers["diverse"], cfg, "diverse", holdout=False, rng=rng)
-            if "diverse_holdout" in buffers:
-                samples += _diverse_samples(buffers["diverse_holdout"], cfg, "diverse_holdout", holdout=True, rng=rng)
-        # Which frames are collected is decided above; this only fixes the order they are
-        # read in. Cell-major order walks every episode once per cell, and each hop is a
-        # fresh video seek — storage order keeps the decoder moving forward.
-        samples = _bound_samples(samples, int(p.conditions_max_frames), int(p.conditions_episodes_per_cell), int(p.random_seed))
-        samples.sort(key=lambda s: (s["kind"], s["source_key"], s["index"]))
-        plan = _plan_summary(samples)
-        for robot, cells in plan.items():
-            logging.info(f"  {robot}: " + "  ".join(f"{c} {v['frames']}f/{v['episodes']}e" for c, v in cells.items()))
-        logging.info(f"  {len(samples)} frames x {len(TEXT_CONDITIONS)} text conditions")
-        with open(os.path.join(output_dir, "sampling_plan.json"), "w") as f:
-            json.dump({"protocol": PROTOCOL, "max_frames": p.conditions_max_frames, "captures": len(samples) * 2, "cells": plan, "samples": samples}, f, indent=2)
-        collect(adapter, cfg, samples, datasets, buffers, cache_dir)
+        collect_cache(adapter, dataset, cfg, output_dir)
     if p.mode in ("plot", "all"):
         rows, arrays, present = _load_cache(cache_dir)
         return analyze(rows, arrays, present, cfg, output_dir)

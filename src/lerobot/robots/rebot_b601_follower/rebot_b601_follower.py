@@ -327,36 +327,43 @@ class RebotB601Follower(Robot):
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
     @check_if_not_connected
-    def park(self, on_step=None) -> None:
+    def park(self, on_step=None, *, fps: float = _PARK_FPS) -> None:
         """Freeze, descend to config.park_pose at config.park_deg_per_s, verify arrival.
 
         `on_step`, when given, receives each ramp target ({joint}.pos -> deg) right after it
         is sent, so a mirrored device (the actuated leader) rides the same descent.
         Raises RuntimeError, with torque still on, if any joint ends farther than
-        config.park_tolerance_deg from the park pose.
+        config.park_tolerance_deg from the park pose. ``fps`` sets the callback/control rate;
+        callback time is included in each tick so recording can run at dataset FPS.
         """
+        if not math.isfinite(fps) or fps <= 0:
+            raise ValueError("Parking fps must be finite and positive")
         present = self._present_pos()
         self.send_action({f"{name}.pos": pos for name, pos in present.items()})
         target = self.config.park_pose
         gap = max(abs(target[name] - present[name]) for name in target)
-        steps = max(int(_PARK_FPS), math.ceil(_PARK_FPS * gap / self.config.park_deg_per_s))
-        logger.info(f"{self} parking: largest gap {gap:.1f} deg, {steps / _PARK_FPS:.1f} s")
+        steps = max(math.ceil(fps), math.ceil(fps * gap / self.config.park_deg_per_s))
+        logger.info(f"{self} parking: largest gap {gap:.1f} deg, {steps / fps:.1f} s")
         for step in range(1, steps + 1):
+            tick_start = time.perf_counter()
             t = step / steps
             step_target = {f"{name}.pos": present[name] + (target[name] - present[name]) * t for name in target}
-            self.send_action(step_target)
+            sent_target = self.send_action(step_target)
             if on_step is not None:
-                on_step(step_target)
-            time.sleep(1.0 / _PARK_FPS)
+                on_step(sent_target)
+            time.sleep(max(0.0, 1.0 / fps - (time.perf_counter() - tick_start)))
         # Settle: the motors lag the ramp (elbow 13 deg after a 134 deg descent on 2026-09-04,
         # closed on its own later), so re-check arrival every _PARK_SETTLE_CHECK_SEC up to
         # _PARK_SETTLE_MAX_SEC. A mirrored leader keeps getting its target meanwhile (its
         # feedback watchdog is 0.5 s).
         for check in range(1, int(_PARK_SETTLE_MAX_SEC / _PARK_SETTLE_CHECK_SEC) + 1):
-            for _ in range(int(_PARK_FPS * _PARK_SETTLE_CHECK_SEC)):
+            for _ in range(max(1, math.ceil(fps * _PARK_SETTLE_CHECK_SEC))):
+                tick_start = time.perf_counter()
+                # Re-send the final target so relative target limits can converge.
+                sent_target = self.send_action(step_target)
                 if on_step is not None:
-                    on_step(step_target)
-                time.sleep(1.0 / _PARK_FPS)
+                    on_step(sent_target)
+                time.sleep(max(0.0, 1.0 / fps - (time.perf_counter() - tick_start)))
             present = self._present_pos()
             error = {name: abs(present[name] - target[name]) for name in target}
             worst = max(error, key=error.get)

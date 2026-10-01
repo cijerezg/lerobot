@@ -121,13 +121,14 @@ def predict_action(
     return action
 
 
-def init_keyboard_listener():
+def init_keyboard_listener(*, enable_return_home: bool = False):
     """
     Initializes a non-blocking keyboard listener for real-time user interaction.
 
     This function sets up a listener for specific keys (right arrow, left arrow, escape) to control
     the program flow during execution, such as stopping recording or exiting loops. It gracefully
     handles headless environments where keyboard listening is not possible.
+    With enable_return_home, H requests a return home before ending the episode.
 
     Returns:
         A tuple containing:
@@ -141,6 +142,7 @@ def init_keyboard_listener():
     events["exit_early"] = False
     events["rerecord_episode"] = False
     events["stop_recording"] = False
+    events["return_home"] = False
 
     if is_headless():
         logging.warning(
@@ -161,6 +163,8 @@ def init_keyboard_listener():
                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
                 events["rerecord_episode"] = True
                 events["exit_early"] = True
+            elif enable_return_home and (getattr(key, "char", None) or "").lower() == "h":
+                events["return_home"] = True
             elif key == keyboard.Key.esc:
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True

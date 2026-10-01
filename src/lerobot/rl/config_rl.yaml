@@ -341,6 +341,13 @@ probe_parameters:
   conditions_episodes_per_cell: 10
   conditions_max_frames: 600
   conditions_headline_layer: 28
+  # Key geometry probe; shares the conditions-matrix capture and frame budget.
+  subspace_text: real
+  subspace_tolerances: 0.1,0.01,0.001
+  subspace_layers: 14,15,16,28,32
+  subspace_n_null: 100
+  subspace_n_pivots: 12
+  subspace_pivot_group: img_external_0
   embodiment_swap_n_frames: 6
   embodiment_swap_n_seeds: 3
   embodiment_swap_max_frames: 96
@@ -359,6 +366,7 @@ probe_parameters:
   enable_metadata_steering: false
   enable_embodiment_swap: false
   enable_conditions_matrix: false
+  enable_subspace_spans: false
   enable_depth_modality: false
   enable_depth_event: false
   enable_attention_budget: false
