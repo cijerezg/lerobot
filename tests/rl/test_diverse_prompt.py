@@ -165,7 +165,7 @@ def test_a_string_the_master_already_has_is_reused_not_duplicated(selection) -> 
 def _prompt(metadata) -> str:
     return _build_robot_text(
         task="arrange the fruit in the basket",
-        state_string="",
+        discrete_state_string="",
         num_images=2,
         embodiment="Franka Panda",
         current_subtask="grasp the apple",
@@ -252,7 +252,7 @@ def test_an_explicit_control_mode_string_wins_and_empty_means_no_clause() -> Non
 def _control_mode_prompt(control_mode, embodiment="Franka Panda") -> str:
     return _build_robot_text(
         task="arrange the fruit in the basket",
-        state_string="<state_1>",
+        discrete_state_string="<state_1>",
         num_images=2,
         embodiment=embodiment,
         control_mode=control_mode,
@@ -279,10 +279,10 @@ def test_a_rebot_row_opens_with_the_control_mode_sentence() -> None:
 
 def test_none_control_mode_is_the_byte_identical_legacy_prompt() -> None:
     legacy = _build_robot_text(
-        task="fold the towel", state_string="<state_1>", num_images=1, embodiment="UR5"
+        task="fold the towel", discrete_state_string="<state_1>", num_images=1, embodiment="UR5"
     )
     assert _build_robot_text(
-        task="fold the towel", state_string="<state_1>", num_images=1, embodiment="UR5",
+        task="fold the towel", discrete_state_string="<state_1>", num_images=1, embodiment="UR5",
         control_mode=None,
     ) == legacy
     assert "control mode" not in legacy
@@ -295,7 +295,7 @@ def test_none_control_mode_is_the_byte_identical_legacy_prompt() -> None:
 
 
 def test_the_generation_prompt_carries_the_same_clause() -> None:
-    kwargs = {"task": "fold the towel", "state_string": "<state_1>", "num_images": 1}
+    kwargs = {"task": "fold the towel", "discrete_state_string": "<state_1>", "num_images": 1}
     with_clause = _build_subtask_generation_text(**kwargs, embodiment="UR5", control_mode="joint")
     assert "user\nThe robot is a UR5. The control mode is joint space. The task is to fold the towel." in with_clause
     rebot = _build_subtask_generation_text(**kwargs, control_mode="joint")

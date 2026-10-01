@@ -72,27 +72,25 @@ def test_image_state_norm_excludes_prompt_and_depth_placeholders():
         image_state_gradient_fields(gradient)
 
 
-def test_continuous_state_uses_projected_placeholder_only():
+def test_non_discrete_state_records_are_rejected():
     from lerobot.probes.critic_gradient_view import image_state_gradient_fields
-    gradient = dict(state_format='continuous', continuous_state_consumed=True, norm=1000,
-                    groups={'img_external_0': {'norm': 3}, 'img_wrist_0': {'norm': 4}},
-                    tokens=[{'group': 'state', 'text': '<extra_0>', 'norm': 12},
-                            {'group': 'state', 'text': ' The', 'norm': 100},
-                            {'group': 'history_placeholders', 'text': '<extra_0>', 'norm': 100},
-                            {'group': 'state', 'text': '<state_5>', 'norm': 100}])
-    result = image_state_gradient_fields(gradient)
-    assert result['state_value_grad_norm'] == 12
-    assert result['image_state_grad_norm'] == 13
-    assert result['state_value_token_count'] == 1
+    gradient = dict(state_format='continuous', norm=1000,
+                    groups={'img_external_0': {'norm': 3}},
+                    tokens=[{'group': 'state', 'text': '<extra_0>', 'norm': 12}])
+    with pytest.raises(ValueError, match='discrete'):
+        image_state_gradient_fields(gradient)
+    gradient.pop('state_format')
+    with pytest.raises(ValueError, match='discrete'):
+        image_state_gradient_fields(gradient)
 
 
 def test_depth_included_only_when_real_measurements_are_consumed():
     from lerobot.probes.critic_gradient_view import image_state_gradient_fields
-    gradient = dict(state_format='continuous', continuous_state_consumed=True,
-                    raw_depth_consumed=True, norm=1000,
+    gradient = dict(state_format='discrete', raw_depth_consumed=True, norm=1000,
                     groups={'img_external_0': {'norm': 3}, 'depth': {'norm': 12},
                             'depth_placeholders': {'norm': 100}},
-                    tokens=[{'group': 'state', 'text': '<extra_0>', 'norm': 4}])
+                    tokens=[{'group': 'state', 'text': '<state_7>', 'norm': 4},
+                            {'group': 'history_placeholders', 'text': '<extra_0>', 'norm': 100}])
     result = image_state_gradient_fields(gradient)
     assert result['image_state_grad_norm'] == 5
     assert result['observation_grad_norm'] == 13
@@ -102,7 +100,4 @@ def test_depth_included_only_when_real_measurements_are_consumed():
     gradient['raw_depth_consumed'] = True
     gradient['groups'].pop('depth')
     with pytest.raises(ValueError, match='missing its gradient group'):
-        image_state_gradient_fields(gradient)
-    gradient['continuous_state_consumed'] = False
-    with pytest.raises(ValueError, match='confirmation'):
         image_state_gradient_fields(gradient)

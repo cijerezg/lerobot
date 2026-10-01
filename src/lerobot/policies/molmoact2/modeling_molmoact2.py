@@ -672,21 +672,21 @@ def _patch_leaf_safe_input_embedding_update(backbone: Any) -> None:
                     flat_x[is_image_patch].detach().float().square().mean().sqrt()
                 )
             if state_values is not None:
-                # Continuous state tokens (04_memory.md §2.4): projected states ADDED
-                # onto the CONTINUOUS_STATE_TOKEN placeholder embeddings, mirroring the
-                # image-patch scatter. The mask says which rows rendered a placeholder:
-                # the current state under state_format "continuous", the past states
-                # unless the sample's history clause was dropped. Row order within a
-                # sample is prompt order (current, then oldest → newest), and the
-                # masked gather walks samples in order, so it lines up with the
-                # flattened placeholder positions.
+                # Continuous state-history tokens (04_memory.md §2.4): projected past
+                # states ADDED onto the STATE_HISTORY_TOKEN placeholder embeddings,
+                # mirroring the image-patch scatter. The mask says which rows rendered
+                # a placeholder: all of a sample's past states, unless its history
+                # clause was dropped. Row order within a sample is prompt order
+                # (oldest → newest), and the masked gather walks samples in order, so
+                # it lines up with the flattened placeholder positions. The current
+                # state is digit tokens in the text and never scatters.
                 embeds, mask, token_id = state_values  # (B, N, D), (B, N) bool, int
                 is_state = input_ids == token_id
                 counts = is_state.sum(dim=1)
                 expected = mask.sum(dim=1)
                 if not bool((counts == expected).all()):
                     raise RuntimeError(
-                        f"Continuous-state placeholders per sample {counts.tolist()} do not "
+                        f"State-history placeholders per sample {counts.tolist()} do not "
                         f"match the shipped state rows {expected.tolist()}."
                     )
                 flat_x[is_state.reshape(-1)] += embeds.to(flat_x.dtype)[mask]
@@ -1684,12 +1684,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
             # Keep the existing telemetry denominator for continuity with old runs.
             self._depth_embed_rms = _token_embedding_rms(backbone)
 
-        # Continuous state tokens (04_memory.md §2.4, π0.7): one shared linear
-        # projecting a proprio state — every past one, and the current one under
-        # state_format "continuous" — into the text embedding space, scattered onto
-        # CONTINUOUS_STATE_TOKEN placeholders. Fresh weights, absent from every
+        # Continuous state-history tokens (04_memory.md §2.4): one shared linear
+        # projecting a past proprio state into the text embedding space, scattered
+        # onto STATE_HISTORY_TOKEN placeholders. Fresh weights, absent from every
         # pretrained checkpoint — whitelisted in _apply_actor_freeze and given its
-        # own optimizer group in _split_depth_group.
+        # own optimizer group in _split_depth_group. (Module name kept as
+        # state_projector so checkpoints saved under it keep loading.)
         self.state_projector: nn.Linear | None = None
         state_feature = self.config.input_features.get(OBS_STATE)
         if state_feature is not None and state_feature.shape:
@@ -1939,8 +1939,8 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _stash_history_inputs(self, batch: dict[str, Tensor]) -> None:
         """MEM short-term memory transport (04_memory.md §2.4). History rides the
         batch, not the backbone kwargs: the video-encoder frames are stashed on the
-        vision backbone (consumed inside encode_image) and the projected states
-        (current + past) on the backbone (consumed inside build_input_embeddings). Consume-once
+        vision backbone (consumed inside encode_image) and the projected past states
+        on the backbone (consumed inside build_input_embeddings). Consume-once
         semantics on both stashes; every forward path funnels through
         _model_inputs, so a stash never crosses forwards. Single inference thread
         only — same constraint as the attention-capture patches."""

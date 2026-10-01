@@ -16,18 +16,14 @@ COLORS = re.compile(r'\b(?:beige|black|blue|brown|gray|green|grey|navy|orange|pi
 def image_state_gradient_fields(gradient):
     """Compute disjoint RGB/state/depth norms and their observation norm.
 
-    State values are the discrete <state_N> tokens, or the continuous state's
-    <extra_0> position, explicitly confirmed to carry the state_projector output.
-    State clause wording, delimiters, depth placeholders and other prompt tokens
-    are excluded. The token blocks are disjoint, so their squared norms add.
+    State values are the discrete <state_N> tokens. State clause wording,
+    delimiters, depth placeholders and other prompt tokens are excluded. The token
+    blocks are disjoint, so their squared norms add.
     """
-    value_token = {'discrete': r'<state_\d+>', 'continuous': r'<extra_0>'}.get(gradient.get('state_format'))
-    if value_token is None:
-        raise ValueError('Image/state report requires saved discrete or continuous state-value token gradients')
-    if gradient.get('state_format') == 'continuous' and not gradient.get('continuous_state_consumed'):
-        raise ValueError('Continuous-state gradient requires confirmation that projected state was consumed')
+    if gradient.get('state_format') != 'discrete':
+        raise ValueError('Image/state report requires saved discrete state-value token gradients')
     state = [t['norm'] for t in gradient['tokens']
-             if t['group'] == 'state' and re.fullmatch(value_token, t['text'])]
+             if t['group'] == 'state' and re.fullmatch(r'<state_\d+>', t['text'])]
     images = [group['norm'] for name, group in gradient['groups'].items()
               if (name.startswith('img_') or name == 'other_image_patches') and group['norm'] is not None]
     if not state or not images:

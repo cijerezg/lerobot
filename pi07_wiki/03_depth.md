@@ -495,9 +495,10 @@ tokens. Missing depth uses the encoder's learned null bank, including per-row
 presence masks in mixed datasets.
 
 Continuous proprioception uses an independent trainable linear `state_projector`:
-normalized current/history state rows are projected to the fusion width and added
-to their `<extra_0>` placeholders. `state_values_mask` selects the rows rendered in
-the prompt. The active training and validation configs use `state_format: continuous`.
+normalized past-state rows (the history clause, when enabled) are projected to the
+fusion width and added to their `<extra_0>` placeholders. `state_values_mask`
+selects the rows rendered in the prompt. The current state reaches the critic as
+the discrete `<state_k>` text tokens through the frozen encoder.
 
 Text embeddings and RGB features come from the critic's own frozen encoder, kept
 in eval mode. State/depth injection happens after that frozen boundary, so TD

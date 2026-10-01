@@ -26,7 +26,7 @@ disabled by default and is independent of the history enable switch.
 ```
 The task is to {task}.
 [ The current step is {subtask}. ]                                   ← HL subtask
-The current state of the robot is {discrete state string | <extra_0>}.   ← state_format (02 §4.1)
+The current state of the robot is <state_start><state_k>…<state_end>.    ← discrete digit tokens (02 §4.1)
 [ The recent states of the robot, oldest to newest, are: <T_h continuous positions> ]  ← proprio history (§2.4)
 [ The quality is {q} of 5. ] [ The robot made {a mistake | no mistakes}. ]     ← metadata
 Given these, what action should the robot take to complete the task?
@@ -258,13 +258,15 @@ the scatter mechanism image patches already use
 Which timestep is which = sequence order. Three positions replace the digit-string
 rendering of the three historical states, and the LLM gets full float precision instead of parsing
 digits. $W$ is the **only new parameter in the whole build** → freeze-whitelist
-+ optimizer-group entries required (the pointmap gate lesson). Since 2026-09-23
-the **current state goes through the same $W$** onto its own placeholder
-(`state_format: continuous`, π0.7; [02 §4.1](02_base_model.md)) — the prompt
-keeps the two clauses, current first, and `state_values_mask` tells the scatter
-which rows rendered. The generation prompt keeps its §1.2 shape (no
-proprio-history clause, so only the current-state row ships) but HL decodes see
-image history automatically through the shared encoder.
++ optimizer-group entries required (the pointmap gate lesson). The pack step
+ships the past states as `state_values` (B, T_h, D) with `state_values_mask`
+(B, T_h) telling the scatter which rows rendered (none for a sample whose
+history clause was dropped); nothing ships without a history window. The
+**current state stays discrete** — routing it through the same $W$
+(`state_format: continuous`, 2026-09-23 → 2026-10-01) was tried and removed
+([02 §4.1](02_base_model.md)). The generation prompt keeps its §1.2 shape (no
+proprio-history clause, so no state rows ship) but HL decodes see image history
+automatically through the shared encoder.
 
 Not adopted from our own parked list: gates, HAMLET moment tokens,
 DepthStream-style streams — MEM ships none of them. Build checklist: Phase 6 of

@@ -1446,9 +1446,10 @@ class MolmoAct2Adapter(ProbablePolicy):
         ]
         result["value"] = float(out["value"].item())
         result["boundary"] = "encoded RGB/text and projected state/depth tokens entering critic fusion" if projected_inputs else "all active frozen-encoder output tokens entering critic fusion"
-        result["state_format"] = str(getattr(self._cfg.policy, "state_format", "discrete"))
+        # The current state is always the discrete <state_k> digit tokens; the record
+        # keeps the field so saved runs and the viewer read one schema.
+        result["state_format"] = "discrete"
         result["raw_depth_consumed"] = depth_consumed
-        result["continuous_state_consumed"] = projected_inputs and torch.is_tensor(batch.get("state_values"))
         result["raw_history_consumed"] = False
         return result
 

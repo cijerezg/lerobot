@@ -556,9 +556,9 @@ Released checkpoint tokens (from `MolmoAct2Config.__init__`):
 
 State input is quantized into one of `num_state_tokens=256` bins per
 state dimension, and the joint sequence is wrapped by
-`<state_start> ... <state_end>` (continuous state embeddings are
-**not** supported by this HF export — `state_format='discrete'` is
-enforced at construction time).
+`<state_start> ... <state_end>` (continuous current-state embeddings are
+**not** supported by this HF export; the LeRobot wrapper only projects
+*past* states, for the optional history clause).
 
 ---
 
