@@ -38,6 +38,10 @@ is spelled out:
 * the per-anchor ``precision`` (1-5) and ``contact`` (code 0-14, contact_vocab.py) read
   off the same atom from their optional sidecars. Unlike speed, a missing sidecar or a
   missing atom is not an error: the row carries -1 and the prompt omits the clause;
+* rubric v2 frame-level labels where a store has the sidecars (``FRAME_LABEL_VIEWS``):
+  ``quality`` is the frame grade at the anchor's frame, ``mistake`` and the critic's
+  onsets come from the v2 mistake spans, and ``precision`` is the window's level inside a
+  window and 1 elsewhere. Without a sidecar that channel is read as described above;
 * the critic's view of the same atom: ``critic_end_timestep_exclusive`` is where the
   critic segment ends (the atom, with an immediately following ``release`` atom folded
   in, the same rule ReBot's ``_subtask_terminals_from_windows`` applies), and
@@ -61,7 +65,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lerobot.datasets.diverse_corpus import HISTORY_OFFSETS_S
+from lerobot.datasets.diverse_corpus import (
+    HISTORY_OFFSETS_S,
+    MISTAKES_V2_VIEW,
+    PRECISION_WINDOWS_VIEW,
+    QUALITY_SPANS_VIEW,
+    read_optional_jsonl,
+)
 from lerobot.datasets.fmb_corpus import FederatedDiverseCorpus
 
 # ── Corpus ledger (diverse_robot_dataset_v3, 2026-09-19) ──────────────────────
@@ -365,6 +375,28 @@ def _mistake_onset_timesteps(atoms: list[dict[str, Any]], rate_hz: float) -> tup
     return tuple(sorted(onsets))
 
 
+# What a rubric v2 frame grade says about itself: reviewed against the rubric and by the
+# annotators of the ReBot half, whose grade always renders (diverse_prompt.should_render_quality).
+FRAME_GRADE_PROVENANCE = "model_reviewed_rubric_v2"
+
+
+def _frame_rows(corpus: FederatedDiverseCorpus, view: str) -> dict[str, dict[str, list[dict[str, Any]]] | None]:
+    """One rubric v2 frame-level sidecar per store, rows by episode; None for a store without the file."""
+    rows: dict[str, dict[str, list[dict[str, Any]]] | None] = {}
+    for key, store in (("common", corpus.common), ("fmb", corpus.fmb)):
+        rows[key] = None
+        if (store.root / view).is_file():
+            rows[key] = defaultdict(list)
+            for row in read_optional_jsonl(store.root / view):
+                rows[key][str(row["episode_id"])].append(row)
+    return rows
+
+
+def _rows_at(rows: list[dict[str, Any]], timestep: int) -> list[dict[str, Any]]:
+    """The sidecar rows whose [from_index, to_index) holds the anchor's native frame."""
+    return [row for row in rows if int(row["from_index"]) <= timestep < int(row["to_index"])]
+
+
 def _fmb_anchor_mistake(record: dict[str, Any], timestep: int) -> bool | None:
     for interval in record["primitive_intervals"]:
         if int(interval["start_timestep"]) <= timestep < int(interval["end_timestep_exclusive"]):
@@ -471,6 +503,9 @@ def _prepare_rows(
     speed_atoms = _atoms_by_episode(corpus, "speed_atoms")
     precision_atoms = _atoms_by_episode(corpus, "precision_atoms")
     contact_atoms = _atoms_by_episode(corpus, "contact_atoms")
+    quality_spans = _frame_rows(corpus, QUALITY_SPANS_VIEW)
+    mistakes_v2 = _frame_rows(corpus, MISTAKES_V2_VIEW)
+    precision_windows = _frame_rows(corpus, PRECISION_WINDOWS_VIEW)
     critic_ends: dict[tuple[str, str], dict[int, int]] = {}
     mistake_onsets: dict[tuple[str, str], tuple[int, ...]] = {}
 
@@ -538,8 +573,24 @@ def _prepare_rows(
         if key not in critic_ends:
             critic_ends[key] = _critic_end_by_atom_start(subtask_atoms[key])
             mistake_onsets[key] = _mistake_onset_timesteps(subtask_atoms[key], float(row["native_rate_hz"]))
+            if mistakes_v2[key[0]] is not None:
+                mistake_onsets[key] = tuple(sorted({int(m["from_index"]) for m in mistakes_v2[key[0]][episode_id]}))
         row["critic_end_timestep_exclusive"] = critic_ends[key][int(atom["start_timestep"])]
         row["mistake_onset_timesteps"] = mistake_onsets[key]
+        # Rubric v2 (5.1, 6): the anchor's own frame decides, not its atom.
+        if quality_spans[key[0]] is not None:
+            # No stretch is graded 4: the minimum is the lowest critique holding the frame, else the exemplary 5.
+            row["quality"] = min(
+                (int(s["quality"]) for s in _rows_at(quality_spans[key[0]][episode_id], anchor_timestep)), default=4
+            )
+            row["quality_provenance"] = FRAME_GRADE_PROVENANCE
+        if mistakes_v2[key[0]] is not None:
+            row["mistake"] = bool(_rows_at(mistakes_v2[key[0]][episode_id], anchor_timestep))
+        if precision_windows[key[0]] is not None:
+            # The higher level wins an overlap, as on ReBot (load_metadata_rows).
+            row["precision"] = max(
+                (int(w["precision"]) for w in _rows_at(precision_windows[key[0]][episode_id], anchor_timestep)), default=1
+            )
         corrected += int(bool(anchor_mistake) != bool(row["mistake_flag_as_stored"]))
         prepared.append(row)
     return prepared, records, corrected

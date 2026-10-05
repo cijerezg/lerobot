@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from lerobot.datasets.diverse_actor_selection import DiverseActorSelection
+from lerobot.datasets.diverse_actor_selection import FRAME_GRADE_PROVENANCE, DiverseActorSelection
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ QUALITY_PROVENANCE: tuple[str, ...] = (
     "human_reviewed_rebot_rubric",
     "source_derived_automatic",
     "model_reviewed_rebot_rubric",
+    FRAME_GRADE_PROVENANCE,
 )
 
 # Provenances where a person actually looked. Only these earn a rendered quality clause
@@ -90,7 +91,8 @@ def should_render_quality(provenance: str | None, *, render_automatic: bool = Fa
     """Whether this sample's quality integer may reach the prompt."""
     if render_automatic:
         return provenance is not None
-    return str(provenance) in HUMAN_REVIEWED_PROVENANCE
+    # A rubric v2 frame grade renders like ReBot's, which carries the same review.
+    return str(provenance) in HUMAN_REVIEWED_PROVENANCE or provenance == FRAME_GRADE_PROVENANCE
 
 
 # ── Episode task text ────────────────────────────────────────────────────────

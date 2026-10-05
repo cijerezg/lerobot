@@ -47,7 +47,7 @@ DEFINITION = (
     "after the failure is observable; recovery is excluded."
 )
 LIMITATION = (
-    "Anchored on per-stratum proprio thresholds (pi07_wiki/annotation_rubric.md) and "
+    "Anchored on per-stratum proprio thresholds (rubric v1, 2026-08-02) and "
     "confirmed against per-segment contact sheets. Closes inside 'return to home' are "
     "parking behaviour and never seed a mistake. Object identity was corrected only "
     "where the video is unambiguous: the wrist camera sees the pile behind the held "
@@ -147,7 +147,8 @@ def main():
         json.dump({
             "model": "assistant-vision-pass",
             "annotator": "segment_sheets.py + segment_label_{baseline,review}.py",
-            "rubric": "lerobot/pi07_wiki/annotation_rubric.md",
+            "rubric": "v1 2026-08-02, git ef8f2dbb2:pi07_wiki/annotation_rubric.md "
+            "(superseded by lerobot/pi07_wiki/quality_mistake_rubric_v2.md)",
             "created_date": date.today().isoformat(),
             "segmentation": "semantic phases from gripper-closed intervals (semantic_segment.py)",
             "quality_scope": "per semantic segment, constant across it",

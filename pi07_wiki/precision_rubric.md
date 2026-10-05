@@ -1,6 +1,6 @@
 # Annotation rubric: precision per step (settled 2026-09-24; nothing annotated yet)
 
-Companion to `annotation_rubric.md` (quality + mistakes) and the speed label
+Companion to `quality_mistake_rubric_v2.md` (quality + mistakes) and the speed label
 (`data_processing/annotate/hybrid_motion_speed.py`). Fourth metadata channel.
 
 ## What the label means

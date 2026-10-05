@@ -62,6 +62,7 @@ def test_provenance_ids_are_stable_and_unknown_is_zero() -> None:
     assert quality_provenance_id("human_reviewed_rebot_rubric") == 2
     assert quality_provenance_id("source_derived_automatic") == 3
     assert quality_provenance_id("model_reviewed_rebot_rubric") == 4
+    assert quality_provenance_id("model_reviewed_rubric_v2") == 5
     assert RETENTION_REASONS[0] == "unknown"
     assert retention_reason_id("useful_motion") == 1
 
@@ -77,6 +78,8 @@ def test_only_reviewed_quality_renders_by_default() -> None:
     assert not should_render_quality("source_derived_automatic")
     assert not should_render_quality("model_reviewed_rebot_rubric")
     assert not should_render_quality(None)
+    # A rubric v2 frame grade carries the review ReBot's always-rendered grade does.
+    assert should_render_quality("model_reviewed_rubric_v2")
     # ... and the run can still ask for it explicitly.
     assert should_render_quality("source_derived_automatic", render_automatic=True)
     assert should_render_quality("model_reviewed_rebot_rubric", render_automatic=True)
@@ -384,7 +387,7 @@ def test_automatic_quality_can_be_switched_back_on(selection) -> None:
     )
     index = next(i for i, row in enumerate(selection.rows) if row["source"] == "robochallenge")
     batch = buffer.collate([index])
-    assert batch["complementary_info"]["metadata_quality"][0].item() == 5.0
+    assert batch["complementary_info"]["metadata_quality"][0].item() == float(selection.rows[index]["quality"])
     assert bool(batch["complementary_info"]["metadata_quality_is_valid"][0])
 
 

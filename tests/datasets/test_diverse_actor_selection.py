@@ -6,17 +6,28 @@ corpus and skip when it is not present, matching test_diverse_corpus.py.
 
 from __future__ import annotations
 
+import json
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import pytest
 
-from lerobot.datasets.diverse_corpus import CONTACT_ATOMS_VIEW, PRECISION_ATOMS_VIEW
+from lerobot.datasets import diverse_actor_selection as selection_module
+from lerobot.datasets.diverse_corpus import (
+    CONTACT_ATOMS_VIEW,
+    FRAME_LABEL_VIEWS,
+    MISTAKES_V2_VIEW,
+    PRECISION_ATOMS_VIEW,
+    PRECISION_WINDOWS_VIEW,
+    QUALITY_SPANS_VIEW,
+)
 from lerobot.datasets.diverse_actor_selection import (
     ACTION_LAYOUTS,
     CANONICAL_CAMERA_ROLES,
     EXPECTED_ANCHORS,
     EXPECTED_ANCHORS_BY_SOURCE,
     EXPECTED_EPISODES,
+    FRAME_GRADE_PROVENANCE,
     holdout_episode_ids,
     PACKED_CURRENT_SLOT,
     PACKED_OBSERVATIONS,
@@ -41,6 +52,11 @@ def _corpus():
 
 def _selection():
     return select_actor_anchors(_corpus())
+
+
+def _ignore_frame_labels(monkeypatch) -> None:
+    """Select as a root without the rubric v2 sidecars does: every channel from the atom."""
+    monkeypatch.setattr(selection_module, "_frame_rows", lambda corpus, view: {"common": None, "fmb": None})
 
 
 # ── Packed observation window ────────────────────────────────────────────────
@@ -191,6 +207,7 @@ def _label_sidecar(store, drop: str) -> tuple[list[dict], list[dict]]:
 
 
 def test_precision_and_contact_follow_their_atom_and_a_missing_atom_is_minus_one(monkeypatch) -> None:
+    _ignore_frame_labels(monkeypatch)
     corpus = _corpus()
     dropped = {}
     for key, store in (("common", corpus.common), ("fmb", corpus.fmb)):
@@ -225,6 +242,84 @@ def test_precision_and_contact_follow_their_atom_and_a_missing_atom_is_minus_one
     assert all(sum(audit.contact_values.values()) == audit.anchors for audit in per_source.values())
 
 
+def test_frame_labels_decide_quality_mistake_and_precision_at_the_anchor_frame(monkeypatch) -> None:
+    """Rubric v2 sidecars, in memory (never written into the corpus root). The common store
+    has them and FMB does not: FMB keeps its per-atom values, and nothing but quality, its
+    provenance, the mistake flag and onsets, and precision moves on a common row."""
+    corpus = _corpus()
+    _ignore_frame_labels(monkeypatch)
+    before = select_actor_anchors(corpus)
+    anchors = Counter(row["episode_id"] for row in before.rows if row["corpus_key"] == "common")
+    episode_id = next(episode_id for episode_id, count in anchors.items() if count >= 8)
+    frames = [int(row["anchor_frame"]) for row in before.rows if row["episode_id"] == episode_id]
+    a, b, c, d = frames[1], frames[3], frames[5], frames[7]
+
+    def span(lo: int, hi: int, **values) -> dict:
+        return {"episode_id": episode_id, "from_index": lo, "to_index": hi, **values}
+
+    sidecars = {
+        # An exemplary stretch, a critique inside it and a lower critique over one frame of that.
+        QUALITY_SPANS_VIEW: [span(a, d, quality=5), span(b, c, quality=3), span(b, b + 1, quality=2)],
+        MISTAKES_V2_VIEW: [span(b, c)],
+        PRECISION_WINDOWS_VIEW: [span(a, c, precision=4), span(b, d, precision=2)],
+    }
+    monkeypatch.setattr(
+        selection_module,
+        "_frame_rows",
+        lambda corpus, view: {"common": defaultdict(list, {episode_id: sidecars[view]}), "fmb": None},
+    )
+    after = select_actor_anchors(corpus)
+
+    moved = {"quality", "quality_provenance", "mistake", "precision", "mistake_onset_timesteps"}
+    for old, row in zip(before.rows, after.rows, strict=True):
+        if row["corpus_key"] == "fmb":
+            assert row == old
+            continue
+        assert {k: v for k, v in row.items() if k not in moved} == {k: v for k, v in old.items() if k not in moved}
+        assert row["quality_provenance"] == FRAME_GRADE_PROVENANCE
+        frame = int(row["anchor_frame"])
+        if row["episode_id"] != episode_id:
+            # No stretch, no event, no window: the defaults.
+            assert (row["quality"], row["mistake"], row["precision"]) == (4, False, 1)
+            assert row["mistake_onset_timesteps"] == ()
+            continue
+        # Critiques win over the exemplary 5 and the lowest critique wins; 4 outside every stretch.
+        assert row["quality"] == (2 if frame == b else 3 if b <= frame < c else 5 if a <= frame < d else 4)
+        assert row["mistake"] == (b <= frame < c)
+        # The window's level inside a window (the higher on an overlap), 1 elsewhere.
+        assert row["precision"] == (4 if a <= frame < c else 2 if c <= frame < d else 1)
+        assert row["mistake_onset_timesteps"] == (b,)
+
+
+def test_the_corpus_frame_labels_reach_every_sampled_anchor() -> None:
+    """With the sidecars on disk: grade, flag and level recomputed from the files (rubric v2
+    5.1 and 6), on the same ledger of episodes and anchors."""
+    if not all((DATA_ROOT / sub / view).is_file() for sub in ("corpus", "fmb") for view in FRAME_LABEL_VIEWS):
+        pytest.skip("rubric v2 sidecars not present")
+    selection = _selection()
+    assert len(selection.rows) == EXPECTED_ANCHORS
+    files: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    for sub, key in (("corpus", "common"), ("fmb", "fmb")):
+        for view in FRAME_LABEL_VIEWS:
+            for line in (DATA_ROOT / sub / view).read_text(encoding="utf-8").splitlines():
+                files[(key, view, json.loads(line)["episode_id"])].append(json.loads(line))
+    for row in selection.rows[::53]:
+        spans, mistakes, windows = (
+            [
+                item
+                for item in files[(row["corpus_key"], view, row["episode_id"])]
+                if item["from_index"] <= row["anchor_frame"] < item["to_index"]
+            ]
+            for view in FRAME_LABEL_VIEWS
+        )
+        critiques = [item["quality"] for item in spans if item["quality"] <= 3]
+        assert row["quality"] == (min(critiques) if critiques else 5 if spans else 4)
+        assert row["quality_provenance"] == FRAME_GRADE_PROVENANCE
+        assert row["mistake"] == bool(mistakes)
+        assert row["precision"] == max([item["precision"] for item in windows], default=1)
+    assert {row["quality"] for row in selection.rows} == {1, 2, 3, 4, 5}
+
+
 def test_split_stays_on_every_row_as_provenance() -> None:
     selection = _selection()
     assert all(row["split"] in {"train", "validation", "test"} for row in selection.rows)
@@ -232,8 +327,9 @@ def test_split_stays_on_every_row_as_provenance() -> None:
     assert {row["split"] for row in selection.rows} == {"train", "validation", "test"}
 
 
-def test_mistake_flags_are_anchor_level_not_segment_level() -> None:
+def test_mistake_flags_are_anchor_level_not_segment_level(monkeypatch) -> None:
     """The stored flag over-claims on 219 common anchors in v3; ReBot's column is per-frame."""
+    _ignore_frame_labels(monkeypatch)
     selection = _selection()
     assert selection.mistake_flags_corrected == 219
     corrected = [row for row in selection.rows if row["mistake"] != row["mistake_flag_as_stored"]]

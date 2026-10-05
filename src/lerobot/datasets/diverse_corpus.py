@@ -62,6 +62,15 @@ SPEED_ATOMS_VIEW = "speed_atoms_hybrid_v1.jsonl"
 PRECISION_ATOMS_VIEW = "precision_atoms.jsonl"
 CONTACT_ATOMS_VIEW = "contact_atoms.jsonl"
 SUBTASK_ATOMS_VIEW = "subtask_atoms.jsonl"
+# Rubric v2 frame-level sidecars (pi07_wiki/quality_mistake_rubric_v2.md 5.1, 6, 10): rows keyed
+# by episode_id with [from_index, to_index) in native frames. Optional, per store and per file:
+# a store that has one takes that channel from the anchor's frame instead of from its atom
+# (diverse_actor_selection._prepare_rows). Not part of the cache key: training reads these
+# channels from the selection rows at startup, never from the cache.
+QUALITY_SPANS_VIEW = "quality_spans.jsonl"
+MISTAKES_V2_VIEW = "mistakes_v2.jsonl"
+PRECISION_WINDOWS_VIEW = "precision_windows.jsonl"
+FRAME_LABEL_VIEWS = (QUALITY_SPANS_VIEW, MISTAKES_V2_VIEW, PRECISION_WINDOWS_VIEW)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

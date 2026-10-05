@@ -1,7 +1,7 @@
 # Annotation rubric: contact strategy per step (plan 2026-09-24; nothing annotated yet)
 
-Companion to `precision_rubric.md` (fourth channel) and `annotation_rubric.md` (quality +
-mistakes). Fifth metadata channel. Vocabulary evidence: `migration/contact_strategy_2026-09-24/`
+Companion to `precision_rubric.md` (fourth channel) and `quality_mistake_rubric_v2.md`
+(quality + mistakes). Fifth metadata channel. Vocabulary evidence: `migration/contact_strategy_2026-09-24/`
 (`vocab.md`, candidate sheets, per-element example sheets, text-rule dry run).
 
 ## Name

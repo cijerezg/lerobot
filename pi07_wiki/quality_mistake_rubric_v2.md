@@ -1,7 +1,7 @@
 # Annotation rubric v2: quality spans, mistakes, precision windows (draft 5, 2026-09-29)
 
-Replaces the quality and mistake sections of `annotation_rubric.md` (2026-08-02) and the
-"Units" section of `precision_rubric.md`. Applies to every dataset: all ReBot roots and the
+Replaces rubric v1 (2026-08-02; deleted from the wiki 2026-10-04, in git at
+`ef8f2dbb2:pi07_wiki/annotation_rubric.md`) and the "Units" section of `precision_rubric.md`. Applies to every dataset: all ReBot roots and the
 diverse corpus (DROID, MolmoAct, RoboChallenge, UR7e, YAM, FMB). The loader does not read
 the new tables yet.
 
@@ -494,7 +494,7 @@ A second look is required for:
 | step | what |
 |---|---|
 | 1 | confirm or reject each v1 mistake row; split rows that cover several events; set $m_a$, $m_b$ |
-| 2 | look for mistakes v1 missed: every close that reopens, every segment over its duration flag |
+| 2 | look for mistakes v1 missed: every close that reopens, every segment over its duration flag (v1: first grasp of an episode > 17 s, later grasp > 14 s, move > 10 s, return > 27 s) |
 | 3 | mark the `attempt` span for each mistake |
 | 4 | mark every idle stretch (`idle_runs.csv` lists the long ones; the trigger finds the rest) |
 | 5 | walk every segment for the other causes |

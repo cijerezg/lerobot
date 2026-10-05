@@ -227,6 +227,12 @@ REBOT_SPEED_TABLE = "speed_hybrid_v1.parquet"
 # unlike speed: a root without them renders today's prompt (no clause, column -1).
 REBOT_PRECISION_TABLE = "precision.parquet"
 REBOT_CONTACT_TABLE = "contact.parquet"
+# Rubric v2 quality stretches (pi07_wiki/quality_mistake_rubric_v2.md 5.1, 10). When a root has
+# them, the frame grade comes from the stretches, not from episode_metadata's per-segment quality.
+REBOT_QUALITY_SPANS_TABLE = "quality_spans.parquet"
+# Rubric v2 precision windows (same rubric, 6). When a root has them, the frame's precision is the
+# window's level inside a window and 1 elsewhere, not precision.parquet's per-segment level.
+REBOT_PRECISION_WINDOWS_TABLE = "precision_windows.parquet"
 
 
 def load_metadata_rows(
@@ -236,7 +242,10 @@ def load_metadata_rows(
     metadata_annotate.py) + the adopted speed table (REBOT_SPEED_TABLE) into the inputs
     ReplayBuffer.materialize_metadata expects. Raises when any of those is missing:
     metadata_enabled requires fully annotated datasets. The precision and contact tables
-    (REBOT_PRECISION_TABLE, REBOT_CONTACT_TABLE) are optional and come back None when absent."""
+    (REBOT_PRECISION_TABLE, REBOT_CONTACT_TABLE) are optional and come back None when absent.
+    A root with REBOT_QUALITY_SPANS_TABLE gets its segment rows split where the frame grade
+    changes (split_segments_by_quality_spans). A root with REBOT_PRECISION_WINDOWS_TABLE gets
+    precision 1 on every segment and the window's level inside each window."""
     meta = Path(root) / "meta"
     for name, tool in (
         ("episode_metadata.parquet", "metadata_annotate.py"),
@@ -250,13 +259,49 @@ def load_metadata_rows(
     import pandas as pd
 
     episode_rows = pd.read_parquet(meta / "episode_metadata.parquet").to_dict("records")
+    if (meta / REBOT_QUALITY_SPANS_TABLE).exists():
+        episode_rows = split_segments_by_quality_spans(
+            episode_rows, pd.read_parquet(meta / REBOT_QUALITY_SPANS_TABLE)
+        )
     mistake_rows = pd.read_parquet(meta / "mistakes.parquet").to_dict("records")
     speed_rows = pd.read_parquet(meta / REBOT_SPEED_TABLE).to_dict("records")
     precision_rows, contact_rows = (
         pd.read_parquet(meta / name).to_dict("records") if (meta / name).exists() else None
         for name in (REBOT_PRECISION_TABLE, REBOT_CONTACT_TABLE)
     )
+    if (meta / REBOT_PRECISION_WINDOWS_TABLE).exists():
+        # Ascending level: materialize_metadata writes rows in order, so the higher level wins an overlap.
+        windows = pd.read_parquet(meta / REBOT_PRECISION_WINDOWS_TABLE).sort_values("precision")
+        precision_rows = [dict(row, precision=1) for row in episode_rows] + windows.to_dict("records")
     return episode_rows, mistake_rows, speed_rows, precision_rows, contact_rows
+
+
+def split_segments_by_quality_spans(episode_rows: list[dict], spans) -> list[dict]:
+    """Rubric v2 5.1 frame grade: 4 by default, 5 inside an exemplary stretch, the lowest
+    critique grade (1-3) inside a critique stretch with its headroom (spans' from/to_index);
+    critiques win over 5. Each segment row is split into pieces of constant grade; a piece
+    keeps the segment's other fields, so subtask / segment_index lookups are unchanged."""
+    import numpy as np
+
+    out = []
+    for row in episode_rows:
+        a, b = int(row["from_index"]), int(row["to_index"])
+        hits = spans[
+            (spans.episode_index == row["episode_index"]) & (spans.from_index < b) & (spans.to_index > a)
+        ]
+        grade = np.full(b - a, 4)
+        critique = np.full(b - a, 9)
+        for s in hits.itertuples():
+            lo, hi = max(int(s.from_index), a) - a, min(int(s.to_index), b) - a
+            if s.quality == 5:
+                grade[lo:hi] = 5
+            else:
+                critique[lo:hi] = np.minimum(critique[lo:hi], int(s.quality))
+        grade = np.where(critique < 9, critique, grade)
+        cuts = [0, *(np.flatnonzero(np.diff(grade)) + 1), b - a]
+        for lo, hi in zip(cuts[:-1], cuts[1:]):
+            out.append(dict(row, from_index=a + lo, to_index=a + hi, quality=int(grade[lo])))
+    return out
 
 
 def _idx_to_name(dataset, table_name: str, index_column: str, text_column: str) -> dict[int, str]:

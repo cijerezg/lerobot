@@ -4,7 +4,9 @@
 
 RoboChallenge's original preparation path assigns quality 5 and an empty mistake
 list to every motion span automatically.  This tool replaces those defaults with
-segment-level visual decisions made under ``pi07_wiki/annotation_rubric.md``.
+segment-level visual decisions made under rubric v1 (2026-08-02, git
+``ef8f2dbb2:pi07_wiki/annotation_rubric.md``; superseded by
+``pi07_wiki/quality_mistake_rubric_v2.md``).
 
 The review artifact is kept outside the training corpus.  ``apply`` first saves
 the original corpus and source annotation metadata, then updates both copies.  The ordinary ``build_corpus.py views`` command must
@@ -205,7 +207,8 @@ def initialize_labels(corpus_root: Path, labels_path: Path) -> dict[str, Any]:
         "rubric": {
             "name": "ReBot quality and semantic mistake rubric",
             "version": "2026-08-02",
-            "path": "lerobot/pi07_wiki/annotation_rubric.md",
+            "path": "git ef8f2dbb2:pi07_wiki/annotation_rubric.md",
+            "superseded_by": "lerobot/pi07_wiki/quality_mistake_rubric_v2.md",
             "quality_scope": "one integer 1-5 constant over each retained RoboChallenge segment",
             "mistake_scope": "one discrete visible failure event per bounded time span",
         },
