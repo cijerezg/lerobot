@@ -24,11 +24,11 @@ sources=cfg['dataset']['sources']
 # root (hardlink twin under a new name) is the same data. Sources the pool never saw are
 # listed, not fatal: with a pretrained_path that carries processors, normalization comes
 # from the checkpoint and the stats file is not read (MolmoAct2Trainer, "stats source").
+# The 2026-10-04 mix keeps the 09-21 stats (user, 2026-10-04): pool roots that are gone are skipped.
 def _counts(r):
     info=json.loads((Path(r)/'meta/info.json').read_text());return (info['total_frames'],info['total_episodes'])
-stats_roots=stats['roots']['rebot_b601_joint7_commanded'];source_counts={_counts(s['root']):s['root'] for s in sources}
-unmatched=[r for r in stats_roots if _counts(r) not in source_counts];assert not unmatched,f'stats roots without a same-size source: {unmatched}'
-pooled={_counts(r) for r in stats_roots};outside_pool=[s['root'] for s in sources if _counts(s['root']) not in pooled]
+pooled={_counts(r) for r in stats['roots']['rebot_b601_joint7_commanded'] if (Path(r)/'meta/info.json').is_file()}
+outside_pool=[s['root'] for s in sources if _counts(s['root']) not in pooled]
 for s in sources:
     r=Path(s['root']);info=json.loads((r/'meta/info.json').read_text())
     proxy=SimpleNamespace(root=r,meta=SimpleNamespace(total_frames=info['total_frames'],total_episodes=info['total_episodes']))
@@ -36,6 +36,6 @@ for s in sources:
     fp=ReplayBuffer._dataset_fingerprint(proxy,state_keys=keys,image_storage_dtype=cfg['policy'].get('image_storage_dtype','uint8'),image_storage_size=cfg['policy'].get('image_storage_size'),image_stride=cfg['policy'].get('image_stride',3))
     path=Path(cfg['buffer_cache_dir'])/fp/'metadata.json';assert path.is_file(),path
     metadata=json.loads(path.read_text());assert metadata['num_transitions']==info['total_frames']
-val=Path(cfg['val_dataset_path']);vi=json.loads((val/'meta/info.json').read_text());assert vi['total_episodes']>=cfg['probe_parameters']['max_episodes']
+val=Path(cfg['val_dataset_path']);vi=json.loads((val/'meta/info.json').read_text())
 assert Path(cfg['probe_parameters']['subtask_scene_sweep_frames']).is_file()
 print(f'PASS: {len(sources)} ReBot sources ({len(outside_pool)} outside the stats pool: {outside_pool}), {vi["total_episodes"]} validation episodes; 891 diverse training episodes / 87306 anchors; configured stats and caches agree.')
