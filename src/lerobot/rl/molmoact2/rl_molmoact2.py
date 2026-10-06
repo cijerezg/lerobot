@@ -21,7 +21,7 @@ import torch
 from torch import Tensor, nn
 
 from lerobot.configs import PreTrainedConfig
-from lerobot.datasets.contact_vocab import code_for
+from lerobot.annotation.vocab import code_for
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
 from lerobot.policies.molmoact2.modeling_molmoact2 import _MODEL_INPUT_KEYS, MolmoAct2Policy, _torch_dtype
 from lerobot.rl.molmoact2.hybrid_critic import CriticFusion, MolmoAct2Critic
@@ -63,7 +63,7 @@ class MolmoAct2RLConfig(MolmoAct2Config):
     eval_subtasks: list[str] = field(default_factory=list)
     eval_home_subtask: str = "return to home"
     # Per-step prompt metadata, aligned with eval_subtasks and latched with the step
-    # (r latches the home values). Precision is 1-5; contact is a contact_vocab slug
+    # (r latches the home values). Precision is 1-5; contact is a contact slug (annotation/vocab.py)
     # ("top-pinch", ..., "na"). None = channel off: no clause, the prompt is unchanged.
     eval_subtask_precisions: list[int] | None = None
     eval_subtask_contacts: list[str] | None = None

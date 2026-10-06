@@ -24,7 +24,7 @@
   interventions (per-frame flag in `meta/online_labels.parquet`, a sidecar the loaders ignore; 52 % of train frames). Val =
   the 18:55 run (policy only, 96 s: sock and two navy-shirt carries to the bin, a beige-shirt drop, two failed closes; held
   out BECAUSE it has mistakes, for mistake-conditioned probes). Earlier versions deleted. Built by
-  `migration/inference_audit_2026-09-06/build_dataset.py` (PLAN rows carry a train/val split; re-encodes the recorded AV1,
+  the 2026-09-06 audit builder (removed 2026-10-06; its successor is `annotation/rebot/build_root.py`) (PLAN rows carry a train/val split; re-encodes the recorded AV1,
   copies low-dim verbatim, hardlinks depth; kept ranges are multiples of 3 on multiples of 3 so the depth phase survives)
   and annotated by `annotate_dataset.py <root>` (episodes matched to the plan by `meta/provenance.json`;
   `review_sheets.py` / `render_videos.py` render labelled sheets and top|wrist videos). Edits: every kept range starts 1 s (one action
@@ -88,9 +88,12 @@ single arm, six joint radians + a real commanded gripper channel; the three Hub 
 ingest. ReBot (6) is not part of the corpus; it holds an id so the mixture keys one stats
 table.
 
-## Chain (scripts in `data_processing/annotate/`)
+## Chain (scripts in `src/lerobot/annotation/`)
 
-Order matters: `summary_annotate.py` (12 s grid) → `subtask_annotate_grid.py` (4 s grid, conditions on summaries; labels atomic + progress-free) → `metadata_annotate.py annotate` + `review` (suspicion 0–10, `--threshold 4`; review UI writes the meta files). Validation sets: `--reuse-map <train-root>`. AV1 videos → ffmpeg, not cv2.
+Every annotation script and rubric lives in `src/lerobot/annotation/`; its [README](../../src/lerobot/annotation/README.md)
+has the rule, the layout and the order of a ReBot pass. The VLM chain used until 2026-08 (`summary_annotate.py` →
+`subtask_annotate_grid.py` → `metadata_annotate.py`, in `data_processing/annotate/`) was removed 2026-10-06; it is in git
+history up to commit `8aeb68367`. The invariants below came out of that chain and still hold for the labels it wrote.
 
 Key invariants:
 - 4 s subtask grid = `subtask_regeneration_interval`; 12 s summary grid = 3:1.

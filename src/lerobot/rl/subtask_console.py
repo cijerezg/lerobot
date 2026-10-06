@@ -13,7 +13,7 @@ current entry at any point without moving the cursor, so the next ``n``/``b``
 continues the script from where it was.
 
 Each entry can also carry prompt metadata, ``cfg.policy.eval_subtask_precisions`` (1-5)
-and ``eval_subtask_contacts`` (contact_vocab slugs), aligned with the script. The step's
+and ``eval_subtask_contacts`` (contact slugs, annotation/vocab.py), aligned with the script. The step's
 precision and contact are latched with it, so n/b/r switch "The precision is N of 5."
 and "The contact is ..." together with the step (r uses ``eval_home_precision`` /
 ``eval_home_contact``). A list left unset keeps that channel off: no clause at all.
@@ -28,7 +28,7 @@ listed at startup.
 """
 import logging
 
-from lerobot.datasets.contact_vocab import code_for, phrase_for
+from lerobot.annotation.vocab import code_for, phrase_for
 
 logger = logging.getLogger(__name__)
 

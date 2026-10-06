@@ -13,7 +13,7 @@ Everything that is not code lives here. One entry point, one cheat sheet, one st
 | [`status.md`](status.md)                    | What is on/off in the current run, next steps, parked ideas, footguns | The **only** snapshot page. Dated.                  |
 | [`guide/`](#guide--how-to-use-the-pipeline) | How to **use** the pipeline                                           | Timeless. No dates, no "as of".                     |
 | [`design/`](#design--how-it-is-built)       | How the system **is built**, one page per subsystem                   | As-built reference. Kept current when code changes. |
-| [`notes/`](#notes--the-ideas-lab)           | Dated design notes, rubrics, investigations                           | Every file opens with a **Status** line.            |
+| [`notes/`](#notes--the-ideas-lab)           | Dated design notes, investigations                                    | Every file opens with a **Status** line.            |
 | [`runbooks/`](#runbooks)                    | What to do when a known failure happens                               | Symptom → root cause → fix.                         |
 | [`reports/`](#reports)                      | Saved analyses with their numbers                                     | Frozen once written.                                |
 | [`archive/`](archive/README.md)             | Superseded or abandoned documents                                     | Index says what replaced each file.                 |
@@ -58,20 +58,18 @@ model), [`rl/RL_NOTES.md`](../src/lerobot/rl/RL_NOTES.md) (trainer seam and crit
 
 ## `notes/` — the ideas lab
 
+Annotation rubrics and label specs are not here: they live with the annotation code in
+[`src/lerobot/annotation/`](../src/lerobot/annotation/README.md) (`rubrics/`).
+
 Each note opens with `> **Status:** ...`. Vocabulary: **idea** · **building** · **built, on** ·
 **built, off** · **decided** · **fixed** / **resolved** · **in force** (rubrics) ·
 **superseded by X** · **abandoned**. The date on the status line is the date of that status.
 
 | Note                                                                             | Status                        | About                                                                               |
 | -------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------- |
-| [`annotation_principles.md`](notes/annotation_principles.md)                     | in force, 2026-10-05          | The one test every label must pass; subtask text, quality, precision, contact rules |
-| [`quality_mistake_rubric_v2.md`](notes/quality_mistake_rubric_v2.md)             | in force, draft 5, 2026-09-29 | Quality spans, mistakes, precision windows; frame-level grading                     |
-| [`precision_rubric.md`](notes/precision_rubric.md)                               | decided 2026-09-24            | Fourth metadata channel: how tightly the step's action is constrained               |
-| [`contact_strategy_rubric.md`](notes/contact_strategy_rubric.md)                 | decided 2026-09-24            | Fifth metadata channel: the contact vocabulary of record                            |
 | [`action_trajectory_losses.md`](notes/action_trajectory_losses.md)               | reference, 2026-09-02         | What the flow/FAST trajectory terms are, what is broken, option catalogue           |
 | [`principled_action_losses.md`](notes/principled_action_losses.md)               | decided                       | Which objective change is defensible and what it assumes                            |
 | [`fast_tokenizer_alphabet_bug.md`](notes/fast_tokenizer_alphabet_bug.md)         | fixed 2026-08-08              | Silent DCT coefficient deletion in the FAST tokenizer                               |
-| [`depth_gripper_event_labels.md`](notes/depth_gripper_event_labels.md)           | built 2026-08-12              | Depth-only auxiliary: predict the next gripper event                                |
 | [`depth_history_design.md`](notes/depth_history_design.md)                       | built 2026-07-25              | Temporal attention inside the depth patch encoder                                   |
 | [`depth_redesign_options.md`](notes/depth_redesign_options.md)                   | decided + built 2026-07-26    | Decision record for the depth read                                                  |
 | [`mem_temporal_attention_analysis.md`](notes/mem_temporal_attention_analysis.md) | built 2026-08-03; off         | RGB history temporal attention: spec, deviation, measurements                       |

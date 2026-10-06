@@ -16,7 +16,7 @@ import torch
 
 pytest.importorskip("transformers", reason="molmoact2 processor imports policy deps")
 
-from lerobot.datasets.contact_vocab import CONTACT_VOCAB  # noqa: E402
+from lerobot.annotation.vocab import CONTACT_VOCAB  # noqa: E402
 from lerobot.policies.molmoact2.processor_molmoact2 import (  # noqa: E402
     MolmoAct2PackInputsProcessorStep,
     _build_robot_text,

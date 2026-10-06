@@ -105,7 +105,7 @@ FMB passed the admission gate and is now a validated production component. All
 intervals were visually reviewed. Every interval is complete, uninterrupted,
 and critic-eligible. Quality and mistake supervision follows the ReBot contract
 of rubric v1 (2026-08-02, git `ef8f2dbb2:pi07_wiki/annotation_rubric.md`;
-superseded by `docs/notes/quality_mistake_rubric_v2.md`), using
+superseded by `annotation/rubrics/quality_mistake_rubric_v2.md`), using
 `outputs/rebot_val-annotated-v3` and
 `outputs/rebot_shirts_bin-annotated-v2` as golden schema examples: quality is
 one integer constant over a complete primitive interval, while a mistake is a
@@ -127,7 +127,7 @@ train/validation/test splits at source-episode level.
 .venv/bin/python \
   lerobot/examples/dataset/diverse_robot_dataset/annotate_fmb_critic.py \
   --review-root outputs/diverse_robot_dataset_build/fmb/production/review \
-  --labels lerobot/examples/dataset/diverse_robot_dataset/fmb_production_quality_mistakes.json \
+  --labels migration/diverse_quality_mistake_labels/fmb_production_quality_mistakes.json \
   validate
 
 # Recreate the pinned selection from immutable Hub metadata if needed.
@@ -193,7 +193,7 @@ outliers across 38 episodes. Those metrics selected review candidates only and
 never assigned labels. The flagged executions were geometry-dependent or slow
 but direct; no correction, retry, failed close, slip, drop, knock, or wrong
 target was visible. The production label artifact is
-`fmb_production_quality_mistakes.json`, and the 100 applied review files are in
+`migration/diverse_quality_mistake_labels/fmb_production_quality_mistakes.json`, and the 100 applied review files are in
 `outputs/diverse_robot_dataset_build/fmb/production/review/`.
 
 Depth remains source-native D405 Z16 `uint16`. Zero and 65,535 are invalid.
@@ -237,7 +237,7 @@ The v2 corpus adds 60 multi-object trajectories (5 per object per board, boards 
 manifest `fmb_multi_production.json`, 80/10/10 splits 48/6/6) through the same converter
 with board-qualified episode ids (`episode_NNNNNN_board_B_trajectory_X_Y`). All 280
 source-native primitive intervals were model-reviewed under the ReBot rubric; the pinned
-label artifact is `fmb_multi_production_quality_mistakes.json` (275 quality 5, 3 quality 4,
+label artifact is `migration/diverse_quality_mistake_labels/fmb_multi_production_quality_mistakes.json` (275 quality 5, 3 quality 4,
 1 quality 3, 1 quality 2 with a single `knock` event; one interval critic-ineligible).
 Review files applied at conversion live in
 `outputs/diverse_robot_dataset_v2_build/fmb_multi/review_completed/`.
@@ -249,7 +249,7 @@ Review files applied at conversion live in
   --review-root outputs/diverse_robot_dataset_v2_build/fmb_multi/review_completed \
   --raw-root outputs/diverse_robot_dataset_v2_build/fmb_multi/staging \
   --output-root outputs/diverse_robot_dataset_v2_build/fmb_multi/store_reviewed \
-  --labels lerobot/examples/dataset/diverse_robot_dataset/fmb_multi_production_quality_mistakes.json \
+  --labels migration/diverse_quality_mistake_labels/fmb_multi_production_quality_mistakes.json \
   convert   # then: validate
 .venv/bin/python lerobot/examples/dataset/diverse_robot_dataset/fmb_merge_stores.py \
   --into outputs/diverse_robot_dataset_v2/fmb \

@@ -477,7 +477,7 @@ class ReplayBuffer:
     ) -> None:
         """π0.7-style metadata columns from meta/episode_metadata.parquet +
         meta/mistakes.parquet + meta/speed.parquet (offline buffers; written by
-        metadata_annotate.py / speed_annotate.py, loaded via load_metadata_rows),
+        the annotation pass, lerobot/annotation; loaded via load_metadata_rows),
         plus the optional meta/precision.parquet and meta/contact.parquet.
 
         quality (1-5), speed (1-5), precision (1-5) and contact (CONTACT_VOCAB code

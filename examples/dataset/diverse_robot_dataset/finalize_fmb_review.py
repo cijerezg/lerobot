@@ -289,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--spec",
         type=Path,
-        default=Path("lerobot/examples/dataset/diverse_robot_dataset/fmb_pilot_reviews.json"),
+        default=Path("migration/diverse_quality_mistake_labels/fmb_pilot_reviews.json"),
     )
     parser.add_argument(
         "--review-root",
@@ -300,7 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--critic-labels",
         type=Path,
         default=Path(
-            "lerobot/examples/dataset/diverse_robot_dataset/fmb_pilot_quality_mistakes.json"
+            "migration/diverse_quality_mistake_labels/fmb_pilot_quality_mistakes.json"
         ),
     )
     return parser

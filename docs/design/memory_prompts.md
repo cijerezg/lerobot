@@ -429,7 +429,7 @@ Design (revised 2026-07-18):
   Three methods were generated and none overwrites another, so the adopted one is named
   by two constants that must agree: `SPEED_ATOMS_VIEW` (`datasets/diverse_corpus.py`) for
   the corpus and `REBOT_SPEED_TABLE` (`rl/offline_dataset_utils.py`) for the ReBot roots.
-  1. *Work-normalized duration* (v4, `annotate/speed_annotate.py`): $\text{ratio} =
+  1. *Work-normalized duration* (v4, `annotation/speed/speed_annotate.py`): $\text{ratio} =
      (a_{g,c} + b_{g,c} D) / T$ over segment wall time $T$ and net arm-joint
      displacement $D$, Theil-Sen per (group, class) on the train population, fixed edges
      0.40 / 0.65 / 1.10 / 1.40. **Rejected 2026-09-09** — a fast but failing attempt

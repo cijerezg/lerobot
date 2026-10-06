@@ -367,7 +367,7 @@ gripper.
 
 **Frames.** Chosen through the auxiliary head's own sidecars
 (`depth_gripper_events.parquet`, the dense `close_delta` / `open_delta`;
-§depth_gripper_event_labels.md): `pre_close_{L}s` and `pre_open_{L}s` at each lead
+`annotation/rubrics/depth_gripper_event_labels.md`): `pre_close_{L}s` and `pre_open_{L}s` at each lead
 $L \in \{0.5, 1, 2, 3\}$ s (the labels must agree that event is the next of its type),
 plus `carry` / `free` controls with no event within $L_{\max}+1$ s and a 1 s settle, two
 per event per episode. Val v4 gives 33 closes / 36 opens over 4 episodes, so 275 event

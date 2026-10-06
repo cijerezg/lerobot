@@ -139,7 +139,7 @@ def test_extract_metadata_from_columns():
     assert out[0] == {"quality": 5, "mistake": False, "speed": 2}
     assert out[1] == {"quality": 3, "mistake": True, "speed": 0}
 
-    # Speed column omitted (metadata_annotate.py datasets): clause renders partially.
+    # Speed column omitted (datasets without a speed table): clause renders partially.
     out = step._extract_metadata(
         {
             "metadata_quality": torch.tensor([4.0]),

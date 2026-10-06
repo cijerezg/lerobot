@@ -503,7 +503,7 @@ Active only when `enable_critic_values_distribution: true`.
 ## Dataset Annotation
 
 Training data carries per-frame subtask text plus the metadata channels the prompt
-renders (quality, mistakes, speed, precision, contact). The annotation chain, its tools
-under `src/lerobot/data_processing/annotate/`, and the dataset inventory are documented
-in [design/data_annotation.md](../design/data_annotation.md). The rubrics that define
-each label live in `docs/notes/` and are indexed from the [docs index](../README.md).
+renders (quality, mistakes, speed, precision, contact). The annotation scripts and the
+rubrics that define each label live in `src/lerobot/annotation/` (see its
+[README](../../src/lerobot/annotation/README.md)). The dataset inventory is in
+[design/data_annotation.md](../design/data_annotation.md).

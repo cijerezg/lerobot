@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from lerobot.datasets.contact_vocab import NA_CODE
+from lerobot.annotation.vocab import NA_CODE
 from lerobot.probes import metadata_steering as ms
 from lerobot.rl.molmoact2.rl_molmoact2_trainer import _forwarded_complementary_keys
 

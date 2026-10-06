@@ -16,7 +16,7 @@ from huggingface_hub import snapshot_download
 from torch import Tensor
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
-from lerobot.datasets.contact_vocab import phrase_for as contact_phrase_for
+from lerobot.annotation.vocab import phrase_for as contact_phrase_for
 from lerobot.datasets.diverse_actor_selection import ACTION_LAYOUTS
 from lerobot.datasets.embodiment import (
     EMBODIMENT_NAMES,

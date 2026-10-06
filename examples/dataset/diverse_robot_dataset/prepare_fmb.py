@@ -26,6 +26,8 @@ from lerobot.utils.gripper_event_targets import (
     frames_for_duration,
 )
 
+# Label artifacts are annotation results: they live outside the repo (annotation/README.md).
+LABELS_DIR = Path(__file__).resolve().parents[4] / "migration/diverse_quality_mistake_labels"
 SOURCE_REPO_ID = "charlesxu0124/functional-manipulation-benchmark"
 SOURCE_REVISION = "f99fd55c072eea5573523c96aa527aed3c665690"
 SOURCE_PREFIX = "single_object_manipulation_dataset/"
@@ -1203,7 +1205,7 @@ def write_production_audit(
     reviewed_intervals = derived_rows["visually_reviewed_critic_intervals"]
     unreviewed_intervals = candidate_intervals - reviewed_intervals
     if labels_path is None:
-        labels_path = Path(__file__).resolve().parent / "fmb_production_quality_mistakes.json"
+        labels_path = LABELS_DIR / "fmb_production_quality_mistakes.json"
     # The single-object production review had a metric-flagged dense second look; the
     # multi-object review cites its dense sheets inside the labels file instead.
     dense_manifest_path = (
@@ -1333,7 +1335,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--labels",
         type=Path,
-        default=here / "fmb_production_quality_mistakes.json",
+        default=LABELS_DIR / "fmb_production_quality_mistakes.json",
         help="Quality/mistake label artifact recorded in the production audit.",
     )
     commands = parser.add_subparsers(dest="command", required=True)

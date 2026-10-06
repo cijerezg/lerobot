@@ -41,7 +41,7 @@ from collections import Counter
 
 import torch
 
-from lerobot.datasets.contact_vocab import CONTACT_VOCAB
+from lerobot.annotation.vocab import CONTACT_VOCAB
 from lerobot.rl.data_sources.diverse_integration import (
     align_rebot_buffers,
     build_diverse_buffer,

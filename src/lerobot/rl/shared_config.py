@@ -32,7 +32,7 @@ class MemoryConfig:
     # Default off so the train-time observation matches deployment.
     history_dropout: float = 0.0
     # π0.7-style metadata steering: per-episode quality + per-window mistake
-    # loaded from the dataset (metadata_annotate.py; speed omitted) and
+    # loaded from the dataset (the annotation tables; speed omitted) and
     # prompt quality=5 / mistake=false at inference.
     metadata_enabled: bool = False
 

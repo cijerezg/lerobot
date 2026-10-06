@@ -176,7 +176,7 @@ rows in that existing batch, not four extra forwards (2026-09-09).
 **7. Precision and contact (2026-09-25).** Two more clauses after speed, "The precision is
 $N$ of 5." and "The contact is <phrase>.", each swept on its own at the rollout clause
 (quality 5, no mistake, speed 5): ``p1`` … ``p5`` is a ramp, ``c0`` … ``c14`` a sweep over the
-contact vocabulary (``datasets/contact_vocab.py``; 14 is "not applicable"). Each is measured
+contact vocabulary (``annotation/vocab.py``; 14 is "not applicable"). Each is measured
 against the no-clause chunk for its channel, which is ``q5`` — the same prompt with that
 sentence absent — and read against the same seed floor: $\lVert a^{(p_k)}-a^{(q_5)}\rVert$ and
 $\lVert a^{(c)}-a^{(q_5)}\rVert$ over the floor. The precision ramp also gets the ordering test of
@@ -199,7 +199,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from lerobot.datasets.contact_vocab import CONTACT_VOCAB
+from lerobot.annotation.vocab import CONTACT_VOCAB
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.utils.action_metrics import TRAJECTORY_RELATIVE_KEYS, trajectory_error_components
 from lerobot.probes.utils import (

@@ -62,7 +62,7 @@ import torch
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
-from lerobot.datasets.contact_vocab import CONTACT_VOCAB, phrase_for
+from lerobot.annotation.vocab import CONTACT_VOCAB, phrase_for
 from lerobot.probes.base import ProbablePolicy
 from lerobot.probes.manifest import Metric, Panel, write_index
 from lerobot.probes.metadata_steering import _level_projection

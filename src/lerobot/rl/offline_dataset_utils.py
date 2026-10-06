@@ -227,7 +227,7 @@ REBOT_SPEED_TABLE = "speed_hybrid_v1.parquet"
 # unlike speed: a root without them renders today's prompt (no clause, column -1).
 REBOT_PRECISION_TABLE = "precision.parquet"
 REBOT_CONTACT_TABLE = "contact.parquet"
-# Rubric v2 quality stretches (docs/notes/quality_mistake_rubric_v2.md 5.1, 10). When a root has
+# Rubric v2 quality stretches (annotation/rubrics/quality_mistake_rubric_v2.md 5.1, 10). When a root has
 # them, the frame grade comes from the stretches, not from episode_metadata's per-segment quality.
 REBOT_QUALITY_SPANS_TABLE = "quality_spans.parquet"
 # Rubric v2 precision windows (same rubric, 6). When a root has them, the frame's precision is the
@@ -239,7 +239,7 @@ def load_metadata_rows(
     root,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict] | None, list[dict] | None]:
     """Read meta/episode_metadata.parquet + meta/mistakes.parquet (written by
-    metadata_annotate.py) + the adopted speed table (REBOT_SPEED_TABLE) into the inputs
+    the annotation pass, lerobot/annotation) + the adopted speed table (REBOT_SPEED_TABLE) into the inputs
     ReplayBuffer.materialize_metadata expects. Raises when any of those is missing:
     metadata_enabled requires fully annotated datasets. The precision and contact tables
     (REBOT_PRECISION_TABLE, REBOT_CONTACT_TABLE) are optional and come back None when absent.
@@ -248,8 +248,8 @@ def load_metadata_rows(
     precision 1 on every segment and the window's level inside each window."""
     meta = Path(root) / "meta"
     for name, tool in (
-        ("episode_metadata.parquet", "metadata_annotate.py"),
-        ("mistakes.parquet", "metadata_annotate.py"),
+        ("episode_metadata.parquet", "the annotation pass (lerobot.annotation.rebot.build_root)"),
+        ("mistakes.parquet", "the annotation pass (lerobot.annotation.rebot.build_root)"),
         (REBOT_SPEED_TABLE, "the speed pass that writes " + REBOT_SPEED_TABLE),
     ):
         if not (meta / name).exists():

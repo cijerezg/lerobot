@@ -287,8 +287,8 @@ def frame_metadata_lookup(dataset) -> dict[int, dict]:
 
     Same spans training uses (`ReplayBuffer.materialize_metadata`): quality, speed,
     precision and contact broadcast over the subtask segment, mistake over its 4 s
-    window. Returns ``{}`` when the dataset has not been through `metadata_annotate.py`
-    and `speed_annotate.py`.
+    window. Returns ``{}`` when the dataset has not been through the annotation and
+    speed passes (`lerobot/annotation`).
     """
     from lerobot.rl.offline_dataset_utils import load_metadata_rows
 

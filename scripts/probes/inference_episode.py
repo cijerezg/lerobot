@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd, yaml
 
 ROOT = Path(__file__).resolve().parents[3]
-ANNOTATE = ROOT / "lerobot/src/lerobot/data_processing/annotate/depth_gripper_event_annotate.py"
+ANNOTATE = ROOT / "lerobot/src/lerobot/annotation/gripper_events/depth_gripper_event_annotate.py"
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("runs", nargs="+", type=Path, help="outputs/train/<day>/<run> or its inference_dataset")

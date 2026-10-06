@@ -50,8 +50,8 @@ Active path:
 - **`rl/`** — replay buffer, memmap cache, RTC actor runtime, shared config, AWR calibration, data sources (rebot + diverse corpus mixer). `rl/molmoact2/` holds the trainer, hybrid critic and val loss. `RL_NOTES.md` documents the `Trainer` seam.
 - **`scripts/rl_offline.py`** — offline training entry point (single process or DDP via `accelerate launch`). Other fork scripts: `compute_delta_stats.py`, `lerobot_memmap_buffer_cache.py`, `view_probes.py`, `compare_probes.py`, `model_explorer.py`.
 - **`probes/`** — validation probes run at every `val_freq`; each writes an `index.json` manifest the viewer reads. `README.md` and `MODEL_TENSORS.md` say where each probe reads the model.
-- **`data_processing/annotate/`** — subtask, summary, metadata, speed, precision, contact and gripper-event annotation tools and review UIs.
-- **`datasets/`** — `LeRobotDataset` plus the diverse-corpus loaders (`diverse_corpus.py`, `diverse_prompt.py`, `contact_vocab.py`).
+- **`annotation/`** — every annotation script, rubric and vocabulary (`README.md` has the rule and the layout); results live outside the repo.
+- **`datasets/`** — `LeRobotDataset` plus the diverse-corpus loaders (`diverse_corpus.py`, `diverse_prompt.py`).
 - **`robots/rebot_b601_follower/`, `teleoperators/rebot_102_leader/`** — the hardware.
 
 Upstream (inherited, not maintained): `policies/{act,diffusion,smolvla,tdmpc,vqbet,gaussian_actor}`, `envs/`, the other robots and teleoperators. The groot, wall_x, xvla, eo1, multi_task_dit, pi0 and pi0_fast policies and the upstream `examples/` were removed in 2026-10; `examples/` now holds only the diverse-corpus tooling.
@@ -66,7 +66,7 @@ Conventions:
 
 - **`docs/`** — all project documentation. `README.md` is the index and states the rules: `guide/` (how to use), `design/` (how it is built), `notes/` (dated notes with a status line), `runbooks/`, `reports/`, `archive/`, and `status.md` as the only snapshot page.
 - **`CHEAT_SHEET.md`** — the one command sheet.
-- **`tests/`** — pytest suite by module. Fork tests: `tests/rl/`, `tests/probes/`, `tests/policies/test_molmoact2_*.py`, `tests/datasets/test_diverse_*.py`, `tests/teleoperators/test_rebot_*.py`.
+- **`tests/`** — pytest suite by module. Fork tests: `tests/rl/`, `tests/probes/`, `tests/annotation/`, `tests/policies/test_molmoact2_*.py`, `tests/datasets/test_diverse_*.py`, `tests/teleoperators/test_rebot_*.py`.
 - **`scripts/`** — ops shell scripts: `remote_validate.sh`, `chase_validate.sh`, `run_probes.sh`, probe helpers.
 - **`examples/dataset/diverse_robot_dataset/`** — the diverse-corpus build pipeline (production tooling, not an example).
 - **`.github/workflows/`** — `quality.yml` (pre-commit), `fast_tests.yml`, `full_tests.yml`, `security.yml`.

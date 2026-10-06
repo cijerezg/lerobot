@@ -35,7 +35,7 @@ is spelled out:
   description — for RoboChallenge the whole task string — and is kept as
   ``parent_subtask``; the prompt's "current step" is the atom, the same grammar ReBot's
   segments already use;
-* the per-anchor ``precision`` (1-5) and ``contact`` (code 0-14, contact_vocab.py) read
+* the per-anchor ``precision`` (1-5) and ``contact`` (code 0-14, annotation/vocab.py) read
   off the same atom from their optional sidecars. Unlike speed, a missing sidecar or a
   missing atom is not an error: the row carries -1 and the prompt omits the clause;
 * rubric v2 frame-level labels where a store has the sidecars (``FRAME_LABEL_VIEWS``):

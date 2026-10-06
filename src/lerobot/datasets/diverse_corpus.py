@@ -56,13 +56,13 @@ FUTURE_FPS = 30.0
 #                                duration label — ADOPTED 2026-09-09, the only method that
 #                                also exists for ReBot (meta/speed_hybrid_v1.parquet, v7)
 SPEED_ATOMS_VIEW = "speed_atoms_hybrid_v1.jsonl"
-# Precision (1-5) and contact (code 0-14, datasets/contact_vocab.py) sidecars, same row
+# Precision (1-5) and contact (code 0-14, annotation/vocab.py) sidecars, same row
 # shape as the speed atoms. Optional: a store without the file reads as no rows, every
 # anchor gets -1 and its prompt omits the clause. Not part of the cache key.
 PRECISION_ATOMS_VIEW = "precision_atoms.jsonl"
 CONTACT_ATOMS_VIEW = "contact_atoms.jsonl"
 SUBTASK_ATOMS_VIEW = "subtask_atoms.jsonl"
-# Rubric v2 frame-level sidecars (docs/notes/quality_mistake_rubric_v2.md 5.1, 6, 10): rows keyed
+# Rubric v2 frame-level sidecars (annotation/rubrics/quality_mistake_rubric_v2.md 5.1, 6, 10): rows keyed
 # by episode_id with [from_index, to_index) in native frames. Optional, per store and per file:
 # a store that has one takes that channel from the anchor's frame instead of from its atom
 # (diverse_actor_selection._prepare_rows). Not part of the cache key: training reads these
