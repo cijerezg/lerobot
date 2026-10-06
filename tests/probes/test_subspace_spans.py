@@ -56,7 +56,7 @@ def test_suite_cache_lifecycle(tmp_path, monkeypatch, mode, shared, captures, re
         assert index['id'] == 'subspace_spans'
         assert any(p['file'] == 'explorer.html' and p['primary'] for p in index['panels'])
         assert result['layers'] == [0, 1, 2]
-        assert result['headline_tau'] == .01
+        assert result['headline_tau'] == .1
         assert (output / 'pairs.csv').is_file()
     else:
         assert result is None

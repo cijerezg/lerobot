@@ -1,4 +1,4 @@
-"""Read raw representation spans without confusing geometry with task performance.
+"""Read mean-centred representation spans without confusing geometry with task performance.
 
 Each frame contributes one arithmetic mean over a token group, captured after a complete
 network block (attention, MLP and residual additions), before the final network norm.
@@ -7,15 +7,19 @@ Camera, subtask, state and action_output groups are in the 2560-dimensional mult
 encoder. action is the 768-dimensional action expert, averaged over 30 future-step tokens
 at flow time zero with the same seeded noise for every frame. It is not a predicted action.
 
-Subspace uses raw fp16 cached vectors promoted to float64: no centring, whitening, or
-per-frame norm normalisation. A shared mean direction therefore counts. Rescaling rows
-preserves the exact span, but can change singular values, numerical rank and energy
-residuals. The singular-value cutoff is a modelling choice, not an intrinsic dimension.
+Subspace uses fp16 cached vectors promoted to float64 and centred on each robot's own
+training mean (holdout rows subtract the same mean); no whitening or per-frame norm
+normalisation. The raw mean direction is shared by every robot at cosine 0.99+ and would
+otherwise be the first direction of every span, so it is removed and reported separately:
+mean_norm per robot and mean_cos per pair (cosine between the two robots' raw means).
+Rescaling rows preserves the exact span, but can change singular values, numerical rank
+and energy residuals. The singular-value cutoff is a modelling choice, not an intrinsic dimension.
 
 Training rows here are the reference frames defining the span; they are not a new
 training run. The conditions cache samples interior frames per episode/class/phase using the
-configured conditions_* budget (defaults: one frame, ten training episodes per cell,
-600 total frames). Only the selected text condition (real by default) and
+configured conditions_* budget (defaults: one frame per episode and cell, 250 training
+frames per robot filled round-robin over its cells, 1000 total frames). summary.json
+"available" gives the episodes each robot could have supplied, the ceiling of its count. Only the selected text condition (real by default) and
 present groups enter this report; robots need at least eight reference frames. ReBot
 holdout comes from validation windows; corpus holdout follows its episode ledger.
 Correlated windows and unequal frame counts limit comparisons. UR7e has no holdout.
@@ -23,7 +27,7 @@ Correlated windows and unequal frame counts limit comparisons. UR7e has no holdo
 Numerical rank k(tau) counts singular values strictly above tau times the largest.
 Training residual is discarded squared-singular-value energy divided by total energy;
 holdout residual is squared energy outside the training basis divided by holdout energy.
-These are uncentred, energy-weighted fractions, not average frame errors or task accuracy.
+These are energy-weighted fractions of the centred vectors, not average frame errors or task accuracy.
 
 Principal-angle cosines are singular values of Q_A transpose Q_B, sorted largest first:
 index 1 is the smallest angle, hence the best-aligned direction. There are min(p,q) values,
@@ -76,7 +80,7 @@ def read_csv(path):
 
 def detail_data(cache_dir, summary, spans, pivots, n_null=100, seed=42):
     """Only the configured detailed layers need new CPU linear algebra. No model imports/run."""
-    from lerobot.probes.subspace_spans import robot_rows, fp16_floor, null_cosines
+    from lerobot.probes.subspace_spans import centred_matrices, robot_rows, fp16_floor, null_cosines
     meta = json.loads((cache_dir/'meta.json').read_text())
     details, nulls = [], {}
     rng = np.random.RandomState(seed)
@@ -88,8 +92,8 @@ def detail_data(cache_dir, summary, spans, pivots, n_null=100, seed=42):
         for layer in summary['layers']:
             bases = {}
             for robot, ids in sel.items():
-                x16 = arr[ids['train'],layer,:]
-                _, s, vt = np.linalg.svd(x16.astype(np.float64),full_matrices=False)
+                x16, x, _, _ = centred_matrices(arr, ids, layer)
+                _, s, vt = np.linalg.svd(x, full_matrices=False)
                 k = int((s > summary['headline_tau']*s[0]).sum())
                 saved = next(r for r in spans if r['group']==group and r['layer']==layer and r['robot']==robot and r['tau']==summary['headline_tau'])
                 if k != saved['k'] or not np.isclose(s[0],saved['s1'],rtol=1e-8):
@@ -147,7 +151,7 @@ def render(output_dir, cache_dir=None, *, n_null=100, seed=42, n_pivots=12):
     for pair, r in summary['overlap'][g].items():
         if pair.startswith('rebot_'):
             metrics.append(Metric(pair, pair.replace('_',' vs ')+' overlap',value=r['overlap'],fmt=4,note=f"Random expectation {r['null_overlap']:.4f}; {r['shared']} / {min(r['p'],r['q'])} cosines >0.9. L{layer}, τ={tau}, {g}."))
-    panels=[Panel('explorer.html','Explore the raw spans, one readable chart at a time',primary=True,
+    panels=[Panel('explorer.html','Explore the centred spans, one readable chart at a time',primary=True,
         how='Selectors preserve access to every group, all captured layers and configured tolerances. Angle spectra use the saved middle tolerance at the configured detailed layers. Tables show exact counts and energy residuals; downloads preserve all measurements.')]
     if (out/'comparison.html').exists():
         panels.append(Panel('comparison.html','BC 1400 versus Diverse-v3 1200: measured results and limitations',how='Matched report settings; checkpoints differ in state encoding and other saved settings, so this is not a controlled training ablation.'))
@@ -168,7 +172,7 @@ function draw(){
  $('tauLabel').hidden=['spectra','angles','pivots'].includes(v);$('layerLabel').hidden=['rank','overlap','residual'].includes(v);$('pairLabel').hidden=!['overlap','angles'].includes(v);$('robotLabel').hidden=!['spectra','residual','pivots'].includes(v);
  const ss=D.spans.filter(r=>r.group===g&&r.tau===t), ps=D.pairs.filter(r=>r.group===g&&r.tau===t&&r.a===a&&r.b===b), end=ss.filter(r=>r.layer===D.summary.headline_layer);
  const rankMax=Math.max(...D.spans.map(r=>Math.min(r.n_frames,r.d))), lastLayer=Math.max(...D.spans.map(r=>r.layer));
- $('context').textContent=D.groups[g]+' Layers are zero-based complete block outputs. Raw, uncentred fp16 cache; float64 analysis. Real text.';
+ $('context').textContent=D.groups[g]+' Layers are zero-based complete block outputs. fp16 cache centred on each robot’s training mean; float64 analysis. Real text.';
  $('gallery').innerHTML='';$('plot').innerHTML='';let lines=[],spec={},reading='',finding='',headers=[],rows=[];
  if(v==='rank'){
   for(const r of D.robots){let z=ss.filter(x=>x.robot===r);if(!z.length)continue;lines.push({name:r,x:z.map(x=>x.layer),y:z.map(x=>x.k),color:color(r)});lines.push({name:r+' frame ceiling ('+z[0].n_frames+')',x:[0,lastLayer],y:[z[0].n_frames,z[0].n_frames],color:color(r),dash:'2 6',width:1})}
@@ -180,20 +184,20 @@ function draw(){
   lines=[{name:a+' ↔ '+b,x:ps.map(r=>r.layer),y:ps.map(r=>r.overlap),color:palette[0]},{name:'Random expectation max(p,q)/D',x:ps.map(r=>r.layer),y:ps.map(r=>r.null_overlap),color:palette[1],dash:'8 5'}];
   spec={title:`Span overlap · ${a} ↔ ${b} · τ=${t}`,xlabel:'Block index (zero-based)',ylabel:'Mean squared principal cosine',xmax:lastLayer};
   let r=ps.find(r=>r.layer===D.summary.headline_layer);finding=`At L${r.layer}: overlap ${fmt(r.overlap)} versus random expectation ${fmt(r.null_overlap)}; ${r.shared} of ${Math.min(r.p,r.q)} cosines exceed 0.9. This is partial alignment, not equal spans.`;
-  reading='Solid: mean cos² over min(p,q) directions. Dashed: expected overlap for independent isotropic subspaces with these ranks and ambient width. Both use a fixed 0–1 scale. Above-reference overlap is descriptive, not a p-value; the raw common mean can contribute. A↔B geometry is symmetric, but energy coverage is directional.';
-  headers=['Layer','Rank A','Rank B','Overlap','Random','cos >0.9','B outside A (%)','A outside B (%)'];rows=ps.map(r=>[r.layer,r.p,r.q,fmt(r.overlap),fmt(r.null_overlap),r.shared,fmt(100*r.residual_b_outside_a),fmt(100*r.residual_a_outside_b)]);
+  reading='Solid: mean cos² over min(p,q) directions. Dashed: expected overlap for independent isotropic subspaces with these ranks and ambient width. Both use a fixed 0–1 scale. Above-reference overlap is descriptive, not a p-value. The shared raw mean direction is removed before the spans are formed; the cosine between the two robots’ raw means is in the table. A↔B geometry is symmetric, but energy coverage is directional.';
+  headers=['Layer','Rank A','Rank B','Overlap','Random','cos >0.9','Raw means cos','B outside A (%)','A outside B (%)'];rows=ps.map(r=>[r.layer,r.p,r.q,fmt(r.overlap),fmt(r.null_overlap),r.shared,fmt(r.mean_cos),fmt(100*r.residual_b_outside_a),fmt(100*r.residual_a_outside_b)]);
  } else if(v==='residual'){
   let z=ss.filter(r=>r.robot===robot);lines=[{name:'Reference / training',x:z.map(r=>r.layer),y:z.map(r=>r.train_residual),color:palette[0]},{name:'Holdout',x:z.map(r=>r.layer),y:z.map(r=>r.holdout_residual),color:palette[1],dash:'8 5'}];
-  spec={title:`Energy outside the span · ${robot} · τ=${t}`,xlabel:'Block index (zero-based)',ylabel:'Fraction of total uncentred energy',xmax:lastLayer};
+  spec={title:`Energy outside the span · ${robot} · τ=${t}`,xlabel:'Block index (zero-based)',ylabel:'Fraction of centred energy',xmax:lastLayer};
   let r=z.find(r=>r.layer===D.summary.headline_layer);finding=r.n_holdout?`At L${r.layer}: ${fmt(100*r.train_residual)}% reference energy and ${fmt(100*r.holdout_residual)}% holdout energy remain outside the ${r.k}-direction basis.`:'No holdout frames for this robot. A missing curve is not a zero residual.';
   reading='Training = discarded Σsᵢ² / total Σsᵢ². Holdout = 1 − ‖Xhold Qk‖²F / ‖Xhold‖²F, using the training basis unchanged. Lower means better energy coverage, not task generalisation. Curves share a 0–1 scale; exact small values remain in the table. Training residuals near zero are expected when rank reaches the frame count.';
   headers=['Layer','Rank','Train outside (%)','Holdout outside (%)','Reference / holdout n'];rows=z.map(r=>[r.layer,r.k,fmt(100*r.train_residual),r.holdout_residual===null?'—':fmt(100*r.holdout_residual),r.n_frames+' / '+r.n_holdout]);
  } else if(v==='spectra'){
   let r=D.details.find(r=>r.kind==='spectrum'&&r.group===g&&r.layer===l&&r.robot===robot);const x=r.s.map((_,i)=>i+1);
   lines=[{name:'Singular values sᵢ / s₁',x,y:r.s,color:palette[0]},{name:'Pivot residual |Rⱼⱼ| / |R₁₁|',x,y:r.qr,color:palette[1],dash:'2 5'},...D.summary.tolerances.map(t=>({name:'τ='+t,x:[1,rankMax],y:[t,t],color:'#a9b9c9',dash:'8 5',width:1})),{name:'Estimated fp16 floor',x:[1,rankMax],y:[r.floor,r.floor],color:palette[3],dash:'10 4 2 4'}];
-  spec={title:`Raw spectrum · ${robot} · ${g} · L${l}`,xlabel:'Singular-value rank / QR pivot order (one-based)',ylabel:'Relative amplitude (log scale)',xmax:rankMax,ymin:1e-7,ymax:1,log:true};
+  spec={title:`Centred spectrum · ${robot} · ${g} · L${l}`,xlabel:'Singular-value rank / QR pivot order (one-based)',ylabel:'Relative amplitude (log scale)',xmax:rankMax,ymin:1e-7,ymax:1,log:true};
   finding=`${r.s.length} singular values; estimated fp16 floor / s₁ = ${r.floor.toExponential(2)}. Different robots have different curve lengths because they contribute different numbers of frames.`;
-  reading='Solid blue: descending singular values of the uncentred frame matrix. Dotted orange: greedy frame residual sequence, separately normalised by its first pivot. Grey dashed lines mark all cutoffs; purple dash-dot is this robot’s estimated rounding floor, not a median across robots. The two sequence indices are orders, not matching directions. Curves share fixed axes across groups, robots and models.';
+  reading='Solid blue: descending singular values of the mean-centred frame matrix. Dotted orange: greedy frame residual sequence, separately normalised by its first pivot. Grey dashed lines mark all cutoffs; purple dash-dot is this robot’s estimated rounding floor, not a median across robots. The two sequence indices are orders, not matching directions. Curves share fixed axes across groups, robots and models.';
   headers=['Index','sᵢ / s₁','QR residual ratio'];rows=r.s.map((s,i)=>[i+1,fmt(s,7),fmt(r.qr[i],7)]);
  } else if(v==='angles'){
   let r=D.details.find(r=>r.kind==='angle'&&r.group===g&&r.layer===l&&r.a===a&&r.b===b);let p=D.pairs.find(r=>r.group===g&&r.layer===l&&r.tau===D.summary.headline_tau&&r.a===a&&r.b===b),x=r.cos.map((_,i)=>i+1);

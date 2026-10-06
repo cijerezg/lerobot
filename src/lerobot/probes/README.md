@@ -27,7 +27,7 @@ probes. `run_probes.sh` dispatches it through the standard validation registry a
 requires its report in the final completeness check. The probe viewer and checkpoint
 comparison discover its `index.json` automatically.
 
-This probe measures raw, uncentered representation rank, cross-robot span overlap,
+This probe measures mean-centred (per robot) representation rank, cross-robot span overlap,
 principal angles, held-out energy outside each span, and the frames defining it.
 Numerical rank counts singular values above a fraction of the largest singular value;
 a shared mean component can change that count without removing frame differences.
@@ -43,7 +43,7 @@ A missing or incompatible cache fails visibly rather than substituting another s
 | Setting | Default | Meaning |
 |---|---|---|
 | `subspace_text` | `real` | Cached text condition (`real` or `neutral`) |
-| `subspace_tolerances` | `0.1,0.01,0.001` | Relative singular-value cutoffs; middle sorted cutoff is the headline |
+| `subspace_tolerances` | `0.3,0.1,0.05` | Relative singular-value cutoffs on the centred spectrum; middle sorted cutoff is the headline. 0.1 keeps k between 1 and the frame count at nearly every layer; 0.05 is frame-limited for state and action_output below ~100 frames |
 | `subspace_layers` | `14,15,16,28,32` | Detailed spectra, principal angles, and pivots; last layer is the headline |
 | `subspace_n_null` | `100` | Random subspace pairs per dimension tuple |
 | `subspace_n_pivots` | `12` | Frame examples shown in the explorer |

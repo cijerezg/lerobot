@@ -10,12 +10,14 @@ The offset-free question is whether the *structure over conditions* agrees.
 tape, block come from the noun of the ReBot subtask window or of the corpus atom; the
 phases are grasp, move, release (return carries no object). ReBot additionally keeps the
 object INSTANCE (spray bottle, pill bottle, cup, tape roll, sock, shirt) for its own
-matrix. Robots: rebot, droid (droid + droid_success), molmoact, robochallenge. A cell
-exists on a robot when at least two of its episodes carry it. One interior frame per (episode, class, phase), at most
-``conditions_episodes_per_cell`` training episodes per cell, and at most
+matrix. Robots: rebot, droid (droid + droid_success), molmoact, robochallenge (ur7e has
+four episodes and is left out). A cell exists on a robot when at least two of its
+episodes carry it. One interior frame per (episode, class, phase), each robot's cells
+filled round-robin up to ``conditions_frames_per_robot`` training frames, and at most
 ``conditions_max_frames`` frames including holdout: every cell is an episode-balanced
 sample, and the frame rate is irrelevant because every similarity below is between
-frames of DIFFERENT episodes.
+frames of DIFFERENT episodes. ``sampling_plan.json`` and the cache's ``meta.json`` record
+the episodes available per cell before the budget, i.e. the ceiling of each robot.
 
 **Text conditions.** Every frame is captured twice: with its real task and subtask text,
 and with constant task/step text ("Manipulate the object." / "continue the task"). Real text can directly carry object and phase labels. Structure that survives constant text can come from images or state; it is not proof
@@ -130,9 +132,9 @@ class ProbeConditionsMatrixConfig(TrainRLServerPipelineConfig):
 REBOT = "rebot"
 ROBOT_OF_SOURCE = {
     "droid": "droid", "droid_success": "droid", "molmoact": "molmoact",
-    "robochallenge": "robochallenge", "ur7e": "ur7e",
+    "robochallenge": "robochallenge",
 }
-ROBOT_ORDER = (REBOT, "droid", "molmoact", "robochallenge", "ur7e")
+ROBOT_ORDER = (REBOT, "droid", "molmoact", "robochallenge")
 PHASES = ("grasp", "move", "release")
 CLASSES = ("bottle", "cup", "cloth", "tape", "block")
 # Noun -> object class. "paper towel" is paper, not cloth.
@@ -193,12 +195,6 @@ def _rebot_instance(noun: str) -> str:
     return noun
 
 
-def _cap_episodes(episodes: list, cap: int, rng) -> list:
-    if len(episodes) <= cap:
-        return episodes
-    return sorted(rng.choice(episodes, size=cap, replace=False).tolist())
-
-
 def _even_picks(n_available: int, n_wanted: int) -> np.ndarray:
     if n_wanted == 1:
         return np.array([n_available // 2], dtype=int)
@@ -233,8 +229,7 @@ def _rebot_samples(dataset, cfg, name: str, holdout: bool, rng) -> list[dict]:
                     cells[(_rebot_instance(noun), cls, verb)][ep].append((g, (g - lo) / max(hi - lo, 1), w["subtask"], dest))
     samples = []
     for (inst, cls, verb), by_ep in sorted(cells.items()):
-        episodes = sorted(by_ep) if holdout else _cap_episodes(sorted(by_ep), p.conditions_episodes_per_cell, rng)
-        for ep in episodes:
+        for ep in sorted(by_ep):
             frames = by_ep[ep]
             first = ep_index[ep][0]
             for k in _even_picks(len(frames), p.conditions_frames_per_episode_cell):
@@ -275,8 +270,7 @@ def _diverse_samples(buffer, cfg, key: str, holdout: bool, rng) -> list[dict]:
         )
     samples = []
     for (robot, cls, verb), by_ep in sorted(cells.items()):
-        episodes = sorted(by_ep) if holdout else _cap_episodes(sorted(by_ep), p.conditions_episodes_per_cell, rng)
-        for ep in episodes:
+        for ep in sorted(by_ep):
             rows = sorted(by_ep[ep])
             for k in _even_picks(len(rows), p.conditions_frames_per_episode_cell):
                 anchor_s, row_index, pos, text, dest, source = rows[int(k)]
@@ -289,14 +283,17 @@ def _diverse_samples(buffer, cfg, key: str, holdout: bool, rng) -> list[dict]:
     return samples
 
 
-def _bound_samples(samples: list[dict], max_frames: int, episodes_per_cell: int, seed: int) -> list[dict]:
-    """One interior frame per episode/class/phase, balanced cells under a hard cap.
+def _bound_samples(samples: list[dict], max_frames: int, frames_per_robot: int, seed: int) -> tuple[list[dict], dict]:
+    """One interior frame per episode/class/phase, balanced cells under a per-robot budget
+    and a hard cap on the total.
 
     ReBot instance windows share a class budget. Held-out samples are retained first;
-    training cells then receive frames round-robin, from independent episodes.
+    each robot's training cells then receive frames round-robin, from independent
+    episodes, until the robot holds ``frames_per_robot`` or its cells are exhausted.
+    Also returns the training episodes available per robot and cell before the budget.
     """
-    if max_frames < 1 or episodes_per_cell < 1:
-        raise ValueError("conditions frame and episode budgets must be positive")
+    if max_frames < 1 or frames_per_robot < 1:
+        raise ValueError("conditions frame budgets must be positive")
     unique = {}
     for s in samples:
         key = (s["holdout"], s["robot"], s["episode"], s["object_class"], s["phase"])
@@ -306,21 +303,24 @@ def _bound_samples(samples: list[dict], max_frames: int, episodes_per_cell: int,
     buckets = defaultdict(list)
     for s in unique.values():
         buckets[(s["holdout"], s["robot"], s["object_class"], s["phase"])].append(s)
+    available: dict = defaultdict(dict)
     for key, bucket in buckets.items():
         bucket.sort(key=lambda s: (s["episode"], s["index"]))
         rng.shuffle(bucket)
         if not key[0]:
-            del bucket[episodes_per_cell:]
+            available[key[1]][f"{key[2]}/{key[3]}"] = len(bucket)
     selected = []
     for held in (True, False):
         keys = sorted(k for k in buckets if k[0] == held)
+        taken: dict = defaultdict(int)
         for n in range(max((len(buckets[k]) for k in keys), default=0)):
             for k in keys:
-                if n < len(buckets[k]):
+                if n < len(buckets[k]) and (held or taken[k[1]] < frames_per_robot):
                     selected.append(buckets[k][n])
+                    taken[k[1]] += 1
                     if len(selected) == max_frames:
-                        return selected
-    return selected
+                        return selected, dict(available)
+    return selected, dict(available)
 
 
 def _plan_summary(samples: list[dict]) -> dict:
@@ -366,8 +366,10 @@ def _rebot_inputs(dataset, cfg, sample: dict, chunk_size: int) -> dict:
 
 
 @torch.no_grad()
-def collect(adapter, cfg, samples: list[dict], datasets: dict, buffers: dict, cache_dir: str) -> None:
-    """Every sample under both text conditions, one fp16 memmap per group."""
+def collect(adapter, cfg, samples: list[dict], datasets: dict, buffers: dict, cache_dir: str,
+            available: dict | None = None) -> None:
+    """Every sample under both text conditions, one fp16 memmap per group. ``available``
+    (training episodes per robot and cell before the budget) travels in ``meta.json``."""
     makedirs(os.path.join(cache_dir, "thumbs"))
     n_rows = len(samples) * len(TEXT_CONDITIONS)
     seed = int(cfg.probe_parameters.random_seed)
@@ -404,7 +406,8 @@ def collect(adapter, cfg, samples: list[dict], datasets: dict, buffers: dict, ca
         arr.flush()
         np.save(os.path.join(cache_dir, f"{group}.present.npy"), present[group])
     with open(os.path.join(cache_dir, "meta.json"), "w") as f:
-        json.dump({"protocol": PROTOCOL, "rows": meta, "groups": {g: list(a.shape[1:]) for g, a in arrays.items()}}, f)
+        json.dump({"protocol": PROTOCOL, "rows": meta, "groups": {g: list(a.shape[1:]) for g, a in arrays.items()},
+                   "available": available or {}}, f)
 
 
 def _load_cache(cache_dir: str) -> tuple[list[dict], dict[str, np.memmap], dict[str, np.ndarray]]:
@@ -1194,15 +1197,21 @@ def collect_cache(adapter, dataset, cfg, output_dir: str) -> None:
     # Which frames are collected is decided above; this only fixes the order they are
     # read in. Cell-major order walks every episode once per cell, and each hop is a
     # fresh video seek — storage order keeps the decoder moving forward.
-    samples = _bound_samples(samples, int(p.conditions_max_frames), int(p.conditions_episodes_per_cell), int(p.random_seed))
+    samples, available = _bound_samples(samples, int(p.conditions_max_frames), int(p.conditions_frames_per_robot), int(p.random_seed))
     samples.sort(key=lambda s: (s["kind"], s["source_key"], s["index"]))
     plan = _plan_summary(samples)
     for robot, cells in plan.items():
         logging.info(f"  {robot}: " + "  ".join(f"{c} {v['frames']}f/{v['episodes']}e" for c, v in cells.items()))
+    for robot, cells in available.items():
+        used = sum(v["frames"] for v in plan.get(robot, {}).values())
+        logging.info(f"  {robot}: {used} training frames of {sum(cells.values())} available "
+                     f"(budget {p.conditions_frames_per_robot}); ceiling per cell "
+                     + "  ".join(f"{c} {n}" for c, n in cells.items()))
     logging.info(f"  {len(samples)} frames x {len(TEXT_CONDITIONS)} text conditions")
     with open(os.path.join(output_dir, "sampling_plan.json"), "w") as f:
-        json.dump({"protocol": PROTOCOL, "max_frames": p.conditions_max_frames, "captures": len(samples) * 2, "cells": plan, "samples": samples}, f, indent=2)
-    collect(adapter, cfg, samples, datasets, buffers, cache_dir)
+        json.dump({"protocol": PROTOCOL, "max_frames": p.conditions_max_frames, "frames_per_robot": p.conditions_frames_per_robot,
+                   "captures": len(samples) * 2, "cells": plan, "available": available, "samples": samples}, f, indent=2)
+    collect(adapter, cfg, samples, datasets, buffers, cache_dir, available)
 
 
 def run(adapter, dataset, cfg, output_dir: str) -> dict | None:

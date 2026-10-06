@@ -335,6 +335,7 @@ class ProbeConfig:
     enable_attention_budget: bool = False  # how the action tokens' attention budget shifts over frames
     enable_subtask_sweep: bool = False  # does the subtask clause move the action chunk (memory chain hop 2)
     enable_subtask_scene_sweep: bool = False  # same, on empty-handed frames with scene-plausible labels + absent control
+    enable_precision_contact_sweep: bool = False  # precision ramp + plausible contact codes on pre-commit frames, truthful prompt as reference
     enable_task_sweep: bool = False  # does the high-level task string steer actions beyond flow noise
     enable_objective: bool = False  # flow + FAST loss on val against a matched training sample
     enable_input_swap: bool = False  # inject another frame's state / images / subtask text: 2^3 cube per anchor
@@ -384,18 +385,20 @@ class ProbeConfig:
     # the ReBot roots carrying meta/subtask_windows.json, comma-separated (None = the
     # config's dataset sources). Episodes are the independent unit every similarity here
     # is built from — same-episode pairs are dropped, and the ceiling splits episodes —
-    # so the budget buys episodes first. One interior frame per episode/class/phase;
-    # the global cap includes held-out frames. Each frame needs two captures.
+    # so the budget buys episodes first. One interior frame per episode/class/phase, each
+    # robot's cells filled round-robin up to conditions_frames_per_robot (a robot with
+    # fewer takes all it has; sampling_plan.json records the ceiling per cell); the global
+    # cap includes held-out frames. Each frame needs two captures.
     conditions_frames_per_episode_cell: int = 1
-    conditions_episodes_per_cell: int = 10
-    conditions_max_frames: int = 600
+    conditions_frames_per_robot: int = 250
+    conditions_max_frames: int = 1000
     conditions_headline_layer: int = 28
     conditions_rebot_roots: str | None = None
     conditions_layers: str = "14,28,32"  # matrices_L<n>.png besides the fixed headline layer; every layer is analysed regardless
     # Subspace spans reuse the conditions-matrix capture and sampling budget above.
     # All layers are analyzed; detailed layers also get spectra, angles, and pivots.
     subspace_text: str = "real"
-    subspace_tolerances: str = "0.1,0.01,0.001"
+    subspace_tolerances: str = "0.3,0.1,0.05"
     subspace_layers: str = "14,15,16,28,32"
     subspace_n_null: int = 100
     subspace_n_pivots: int = 12
@@ -472,6 +475,11 @@ class ProbeConfig:
     # sheets). Required when the probe is enabled; n_seeds falls back to the sweep's.
     subtask_scene_sweep_frames: str | None = None
     subtask_scene_sweep_n_seeds: int | None = None
+    # Precision / contact sweep: the hand-reviewed pre-commit frame list (true precision and
+    # contact, plausible and control contact codes per frame), built by
+    # migration/precision_contact_sweep_frames.py. Required when the probe is enabled.
+    precision_contact_sweep_frames: str | None = None
+    precision_contact_sweep_n_seeds: int | None = None
 
     # Task sweep: same intervention/noise-floor test over meta/tasks.parquet.
     task_sweep_n_frames: int | None = None

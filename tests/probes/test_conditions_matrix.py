@@ -14,9 +14,11 @@ def test_budget_deduplicates_instances_and_balances_episodes():
                for e in range(20) for c in ('cup','cloth') for p in cm.PHASES for i in range(3)]
     held = [dict(holdout=True, robot='droid', episode='held', object_class='cup',
                  phase=p, position=.5, instance='cup', index=i) for i,p in enumerate(cm.PHASES)]
-    chosen=cm._bound_samples(samples+held,39,10,42)
-    assert chosen==cm._bound_samples(samples+held,39,10,42)
+    chosen,available=cm._bound_samples(samples+held,39,36,42)
+    assert chosen==cm._bound_samples(samples+held,39,36,42)[0]
     assert len(chosen)==39 and sum(s['holdout'] for s in chosen)==3
+    assert available=={'rebot':{f'{c}/{p}':20 for c in ('cup','cloth') for p in cm.PHASES}}
+    assert len(cm._bound_samples(samples+held,999,36,42)[0])==39
     keys=[(s['episode'],s['object_class'],s['phase']) for s in chosen]
     assert len(keys)==len(set(keys))
     assert set(Counter((s['object_class'],s['phase']) for s in chosen if not s['holdout']).values())=={6}

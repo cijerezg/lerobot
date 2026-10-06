@@ -235,7 +235,7 @@ def test_both_probes_match_training_prompt_identity(tmp_path, monkeypatch, colum
     cfg = SimpleNamespace(
         policy=SimpleNamespace(embodiment="SO-101"),  # not the offline training identity
         dataset=SimpleNamespace(sources=[SimpleNamespace(root=str(tmp_path), embodiment=override)]),
-        probe_parameters=SimpleNamespace(conditions_episodes_per_cell=2, conditions_frames_per_episode_cell=2),
+        probe_parameters=SimpleNamespace(conditions_frames_per_episode_cell=2),
     )
     (tmp_path / "meta").mkdir()
     (tmp_path / "meta" / "subtask_windows.json").write_text(json.dumps({

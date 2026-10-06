@@ -27,8 +27,8 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/close-case-v1 \
-    --dataset.single_task="close the headphone case" \
+    --dataset.repo_id=cijerezg/fold-towel-v1 \
+    --dataset.single_task="complete various tasks" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \

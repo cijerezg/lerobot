@@ -338,12 +338,12 @@ aim:
   histogram_bins: 64
 probe_parameters:
   conditions_frames_per_episode_cell: 1
-  conditions_episodes_per_cell: 10
-  conditions_max_frames: 600
+  conditions_frames_per_robot: 250
+  conditions_max_frames: 1000
   conditions_headline_layer: 28
   # Key geometry probe; shares the conditions-matrix capture and frame budget.
   subspace_text: real
-  subspace_tolerances: 0.1,0.01,0.001
+  subspace_tolerances: 0.3,0.1,0.05
   subspace_layers: 14,15,16,28,32
   subspace_n_null: 100
   subspace_n_pivots: 12

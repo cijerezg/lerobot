@@ -1,12 +1,16 @@
 #!/usr/bin/env python
-"""Subspace spans: which directions do a robot's raw representations span, and do the robots' spans meet?
+"""Subspace spans: which directions do a robot's representations vary along, and do the robots' spans meet?
 
-**Question.** Take the raw hidden states of many frames at one layer and one token group.
-They span a subspace of R^D. How large is it, which frames define it, and is another
-robot's span the same subspace, an orthogonal one, or something in between? Nothing is
-centred or normalised: the span of a set of vectors is projective (span{c x} = span{x}),
-and the next layer reads directions through RMSNorm, so raw directions are what downstream
-sees. Centring would remove the mean direction from every span; here it is kept and counted.
+**Question.** Take the hidden states of many frames at one layer and one token group,
+centred on the robot's own mean. They span a subspace of R^D. How large is it, which frames
+define it, and is another robot's span the same subspace, an orthogonal one, or something in
+between? The mean is subtracted per robot because the raw mean direction is shared by every
+robot at cosine 0.99+ (massive activations), so uncentred it is the first singular direction
+of every span, sets the scale of every tolerance and makes any two spans overlap by
+construction. Centring leaves the directions of variation, which is where the structure is.
+The removed direction is not lost: ``mean_norm`` (per robot) and ``mean_cos`` (per pair, the
+cosine between the two robots' raw means) are recorded beside the span measurements. No
+per-frame normalisation is applied.
 
 **Input.** A ``conditions_matrix`` cache: per token group one fp16 memmap of shape
 (rows, layers, D) holding the pooled hidden state of every captured frame, plus meta.json
@@ -17,9 +21,12 @@ cache command always reads saved representations. Rows are taken under one text 
 are identical under both). Training rows (holdout = False) define a robot's span; the
 robot's holdout rows are tested against it.
 
-**Dimension.** For robot r with frame matrix X_r (n_r x D, float64), singular values
+**Dimension.** For robot r with centred frame matrix X_r (n_r x D, float64; training rows
+minus their mean mu_r, holdout rows minus the same mu_r), singular values
 s_1 >= s_2 >= .... The numerical rank at tolerance tau is k_r(tau) = #{i : s_i > tau s_1},
-for every tau in ``--tolerances`` (default 0.1, 0.01, 0.001). In exact arithmetic n generic
+for every tau in ``--tolerances`` (default 0.3, 0.1, 0.05, picked from the centred spectra of the
+2026-10-05 step-1200 cache: 0.1 keeps 1 < k < n at nearly every layer and robot; 0.05 runs into the
+frame count for state and action_output below ~100 frames). In exact arithmetic n generic
 vectors have rank min(n, D), so a tolerance is what makes "the span" a defined object; it is
 swept, not chosen. The cache is fp16, so directions below the quantisation floor
 s_floor = sigma (sqrt(n) + sqrt(D)), sigma^2 = mean(ulp(x)^2) / 12, are rounding noise; the
@@ -106,6 +113,16 @@ def fp16_floor(x16: np.ndarray) -> float:
     return float(sigma * (np.sqrt(n) + np.sqrt(d)))
 
 
+def centred_matrices(arr16: np.ndarray, ids: dict[str, np.ndarray], layer: int):
+    """(raw fp16 training rows, centred training rows, centred holdout rows, mean) at one layer.
+    Both centrings use the TRAINING mean, so holdout rows are tested against the training span."""
+    x16 = arr16[ids["train"], layer, :]
+    mu = x16.astype(np.float64).mean(axis=0)
+    x = x16.astype(np.float64) - mu
+    xh = arr16[ids["holdout"], layer, :].astype(np.float64) - mu
+    return x16, x, xh, mu
+
+
 def pivot_sequence(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Column-pivoted QR of X^T: pivots are row indices of X, |R_jj| their residual norms."""
     _, r, piv = qr(x.T, mode="economic", pivoting=True)
@@ -156,11 +173,9 @@ def analyze_group(group: str, arr16: np.ndarray, sel: dict, tolerances: list[flo
     for layer in range(n_layers):
         spans = {}
         for robot in robots:
-            x16 = arr16[sel[robot]["train"], layer, :]
-            x = x16.astype(np.float64)
+            x16, x, xh, mu = centred_matrices(arr16, sel[robot], layer)
             _, s, vt = np.linalg.svd(x, full_matrices=False)
-            spans[robot] = {"x": x, "s": s, "vt": vt, "floor": fp16_floor(x16),
-                            "xh": arr16[sel[robot]["holdout"], layer, :].astype(np.float64)}
+            spans[robot] = {"x": x, "s": s, "vt": vt, "floor": fp16_floor(x16), "xh": xh, "mu": mu}
             energy = np.cumsum(s ** 2) / np.sum(s ** 2)
             for tau in tolerances:
                 k = numerical_rank(s, tau)
@@ -168,7 +183,7 @@ def analyze_group(group: str, arr16: np.ndarray, sel: dict, tolerances: list[flo
                 out["spans"].append({
                     "group": group, "layer": layer, "robot": robot, "tau": tau,
                     "n_frames": len(x), "n_holdout": len(spans[robot]["xh"]), "d": d,
-                    "s1": s[0], "fp16_floor": spans[robot]["floor"], "k": k,
+                    "s1": s[0], "mean_norm": float(np.linalg.norm(mu)), "fp16_floor": spans[robot]["floor"], "k": k,
                     "train_residual": max(0.0, 1.0 - energy[k - 1]),
                     "holdout_residual": residual_outside(spans[robot]["xh"], q) if len(spans[robot]["xh"]) else float("nan"),
                 })
@@ -185,6 +200,8 @@ def analyze_group(group: str, arr16: np.ndarray, sel: dict, tolerances: list[flo
                     "group": group, "layer": layer, "a": a, "b": b, "tau": tau, "p": p, "q": q_, "d": d,
                     "overlap": float(np.sum(cos ** 2) / min(p, q_)), "null_overlap": max(p, q_) / d,
                     "shared": int(np.sum(cos > COS_SHARED)), "cos_1": float(cos[0]),
+                    "mean_cos": float(np.dot(spans[a]["mu"], spans[b]["mu"])
+                                      / (np.linalg.norm(spans[a]["mu"]) * np.linalg.norm(spans[b]["mu"]))),
                     "residual_b_outside_a": residual_outside(spans[b]["x"], qa),
                     "residual_a_outside_b": residual_outside(spans[a]["x"], qb),
                 })
@@ -231,7 +248,7 @@ def plot_spectra(spectra: dict, groups: list[str], layers: list[int], robots: li
             if j == 0:
                 ax.set_ylabel("s_i / s_1  (dotted: |R_jj| / |R_11|)", fontsize=8)
     axes[0, 0].legend(fontsize=7)
-    fig.suptitle("Raw singular-value spectra per robot (solid) and pivoted-QR residuals (dotted); dashed = tolerances", fontsize=10)
+    fig.suptitle("Centred singular-value spectra per robot (solid) and pivoted-QR residuals (dotted); dashed = tolerances", fontsize=10)
     fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -262,7 +279,7 @@ def plot_dimension(spans: list[dict], groups: list[str], robots: list[str], tole
             if j == 0:
                 ax.set_ylabel("k(tau)", fontsize=8)
     axes[0, 0].legend(fontsize=7)
-    fig.suptitle("Numerical rank of each robot's raw span against depth (dotted: a robot's frame count where k reaches it)", fontsize=10)
+    fig.suptitle("Numerical rank of each robot's centred span against depth (dotted: a robot's frame count where k reaches it)", fontsize=10)
     fig.tight_layout()
     fig.savefig(path, dpi=130)
     plt.close(fig)
@@ -397,7 +414,7 @@ def _pivot_rows(pivots: dict, rows: list[dict]) -> list[dict]:
     return out
 
 
-def _summary(spans, pairs_rows, sel_by_group, text, tolerances, layers, headline_layer, tau, headline_group) -> dict:
+def _summary(spans, pairs_rows, sel_by_group, available, text, tolerances, layers, headline_layer, tau, headline_group) -> dict:
     dimension = defaultdict(dict)
     for r in spans:
         if r["layer"] == headline_layer and r["tau"] == tau:
@@ -407,11 +424,14 @@ def _summary(spans, pairs_rows, sel_by_group, text, tolerances, layers, headline
     for r in pairs_rows:
         if r["layer"] == headline_layer and r["tau"] == tau:
             overlap[r["group"]][f"{r['a']}_{r['b']}"] = {k: r[k] for k in (
-                "p", "q", "overlap", "null_overlap", "shared", "cos_1", "residual_b_outside_a", "residual_a_outside_b")}
+                "p", "q", "overlap", "null_overlap", "shared", "cos_1", "mean_cos", "residual_b_outside_a", "residual_a_outside_b")}
     return {
         "text": text, "tolerances": tolerances, "layers": layers, "headline_layer": headline_layer,
         "headline_tau": tau, "headline_group": headline_group, "cos_shared": COS_SHARED,
         "robots": {g: {r: int(len(s["train"])) for r, s in sel.items()} for g, sel in sel_by_group.items()},
+        # Training episodes the conditions sampler could have drawn per robot and cell: the
+        # ceiling of the frame counts above (one frame per episode and cell).
+        "available": {r: {"total": int(sum(cells.values())), "cells": cells} for r, cells in available.items()},
         "dimension": dimension, "overlap": overlap,
     }
 
@@ -419,21 +439,25 @@ def _summary(spans, pairs_rows, sel_by_group, text, tolerances, layers, headline
 def _write_manifest(output_dir: str, summary: dict, groups: list[str], pivot_group: str, pivot_written: bool) -> dict:
     layer, tau, g = summary["headline_layer"], summary["headline_tau"], summary["headline_group"]
     metrics = []
-    for robot in summary["dimension"].get(g, {}):
-        metrics.append(Metric(f"dimension.{g}.{robot}.k", f"{robot}: numerical rank of the raw {g} span, layer {layer}, tau {tau:g}",
-                              good="none", fmt=0, primary=(robot == REBOT)))
+    for robot, entry in summary["dimension"].get(g, {}).items():
+        ceiling = summary["available"].get(robot, {}).get("total")
+        metrics.append(Metric(f"dimension.{g}.{robot}.k", f"{robot}: numerical rank of the centred {g} span, layer {layer}, tau {tau:g}",
+                              good="none", fmt=0, primary=(robot == REBOT),
+                              note=f"{entry['n_frames']} frames" + (f" of {ceiling} available" if ceiling is not None else "")))
     for pair, entry in summary["overlap"].get(g, {}).items():
         if REBOT not in pair.split("_"):
             continue
         metrics.append(Metric(f"overlap.{g}.{pair}.overlap", f"{pair.replace('_', ' vs ')}: span overlap, {g}, layer {layer}, tau {tau:g}",
                               good="none", fmt=2, primary=True,
-                              note=f"random-subspace expectation {entry['null_overlap']:.2f}; {entry['shared']} angles with cos > {COS_SHARED}"))
+                              note=f"random-subspace expectation {entry['null_overlap']:.2f}; {entry['shared']} angles with cos > {COS_SHARED}; "
+                                   f"cosine between the removed raw means {entry['mean_cos']:.3f}"))
     panels = [
-        Panel("spectra.png", "Raw singular-value spectra per robot with the pivoted-QR residual sequence",
-              how="Solid: s_i / s_1 of each robot's raw frame matrix. Dotted: |R_jj| / |R_11| of the column-pivoted QR, "
+        Panel("spectra.png", "Centred singular-value spectra per robot with the pivoted-QR residual sequence",
+              how="Solid: s_i / s_1 of each robot's frame matrix after subtracting the robot's training mean. "
+                  "Dotted: |R_jj| / |R_11| of the column-pivoted QR, "
                   "the residual of the j-th most novel frame. Dashed grey: the tolerances; dash-dot: the fp16 "
                   "quantisation floor. Directions below the floor are rounding noise.", primary=True),
-        Panel("dimension_by_layer.png", "Numerical rank k(tau) of each robot's raw span against depth, one column per tolerance",
+        Panel("dimension_by_layer.png", "Numerical rank k(tau) of each robot's centred span against depth, one column per tolerance",
               how="k(tau) = number of singular values above tau s_1. Compare robots at the same tau; compare "
                   "columns to see how much the answer depends on the tolerance.", primary=True),
         Panel("overlap_by_layer.png", "ReBot pairs: overlap of the tau-spans against depth",
@@ -451,7 +475,7 @@ def _write_manifest(output_dir: str, summary: dict, groups: list[str], pivot_gro
                                 "outside the span of the frames before it. r is that residual relative to the first."))
     return write_index(
         output_dir, sys.modules[__name__], title="Subspace spans", group="Representation",
-        claim="What subspace do a robot's raw representations span at each layer, which frames define it, "
+        claim="What subspace do a robot's mean-centred representations span at each layer, which frames define it, "
               "and do the robots' spans coincide, meet at an angle, or stay orthogonal?",
         summary=summary, metrics=metrics, panels=panels, status="info",
         see_also=["conditions_matrix", "domain_representations"],
@@ -466,6 +490,7 @@ def analyze(cache_dir: str, output_dir: str, text: str, tolerances: list[float],
             n_null: int, n_pivots: int, pivot_group: str, seed: int) -> dict:
     makedirs(output_dir)
     rows, arrays, present = _load_cache(cache_dir)
+    available = json.load(open(os.path.join(cache_dir, "meta.json"))).get("available", {})
     rng = np.random.RandomState(seed)
     out = {"spans": [], "pairs": [], "pivots": {}, "spectra": {}, "angles": {}}
     sel_by_group = {}
@@ -473,7 +498,9 @@ def analyze(cache_dir: str, output_dir: str, text: str, tolerances: list[float],
     for group in groups:
         sel = robot_rows(rows, present[group], text)
         sel_by_group[group] = sel
-        logging.info(f"{group}: " + ", ".join(f"{r} {len(s['train'])}f (+{len(s['holdout'])} holdout)" for r, s in sel.items()))
+        logging.info(f"{group}: " + ", ".join(
+            f"{r} {len(s['train'])}f of {sum(available[r].values())} available (+{len(s['holdout'])} holdout)"
+            if r in available else f"{r} {len(s['train'])}f (+{len(s['holdout'])} holdout)" for r, s in sel.items()))
         arr16 = np.asarray(arrays[group])
         analyze_group(group, arr16, sel, tolerances, layers, n_null, rng, out)
     robots = [r for r in ROBOT_ORDER if any(r in s for s in sel_by_group.values())]
@@ -485,7 +512,7 @@ def analyze(cache_dir: str, output_dir: str, text: str, tolerances: list[float],
     _write_csv(os.path.join(output_dir, "spans.csv"), out["spans"])
     _write_csv(os.path.join(output_dir, "pairs.csv"), out["pairs"])
     _write_csv(os.path.join(output_dir, "pivots.csv"), _pivot_rows(out["pivots"], rows))
-    summary = _summary(out["spans"], out["pairs"], sel_by_group, text, tolerances, layers, headline_layer, tau, headline_group)
+    summary = _summary(out["spans"], out["pairs"], sel_by_group, available, text, tolerances, layers, headline_layer, tau, headline_group)
     with open(os.path.join(output_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2, default=float)
     from lerobot.probes.subspace_report import render
@@ -535,7 +562,7 @@ def main() -> None:
     ap.add_argument("--output_dir", default=None, help="default: <step>/subspace_spans[_<text>] beside the cache's probe dir")
     ap.add_argument("--report_only", action="store_true", help="rebuild report from saved CSVs and cache; no inference")
     ap.add_argument("--text", default="real", choices=TEXT_CONDITIONS)
-    ap.add_argument("--tolerances", default="0.1,0.01,0.001", help="relative singular-value cutoffs tau; the middle one is the headline")
+    ap.add_argument("--tolerances", default="0.3,0.1,0.05", help="relative singular-value cutoffs tau; the middle one is the headline")
     ap.add_argument("--layers", default="14,15,16,28,32", help="zero-based layers for spectra, angles and pivots; the last one is the headline")
     ap.add_argument("--n_null", type=int, default=100, help="random subspace pairs behind the angle null band")
     ap.add_argument("--n_pivots", type=int, default=12)
