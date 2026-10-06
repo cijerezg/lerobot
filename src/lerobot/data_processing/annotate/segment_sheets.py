@@ -3,8 +3,8 @@
 """
 Contact sheets for the semantic segments, one image per unit of judgement.
 
-Rubric v1 (2026-08-02, git ef8f2dbb2:pi07_wiki/annotation_rubric.md; superseded by
-pi07_wiki/quality_mistake_rubric_v2.md) grades whole segments from video, so the
+Rubric v1 (2026-08-02, git ef8f2dbb2:docs/notes/quality_mistake_rubric_v2.md; superseded by
+docs/notes/quality_mistake_rubric_v2.md) grades whole segments from video, so the
 sheet is the annotation instrument: a segment's frames sampled over time, top over
 wrist, with the frame index / elapsed time / gripper value burned into every tile.
 

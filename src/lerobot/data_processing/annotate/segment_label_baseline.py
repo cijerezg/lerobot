@@ -4,8 +4,8 @@
 Anchor baseline for every segment — the starting point the vision pass overrides.
 
 The per-stratum thresholds of rubric v1 (2026-08-02, git
-ef8f2dbb2:pi07_wiki/annotation_rubric.md; superseded by
-pi07_wiki/quality_mistake_rubric_v2.md) are deterministic, so applying them by hand
+ef8f2dbb2:docs/notes/quality_mistake_rubric_v2.md; superseded by
+docs/notes/quality_mistake_rubric_v2.md) are deterministic, so applying them by hand
 767 times only adds transcription errors. This writes the
 baseline grade and the proprio-derived mistake spans; reading the contact sheets then
 *changes* what vision disagrees with, and every such change is recorded by flipping

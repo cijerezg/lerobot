@@ -227,7 +227,7 @@ REBOT_SPEED_TABLE = "speed_hybrid_v1.parquet"
 # unlike speed: a root without them renders today's prompt (no clause, column -1).
 REBOT_PRECISION_TABLE = "precision.parquet"
 REBOT_CONTACT_TABLE = "contact.parquet"
-# Rubric v2 quality stretches (pi07_wiki/quality_mistake_rubric_v2.md 5.1, 10). When a root has
+# Rubric v2 quality stretches (docs/notes/quality_mistake_rubric_v2.md 5.1, 10). When a root has
 # them, the frame grade comes from the stretches, not from episode_metadata's per-segment quality.
 REBOT_QUALITY_SPANS_TABLE = "quality_spans.parquet"
 # Rubric v2 precision windows (same rubric, 6). When a root has them, the frame's precision is the

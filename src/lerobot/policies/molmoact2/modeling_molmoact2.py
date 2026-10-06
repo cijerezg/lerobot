@@ -766,7 +766,7 @@ def _temporal_vision_block(block: Any, x: Tensor, e_t: Tensor, history_on: Tenso
     when temporal and spatial keys shared one denominator (our implementation until
     2026-08-03) the past held T/(n+T) = 0.7% of the attention budget instead of
     (K-1)/K = 83%, which starved the forward contribution *and* the gradient reaching
-    the temporal logits — see pi07_wiki/mem_temporal_attention_analysis.md.
+    the temporal logits — see docs/notes/mem_temporal_attention_analysis.md.
 
     e(t) is added at the layer input (paper eq.; accumulates in the residual stream).
     The step reuses the block's own norm and projections, so it adds no parameters.

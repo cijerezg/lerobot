@@ -56,6 +56,6 @@ with `index.json`, `summary.json`, and CSV downloads alongside it. The standalon
 remain available for saved-cache analysis.
 
 Flow inversion remains an optional curiosity experiment in
-[`migration/flow_inversion_2026-09-28/flow_inversion.py`](../../../../migration/flow_inversion_2026-09-28/flow_inversion.py),
+`migration/flow_inversion_2026-09-28/flow_inversion.py`,
 with its existing `flow_inversion_report` renderer. It is not registered or enabled
 in the official validation suite.

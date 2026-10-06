@@ -16,7 +16,7 @@
 
 """Mapping between LeRobot joint positions and reBot 102 leader raw servo angles.
 
-See ``pi07_wiki/leader_102hd_actuation.md`` §4.3. ``raw_to_position`` is the map
+See ``docs/notes/leader_102hd_actuation.md`` §4.3. ``raw_to_position`` is the map
 ``RebotArm102Leader.get_action`` applies when reading the arm; ``position_to_raw`` is its
 inverse, used to drive the arm. Both take their per-joint constants (``joint_ranges``,
 ``joint_directions``) from ``RebotArm102LeaderConfig``.

@@ -8,7 +8,8 @@ HuggingFace `trust_remote_code` snapshot under
 `image_processing_molmoact2.py`, `processing_molmoact2.py`), and the
 LeRobot wrapper lives in
 [lerobot/policies/molmoact2/](.) (`configuration_molmoact2.py`,
-`modeling_molmoact2.py`, `processor_molmoact2.py`, `frame_so101.py`).
+`modeling_molmoact2.py`, `processor_molmoact2.py`, `anchor_encoding.py`,
+`action_layout.py`, `future_visual.py`).
 
 All values below are taken from the released
 `allenai/MolmoAct2-SO100_101` config defaults. Anywhere the released
@@ -620,10 +621,9 @@ Wraps the HF model with:
      replaced by `depth_marker + projected_depth`, where `depth_marker`
      is independent but initialized from `<im_patch>`.
 
-- Frame conversion (SO-101): `SO101V3ToV21Step` /
-  `SO101V21ToV3Step` in [`frame_so101.py`](frame_so101.py) translate
-  joints 1 (`shoulder_lift`) and 2 (`elbow_flex`) between LeRobot v3.0
-  and the v2.1 convention MolmoAct2 was pretrained on.
+- Frame conversion: none. The SO-101 v3.0/v2.1 joint conversion
+  (`frame_so101.py`) was removed on 2026-07-04; the pipeline operates in
+  the raw arm frame of the target robot (rebot B601).
 
 - RTC (real-time chunking) integration via `RTCProcessor` from
   `lerobot/policies/rtc/`.

@@ -3,7 +3,7 @@
 The shipped MolmoAct2 FAST tokenizer cannot encode some quantized-DCT bins and, having
 no UNK token, silently deletes them — which shifts every later coefficient into the
 wrong (frequency, joint) cell. _tokenize_discrete_action snaps to the nearest encodable
-bin instead. See lerobot/pi07_wiki/fast_tokenizer_alphabet_bug.md.
+bin instead. See lerobot/docs/notes/fast_tokenizer_alphabet_bug.md.
 """
 
 from pathlib import Path

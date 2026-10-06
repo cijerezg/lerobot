@@ -148,7 +148,7 @@ def main():
             "model": "assistant-vision-pass",
             "annotator": "segment_sheets.py + segment_label_{baseline,review}.py",
             "rubric": "v1 2026-08-02, git ef8f2dbb2:pi07_wiki/annotation_rubric.md "
-            "(superseded by lerobot/pi07_wiki/quality_mistake_rubric_v2.md)",
+            "(superseded by lerobot/docs/notes/quality_mistake_rubric_v2.md)",
             "created_date": date.today().isoformat(),
             "segmentation": "semantic phases from gripper-closed intervals (semantic_segment.py)",
             "quality_scope": "per semantic segment, constant across it",

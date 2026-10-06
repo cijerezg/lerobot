@@ -6,7 +6,7 @@ FMB's source-native primitive runs remain the semantic segments. Quality is a
 single 1--5 value for the complete run. Mistakes are short event spans inside
 one run and become a per-timestep boolean downstream. This mirrors rubric v1
 (2026-08-02, git ``ef8f2dbb2:pi07_wiki/annotation_rubric.md``; superseded by
-``pi07_wiki/quality_mistake_rubric_v2.md``) without importing ReBot-specific
+``docs/notes/quality_mistake_rubric_v2.md``) without importing ReBot-specific
 subtasks or motion thresholds.
 """
 
@@ -430,7 +430,7 @@ def finalize_production(
         "name": "ReBot quality and semantic mistake rubric",
         "version": "2026-08-02",
         "path": "git ef8f2dbb2:pi07_wiki/annotation_rubric.md",
-        "superseded_by": "lerobot/pi07_wiki/quality_mistake_rubric_v2.md",
+        "superseded_by": "lerobot/docs/notes/quality_mistake_rubric_v2.md",
         "golden_reference_datasets": [
             "outputs/rebot_val-annotated-v3",
             "outputs/rebot_shirts_bin-annotated-v2",

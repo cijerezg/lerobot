@@ -13,7 +13,7 @@ from lerobot.datasets.contact_vocab import (
     phrase_for,
 )
 
-RUBRIC = Path(__file__).resolve().parents[2] / "pi07_wiki" / "contact_strategy_rubric.md"
+RUBRIC = Path(__file__).resolve().parents[2] / "docs" / "notes" / "contact_strategy_rubric.md"
 
 
 def _rubric_rows() -> list[tuple[int, str, str, str]]:
@@ -56,7 +56,7 @@ def test_code_for_rejects_unknown_slug():
         code_for("grab")
 
 
-@pytest.mark.skipif(not RUBRIC.exists(), reason="pi07_wiki not present in this checkout")
+@pytest.mark.skipif(not RUBRIC.exists(), reason="docs/notes not present in this checkout")
 def test_vocab_matches_the_rubric_table():
     rows = _rubric_rows()
     assert rows == [(e.code, e.slug, e.phrase, e.definition) for e in CONTACT_VOCAB]

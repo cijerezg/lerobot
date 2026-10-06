@@ -105,7 +105,7 @@ FMB passed the admission gate and is now a validated production component. All
 intervals were visually reviewed. Every interval is complete, uninterrupted,
 and critic-eligible. Quality and mistake supervision follows the ReBot contract
 of rubric v1 (2026-08-02, git `ef8f2dbb2:pi07_wiki/annotation_rubric.md`;
-superseded by `pi07_wiki/quality_mistake_rubric_v2.md`), using
+superseded by `docs/notes/quality_mistake_rubric_v2.md`), using
 `outputs/rebot_val-annotated-v3` and
 `outputs/rebot_shirts_bin-annotated-v2` as golden schema examples: quality is
 one integer constant over a complete primitive interval, while a mistake is a

@@ -1,147 +1,129 @@
-<!---
-Copyright 2020 The HuggingFace Team. All rights reserved.
+# Documentation
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+This fork of LeRobot trains and runs **MolmoAct2** on the **rebot B601** (7-DOF) with an
+offline-then-online RL pipeline (RECAP-style critic, advantage-weighted regression), a metric
+depth path, prompt-rendered memory and metadata steering, and a probe suite for looking
+inside the model. The design pages still call the recipe **pi07** (our re-implementation of
+the π0.7 recipe on MolmoAct2); that is the codename, not a separate model.
 
-    http://www.apache.org/licenses/LICENSE-2.0
+Everything that is not code lives here. One entry point, one cheat sheet, one status page.
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
--->
+| Where                                      | What                                                                  | Rule                                                |
+| ------------------------------------------ | --------------------------------------------------------------------- | --------------------------------------------------- |
+| [`status.md`](status.md)                   | What is on/off in the current run, next steps, parked ideas, footguns | The **only** snapshot page. Dated.                  |
+| [`guide/`](#guide-how-to-use-the-pipeline) | How to **use** the pipeline                                           | Timeless. No dates, no "as of".                     |
+| [`design/`](#design-how-it-is-built)       | How the system **is built**, one page per subsystem                   | As-built reference. Kept current when code changes. |
+| [`notes/`](#notes-the-ideas-lab)           | Dated design notes, rubrics, investigations                           | Every file opens with a **Status** line.            |
+| [`runbooks/`](#runbooks)                   | What to do when a known failure happens                               | Symptom → root cause → fix.                         |
+| [`reports/`](#reports)                     | Saved analyses with their numbers                                     | Frozen once written.                                |
+| [`archive/`](archive/README.md)            | Superseded or abandoned documents                                     | Index says what replaced each file.                 |
+| [`../CHEAT_SHEET.md`](../CHEAT_SHEET.md)   | The copy-paste command sheet for the rebot setup                      | The only cheat sheet.                               |
 
-# Local research reports
+In-source markdown describes **that package's code only** and nothing about the project:
+[`policies/molmoact2/ARCHITECTURE.md`](../src/lerobot/policies/molmoact2/ARCHITECTURE.md)
+(network reference), [`probes/README.md`](../src/lerobot/probes/README.md) and
+[`probes/MODEL_TENSORS.md`](../src/lerobot/probes/MODEL_TENSORS.md) (where probes read the
+model), [`rl/RL_NOTES.md`](../src/lerobot/rl/RL_NOTES.md) (trainer seam and critic design).
 
-- [Critic gradient report — v2 with depth, checkpoint 2000](engineering_notes/reports/critic_gradients_v2_2000/README.md):
-  [numerical report](engineering_notes/reports/critic_gradients_v2_2000/index.html) · [comparison](engineering_notes/reports/critic_gradients_v2_2000/comparison.html).
-- [Critic gradient report — checkpoint 2000](engineering_notes/reports/critic_gradients_2000/README.md):
-  [open the saved interactive HTML](engineering_notes/reports/critic_gradients_2000/index.html).
-- [Engineering notes index](engineering_notes/README.md).
+## Start here
 
-# Generating the documentation
+- **Run something**: [`../README.md`](../README.md) for install and the first training run,
+  then [`guide/usage.md`](guide/usage.md).
+- **Understand the build**: [`design/overview.md`](design/overview.md) →
+  [`base_model.md`](design/base_model.md) → [`depth.md`](design/depth.md) →
+  [`memory_prompts.md`](design/memory_prompts.md), then
+  [`training.md`](design/training.md) / [`inference.md`](design/inference.md) as needed.
+- **Resume work**: [`status.md`](status.md) first.
 
-To generate the documentation, you first have to build it. Several packages are necessary to build the doc,
-you can install them with the following command, at the root of the code repository:
+## `guide/` — how to use the pipeline
 
-```bash
-pip install -e . -r docs-requirements.txt
+| Page                           | Covers                                                                                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`usage.md`](guide/usage.md)   | Action encodings, offline→online flow, full config reference, pretrained merge, the RL loop, v2.1 datasets, interventions, async inference, action post-processing, buffer caching, probes |
+| [`recap.md`](guide/recap.md)   | RECAP: the critic, advantage conditioning, losses, training loop, freezing, rewards, hyperparameters, code map                                                                             |
+| [`awr.md`](guide/awr.md)       | Frozen-critic advantage-weighted regression: weight calculation, calibration, launch, probe                                                                                                |
+| [`probes.md`](guide/probes.md) | The validation probes: what each computes, standalone commands, config                                                                                                                     |
+
+## `design/` — how it is built
+
+| Page                                              | Subsystem                                                                                           |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| [`overview.md`](design/overview.md)               | The four subsystems, system diagram, the generic-layer / policy-seam rule, glossary                 |
+| [`base_model.md`](design/base_model.md)           | MolmoAct2: VLM + action expert, flow matching, token and prompt layout, anchor encoding             |
+| [`depth.md`](design/depth.md)                     | Point-map tokens, depth history, the depth read, critic depth read                                  |
+| [`memory_prompts.md`](design/memory_prompts.md)   | Prompt anatomy, short-term history, subtask generation, metadata steering                           |
+| [`training.md`](design/training.md)               | `rl_offline.py`: losses, freeze and optimizer rules, distributional critic, buffer and memmap cache |
+| [`inference.md`](design/inference.md)             | RTC actor runtime, HL decode cadence, history deque, depth at inference                             |
+| [`data_annotation.md`](design/data_annotation.md) | Datasets, the annotation chain and its tools, retained integration decisions                        |
+
+## `notes/` — the ideas lab
+
+Each note opens with `> **Status:** ...`. Vocabulary: **idea** · **building** · **built, on** ·
+**built, off** · **decided** · **fixed** / **resolved** · **in force** (rubrics) ·
+**superseded by X** · **abandoned**. The date on the status line is the date of that status.
+
+| Note                                                                             | Status                        | About                                                                               |
+| -------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------- |
+| [`annotation_principles.md`](notes/annotation_principles.md)                     | in force, 2026-10-05          | The one test every label must pass; subtask text, quality, precision, contact rules |
+| [`quality_mistake_rubric_v2.md`](notes/quality_mistake_rubric_v2.md)             | in force, draft 5, 2026-09-29 | Quality spans, mistakes, precision windows; frame-level grading                     |
+| [`precision_rubric.md`](notes/precision_rubric.md)                               | decided 2026-09-24            | Fourth metadata channel: how tightly the step's action is constrained               |
+| [`contact_strategy_rubric.md`](notes/contact_strategy_rubric.md)                 | decided 2026-09-24            | Fifth metadata channel: the contact vocabulary of record                            |
+| [`action_trajectory_losses.md`](notes/action_trajectory_losses.md)               | reference, 2026-09-02         | What the flow/FAST trajectory terms are, what is broken, option catalogue           |
+| [`principled_action_losses.md`](notes/principled_action_losses.md)               | decided                       | Which objective change is defensible and what it assumes                            |
+| [`fast_tokenizer_alphabet_bug.md`](notes/fast_tokenizer_alphabet_bug.md)         | fixed 2026-08-08              | Silent DCT coefficient deletion in the FAST tokenizer                               |
+| [`depth_gripper_event_labels.md`](notes/depth_gripper_event_labels.md)           | built 2026-08-12              | Depth-only auxiliary: predict the next gripper event                                |
+| [`depth_history_design.md`](notes/depth_history_design.md)                       | built 2026-07-25              | Temporal attention inside the depth patch encoder                                   |
+| [`depth_redesign_options.md`](notes/depth_redesign_options.md)                   | decided + built 2026-07-26    | Decision record for the depth read                                                  |
+| [`mem_temporal_attention_analysis.md`](notes/mem_temporal_attention_analysis.md) | built 2026-08-03; off         | RGB history temporal attention: spec, deviation, measurements                       |
+| [`future_visual_prediction.md`](notes/future_visual_prediction.md)               | built, off                    | Predict a frame four seconds ahead to keep RGB memory informative                   |
+| [`offline_accelerate_plan.md`](notes/offline_accelerate_plan.md)                 | built                         | DDP for `rl_offline.py` via `accelerate launch`                                     |
+| [`leader_102hd_actuation.md`](notes/leader_102hd_actuation.md)                   | built 2026-09-03              | Driving the 102HD leader: HD driver, policy preview, shadowing                      |
+| [`leader_bus_investigation.md`](notes/leader_bus_investigation.md)               | resolved 2026-09-06           | Leader byte loss and overvoltage: root causes and workarounds                       |
+| [`open_questions.md`](notes/open_questions.md)                                   | living list                   | Unresolved repo-level questions                                                     |
+
+## `runbooks/`
+
+- [`system_overcommit.md`](runbooks/system_overcommit.md): `[Errno 12] Cannot allocate memory`
+  from imageio/ffmpeg during probes; Linux overcommit accounting and the sysctl fix.
+
+## `reports/`
+
+Saved analyses. The HTML embeds its numbers and opens without a model or server; frame links
+inside point at the original `outputs/probe_runs/...` directory on the training machine.
+
+- [`critic_gradients_v2_2000/`](reports/critic_gradients_v2_2000/README.md): critic input
+  sensitivity with continuous state and depth, checkpoint 2000, plus the comparison with v1.
+- [`critic_gradients_2000/`](reports/critic_gradients_2000/README.md): the original critic,
+  checkpoint 2000.
+
+## Rules
+
+1. **Status line on every note.** A note in `notes/` starts with `> **Status:** <word>, <date>`
+   plus one sentence on what that means for the code or config. Change the line when the
+   status changes; do not leave the reader to infer it from the prose.
+2. **Design pages are the truth, notes are the history.** When an idea lands, fold the
+   as-built description into the relevant `design/` page and move the note to `archive/`
+   with a row in [`archive/README.md`](archive/README.md). When an idea dies, same move,
+   and the code goes in the same commit.
+3. **`guide/` and `design/` never carry dates.** Anything that would need "as of" belongs
+   in `status.md` or in a note.
+4. **The repo cites files outside itself by plain path, not by link.** The live run config
+   (`config_rl.yaml`), the scratch directory (`migration/`) and run outputs (`outputs/`) sit
+   at the workspace root next to this clone and are not in git. The in-package
+   [`src/lerobot/rl/config_rl.yaml`](../src/lerobot/rl/config_rl.yaml) is the template.
+5. **In-source markdown describes its package only.** Anything about the project, a decision
+   or a status goes here.
+
+### Adding a note
+
+Create `notes/<topic>.md`:
+
+```markdown
+# <Title>
+
+> **Status:** idea, 2026-MM-DD. <What this means for code/config right now.>
+
+<Why, what, how to measure.>
 ```
 
-You will also need `nodejs`. Please refer to their [installation page](https://nodejs.org/en/download)
-
----
-
-**NOTE**
-
-You only need to generate the documentation to inspect it locally (if you're planning changes and want to
-check how they look before committing for instance). You don't have to `git commit` the built documentation.
-
----
-
-## Building the documentation
-
-Once you have setup the `doc-builder` and additional packages, you can generate the documentation by
-typing the following command:
-
-```bash
-doc-builder build lerobot docs/source/ --build_dir ~/tmp/test-build
-```
-
-You can adapt the `--build_dir` to set any temporary folder that you prefer. This command will create it and generate
-the MDX files that will be rendered as the documentation on the main website. You can inspect them in your favorite
-Markdown editor.
-
-## Previewing the documentation
-
-To preview the docs, first install the `watchdog` module with:
-
-```bash
-pip install watchdog
-```
-
-Then run the following command:
-
-```bash
-doc-builder preview lerobot docs/source/
-```
-
-The docs will be viewable at [http://localhost:3000](http://localhost:3000). You can also preview the docs once you have opened a PR. You will see a bot add a comment to a link where the documentation with your changes lives.
-
----
-
-**NOTE**
-
-The `preview` command only works with existing doc files. When you add a completely new file, you need to update `_toctree.yml` & restart `preview` command (`ctrl-c` to stop it & call `doc-builder preview ...` again).
-
----
-
-## Adding a new element to the navigation bar
-
-Accepted files are Markdown (.md).
-
-Create a file with its extension and put it in the source directory. You can then link it to the toc-tree by putting
-the filename without the extension in the [`_toctree.yml`](https://github.com/huggingface/lerobot/blob/main/docs/source/_toctree.yml) file.
-
-## Renaming section headers and moving sections
-
-It helps to keep the old links working when renaming the section header and/or moving sections from one document to another. This is because the old links are likely to be used in Issues, Forums, and Social media and it'd make for a much more superior user experience if users reading those months later could still easily navigate to the originally intended information.
-
-Therefore, we simply keep a little map of moved sections at the end of the document where the original section was. The key is to preserve the original anchor.
-
-So if you renamed a section from: "Section A" to "Section B", then you can add at the end of the file:
-
-```
-Sections that were moved:
-
-[ <a href="#section-b">Section A</a><a id="section-a"></a> ]
-```
-
-and of course, if you moved it to another file, then:
-
-```
-Sections that were moved:
-
-[ <a href="../new-file#section-b">Section A</a><a id="section-a"></a> ]
-```
-
-Use the relative style to link to the new file so that the versioned docs continue to work.
-
-For an example of a rich moved sections set please see the very end of [the transformers Trainer doc](https://github.com/huggingface/transformers/blob/main/docs/source/en/main_classes/trainer.md).
-
-### Adding a new tutorial
-
-Adding a new tutorial or section is done in two steps:
-
-- Add a new file under `./source`. This file can either be ReStructuredText (.rst) or Markdown (.md).
-- Link that file in `./source/_toctree.yml` on the correct toc-tree.
-
-Make sure to put your new file under the proper section. If you have a doubt, feel free to ask in a Github Issue or PR.
-
-### Writing source documentation
-
-Values that should be put in `code` should either be surrounded by backticks: \`like so\`. Note that argument names
-and objects like True, None or any strings should usually be put in `code`.
-
-#### Writing a multi-line code block
-
-Multi-line code blocks can be useful for displaying examples. They are done between two lines of three backticks as usual in Markdown:
-
-````
-```
-# first line of code
-# second line
-# etc
-```
-````
-
-#### Adding an image
-
-Due to the rapidly growing repository, it is important to make sure that no files that would significantly weigh down the repository are added. This includes images, videos, and other non-text files. We prefer to leverage a hf.co hosted `dataset` like
-the ones hosted on [`hf-internal-testing`](https://huggingface.co/hf-internal-testing) in which to place these files and reference
-them by URL. We recommend putting them in the following dataset: [huggingface/documentation-images](https://huggingface.co/datasets/huggingface/documentation-images).
-If an external contribution, feel free to add the images to your PR and ask a Hugging Face member to migrate your images
-to this dataset.
+Add a row to the table above. When the status changes, change the line and the row.

@@ -62,7 +62,7 @@ SPEED_ATOMS_VIEW = "speed_atoms_hybrid_v1.jsonl"
 PRECISION_ATOMS_VIEW = "precision_atoms.jsonl"
 CONTACT_ATOMS_VIEW = "contact_atoms.jsonl"
 SUBTASK_ATOMS_VIEW = "subtask_atoms.jsonl"
-# Rubric v2 frame-level sidecars (pi07_wiki/quality_mistake_rubric_v2.md 5.1, 6, 10): rows keyed
+# Rubric v2 frame-level sidecars (docs/notes/quality_mistake_rubric_v2.md 5.1, 6, 10): rows keyed
 # by episode_id with [from_index, to_index) in native frames. Optional, per store and per file:
 # a store that has one takes that channel from the anchor's frame instead of from its atom
 # (diverse_actor_selection._prepare_rows). Not part of the cache key: training reads these

@@ -1,7 +1,9 @@
 # RL Infrastructure Notes
 
 Generic value-based RL training for LeRobot.  
-Supports MolmoAct2 and PI05.  All model-specific logic is isolated behind the `Trainer` ABC.
+MolmoAct2 is the active policy; the PI05 trainer is still registered for the online and inference
+entry points but `rl_offline.py` accepts `molmoact2_rl` only. All model-specific logic is isolated
+behind the `Trainer` ABC. Project-level docs live in `docs/` (see `docs/README.md`).
 
 ---
 
@@ -61,18 +63,15 @@ rl_actor_async.py  ←gRPC→  rl_learner.py
 | File | Purpose |
 |------|---------|
 | `rl_trainer.py` | Abstract `Trainer` base class + `for_config()` dispatch |
-| `rl_pi05_trainer.py` | `PI05Trainer` — thin wrapper over existing `pi05_train_utils.py` |
+| `pi05/rl_pi05_trainer.py` | `PI05Trainer` — legacy path, not used by `rl_offline.py` |
 | `rl_molmoact2.py` | `MolmoAct2RLConfig`, `MolmoAct2Critic`, and `MolmoAct2RLPolicy` |
 | `rl_molmoact2_trainer.py` | `MolmoAct2Trainer` — all abstract methods implemented |
 | `scripts/rl_offline.py` | Generic offline training loop (actor-only and critic-trained) |
 | `rl_actor_async.py` | Generic online actor entrypoint; RTC is the default runtime |
-| `rtc_actor_runtime.py` | Generic RTC `ActionQueue` actor runtime ported from tested PI05 path |
+| `rtc_actor_runtime.py` | Generic RTC `ActionQueue` actor runtime |
 | `rl_learner.py` | Generic online learner |
-| `config_rl.yaml` | Unified config for both models (offline + online sections) |
+| `config_rl.yaml` | In-package config template (offline + online sections); the live run config is the workspace-root copy |
 | `inference_async.py` | Standalone VLA inference (no learner, no gRPC) |
-
-**Unchanged PI05 files** (still active, not replaced):  
-`actor_pi05_async.py`, `learner_pi05.py`, `pi05_train_utils.py`, `inference_pi05_async.py`
 
 ---
 
@@ -260,10 +259,9 @@ and `::test_release_window_after_a_gap_keeps_both_boundaries`.
 - Default runtime uses `rtc_actor_runtime.py`: `ActionQueue`, latency-aware replanning, intervention resets, and smooth execution.
 - `trainer.build_inference_batch()` is the model-agnostic isolation point:
   - **MolmoAct2**: calls preprocessor, returns `{input_ids, pixel_values, ...}`
-  - **PI05** (future): injects subtask tokens + advantage into complementary_data
 - `policy.select_action(batch)` is called `chunk_size` times per chunk:
   first call runs model + caches; subsequent calls pop from cache (MolmoAct2 behaviour).
-- The old simple chunk-deque runtime remains as a debug fallback. PI05-specific `actor_pi05_async.py` remains as a reference until generic RTC is validated on robot.
+- The old simple chunk-deque runtime remains as a debug fallback.
 
 ### `rl_learner.py`
 - Identical loop structure for any registered model.
@@ -301,20 +299,11 @@ Make sure `actor_learner_config` is uncommented in `config_rl.yaml` and `learner
 
 ---
 
-## TODO
+## Open items
 
-### Immediate (before first run)
-- [ ] **Smoke test offline actor-only** — run `scripts/rl_offline.py` with `skip_critic: true`, verify flow loss decreases over 500 steps.
-- [ ] **Smoke test RECAP** — run with `skip_critic: false`, verify critic CE loss decreases and `critic_value_mean` moves away from init.
-- [ ] **PI05 regression** — run `scripts/rl_offline.py` with `policy.type: pi05_rl`, verify same loss curve as original `learner_pi05.py`.
+Current status, the feature matrix and next steps live in [`docs/status.md`](../../../docs/status.md);
+unresolved questions in [`docs/notes/open_questions.md`](../../../docs/notes/open_questions.md).
+Items that remain specific to this package:
 
-### Short term
-- [ ] **RTC for MolmoAct2** — implement `predict_action_chunk` + `ActionQueue` support in `MolmoAct2Policy`/`MolmoAct2RLPolicy`.  Once done, `rl_actor_async.py` can route through RTC for both models and `actor_pi05_async.py` can be retired.
-- [ ] **`rl_pi05_trainer.py` full implementation** — currently a thin stub that delegates to `pi05_train_utils.py`.  Flesh out so PI05 can run through `scripts/rl_offline.py` and `rl_learner.py` fully.
-- [ ] **`inference_async.py` cleanup** — strip gRPC transport; make it pure standalone inference only (the distributed path now lives in `rl_actor_async.py`).
-- [ ] **`config_rl.yaml` — fill in `actor_learner_config`** with real IPs for the lab machines.
-
-### Longer term
-- [ ] **Unified actor** — once RTC lands for MolmoAct2, merge `actor_pi05_async.py` logic into `rl_actor_async.py` and retire the PI05-specific file.
-- [ ] **`rl_pi05_trainer.py` — `build_inference_batch`** — implement subtask token injection + advantage for PI05 so the generic actor works for PI05 without RTC too.
-- [ ] **Online training run** — full HILSERL loop: learner + actor on robot, verify policy improves over episodes.
+- `inference_async.py` cleanup: strip gRPC transport; make it pure standalone inference (the distributed path lives in `rl_actor_async.py`).
+- Online training run: full learner + actor loop on the robot, verify policy improves over episodes.

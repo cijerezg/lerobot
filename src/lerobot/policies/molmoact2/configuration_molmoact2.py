@@ -84,7 +84,7 @@ def infer_molmoact2_max_sequence_length(
     )
     if history_num_samples > 0:
         # Short-term memory clause: a fixed text lead-in plus one continuous
-        # placeholder position per past state (pi07_wiki/04_memory.md §2.4).
+        # placeholder position per past state (docs/design/memory_prompts.md §2.4).
         prompt_tokens += history_num_samples + MOLMOACT2_HISTORY_CLAUSE_TOKEN_BUDGET
     if num_depth_tokens > 0:
         # Point-map depth clause: a fixed text lead-in plus one DEPTH_TOKEN placeholder
@@ -282,7 +282,7 @@ class MolmoAct2Config(PreTrainedConfig):
     # dense). Must divide chunk_size. Requires a cache built with the same stride.
     image_stride: int = 1
 
-    # --- MEM video encoder (pi07_wiki/04_memory.md §2.4) -----------------------
+    # --- MEM video encoder (docs/design/memory_prompts.md §2.4) -----------------------
     # Image history enters the ViT as extra time slices; every
     # temporal_layer_stride-th resblock extends its attention keys with the
     # same-patch positions of strictly older frames (causal, one softmax), and

@@ -1,6 +1,6 @@
 """Contact-strategy vocabulary: the per-subtask ``contact`` metadata channel.
 
-Definitions of record: ``pi07_wiki/contact_strategy_rubric.md``. ``code`` is the integer
+Definitions of record: ``docs/notes/contact_strategy_rubric.md``. ``code`` is the integer
 stored per frame (buffer column ``metadata_contact``); ``phrase`` fills the prompt clause
 ``The contact is <phrase>.``. ``-1`` means no label covers the frame: the clause is omitted.
 """
