@@ -97,6 +97,20 @@ probe suite is on, plus held-out `val_loss_*` on 128 frames.
 - Leader shadow takeover (blocked: encoder-only leader); upstream merge
   (19-conflict chunked rebase plan in memory).
 
+## Repo housekeeping (2026-10-06)
+
+- Docs restructured into `docs/` (see [README](README.md)); `pi07_wiki/` is gone.
+- Source prune tier A done: `policies/{groot,wall_x,xvla,eo1,multi_task_dit,pi0,pi0_fast}`,
+  their tests, the pi05 tests and the upstream `examples/` are deleted. The pi05 code path
+  (`policies/pi05_full`, `rl/pi05`) stays as legacy.
+- **Pending:** the `wallx`, `multi_task_dit`, `groot`, `xvla` and `eo1` extras are still
+  declared in `pyproject.toml` because `uv.lock` could not be regenerated from the cloud
+  session. Remove those five extras (and their entries in `all`) and run `uv lock` locally.
+- Not yet pruned: `smolvla` (used as the example policy by the yaml-config and PEFT tests
+  and the e2e Makefile targets), `tdmpc`/`vqbet`/`act`/`diffusion` (core policy tests),
+  `gaussian_actor` + `rl/algorithms/sac` (imported by `rl/__init__.py`), sim `envs/`,
+  upstream robots and teleoperators, `benchmark_tests.yml`.
+
 ## Known footguns (the ones that actually bit)
 
 - Freeze else-branches: whitelist every new from-scratch module in

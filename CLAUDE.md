@@ -54,7 +54,7 @@ Active path:
 - **`datasets/`** — `LeRobotDataset` plus the diverse-corpus loaders (`diverse_corpus.py`, `diverse_prompt.py`, `contact_vocab.py`).
 - **`robots/rebot_b601_follower/`, `teleoperators/rebot_102_leader/`** — the hardware.
 
-Upstream (inherited, not maintained): the other `policies/*`, `envs/`, the other robots and teleoperators, `examples/` except `examples/dataset/diverse_robot_dataset/`.
+Upstream (inherited, not maintained): `policies/{act,diffusion,smolvla,tdmpc,vqbet,gaussian_actor}`, `envs/`, the other robots and teleoperators. The groot, wall_x, xvla, eo1, multi_task_dit, pi0 and pi0_fast policies and the upstream `examples/` were removed in 2026-10; `examples/` now holds only the diverse-corpus tooling.
 
 Conventions:
 

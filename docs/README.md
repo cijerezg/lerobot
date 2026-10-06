@@ -8,16 +8,16 @@ the π0.7 recipe on MolmoAct2); that is the codename, not a separate model.
 
 Everything that is not code lives here. One entry point, one cheat sheet, one status page.
 
-| Where                                      | What                                                                  | Rule                                                |
-| ------------------------------------------ | --------------------------------------------------------------------- | --------------------------------------------------- |
-| [`status.md`](status.md)                   | What is on/off in the current run, next steps, parked ideas, footguns | The **only** snapshot page. Dated.                  |
-| [`guide/`](#guide-how-to-use-the-pipeline) | How to **use** the pipeline                                           | Timeless. No dates, no "as of".                     |
-| [`design/`](#design-how-it-is-built)       | How the system **is built**, one page per subsystem                   | As-built reference. Kept current when code changes. |
-| [`notes/`](#notes-the-ideas-lab)           | Dated design notes, rubrics, investigations                           | Every file opens with a **Status** line.            |
-| [`runbooks/`](#runbooks)                   | What to do when a known failure happens                               | Symptom → root cause → fix.                         |
-| [`reports/`](#reports)                     | Saved analyses with their numbers                                     | Frozen once written.                                |
-| [`archive/`](archive/README.md)            | Superseded or abandoned documents                                     | Index says what replaced each file.                 |
-| [`../CHEAT_SHEET.md`](../CHEAT_SHEET.md)   | The copy-paste command sheet for the rebot setup                      | The only cheat sheet.                               |
+| Where                                       | What                                                                  | Rule                                                |
+| ------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------- |
+| [`status.md`](status.md)                    | What is on/off in the current run, next steps, parked ideas, footguns | The **only** snapshot page. Dated.                  |
+| [`guide/`](#guide--how-to-use-the-pipeline) | How to **use** the pipeline                                           | Timeless. No dates, no "as of".                     |
+| [`design/`](#design--how-it-is-built)       | How the system **is built**, one page per subsystem                   | As-built reference. Kept current when code changes. |
+| [`notes/`](#notes--the-ideas-lab)           | Dated design notes, rubrics, investigations                           | Every file opens with a **Status** line.            |
+| [`runbooks/`](#runbooks)                    | What to do when a known failure happens                               | Symptom → root cause → fix.                         |
+| [`reports/`](#reports)                      | Saved analyses with their numbers                                     | Frozen once written.                                |
+| [`archive/`](archive/README.md)             | Superseded or abandoned documents                                     | Index says what replaced each file.                 |
+| [`../CHEAT_SHEET.md`](../CHEAT_SHEET.md)    | The copy-paste command sheet for the rebot setup                      | The only cheat sheet.                               |
 
 In-source markdown describes **that package's code only** and nothing about the project:
 [`policies/molmoact2/ARCHITECTURE.md`](../src/lerobot/policies/molmoact2/ARCHITECTURE.md)
