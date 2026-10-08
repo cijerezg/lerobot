@@ -395,6 +395,10 @@ Every mistake gets one `attempt` span that contains it.
 - Recovery = the arm reacts and starts a new approach to the same object (re-annotation grading 2026-10-07, ra1007
   ep0 seg8, ep7 seg5). The outcome of that new approach does not decide it: its own failures are their own mistake
   rows and spans. No reaction before the next step or the recording end = no recovery (1).
+- Spill (re-annotation second read 2026-10-07, ad1007 ep9 seg6 / ep12 seg0): there is no object to approach again.
+  Recovery = the step's goal is still reached after the spill (the pour still lands in the target, the cap still comes
+  off) or the step is tried again: 2. Spilled contents left on the table do not count against it (`mistake_droid_ep013256`).
+  The goal never reached and no new try (tilt back and leave with the target empty) = 1.
 
 ### 5.11 Idle and retention
 

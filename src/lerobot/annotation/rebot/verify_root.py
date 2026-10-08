@@ -24,7 +24,7 @@ os.environ["HF_DATASETS_CACHE"] = str(WORKSPACE / "outputs/_annotation/loader_ca
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from lerobot.annotation.rebot.episode import CAMS, decode, kept, layout, remap  # noqa: E402
+from lerobot.annotation.rebot.episode import decode, kept, layout, remap, video_keys  # noqa: E402
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 from lerobot.rl.buffer import ReplayBuffer  # noqa: E402
 from lerobot.rl.offline_dataset_utils import _subtask_indices_from_windows, load_metadata_rows  # noqa: E402
@@ -107,7 +107,9 @@ def check(root, report=None):
     online = pd.read_parquet(meta / "online_labels.parquet") if (meta / "online_labels.parquet").exists() else None
     dataset = LeRobotDataset("cijerezg/" + root.name, root=root, video_backend="pyav", download_videos=False)
     assert len(dataset) == n
-    keys, depth = layout(root)
+    _, depth = layout(root)
+    keys = video_keys(root)  # every camera (external roots: external_0, external_1, wrist_0)
+    contract = json.loads((meta / "cache_ready.json").read_text()) if (meta / "cache_ready.json").exists() else None
     annotated = (meta / "quality_spans.parquet").exists()
     counts = check_annotations(root, n, eps, dataset) if annotated else {}
     samples = depth_files = splice_checks = 0
@@ -147,18 +149,25 @@ def check(root, report=None):
             probe = sorted({remap(kf, c0) - 1 for c0, c1 in p["cuts"] if c0 > a} | {remap(kf, c1) for c0, c1 in p["cuts"] if c1 < b})
             for local in probe:
                 row = dataset[int(e.dataset_from_index) + local]
-                for cam, key in zip(CAMS, keys, strict=True):
-                    f = int(kf[local])
+                for key in keys:
+                    cam, f = key.rsplit(".", 1)[1], int(kf[local])
                     src = np.asarray(decode(rec, cam, [f], (640, 480))[f], np.float32)
                     got = row[key].permute(1, 2, 0).numpy() * 255
                     err = np.abs(got - src).mean()
                     assert err < 6, (ep, cam, f, err)
                     splice_checks += 1
+        if contract is not None:  # the episode keeps its source camera contract and its new frame range
+            sc = json.loads((source / "meta/cache_ready.json").read_text())
+            for k in ("episode_contracts", "episode_depth"):
+                assert contract[k][str(ep)] == sc[k][str(sep)], (ep, k)
+            assert contract["episode_ranges"][ep] == [int(e.dataset_from_index), int(e.dataset_to_index)]
+        has_depth = (source / f"depth/{depth}").exists()  # external contributor roots are RGB only
         pngs = sorted((root / f"depth/{depth}/episode-{ep:06d}").glob("*.png"))
+        assert has_depth or not pngs
         # one PNG every third frame, at the phase the episode was recorded with (load_depth_png tolerates it);
         # external contributor episodes carry one per frame
         local = [int(f.stem.split("-")[1]) for f in pngs]
-        assert local[0] < 3 and local in (list(range(local[0], len(dst), 3)), list(range(len(dst))))
+        assert not has_depth or local[0] < 3 and local in (list(range(local[0], len(dst), 3)), list(range(len(dst))))
         for f in pngs:
             original = source / f"depth/{depth}/episode-{sep:06d}" / f"frame-{kf[int(f.stem.split('-')[1])]:06d}.png"
             assert os.path.samefile(f, original)
@@ -168,8 +177,9 @@ def check(root, report=None):
             assert row["task"] == p["task"]
             for key in keys:
                 assert tuple(row[key].shape) == (3, 480, 640)
-            d = load_depth_png(root, depth, ep, local - local % 3)
-            assert d.dtype == np.uint16 and d.shape == (480, 640)
+            if has_depth:
+                d = load_depth_png(root, depth, ep, local - local % 3)
+                assert d.dtype == np.uint16 and d.shape == (480, 640)
             samples += 1
         print("PASS episode", ep, p.get("source_key", source.parent.name), p["keep"], "cuts", p["cuts"], flush=True)
     result = dict(

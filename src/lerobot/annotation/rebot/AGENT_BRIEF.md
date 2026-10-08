@@ -42,6 +42,32 @@ Run commands from the workspace root (the folder holding `lerobot/`, `migration/
 - Rollouts: orange TELEOP tiles are operator frames. The subtask the operator typed (`recorded_subtask`) is what was
   asked for and is often wrong; label what the arm did.
 
+### External contributor roots (external_rebot_train, 2026-10-08)
+
+Community recordings of the same B601 arm, 34 repos (`<work>/episodes.tsv`: repo, source fps, cameras, the old task).
+Audit round 1 of the old labels (`migration/audit_external_rebot_2026-10-07/checks/`) found a wrong issue in 7 of 8
+episodes; the rules below come from it.
+
+- Cameras: a tile stacks every camera the episode has, named in the sheet header (`rows: external_0 / external_1 /
+  wrist_0`). Some episodes have no wrist view (11, 42-51, 166-175; 134-143, whose `wrist_0` is a second fixed camera):
+  read grips on the fixed views and say so in the note. 210-219 have no `external_0`, 230-239 only `wrist_0`.
+- Rate: many repos were recorded at 15 fps (some 60 or 120) and resampled to 30; at 15 fps each frame shows twice.
+  Frames are the 30 fps frames.
+- The old task is the repo's prompt (often a template, sometimes Chinese) and the old texts copy it: both are a first
+  guess. Name what the arm did with the objects in the frames ("grasp the can" on a purple box was wrong; "beside the
+  other block" named a block that was not there). A source prompt in Chinese becomes an English task.
+- Every step done gets its own segment: a drawer opened before the pick, a grasp before a plug-in, a second
+  pick-and-place in the same episode. A `grasp` segment ends at the lift (segment table below), a release where the
+  object settles, and the final trip to park is `return to home`; the range ends about 1 s after the arm settles there.
+- A person resetting the scene (lifting the object off its target, putting it back) is not robot data: end the kept
+  range before the hand enters and start a second entry of `episodes` after it leaves, both on multiples of 3. A person
+  who is part of the task (the partner of a handshake, the air-hockey opponent) stays in. A hand that helps the robot
+  (places the object, pushes it in) is described with frames in `what_happens` for the grader (`other` 1).
+- Episodes of one repo show the same objects: they name them with the same words (2026-10-08: agents annotating
+  siblings in parallel called the same Hanoi pieces "the octagon" and "the blue piece", the same container "box" and
+  "tray"). A word changes between siblings only when the scene does (a black target instead of a green one). Sides
+  are said from the robot ("on the robot's left"). After a parallel wave, one text sweep per repo aligns them.
+
 ### What to decide
 
 **Keep range.** `[a, b)` with `a % 3 == 0` and `(b - a) % 3 == 0`; the whole episode `[0, frames)` by default.

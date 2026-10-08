@@ -26,6 +26,23 @@ def layout(root):
     return ["observation.images.external_0", "observation.images.wrist_0"], "wrist_0.depth"
 
 
+def video_keys(root):
+    """Every camera video key of a root (own roots: top, wrist; cache-ready roots: external_0, external_1, wrist_0)."""
+    features = json.loads((Path(root) / "meta/info.json").read_text())["features"]
+    return [k for k, v in features.items() if v["dtype"] == "video"]
+
+
+def cameras(rec):
+    """Cameras to show for one episode: top, wrist on own roots; on a cache-ready root the roles its
+    meta/cache_ready.json contract lists as present for the episode (external roots: 1 to 3 of external_0,
+    external_1, wrist_0), top-view cameras first."""
+    path = Path(rec["source"]) / "meta/cache_ready.json"
+    if not path.exists():
+        return CAMS
+    roles = json.loads(path.read_text())["episode_contracts"][str(rec["episode"])]["camera_roles"]
+    return sorted(roles, key=lambda r: (r == "wrist_0", r))
+
+
 def records(work):
     """The pass inventory: one record per source episode."""
     return json.loads((Path(work) / "inventory.json").read_text())
@@ -110,21 +127,23 @@ def decode(rec, camera, want, size=(256, 192)):
 
 
 def sheet(rec, want, out, cols=6, size=(256, 192)):
-    """Top over wrist per tile; frame index, seconds, gripper state (and TELEOP on operator frames) burned in."""
+    """Top over wrist per tile (every present camera of a cache-ready episode, wrist_0 last); frame index, seconds,
+    gripper state (and TELEOP on operator frames) burned in."""
     want = sorted(set(int(w) for w in want if 0 <= w < rec["frames"]))
     s, _ = states(rec)
     iv = interventions(rec)
-    imgs = {cam: decode(rec, cam, want, size) for cam in CAMS}
-    w, h = size[0], 2 * size[1] + 24
+    cams = cameras(rec)
+    imgs = {cam: decode(rec, cam, want, size) for cam in cams}
+    w, h = size[0], len(cams) * size[1] + 24
     canvas = Image.new("RGB", (cols * w, 30 + int(np.ceil(len(want) / cols)) * h), "#151515")
     draw = ImageDraw.Draw(canvas)
-    draw.text((5, 5), rec["key"], fill="cyan")
+    draw.text((5, 5), f"{rec['key']}   rows: {' / '.join(cams)}", fill="cyan")
     for k, i in enumerate(want):
         x, y = (k % cols) * w, 30 + (k // cols) * h
         tag = " TELEOP" if iv is not None and iv[i] else ""
         label = f"f{i} {i / 30:.1f}s grip {s[i, 6]:.0f}{tag}"
         draw.text((x + 3, y + 3), label, fill="orange" if tag else "white")
-        for j, cam in enumerate(CAMS):
+        for j, cam in enumerate(cams):
             canvas.paste(imgs[cam][i], (x, y + 24 + j * size[1]))
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)

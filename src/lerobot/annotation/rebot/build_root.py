@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 from lerobot.annotation.paths import WORKSPACE
-from lerobot.annotation.rebot.episode import kept, layout, records, remap
+from lerobot.annotation.rebot.episode import kept, layout, records, remap, video_keys
 from lerobot.configs.video import VideoEncoderConfig
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 
@@ -133,7 +133,8 @@ def build(rows, destination, split="train", annotator=None):
     meta = destination / "meta"
     meta.mkdir()
     labelled = "segments" in rows[0]
-    keys, depth = layout(WORKSPACE / rows[0]["source"])
+    keys, depth = layout(WORKSPACE / rows[0]["source"])  # top / wrist names for subtask_windows
+    vkeys = video_keys(WORKSPACE / rows[0]["source"])  # every camera is carried (external roots: three)
     info = json.loads((WORKSPACE / rows[0]["source"] / "meta/info.json").read_text())
     fps = info["fps"]
     features = copy.deepcopy(info["features"])
@@ -141,7 +142,7 @@ def build(rows, destination, split="train", annotator=None):
     tasks = sorted({r["task"] for r in rows})
     task_index = {v: k for k, v in enumerate(tasks)}
     ep_rows, seg_rows, mistake_rows, prov, online, windows, all_stats, all_data = [], [], [], [], [], {}, [], []
-    video_files, offset = {}, 0
+    video_files, offset, contracts = {}, 0, []
     for ep, row in enumerate(rows):
         src, sep, (a, b), cuts = WORKSPACE / row["source"], row["episode"], row["keep"], row["cuts"]
         sdf = pd.concat([pd.read_parquet(p) for p in sorted((src / "data").rglob("*.parquet"))], ignore_index=True)
@@ -217,7 +218,7 @@ def build(rows, destination, split="train", annotator=None):
         er = {c: v for c, v in original.items() if not c.startswith("stats/")}
         er.update(episode_index=ep, tasks=[row["task"]], length=n, dataset_from_index=offset, dataset_to_index=offset + n)
         er.update({"data/chunk_index": 0, "data/file_index": ep, "meta/episodes/chunk_index": 0, "meta/episodes/file_index": 0})
-        for key_ in keys:
+        for key_ in vkeys:
             prefix = f"videos/{key_}"
             chunk, file = int(original[prefix + "/chunk_index"]), int(original[prefix + "/file_index"])
             old = src / prefix / f"chunk-{chunk:03d}" / f"file-{file:03d}.mp4"
@@ -245,7 +246,7 @@ def build(rows, destination, split="train", annotator=None):
                 link(p, destination / f"depth/{depth}/episode-{ep:06d}" / f"frame-{remap(k, f):06d}.png")
         numeric = {c: (np.stack(df[c]) if c in ("action", "observation.state") else df[c].to_numpy()) for c in df.columns}
         stats = compute_episode_stats(numeric, {c: features[c] for c in columns})
-        for key in keys:
+        for key in vkeys:
             stats[key] = {
                 c.rsplit("/", 1)[1]: np.asarray(plain(original[c]), dtype=np.float64)
                 for c in original.index
@@ -255,6 +256,10 @@ def build(rows, destination, split="train", annotator=None):
             for name, value in values.items():
                 er[f"stats/{key}/{name}"] = plain(value)
         all_stats.append(stats)
+        cr = src / "meta/cache_ready.json"
+        if cr.exists():  # per-episode camera contract of a cache-ready source (absent cameras are zero placeholders)
+            cr = json.loads(cr.read_text())
+            contracts.append((cr, {k: cr[k][str(sep)] for k in ("episode_contracts", "episode_depth")}, (offset, offset + n)))
         all_data.append(df)
         ep_rows.append(er)
         prov.append(
@@ -314,6 +319,14 @@ def build(rows, destination, split="train", annotator=None):
     )
     json_write(meta / "info.json", info)
     json_write(meta / "provenance.json", prov)
+    if contracts:
+        assert len(contracts) == len(rows), "every source or none carries meta/cache_ready.json"
+        cr = {k: v for k, v in contracts[0][0].items() if k not in ("episode_contracts", "episode_depth", "episode_ranges")}
+        assert all(c[0][k] == v for c in contracts for k, v in cr.items()), "cache_ready sources disagree"
+        cr["episode_contracts"] = {str(i): c[1]["episode_contracts"] for i, c in enumerate(contracts)}
+        cr["episode_depth"] = {str(i): c[1]["episode_depth"] for i, c in enumerate(contracts)}
+        cr["episode_ranges"] = [list(c[2]) for c in contracts]
+        json_write(meta / "cache_ready.json", cr)
     print("DONE", destination, len(rows), "episodes", offset, "frames")
     return destination
 

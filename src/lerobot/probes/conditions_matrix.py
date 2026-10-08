@@ -753,6 +753,10 @@ def _write_csv(path: str, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def _rebot_pairs(pairs) -> list[tuple[str, str]]:
+    return [p for p in pairs if REBOT in p] or list(pairs)
+
+
 def _summary(rows, organisation, holdout_rows, decoding, pairs, robots, class_cells, headline_layer) -> dict:
     n_layers = max((r["layer"] for r in organisation), default=-1) + 1
     summary = {

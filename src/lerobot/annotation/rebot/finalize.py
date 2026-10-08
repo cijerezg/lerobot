@@ -61,9 +61,11 @@ def episode_map(staging, root, work):
     out = {}
     for key, (ef, f0, f1, p) in f.items():
         es, s0, _, sp = s[key]
-        assert "source_key" not in sp or (not sp.get("cuts") and sp["keep"][0] == p["keep"][0])
+        # staging frame -> source frame through the staging root's own kept frames (a staging root built with the
+        # cuts already applied), then source frame -> final frame; the frame after the last maps past the end
+        ks = np.append(kept(sp["keep"], sp.get("cuts") or []), sp["keep"][1])
         k = kept(p["keep"], p["cuts"])
-        out[es] = (ef, lambda g, s0=s0, a=sp["keep"][0], k=k, f0=f0: f0 + remap(k, g - s0 + a), f0, f1)
+        out[es] = (ef, lambda g, s0=s0, ks=ks, k=k, f0=f0: f0 + remap(k, ks[min(g - s0, len(ks) - 1)]), f0, f1)
     return out
 
 

@@ -10,7 +10,8 @@ else 4. Spans and precision windows of every labelled unit of an episode apply t
 Precision (rubric 6): p(t) = level if w_a - 1 s <= t < w_b, else 1.
 Resolution rows (second reader): {"uid", "reader", "rows": [{"ref": "unit|precision|span:<i>|mistake:<i>|v1_rejected:<i>",
 "verdict": "agree|change|remove", "row": {...} (change), "note"}], "added": {"spans": [...], "mistakes": [...]}}.
-A unit is validated when every unsure row of the first reader has a resolution row.
+A `unit` row with verdict change and a full "row" replaces the whole unit (its span / mistake / precision refs then
+point into the replaced row). A unit is validated when every unsure row of the first reader has a resolution row.
 """
 import csv, glob, json, os, sys
 from collections import Counter, defaultdict
@@ -57,6 +58,18 @@ def merge(r, res):
     for x in (res or {}).get("rows", []): done[x["ref"]] = x
     unsure = [ref for ref, row in rows_of(r) if row.get("confidence") == "unsure"]
     r["_open"] = [ref for ref in unsure if ref not in done]; r["_resolved"] = len([ref for ref in unsure if ref in done])
+    # a `unit` change may carry a row (2026-10-07: its content used to be dropped). Fields it carries overlay the unit;
+    # a kind it carries (spans / mistakes / precision) replaces that kind, and the same reader's refs into it are moot
+    unit = done.get("unit"); urow = (unit or {}).get("row") or {} if (unit or {}).get("verdict") == "change" else {}
+    for k in ("what_happens", "strategy", "note", "v1_rejected"):
+        if k in urow: r[k] = urow[k]
+    for kind, prefix in (("spans", "span"), ("mistakes", "mistake")):
+        if kind in urow:
+            r[kind] = [dict(row, confidence="sure", second_read="change") for row in urow[kind]]
+            done = {ref: x for ref, x in done.items() if not ref.startswith(prefix + ":")}
+    if "precision" in urow:
+        r["precision"] = dict(urow["precision"], confidence="sure", second_read="change") if urow["precision"] else None
+        done.pop("precision", None)
     # v1_rejected rows are not confidence-bearing, but a resolver may still
     # remove or replace one after an ownership/validity audit.
     for kind, prefix in (("spans", "span"), ("mistakes", "mistake"),
@@ -71,7 +84,9 @@ def merge(r, res):
                 row["second_read"] = x["verdict"]
             new.append(row)
         added = (res or {}).get("added", {}).get(kind, []) if kind != "v1_rejected" else []
-        r[kind] = new + [dict(y, second_read="added") for y in added]
+        seen = {(x.get("cause") or x.get("type"), x.get("raw_from", x.get("from_index")), x.get("raw_to", x.get("to_index"))) for x in new}
+        r[kind] = new + [dict(y, second_read="added") for y in added  # a row already in the unit row is not added twice
+                         if (y.get("cause") or y.get("type"), y.get("raw_from", y.get("from_index")), y.get("raw_to", y.get("to_index"))) not in seen]
     # extra precision windows from a second reader (a unit with several commits): added.precision_* lists -> precision_<k>
     extra = [w for k, v in (res or {}).get("added", {}).items() if k.startswith("precision") for w in v]
     k0 = 1 + sum(1 for k in r if k.startswith("precision"))
@@ -108,6 +123,11 @@ def load():
         for f in sorted(glob.glob(str(d / "resolve/*.jsonl")), key=resolver_key):
             for x in map(json.loads, filter(str.strip, open(f))):
                 m = res.setdefault(x["uid"], {"rows": [], "added": {"spans": [], "mistakes": []}})
+                # a later `unit` change carrying a full spans / mistakes list supersedes what earlier readers added
+                for y in x.get("rows", []):
+                    if y["ref"] == "unit" and y["verdict"] == "change":
+                        for k in ("spans", "mistakes"):
+                            if k in (y.get("row") or {}): m["added"][k] = []
                 m["rows"] += x.get("rows", [])
                 for k, v in (x.get("added") or {}).items():
                     have = m["added"].setdefault(k, [])
