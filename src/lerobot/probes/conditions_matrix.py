@@ -38,17 +38,12 @@ $P_{ij}$ the pairs with $a$ in cell $i$, $b$ in cell $j$ and $\\text{episode}(a)
 \\text{episode}(b)$. Off the diagonal this is the inner product of cell means with
 same-episode pairs removed; on the diagonal it is the cell's cross-episode consistency.
 
-**Score.** Spearman $\\rho_{AB}$ over the strict upper triangle of the cells both robots
-have. Null: 2,000 permutations of $B$'s cell labels, reported as the 95th percentile and
-a p-value. Ceiling: split each robot's episodes in half, $\\rho$ between the two half
-matrices, $\\sqrt{\\rho_{AA}\\rho_{BB}}$ averaged over 20 splits. The ratio $\\rho_{AB}$ / ceiling remains a secondary diagnostic, not a calibrated fraction.
-Headlines use raw correlation and decoding at the configured fixed layer.
-
 **Organisation.** The upper triangle regressed on same-class and same-phase indicators
 (plus same-instance on ReBot's instance matrix): standardised weights per robot.
 
-**Cross-robot decoding.** The matrix is invariant to a rotation of each robot's space, so
-matching structure is consistent with parallel, disjoint codes. The direct test: for every
+**Cross-robot decoding.** The matrices are only descriptive: a matching block pattern is
+invariant to a rotation of each robot's space, so it is consistent with parallel, disjoint
+codes. The test of the directions themselves, reported at the configured fixed layer: for every
 pair and both directions, ``dst``'s frames decoded by nearest cosine to ``src``'s cell
 means over the cells both robots have, each robot centred on the mean of its shared-cell
 means (a different cell mix adds no offset). Balanced accuracy for the cell, the object
@@ -62,8 +57,7 @@ frame is scored by inner product with its robot's training cell means: nearest-c
 accuracy, and the Spearman between its similarity row and the training matrix's row for
 its true cell.
 
-**Output** (``<output_dir>/conditions_matrix/``): ``sharing_by_layer.png`` (raw rho
-against depth, one panel per robot pair x text condition, null line), ``matrices.png``
+**Output** (``<output_dir>/conditions_matrix/``): ``matrices.png``
 (every robot's class-level matrix at the fixed headline layer, action and top-view
 groups), ``matrices_wrist_state.png`` (the same for the wrist-view and state groups),
 ``rebot_instances.png`` (ReBot's instance-level matrix at the fixed headline layer),
@@ -74,7 +68,7 @@ against the within-robot ceiling and chance, action and wrist groups, both texts
 headline and ``conditions_layers`` layers) with ``decoding.csv`` behind it,
 ``frames_<robot>.png`` (per robot, the frames behind its matrix: every cell, the first
 window frame of one episode and the last of another, external over wrist, captioned with
-the real subtask), ``metrics.csv`` / ``organisation.csv`` / ``holdout.csv`` /
+the real subtask), ``organisation.csv`` / ``holdout.csv`` /
 ``summary.json``, and ``cache/`` (one fp16 memmap per group plus meta.json and
 ``thumbs/`` with both camera views of every frame; ``--probe_parameters.mode=plot``
 re-analyses it). Matrix row labels carry the frames / episodes each cell rests on.
@@ -102,7 +96,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from scipy.stats import rankdata, spearmanr
+from scipy.stats import spearmanr
 
 from lerobot.configs import parser
 from lerobot.configs.train import TrainRLServerPipelineConfig
@@ -159,8 +153,6 @@ TEXT_CONDITIONS = ("real", "neutral")
 PROTOCOL = "bounded_v1_constant_text"
 NEUTRAL_TASK = "Manipulate the object."
 NEUTRAL_SUBTASK = "continue the task"
-N_NULL = 2000
-N_SPLITS = 20
 MIN_EPISODES_PER_CELL = 2
 MIN_SHARED_CELLS = 4
 THUMB_CAMERAS = ("external_0", "wrist_0")
@@ -496,48 +488,11 @@ def cell_matrix(z: np.ndarray, cell: np.ndarray, episode: np.ndarray, n_cells: i
     return m
 
 
-def _upper(m: np.ndarray) -> np.ndarray:
-    return m[np.triu_indices(m.shape[0], 1)]
-
-
 def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     keep = np.isfinite(a) & np.isfinite(b)
     if keep.sum() < 3:
         return float("nan")
     return float(spearmanr(a[keep], b[keep]).correlation)
-
-
-def _null_percentile(m_a: np.ndarray, m_b: np.ndarray, rho: float, rng) -> tuple[float, float]:
-    """Permute B's cell labels: (95th percentile of the null rho, p-value of ``rho``)."""
-    k = m_b.shape[0]
-    perms = np.stack([rng.permutation(k) for _ in range(N_NULL)])
-    permuted = m_b[perms[:, :, None], perms[:, None, :]]  # [P, K, K]
-    iu = np.triu_indices(k, 1)
-    ub = permuted[:, iu[0], iu[1]]  # [P, m]
-    ua = _upper(m_a)
-    keep = np.isfinite(ua) & np.all(np.isfinite(ub), axis=0)
-    if keep.sum() < 3:
-        return float("nan"), float("nan")
-    ra = rankdata(ua[keep])
-    rb = rankdata(ub[:, keep], axis=1)
-    ra = (ra - ra.mean()) / ra.std()
-    rb = (rb - rb.mean(axis=1, keepdims=True)) / rb.std(axis=1, keepdims=True)
-    null = (rb * ra).mean(axis=1)
-    return float(np.percentile(null, 95)), float((null >= rho).mean())
-
-
-def _split_half_reliability(z, cell, episode, n_cells, rng) -> float:
-    episodes = np.unique(episode)
-    if len(episodes) < 4:
-        return float("nan")
-    rhos = []
-    for _ in range(N_SPLITS):
-        half = set(rng.permutation(episodes)[: len(episodes) // 2].tolist())
-        in_half = np.array([e in half for e in episode])
-        m1 = cell_matrix(z[in_half], cell[in_half], episode[in_half], n_cells)
-        m2 = cell_matrix(z[~in_half], cell[~in_half], episode[~in_half], n_cells)
-        rhos.append(_spearman(_upper(m1), _upper(m2)))
-    return float(np.nanmean(rhos))
 
 
 def _organisation(m: np.ndarray, labels: list[tuple], instance_level: bool) -> dict[str, float]:
@@ -671,7 +626,6 @@ def _robot_totals(rows: list[dict], robot: str, cells: list[tuple]) -> tuple[int
 
 
 def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str) -> dict:
-    seed = int(cfg.probe_parameters.random_seed)
     robots = [r for r in ROBOT_ORDER if any(x["robot"] == r and not x["holdout"] for x in rows)]
     class_cells = {r: _robot_cells(rows, r, instance_level=False) for r in robots}
     robots = [r for r in robots if len(class_cells[r]) >= MIN_SHARED_CELLS]
@@ -687,7 +641,7 @@ def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str)
     row_class_key = [(r["object_class"], r["object_class"], r["phase"]) for r in rows]
     row_inst_key = [(r["instance"], r["object_class"], r["phase"]) for r in rows]
 
-    metrics, organisation, holdout_rows, decoding = [], [], [], []
+    organisation, holdout_rows, decoding = [], [], []
     matrices: dict = {}  # (group, text, layer, robot, level) -> (M, labels, counts)
     for group in GROUP_NAMES:
         if group not in arrays:
@@ -696,7 +650,6 @@ def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str)
         n_layers = x.shape[1]
         for text in TEXT_CONDITIONS:
             for layer in range(n_layers):
-                rng = np.random.RandomState(seed + layer)
                 z_all = np.asarray(x[:, layer, :], dtype=np.float32)
                 per_robot: dict = {}
                 for robot in robots:
@@ -711,13 +664,12 @@ def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str)
                     cell = np.array([index.get(row_class_key[i], -1) for i in idx])
                     episode = row_episode[idx]
                     m = cell_matrix(z, cell, episode, len(cells))
-                    rel = _split_half_reliability(z, cell, episode, len(cells), rng)
-                    per_robot[robot] = {"m": m, "cells": cells, "rel": rel, "mu": mu, "z": z, "cell": cell,
+                    per_robot[robot] = {"m": m, "cells": cells, "mu": mu, "z": z, "cell": cell,
                                         "raw": z_all[idx], "episode": episode}
                     matrices[(group, text, layer, robot, "class")] = (
                         m, [_label(c, False) for c in cells], _cell_counts(cell, episode, len(cells)))
                     organisation.append({"group": group, "text": text, "layer": layer, "robot": robot, "level": "class",
-                                         "n_cells": len(cells), "reliability": rel, **_organisation(m, cells, False)})
+                                         "n_cells": len(cells), **_organisation(m, cells, False)})
                     if robot == REBOT and rebot_instance_cells:
                         index_i = {c: k for k, c in enumerate(rebot_instance_cells)}
                         cell_i = np.array([index_i.get(row_inst_key[i], -1) for i in idx])
@@ -726,7 +678,7 @@ def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str)
                             m_i, [_label(c, True) for c in rebot_instance_cells],
                             _cell_counts(cell_i, episode, len(rebot_instance_cells)))
                         organisation.append({"group": group, "text": text, "layer": layer, "robot": robot, "level": "instance",
-                                             "n_cells": len(rebot_instance_cells), "reliability": float("nan"),
+                                             "n_cells": len(rebot_instance_cells),
                                              **_organisation(m_i, rebot_instance_cells, True)})
                     # Held-out frames of this robot against the training cell means.
                     held = (row_robot == robot) & (row_text == text) & row_holdout & present[group]
@@ -747,34 +699,17 @@ def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str)
                     if a not in per_robot or b not in per_robot:
                         continue
                     shared = [c for c in per_robot[a]["cells"] if c in set(per_robot[b]["cells"])]
-                    ia = [per_robot[a]["cells"].index(c) for c in shared]
-                    ib = [per_robot[b]["cells"].index(c) for c in shared]
-                    m_a = per_robot[a]["m"][np.ix_(ia, ia)]
-                    m_b = per_robot[b]["m"][np.ix_(ib, ib)]
-                    rho = _spearman(_upper(m_a), _upper(m_b))
-                    null95, p_value = _null_percentile(m_a, m_b, rho, rng)
-                    ceiling = float(np.sqrt(max(per_robot[a]["rel"], 0.0) * max(per_robot[b]["rel"], 0.0)))
-                    metrics.append({
-                        "group": group, "text": text, "layer": layer, "pair": f"{a}|{b}", "n_cells": len(shared),
-                        "rho": rho, "null_p95": null95, "p_value": p_value,
-                        "reliability_a": per_robot[a]["rel"], "reliability_b": per_robot[b]["rel"], "ceiling": ceiling,
-                        "rho_over_ceiling": rho / ceiling if ceiling > 0.05 else float("nan"),
-                        "null_p95_over_ceiling": null95 / ceiling if ceiling > 0.05 else float("nan"),
-                    })
                     for src, dst in ((a, b), (b, a)):
                         decoding.append({"group": group, "text": text, "layer": layer, "src": src, "dst": dst,
                                          **_decode(per_robot[src], per_robot[dst], shared)})
             logging.info(f"  {group}/{text}: " + "  ".join(
-                f"{r['pair']} {r['rho_over_ceiling']:.2f}" for r in metrics
-                if r["group"] == group and r["text"] == text and r["layer"] == n_layers - 1))
+                f"{d['src']}->{d['dst']} phase {d['phase']:.2f} class {d['class']:.2f}" for d in decoding
+                if d["group"] == group and d["text"] == text and d["layer"] == n_layers - 1 and d["dst"] == REBOT))
 
-    _write_csv(os.path.join(output_dir, "metrics.csv"), metrics)
     _write_csv(os.path.join(output_dir, "organisation.csv"), organisation)
     _write_csv(os.path.join(output_dir, "holdout.csv"), holdout_rows)
     _write_csv(os.path.join(output_dir, "decoding.csv"), decoding)
 
-    peak = _peak_layers(metrics, pairs)
-    plot_by_layer(metrics, pairs, os.path.join(output_dir, "sharing_by_layer.png"))
     available_layers = arrays.get("action", next(iter(arrays.values()))).shape[1]
     headline_layer = min(int(cfg.probe_parameters.conditions_headline_layer), available_layers - 1)
     if headline_layer < 0:
@@ -799,7 +734,7 @@ def analyze(rows: list[dict], arrays: dict, present: dict, cfg, output_dir: str)
     if not frames_written:
         logging.warning("  no cache/thumbs: frames_<robot>.png skipped (re-run mode=collect to write them)")
 
-    summary = _summary(rows, metrics, organisation, holdout_rows, decoding, pairs, robots, class_cells, peak, headline_layer)
+    summary = _summary(rows, organisation, holdout_rows, decoding, pairs, robots, class_cells, headline_layer)
     with open(os.path.join(output_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
     _write_manifest(output_dir, summary, pairs, frames_written, extra_layers)
@@ -818,29 +753,8 @@ def _write_csv(path: str, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def _rebot_pairs(pairs) -> list[tuple[str, str]]:
-    return [p for p in pairs if REBOT in p] or list(pairs)
-
-
-def _peak_layers(metrics: list[dict], pairs) -> dict[str, int]:
-    """Per group: the layer where the mean rho/ceiling over the rebot pairs (real text) peaks."""
-    peak = {}
-    focus = {f"{a}|{b}" for a, b in _rebot_pairs(pairs)}
-    for group in GROUP_NAMES:
-        by_layer: dict[int, list] = defaultdict(list)
-        for r in metrics:
-            if r["group"] == group and r["text"] == "real" and r["pair"] in focus and np.isfinite(r["rho_over_ceiling"]):
-                by_layer[r["layer"]].append(r["rho_over_ceiling"])
-        if by_layer:
-            peak[group] = max(by_layer, key=lambda l: float(np.mean(by_layer[l])))
-    return peak
-
-
-def _summary(rows, metrics, organisation, holdout_rows, decoding, pairs, robots, class_cells, peak, headline_layer) -> dict:
-    def at(group, text, layer):
-        return {r["pair"]: r for r in metrics if r["group"] == group and r["text"] == text and r["layer"] == layer}
-
-    n_layers = max((r["layer"] for r in metrics), default=-1) + 1
+def _summary(rows, organisation, holdout_rows, decoding, pairs, robots, class_cells, headline_layer) -> dict:
+    n_layers = max((r["layer"] for r in organisation), default=-1) + 1
     summary = {
         "protocol": PROTOCOL,
         "n_samples": len({r["row"] // len(TEXT_CONDITIONS) for r in rows}),
@@ -850,28 +764,20 @@ def _summary(rows, metrics, organisation, holdout_rows, decoding, pairs, robots,
         "cells": {r: [f"{c[1]}/{c[2]}" for c in class_cells[r]] for r in robots},
         "plan": _plan_summary([r for r in rows if r["text"] == "real"]),
         "n_layers": n_layers,
-        "peak_layer": peak,
         "headline_layer": headline_layer,
         "headline": {},
     }
     for group in GROUP_NAMES:
         layer = headline_layer
-        if not at(group, "real", layer):
+        if not any(o["group"] == group and o["layer"] == layer for o in organisation):
             continue
         entry = {"layer": layer}
-        for text in TEXT_CONDITIONS:
-            entry[text] = {pair: {"rho_over_ceiling": r["rho_over_ceiling"], "rho": r["rho"], "ceiling": r["ceiling"],
-                                  "null_p95": r["null_p95"], "p_value": r["p_value"], "n_cells": r["n_cells"]}
-                           for pair, r in at(group, text, layer).items()}
         entry["organisation"] = {f"{o['robot']}/{o['level']}": {k: o[k] for k in ("same_class", "same_phase", "same_instance") if k in o}
                                  for o in organisation if o["group"] == group and o["text"] == "real" and o["layer"] == layer}
         entry["holdout"] = {h["robot"]: {"accuracy": h["accuracy"], "chance": h["chance"], "row_corr": h["row_corr"], "n_frames": h["n_frames"]}
                             for h in holdout_rows if h["group"] == group and h["text"] == "real" and h["layer"] == layer}
         summary[f"fixed_layer_{group}"] = entry
     # Flat headline numbers for the manifest: action tokens at the fixed layer.
-    for text in TEXT_CONDITIONS:
-        for pair, r in at("action", text, headline_layer).items():
-            summary["headline"][f"{text}.{pair.replace('|', '_')}"] = r["rho"]
     for h in holdout_rows:
         if h["group"] == "action" and h["text"] == "real" and h["layer"] == headline_layer:
             summary["headline"][f"holdout_accuracy.{h['robot']}"] = h["accuracy"]
@@ -893,47 +799,6 @@ def _summary(rows, metrics, organisation, holdout_rows, decoding, pairs, robots,
 
 GROUP_COLORS = {"img_wrist_0": "#2ca02c", "img_external_0": "#d62728", "subtask": "#ff7f0e",
                 "state": "#8c564b", "action_output": "#9467bd", "action": "#1f77b4"}
-
-
-def plot_by_layer(metrics: list[dict], pairs, path: str) -> None:
-    """raw Spearman rho against layer: one row per robot pair, one column per text condition,
-    one curve per token group; dotted = the largest null 95th percentile over the groups."""
-    pair_names = [f"{a}|{b}" for a, b in sorted(pairs, key=lambda p: (REBOT not in p, p))]
-    if not pair_names:
-        return
-    fig, axes = plt.subplots(len(pair_names), len(TEXT_CONDITIONS), figsize=(5.2 * len(TEXT_CONDITIONS), 2.6 * len(pair_names)),
-                             squeeze=False, sharex=True, sharey=True)
-    for i, pair in enumerate(pair_names):
-        for j, text in enumerate(TEXT_CONDITIONS):
-            ax = axes[i][j]
-            null_by_layer: dict[int, list] = defaultdict(list)
-            for group in GROUP_NAMES:
-                series = sorted((r["layer"], r["rho"]) for r in metrics
-                                if r["pair"] == pair and r["text"] == text and r["group"] == group)
-                if not series:
-                    continue
-                ax.plot([l for l, _ in series], [v for _, v in series], marker="o", markersize=2.5, linewidth=1.3,
-                        color=GROUP_COLORS[group], linestyle="--" if group == "action" else "-", label=group)
-                for r in metrics:
-                    if r["pair"] == pair and r["text"] == text and r["group"] == group:
-                        null_by_layer[r["layer"]].append(r["null_p95"])
-            if null_by_layer:
-                layers = sorted(null_by_layer)
-                ax.plot(layers, [np.nanmax(null_by_layer[l]) for l in layers], color="#888", linestyle=":", linewidth=1.2,
-                        label="null 95th pct")
-            ax.axhline(1.0, color="#bbb", linewidth=0.8)
-            ax.axhline(0.0, color="#bbb", linewidth=0.8)
-            ax.set_title(f"{pair.replace('|', ' vs ')}  ·  {text} text", fontsize=9)
-            ax.grid(alpha=0.3)
-            if i == len(pair_names) - 1:
-                ax.set_xlabel("layer")
-            if j == 0:
-                ax.set_ylabel("raw Spearman rho")
-    axes[0][0].set_ylim(-1.05, 1.05)
-    axes[0][0].legend(fontsize=7, loc="lower left", ncol=2)
-    fig.tight_layout()
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
 
 
 def _heatmap(ax, m: np.ndarray, labels: list[str], counts: list[tuple[int, int]], title: str) -> None:
@@ -1097,15 +962,6 @@ def plot_decoding(decoding: list[dict], pairs, layers: list[int], path: str) -> 
 def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[str], extra_layers: list[int]) -> dict:
     layer = summary["headline_layer"]
     metrics = []
-    for a, b in sorted(pairs, key=lambda p: (REBOT not in p, p)):
-        key = f"real.{a}_{b}"
-        if key in summary["headline"]:
-            metrics.append(Metric(f"headline.{key}", f"{a} vs {b}: raw Spearman rho, action tokens, layer {layer}, real text",
-                                  good="high", fmt=2, primary=REBOT in (a, b)))
-        key = f"neutral.{a}_{b}"
-        if key in summary["headline"]:
-            metrics.append(Metric(f"headline.{key}", f"{a} vs {b}: raw Spearman rho, action tokens, layer {layer}, neutral text",
-                                  good="high", fmt=2))
     for robot in summary["robots"]:
         key = f"holdout_accuracy.{robot}"
         if key in summary["headline"]:
@@ -1123,10 +979,6 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
                 note=f"within-ReBot leave-one-episode-out {entry[f'within_{name}']:.2f}, chance {entry[f'{name}_chance']:.2f}"))
     metrics.append(Metric("n_samples", "Frames captured (x2 text conditions)", good="none", fmt=0))
     panels = [
-        Panel("sharing_by_layer.png", "raw Spearman rho against depth, one row per robot pair, real and neutral text",
-              how="Spearman correlation of the shared cells' similarity matrices; dotted = label-permutation null. "
-                  "Neutral text is identical across objects and phases. Remaining structure can use images or state. "
-                  "The reliability ratio in metrics.csv is a secondary diagnostic, not a fraction of shared code.", primary=True),
         Panel("matrices.png", "Each robot's class-level similarity matrix at the headline layer (action and top-view groups)",
               how="Cells are object/phase; entries are mean cosine between frames of different episodes, after per-robot "
                   "centering. Similar block patterns suggest similar relational geometry; they do not establish "
@@ -1159,10 +1011,10 @@ def _write_manifest(output_dir: str, summary: dict, pairs, frames_written: list[
                                 "real-text condition.", primary=True))
     return write_index(
         output_dir, sys.modules[__name__], title="Conditions matrix", group="Representation",
-        claim="Are object and phase representations shared across robots: same relational geometry over the cells, "
-              "with real versus constant task and step text?",
+        claim="Are object and phase representations shared across robots: do one robot's class and phase "
+              "prototypes decode another robot's frames, with real versus constant task and step text?",
         summary=summary, metrics=metrics, panels=panels, status="info",
-        extra={"headline_layer": layer, "peak_layer_exploratory": summary["peak_layer"], "cells": summary["cells"]},
+        extra={"headline_layer": layer, "cells": summary["cells"]},
         see_also=["subspace_spans", "domain_representations", "input_swap", "subtask_sweep"],
     )
 

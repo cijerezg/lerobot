@@ -73,6 +73,12 @@ round 3: template tasks such as "Put sock in basket and shirts in bin" got order
   Colour and feature words stay; position words (nearest, farther, on top of, on the shirt, under, next to) go.
 - A retried step stays one segment. A close that holds nothing and is carried away empty stays in the grasp segment; the
   close is the mistake.
+- A part released in or on its slot but not seated, then pushed in with the fingers, is its own contact-work segment
+  ("push the clipper into the slot"), contact `push`: the part moves into the fit (`press` is for a face that does not
+  move). User 2026-10-07: "if it didn't fit well, it makes sense to push". Pressing on a part already seated, with no
+  visible change, is no progress: report it in `flags` with its frames.
+- A pour where nothing comes out is still a pour ("pour the pills into the cup", `tilt-pour`): the goal is visible
+  (user 2026-10-07).
 - An object that is grasped, lost and grasped again gives two grasp segments. They keep the same text when it is still
   the only object of its kind (principles section 2).
 
@@ -192,6 +198,21 @@ Raw frames, no headroom (the writer adds it). `exemplary` is grade 5, `strategy`
 
 Final message, under 200 words: per unit the stretches (cause, grade, frames), mistakes confirmed / rejected / new,
 unsure rows, and any class rule that did not fit.
+
+## Second read
+
+A second reader settles every `unsure` row a grader left. Slices come from
+`quality_v2.second_read <pool> --no-calibrate <every class of the pool>` (`classes/second_read_<pool>.json`): one class per
+slice, each unit with its label file and the open refs (`unit`, `span:<i>`, `mistake:<i>`, `precision`).
+
+- Read first as for grading (principles section 4, the quality rubric, the precision rubric, the slice's class file with its
+  notes; the class notes of this pass are the latest rule).
+- Per ref: read the grader's row and what it says would settle it, then look at exactly that (dense strips at 0.5 s or
+  finer, `dense <slug> <uid> <from> <to>`). Decide on the frames, not on the grader's lean.
+- `agree` keeps the row; `change` gives the full corrected row; `remove` drops it. A missed span or mistake goes in `added`.
+- Output: `<classes>/<slug>/resolve/<reader id>.jsonl`, one object per unit:
+  `{"uid", "reader", "rows": [{"ref", "verdict": "agree|change|remove", "row": {...} (change only), "note"}],
+  "added": {"spans": [], "mistakes": []}, "looked_at", "note"}`. Every open ref of the unit gets a row.
 
 ## Auditing one episode
 

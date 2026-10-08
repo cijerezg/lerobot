@@ -1,6 +1,8 @@
 """Second-reader slices for one pool (step 3 pass D): classes/second_read_<pool>.json.
 
-uv run python -m lerobot.annotation.quality_v2.second_read rebot_main [--no-calibrate <class> ...]
+uv run python -m lerobot.annotation.quality_v2.second_read rebot_main [--work <work> ...] [--no-calibrate <class> ...]
+--work (before --no-calibrate): a pass whose classes reuse other class files; each slice's `final` is then the class file
+named in <work>/class_map.json (a re-annotation pool has no strategy files of its own).
 Small classes (<= 16 units to read): one slice for both jobs. Otherwise unsure slices: units with open unsure refs, at most 12 per slice, one class each. Calibration slices: every unit with an
 `exemplary` or `strategy` stretch, at most 24 per slice, one class each (pilot classes are not calibrated: user-reviewed).
 Units already resolved (a row in <class>/resolve/*.jsonl) are skipped.
@@ -12,6 +14,8 @@ from lerobot.annotation.paths import QUALITY_V2, WORKSPACE  # noqa: E402
 HERE = QUALITY_V2
 pool = sys.argv[1]
 skip_cal = set(sys.argv[sys.argv.index("--no-calibrate") + 1:]) if "--no-calibrate" in sys.argv else set()
+works = [a for i, a in enumerate(sys.argv) if sys.argv[i - 1] == "--work"]
+CMAP = {c["slug"]: str((WORKSPACE / c["final"]).resolve().relative_to(HERE)) for w in works for c in json.loads((WORKSPACE / w / "class_map.json").read_text()).values()}
 EXTRA = {"rebot_main__release__deformable_to_surface": "rebot_main__release__sock_to_basket"}
 
 
@@ -40,7 +44,7 @@ for d in [d for d in dirs if (d / "units.jsonl").exists()]:
             if refs(r): uns.append(dict(uid=r["uid"], label_file=lf, refs=refs(r)))
             c = [f"span:{i}" for i, s in enumerate(r.get("spans", [])) if s["cause"] in ("exemplary", "strategy")]
             if c and not pilot and d.name not in skip_cal: cal.append(dict(uid=r["uid"], label_file=lf, calib_refs=c))
-    final = f"{'pilot' if pilot else 'classes'}/{EXTRA.get(d.name, d.name)}/strategy/FINAL.md"
+    final = CMAP.get(d.name) or f"{'pilot' if pilot else 'classes'}/{EXTRA.get(d.name, d.name)}/strategy/FINAL.md"
     tag = ("P_" if pilot else "") + short(d.name)
     if len({u["uid"] for u in uns + cal}) <= 16:  # small class: one slice does both jobs
         m = {}

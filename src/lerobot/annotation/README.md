@@ -89,7 +89,7 @@ uv run python -m $M.rebot.classify <work>
 uv run python -m $M.quality_v2.material --work <work>
 uv run python -m $M.quality_v2.dense <class_slug> <uid> <from> <to>          # on demand, while grading
 # 4. after grading: second read, compile, idle cuts
-uv run python -m $M.quality_v2.second_read <pool>
+uv run python -m $M.quality_v2.second_read <pool> [--work <work>] --no-calibrate <every class of the pool>   # --work: re-annotation pools (class files from class_map.json)
 uv run python -m $M.quality_v2.compile_labels --pool <pool> --deterministic-resolvers
 uv run python -m $M.quality_v2.check_mistake_owner <pool>                     # also check_precision_chain, check_references, blind_agreement
 uv run python -m $M.rebot.idle_scan <work>                                   # writes idle_cuts.json; build_root applies it
@@ -113,7 +113,7 @@ The agent that receives the request coordinates; the frame reading is done by ag
 | read | `rubrics/annotation_principles.md`, `rebot/AGENT_BRIEF.md`, `rubrics/quality_mistake_rubric_v2.md` section 8 (the user's verdicts are the calibration), and the source root's own `README.md` if it has one (its descriptions are a first guess; the frames decide) |
 | set up | a new `<work>` folder, `inventory.json`, and `pass.json` with a pool and dataset name that do not exist yet under `paths.QUALITY_V2/classes`; `class_rules` and `reuse` name the existing class files each step is graded against |
 | annotate | one agent per episode, all at once, each given "Annotating one episode" of `AGENT_BRIEF.md` plus its `idx`, root, episode, `seams` and operator runs (`review/events_<IDX>.txt`). Before going on, read every subtask text against principles section 2 and fix or send back the ones that fail |
-| grade | staging root, `classify`, `material`, then one grader per episode, all at once, each given "Grading" of `AGENT_BRIEF.md` and its episode's units (each graded against its own class file, `final` in `class_map.json`). Then a second reader for every unsure row (`second_read <pool> --no-calibrate <every class of the pool>`), up to 12 readers at once. Then `compile_labels` |
+| grade | staging root, `classify`, `material`, then one grader per episode, all at once, each given "Grading" of `AGENT_BRIEF.md` and its episode's units (each graded against its own class file, `final` in `class_map.json`). Then a second reader for every unsure row ("Second read" of `AGENT_BRIEF.md`; slices from `second_read <pool> --no-calibrate <every class of the pool>`), up to 12 readers at once. Then `compile_labels` |
 | build | final root, tables, speed, gripper events; `verify_root` must pass |
 | hand over | per episode a short table (frames, subtask, contact, precision, stretches, mistakes). Decide every call yourself (borderline grades, mistake types, short tails, range edges) and list them as decisions taken. Escalate only what would change the data substantially, each item with a review video and the frame range. Then stop for the user's feedback |
 | feedback | written into the rubrics (the rule it changes, and a row in the case library) and into `AGENT_BRIEF.md`. Never into a new file |
