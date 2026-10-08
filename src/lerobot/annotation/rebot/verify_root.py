@@ -24,7 +24,7 @@ os.environ["HF_DATASETS_CACHE"] = str(WORKSPACE / "outputs/_annotation/loader_ca
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from lerobot.annotation.rebot.episode import CAMS, decode, kept, remap  # noqa: E402
+from lerobot.annotation.rebot.episode import CAMS, decode, kept, layout, remap  # noqa: E402
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 from lerobot.rl.buffer import ReplayBuffer  # noqa: E402
 from lerobot.rl.offline_dataset_utils import _subtask_indices_from_windows, load_metadata_rows  # noqa: E402
@@ -107,6 +107,7 @@ def check(root, report=None):
     online = pd.read_parquet(meta / "online_labels.parquet") if (meta / "online_labels.parquet").exists() else None
     dataset = LeRobotDataset("cijerezg/" + root.name, root=root, video_backend="pyav", download_videos=False)
     assert len(dataset) == n
+    keys, depth = layout(root)
     annotated = (meta / "quality_spans.parquet").exists()
     counts = check_annotations(root, n, eps, dataset) if annotated else {}
     samples = depth_files = splice_checks = 0
@@ -124,14 +125,16 @@ def check(root, report=None):
         assert (dst.task_index == tasks.loc[p["task"], "task_index"]).all() and list(e.tasks) == [p["task"]]
         if online is not None and (source / "meta/online_labels.parquet").exists():
             so = pd.read_parquet(source / "meta/online_labels.parquet")
-            so = so[so.episode_index == sep].sort_values("frame_index").iloc[kf]
+            so = so[so.episode_index == sep].sort_values("frame_index")
+            so = so.iloc[kf] if len(so) else so  # a teleop episode of a mixed root has no rows
             o = online[online.episode_index == ep]
             assert np.array_equal(o.is_intervention.values, so.is_intervention.values)
-            assert list(o.recorded_subtask) == list(so.subtask)
+            if len(so) and {"subtask", "recorded_subtask"} & set(so.columns):
+                assert list(o.recorded_subtask) == list(so["subtask" if "subtask" in so else "recorded_subtask"])
         sepi = pd.concat([pd.read_parquet(f) for f in (source / "meta/episodes").rglob("*.parquet")])
         sepi = sepi[sepi.episode_index == sep].iloc[0]
-        for cam in CAMS:
-            pre = f"videos/observation.images.{cam}"
+        for key in keys:
+            pre = f"videos/{key}"
             va = root / pre / f"chunk-{int(e[pre + '/chunk_index']):03d}" / f"file-{int(e[pre + '/file_index']):03d}.mp4"
             vb = source / pre / f"chunk-{int(sepi[pre + '/chunk_index']):03d}" / f"file-{int(sepi[pre + '/file_index']):03d}.mp4"
             if p["spliced"]:
@@ -144,27 +147,28 @@ def check(root, report=None):
             probe = sorted({remap(kf, c0) - 1 for c0, c1 in p["cuts"] if c0 > a} | {remap(kf, c1) for c0, c1 in p["cuts"] if c1 < b})
             for local in probe:
                 row = dataset[int(e.dataset_from_index) + local]
-                for cam in CAMS:
+                for cam, key in zip(CAMS, keys, strict=True):
                     f = int(kf[local])
                     src = np.asarray(decode(rec, cam, [f], (640, 480))[f], np.float32)
-                    got = row[f"observation.images.{cam}"].permute(1, 2, 0).numpy() * 255
+                    got = row[key].permute(1, 2, 0).numpy() * 255
                     err = np.abs(got - src).mean()
                     assert err < 6, (ep, cam, f, err)
                     splice_checks += 1
-        pngs = sorted((root / f"depth/wrist.depth/episode-{ep:06d}").glob("*.png"))
-        # one PNG every third frame, at the phase the episode was recorded with (load_depth_png tolerates it)
+        pngs = sorted((root / f"depth/{depth}/episode-{ep:06d}").glob("*.png"))
+        # one PNG every third frame, at the phase the episode was recorded with (load_depth_png tolerates it);
+        # external contributor episodes carry one per frame
         local = [int(f.stem.split("-")[1]) for f in pngs]
-        assert local[0] < 3 and local == list(range(local[0], len(dst), 3))
+        assert local[0] < 3 and local in (list(range(local[0], len(dst), 3)), list(range(len(dst))))
         for f in pngs:
-            original = source / f"depth/wrist.depth/episode-{sep:06d}" / f"frame-{kf[int(f.stem.split('-')[1])]:06d}.png"
+            original = source / f"depth/{depth}/episode-{sep:06d}" / f"frame-{kf[int(f.stem.split('-')[1])]:06d}.png"
             assert os.path.samefile(f, original)
             depth_files += 1
         for local in (0, len(dst) // 2, len(dst) - 3):
             row = dataset[int(e.dataset_from_index) + local]
             assert row["task"] == p["task"]
-            for cam in CAMS:
-                assert tuple(row[f"observation.images.{cam}"].shape) == (3, 480, 640)
-            d = load_depth_png(root, "wrist.depth", ep, local - local % 3)
+            for key in keys:
+                assert tuple(row[key].shape) == (3, 480, 640)
+            d = load_depth_png(root, depth, ep, local - local % 3)
             assert d.dtype == np.uint16 and d.shape == (480, 640)
             samples += 1
         print("PASS episode", ep, p.get("source_key", source.parent.name), p["keep"], "cuts", p["cuts"], flush=True)

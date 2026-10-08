@@ -75,21 +75,30 @@ Approach angles are the ReBot FK angle between the gripper axis and straight dow
 Full definitions, corpus examples per element and the evidence behind the choices:
 `migration/contact_strategy_2026-09-24/vocab.md` and `sheets/examples/<element>.jpg`.
 
-### Not contact
+### What the label does not record
 
-- **Approach angle beyond top / side.** Computable by FK from proprio on every ReBot
-  root; never annotated. A cloth pinch of a hanging shirt is a note, not an element.
-- **Pad orientation across / along an elongated object** (bits: wrist roll spreads
-  evenly 0-80 deg, no lobes). Not in the vocabulary; the roll-mod-180 canonicalisation
-  is the zero-annotation route if bits need it.
-- **Sub-techniques inside an element**: wad vs corner cloth pinch, body vs neck on a
-  bottle, fingertip vs pad pinch, open-on-arrival vs lower-then-open drops, straight vs
-  twist insertion, tip vs body push. Measured 2026-09-24 and left out on the user's
-  decision: mostly object-determined or continuous, and the 14 elements are enough.
-- **Grasp point, release height, carry height, effort, tempo**: other channels or
-  measurements.
-- **How the demonstration went**: a failed close is a mistake row and a quality value;
-  its contact label is still the mode the operator attempted.
+Every step that makes, breaks or works a contact gets one of the 14 elements. The
+element is all the label says. These details are left out on purpose; none of them
+removes a label from a step.
+
+- **Approach angle finer than top / side.** The 45 deg split between top-pinch and
+  side-pinch is the only angle in the label. The exact angle is never hand-labelled: on
+  ReBot it can be calculated from the recorded joint angles (forward kinematics). A
+  cloth pinch of a hanging shirt is still a cloth pinch; the sideways approach goes in
+  the note. Open (2026-10-06): the user wants the angle as conditioning. If added, it is
+  a separate field calculated from the joint angles, not a new element. Not built.
+- **How the pads sit across a long object** (wrist roll). Not labelled. On bits the
+  roll varies smoothly from 0 to 80 deg with no clusters, so there are no classes to
+  name. If bits need it, it can be calculated from the wrist roll taken mod 180 deg.
+- **Variants inside an element**: wad vs corner cloth pinch, body vs neck on a bottle,
+  fingertip vs pad pinch, open-on-arrival vs lower-then-open drops, straight vs twist
+  insertion, tip vs body push. Measured 2026-09-24 and left out on the user's decision:
+  they are mostly set by the object or vary continuously, and the 14 elements are
+  enough.
+- **Grasp point, release height, carry height, effort, tempo.** Recorded by other
+  channels or measured.
+- **Whether the attempt worked.** A failed close keeps the contact label of what the
+  operator attempted. The failure goes in the mistake row and the quality value.
 
 ## Units and storage
 
@@ -101,8 +110,8 @@ Full definitions, corpus examples per element and the evidence behind the choice
 Columns: `episode_index, segment_index, from_index, to_index, subtask, contact, code,
 prior, image_read, note` (`prior` = the text-rule element, `image_read` = whether a vision
 read changed or confirmed it). `meta/contact_info.json` / sidecar info: vocabulary version,
-the phrase table, the rules version, annotator, the definition and the "not contact" list
-verbatim. Written to **new roots**, never in place.
+the phrase table, the rules version, annotator, the definition and the "what the label does not
+record" list verbatim. Written to **new roots**, never in place.
 
 Per-frame materialisation: `ReplayBuffer.materialize_metadata` gains `contact_rows` and
 fills a bf16 column `metadata_contact` with the code (14 for `na`, -1 only where no row
@@ -162,7 +171,19 @@ Own data has 8 of the 14 elements; press, strike, set-down, tilt-pour, tool-drag
 handle-grasp come only from the other halves. Coverage, not calibration: report the
 per-half histogram after the pass; there is no target distribution.
 
-## Procedure (one pass with precision)
+## Current review authority
+
+For an episode actually reviewed, read the real contact from the available views at the commit, even if the
+class was previously unflagged. The text rules are priors; they are not evidence that every scene uses the same
+contact. `annotation_principles.md` overrides the legacy class-first procedure where it conflicts. On diverse
+sources use the native rate and observed commit, not the fixed `to-15` / `from+15` offsets below. Missing views
+or gripper channels must be recorded as missing. The centralized sampled-audit procedure is in `../README.md`.
+Inspect the full close or open through its settled state when deciding what contact occurred. The atom boundary is
+the completed state, not merely the first mechanical candidate: in the confirmed RoboChallenge block-grasp case,
+the measured-width close is still ramping at f233 and reaches its held-block plateau at f239, so the grasp-to-move
+boundary is f239. Do not extend a boundary for unrelated low-amplitude arm motion after contact has already settled.
+
+## Legacy class-first procedure (subject to the current authority above)
 
 Contact is a class property with the same exception list as precision, so it is
 annotated class-first, in the **same pass** as precision: the same commit frames, one JSON

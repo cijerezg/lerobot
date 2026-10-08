@@ -76,3 +76,12 @@ def leaves_home(state, thr=10.0):
     init = np.median(state[:30, :4], axis=0)
     on = np.flatnonzero(np.abs(state[:, :4] - init).max(1) > thr)
     return int(on[0]) if len(on) else -1
+
+
+def approach_angle(q):
+    """Angle (deg) between the gripper pointing axis and straight down at one state (contact rubric: < 45 top-pinch,
+    >= 45 side-pinch). Forward kinematics of the ReBot arm."""
+    from lerobot.robots.rebot_b601_follower.kinematics import RebotKinematics
+
+    rotation = RebotKinematics().frames(np.asarray(q[:6], float))[0, -1, :3, :3]
+    return float(np.degrees(np.arccos(np.clip(-rotation[2, 0], -1, 1))))

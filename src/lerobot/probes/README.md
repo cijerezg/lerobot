@@ -59,3 +59,156 @@ Flow inversion remains an optional curiosity experiment in
 `migration/flow_inversion_2026-09-28/flow_inversion.py`,
 with its existing `flow_inversion_report` renderer. It is not registered or enabled
 in the official validation suite.
+
+### Flow inversion reconstruction experiment
+
+The same standalone inversion runner now accepts `--inv_roundtrip`. It holds each
+frame's context fixed, inverts the processed demonstrated action, and continues the
+normal forward Euler sampler from selected inverse times. It compares float32
+accumulation with the deployment dtype, checks every full native continuation
+against `_generate_actions_from_inputs_with_rtc`, and repeats on actions generated
+from known seeded noise. Padding joints are excluded from errors; episode-end
+repeated chunk targets are retained, as in the original probe.
+
+```bash
+PYTHONPATH=lerobot/src .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+  --config_path=<checkpoint-compatible-config.yaml> \
+  --policy.pretrained_path=<checkpoint>/pretrained_model \
+  --inv_out=<new-output-directory> --inv_roundtrip \
+  --inv_roundtrip_steps=20,40 --inv_roundtrip_refinements=0,4 \
+  --inv_roundtrip_times=0,0.25,0.5,0.75,1 \
+  --inv_val_frames_per_episode=4 --inv_val_max_episodes=2
+```
+
+This mode evaluates validation frames only. Its report leads with mean round-trip MSE,
+explains flow steps and inverse corrections, and includes frame errors, joint/step
+heatmaps, restart-time plots, precision controls, and interactive action overlays.
+MSE averages squared coordinate errors within each frame and then across frames;
+it does not square the average RMS. Existing captures can be re-rendered without
+model execution. It writes `roundtrip.html`,
+`roundtrip.png`, frame metrics in CSV/JSON, a summary, and complete padded inverse
+and forward trajectories in one NPZ per frame. Array keys encode target kind,
+step count, refinement count, and restart step. Inverse arrays have shape
+`[N+1, 1, chunk_steps, padded_action_dim]`, ordered from t=0 to t=1. Forward arrays
+start at the specified k/N; t=1 is a cast-only control. The generated control's
+original noise is also saved. Refinement is a fixed-point iteration and can fail
+to converge; it is not claimed to exactly invert the finite-precision sampler.
+
+Rebuild the report without loading a checkpoint:
+
+```bash
+PYTHONPATH=lerobot/src .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+  --inv_out=<output-directory> --inv_roundtrip --inv_analyze_only
+```
+
+### Shared 3D PCA of recovered inputs
+
+`--inv_noise_pca` compares recorded actions, uniform `[-1,1]`, Gaussian with
+standard deviation `1/sqrt(3)`, independent random `±1`, and Student-t(3)/3 targets.
+It uses exactly `--inv_pca_points` paired observation contexts (150 by default),
+balanced across validation episodes and interleaved for useful partial results.
+Each action family gets one target per context. This mode does not run generated
+controls or a sweep of solver settings.
+
+```bash
+PYTHONPATH=lerobot/src OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 \
+  .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+  --config_path=config_rl_validate.yaml \
+  --policy.pretrained_path=outputs/rebot-diverse-v1-2026-10-04/checkpoints/001200/pretrained_model \
+  --inv_out=migration/flow_noise_pca_diverse_v1_1200/results \
+  --inv_noise_pca --inv_pca_points=150 --inv_num_steps=20 --inv_refine=4
+```
+
+The five inverse trajectories share an observation context and run as independent
+batch rows; every recovered input is then checked individually with the production
+sampler. `noise_capture.json` and one `noise_*.npz` per context are saved as collection
+progresses. `noise_pca.html` is rebuilt after 5, 15, 50, 100, and all requested contexts.
+It includes interactive 3D rotation, group toggles, static projections, explained
+variance, full-dimensional input magnitude, and reconstruction MSE. Plotly is bundled
+locally, so the page works without network access.
+
+PCA uses the actual sampler inputs after the expert-dtype cast, with padding excluded:
+one 210-dimensional vector per 30-step, 7-joint chunk. One pooled mean and one shared
+PCA basis are fitted across all groups. There is no per-group centering, scaling,
+whitening, outlier removal, or filtering on reconstruction MSE. The saved
+`noise_pca.npz` includes full vectors, mean, basis, scores, and explained variance;
+`points.csv` identifies every point and its actual reconstruction error.
+
+To refresh the PCA page from all completed contexts without running the model:
+
+```bash
+PYTHONPATH=lerobot/src .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+  --inv_out=migration/flow_noise_pca_diverse_v1_1200/results --inv_noise_pca --inv_analyze_only
+```
+
+### Fixed-frame action interpolation
+
+`--inv_interpolation` holds three own-ReBot observations fixed (validation episodes
+0, 1, and 6, about 40% through each episode). It blends the recorded normalized
+action to one uniform, Gaussian, random ±1, and heavy-tailed endpoint, plus a
+uniform-to-±1 bridge. Alpha is the action blend fraction, sampled from 0 to 1 in
+0.1 increments; it is separate from the solver's flow time. Shared endpoints are
+inverted once, giving 50 unique targets per frame. `--inv_interpolation_episodes`
+and `--inv_interpolation_batch_size` control frame selection and inverse batching.
+
+For model-generated endpoints instead, use `--inv_generated_actions`. This draws
+three standard Gaussian inputs in the production dtype, runs the production flow
+sampler, and blends each resulting action with the recorded action. It produces
+31 unique targets per frame, 93 total. Outputs stay in normalized action space:
+there is no second normalization or postprocessing clamp. The report marks known
+sampled noises alongside recovered endpoints and separately plots action MSE and
+noise recovery RMS. Generation is not a guarantee of task success.
+
+```bash
+PYTHONPATH=lerobot/src OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 \
+  .venv/bin/python migration/flow_inversion_2026-09-28/flow_inversion.py \
+  --config_path=config_rl_validate.yaml \
+  --policy.pretrained_path=outputs/rebot-diverse-v1-2026-10-04/checkpoints/001200/pretrained_model \
+  --inv_out=<new-output-directory> --inv_generated_actions \
+  --inv_interpolation_episodes=0,1,6 --inv_interpolation_batch_size=10 \
+  --inv_num_steps=20 --inv_refine=4
+```
+
+Both modes save `interpolation.json` and `paths_*.npz` after each completed frame,
+then write `interpolation.html` with camera observations, shared 3D PCA, full-space
+geometry, reconstruction errors, and action overlays. To render completed frames
+without loading the model, pass `--inv_interpolation --inv_analyze_only` with the
+same `--inv_out`; the renderer reads the experiment type from the capture.
+
+For the matched synthetic-target checkpoint comparison, place the two captures in
+`<comparison-root>/step_000200` and `step_001200`, then run:
+
+```bash
+PYTHONPATH=lerobot/src .venv/bin/python -m lerobot.probes.flow_interpolation_compare <comparison-root>
+```
+
+The comparison verifies identical targets and uses one PCA basis and common axis
+ranges across both checkpoints. Geometry and MSE always use all 210 valid action
+coordinates; PCA is only a visualization. Inversion uses velocity subtraction and
+fixed-point corrections, with ordinary model forwards and no backpropagation.
+
+### Shared, distance-matched endpoints
+
+`--inv_distance_matched` compares other recorded chunks with model-generated
+chunks at similar MSE distances from the three fixed anchor actions. It uses one
+immutable set of three recorded and three generated endpoint tensors across all
+anchors. Recorded endpoints preserve their source-frame displacement patterns,
+using saved quantile normalization and the training clamp; absolute joint
+positions are not transplanted between contexts. Source images, tasks, indices,
+noise seeds, and actual matching discrepancies are shown in the report.
+
+The recorded pool contains own-ReBot validation chunks at 3-frame intervals,
+excluding each anchor's 60-frame neighborhood. The generated pool reuses the nine
+saved actions from `migration/flow_generated_interpolation_rebot_1200`.
+Selection greedily takes three distinct pairs with the smallest worst relative
+endpoint-distance mismatch over the three anchors, without using inversion
+outcomes. Selected recorded windows do not overlap. The current completed run's
+worst mismatch is 6.96%; endpoints are never rescaled to force a match.
+
+Use the same checkpoint/config/solver arguments as the generated-action example,
+with `--inv_distance_matched` instead of `--inv_generated_actions` and a fresh
+output directory. `--inv_distance_matched --inv_analyze_only` renders saved results.
+`matched.html` is refreshed after every anchor. `shared_endpoints.npz` stores the
+fixed endpoints and candidate-distance audit; `matched_*.npz` stores all 61 unique
+targets per anchor, their recovered inputs, and actual production reconstructions.
+Matching and geometry use the same 210 valid normalized coordinates.

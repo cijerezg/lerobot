@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 from lerobot.annotation.paths import WORKSPACE
-from lerobot.annotation.rebot.episode import CAMS, kept, records, remap
+from lerobot.annotation.rebot.episode import kept, layout, records, remap
 from lerobot.configs.video import VideoEncoderConfig
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
 
@@ -105,7 +105,7 @@ def rows_from_labels(work, split):
                         key=r["key"],
                         frames=r["frames"],
                         keep=e["keep"],
-                        cuts=e.get("cuts", [c["cut"] for c in idle if c["idx"] == r["idx"] and c["part"] == j]),
+                        cuts=e.get("cuts") or [c["cut"] for c in idle if c["idx"] == r["idx"] and c["part"] == j],
                         task=e["task"],
                         segments=e["segments"],
                         mistakes=e["mistakes"],
@@ -133,6 +133,7 @@ def build(rows, destination, split="train", annotator=None):
     meta = destination / "meta"
     meta.mkdir()
     labelled = "segments" in rows[0]
+    keys, depth = layout(WORKSPACE / rows[0]["source"])
     info = json.loads((WORKSPACE / rows[0]["source"] / "meta/info.json").read_text())
     fps = info["fps"]
     features = copy.deepcopy(info["features"])
@@ -193,9 +194,10 @@ def build(rows, destination, split="train", annotator=None):
                     )
                 )
         olp = src / "meta/online_labels.parquet"
-        if olp.exists():
-            o = pd.read_parquet(olp)
-            o = o[o.episode_index == sep].sort_values("frame_index").iloc[k]
+        o = pd.read_parquet(olp) if olp.exists() else None
+        o = o[o.episode_index == sep] if o is not None else None
+        if o is not None and len(o):  # a teleop episode of a mixed root has no rows
+            o = o.sort_values("frame_index").iloc[k]
             online.append(
                 pd.DataFrame(
                     dict(
@@ -203,7 +205,7 @@ def build(rows, destination, split="train", annotator=None):
                         frame_index=np.arange(n, dtype=np.int64),
                         index=df["index"].values,
                         is_intervention=o.is_intervention.values,
-                        recorded_subtask=o.subtask.values,
+                        recorded_subtask=next((o[c].values for c in ("subtask", "recorded_subtask") if c in o), [""] * n),
                     )
                 )
             )
@@ -215,14 +217,14 @@ def build(rows, destination, split="train", annotator=None):
         er = {c: v for c, v in original.items() if not c.startswith("stats/")}
         er.update(episode_index=ep, tasks=[row["task"]], length=n, dataset_from_index=offset, dataset_to_index=offset + n)
         er.update({"data/chunk_index": 0, "data/file_index": ep, "meta/episodes/chunk_index": 0, "meta/episodes/file_index": 0})
-        for cam in CAMS:
-            prefix = f"videos/observation.images.{cam}"
+        for key_ in keys:
+            prefix = f"videos/{key_}"
             chunk, file = int(original[prefix + "/chunk_index"]), int(original[prefix + "/file_index"])
             old = src / prefix / f"chunk-{chunk:03d}" / f"file-{file:03d}.mp4"
             t0 = float(original[prefix + "/from_timestamp"])
             key = f"{old}#spliced-ep{ep}" if spliced else str(old)
             if key not in video_files:
-                file_id = sum(f"/observation.images.{cam}/" in v for v in video_files)
+                file_id = sum(f"/{key_}/" in v for v in video_files)
                 new = destination / prefix / f"chunk-000/file-{file_id:03d}.mp4"
                 if spliced:
                     encode_kept(old, t0, k, new, fps)
@@ -237,14 +239,13 @@ def build(rows, destination, split="train", annotator=None):
                 er[prefix + "/from_timestamp"] = t0 + int(k[0]) / fps
                 er[prefix + "/to_timestamp"] = t0 + (int(k[-1]) + 1) / fps
         keep_set = set(int(f) for f in k)
-        for p in sorted((src / f"depth/wrist.depth/episode-{sep:06d}").glob("*.png")):
+        for p in sorted((src / f"depth/{depth}/episode-{sep:06d}").glob("*.png")):
             f = int(p.stem.split("-")[1])
             if f in keep_set:
-                link(p, destination / f"depth/wrist.depth/episode-{ep:06d}" / f"frame-{remap(k, f):06d}.png")
+                link(p, destination / f"depth/{depth}/episode-{ep:06d}" / f"frame-{remap(k, f):06d}.png")
         numeric = {c: (np.stack(df[c]) if c in ("action", "observation.state") else df[c].to_numpy()) for c in df.columns}
         stats = compute_episode_stats(numeric, {c: features[c] for c in columns})
-        for cam in CAMS:
-            key = f"observation.images.{cam}"
+        for key in keys:
             stats[key] = {
                 c.rsplit("/", 1)[1]: np.asarray(plain(original[c]), dtype=np.float64)
                 for c in original.index
@@ -291,8 +292,8 @@ def build(rows, destination, split="train", annotator=None):
                 annotator=annotator,
                 created_date=date.today().isoformat(),
                 interval_seconds=None,
-                top_key="observation.images.top",
-                wrist_key="observation.images.wrist",
+                top_key=keys[0],
+                wrist_key=keys[1],
                 episodes=windows,
             ),
         )

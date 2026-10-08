@@ -1,0 +1,523 @@
+"""Source-aware evidence renderer for the diverse sampled annotation audit.
+
+This renderer consumes the audit inventory's source-derived continuous retained ranges.
+It never reconstructs retention from atoms.  The active dataset root and the audit work
+directory are explicit command-line inputs; only episodes already selected into the
+requested round are decoded.
+"""
+
+from __future__ import annotations
+
+import argparse
+import bisect
+import json
+import math
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+import matplotlib
+import numpy as np
+from PIL import Image, ImageDraw
+
+from lerobot.annotation.diverse_audit_render import (
+    COLORS,
+    atom_at,
+    decode_common,
+    decode_fmb,
+    fit_tile,
+    font,
+    rows_at,
+    wrap,
+)
+from lerobot.annotation.vocab import phrase_for
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+
+
+def interval_at(intervals: list[list[int]], frame: int) -> list[int] | None:
+    return next(
+        (
+            [int(start), int(stop)]
+            for start, stop in intervals
+            if int(start) <= frame < int(stop)
+        ),
+        None,
+    )
+
+
+def row_bounds(row: dict[str, Any], rate: float, total: int) -> tuple[int, int]:
+    """Normalize an inventory source interval/event without guessing its source family."""
+    start = row.get("from_index", row.get("start_timestep"))
+    stop = row.get("to_index", row.get("end_timestep_exclusive"))
+    if start is None:
+        start = round(float(row.get("start_s", 0.0)) * rate)
+    if stop is None:
+        stop = round(float(row.get("end_s", total / rate)) * rate)
+    return max(0, int(start)), min(total, int(stop))
+
+
+def source_rows_at(inv: dict[str, Any], frame: int) -> list[dict[str, Any]]:
+    rate, total = float(inv["native_rate_hz"]), int(inv["frames"])
+    rows = inv.get("source_intervals", inv.get("parent_intervals", []))
+    return [
+        row
+        for row in rows
+        if row_bounds(row, rate, total)[0] <= frame < row_bounds(row, rate, total)[1]
+    ]
+
+
+def actor_frame(row: dict[str, Any]) -> int:
+    return int(row.get("anchor_timestep", row.get("anchor_frame", -1)))
+
+
+def history_validity(
+    anchor: dict[str, Any], retained: list[list[int]], total: int
+) -> tuple[bool, str]:
+    history = [int(frame) for frame in anchor.get("history_frames", [])]
+    if not history:
+        return False, "history frames missing"
+    current = actor_frame(anchor)
+    continuous = interval_at(retained, current)
+    in_bounds = all(0 <= frame < total for frame in history)
+    same_interval = continuous is not None and all(
+        continuous[0] <= frame < continuous[1] for frame in history
+    )
+    stored = anchor.get("history_complete")
+    stored_ok = True if stored is None else bool(stored)
+    valid = in_bounds and same_interval and stored_ok
+    stored_text = "n/a" if stored is None else str(bool(stored)).lower()
+    return valid, (
+        f"frames={history[0]}..{history[-1]} same_interval={str(same_interval).lower()} "
+        f"stored_complete={stored_text}"
+    )
+
+
+def _interval_evidence_frames(inv: dict[str, Any], step: int) -> set[int]:
+    rate, total = float(inv["native_rate_hz"]), int(inv["frames"])
+    frames: set[int] = set()
+    for start, stop in inv["retained_intervals"]:
+        frames.update(range(int(start), int(stop), step))
+        frames.update((int(start) - 1, int(start), int(stop) - 1, int(stop)))
+    for start, stop in inv.get("excluded_intervals", []):
+        frames.update(range(int(start), int(stop), step))
+        frames.update((int(start) - 1, int(start), int(stop) - 1, int(stop)))
+    for row in inv.get("source_intervals", inv.get("parent_intervals", [])):
+        start, stop = row_bounds(row, rate, total)
+        frames.update((start - 1, start, max(start, stop - 1), stop))
+    for row in inv.get("interruption_events", []):
+        start, stop = row_bounds(row, rate, total)
+        frames.update((start - 1, start, max(start, stop - 1), stop))
+    return frames
+
+
+def selected_frames(packet: dict[str, Any], step_s: float) -> list[int]:
+    inv, channels = packet["inventory"], packet["channels"]
+    rate, total = float(inv["native_rate_hz"]), int(inv["frames"])
+    step = max(1, int(round(step_s * rate)))
+    frames = _interval_evidence_frames(inv, step)
+    for name in (
+        "subtask_atoms.jsonl",
+        "contact_atoms.jsonl",
+        "precision_atoms.jsonl",
+        "speed_atoms_hybrid_v1.jsonl",
+        "quality_spans.jsonl",
+        "mistakes_v2.jsonl",
+        "precision_windows.jsonl",
+    ):
+        for row in channels[name]:
+            start = int(row.get("from_index", row.get("start_timestep", 0)))
+            stop = int(row.get("to_index", row.get("end_timestep_exclusive", total)))
+            frames.update((start, max(start, stop - 1)))
+            for key in ("raw_from_index", "commit_index"):
+                if key in row:
+                    frames.add(int(row[key]))
+            if "raw_to_index" in row:
+                frames.add(max(0, int(row["raw_to_index"]) - 1))
+
+    anchor_frames = sorted({actor_frame(row) for row in packet.get("actor_anchors", [])})
+    for frame in list(frames):
+        position = bisect.bisect_left(anchor_frames, frame)
+        candidates = anchor_frames[max(0, position - 1) : position + 1]
+        if candidates:
+            frames.add(min(candidates, key=lambda candidate: abs(candidate - frame)))
+    for anchor in packet.get("actor_anchors", []):
+        valid, _ = history_validity(anchor, inv["retained_intervals"], total)
+        stored_retained = bool(anchor.get("retained", False))
+        source_retained = interval_at(inv["retained_intervals"], actor_frame(anchor)) is not None
+        if not valid or stored_retained != source_retained:
+            frames.add(actor_frame(anchor))
+    return sorted(frame for frame in frames if 0 <= frame < total)
+
+
+def _contact_text(contact: dict[str, Any] | None) -> str:
+    if contact is None:
+        return "MISSING"
+    code = int(contact["contact"])
+    try:
+        phrase = phrase_for(code)
+    except ValueError:
+        phrase = "INVALID"
+    return f"{code} ({contact.get('contact_slug', '?')}; {phrase})"
+
+
+def _source_interval_text(inv: dict[str, Any], row: dict[str, Any]) -> str:
+    start, stop = row_bounds(row, float(inv["native_rate_hz"]), int(inv["frames"]))
+    retention = row.get("retention", row.get("status", row.get("kind", "unspecified")))
+    reason = row.get("retention_reason", row.get("reason", row.get("primitive", "")))
+    parent = row.get("parent_interval_index", row.get("interval_index", "?"))
+    return f"SOURCE parent={parent} [{start},{stop}) {retention} {reason}".strip()
+
+
+def frame_text(packet: dict[str, Any], frame: int) -> list[tuple[str, str]]:
+    inv, ch = packet["inventory"], packet["channels"]
+    retained = interval_at(inv["retained_intervals"], frame)
+    excluded = interval_at(inv.get("excluded_intervals", []), frame)
+    out: list[tuple[str, str]] = [
+        (
+            f"f{frame} t={frame / float(inv['native_rate_hz']):.2f}s "
+            f"{inv['split']} {inv['family']}/{inv['component']} "
+            f"SOURCE_RETAINED={'yes' if retained else 'NO'}",
+            "white" if retained else "red",
+        )
+    ]
+    if excluded:
+        out.append((f"EXCLUDED [{excluded[0]},{excluded[1]})", "red"))
+    for row in source_rows_at(inv, frame):
+        out.append((_source_interval_text(inv, row), "grey"))
+    for row in inv.get("interruption_events", []):
+        start, stop = row_bounds(row, float(inv["native_rate_hz"]), int(inv["frames"]))
+        if start <= frame < stop:
+            out.append((f"INTERRUPTION [{start},{stop}): {row.get('reason', row.get('kind', ''))}", "red"))
+
+    atom = atom_at(ch["subtask_atoms.jsonl"], frame)
+    speed = atom_at(ch["speed_atoms_hybrid_v1.jsonl"], frame)
+    contact = atom_at(ch["contact_atoms.jsonl"], frame)
+    old_precision = atom_at(ch["precision_atoms.jsonl"], frame)
+    if atom:
+        key = (int(atom["parent_interval_index"]), int(atom["atom_index"]))
+        out.append(
+            (
+                f"ATOM p{key[0]}a{key[1]} [{atom['start_timestep']},"
+                f"{atom['end_timestep_exclusive']}): {atom['subtask']}",
+                "cyan",
+            )
+        )
+    else:
+        out.append(("ATOM: none", "grey"))
+    out.append(
+        (
+            f"ATOM CHANNELS: speed={speed.get('speed') if speed else 'MISSING'}; "
+            f"contact={_contact_text(contact)}; legacy_precision="
+            f"{old_precision.get('precision') if old_precision else 'MISSING'}",
+            "cyan",
+        )
+    )
+
+    anchors = [row for row in packet.get("actor_anchors", []) if actor_frame(row) == frame]
+    if anchors:
+        anchor = anchors[0]
+        history_ok, history_note = history_validity(
+            anchor, inv["retained_intervals"], int(inv["frames"])
+        )
+        in_training = bool(anchor.get("retained", False)) and not bool(packet.get("holdout"))
+        out.append(
+            (
+                f"ACTOR ANCHOR: stored_retained={bool(anchor.get('retained', False))}; "
+                f"trainer_member={str(in_training).lower()}; holdout={bool(packet.get('holdout'))}; "
+                f"history_valid={str(history_ok).lower()} ({history_note})",
+                "yellow" if in_training and history_ok else "red",
+            )
+        )
+    else:
+        out.append(("ACTOR ANCHOR: none at this native frame", "grey"))
+
+    qrows = rows_at(ch["quality_spans.jsonl"], frame)
+    quality = min((int(row["quality"]) for row in qrows), default=4)
+    qwhy = ", ".join(f"{row['cause']}:{row['confidence']}" for row in qrows) or "default"
+    windows = rows_at(ch["precision_windows.jsonl"], frame)
+    precision = max((int(row["precision"]) for row in windows), default=1)
+    mistakes = rows_at(ch["mistakes_v2.jsonl"], frame)
+    out.append(
+        (
+            f"EFFECTIVE: quality={quality} ({qwhy}); mistake={bool(mistakes)}; "
+            f"precision={precision} ({'window' if windows else 'outside window'})",
+            "yellow",
+        )
+    )
+    for row in mistakes:
+        out.append(
+            (
+                f"MISTAKE {row['mistake_type']} [{row['from_index']},{row['to_index']}): "
+                f"{row.get('note', '')}",
+                "red",
+            )
+        )
+    return out
+
+
+def _episode_dir(root: Path, inv: dict[str, Any]) -> Path:
+    return root / str(inv["store"]) / "episodes" / str(inv["episode_id"])
+
+
+def _schema_text(inv: dict[str, Any]) -> str:
+    if inv["store"] == "fmb":
+        return (
+            "trainer state/action: measured q[7] + binary gripper (action copies state); "
+            "aux source command: normalized Cartesian delta + binary gripper"
+        )
+    return f"state: {inv.get('state_semantics', 'unknown')}; action: {inv.get('action_semantics', 'unknown')}"
+
+
+def render_pages(
+    packet: dict[str, Any], root: Path, out: Path, step_s: float, per_page: int
+) -> int:
+    inv = packet["inventory"]
+    episode_dir = _episode_dir(root, inv)
+    record = json.loads((episode_dir / "episode.json").read_text(encoding="utf-8"))
+    wanted = selected_frames(packet, step_s)
+    if not wanted:
+        raise ValueError(f"{inv['episode_id']}: no evidence frames selected")
+    names, decoded = (
+        decode_fmb(episode_dir, wanted)
+        if inv["store"] == "fmb"
+        else decode_common(record, episode_dir, wanted)
+    )
+    out.mkdir(parents=True, exist_ok=True)
+    tile_w, tile_h, text_w, header_h = 360, 250, 780, 125
+    width = tile_w * len(names) + text_w
+    pages = math.ceil(len(wanted) / per_page)
+    for page_index in range(pages):
+        frames = wanted[page_index * per_page : (page_index + 1) * per_page]
+        canvas = Image.new("RGB", (width, header_h + tile_h * len(frames)), (18, 18, 18))
+        draw = ImageDraw.Draw(canvas)
+        draw.text((12, 8), f"{inv['episode_id']} | task: {inv['task']}", font=font(22, True), fill="white")
+        draw.text(
+            (12, 40),
+            f"native {inv['native_rate_hz']:g} Hz | retained {inv['retained_intervals']} | "
+            f"excluded {inv.get('excluded_intervals', [])} | views: {', '.join(names)} | "
+            f"page {page_index + 1}/{pages}",
+            font=font(15),
+            fill="white",
+        )
+        schema = _schema_text(inv)
+        draw.text((12, 66), schema[: max(80, width // 8)], font=font(13), fill=COLORS["grey"])
+        draw.text(
+            (12, 88),
+            f"retention provenance: {inv.get('retention_provenance', 'MISSING')} | "
+            f"actor view: {inv.get('actor_anchor_view', 'actor_anchors_5hz.jsonl')} "
+            f"({len(packet.get('actor_anchors', []))} loaded)",
+            font=font(13),
+            fill=COLORS["grey"],
+        )
+        for row_index, frame in enumerate(frames):
+            y = header_h + row_index * tile_h
+            for camera_index, name in enumerate(names):
+                image = decoded[name].get(frame, Image.new("RGB", (tile_w, tile_h), (55, 0, 0)))
+                canvas.paste(fit_tile(image, tile_w, tile_h), (camera_index * tile_w, y))
+                draw.text(
+                    (camera_index * tile_w + 5, y + 5),
+                    name,
+                    font=font(14, True),
+                    fill="white",
+                    stroke_width=2,
+                    stroke_fill="black",
+                )
+            x, ty = tile_w * len(names) + 10, y + 8
+            for value, color in frame_text(packet, frame):
+                for line in wrap(draw, value, text_w - 20, font(14)):
+                    draw.text((x, ty), line, font=font(14), fill=COLORS[color])
+                    ty += 18
+            draw.line((0, y + tile_h - 1, width, y + tile_h - 1), fill=(100, 100, 100))
+        canvas.save(out / f"page_{page_index + 1:03d}.jpg", quality=90)
+    return pages
+
+
+def quaternion_speed_deg_s(pose: np.ndarray, rate: float) -> np.ndarray:
+    quaternion = np.asarray(pose[:, 3:7], dtype=np.float64)
+    norm = np.linalg.norm(quaternion, axis=1, keepdims=True)
+    quaternion = quaternion / np.maximum(norm, 1e-12)
+    dots = np.abs(np.sum(quaternion[1:] * quaternion[:-1], axis=1))
+    angles = 2.0 * np.arccos(np.clip(dots, 0.0, 1.0))
+    return np.r_[0.0, np.degrees(angles) * rate]
+
+
+def _shade_source(ax: Any, inv: dict[str, Any], rate: float) -> None:
+    for start, stop in inv.get("excluded_intervals", []):
+        ax.axvspan(int(start) / rate, int(stop) / rate, color="tab:red", alpha=0.10)
+    for row in inv.get("interruption_events", []):
+        start, stop = row_bounds(row, rate, int(inv["frames"]))
+        ax.axvspan(start / rate, stop / rate, color="tab:purple", alpha=0.14)
+    for row in inv.get("source_intervals", inv.get("parent_intervals", [])):
+        start, _ = row_bounds(row, rate, int(inv["frames"]))
+        ax.axvline(start / rate, color="0.55", lw=0.5, alpha=0.5)
+
+
+def _shade_labels(ax: Any, packet: dict[str, Any], rate: float) -> None:
+    for atom in packet["channels"]["subtask_atoms.jsonl"]:
+        ax.axvline(int(atom["start_timestep"]) / rate, color="tab:green", alpha=0.35)
+    for row in packet["channels"]["quality_spans.jsonl"]:
+        color = "gold" if int(row["quality"]) == 5 else "tab:orange"
+        ax.axvspan(int(row["from_index"]) / rate, int(row["to_index"]) / rate, color=color, alpha=0.16)
+    for row in packet["channels"]["mistakes_v2.jsonl"]:
+        ax.axvspan(int(row["from_index"]) / rate, int(row["to_index"]) / rate, color="tab:red", alpha=0.25)
+
+
+def render_trace(packet: dict[str, Any], root: Path, out: Path) -> None:
+    inv = packet["inventory"]
+    episode_dir = _episode_dir(root, inv)
+    rate, n = float(inv["native_rate_hz"]), int(inv["frames"])
+    timeline = np.arange(n) / rate
+    if inv["store"] == "fmb":
+        pose = np.load(episode_dir / "tcp_pose.npy", mmap_mode="r")
+        translation = np.r_[0.0, np.linalg.norm(np.diff(pose[:, :3], axis=0), axis=1) * rate * 100]
+        rotation = quaternion_speed_deg_s(pose, rate)
+        measured = np.load(episode_dir / "gripper_pose.npy", mmap_mode="r").reshape(n, -1)[:, 0]
+        command = np.load(episode_dir / "actions.npy", mmap_mode="r").reshape(n, -1)[:, -1]
+        fig, axes = plt.subplots(3, 1, figsize=(16, 8), sharex=True)
+        axes[0].plot(timeline, translation, color="black", lw=0.8, label="translation cm/s")
+        turn_ax = axes[0].twinx()
+        turn_ax.plot(timeline, rotation, color="tab:orange", lw=0.7, alpha=0.8, label="orientation deg/s")
+        axes[0].set_ylabel("TCP cm/s")
+        turn_ax.set_ylabel("TCP deg/s", color="tab:orange")
+        axes[1].step(timeline, measured, where="post", color="tab:blue", lw=0.9, label="measured gripper")
+        axes[1].step(timeline, command, where="post", color="tab:purple", lw=0.9, label="binary command")
+        axes[1].set_ylabel("gripper")
+        axes[1].legend(loc="upper right", fontsize=8)
+        close_path, open_path = episode_dir / "depth_gripper_close_target.npy", episode_dir / "depth_gripper_open_target.npy"
+        if close_path.is_file():
+            axes[2].plot(timeline, np.load(close_path, mmap_mode="r"), color="tab:red", lw=0.8, label="depth close target")
+        if open_path.is_file():
+            axes[2].plot(timeline, np.load(open_path, mmap_mode="r"), color="tab:green", lw=0.8, label="depth open target")
+        axes[2].set_ylabel("event target")
+        axes[2].legend(loc="upper right", fontsize=8)
+        axes[2].set_xlabel("seconds")
+        for ax in axes:
+            _shade_source(ax, inv, rate)
+        _shade_labels(axes[0], packet, rate)
+        fig.suptitle(f"{inv['episode_id']} | {_schema_text(inv)}")
+    else:
+        state = np.load(episode_dir / "state.npy", mmap_mode="r")
+        fig, ax = plt.subplots(figsize=(16, 5))
+        axes = [ax]
+        if inv["family"] == "molmoact":
+            speed = np.r_[0.0, np.linalg.norm(np.diff(state[:, :3], axis=0), axis=1) * rate * 100]
+            euler = np.unwrap(np.asarray(state[:, 3:6]), axis=0)
+            rotation = np.r_[0.0, np.degrees(np.linalg.norm(np.diff(euler, axis=0), axis=1)) * rate]
+            ax.plot(timeline, speed, color="black", lw=0.8)
+            turn_ax = ax.twinx()
+            turn_ax.plot(timeline, rotation, color="tab:orange", lw=0.7, alpha=0.8)
+            ax.set_ylabel("TCP speed cm/s")
+            turn_ax.set_ylabel("Euler speed deg/s", color="tab:orange")
+        else:
+            speed = np.r_[0.0, np.linalg.norm(np.diff(state[:, :-1], axis=0), axis=1) * rate]
+            ax.plot(timeline, speed, color="black", lw=0.8)
+            ax.set_ylabel("joint L2 speed /s")
+        gripper_ax = ax.twinx()
+        gripper_ax.plot(timeline, state[:, -1], color="tab:blue", lw=0.7, alpha=0.55)
+        gripper_ax.set_ylabel("source-native gripper", color="tab:blue")
+        ax.set_xlabel("seconds")
+        _shade_source(ax, inv, rate)
+        _shade_labels(ax, packet, rate)
+        ax.set_title(
+            f"{inv['episode_id']} source-native trace "
+            "(grey=source parent, green=atom, orange/gold=quality, red=mistake/excluded)"
+        )
+    fig.tight_layout()
+    fig.savefig(out / "trace_v2.png", dpi=120)
+    plt.close(fig)
+
+
+def _actor_view_path(root: Path, inv: dict[str, Any]) -> Path:
+    value = inv.get("actor_anchor_view", "actor_anchors_5hz.jsonl")
+    if isinstance(value, dict):
+        value = value.get("path", "actor_anchors_5hz.jsonl")
+    # The root is authoritative. Inventory paths are provenance, not permission to read
+    # an unrelated location.
+    return root / str(inv["store"]) / Path(str(value)).name
+
+
+def _load_anchor_rows(root: Path, packets: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    wanted = {str(packet["inventory"]["episode_id"]) for packet in packets}
+    paths = {_actor_view_path(root, packet["inventory"]) for packet in packets}
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for path in sorted(paths):
+        with path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                episode_id = str(row["episode_id"])
+                if episode_id in wanted:
+                    grouped[episode_id].append(row)
+    return grouped
+
+
+def _holdouts(root: Path) -> set[str]:
+    path = root / "holdout_episodes.json"
+    if not path.is_file():
+        return set()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {str(value) for value in payload.get("episode_ids", [])}
+
+
+def validate_packet(packet: dict[str, Any]) -> list[str]:
+    """Fast evidence validation; failures are rendered as warnings and printed."""
+    inv = packet["inventory"]
+    warnings: list[str] = []
+    if not inv.get("retention_provenance"):
+        warnings.append("missing retention_provenance")
+    if "excluded_intervals" not in inv:
+        warnings.append("missing excluded_intervals")
+    expected = inv.get("actor_anchor_count")
+    actual = len(packet.get("actor_anchors", []))
+    if expected is not None and int(expected) != actual:
+        warnings.append(f"actor anchor count {actual} != inventory {expected}")
+    for anchor in packet.get("actor_anchors", []):
+        frame = actor_frame(anchor)
+        source_retained = interval_at(inv["retained_intervals"], frame) is not None
+        if bool(anchor.get("retained", False)) != source_retained:
+            warnings.append(
+                f"anchor f{frame} stored_retained={bool(anchor.get('retained', False))} "
+                f"source_retained={source_retained}"
+            )
+    return warnings
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", required=True, help="active federated diverse root")
+    parser.add_argument("--work", required=True, help="audit results directory")
+    parser.add_argument("--round", type=int, required=True)
+    parser.add_argument("--step-s", type=float, default=0.5)
+    parser.add_argument("--per-page", type=int, default=6)
+    parser.add_argument("--validate-only", action="store_true")
+    args = parser.parse_args()
+    root, work = Path(args.root), Path(args.work)
+    base = work / "evidence" / f"round_{args.round:02d}"
+    directories = sorted(path for path in base.iterdir() if path.is_dir())
+    packets = [json.loads((directory / "effective_labels.json").read_text(encoding="utf-8")) for directory in directories]
+    anchors = _load_anchor_rows(root, packets)
+    holdouts = _holdouts(root)
+    total = 0
+    for directory, packet in zip(directories, packets, strict=True):
+        episode_id = str(packet["inventory"]["episode_id"])
+        packet["actor_anchors"] = anchors.get(episode_id, [])
+        packet["holdout"] = episode_id in holdouts
+        warnings = validate_packet(packet)
+        print(episode_id, "validation", "PASS" if not warnings else f"WARN ({len(warnings)})")
+        for warning in warnings:
+            print(" ", warning)
+        if args.validate_only:
+            continue
+        pages = render_pages(packet, root, directory, args.step_s, args.per_page)
+        render_trace(packet, root, directory)
+        total += pages
+        print(episode_id, pages)
+    if not args.validate_only:
+        print("pages", total)
+
+
+if __name__ == "__main__":
+    main()

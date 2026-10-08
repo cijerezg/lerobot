@@ -103,12 +103,17 @@ def load():
             path = Path(f); name = path.stem.lower()
             kind = "unsure" if "unsure" in name else "precision" if "precision" in name else "other"
             phase = 3 if kind == "precision" else {"K": 1, "F": 2}.get(path.name[0], 0)
+            phase = 4 if path.name.startswith("F_audit") else phase  # an audit fix is the latest reading: it wins
             return (phase, path.name) if "--deterministic-resolvers" in sys.argv else (phase,)
         for f in sorted(glob.glob(str(d / "resolve/*.jsonl")), key=resolver_key):
             for x in map(json.loads, filter(str.strip, open(f))):
                 m = res.setdefault(x["uid"], {"rows": [], "added": {"spans": [], "mistakes": []}})
                 m["rows"] += x.get("rows", [])
-                for k, v in (x.get("added") or {}).items(): m["added"].setdefault(k, []).extend(v)
+                for k, v in (x.get("added") or {}).items():
+                    have = m["added"].setdefault(k, [])
+                    # two readers adding the same row add it once (same values; their notes may differ)
+                    same = lambda y: {f: y[f] for f in y if f not in ("note", "what_happens", "looked_at", "confidence")}  # noqa: E731
+                    have.extend(y for y in v if same(y) not in map(same, have))
         for f in sorted(glob.glob(str(d / sub / "*.jsonl"))):
             for r in map(json.loads, filter(str.strip, open(f))):
                 L[r["uid"]] = dict(merge(r, res.get(r["uid"])), _file=Path(f).stem, _cls=d.name)

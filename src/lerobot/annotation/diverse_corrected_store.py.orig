@@ -1,0 +1,770 @@
+"""Assemble a versioned corrected diverse store without touching its source.
+
+The audit writes one JSON correction spec per affected episode beneath ``--fix-dir``.
+Every changed channel is a *full episode replacement*: this tool removes all source
+rows for that episode and inserts the supplied rows.  There is no patch-by-index
+mode, which keeps a repair auditable and prevents stale rows surviving a boundary
+edit.
+
+Schema (version 1)::
+
+    {
+      "schema_version": 1,
+      "status": "resolved",
+      "store": "corpus",                 // or "fmb"
+      "episode_id": "...",
+      "replacements": {
+        "subtask_atoms.jsonl": [{...}],
+        "contact_atoms.jsonl": [{...}],
+        "precision_atoms.jsonl": [{...}],
+        "speed_atoms_hybrid_v1.jsonl": [{...}],
+        "quality_spans.jsonl": [{...}],  // [] deliberately removes episode rows
+        "mistakes_v2.jsonl": [],
+        "precision_windows.jsonl": [{...}]
+      },
+      "actor_anchors": {
+        "mode": "remap",                 // preserve | remap | replace
+        "retained_intervals": [[90, 564]] // native half-open frames; remap only
+      },
+      "critic_intervals": {
+        "mode": "from_atoms"             // preserve | from_atoms | replace
+      },
+      "episode_record": null,
+      "unresolved": [],
+      "second_read_required": false
+    }
+
+``replace`` modes additionally require a ``rows`` list.  ``episode_record`` is an
+optional full replacement for ``episodes/<episode_id>/episode.json``.  Changing
+``subtask_atoms.jsonl`` requires full replacements for every atom-aligned trainer
+channel and non-preserving actor/critic directives.
+
+Episode payloads are never copied or modified.  The output has real episode
+directories with a copied ``episode.json`` and absolute symlinks for immutable array
+and video payloads.  Root/store metadata and unrelated sidecar rows are copied.
+
+Examples::
+
+    uv run python -m lerobot.annotation.diverse_corrected_store \
+      --source-root outputs/diverse_robot_dataset_v3 \
+      --out-root outputs/diverse_robot_dataset_v3_audit1 \
+      --fix-dir migration/diverse_annotation_audit_2026-10-07/fixes --dry-run
+
+    uv run python -m lerobot.annotation.diverse_corrected_store \
+      --source-root outputs/diverse_robot_dataset_v3 \
+      --out-root outputs/diverse_robot_dataset_v3_audit1 \
+      --fix-dir migration/diverse_annotation_audit_2026-10-07/fixes
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import shutil
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+import numpy as np
+from lerobot.datasets.diverse_pilot import COPY_STATE_LEAD_S
+
+
+STORES = ("corpus", "fmb")
+ACTOR_VIEW = "actor_anchors_5hz.jsonl"
+CRITIC_VIEW = "critic_intervals.jsonl"
+SUBTASK_VIEW = "subtask_atoms.jsonl"
+ATOM_ALIGNED = (
+    "contact_atoms.jsonl",
+    "precision_atoms.jsonl",
+    "speed_atoms_hybrid_v1.jsonl",
+)
+V2_VIEWS = ("quality_spans.jsonl", "mistakes_v2.jsonl", "precision_windows.jsonl")
+REPLACEABLE = frozenset((SUBTASK_VIEW, *ATOM_ALIGNED, *V2_VIEWS))
+
+
+class StoreError(ValueError):
+    """A correction spec or assembled store violates the audit contract."""
+
+
+@dataclass(frozen=True)
+class Correction:
+    path: Path
+    store: str
+    episode_id: str
+    replacements: dict[str, list[dict[str, Any]]]
+    actor: dict[str, Any]
+    critic: dict[str, Any]
+    episode_record: dict[str, Any] | None
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        raise StoreError(f"required JSONL is missing: {path}")
+    rows = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise StoreError(f"{path}:{line_number}: invalid JSON: {exc}") from exc
+        if not isinstance(row, dict):
+            raise StoreError(f"{path}:{line_number}: each JSONL row must be an object")
+        rows.append(row)
+    return rows
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+
+
+def _rows(value: Any, where: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or any(not isinstance(row, dict) for row in value):
+        raise StoreError(f"{where} must be a list of JSON objects")
+    return value
+
+
+def _directive(value: Any, name: str) -> dict[str, Any]:
+    if value is None:
+        return {"mode": "preserve"}
+    if not isinstance(value, dict) or value.get("mode") not in {"preserve", "remap", "replace", "from_atoms"}:
+        raise StoreError(f"{name} needs mode preserve/remap/replace/from_atoms")
+    return value
+
+
+def correction_paths(fix_dir: Path) -> list[Path]:
+    if not fix_dir.is_dir():
+        raise StoreError(f"fix directory does not exist: {fix_dir}")
+    paths = sorted(path for path in fix_dir.rglob("*.json") if path.is_file())
+    if not paths:
+        raise StoreError(f"no correction specs (*.json) in {fix_dir}")
+    return paths
+
+
+def load_corrections(fix_dir: Path) -> list[Correction]:
+    paths = correction_paths(fix_dir)
+    corrections, seen = [], set()
+    for path in paths:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("schema_version") != 1:
+            raise StoreError(f"{path}: not a diverse correction spec with schema_version 1")
+        if data.get("status") != "resolved":
+            raise StoreError(f"{path}: status must be 'resolved'")
+        if data.get("unresolved"):
+            raise StoreError(f"{path}: unresolved items remain")
+        if data.get("second_read_required"):
+            raise StoreError(f"{path}: required second read is unresolved")
+        store, episode_id = data.get("store"), str(data.get("episode_id", ""))
+        if store not in STORES or not episode_id:
+            raise StoreError(f"{path}: store must be corpus/fmb and episode_id must be non-empty")
+        key = (store, episode_id)
+        if key in seen:
+            raise StoreError(f"duplicate correction spec for {store}/{episode_id}")
+        seen.add(key)
+        raw_replacements = data.get("replacements", {})
+        if not isinstance(raw_replacements, dict) or set(raw_replacements) - REPLACEABLE:
+            bad = sorted(set(raw_replacements) - REPLACEABLE) if isinstance(raw_replacements, dict) else []
+            raise StoreError(f"{path}: invalid replacements mapping; unknown channels {bad}")
+        replacements = {
+            name: _rows(value, f"{path}:replacements.{name}")
+            for name, value in raw_replacements.items()
+        }
+        actor = _directive(data.get("actor_anchors"), f"{path}:actor_anchors")
+        critic = _directive(data.get("critic_intervals"), f"{path}:critic_intervals")
+        if actor["mode"] == "from_atoms" or critic["mode"] == "remap":
+            raise StoreError(f"{path}: actor supports remap, critic supports from_atoms (not vice versa)")
+        for name, directive in (("actor_anchors", actor), ("critic_intervals", critic)):
+            if directive["mode"] == "replace":
+                _rows(directive.get("rows"), f"{path}:{name}.rows")
+        if actor["mode"] == "remap":
+            _validate_intervals(actor.get("retained_intervals"), f"{path}:actor_anchors.retained_intervals")
+        if SUBTASK_VIEW in replacements:
+            missing = [name for name in ATOM_ALIGNED if name not in replacements]
+            if missing:
+                raise StoreError(f"{path}: atom replacement also requires full replacements for {missing}")
+            if actor["mode"] == "preserve" or critic["mode"] == "preserve":
+                raise StoreError(f"{path}: atom replacement requires actor remap/replace and critic from_atoms/replace")
+        episode_record = data.get("episode_record")
+        if episode_record is not None and not isinstance(episode_record, dict):
+            raise StoreError(f"{path}: episode_record must be a full JSON object or null")
+        if not replacements and actor["mode"] == critic["mode"] == "preserve" and episode_record is None:
+            raise StoreError(f"{path}: correction spec makes no change")
+        corrections.append(Correction(path, store, episode_id, replacements, actor, critic, episode_record))
+    return corrections
+
+
+def _validate_intervals(value: Any, where: str) -> list[tuple[int, int]]:
+    if not isinstance(value, list):
+        raise StoreError(f"{where} must be a list of [from_index, to_index] pairs")
+    intervals = []
+    for item in value:
+        if not isinstance(item, list) or len(item) != 2:
+            raise StoreError(f"{where}: invalid interval {item!r}")
+        start, stop = int(item[0]), int(item[1])
+        if start < 0 or stop <= start or (intervals and start < intervals[-1][1]):
+            raise StoreError(f"{where}: intervals must be positive, sorted, disjoint half-open ranges")
+        intervals.append((start, stop))
+    if not intervals:
+        raise StoreError(f"{where}: at least one retained interval is required")
+    return intervals
+
+
+def _replace_episode(rows: list[dict[str, Any]], episode_id: str, replacement: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in replacement:
+        if str(row.get("episode_id")) != episode_id:
+            raise StoreError(f"replacement row has episode_id={row.get('episode_id')!r}, expected {episode_id!r}")
+    positions = [i for i, row in enumerate(rows) if str(row.get("episode_id")) == episode_id]
+    insert_at = positions[0] if positions else len(rows)
+    kept = [row for row in rows if str(row.get("episode_id")) != episode_id]
+    removed_before = sum(position < insert_at for position in positions)
+    insert_at -= removed_before
+    return kept[:insert_at] + replacement + kept[insert_at:]
+
+
+def _atom_at(atoms: list[dict[str, Any]], frame: int) -> dict[str, Any] | None:
+    hits = [a for a in atoms if int(a["start_timestep"]) <= frame < int(a["end_timestep_exclusive"])]
+    if len(hits) > 1:
+        raise StoreError(f"overlapping atoms at frame {frame}")
+    return hits[0] if hits else None
+
+
+def _same_interval(intervals: list[tuple[int, int]], frames: list[int], future_last: int) -> bool:
+    return any(start <= min(frames) and max(frames) < stop and start <= future_last < stop for start, stop in intervals)
+
+
+def remap_actor_rows(
+    rows: list[dict[str, Any]], episode_id: str, atoms: list[dict[str, Any]],
+    intervals: list[tuple[int, int]], store: str, timestamps: np.ndarray,
+) -> list[dict[str, Any]]:
+    """Remap an episode's existing 5 Hz grid; never synthesize temporal samples."""
+    output = []
+    for source in rows:
+        if str(source.get("episode_id")) != episode_id:
+            output.append(source)
+            continue
+        row = dict(source)
+        frame_key = "anchor_timestep" if store == "fmb" else "anchor_frame"
+        frame = int(row[frame_key])
+        rate = float(row.get("native_rate_hz", 0) or row.get("interpolation_provenance", {}).get("source_rate_hz_nominal"))
+        atom = _atom_at(atoms, frame)
+        future_s = float(row.get("future_end_s_nominal", row.get("future_end_s")))
+        if store == "fmb":
+            future_s += float(COPY_STATE_LEAD_S)
+        future_last = min(int(np.searchsorted(timestamps, future_s, side="left")), len(timestamps) - 1)
+        future_within_episode = future_s <= float(timestamps[-1]) + 1e-6
+        history = [int(value) for value in row["history_frames"]]
+        context_ok = atom is not None and future_within_episode and _same_interval(intervals, history, future_last)
+        row["retained"] = context_ok
+        if context_ok:
+            row["rejection_reasons"] = []
+            row["retention_reason"] = "audit_retained"
+        else:
+            row["rejection_reasons"] = ["audit_excluded_or_context_crosses_gap"]
+            row["retention_reason"] = "audit_excluded"
+        if atom is not None:
+            start, stop = int(atom["start_timestep"]), int(atom["end_timestep_exclusive"])
+            row["subtask"] = str(atom["subtask"])
+            row["quality"] = int(atom.get("quality", 4))
+            row["quality_provenance"] = atom.get("quality_provenance", "audit_atom")
+            row["mistake"] = any(
+                float(event["start_s"]) <= frame / rate < float(event["end_s"])
+                for event in atom.get("mistake_events", [])
+            )
+            row["subtask_interval_index"] = int(atom["parent_interval_index"])
+            row["time_since_subtask_start_s"] = (frame - start) / rate
+            row["time_to_subtask_end_s"] = (stop - frame) / rate
+            row["future_inside_subtask"] = future_within_episode and future_last < stop
+            if store == "fmb":
+                row["primitive"] = atom.get("primitive")
+                row["primitive_conditioned_future_supported"] = future_within_episode and future_last < stop
+        else:
+            for key, value in (
+                ("subtask", None), ("quality", None), ("mistake", False),
+                ("subtask_interval_index", None), ("time_since_subtask_start_s", None),
+                ("time_to_subtask_end_s", None), ("future_inside_subtask", None),
+            ):
+                if key in row or store == "corpus":
+                    row[key] = value
+        output.append(row)
+    return output
+
+
+def critic_rows_from_atoms(
+    source_rows: list[dict[str, Any]], episode_id: str, atoms: list[dict[str, Any]], store: str
+) -> list[dict[str, Any]]:
+    templates = [row for row in source_rows if str(row.get("episode_id")) == episode_id]
+    if not templates:
+        raise StoreError(f"{store}/{episode_id}: no critic row available as a rebuild template")
+    rebuilt = []
+    atoms_by_parent: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for atom in atoms:
+        atoms_by_parent[int(atom["parent_interval_index"])].append(atom)
+    for parent_index, parent_atoms in sorted(atoms_by_parent.items()):
+        parent_atoms.sort(key=lambda row: int(row["start_timestep"]))
+        atom = parent_atoms[0]
+        start = int(parent_atoms[0]["start_timestep"])
+        stop = int(parent_atoms[-1]["end_timestep_exclusive"])
+        cursor = start
+        for part in parent_atoms:
+            if int(part["start_timestep"]) != cursor:
+                raise StoreError(f"{store}/{episode_id}: atom gap inside parent {parent_index}")
+            cursor = int(part["end_timestep_exclusive"])
+        template = max(
+            templates,
+            key=lambda row: max(0, min(stop, int(row["end_timestep_exclusive"])) - max(start, int(row["start_timestep"]))),
+        )
+        row = dict(template)
+        rate = float(atom["native_rate_hz"])
+        row.update(
+            episode_id=episode_id,
+            interval_index=parent_index,
+            start_timestep=start,
+            end_timestep_exclusive=stop,
+            native_action_samples=stop - start,
+            normalized_description=str(atom.get("parent_subtask", atom["subtask"])),
+            primitive=atom.get("primitive"),
+            quality=int(atom.get("parent_quality", atom.get("quality", 4))),
+            quality_provenance=atom.get("quality_provenance", "audit_atom"),
+            quality_values=sorted({int(part.get("quality", 4)) for part in parent_atoms}),
+            mistake_events=atom.get("mistake_events", []),
+            pause_events=atom.get("pause_events", []),
+            interruption_events=atom.get("interruption_events", []),
+            recovery_events=atom.get("recovery_events", []),
+            critic_eligible=bool(atom.get("parent_critic_eligible", True)),
+        )
+        start_s, stop_s = start / rate, stop / rate
+        if store == "fmb":
+            row.update(start_s_nominal=start_s, end_s_nominal_exclusive=stop_s, duration_s_nominal=(stop - start) / rate)
+        else:
+            row.update(start_s=start_s, end_s_exclusive=stop_s, duration_s=(stop - start) / rate)
+        for key in ("action_sequence_reference", "timestamp_reference"):
+            if isinstance(row.get(key), dict):
+                row[key] = {**row[key], "start_timestep": start, "end_timestep_exclusive": stop}
+        rebuilt.append(row)
+    return _replace_episode(source_rows, episode_id, rebuilt)
+
+
+def _episode_ids(store: Path) -> set[str]:
+    return {str(row["episode_id"]) for row in read_jsonl(store / "episodes.jsonl")}
+
+
+def plan(source_root: Path, corrections: list[Correction]) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    planned: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    by_store = defaultdict(list)
+    for correction in corrections:
+        by_store[correction.store].append(correction)
+    for store_name in STORES:
+        store = source_root / store_name
+        if not store.is_dir():
+            raise StoreError(f"source store is missing: {store}")
+        ids = _episode_ids(store)
+        names = set(REPLACEABLE) | {ACTOR_VIEW, CRITIC_VIEW}
+        tables = {name: read_jsonl(store / name) for name in names}
+        for correction in by_store[store_name]:
+            if correction.episode_id not in ids:
+                raise StoreError(f"{correction.path}: episode is not in {store_name}/episodes.jsonl")
+            for name, replacement in correction.replacements.items():
+                tables[name] = _replace_episode(tables[name], correction.episode_id, replacement)
+            atoms = [row for row in tables[SUBTASK_VIEW] if str(row["episode_id"]) == correction.episode_id]
+            if correction.actor["mode"] == "replace":
+                tables[ACTOR_VIEW] = _replace_episode(
+                    tables[ACTOR_VIEW], correction.episode_id, _rows(correction.actor["rows"], "actor rows")
+                )
+            elif correction.actor["mode"] == "remap":
+                intervals = _validate_intervals(correction.actor["retained_intervals"], "retained_intervals")
+                timestamps = np.load(store / "episodes" / correction.episode_id / "timestamp_s.npy", mmap_mode="r")
+                tables[ACTOR_VIEW] = remap_actor_rows(
+                    tables[ACTOR_VIEW], correction.episode_id, atoms, intervals, store_name, timestamps
+                )
+            if correction.critic["mode"] == "replace":
+                tables[CRITIC_VIEW] = _replace_episode(
+                    tables[CRITIC_VIEW], correction.episode_id, _rows(correction.critic["rows"], "critic rows")
+                )
+            elif correction.critic["mode"] == "from_atoms":
+                tables[CRITIC_VIEW] = critic_rows_from_atoms(
+                    tables[CRITIC_VIEW], correction.episode_id, atoms, store_name
+                )
+        planned[store_name] = tables
+    return planned
+
+
+def _frame_count(summary: dict[str, Any], record: dict[str, Any]) -> int:
+    return int(summary.get("frames", summary.get("frame_count", record.get("frame_count", 0))))
+
+
+def _contained(intervals: list[tuple[int, int]], start: int, stop: int) -> bool:
+    return any(lo <= start and stop <= hi for lo, hi in intervals)
+
+
+def _retained_authority(
+    store_name: str, episode_dir: Path, record: dict[str, Any]
+) -> list[tuple[int, int]]:
+    if store_name == "fmb":
+        primitives = record.get("primitive_intervals")
+        if not isinstance(primitives, list) or not primitives:
+            raise StoreError(f"{episode_dir}: FMB episode lacks primitive_intervals")
+        spans = [
+            (
+                int(row.get("reviewed_start_timestep", row["start_timestep"])),
+                int(row.get("reviewed_end_timestep_exclusive", row["end_timestep_exclusive"])),
+            )
+            for row in primitives
+        ]
+    else:
+        segments = record.get("annotations", {}).get("segments")
+        if not isinstance(segments, list):
+            raise StoreError(f"{episode_dir}: corpus episode lacks annotation segments")
+        timestamps = np.load(episode_dir / "timestamp_s.npy", mmap_mode="r")
+        spans = [
+            (
+                int(np.searchsorted(timestamps, float(row["start_s"]), side="left")),
+                int(np.searchsorted(timestamps, float(row["end_s"]), side="left")),
+            )
+            for row in segments
+            if row.get("retention") == "keep"
+        ]
+    return _merge_ranges([(start, stop) for start, stop in spans if start < stop])
+
+
+def validate_tables(
+    root: Path,
+    tables: dict[str, dict[str, list[dict[str, Any]]]],
+    corrected: set[tuple[str, str]],
+    records: dict[tuple[str, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {"stores": {}, "corrected_episodes": len(corrected)}
+    for store_name in STORES:
+        store, data = root / store_name, tables[store_name]
+        summaries = {str(row["episode_id"]): row for row in read_jsonl(store / "episodes.jsonl")}
+        atoms_by_episode: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for atom in data[SUBTASK_VIEW]:
+            eid = str(atom.get("episode_id"))
+            if eid not in summaries:
+                raise StoreError(f"{store_name}: atom references unknown episode {eid}")
+            atoms_by_episode[eid].append(atom)
+        atom_keys, intervals_by_episode = {}, {}
+        for eid, atoms in atoms_by_episode.items():
+            record = (records or {}).get((store_name, eid))
+            if record is None:
+                record = json.loads((store / "episodes" / eid / "episode.json").read_text(encoding="utf-8"))
+            count, ordered = _frame_count(summaries[eid], record), sorted(atoms, key=lambda row: int(row["start_timestep"]))
+            last_stop = -1
+            for atom in ordered:
+                start, stop = int(atom["start_timestep"]), int(atom["end_timestep_exclusive"])
+                if start < 0 or stop <= start or stop > count or start < last_stop:
+                    raise StoreError(f"{store_name}/{eid}: invalid or overlapping atom [{start},{stop}) of {count}")
+                last_stop = stop
+                key = (eid, int(atom["parent_interval_index"]), int(atom["atom_index"]))
+                if key in atom_keys:
+                    raise StoreError(f"{store_name}: duplicate atom key {key}")
+                atom_keys[key] = atom
+            intervals_by_episode[eid] = [(int(a["start_timestep"]), int(a["end_timestep_exclusive"])) for a in ordered]
+            authority = _retained_authority(store_name, store / "episodes" / eid, record)
+            actual = _merge_ranges(intervals_by_episode[eid])
+            if actual != authority:
+                raise StoreError(
+                    f"{store_name}/{eid}: atoms retain {actual}, episode authority retains {authority}"
+                )
+
+        for name in ATOM_ALIGNED:
+            keys = {}
+            for row in data[name]:
+                key = (str(row.get("episode_id")), int(row["parent_interval_index"]), int(row["atom_index"]))
+                if key in keys:
+                    raise StoreError(f"{store_name}/{name}: duplicate key {key}")
+                keys[key] = row
+            if set(keys) != set(atom_keys):
+                raise StoreError(f"{store_name}/{name}: keys do not exactly cover subtask atoms")
+            for key, atom in atom_keys.items():
+                row = keys[key]
+                if (int(row["start_timestep"]), int(row["end_timestep_exclusive"])) != (
+                    int(atom["start_timestep"]), int(atom["end_timestep_exclusive"])
+                ):
+                    raise StoreError(f"{store_name}/{name}: boundary mismatch at {key}")
+
+        for name in V2_VIEWS:
+            for row in data[name]:
+                eid, start, stop = str(row.get("episode_id")), int(row["from_index"]), int(row["to_index"])
+                if eid not in summaries or start < 0 or stop <= start:
+                    raise StoreError(f"{store_name}/{name}: invalid row for {eid} [{start},{stop})")
+                if (store_name, eid) in corrected:
+                    merged = _merge_ranges(intervals_by_episode[eid])
+                    if not _contained(merged, start, stop):
+                        raise StoreError(f"{store_name}/{eid}/{name}: [{start},{stop}) crosses excluded footage")
+
+        actors = defaultdict(list)
+        for row in data[ACTOR_VIEW]:
+            actors[str(row["episode_id"])].append(row)
+        for eid, rows in actors.items():
+            if eid not in summaries:
+                raise StoreError(f"{store_name}: actor row references unknown episode {eid}")
+            for row in rows:
+                if not row.get("retained"):
+                    continue
+                frame = int(row.get("anchor_timestep", row.get("anchor_frame")))
+                if _atom_at(atoms_by_episode[eid], frame) is None:
+                    raise StoreError(f"{store_name}/{eid}: retained actor anchor {frame} has no atom")
+
+        # Every corrected mistake must be fully covered by at least one effective grade 1/2 span.
+        quality = defaultdict(list)
+        for row in data["quality_spans.jsonl"]:
+            if int(row["quality"]) <= 2:
+                quality[str(row["episode_id"])].append(row)
+        for row in data["mistakes_v2.jsonl"]:
+            eid = str(row["episode_id"])
+            if (store_name, eid) not in corrected:
+                continue
+            if not any(int(q["from_index"]) <= int(row["from_index"]) and int(row["to_index"]) <= int(q["to_index"]) for q in quality[eid]):
+                raise StoreError(f"{store_name}/{eid}: mistake is not contained in a grade 1/2 quality span")
+        report["stores"][store_name] = {
+            "episodes": len(summaries),
+            "atoms": len(data[SUBTASK_VIEW]),
+            "actor_rows": len(data[ACTOR_VIEW]),
+            "retained_actor_rows": sum(bool(row.get("retained")) for row in data[ACTOR_VIEW]),
+            "critic_rows": len(data[CRITIC_VIEW]),
+        }
+    return report
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[list[int]] = []
+    for start, stop in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], stop)
+        else:
+            merged.append([start, stop])
+    return [(start, stop) for start, stop in merged]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _file_hashes(root: Path, relative_paths: list[Path]) -> list[dict[str, Any]]:
+    output = []
+    for relative in sorted(relative_paths, key=lambda value: value.as_posix()):
+        path = root / relative
+        if not path.is_file():
+            raise StoreError(f"provenance input is missing: {path}")
+        output.append({"path": relative.as_posix(), "sha256": _sha256(path), "bytes": path.stat().st_size})
+    return output
+
+
+def semantic_table_hashes(root: Path) -> list[dict[str, Any]]:
+    names = set(REPLACEABLE) | {ACTOR_VIEW, CRITIC_VIEW, "episodes.jsonl"}
+    paths = [Path(store) / name for store in STORES for name in sorted(names)]
+    return _file_hashes(root, paths)
+
+
+def changed_episode_hashes(root: Path, corrections: list[Correction]) -> list[dict[str, Any]]:
+    paths = [
+        Path(item.store) / "episodes" / item.episode_id / "episode.json"
+        for item in corrections
+        if item.episode_record is not None
+    ]
+    return _file_hashes(root, paths)
+
+
+def symlink_target_hashes(root: Path) -> list[dict[str, Any]]:
+    """Inventory every output symlink and hash the immutable file it targets."""
+    output = []
+    digest_cache: dict[Path, tuple[str, int]] = {}
+    links = sorted((item for item in root.rglob("*") if item.is_symlink()), key=lambda value: value.as_posix())
+    for path in links:
+        raw_target = Path(os.readlink(path))
+        if not raw_target.is_absolute():
+            raise StoreError(f"payload link is not absolute: {path} -> {raw_target}")
+        target = path.resolve(strict=True)
+        if not target.is_file():
+            raise StoreError(f"payload link target is not a file: {path} -> {target}")
+        if target not in digest_cache:
+            digest_cache[target] = (_sha256(target), target.stat().st_size)
+        digest, size = digest_cache[target]
+        output.append({
+            "path": path.relative_to(root).as_posix(),
+            "target": str(target),
+            "target_sha256": digest,
+            "bytes": size,
+        })
+    return output
+
+
+def _correction_manifest(corrections: list[Correction]) -> list[dict[str, Any]]:
+    return [
+        {"store": item.store, "episode_id": item.episode_id, "spec": str(item.path), "sha256": _sha256(item.path)}
+        for item in corrections
+    ]
+
+
+def _require_manifest_value(manifest: dict[str, Any], name: str, actual: Any) -> None:
+    if manifest.get(name) != actual:
+        raise StoreError(f"corrected-store manifest mismatch for {name}")
+
+
+def source_manifest_hash(root: Path) -> dict[str, Any] | None:
+    path = root / "corrected_store_manifest.json"
+    if not path.is_file():
+        return None
+    return {"path": path.name, "sha256": _sha256(path), "bytes": path.stat().st_size}
+
+
+def _mirror_episode(source: Path, destination: Path, record: dict[str, Any] | None) -> None:
+    destination.mkdir(parents=True)
+    for path in source.rglob("*"):
+        relative, target = path.relative_to(source), destination / path.relative_to(source)
+        if path.is_dir():
+            target.mkdir(exist_ok=True)
+        elif relative == Path("episode.json"):
+            value = record if record is not None else json.loads(path.read_text(encoding="utf-8"))
+            target.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        else:
+            target.symlink_to(path.resolve())
+
+
+def _copy_scaffold(source_root: Path, temporary: Path, corrections: list[Correction]) -> None:
+    replacements = {(item.store, item.episode_id): item.episode_record for item in corrections}
+    temporary.mkdir(parents=True)
+    for path in source_root.iterdir():
+        if path.is_file():
+            shutil.copy2(path, temporary / path.name)
+    for store_name in STORES:
+        source_store, destination_store = source_root / store_name, temporary / store_name
+        destination_store.mkdir()
+        for path in source_store.iterdir():
+            if path.is_file():
+                shutil.copy2(path, destination_store / path.name)
+        episodes_out = destination_store / "episodes"
+        episodes_out.mkdir()
+        for episode in sorted((source_store / "episodes").iterdir()):
+            if episode.is_dir():
+                _mirror_episode(episode, episodes_out / episode.name, replacements.get((store_name, episode.name)))
+
+
+def _load_output_tables(root: Path) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    names = set(REPLACEABLE) | {ACTOR_VIEW, CRITIC_VIEW}
+    return {store: {name: read_jsonl(root / store / name) for name in names} for store in STORES}
+
+
+def assemble(
+    source_root: Path,
+    out_root: Path,
+    fix_dir: Path,
+    dry_run: bool,
+    *,
+    pre_publish: Callable[[Path, dict[str, Any]], dict[str, Any] | None] | None = None,
+) -> dict[str, Any]:
+    source_root, out_root, fix_dir = source_root.resolve(), out_root.resolve(), fix_dir.resolve()
+    if source_root == out_root or source_root in out_root.parents:
+        raise StoreError("--out-root must be a new sibling, not the source or a directory inside it")
+    if out_root.exists():
+        raise FileExistsError(f"refusing to overwrite existing output root: {out_root}")
+    corrections = load_corrections(fix_dir)
+    correction_inventory = _correction_manifest(corrections)
+    source_tables = semantic_table_hashes(source_root)
+    source_store_manifest = source_manifest_hash(source_root)
+    tables = plan(source_root, corrections)
+    corrected = {(item.store, item.episode_id) for item in corrections}
+    records = {(item.store, item.episode_id): item.episode_record for item in corrections if item.episode_record is not None}
+    report = validate_tables(source_root, tables, corrected, records)
+    report.update({"source_root": str(source_root), "out_root": str(out_root), "fix_dir": str(fix_dir), "dry_run": dry_run})
+    if dry_run:
+        return report
+
+    temporary = out_root.with_name(f".{out_root.name}.assembling-{os.getpid()}")
+    if temporary.exists():
+        raise FileExistsError(f"refusing to reuse temporary assembly path: {temporary}")
+    try:
+        _copy_scaffold(source_root, temporary, corrections)
+        for store_name, store_tables in tables.items():
+            for name, rows in store_tables.items():
+                write_jsonl(temporary / store_name / name, rows)
+        final_report = validate_tables(temporary, _load_output_tables(temporary), corrected)
+        current_source_tables = semantic_table_hashes(source_root)
+        if current_source_tables != source_tables or source_manifest_hash(source_root) != source_store_manifest:
+            raise StoreError("source semantic tables changed during corrected-store assembly")
+        if _correction_manifest(corrections) != correction_inventory:
+            raise StoreError("correction specs changed during corrected-store assembly")
+        manifest = {
+            "schema_version": 2,
+            "source_root": str(source_root),
+            "fix_dir": str(fix_dir),
+            "corrections": correction_inventory,
+            "source_semantic_tables": source_tables,
+            "source_store_manifest": source_store_manifest,
+            "output_semantic_tables": semantic_table_hashes(temporary),
+            "changed_episode_records": changed_episode_hashes(temporary, corrections),
+            "symlink_targets": symlink_target_hashes(temporary),
+            "validation": report,
+            "post_write_validation": final_report,
+            "episode_payloads": "absolute symlinks; episode.json copied",
+        }
+        if pre_publish is not None:
+            additions = pre_publish(temporary, manifest)
+            if additions:
+                overlap = set(additions) & set(manifest)
+                if overlap:
+                    raise StoreError(f"pre-publish manifest fields collide with base fields: {sorted(overlap)}")
+                manifest.update(additions)
+        (temporary / "corrected_store_manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        temporary.rename(out_root)
+    except Exception:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        raise
+    return {**report, "dry_run": False, "post_write_validation": final_report}
+
+
+def validate_assembled_store(source_root: Path, out_root: Path, fix_dir: Path) -> dict[str, Any]:
+    """Validate content provenance and structural invariants of a published store."""
+    source_root, out_root, fix_dir = source_root.resolve(), out_root.resolve(), fix_dir.resolve()
+    if not out_root.is_dir():
+        raise StoreError(f"output root does not exist: {out_root}")
+    corrections = load_corrections(fix_dir)
+    corrected = {(item.store, item.episode_id) for item in corrections}
+    report = validate_tables(out_root, _load_output_tables(out_root), corrected)
+    manifest_path = out_root / "corrected_store_manifest.json"
+    if not manifest_path.is_file():
+        raise StoreError(f"corrected-store manifest is missing: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != 2:
+        raise StoreError("corrected-store manifest must use schema_version 2")
+    _require_manifest_value(manifest, "source_root", str(source_root))
+    _require_manifest_value(manifest, "fix_dir", str(fix_dir))
+    _require_manifest_value(manifest, "corrections", _correction_manifest(corrections))
+    _require_manifest_value(manifest, "source_semantic_tables", semantic_table_hashes(source_root))
+    _require_manifest_value(manifest, "source_store_manifest", source_manifest_hash(source_root))
+    _require_manifest_value(manifest, "output_semantic_tables", semantic_table_hashes(out_root))
+    _require_manifest_value(manifest, "changed_episode_records", changed_episode_hashes(out_root, corrections))
+    _require_manifest_value(manifest, "symlink_targets", symlink_target_hashes(out_root))
+    return {**report, "provenance_manifest": str(manifest_path), "provenance_status": "verified"}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-root", required=True, type=Path)
+    parser.add_argument("--out-root", required=True, type=Path)
+    parser.add_argument("--fix-dir", required=True, type=Path)
+    parser.add_argument("--dry-run", action="store_true", help="validate and print the plan without writing")
+    parser.add_argument("--validate-only", action="store_true", help="validate an already assembled --out-root")
+    args = parser.parse_args()
+    if args.dry_run and args.validate_only:
+        parser.error("--dry-run and --validate-only are mutually exclusive")
+    if args.validate_only:
+        report = validate_assembled_store(args.source_root, args.out_root, args.fix_dir)
+    else:
+        report = assemble(args.source_root, args.out_root, args.fix_dir, args.dry_run)
+    print(json.dumps(report, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

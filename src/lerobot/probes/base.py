@@ -254,13 +254,18 @@ class ProbablePolicy(ABC):
         metadata: dict | None = None,
         extra_complementary: dict | None = None,
         noise_seed: int = 0,
+        output_dtype: torch.dtype = torch.float16,
+        capture_native_views: bool = False,
     ) -> dict:
         """Every layer's hidden state pooled per prompt token group (domain_representations).
 
         Returns ``{"encoder": {group: Tensor[L, D] | None}, "action_expert": {group:
-        Tensor[L, D]}, "n_tokens": {group: int}}``. ``extra_complementary`` carries a
-        sample's own identity columns (action layout, embodiment, camera and depth
-        presence) when it is not a ReBot frame.
+        Tensor[L, D]}, "n_tokens": {group: int}}``.
+        Native-capable adapters additionally return ``native_views`` when requested;
+        these capture model intermediates before pooling, without external normalization.
+        ``output_dtype`` controls the legacy/raw cache dtype.
+        ``extra_complementary`` carries a sample's own identity columns (action
+        layout, embodiment, camera and depth presence) for diverse-corpus frames.
         """
         raise NotImplementedError(f"{type(self).__name__} has no per-layer token-group capture.")
 

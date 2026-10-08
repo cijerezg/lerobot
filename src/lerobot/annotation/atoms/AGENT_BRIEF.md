@@ -1,5 +1,10 @@
 # Brief for a Claude visual reviewer (atom review, subtask-atoms-v1)
 
+> Historical v1 worker brief. Its parent-grade inheritance, automatic event mapping and identical-object naming
+> instructions are superseded by the current [atom rubric](../rubrics/subtask_atoms_rubric.md) and principles.
+> For a new diverse sampled audit use [the central README](../README.md#diverse-dataset-sampled-audit), not this
+> old pass's output paths or grading procedure.
+
 You are one of several reviewers cutting reviewed parent intervals of the diverse corpus into
 atoms (one verb, one object) by LOOKING AT THE FRAMES. Read
 `lerobot/src/lerobot/annotation/rubrics/subtask_atoms_rubric.md` completely first: it defines the grammar,

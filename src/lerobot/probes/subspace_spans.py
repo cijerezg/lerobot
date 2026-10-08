@@ -12,10 +12,16 @@ The removed direction is not lost: ``mean_norm`` (per robot) and ``mean_cos`` (p
 cosine between the two robots' raw means) are recorded beside the span measurements. No
 per-frame normalisation is applied.
 
-**Input.** A ``conditions_matrix`` cache: per token group one fp16 memmap of shape
+**Input.** A ``conditions_matrix`` cache view: per token group one memmap of shape
 (rows, layers, D) holding the pooled hidden state of every captured frame, plus meta.json
 (robot, episode, class, phase, text condition, holdout flag) and thumbnails. The analysis
-runs no forward pass. In the official suite, ``enable_subspace_spans`` reuses the
+runs no forward pass. New suite/CLI runs default to ``attention_input``: native VLM
+attention-normalization outputs and expert cross-attention inputs after native normalization
+and time modulation. ``expert_key`` and ``expert_value`` read prepared cross-attention K/V.
+These views are float32 means of native tensors, without external normalization.
+``block_output`` explicitly selects the historical raw fp16 cache. Layer indices name the
+consuming block for native views: attention-input L17 reads block 16's residual output.
+In the official suite, ``enable_subspace_spans`` reuses the
 conditions-matrix capture, or collects it when that probe is disabled. The standalone
 cache command always reads saved representations. Rows are taken under one text condition (``--text``, default real; the image groups
 are identical under both). Training rows (holdout = False) define a robot's span; the
@@ -28,7 +34,7 @@ for every tau in ``--tolerances`` (default 0.3, 0.1, 0.05, picked from the centr
 2026-10-05 step-1200 cache: 0.1 keeps 1 < k < n at nearly every layer and robot; 0.05 runs into the
 frame count for state and action_output below ~100 frames). In exact arithmetic n generic
 vectors have rank min(n, D), so a tolerance is what makes "the span" a defined object; it is
-swept, not chosen. The cache is fp16, so directions below the quantisation floor
+swept, not chosen. Cache rounding is estimated at its actual storage dtype; directions below the quantisation floor
 s_floor = sigma (sqrt(n) + sqrt(D)), sigma^2 = mean(ulp(x)^2) / 12, are rounding noise; the
 floor is drawn on the spectra. The training residual sum_{i>k} s_i^2 / sum_i s_i^2 and the
 holdout residual 1 - ||X_hold Q_k||_F^2 / ||X_hold||_F^2 say how much energy of seen and
@@ -87,6 +93,7 @@ from scipy.linalg import qr
 
 from lerobot.probes.conditions_matrix import REBOT, ROBOT_ORDER, TEXT_CONDITIONS, _load_cache, _thumb_path
 from lerobot.probes.manifest import Metric, Panel, write_index
+from lerobot.probes.representation_views import VIEW_METADATA, resolve_view_cache
 from lerobot.probes.utils import makedirs
 from lerobot.utils.utils import init_logging
 
@@ -106,7 +113,7 @@ def numerical_rank(s: np.ndarray, tau: float) -> int:
 
 
 def fp16_floor(x16: np.ndarray) -> float:
-    """Spectral norm of the fp16 rounding error, treated as iid noise of variance ulp^2 / 12."""
+    """Estimated cache rounding floor at the input dtype; legacy name kept for callers."""
     ulp = np.spacing(np.abs(x16)).astype(np.float64)
     sigma = np.sqrt(np.mean(ulp ** 2) / 12.0)
     n, d = x16.shape
@@ -114,7 +121,7 @@ def fp16_floor(x16: np.ndarray) -> float:
 
 
 def centred_matrices(arr16: np.ndarray, ids: dict[str, np.ndarray], layer: int):
-    """(raw fp16 training rows, centred training rows, centred holdout rows, mean) at one layer.
+    """(cached training rows, centred training rows, centred holdout rows, mean) at one layer.
     Both centrings use the TRAINING mean, so holdout rows are tested against the training span."""
     x16 = arr16[ids["train"], layer, :]
     mu = x16.astype(np.float64).mean(axis=0)
@@ -240,7 +247,7 @@ def plot_spectra(spectra: dict, groups: list[str], layers: list[int], robots: li
             for tau in tolerances:
                 ax.axhline(tau, color="0.6", lw=0.6, ls="--")
             if floors:
-                ax.axhline(np.median(floors), color="0.3", lw=0.8, ls="-.", label="fp16 floor")
+                ax.axhline(np.median(floors), color="0.3", lw=0.8, ls="-.", label="cache rounding floor")
             ax.set_title(f"{group}  L{layer}", fontsize=9)
             ax.tick_params(labelsize=7)
             if i == len(groups) - 1:
@@ -455,7 +462,7 @@ def _write_manifest(output_dir: str, summary: dict, groups: list[str], pivot_gro
         Panel("spectra.png", "Centred singular-value spectra per robot with the pivoted-QR residual sequence",
               how="Solid: s_i / s_1 of each robot's frame matrix after subtracting the robot's training mean. "
                   "Dotted: |R_jj| / |R_11| of the column-pivoted QR, "
-                  "the residual of the j-th most novel frame. Dashed grey: the tolerances; dash-dot: the fp16 "
+                  "the residual of the j-th most novel frame. Dashed grey: the tolerances; dash-dot: the cache "
                   "quantisation floor. Directions below the floor are rounding noise.", primary=True),
         Panel("dimension_by_layer.png", "Numerical rank k(tau) of each robot's centred span against depth, one column per tolerance",
               how="k(tau) = number of singular values above tau s_1. Compare robots at the same tau; compare "
@@ -490,7 +497,8 @@ def analyze(cache_dir: str, output_dir: str, text: str, tolerances: list[float],
             n_null: int, n_pivots: int, pivot_group: str, seed: int) -> dict:
     makedirs(output_dir)
     rows, arrays, present = _load_cache(cache_dir)
-    available = json.load(open(os.path.join(cache_dir, "meta.json"))).get("available", {})
+    cache_meta = json.load(open(os.path.join(cache_dir, "meta.json")))
+    available = cache_meta.get("available", {})
     rng = np.random.RandomState(seed)
     out = {"spans": [], "pairs": [], "pivots": {}, "spectra": {}, "angles": {}}
     sel_by_group = {}
@@ -513,6 +521,9 @@ def analyze(cache_dir: str, output_dir: str, text: str, tolerances: list[float],
     _write_csv(os.path.join(output_dir, "pairs.csv"), out["pairs"])
     _write_csv(os.path.join(output_dir, "pivots.csv"), _pivot_rows(out["pivots"], rows))
     summary = _summary(out["spans"], out["pairs"], sel_by_group, available, text, tolerances, layers, headline_layer, tau, headline_group)
+    summary["representation_view"] = cache_meta.get("representation_view", "block_output")
+    summary["representation"] = VIEW_METADATA[summary["representation_view"]]
+    summary["cache_dtype"] = cache_meta.get("cache_dtype", str(next(iter(arrays.values())).dtype))
     with open(os.path.join(output_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2, default=float)
     from lerobot.probes.subspace_report import render
@@ -529,6 +540,8 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     p = cfg.probe_parameters
     if p.mode not in ("collect", "plot", "all"):
         raise ValueError(f"Unknown subspace probe mode: {p.mode!r}")
+    if p.subspace_view not in VIEW_METADATA:
+        raise ValueError(f"Unknown subspace_view: {p.subspace_view!r}")
     tolerances = sorted((float(t) for t in p.subspace_tolerances.split(",")), reverse=True)
     layers = [int(layer) for layer in p.subspace_layers.split(",")]
     if p.subspace_text not in TEXT_CONDITIONS:
@@ -542,6 +555,7 @@ def run(adapter, dataset, cfg, output_dir: str) -> dict | None:
     cache_dir = os.path.join(conditions_dir, "cache")
     if p.mode in ("collect", "all") and not p.enable_conditions_matrix:
         collect_cache(adapter, dataset, cfg, conditions_dir)
+    cache_dir = resolve_view_cache(cache_dir, p.subspace_view)
     # Validate even in collect mode: an enabled conditions probe may have failed earlier.
     _, arrays, _ = _load_cache(cache_dir)
     if not arrays or any(max(layers) >= array.shape[1] for array in arrays.values()):
@@ -560,6 +574,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cache_dir", required=True, help="a conditions_matrix cache directory (meta.json + <group>.npy)")
     ap.add_argument("--output_dir", default=None, help="default: <step>/subspace_spans[_<text>] beside the cache's probe dir")
+    ap.add_argument("--view", choices=tuple(VIEW_METADATA), default="attention_input", help="Native capture view; legacy raw caches require explicit block_output")
     ap.add_argument("--report_only", action="store_true", help="rebuild report from saved CSVs and cache; no inference")
     ap.add_argument("--text", default="real", choices=TEXT_CONDITIONS)
     ap.add_argument("--tolerances", default="0.3,0.1,0.05", help="relative singular-value cutoffs tau; the middle one is the headline")
@@ -573,7 +588,11 @@ def main() -> None:
     cache_dir = os.path.normpath(args.cache_dir)
     output_dir = args.output_dir or os.path.join(
         os.path.dirname(os.path.dirname(cache_dir)), "subspace_spans" if args.text == "real" else f"subspace_spans_{args.text}")
+    cache_dir = resolve_view_cache(cache_dir, args.view)
     if args.report_only:
+        saved_view = json.load(open(os.path.join(output_dir, "summary.json"))).get("representation_view", "block_output")
+        if saved_view != args.view:
+            raise ValueError(f"Saved analysis uses {saved_view}, requested {args.view}; rerun without --report_only.")
         from lerobot.probes.subspace_report import render
         render(output_dir, cache_dir, n_null=args.n_null, seed=args.seed, n_pivots=args.n_pivots)
         return

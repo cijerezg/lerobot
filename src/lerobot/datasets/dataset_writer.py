@@ -20,6 +20,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import logging
+import pickle
 import shutil
 import tempfile
 from pathlib import Path
@@ -134,6 +135,10 @@ class DatasetWriter:
         self._episodes_since_last_encoding: int = 0
         self._recorded_frames: int = initial_frames
         self._finalized = False
+        # Per-frame log of the non-image values, so a crash before save_episode loses nothing
+        # (images are on disk too, unless streaming encoding is on). Deleted when the episode is saved or discarded;
+        # scripts/recover_episodes.py rebuilds a crashed episode from it.
+        self._frame_log = None
 
     def _create_episode_buffer(self, episode_index: int | None = None) -> dict:
         current_ep_idx = self._meta.total_episodes if episode_index is None else episode_index
@@ -169,8 +174,8 @@ class DatasetWriter:
         """
         Add a single frame to the current episode buffer.
 
-        Apart from images written to a temporary directory, nothing is written to disk
-        until ``save_episode()`` is called.
+        Images go to a temporary directory and the other values to a per-frame log
+        (``recovery/episode-XXXXXX.pkl``); the dataset files are written by ``save_episode()``.
 
         The caller must provide all user-defined features plus ``"task"``, and must
         not provide ``"timestamp"`` or ``"frame_index"``; those are computed
@@ -225,6 +230,17 @@ class DatasetWriter:
                 self.episode_buffer[key].append(frame[key])
 
         self.episode_buffer["size"] += 1
+
+        if self._frame_log is None:
+            path = self._root / "recovery" / f"episode-{self.episode_buffer['episode_index']:06d}.pkl"
+            path.parent.mkdir(exist_ok=True)
+            self._frame_log = open(path, "wb")  # noqa: SIM115
+        record = {"task": self.episode_buffer["task"][-1]}
+        for key, value in frame.items():
+            if self._meta.features[key]["dtype"] not in ("image", "video"):
+                record[key] = value
+        pickle.dump(record, self._frame_log)
+        self._frame_log.flush()
 
     def save_episode(
         self,
@@ -559,6 +575,14 @@ class DatasetWriter:
                 if img_dir.is_dir():
                     shutil.rmtree(img_dir)
 
+        if self._frame_log is not None:
+            self._frame_log.close()
+            path = Path(self._frame_log.name)
+            path.unlink()
+            with contextlib.suppress(OSError):
+                path.parent.rmdir()
+            self._frame_log = None
+
         self.episode_buffer = self._create_episode_buffer()
 
     def start_image_writer(self, num_processes: int = 0, num_threads: int = 4) -> None:
@@ -647,6 +671,10 @@ class DatasetWriter:
         """
         if getattr(self, "_finalized", False):
             return
+        # An unsaved episode keeps its frame log on disk for recover_episodes.py
+        if self._frame_log is not None:
+            self._frame_log.close()
+            self._frame_log = None
         # 1. Wait for async image writes to complete, then stop
         if self.image_writer is not None:
             self.image_writer.wait_until_done()

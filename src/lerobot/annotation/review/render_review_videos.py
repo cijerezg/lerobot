@@ -15,6 +15,8 @@ subtask window (meta/subtask_windows.json), segment quality (episode_metadata.pa
     uv run python -m lerobot.annotation.review.render_review_videos [--seed 20260919]
     -> migration/annotation_review_2026-09-19/videos/*.mp4 + picks.json
 
+2026-10-06: --rebot-root <annotated ReBot root> --out <dir> [--episodes E ...] renders those episodes of any ReBot root.
+
 2026-09-25: --diverse-root <corpus root> --robots <group ...> [--n N] --out <dir> renders N random training
 episodes, each from a different robot group (droid, droid_success, molmoact, rc_arx5, rc_ur5, ur7e, yam, fmb),
 and adds the precision / contact atom (precision_atoms.jsonl, contact_atoms.jsonl) and the anchor's
@@ -246,8 +248,11 @@ def render_rebot(ep, step=2):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--seed", type=int, default=20260919); ap.add_argument("--only", nargs="*", default=None)
     ap.add_argument("--diverse-root", type=Path); ap.add_argument("--robots", nargs="*"); ap.add_argument("--n", type=int, default=5); ap.add_argument("--out", type=Path)
+    ap.add_argument("--episode-ids", nargs="*", help="exact diverse episode ids to render")
+    ap.add_argument("--rebot-root", type=Path); ap.add_argument("--episodes", type=int, nargs="*")
     args = ap.parse_args()
     rng = random.Random(args.seed)
+    if args.rebot_root is not None: return render_rebot_root(args)
     if args.diverse_root is not None: return render_diverse_groups(args, rng)
     common = [json.loads(l) for l in open(DIVERSE / "corpus/episodes.jsonl")]; fmb = [json.loads(l) for l in open(DIVERSE / "fmb/episodes.jsonl")]
     holdout = set(json.load(open(DIVERSE / "holdout_episodes.json"))["episode_ids"])
@@ -278,6 +283,14 @@ def main():
         for ep in picks["rebot_bottle"]: render_rebot(ep)
 
 
+def render_rebot_root(args):
+    """The given episodes (default: all) of any annotated ReBot root, into --out."""
+    global REBOT, OUT
+    REBOT, OUT = args.rebot_root, args.out; OUT.mkdir(parents=True, exist_ok=True)
+    eps = pd.read_parquet(REBOT / "meta/episodes/chunk-000/file-000.parquet").episode_index
+    for ep in args.episodes or sorted(eps): render_rebot(int(ep))
+
+
 def render_diverse_groups(args, rng):
     """One random non-holdout episode from each of N randomly chosen robot groups of --diverse-root."""
     global DIVERSE, OUT, MAX_LINES
@@ -285,13 +298,21 @@ def render_diverse_groups(args, rng):
     OUT = args.out or HERE / "videos"; OUT.mkdir(parents=True, exist_ok=True)
     holdout = set(json.load(open(DIVERSE / "holdout_episodes.json"))["episode_ids"])
     group = lambda r: "rc_" + r["embodiment"].lower() if r["source"] == "robochallenge" else r["source"]  # noqa: E731
-    pools = {}
+    pools, episodes = {}, {}
     for r in map(json.loads, open(DIVERSE / "corpus/episodes.jsonl")):
+        episodes[r["episode_id"]] = ("common", r["episode_id"])
         if r["episode_id"] not in holdout: pools.setdefault(group(r), []).append(("common", r["episode_id"]))
     for r in map(json.loads, open(DIVERSE / "fmb/episodes.jsonl")):
+        episodes[r["episode_id"]] = ("fmb", r["episode_id"])
         if r["episode_id"] not in holdout: pools.setdefault("fmb", []).append(("fmb", r["episode_id"]))
-    groups = args.robots or rng.sample(sorted(pools), args.n)
-    picks = {g: rng.choice(sorted(pools[g])) for g in groups}
+    if args.episode_ids:
+        missing = sorted(set(args.episode_ids) - episodes.keys())
+        if missing: raise ValueError(f"unknown diverse episode ids: {missing}")
+        picks = {eid: episodes[eid] for eid in args.episode_ids}
+        groups = []
+    else:
+        groups = args.robots or rng.sample(sorted(pools), args.n)
+        picks = {g: rng.choice(sorted(pools[g])) for g in groups}
     print(json.dumps({g: len(pools[g]) for g in groups}), json.dumps(picks))
     json.dump({"seed": args.seed, "root": str(DIVERSE), "pools": {g: len(v) for g, v in pools.items()}, "picks": picks}, open(OUT / "picks.json", "w"), indent=1)
     corpus = open_federated_corpus(DIVERSE); sel_rows = select_actor_anchors(corpus, verify_counts=False).rows_by_episode()

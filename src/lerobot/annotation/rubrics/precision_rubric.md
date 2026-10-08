@@ -24,7 +24,18 @@ where hundreds of tasks share five levels.
 Prompt clause (proposed, after speed): `The precision is N of 5.` Inference sets the
 **true** value of the current step, not a wish; see "Inference" below.
 
-## Units
+## Current application
+
+The levels below describe spatial slack; they do not grade execution. `quality_mistake_rubric_v2.md` section 6
+controls where they apply: level 1 outside precision windows, the commit's level inside them, including across
+an atom boundary when needed. It supersedes segment-wide broadcasting and the old move-minus-one rule below.
+The writer applies the window's one-second lead once. Use actual native-rate commit frames, not fixed 30 Hz
+frame offsets. Reviewed contact/precision evidence overrides class/text priors under the principles.
+
+The precision commit is an onset marker, not an atom boundary. For example, if a UR7e close starts at f1620 and
+settles at f1628, the precision commit may be f1620 while the grasp-to-move atom cut is f1628.
+
+## Legacy per-step storage (superseded for v2 training)
 
 | half | unit | storage |
 |---|---|---|
@@ -76,7 +87,7 @@ those calls live in the table below, keyed by verb + object + target.
 
 Three values are derived, not read:
 
-- **move**: slack of its **end pose**, which is where the next step starts. One level
+- **move (legacy per-step prior only; v2 uses precision windows)**: slack of its **end pose**, which is where the next step starts. One level
   below the next step (floor 1): the release or insert does the final alignment, the move
   only has to arrive within reach of it. Read `to-30` to check where it actually ended.
 - **return to home**: always 1.

@@ -17,6 +17,15 @@ from PIL import Image, ImageDraw
 CAMS = ["top", "wrist"]
 
 
+def layout(root):
+    """(video keys [top, wrist], wrist depth folder) of a root: own roots name them top / wrist, cache-ready roots
+    external_0 / wrist_0."""
+    features = json.loads((Path(root) / "meta/info.json").read_text())["features"]
+    if "observation.images.top" in features:
+        return ["observation.images.top", "observation.images.wrist"], "wrist.depth"
+    return ["observation.images.external_0", "observation.images.wrist_0"], "wrist_0.depth"
+
+
 def records(work):
     """The pass inventory: one record per source episode."""
     return json.loads((Path(work) / "inventory.json").read_text())
@@ -70,7 +79,8 @@ def interventions(rec):
     if not p.exists():
         return None
     o = pd.read_parquet(p)
-    return o[o.episode_index == rec["episode"]].sort_values("frame_index").is_intervention.to_numpy()
+    o = o[o.episode_index == rec["episode"]]
+    return o.sort_values("frame_index").is_intervention.to_numpy() if len(o) else None  # teleop episode of a mixed root
 
 
 def decode(rec, camera, want, size=(256, 192)):
@@ -78,6 +88,8 @@ def decode(rec, camera, want, size=(256, 192)):
     root = Path(rec["source"])
     eps = pd.concat([pd.read_parquet(p) for p in sorted((root / "meta/episodes").rglob("*.parquet"))])
     row = eps[eps.episode_index == rec["episode"]].iloc[0]
+    if f"videos/observation.images.{camera}/chunk_index" not in row:  # cache-ready roots name the cameras external_0 / wrist_0
+        camera = {"top": "external_0", "wrist": "wrist_0"}[camera]
     prefix = f"videos/observation.images.{camera}"
     chunk, file = int(row[prefix + "/chunk_index"]), int(row[prefix + "/file_index"])
     path = root / prefix / f"chunk-{chunk:03d}" / f"file-{file:03d}.mp4"

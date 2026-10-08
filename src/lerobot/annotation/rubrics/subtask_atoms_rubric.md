@@ -1,8 +1,14 @@
-# Atom review guide (subtask-atoms-v1)
+# Atom review guide
+
+> Current authority: `annotation_principles.md` for text and retention, and `quality_mistake_rubric_v2.md`
+> for frame-local quality, mistakes and precision windows. The v1 parent-quality fields and review tools below
+> are legacy storage/workflow details, not current grading rules. For sampled audits start at
+> [the annotation README](../README.md#diverse-dataset-sampled-audit).
 
 You are cutting the diverse corpus's reviewed subtask intervals ("parents") into atoms:
 one verb plus one object per atom, at the ReBot resolution. Proprio already proposed
-candidate cuts; you look at the frames and decide. Nothing you write edits the parents.
+candidate cuts; you look at the frames and decide. The original v1 atom pass left parents unchanged. In a current
+audit, retention/boundary repairs may revise parents in a new store; preserve originals and excluded gaps.
 
 Everything is under `/home/user/Documents/Research/RL/LeRobot` (run commands from there,
 with `uv run python`, never bare python; install nothing).
@@ -39,6 +45,13 @@ Pick-and-place, cut at physical events (the ReBot rule):
 | release | [arrival over the target, opening settles) | `release` + container | `release the X in the C` / `on the C` |
 | return | [last release, parent end): the final park only | `return` | `return to home` |
 
+- **Completion, not onset.** Grasp ends and move begins at the first frame where the close has settled and the
+  object is securely captured. Release ends only after opening has settled and the object is no longer held.
+  Close/open command edges and motion onset stay inside grasp/release. A precision `commit_index` is a separate
+  onset marker and must not be reused as the atom cut.
+- **Hard gaps.** Every atom lies wholly inside one continuous retained interval. If an action continues across an
+  excluded interval, split it at the gap and resume it as a new atom with the same text when identity and action
+  are unchanged. No atom tiles excluded time.
 - grasp absorbs the transit back from the previous container and any searching, nudging
   or repositioning before the close. One grasp atom per object actually lifted.
 - A failed close (closes on nothing, or loses the object during the close and reopens
@@ -92,33 +105,45 @@ closest and say so in the note.
   `stir the beans with the red spoon`, `grasp the lemon with the tongs`.
 - NEVER: ordinals, counts or progress words (first, second, next, remaining, another,
   last, again, other, more, all, both, one, two ...), digits, or two objects joined by
-  "and". Four green blocks give four `grasp the green block` atoms that read identically.
-- Identical objects keep the same name in every cycle. Do not invent attributes you cannot
-  see; `the flower` is better than a guessed colour. When you cannot tell what the object
+  "and" as substitutes for visible identity. Four identical green blocks still need visible spatial references
+  when more than one is in play: `grasp the green block nearest the basket`.
+- Use the least text that distinguishes active look-alikes at that frame, including a visible landmark or part
+  when colour is insufficient. Once only one remains in play, drop unnecessary modifiers. The same object
+  regrasped in the same scene needs no invented new name. If no visible reference resolves identity, use the
+  best available reference and flag `ambiguous`. Do not invent attributes you cannot see; `the flower` is better
+  than a guessed colour. When you cannot tell what the object
   is, name what you see (`the small object`) and set the parent's confidence to "unsure".
 
 ## Quality and mistakes
 
-- `quality: null` = inherit the parent's reviewed quality. This is the default.
-- Parents at quality 1-2 WITH reviewed mistake events (listed in the sheet header): the
-  atom(s) containing an event keep the parent's value (leave null). Every sibling atom
-  without an event MUST be graded on its own with a `quality_note`: 5 direct, 4 one minor
-  correction, 3 laboured (repeated corrections, searching, shoving). This is the only case
-  where a child may exceed the parent.
-- Any atom to which you add a `new_mistake_events` entry must get `quality` 2 (one event)
-  or 1 (two events, or the object is left displaced / unrecovered), with a note.
-- Otherwise you may lower a child below the parent when the frames show that child was
-  laboured (3) while the parent's grade came from elsewhere; say why. Never raise above the
-  parent in that case.
-- New mistake events: only a discrete visible failure you can point at in the frames, of
-  kind `failed_close`, `slip`, `drop`, `knock`, `wrong_target`. Do not re-add an event the
-  parent already lists (those are mapped automatically); do add the failed closes the
-  header flags if the frames confirm them (gripper shut, nothing in it, reopens). Span:
-  from the committed descent (about 0.4 s before the fingers shut) to about 0.5 s after the
-  reopen / the reveal that nothing was picked; typically 1-4 s, inside one atom.
-- Pauses, interruptions, recoveries listed on the parent are mapped automatically.
+Use `quality_mistake_rubric_v2.md`, sections 4-6. Quality is frame-local: default 4, raw exemplary stretches 5,
+critiques 3/2/1. Do not inherit a parent's grade as the current verdict, cap a child at its parent's grade, or
+penalize an entire atom because it contains a mistake. Legacy `quality` / `quality: null` fields are not the
+v2 training verdict when frame sidecars are present.
 
-## Procedure per episode
+A mistake needs a discrete visible event and outcome: `failed_close`, `slip`, `drop`, `knock`, `spill`.
+Do not duplicate an existing event. Use native half-open event spans, which may cross an atom boundary but never
+an excluded gap; each event is contained in a quality 1/2 attempt stretch. Mark raw stretches without adding
+padding by hand. Searching, regrasping and repositioning are not automatically mistakes. `wrong_target` is
+retired: name the action actually performed without a choice-of-target penalty.
+
+Pause/recovery records are review candidates, not labels to copy automatically. Confirm idle against source-aware
+traces and frames, then cut under the principles. Keep purposeful searching at the object and grade it. Record
+ambiguous outcomes as unsure and obtain a second read.
+
+## Current audit case library (2026-10-07)
+
+| case | evidence | verdict |
+|---|---|---|
+| YAM retained fragments | a legacy grasp covers frames 0-200 but source frames 30-60 are excluded | split at the excluded interval; no atom, history, or future crosses it |
+| DROID AUTOLab repeated bars | `first bar` / `second bar` refer to look-alikes | use visible state and position: `the black aluminium bar under the gripper`, then `beside the parallel bars` |
+| UR7e stack | final close starts around f1620 and settles at f1628 | precision onset may be f1620; grasp-to-move atom cut is f1628 |
+| RoboChallenge block grasp | measured-width close is still ramping at f233 and settles at f239 | grasp ends at the settled close, f239, not at the earlier mechanical candidate |
+
+## Legacy v1 procedure per episode
+
+For a current audit, use the README workflow and its new results folder. These commands and fixed output paths
+describe the original atom pass; inspect/adapt tools before reuse, including their obsolete semantic validators.
 
 1. Read the overview page(s): task, parent text, reviewed mistakes, gripper events. Decide
    the cycle structure (which closes lifted something, which are failed closes, where each
@@ -150,7 +175,8 @@ your best atoms, set `"confidence": "unsure"` and explain in the note. Never gue
 
 These conventions were consolidated from the retired root progress tracker on
 2026-09-24. Episode examples and unresolved skeleton notes describe that review,
-not a fresh audit of the current corpus.
+not a fresh audit of the current corpus. The inherited-grade and identical-name conventions below are historical
+v1 decisions, superseded by the current sections above; do not apply them to new labels.
 
 - **Arrivals.** The proposal's `arm_settle` cut is a proprio guess and was wrong in most
   RoboChallenge families (it fires at the end of the descent, on a mid-pass slowdown, or

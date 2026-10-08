@@ -369,13 +369,21 @@ def _rebot_inputs(dataset, cfg, sample: dict, chunk_size: int) -> dict:
 def collect(adapter, cfg, samples: list[dict], datasets: dict, buffers: dict, cache_dir: str,
             available: dict | None = None) -> None:
     """Every sample under both text conditions, one fp16 memmap per group. ``available``
-    (training episodes per robot and cell before the budget) travels in ``meta.json``."""
+    (training episodes per robot and cell before the budget) travels in ``meta.json``.
+    When subspace spans are enabled, the same forwards also save native float32 views.
+    """
     makedirs(os.path.join(cache_dir, "thumbs"))
     n_rows = len(samples) * len(TEXT_CONDITIONS)
     seed = int(cfg.probe_parameters.random_seed)
     arrays: dict[str, np.memmap] = {}
     present = {g: np.zeros(n_rows, dtype=bool) for g in GROUP_NAMES}
     meta = []
+    from uuid import uuid4
+    from lerobot.probes.representation_views import VIEW_METADATA, NATIVE_VIEWS
+    capture_id = uuid4().hex
+    want_native = bool(getattr(cfg.probe_parameters, "enable_subspace_spans", False))
+    native_arrays = {v: {} for v in NATIVE_VIEWS} if want_native else {}
+    native_present = {v: {} for v in native_arrays}
     for i, s in enumerate(samples):
         if i % 50 == 0:
             logging.info(f"  [{i + 1}/{len(samples)}] {s['robot']} {s['episode']} @ {s['frame']} {s['object_class']}/{s['phase']}")
@@ -389,6 +397,7 @@ def collect(adapter, cfg, samples: list[dict], datasets: dict, buffers: dict, ca
             reps = adapter.capture_layer_representations(
                 inputs["obs"], task, subtask=subtask, metadata=inputs["metadata"],
                 extra_complementary=inputs["extra"], noise_seed=seed,
+                **({"capture_native_views": True} if want_native else {}),
             )
             r = i * len(TEXT_CONDITIONS) + t
             for site, group in GROUPS:
@@ -401,13 +410,41 @@ def collect(adapter, cfg, samples: list[dict], datasets: dict, buffers: dict, ca
                     )
                 arrays[group][r] = vec.numpy()
                 present[group][r] = True
+            if want_native:
+                if set(reps.get("native_views", {})) != set(NATIVE_VIEWS):
+                    raise ValueError("Adapter did not provide the requested native representation views.")
+                for view in NATIVE_VIEWS:
+                    path = os.path.join(cache_dir, "native", view)
+                    makedirs(path)
+                    for site, group in GROUPS:
+                        vec = reps["native_views"][view][site].get(group)
+                        if vec is None:
+                            continue
+                        if group not in native_arrays[view]:
+                            native_arrays[view][group] = np.lib.format.open_memmap(
+                                os.path.join(path, f"{group}.npy"), mode="w+", dtype=np.float32,
+                                shape=(n_rows, *vec.shape))
+                            native_present[view][group] = np.zeros(n_rows, dtype=bool)
+                        native_arrays[view][group][r] = vec.numpy()
+                        native_present[view][group][r] = True
             meta.append({**s, "row": r, "text": text, "task": task, "subtask_used": subtask})
     for group, arr in arrays.items():
         arr.flush()
         np.save(os.path.join(cache_dir, f"{group}.present.npy"), present[group])
+    shared = {"protocol": PROTOCOL, "rows": meta, "available": available or {}, "capture_id": capture_id}
+    for view, values in native_arrays.items():
+        path = os.path.join(cache_dir, "native", view)
+        for group, arr in values.items():
+            arr.flush()
+            np.save(os.path.join(path, f"{group}.present.npy"), native_present[view][group])
+        with open(os.path.join(path, "meta.json"), "w") as f:
+            json.dump({**shared, "groups": {g: list(a.shape[1:]) for g, a in values.items()},
+                       "representation_view": view, "representation": VIEW_METADATA[view],
+                       "cache_dtype": "float32", "thumbs_path": "../../thumbs"}, f)
     with open(os.path.join(cache_dir, "meta.json"), "w") as f:
-        json.dump({"protocol": PROTOCOL, "rows": meta, "groups": {g: list(a.shape[1:]) for g, a in arrays.items()},
-                   "available": available or {}}, f)
+        json.dump({**shared, "groups": {g: list(a.shape[1:]) for g, a in arrays.items()},
+                   "representation_view": "block_output", "representation": VIEW_METADATA["block_output"],
+                   "cache_dtype": "float16", "native_views": list(native_arrays)}, f)
 
 
 def _load_cache(cache_dir: str) -> tuple[list[dict], dict[str, np.memmap], dict[str, np.ndarray]]:

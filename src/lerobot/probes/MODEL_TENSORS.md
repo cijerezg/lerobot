@@ -1,7 +1,7 @@
 # MolmoAct2 probe tensor map
 
 This note defines exactly where the MolmoAct2 probes read the model. Layer indices in
-probe artifacts are **zero-based**: `L31` is the output of the 32nd block. The dimensions
+probe artifacts are **zero-based**: `L31` identifies the 32nd block; the selected capture view specifies its input or output. The dimensions
 below are from the local `outputs/MolmoAct2/config.json`; code should still obtain them
 from the loaded model rather than hard-code them.
 
@@ -41,7 +41,7 @@ Z^{\ell+1} = \widetilde Z^\ell +
   \operatorname{MLP}_\ell(\operatorname{RMSNorm}(\widetilde Z^\ell)).
 \]
 
-`capture_layer_representations` installs a forward hook on the complete decoder block.
+The default raw view of `capture_layer_representations` installs a forward hook on the complete decoder block.
 It therefore captures \(Z^{\ell+1}\), **after attention, MLP, and their residual
 additions**, but before the transformer's final `ln_f`. It does not capture the raw
 attention output.
@@ -79,6 +79,51 @@ r^\ell_{\mathrm{action}}=\frac1{30}\sum_{t=1}^{30}X^{\ell+1}_{1,t,:}
 One frame therefore contributes `[36,768]` for the action group. This mean discards which
 future timestep carried a feature; probes concerned with the horizon structure must use
 the unpooled attention or action outputs instead.
+
+## Native normalized views for the subspace-span probe
+
+The subspace-span probe defaults to `subspace_view=attention_input`. These tensors
+are captured from the model's own forward pass, including learned normalization
+parameters. The probe does not apply another normalization or reconstruct one from
+pooled raw outputs.
+
+For one token vector \(z\in\mathbb R^d\), the VLM attention normalization is
+
+\[
+y_j=\gamma_j\frac{z_j}{\sqrt{\frac1d\sum_{k=1}^{d}z_k^2+\varepsilon}}.
+\]
+
+The denominator is computed separately for each token. The probe first captures
+this actual output \(y\), then averages the selected token positions. Consequently,
+\(\frac1{|I_g|}\sum_{i\in I_g}\operatorname{RMSNorm}(z_i)\) is the captured group
+representation, rather than normalization of the group's mean residual vector.
+
+| `subspace_view` | VLM prompt groups | Action group | Meaning of layer Lℓ |
+| --- | --- | --- | --- |
+| `attention_input` (default) | Actual `attn_norm` output, with learned scale | Actual cross-attention input, after `cross_norm` and time-conditioned shift/scale | Consuming block ℓ; VLM L17 normalizes the residual output of block 16 |
+| `expert_key` | Actual keys supplied to expert cross-attention, after context projection, context RMS normalization and per-head key normalization | Not present | Expert block ℓ, using cached keys from VLM block ℓ |
+| `expert_value` | Actual values supplied to expert cross-attention, after context projection and context RMS normalization | Not present | Expert block ℓ, using cached values from VLM block ℓ |
+| `block_output` | Complete VLM block output | Complete expert block output | Output of block ℓ, before final network normalization |
+
+Native keys and values have their head axes flattened without changing their values;
+for this model that gives width 768. VLM attention inputs have width 2560, and expert
+attention inputs have width 768. The expert attention input includes the model's
+native time modulation; it is not constrained to unit RMS. Cached K/V from VLM
+block 16 precede that block's MLP, so expert block 17 is the first to see effects of
+the block-16 residual anomaly.
+
+With `enable_subspace_spans=true`, collection saves all three native views alongside
+the original raw cache, using the same frames, text conditions, noise, flow time and
+forward pass. Native means are stored as float32 to avoid additional fp16 cache
+rounding; this does not change model computation precision. The original raw cache
+remains fp16. The span analysis still averages token groups and centers the resulting
+frame vectors before SVD; it applies no per-frame unit normalization or whitening.
+These reductions describe variation across frames, not the full token-level geometry.
+
+The report labels the capture site and layer convention. A legacy raw-only cache
+cannot provide native tensors: collect again, or explicitly select
+`subspace_view=block_output` (`--view block_output` for the standalone CLI). Changing
+views after a new collection needs analysis/plotting only, not another model pass.
 
 ## Attention tensors
 

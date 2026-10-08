@@ -1,0 +1,245 @@
+"""Bookkeeping for the diverse-only sampled annotation audit.
+
+This module deliberately does not decide semantic labels. It resolves the active
+federated store, inventories unique source episodes, makes reproducible family-balanced
+draws without replacement, and writes the audit ledger/check skeletons outside the repo.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import random
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any
+
+FAMILY_ORDER = ("droid", "droid_success", "molmoact", "robochallenge", "ur7e", "yam", "fmb")
+SIDECARS = (
+    "subtask_atoms.jsonl", "contact_atoms.jsonl", "precision_atoms.jsonl",
+    "quality_spans.jsonl", "mistakes_v2.jsonl", "precision_windows.jsonl",
+    "speed_atoms_hybrid_v1.jsonl",
+)
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+
+
+def sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def camera_names(record: dict[str, Any], part: str) -> list[str]:
+    if part == "fmb":
+        counts = record.get("production_retained_sensor_counts", {}).get("rgb_images_by_camera", {})
+        return sorted(counts)
+    return [camera if isinstance(camera, str) else camera["name"] for camera in record.get("cameras", [])]
+
+
+def merged_ranges(atoms: list[dict[str, Any]]) -> list[list[int]]:
+    spans = sorted((int(row["start_timestep"]), int(row["end_timestep_exclusive"])) for row in atoms)
+    out: list[list[int]] = []
+    for start, stop in spans:
+        if out and start <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], stop)
+        else:
+            out.append([start, stop])
+    return out
+
+
+def build_inventory(root: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    inventory: list[dict[str, Any]] = []
+    provenance: dict[str, Any] = {"root": str(root), "stores": {}}
+    for part in ("corpus", "fmb"):
+        store = root / part
+        episodes = read_jsonl(store / "episodes.jsonl")
+        atoms: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for atom in read_jsonl(store / "subtask_atoms.jsonl"):
+            atoms[str(atom["episode_id"])].append(atom)
+        sidecars = {
+            name: {"path": str(store / name), "sha256": sha256(store / name), "rows": len(read_jsonl(store / name))}
+            for name in SIDECARS
+        }
+        provenance["stores"][part] = {"path": str(store), "episodes": len(episodes), "sidecars": sidecars}
+        for summary in episodes:
+            eid = str(summary["episode_id"])
+            episode_dir = store / summary.get("directory", f"episodes/{eid}")
+            record_path = episode_dir / "episode.json"
+            record = json.loads(record_path.read_text(encoding="utf-8")) if record_path.is_file() else summary
+            family = "fmb" if part == "fmb" else str(summary["source"])
+            rate = float(summary.get("native_rate_hz", summary.get("nominal_fps", record.get("nominal_fps"))))
+            frames = int(summary.get("frames", summary.get("frame_count", record.get("frame_count"))))
+            source_meta = record.get("source", {}) if part == "fmb" else {}
+            inventory.append({
+                "episode_id": eid, "family": family, "source": family, "store": part,
+                "component": summary.get("component", record.get("component", "single_object_manipulation")),
+                "split": str(summary.get("split", record.get("split", "train"))),
+                "task": summary.get("task", record.get("task", "insert the object into the board")),
+                "embodiment": summary.get("embodiment", record.get("embodiment", "Franka")),
+                "native_rate_hz": rate, "frames": frames,
+                "duration_s": float(summary.get("duration_s", frames / rate)),
+                "retained_intervals": merged_ranges(atoms[eid]), "atoms": len(atoms[eid]),
+                "cameras": camera_names(record, part),
+                "state_fields": record.get("state_fields", ["q.npy", "dq.npy", "tcp_pose.npy", "gripper_pose.npy"]),
+                "state_semantics": record.get("state_semantics", "FMB q/dq plus TCP pose quaternion"),
+                "action_fields": record.get("action_fields", ["actions.npy"]),
+                "action_semantics": record.get("action_semantics", "FMB source-native arrays"),
+                "gripper_semantics": record.get("gripper_semantics", "FMB gripper pose and binary command targets"),
+                "source_identity": source_meta.get("path", summary.get("source_episode_index")),
+                "episode_metadata": str(record_path), "label_store": str(store),
+            })
+    inventory.sort(key=lambda row: (FAMILY_ORDER.index(row["family"]), row["episode_id"]))
+    if len({row["episode_id"] for row in inventory}) != len(inventory):
+        raise ValueError("episode_id is not unique across the federated stores")
+    actual = tuple(family for family in FAMILY_ORDER if any(row["family"] == family for row in inventory))
+    if actual != FAMILY_ORDER:
+        raise ValueError(f"family inventory differs from the audit contract: {actual}")
+    return inventory, provenance
+
+
+def schema_table(inventory: list[dict[str, Any]]) -> list[str]:
+    lines = ["| family / component / embodiment | episodes | rates (Hz) | splits | cameras | state/action schema |", "|---|---:|---|---|---|---|"]
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in inventory:
+        groups[(row["family"], str(row["component"]), str(row["embodiment"]))].append(row)
+    for key, rows in sorted(groups.items()):
+        rates = ", ".join(f"{x:g}" for x in sorted({row["native_rate_hz"] for row in rows}))
+        splits = ", ".join(f"{k}:{v}" for k, v in sorted(Counter(row["split"] for row in rows).items()))
+        cameras = ", ".join(sorted({"/".join(row["cameras"]) for row in rows}))
+        schema = (str(rows[0]["state_semantics"]) + "; " + str(rows[0]["action_semantics"])).replace("|", "/")
+        lines.append(f"| {' / '.join(key)} | {len(rows)} | {rates} | {splits} | {cameras} | {schema} |")
+    return lines
+
+
+def init(args: argparse.Namespace) -> None:
+    root, work = Path(args.root), Path(args.work)
+    if work.exists() and (work / "population.json").is_file():
+        print(f"resume {work}")
+        return
+    if work.exists() and any(work.iterdir()):
+        raise FileExistsError(f"refusing to initialize non-empty {work}")
+    work.mkdir(parents=True, exist_ok=True)
+    for name in ("rounds", "checks", "evidence", "fixes", "sweeps", "validation"):
+        (work / name).mkdir()
+    inventory, provenance = build_inventory(root)
+    write_jsonl(work / "inventory.jsonl", inventory)
+    family_counts, split_counts = Counter(row["family"] for row in inventory), Counter(row["split"] for row in inventory)
+    population = {
+        "contract_date": "2026-10-07", "active_config": "lerobot/src/lerobot/rl/config_rl.yaml",
+        "root": str(root), "episodes": len(inventory), "families": dict(family_counts), "splits": dict(split_counts),
+        "provenance": provenance,
+        "sampling": "8 unchecked episodes per round; one per non-exhausted family, then rotating extras; without replacement",
+    }
+    (work / "population.json").write_text(json.dumps(population, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    lines = [
+        "# Diverse annotation sampled audit", "",
+        "- Contract: `lerobot/src/lerobot/annotation/README.md`, “Diverse dataset: sampled audit” (2026-10-07).",
+        f"- Active training pointer: `lerobot/src/lerobot/rl/config_rl.yaml` → `{root}`.",
+        f"- Stores: `{root / 'corpus'}`, `{root / 'fmb'}`.",
+        f"- Population: {len(inventory)} unique source episodes; families {dict(family_counts)}; splits {dict(split_counts)}.",
+        "- Exclusions: every ReBot, external-ReBot, and rollout root. No training-config change or dataset adoption is authorized.",
+        "- Sampling: without replacement; random within families; each non-exhausted family receives one slot when possible; extra slots rotate by family and prefer unseen split/component combinations.",
+        "- Stopping rule: two consecutive 8-episode rounds with 0 wrong and at most 2 minor each, every represented family sampled, and no open fixes, second reads, or sweeps.",
+        "- Spark status at start: unavailable (`ssh dgx`: no route to host); only bounded sampled evidence may be rendered locally. Full compilation/validation remains on Spark when needed.",
+        "", "## Population schema", "", *schema_table(inventory), "", "## Rounds", "",
+        "| round | seed | eligible | allocation | ordered picks | pre-fix wrong | pre-fix minor | open | clean streak |",
+        "|---:|---:|---:|---|---|---:|---:|---:|---:|",
+    ]
+    (work / "audit.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(json.dumps({"work": str(work), "episodes": len(inventory), "families": family_counts, "splits": split_counts}, default=dict))
+
+
+def existing_picks(work: Path) -> list[dict[str, Any]]:
+    rows = []
+    for path in sorted((work / "rounds").glob("round_*.json")):
+        rows.extend(json.loads(path.read_text(encoding="utf-8"))["picks"])
+    return rows
+
+
+def sample(args: argparse.Namespace) -> None:
+    work = Path(args.work)
+    path = work / "rounds" / f"round_{args.round:02d}.json"
+    if path.is_file():
+        print(path.read_text(encoding="utf-8"))
+        return
+    inventory, prior = read_jsonl(work / "inventory.jsonl"), existing_picks(work)
+    checked = {row["episode_id"] for row in prior}
+    seen_components = {(row["family"], str(row["component"])) for row in prior}
+    seen_splits = {(row["family"], str(row["split"])) for row in prior}
+    pools = {family: [row for row in inventory if row["family"] == family and row["episode_id"] not in checked] for family in FAMILY_ORDER}
+    eligible = sum(len(rows) for rows in pools.values())
+    allocation = {family: 1 for family in FAMILY_ORDER if pools[family]}
+    remaining = 8 - sum(allocation.values())
+    rotation = list(FAMILY_ORDER[args.round - 1 :]) + list(FAMILY_ORDER[: args.round - 1])
+    while remaining > 0:
+        candidates = [family for family in rotation if len(pools[family]) > allocation.get(family, 0)]
+        if not candidates:
+            break
+        family = candidates[0]
+        allocation[family] = allocation.get(family, 0) + 1
+        rotation = rotation[1:] + rotation[:1]
+        remaining -= 1
+    rng = random.Random(args.seed)
+    picks: list[dict[str, Any]] = []
+    for family in FAMILY_ORDER:
+        candidates = list(pools[family]); rng.shuffle(candidates)
+        candidates.sort(key=lambda row: ((family, str(row["split"])) in seen_splits, (family, str(row["component"])) in seen_components))
+        picks.extend(candidates[: allocation.get(family, 0)])
+    rng.shuffle(picks)
+    payload = {
+        "round": args.round, "seed": args.seed, "eligible_pool": eligible,
+        "eligible_by_family": {family: len(pools[family]) for family in FAMILY_ORDER},
+        "allocation": allocation, "ordered_picks": [row["episode_id"] for row in picks], "picks": picks,
+        "status": "pending_review", "pre_fix_counts": {"wrong": None, "minor": None, "open": None},
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    for row in picks:
+        check = {
+            "round": args.round, "episode_id": row["episode_id"], "family": row["family"], "store": row["store"],
+            "split": row["split"], "native_rate_hz": row["native_rate_hz"], "retained_intervals": row["retained_intervals"],
+            "cameras": row["cameras"], "status": "pending", "second_read_required": False, "issues": [], "decision_note": "",
+        }
+        (work / "checks" / f"round_{args.round:02d}__{row['episode_id']}.json").write_text(json.dumps(check, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    pick_text = "<br>".join(f"{row['family']}: {row['episode_id']} ({row['split']})" for row in picks)
+    with (work / "audit.md").open("a", encoding="utf-8") as stream:
+        stream.write(f"| {args.round} | {args.seed} | {eligible} | {allocation} | {pick_text} | pending | pending | pending | 0 |\n")
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def labels(args: argparse.Namespace) -> None:
+    work = Path(args.work)
+    round_row = json.loads((work / "rounds" / f"round_{args.round:02d}.json").read_text(encoding="utf-8"))
+    root = Path(json.loads((work / "population.json").read_text(encoding="utf-8"))["root"])
+    for pick in round_row["picks"]:
+        eid, store = pick["episode_id"], root / pick["store"]
+        out = work / "evidence" / f"round_{args.round:02d}" / eid; out.mkdir(parents=True, exist_ok=True)
+        payload = {"inventory": pick, "channels": {name: [row for row in read_jsonl(store / name) if str(row.get("episode_id")) == eid] for name in SIDECARS}}
+        (out / "effective_labels.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"wrote effective-label packets for {len(round_row['picks'])} episodes")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(); sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("init"); p.add_argument("--root", required=True); p.add_argument("--work", required=True); p.set_defaults(func=init)
+    p = sub.add_parser("sample"); p.add_argument("--work", required=True); p.add_argument("--round", type=int, required=True); p.add_argument("--seed", type=int, required=True); p.set_defaults(func=sample)
+    p = sub.add_parser("labels"); p.add_argument("--work", required=True); p.add_argument("--round", type=int, required=True); p.set_defaults(func=labels)
+    args = parser.parse_args(); args.func(args)
+
+
+if __name__ == "__main__":
+    main()

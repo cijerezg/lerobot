@@ -1,19 +1,24 @@
 """Read mean-centred representation spans without confusing geometry with task performance.
 
-Each frame contributes one arithmetic mean over a token group, captured after a complete
-network block (attention, MLP and residual additions), before the final network norm.
-Layers are zero-based: L32 is the output of block 33, not the final block (L35).
-Camera, subtask, state and action_output groups are in the 2560-dimensional multimodal
-encoder. action is the 768-dimensional action expert, averaged over 30 future-step tokens
-at flow time zero with the same seeded noise for every frame. It is not a predicted action.
+Each frame contributes one arithmetic mean over a token group. The capture view is
+recorded in the cache and displayed above every chart. Native attention-input captures
+read actual VLM attention-normalization outputs (including learned scaling) and actual
+expert cross-attention inputs after normalization and time modulation. Expert-key/value
+views read prepared cross-attention arguments; heads are flattened without changing values.
+There is no external normalization, whitening, or unit-length conversion in this analysis.
+Native views are pooled and stored in float32. Explicit block_output selects legacy raw
+post-block fp16 representations. The action group, when present, is averaged over future
+positions at flow time zero with fixed seeded noise; it is not a predicted action.
 
-Subspace uses fp16 cached vectors promoted to float64 and centred on each robot's own
-training mean (holdout rows subtract the same mean); no whitening or per-frame norm
-normalisation. The raw mean direction is shared by every robot at cosine 0.99+ and would
-otherwise be the first direction of every span, so it is removed and reported separately:
-mean_norm per robot and mean_cos per pair (cosine between the two robots' raw means).
-Rescaling rows preserves the exact span, but can change singular values, numerical rank
-and energy residuals. The singular-value cutoff is a modelling choice, not an intrinsic dimension.
+Layer indices identify the named capture site. Native attention-input L17 is inside
+block 17, reading block 16's residual output. Expert K/V at L16 were computed before
+VLM block 16's MLP output; its new output first affects expert context L17.
+
+Subspace promotes cached vectors to float64 and centers them on each robot's own
+training mean; holdout rows subtract the same mean. Mean norms and between-robot mean
+cosines are reported separately. Rescaling rows can change singular values, numerical
+rank, and energy residuals. The relative cutoff is a measurement choice: a larger first
+singular value can lower reported rank without shrinking the remaining variation.
 
 Training rows here are the reference frames defining the span; they are not a new
 training run. The conditions cache samples interior frames per episode/class/phase using the
@@ -39,7 +44,7 @@ directions are forced by dimension alone. Cosine >0.9 is an explicitly chosen de
 threshold; it does not establish an exactly shared direction.
 
 The angle reference is the pointwise 95th percentile of 100 matched-dimension random
-space pairs, not a simultaneous confidence band. The fp16 floor estimates independent
+space pairs, not a simultaneous confidence band. The cache-precision floor estimates independent
 rounding error: sigma*(sqrt(n)+sqrt(D)), sigma squared = mean(ulp(x)^2)/12. It is a heuristic,
 not proof that a direction below it is noise, and does not include upstream bfloat16 error.
 Pivoted QR chooses the frame with the largest residual after previous pivots. Its index
@@ -55,6 +60,7 @@ import os
 import sys
 import numpy as np
 from lerobot.probes.manifest import Metric, Panel, write_index
+from lerobot.probes.representation_views import VIEW_METADATA, resolve_view_cache
 from lerobot.probes.report_html import CHART_JS, clean, data_json, page, table
 
 GROUPS = {
@@ -114,8 +120,10 @@ def detail_data(cache_dir, summary, spans, pivots, n_null=100, seed=42):
 
 
 def render(output_dir, cache_dir=None, *, n_null=100, seed=42, n_pivots=12):
-    out=Path(output_dir); cache=Path(cache_dir) if cache_dir else out.parent/'conditions_matrix/cache'
+    out=Path(output_dir)
     summary=json.loads((out/'summary.json').read_text())
+    view=summary.get('representation_view','block_output')
+    cache=Path(resolve_view_cache(cache_dir or out.parent/'conditions_matrix/cache',view))
     spans=read_csv(out/'spans.csv'); pairs=read_csv(out/'pairs.csv'); pivots=read_csv(out/'pivots.csv')
     detail_path = out/'report_details.json'
     sources = [out/name for name in ('summary.json', 'spans.csv', 'pairs.csv', 'pivots.csv')]
@@ -128,14 +136,26 @@ def render(output_dir, cache_dir=None, *, n_null=100, seed=42, n_pivots=12):
     else:
         details,meta=detail_data(cache,summary,spans,pivots,n_null,seed)
         detail_path.write_text(json.dumps(dict(n_null=n_null,seed=seed,details=details),allow_nan=False))
+    actual_view=meta.get('representation_view','block_output')
+    if actual_view!=view:
+        raise ValueError(f'Report view {view} does not match cache view {actual_view}; reanalyze the selected cache.')
+    capture=VIEW_METADATA[view]
+    descriptions={}
+    for group,shape in meta['groups'].items():
+        detail=capture['action'] if group=='action' else capture['encoder']
+        descriptions[group]=f'{group}: {detail} Width D={shape[-1]}; arithmetic mean over the selected group positions.'
+    precision=meta.get('cache_dtype',str(np.load(cache/f"{next(iter(meta['groups']))}.npy",mmap_mode='r').dtype))
+    tensor_context=f"{capture['layers']} {precision} cache; per-robot training-mean centering and float64 analysis. {summary['text']} text."
     robots=list(summary['robots'][summary['headline_group']])
     counts=[]
     for robot in robots:
         rr=[r for r in meta['rows'] if r['robot']==robot and r['text']==summary['text']]
         counts.append([robot, sum(not r['holdout'] for r in rr), len({str(r['episode']) for r in rr if not r['holdout']}), sum(r['holdout'] for r in rr), len({str(r['episode']) for r in rr if r['holdout']})])
-    data=dict(summary=summary,spans=spans,pairs=pairs,pivots=pivots,details=details,groups=GROUPS,robots=robots,counts=counts,
-              cache=os.path.relpath(cache,out),n_null=n_null,seed=seed,n_pivots=n_pivots)
+    data=dict(summary=summary,spans=spans,pairs=pairs,pivots=pivots,details=details,groups=descriptions,robots=robots,counts=counts,
+              tensor_context=tensor_context,capture=capture,cache_dtype=precision,
+              cache=os.path.relpath(cache,out),thumbs=os.path.relpath(cache/meta.get('thumbs_path','thumbs'),out),n_null=n_null,seed=seed,n_pivots=n_pivots)
     body='''<div class="eyebrow">Representation geometry · saved-cache report</div><h1>Which directions are shared across robots?</h1>
+<p class="callout" id="capture-site"></p>
 <p class="note">One view at a time. Select a token group, then explore depth, tolerance, or a robot pair. Hover a curve point for its exact value.</p>
 <div class="controls"><label>Question<select id="view"><option value="rank">How large is each span?</option><option value="overlap">How much do two spans overlap?</option><option value="residual">Does the span cover unseen frames?</option><option value="spectra">Which singular directions survive?</option><option value="angles">How are the directions aligned?</option><option value="pivots">Which frames define the span?</option></select></label>
 <label>Token group<select id="group"></select></label><label id="tauLabel">Tolerance τ<select id="tau"></select></label><label id="layerLabel">Detailed layer<select id="layer"></select></label><label id="pairLabel">Robot pair<select id="pair"></select></label><label id="robotLabel">Robot<select id="robot"></select></label></div>
@@ -158,11 +178,12 @@ def render(output_dir, cache_dir=None, *, n_null=100, seed=42, n_pivots=12):
     return write_index(str(out),sys.modules[__name__],title='Subspace spans',group='Representation',
         claim='Shared directions are present; neither overlap nor low residual alone establishes a shared task representation.',summary=summary,metrics=metrics,panels=panels,status='info',
         extra={'viewer': {'show_headlines': False}, 'provenance':{'sampling':f"Conditions-matrix sampling budget; {summary['text']} text only. Present masks exclude missing groups. Exact counts appear in the explorer.",
-            'details':[['Cache',str(cache)],['Reference draws',f'{n_null} isotropic random pairs per dimension tuple; report seed {seed}. Recomputed on CPU; pointwise references can differ from the original Monte Carlo draw.'],['Layer convention','Zero-based complete block outputs; detail ' + ', '.join(f'L{layer}' for layer in summary['layers']) + '.']] }},see_also=['conditions_matrix'])
+            'details':[['Cache',str(cache)],['Reference draws',f'{n_null} isotropic random pairs per dimension tuple; report seed {seed}. Recomputed on CPU; pointwise references can differ from the original Monte Carlo draw.'],['Capture site',capture['label']],['Layer convention',capture['layers'] + ' Detail ' + ', '.join(f'L{layer}' for layer in summary['layers']) + '.']] }},see_also=['conditions_matrix'])
 
 
 SCRIPT = r'''
 const $=id=>document.getElementById(id);
+$('capture-site').textContent=D.capture.label+' · '+D.capture.encoder+' '+D.capture.layers;
 function options(id,vals,labels){$(id).innerHTML=vals.map((v,i)=>`<option value="${esc(v)}">${esc(labels?labels[i]:v)}</option>`).join('')}
 const groups=Object.keys(D.summary.robots), pairs=[...new Set(D.pairs.map(r=>r.a+'|'+r.b))];
 options('group',groups);$('group').value=D.summary.headline_group;options('tau',D.summary.tolerances);$('tau').value=D.summary.headline_tau;options('layer',D.summary.layers);$('layer').value=D.summary.headline_layer;options('pair',pairs,pairs.map(p=>p.replace('|',' ↔ ')));options('robot',D.robots);
@@ -172,7 +193,7 @@ function draw(){
  $('tauLabel').hidden=['spectra','angles','pivots'].includes(v);$('layerLabel').hidden=['rank','overlap','residual'].includes(v);$('pairLabel').hidden=!['overlap','angles'].includes(v);$('robotLabel').hidden=!['spectra','residual','pivots'].includes(v);
  const ss=D.spans.filter(r=>r.group===g&&r.tau===t), ps=D.pairs.filter(r=>r.group===g&&r.tau===t&&r.a===a&&r.b===b), end=ss.filter(r=>r.layer===D.summary.headline_layer);
  const rankMax=Math.max(...D.spans.map(r=>Math.min(r.n_frames,r.d))), lastLayer=Math.max(...D.spans.map(r=>r.layer));
- $('context').textContent=D.groups[g]+' Layers are zero-based complete block outputs. fp16 cache centred on each robot’s training mean; float64 analysis. Real text.';
+ $('context').textContent=D.groups[g]+' '+D.tensor_context;
  $('gallery').innerHTML='';$('plot').innerHTML='';let lines=[],spec={},reading='',finding='',headers=[],rows=[];
  if(v==='rank'){
   for(const r of D.robots){let z=ss.filter(x=>x.robot===r);if(!z.length)continue;lines.push({name:r,x:z.map(x=>x.layer),y:z.map(x=>x.k),color:color(r)});lines.push({name:r+' frame ceiling ('+z[0].n_frames+')',x:[0,lastLayer],y:[z[0].n_frames,z[0].n_frames],color:color(r),dash:'2 6',width:1})}
@@ -194,9 +215,9 @@ function draw(){
   headers=['Layer','Rank','Train outside (%)','Holdout outside (%)','Reference / holdout n'];rows=z.map(r=>[r.layer,r.k,fmt(100*r.train_residual),r.holdout_residual===null?'—':fmt(100*r.holdout_residual),r.n_frames+' / '+r.n_holdout]);
  } else if(v==='spectra'){
   let r=D.details.find(r=>r.kind==='spectrum'&&r.group===g&&r.layer===l&&r.robot===robot);const x=r.s.map((_,i)=>i+1);
-  lines=[{name:'Singular values sᵢ / s₁',x,y:r.s,color:palette[0]},{name:'Pivot residual |Rⱼⱼ| / |R₁₁|',x,y:r.qr,color:palette[1],dash:'2 5'},...D.summary.tolerances.map(t=>({name:'τ='+t,x:[1,rankMax],y:[t,t],color:'#a9b9c9',dash:'8 5',width:1})),{name:'Estimated fp16 floor',x:[1,rankMax],y:[r.floor,r.floor],color:palette[3],dash:'10 4 2 4'}];
+  lines=[{name:'Singular values sᵢ / s₁',x,y:r.s,color:palette[0]},{name:'Pivot residual |Rⱼⱼ| / |R₁₁|',x,y:r.qr,color:palette[1],dash:'2 5'},...D.summary.tolerances.map(t=>({name:'τ='+t,x:[1,rankMax],y:[t,t],color:'#a9b9c9',dash:'8 5',width:1})),{name:'Estimated cache rounding floor',x:[1,rankMax],y:[r.floor,r.floor],color:palette[3],dash:'10 4 2 4'}];
   spec={title:`Centred spectrum · ${robot} · ${g} · L${l}`,xlabel:'Singular-value rank / QR pivot order (one-based)',ylabel:'Relative amplitude (log scale)',xmax:rankMax,ymin:1e-7,ymax:1,log:true};
-  finding=`${r.s.length} singular values; estimated fp16 floor / s₁ = ${r.floor.toExponential(2)}. Different robots have different curve lengths because they contribute different numbers of frames.`;
+  finding=`${r.s.length} singular values; estimated cache rounding floor / s₁ = ${r.floor.toExponential(2)}. Different robots have different curve lengths because they contribute different numbers of frames.`;
   reading='Solid blue: descending singular values of the mean-centred frame matrix. Dotted orange: greedy frame residual sequence, separately normalised by its first pivot. Grey dashed lines mark all cutoffs; purple dash-dot is this robot’s estimated rounding floor, not a median across robots. The two sequence indices are orders, not matching directions. Curves share fixed axes across groups, robots and models.';
   headers=['Index','sᵢ / s₁','QR residual ratio'];rows=r.s.map((s,i)=>[i+1,fmt(s,7),fmt(r.qr[i],7)]);
  } else if(v==='angles'){
@@ -208,7 +229,7 @@ function draw(){
   headers=['Angle index','Measured cosine','Random pointwise p95'];rows=r.cos.map((c,i)=>[i+1,fmt(c,6),fmt(r.null[i],6)]);
  } else {
   let r=D.pivots.filter(r=>r.group===g&&r.layer===l&&r.robot===robot);finding='The first '+D.n_pivots+' greedy frame pivots for '+robot+'; all '+r.length+' pivots remain in the table and CSV.';
-  $('gallery').innerHTML=r.slice(0,D.n_pivots).map(p=>`<figure><img loading="lazy" src="${esc(D.cache)}/thumbs/${String(Math.floor(p.row/2)).padStart(4,'0')}.external_0.jpg" alt="External camera, pivot ${p.pivot}" onerror="this.replaceWith(document.createTextNode('Thumbnail unavailable'))"><figcaption><b>#${p.pivot} · residual ${fmt(p.residual_rel,3)}</b><br>${esc(p.object_class)} / ${esc(p.phase)}<br>${esc(p.episode)} · frame ${esc(p.frame)}</figcaption></figure>`).join('');
+  $('gallery').innerHTML=r.slice(0,D.n_pivots).map(p=>`<figure><img loading="lazy" src="${esc(D.thumbs)}/${String(Math.floor(p.row/2)).padStart(4,'0')}.external_0.jpg" alt="External camera, pivot ${p.pivot}" onerror="this.replaceWith(document.createTextNode('Thumbnail unavailable'))"><figcaption><b>#${p.pivot} · residual ${fmt(p.residual_rel,3)}</b><br>${esc(p.object_class)} / ${esc(p.phase)}<br>${esc(p.episode)} · frame ${esc(p.frame)}</figcaption></figure>`).join('');
   reading='Column-pivoted QR of Xᵀ: choose the frame with maximum remaining residual after earlier pivots. Residual ratios divide by the first pivot norm; they are not singular values. External-camera thumbnails identify the frame even when another token group defines the geometry. The order is geometric novelty, not chronology or task importance.';
   headers=['Pivot','Cache row','Episode','Frame / corpus time (s)','Class','Phase','Residual ratio'];rows=r.map(p=>[p.pivot,p.row,p.episode,p.frame,p.object_class,p.phase,fmt(p.residual_rel,7)]);
  }

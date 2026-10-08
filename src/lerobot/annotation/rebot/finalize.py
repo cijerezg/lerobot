@@ -24,16 +24,18 @@ import numpy as np
 import pandas as pd
 
 from lerobot.annotation.paths import QUALITY_V2, WORKSPACE
-from lerobot.annotation.rebot.episode import kept, remap
+from lerobot.annotation.rebot.episode import kept, records, remap
 from lerobot.annotation.vocab import CONTACT_VOCAB, CONTACT_VOCAB_VERSION, code_for
 
 PRE, POST = 30, 15
 RUBRICS = "lerobot/src/lerobot/annotation/rubrics"
 
 
-def episode_map(staging, root):
+def episode_map(staging, root, work):
     """staging episode -> (final episode, frame map, final [from, to)). The map takes a staging-root frame to the
-    final root through the source frame; idle cuts (spliced or trimmed) collapse onto the splice point."""
+    final root through the source frame; idle cuts (spliced or trimmed) collapse onto the splice point. A pass that
+    re-annotates an annotated root may name that root as its staging root: its episodes are then the inventory's
+    source episodes, uncut."""
 
     def prov(r):
         eps = pd.read_parquet(r / "meta/episodes/chunk-000/file-000.parquet").set_index("episode_index")
@@ -47,11 +49,19 @@ def episode_map(staging, root):
             for p in json.loads((r / "meta/provenance.json").read_text())
         }
 
-    s, f = prov(staging), prov(root)
+    f = prov(root)
+    if all("source_key" in p for p in json.loads((staging / "meta/provenance.json").read_text())):
+        s = prov(staging)
+    else:
+        eps = pd.concat([pd.read_parquet(x) for x in (staging / "meta/episodes").rglob("*.parquet")]).set_index("episode_index")
+        s = {}
+        for r in records(work):
+            start = int(eps.loc[r["episode"]].dataset_from_index)
+            s.update({(r["key"], j): (r["episode"], start, None, dict(keep=[0, r["frames"]])) for j in range(8)})
     out = {}
     for key, (ef, f0, f1, p) in f.items():
         es, s0, _, sp = s[key]
-        assert not sp.get("cuts") and sp["keep"][0] == p["keep"][0]
+        assert "source_key" not in sp or (not sp.get("cuts") and sp["keep"][0] == p["keep"][0])
         k = kept(p["keep"], p["cuts"])
         out[es] = (ef, lambda g, s0=s0, a=sp["keep"][0], k=k, f0=f0: f0 + remap(k, g - s0 + a), f0, f1)
     return out
@@ -63,12 +73,15 @@ def main(work, root):
     meta = root / "meta"
     for t in ("quality_spans.parquet", "precision_windows.parquet", "precision.parquet", "contact.parquet"):
         assert not (meta / t).exists(), f"{t} already in {root}"
-    emap = episode_map(WORKSPACE / config["staging"], root)
+    emap = episode_map(WORKSPACE / config["staging"], root, work)
     labels = [json.loads(line) for line in open(QUALITY_V2 / f"classes/labels_{pool}.jsonl")]
     em = pd.read_parquet(meta / "episode_metadata.parquet")
     spans, mistakes, windows = [], [], []
     for r in labels:
-        es, seg = map(int, re.fullmatch(rf"{name}_ep(\d+)_seg(\d+)", r["uid"]).groups())
+        m = re.fullmatch(rf"{name}_ep(\d+)_seg(\d+)", r["uid"])
+        if m is None:
+            continue  # another dataset of the pool
+        es, seg = map(int, m.groups())
         if es not in emap:
             continue
         ef, fm, e0, e1 = emap[es]
@@ -107,8 +120,10 @@ def main(work, root):
                     uid=r["uid"],
                 )
             )
-        p = r.get("precision")
-        if p and fm(p["w_a"]) < fm(p["w_b"]):
+        for k in sorted(x for x in r if x.startswith("precision")):  # precision, precision_2, ... (a unit with several commits)
+            p = r[k]
+            if not (p and fm(p["w_a"]) < fm(p["w_b"])):
+                continue
             c = min(fm(p["commit_index"]), e1 - 1)  # a clip may end on its commit
             host = em[(em.episode_index == ef) & (em.from_index <= c) & (em.to_index > c)]
             assert len(host) == 1, r["uid"]  # final segment index (staging indices shift after reconcile merges)
@@ -125,9 +140,13 @@ def main(work, root):
                     uid=r["uid"],
                 )
             )
-    S, M, W = pd.DataFrame(spans), pd.DataFrame(mistakes), pd.DataFrame(windows)  # noqa: N806
+    # columns named so a root without any span, mistake or window still has readable tables for the loader
+    scols = ["episode_index", "raw_from_index", "raw_to_index", "from_index", "to_index", "quality", "cause", "confidence", "looked_at", "note", "uid"]
+    mcols = ["episode_index", "from_index", "to_index", "mistake", "mistake_type", "confidence", "note", "uid"]
+    wcols = ["episode_index", "segment_index", "commit_index", "raw_from_index", "from_index", "to_index", "precision", "confidence", "uid"]
+    S, M, W = pd.DataFrame(spans, columns=scols), pd.DataFrame(mistakes, columns=mcols), pd.DataFrame(windows, columns=wcols)  # noqa: N806
     for df in (S, M):
-        assert ((df.from_index < df.to_index) if len(df) else True).all()
+        assert (df.from_index < df.to_index).all() if len(df) else True
     S.to_parquet(meta / "quality_spans.parquet", index=False)
     M.astype({"mistake": bool}).to_parquet(meta / "mistakes.parquet", index=False)
     W.to_parquet(meta / "precision_windows.parquet", index=False)

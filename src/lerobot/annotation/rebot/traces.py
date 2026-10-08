@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 from lerobot.annotation.rebot.episode import interventions, records, states  # noqa: E402
-from lerobot.annotation.rebot.motion import closed_intervals, runs_of, still_runs  # noqa: E402
+from lerobot.annotation.rebot.motion import approach_angle, closed_intervals, runs_of, still_runs  # noqa: E402
 
 NAMES = ["pan", "lift", "elbow", "wflex", "wyaw", "wroll", "grip"]
 
@@ -59,6 +59,8 @@ def trace(work, k):
     lines = [
         f"{k:02d} {r['key']} frames={n} fps=30",
         "closed intervals (state gripper, relative-travel 25 deg): " + spans(closes),
+        "FK approach angle at each close start (< 45 top-pinch, >= 45 side-pinch): "
+        + ", ".join(f"f{p} {approach_angle(s[p]):.0f} deg" for p, _ in closes),
         "still runs >= 1 s: " + (spans(stills) or "none"),
         "teleop (is_intervention) runs: " + teleop,
     ]

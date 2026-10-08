@@ -1560,6 +1560,8 @@ class MolmoAct2Adapter(ProbablePolicy):
         metadata: dict | None = None,
         extra_complementary: dict | None = None,
         noise_seed: int = 0,
+        output_dtype: torch.dtype = torch.float16,
+        capture_native_views: bool = False,
     ) -> dict:
         """Every layer's hidden state, pooled per prompt token group, at the first
         inference step (t = 0: the action tokens are pure noise drawn from ``noise_seed``,
@@ -1569,6 +1571,12 @@ class MolmoAct2Adapter(ProbablePolicy):
         ``extra_complementary`` overrides the ReBot identity columns, which is how a
         diverse-corpus sample brings its own action_layout_id, embodiment_index,
         camera presence and depth presence through the same pack step.
+
+        ``output_dtype`` controls cache precision after float32 token pooling.
+        The default preserves existing fp16 probes; float32 avoids this extra rounding.
+        ``capture_native_views`` additionally reads actual VLM normalized attention inputs
+        and expert cross-attention inputs/K/V in the SAME forward. Native views are
+        returned under ``native_views`` as float32 pooled tensors; no norm is recomputed.
 
         Returns ``{"encoder": {group: Tensor[L, D] | None}, "action_expert": {"action":
         Tensor[L, D]}, "n_tokens": {group: int}}``; ``None`` marks a group this frame
@@ -1638,13 +1646,20 @@ class MolmoAct2Adapter(ProbablePolicy):
 
         handles = [block.register_forward_hook(_encoder_hook) for block in transformer.blocks]
         handles += [block.register_forward_hook(_expert_hook) for block in action_expert.blocks]
+        native_capture = None
         self._set_probe_cuda_graph_enabled(False)
         try:
+            if capture_native_views:
+                from lerobot.probes.representation_views import NativeRepresentationCapture
+
+                native_capture = NativeRepresentationCapture(transformer, action_expert, groups, device)
             self._policy._compute_flow_matching_loss_joint_per_layer(
                 batch=batch, model_inputs=model_inputs, timesteps=timesteps, noise=noise, reduction="mean",
             )
         finally:
             self._restore_probe_cuda_graph_enabled()
+            if native_capture is not None:
+                native_capture.close()
             for handle in handles:
                 handle.remove()
         if len(encoder_layers) != len(transformer.blocks) or len(expert_layers) != len(action_expert.blocks):
@@ -1653,13 +1668,14 @@ class MolmoAct2Adapter(ProbablePolicy):
                 f"{len(transformer.blocks)} / {len(action_expert.blocks)}"
             )
 
-        encoder = torch.stack(encoder_layers).half().cpu()  # [L, G, D]
+        encoder = torch.stack(encoder_layers).to(dtype=output_dtype).cpu()  # [L, G, D]
         pooled: dict[str, Tensor | None] = dict.fromkeys(groups)
         for position, name in enumerate(pooled_names):
             pooled[name] = encoder[:, position, :]
         return {
+            "native_views": native_capture.result() if native_capture is not None else {},
             "encoder": pooled,
-            "action_expert": {"action": torch.stack(expert_layers).half().cpu()},  # [L, D]
+            "action_expert": {"action": torch.stack(expert_layers).to(dtype=output_dtype).cpu()},  # [L, D]
             "n_tokens": {name: len(positions) for name, positions in groups.items()},
         }
 

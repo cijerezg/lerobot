@@ -69,6 +69,52 @@ def commit_of(action, cl, op, f0, f1, fps):
     return f1, "end", True
 
 
+RISE_CM, RISE_DEG, FLAT_CM, FLAT_DEG, FLAT_GRIP = 1.0, 5.0, 0.5, 2.0, 5.0  # rubric 5.13 starting values
+
+
+def approach_line(Q, w0, w1, f0, commit, fps):
+    """Rubric 5.13 on the window [w0, w1): d = distance (cm) of the gripper end link to its pose at the commit,
+    turn = rotation (deg) still needed to reach the commit orientation, from the arm joints by forward kinematics.
+    Flags from the farthest point (largest d between the unit start f0 and the commit, so leaving home does not count)
+    to the commit: rises (d more than RISE_CM or turn more than RISE_DEG above its running minimum, for 0.5 s or more) and flats (over 1 s,
+    d moves less than FLAT_CM, turn less than FLAT_DEG, gripper less than FLAT_GRIP)."""
+    global FK
+    if "FK" not in globals():
+        from lerobot.robots.rebot_b601_follower.kinematics import RebotKinematics
+        FK = RebotKinematics()
+    fr = FK.frames(Q[w0:w1, :6]); p, R = fr[:, -1, :3, 3], fr[:, -1, :3, :3]
+    c = min(max(commit, w0), w1 - 1) - w0
+    d = np.linalg.norm(p - p[c], axis=1) * 100
+    turn = np.degrees(np.arccos(np.clip((np.einsum("tij,ij->t", R, R[c]) - 1) / 2, -1, 1)))
+    k = max(1, int(fps / 3)); smooth = lambda x: np.convolve(np.pad(x, k // 2, mode="edge"), np.ones(k) / k, mode="valid")[: len(x)]
+    sm, st = smooth(d), smooth(turn)
+    a, s = max(f0, w0) - w0, int(fps)
+    a += int(np.argmax(sm[a:c + 1])) if c >= a else 0
+    above = lambda x: x[a:c + 1] - np.minimum.accumulate(x[a:c + 1])
+    rise = (above(sm) > RISE_CM) | (above(st) > RISE_DEG)
+    g = Q[w0:w1, 6]; lag = lambda x: np.abs(x[a + s:c + 1] - x[a:c + 1 - s]) if c + 1 - s > a else np.zeros(0)
+    flat = (lag(sm) < FLAT_CM) & (lag(st) < FLAT_DEG) & (lag(g) < FLAT_GRIP)
+    rises = [[int(x) + a + w0, int(y) + a + w0] for x, y in runs(rise, max(1, int(fps / 2)))]
+    flat_frames = np.zeros(c + 1 - a if c >= a else 0, bool)
+    for x, y in runs(flat, 1): flat_frames[x:y + s] = True  # a flat 1 s window covers its whole second
+    flats = [[int(x) + a + w0, int(y) + a + w0] for x, y in runs(flat_frames, 1)]
+    return d, turn, rises, flats
+
+
+def plot_approach(path, it, d, turn, rises, flats):
+    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    w0, w1 = it["window"]; x = np.arange(w0, w1)
+    fig, ax = plt.subplots(figsize=(14, 3.2)); ax2 = ax.twinx()
+    for a, b in rises: ax.axvspan(a, b, color="tab:red", alpha=0.2)
+    for a, b in flats: ax.axvspan(a, b, color="tab:orange", alpha=0.2)
+    ax.plot(x, d, "k", lw=1.6, label="distance to commit pose (cm)"); ax2.plot(x, turn, "tab:blue", lw=1, label="turn to commit (deg)")
+    for f, st in ((it["from_index"], "--"), (it["to_index"], "--"), (it["commit"], "-")): ax.axvline(f, color="grey", ls=st, lw=0.8)
+    ax.set_xlabel("frame (red = rises again, orange = flat)"); ax.set_ylabel("cm"); ax2.set_ylabel("deg", color="tab:blue")
+    ax.set_title(f"{it['uid']} | {it['subtask'][:70]} | commit f{it['commit']}", fontsize=9)
+    ax.legend(loc="upper right", fontsize=8); ax2.legend(loc="upper center", fontsize=8)
+    fig.tight_layout(); fig.savefig(path, dpi=90); plt.close(fig)
+
+
 def job(j):
     kind, out, r, g = j
     img = rs.strip(r, g) if kind == "one" else np.vstack([rs.strip(x, g) for x in r])
@@ -109,7 +155,7 @@ def rebot_units(sel):
                               still_runs=[[int(a) + w0, int(b) + w0] for a, b in runs(still[w0:w1], fps)],
                               v1_mistakes=[dict(from_index=int(x.from_index), to_index=int(x.to_index), type=x.mistake_type, note=x.note) for x in mks.itertuples()],
                               segments=[f"seg{int(t.segment_index)} f{int(t.from_index)}-{int(t.to_index)} q{int(t.quality)} {t.subtask}" for t in segs.itertuples()],
-                              _h=h.get((e, seg), h_ep[e]), _g=g, _v=vs, _off=0))
+                              _h=h.get((e, seg), h_ep[e]), _g=g, _v=vs, _off=0, _Q=Q))
     return items
 
 
@@ -226,12 +272,19 @@ def build(cls):
              f"v1 note: {it['v1_note']}", "segments in window:"] + ["  " + x for x in it["segments"]]
         L += [f"v1 mistakes: {it['v1_mistakes']}", f"still runs (no motion >= 1 s): {it['still_runs']}"]
         if "v1_pauses" in it: L += [f"v1 pauses: {it['v1_pauses']}", f"excluded gaps: {it['gaps']}"]
-        L.append(f"frame   t_from_commit_s  arm_speed_{unit_speed}  gripper  tags")
+        line = approach_line(it["_Q"], w0, w1, it["from_index"], it["commit"], fps) if "_Q" in it else None
+        if line is not None:  # rubric 5.13
+            (out / "approach").mkdir(exist_ok=True); plot_approach(out / "approach" / f"{uid}.png", it, *line)
+            L.append(f"approach line (rubric 5.13, unit start to commit): rises again {line[2]} | flat {line[3]} | plot approach/{uid}.png")
+        L.append(f"frame   t_from_commit_s  arm_speed_{unit_speed}  gripper" + ("  dist_cm  turn_deg" if line is not None else "") + "  tags")
         step = max(1, int(round(fps / 4)))
         for f in range(w0, w1, step):
             tg = [t for a, ts in tags.items() if f <= a < f + step for t in ts]
             tg += ["still"] if any(a <= f < b for a, b in it["still_runs"]) else []
-            L.append(f"{f:8d} {(f - it['commit']) / fps:+8.2f} {it['_v'][f]:12.1f} {g[f]:8.1f}  {' '.join(tg)}")
+            tg += ["RISE"] if line is not None and any(a <= f < b for a, b in line[2]) else []
+            tg += ["FLAT"] if line is not None and any(a <= f < b for a, b in line[3]) else []
+            dt = f" {line[0][f - w0]:8.1f} {line[1][f - w0]:9.1f}" if line is not None else ""
+            L.append(f"{f:8d} {(f - it['commit']) / fps:+8.2f} {it['_v'][f]:12.1f} {g[f]:8.1f}{dt}  {' '.join(tg)}")
         (out / "traces" / f"{uid}.txt").write_text("\n".join(L) + "\n")
         # coarse strips over the window, 6 s each
         n = int(np.ceil((w1 - w0) / (STRIP_S * fps))); parts = []

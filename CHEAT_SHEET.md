@@ -27,8 +27,8 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/fold-towel-v1 \
-    --dataset.single_task="complete various tasks" \
+    --dataset.repo_id=cijerezg/store-nail-clippers-v1 \
+    --dataset.single_task="store nail clippers" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \
@@ -37,6 +37,11 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --dataset.push_to_hub=false \
     --teleop.variant=102HD \
     --display_data=true
+
+A crash or Ctrl-C mid-episode leaves `<root>/recovery/episode-XXXXXX.pkl` (state, action, task per frame) next to the
+images. Rebuild those episodes into a new root (needs images on disk, so not with `--dataset.streaming_encoding=true`):
+
+uv run python -m lerobot.scripts.recover_episodes --root ~/.cache/huggingface/lerobot/cijerezg/<run> --out outputs/<run>-recovered
 
 ## New dataset prep (once per dataset)
 

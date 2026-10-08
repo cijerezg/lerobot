@@ -26,7 +26,9 @@ def screen(root):
         if labels is not None:
             iv = interventions(rec)
             line += f" | teleop {iv.mean() * 100:.1f}% spans={[(int(a), int(b)) for a, b in runs_of(iv)]}"
-            sub = labels[labels.episode_index == ep].sort_values("frame_index").subtask
+            # a built root carries the typed subtask as recorded_subtask (build_root renames it)
+            sub = labels[labels.episode_index == ep].sort_values("frame_index")
+            sub = sub["subtask" if "subtask" in sub else "recorded_subtask"]
             change = sub.ne(sub.shift()).cumsum()
             line += f" | recorded subtasks: {[(v.iloc[0], len(v)) for _, v in sub.groupby(change)]}"
         print(line)

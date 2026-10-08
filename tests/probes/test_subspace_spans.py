@@ -9,6 +9,7 @@ import pytest
 from lerobot.configs.train import ProbeConfig
 from lerobot.probes import conditions_matrix as cm
 from lerobot.probes import subspace_spans as spans
+from lerobot.probes.representation_views import VIEW_METADATA, NATIVE_VIEWS
 
 
 def write_cache(directory):
@@ -25,8 +26,19 @@ def write_cache(directory):
     np.save(directory / 'img_external_0.present.npy', np.ones(len(rows), dtype=bool))
     (directory / 'meta.json').write_text(json.dumps(dict(
         protocol=cm.PROTOCOL, rows=rows, groups={'img_external_0': [3, 12]})))
+    for view in NATIVE_VIEWS:
+        native = directory / 'native' / view
+        native.mkdir(parents=True, exist_ok=True)
+        np.save(native / 'img_external_0.npy', values.astype(np.float32))
+        np.save(native / 'img_external_0.present.npy', np.ones(len(rows), dtype=bool))
+        (native / 'meta.json').write_text(json.dumps(dict(
+            protocol=cm.PROTOCOL, rows=rows, groups={'img_external_0': [3, 12]},
+            representation_view=view, representation=VIEW_METADATA[view],
+            cache_dtype='float32', thumbs_path='../../thumbs')))
 
 
+
+@pytest.mark.parametrize('view', list(VIEW_METADATA))
 @pytest.mark.parametrize('mode,shared,captures,reports', [
     ('all', True, 0, True),
     ('all', False, 1, True),
@@ -34,9 +46,9 @@ def write_cache(directory):
     ('collect', False, 1, False),
     ('collect', True, 0, False),
 ])
-def test_suite_cache_lifecycle(tmp_path, monkeypatch, mode, shared, captures, reports):
+def test_suite_cache_lifecycle(tmp_path, monkeypatch, mode, shared, captures, reports, view):
     cfg = SimpleNamespace(probe_parameters=ProbeConfig(
-        mode=mode, enable_conditions_matrix=shared, enable_subspace_spans=True,
+        mode=mode, enable_conditions_matrix=shared, enable_subspace_spans=True, subspace_view=view,
         subspace_layers='0,1,2', subspace_n_null=2, subspace_n_pivots=2))
     calls = []
 
@@ -57,6 +69,11 @@ def test_suite_cache_lifecycle(tmp_path, monkeypatch, mode, shared, captures, re
         assert any(p['file'] == 'explorer.html' and p['primary'] for p in index['panels'])
         assert result['layers'] == [0, 1, 2]
         assert result['headline_tau'] == .1
+        assert result['representation_view'] == view
+        page=(output/'explorer.html').read_text()
+        assert VIEW_METADATA[view]['label'] in page
+        assert 'D=12' in page
+        assert 'native/attention_input/../../thumbs' not in page # paths are normalized
         assert (output / 'pairs.csv').is_file()
     else:
         assert result is None
