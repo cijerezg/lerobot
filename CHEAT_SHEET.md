@@ -27,8 +27,8 @@ uv run --no-project --python .venv/bin/python lerobot/src/lerobot/scripts/lerobo
     --teleop.type=rebot_102_leader \
     --teleop.port=/dev/ttyUSB0 \
     --teleop.id=rebot_leader_v1 \
-    --dataset.repo_id=cijerezg/store-nail-clippers-v1 \
-    --dataset.single_task="store nail clippers" \
+    --dataset.repo_id=cijerezg/lift-up-shaker-bottle-v1 \
+    --dataset.single_task="lift up and put the lid on the shake bottle" \
     --dataset.fps=30 \
     --dataset.depth_stride=3 \
     --dataset.num_episodes=16 \

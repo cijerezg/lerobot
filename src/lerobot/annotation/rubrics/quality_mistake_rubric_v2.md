@@ -402,6 +402,13 @@ Every mistake gets one `attempt` span that contains it.
 
 ### 5.11 Idle and retention
 
+**Quality must be rechecked after every retention or boundary repair.** Newly retained footage does not inherit
+quality 4 merely because its parent segment or legacy atom says 4. Rewatch the dense frames and all useful camera
+views, find the start of the final descent or other attempt that produces the outcome, and verify both the raw
+quality interval and its effective headroom. The trainer-facing grade comes from `quality_spans`, not the legacy
+parent/atom `quality` field. In particular, a miss followed by one direct recovery is quality 2; use quality 1 only
+for an attempt chain, no recovery, or oblivious continuation under section 5.10.
+
 The current `annotation_principles.md` supersedes the 2026-09-29 decision to retain idle as grade 1.
 Cut confirmed idle and aimless motion before grading, including purposeless tails after the last useful step.
 Keep purposeful searching/hovering at the object and grade it; slow direct travel and task-required holds are
@@ -667,6 +674,7 @@ before the verdict is final. File names are in `migration/quality_span_2026-09-2
 | `mistake_droid_ep013103` | failed close x2 | glasses; 6 s moving with shut empty fingers, reopen, second close only pushes them | one `attempt`, 1 |
 | `mistake_droid_ep013256` | spill | cup held tilted and motionless for 6 s, then moved to the bowl's side; pellets land on the table | `idle` 1; `attempt` 2 |
 | `mistake_droid_ep006324` | knock | marker carried over a paper cup, cup knocked onto its side | `attempt` 2 |
+| `mistake_arrange_flowers_ep000375` | drop | flower stands in the vase, falls as the pads open, ends with the bloom outside the vase across the rim, never righted (diverse screen 2026-10-08; same in ep000108) | `drop`; `attempt` 1 (no recovery). A flower that only leans but stays in the vase is `poor_place` 3, no mistake |
 | `add_ep3_f6320` | knock | spray bottle rolls as the tape is released | `attempt` 2 |
 | `lowq_droid_ep005878` * | failed close, several | bread in a dish; repeated closes that do not lift it; v1 has one 9 s row | split into events; one `attempt`, 1 |
 | `lowq_droid_ep006256` * | unclear | mug; 0.9 s close, reopens, re-approach, second close | dense strip decides `regrasp` or `failed_close` |

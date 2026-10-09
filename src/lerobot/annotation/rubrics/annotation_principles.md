@@ -89,7 +89,9 @@ Calibration from the 2026-10-06 review (cases in `quality_mistake_rubric_v2.md` 
   `return to home` and graded low.
 - **Useful data, not perfect labels** (user 2026-10-06). Aimless motion (away from any object, after the last useful
   step) is cut. Hovering or searching at the object, confused but still trying (the wrist turning to find it), is kept
-  and graded (3, 2 where it drags): it shows the model how to find the object.
+  and graded (3, 2 where it drags): it shows the model how to find the object. Complete, purposeful manipulation
+  after the task is done (the piece picked up again and set down elsewhere) is kept and labelled for what it does
+  ("grasp the black piece on the table"); only motion that touches nothing is cut (2026-10-08, diverse screen).
 - **Judge the flow, not only the commit.** Hesitation and indirect approaches show on video and on dense strips over
   the whole segment; a coarse strip around the commit hides them.
 - **Read directness off the joints, not the stills** (user 2026-10-06). The approach line (`quality_mistake_rubric_v2.md`

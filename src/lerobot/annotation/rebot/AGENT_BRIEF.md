@@ -192,7 +192,8 @@ Frames are the trace's frames (global index of the staging root). There is no ea
    it drags on, from the frame the line stops falling. A hesitation in mid-carry is `hold_still` 3.
 5. Strategy: put the aligned strip next to the references and decide `exemplary`, `strategy` or nothing.
 6. Precision window (rubric 6) for a level of 2 or more. A carry takes the level of the release that follows it.
-   The level is the segment's `precision` in the label file (`<work>/labels/<IDX>.json`); the grader places the window,
+   The level is the segment's `precision` in the label file (`<work>/labels/<IDX>.json`; a carry: the release's level, the
+   label's move-minus-one value is a legacy prior); the grader places the window,
    it does not re-pick the level. A level you think is wrong goes in the note, not in the window.
 
 - Every grade points at frames. A stretch you cannot show on a strip is not written.

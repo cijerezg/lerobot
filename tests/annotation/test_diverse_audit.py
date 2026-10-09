@@ -11,9 +11,12 @@ from lerobot.annotation.diverse_audit import (
     FAMILY_ORDER,
     allocate_families,
     array_schema,
+    campaign_labels,
     camera_modalities,
     choose_family_rows,
+    draw_round_payload,
     handoff,
+    plan_campaign,
     refresh,
     require_prior_rounds_complete,
     resolve_active_root,
@@ -235,6 +238,92 @@ def test_sampler_refuses_short_exhausted_round(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="short final batch"):
         sample(SimpleNamespace(work=str(tmp_path), round=1, seed=7))
     assert not (tmp_path / "rounds" / "round_01.json").exists()
+
+
+def test_campaign_planner_freezes_sequential_draws_without_official_rounds(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    (work / "rounds").mkdir(parents=True)
+    (work / "checks").mkdir()
+    inventory = [
+        {
+            "episode_id": f"{family}-{index}",
+            "family": family,
+            "split": ("train", "validation", "test")[index % 3],
+            "component": f"component-{index % 2}",
+            "task": f"task-{index}",
+            "embodiment": "robot",
+        }
+        for family in FAMILY_ORDER
+        for index in range(4)
+    ]
+    (work / "inventory.jsonl").write_text("".join(json.dumps(row) + "\n" for row in inventory))
+    (work / "population.json").write_text(json.dumps({
+        "root": "outputs/training",
+        "review_root": "outputs/review",
+    }))
+    args = SimpleNamespace(
+        work=str(work), start_round=1, rounds=2, seed_base=1000, out=None
+    )
+
+    plan_campaign(args)
+
+    manifest_path = work / "campaigns/rounds_01_02/manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    first = draw_round_payload(inventory, [], 1, 1001)
+    second = draw_round_payload(inventory, first["picks"], 2, 1002)
+    assert [row["payload"]["ordered_picks"] for row in manifest["rounds"]] == [
+        first["ordered_picks"], second["ordered_picks"]
+    ]
+    assert len({episode for row in manifest["rounds"] for episode in row["payload"]["ordered_picks"]}) == 16
+    assert not list((work / "rounds").glob("round_*.json"))
+
+    # Exact reruns are idempotent; a changed seed cannot silently rewrite the frozen manifest.
+    plan_campaign(args)
+    with pytest.raises(ValueError, match="different content"):
+        plan_campaign(SimpleNamespace(
+            work=str(work), start_round=1, rounds=2, seed_base=2000, out=None
+        ))
+
+
+def test_campaign_labels_require_frozen_inventory_and_root(tmp_path: Path) -> None:
+    work, review_root = tmp_path / "work", tmp_path / "review"
+    store = review_root / "corpus"
+    store.mkdir(parents=True)
+    work.mkdir()
+    episode = {
+        "episode_id": "episode-1",
+        "family": "droid",
+        "split": "train",
+        "native_rate_hz": 15.0,
+        "store": "corpus",
+    }
+    inventory_path = work / "inventory.jsonl"
+    inventory_path.write_text(json.dumps(episode) + "\n")
+    for name in diverse_audit.SIDECARS:
+        (store / name).write_text(json.dumps({"episode_id": "episode-1", "channel": name}) + "\n")
+    (work / "population.json").write_text(json.dumps({
+        "root": str(tmp_path / "training"),
+        "review_root": str(review_root),
+    }))
+    manifest_path = work / "manifest.json"
+    manifest_path.write_text(json.dumps({
+        "kind": "diverse_sampled_audit_campaign_v1",
+        "review_root": str(review_root),
+        "inventory": {"sha256": diverse_audit.sha256(inventory_path)},
+        "rounds": [{"payload": {"round": 20, "picks": [episode]}}],
+    }))
+    args = SimpleNamespace(work=str(work), manifest=str(manifest_path))
+
+    campaign_labels(args)
+
+    packet = json.loads((work / "evidence/round_20/episode-1/effective_labels.json").read_text())
+    assert packet["inventory"] == episode
+    assert all(len(rows) == 1 for rows in packet["channels"].values())
+    campaign_labels(args)
+
+    inventory_path.write_text(inventory_path.read_text() + "\n")
+    with pytest.raises(ValueError, match="frozen campaign inventory"):
+        campaign_labels(args)
 
 
 def test_gate_stops_after_two_clean_rounds_with_family_coverage(tmp_path: Path) -> None:

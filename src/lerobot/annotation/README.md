@@ -34,7 +34,8 @@ Read `rubrics/annotation_principles.md` first. It overrides older conflicting ru
 `subtask_atoms_rubric.md` supplies diverse segmentation and grammar. Historical examples and legacy tool constraints
 never override the current contract. Existing annotations are hypotheses to check, not ground truth.
 
-For a **diverse-only sampled audit**, use [Diverse dataset: sampled audit](#diverse-dataset-sampled-audit) below.
+For a **diverse-only sampled audit**, use [Diverse dataset: sampled audit](#diverse-dataset-sampled-audit) below;
+since 2026-10-08 its current mode is the [Coverage screen](#coverage-screen-current-mode-2026-10-08).
 The ReBot pass commands and `rebot/AGENT_BRIEF.md` are not the diverse execution procedure.
 
 ## Layout
@@ -183,7 +184,10 @@ Do not use git. Do not change training configs or publish/adopt a replacement da
    precision level/window, mistakes and quality. Inspect the effective labels the trainer reads, including v2
    sidecars, rather than only the legacy atom `quality` or `mistake_events`. Use existing class references to judge
    quality, verifying their calibration; a missing or unsuitable reference needs a small comparison sheet, not a
-   full-corpus regrade. Inspect frames before letting the old grade determine the verdict.
+   full-corpus regrade. Inspect frames before letting the old grade determine the verdict. After any retention or
+   boundary repair, perform a fresh quality pass over the newly exposed motion: do not allow a parent/legacy
+   quality 4 to hide a failed descent, miss or recovery. Check the raw span onset and the trainer-effective span
+   with headroom, and make review-video overlays distinguish those effective grades from legacy fields.
 3. For each issue record episode, parent/atom identity, native half-open frame range, field, visible evidence,
    proposed correction and confidence. `wrong` teaches something false: wrong/ambiguous target, missed or invented
    mistake, visibly contradicted grade/contact/precision, a boundary more than 1 s off, or retained aimless motion.
@@ -201,6 +205,117 @@ Do not use git. Do not change training configs or publish/adopt a replacement da
    exhausted, report a complete review instead; a short final batch is not an eight-episode clean round.
    This is a budget-conscious heuristic, not a statistical guarantee of a low corpus-wide error rate. Report source
    and split coverage and any remaining blind spots alongside the stopping reason.
+
+### Coverage screen (current mode, 2026-10-08)
+
+Replaces further random rounds. User 2026-10-08: after 19 rounds (17% of 909 episodes) errors were still frequent,
+and the two-clean-rounds rule cannot trigger at that rate. The goal is now coverage and raising the flag on errors
+that teach the model something false, not reviewing every episode. The rubrics are the same ones the ReBot passes
+use, so diverse and ReBot labels stay on one framework.
+
+1. **Select by stratum.** A phase is a seeded selection, stored as data in `<audit-work>/screen/selection_phase<N>.json`
+   (seed, rule, quota per family/component, episodes, evidence path). Phase 1 (seed 20261008): every unreviewed DROID
+   and DROID-success episode, 3 per RoboChallenge task, 33 MolmoAct household + 7 tabletop, 4 FMB multi + 6 single,
+   plus the Rounds 20-23 campaign picks that had no primary review. Later phases go where phase flags are dense.
+2. **Evidence.** The same packets and pages as a round:
+
+   ```bash
+   uv run --project lerobot python -m lerobot.annotation.diverse_audit screen-labels \
+     --work <audit-work> --selection <audit-work>/screen/selection_phase<N>.json
+   uv run --project lerobot python -m lerobot.annotation.diverse_audit_render_v2 \
+     --root <review root> --work <audit-work> --evidence <audit-work>/screen/evidence
+   ```
+
+3. **Screen.** One screener per batch (one or two long episodes, up to four short ones). The screener reads
+   `effective_labels.json`, every page and `trace_v2.png`, judges by the principles and channel rubrics, and flags
+   only `wrong` issues. Images drop out of a long context, so the screener writes running notes to its own scratchpad subfolder
+   (`<scratchpad>/<batch>/`) every 3-5 pages (images can drop out after a few reads). An image read can come back empty ("media removed"); the screener re-reads it until it displays, never
+   describes a page it has not seen, and lists unread pages in `decision_note`. When the pages cannot settle a call, it reads the store's state arrays or video read-only
+   (temporary frames in the scratchpad, not in the work dir). Flags:
+
+   | channel | flag when |
+   |---|---|
+   | retention | purposeful motion excluded; aimless motion, or idle of 3 s or more (user 2026-10-04), kept; a pause over 1 s graded 4 or 5 (a pause inside an action is a critique of grade 3 or lower, user 2026-09-30); any excluded head, tail or mid-episode gap (whatever its stored reason) with more than 1 s of motion on a task action, or holding a gripper open/close that completes a step (any length; restore it into the adjacent action) |
+   | task / subtask text | wrong action, object, destination or part; a missing destination (including one that does not separate start from goal, e.g. "to the table" for an object already on the table); a look-alike target the text does not single out |
+   | boundaries | off by more than 1 s, or an atom (of any length) whose action does not happen in its frames |
+   | quality | a miss, failed close, drop, collision or recovery inside a span graded 3 or higher; clean direct motion graded 1-2; any grade off by 2 or more |
+   | mistakes | a visible mistake with no event, or an event with no visible mistake |
+   | precision | level off by 2 or more, or a window on the wrong action |
+   | contact | wrong element (NA on a grasp, top vs side pinch, grasp vs push) |
+
+   Not flagged: offsets of 1 s or less, adjacent-grade borderlines, wording style, notes and provenance. Each flag uses
+   the round check schema (native half-open frames, field, visible evidence, proposed correction, confidence
+   `sure|unsure`) in `<audit-work>/screen/checks/<episode_id>.json`, `status: complete`. In place of `round` the
+   check carries `screen_phase`, `batch` and `stratum`; each issue names its parent and atom (`parent_atom`, e.g.
+   `p2a0`). A correction that another flag implies (a contact or span onset that moves with a text
+   or mistake fix) goes inside that flag's `proposed_correction`, not in a separate flag. Actor-anchor fields on the pages are derived from retention and are not judged. Errors below the bar that a repair should clean up anyway (legacy fields, notes) go in `decision_note`.
+   A clean episode gets a check with `issues: []`. Screeners are read-only on everything else. Issues already in
+   `<audit-work>/screen/known_issues.md` are swept once and not flagged per episode, except
+   those whose status there says "keep flagging per episode". Evidence paths in the batch
+   file are relative to `<audit-work>`.
+4. **Second read.** Every `unsure` flag gets an independent reader before it is repaired. The ledger counts unsure flags as pending until
+   that read.
+5. **Recurrence.** A flag seen in two or more episodes of a stratum is a rule question: fix the rubric if it is wrong,
+   then sweep the unscreened episodes of that stratum by metadata predicate and visual confirmation.
+6. **Repair once per phase.** All confirmed flags of a phase go into one new fix directory and one corrected sibling,
+   with the gates under "Tools, storage and validation". The ledger `<audit-work>/screen/screen.md` reports flags per
+   stratum (episodes screened, episodes flagged, episodes flagged per channel; flag counts depend on how a
+   screener groups findings and are not compared), kept apart from the Rounds 1-19 counts.
+
+There is no stopping rule. After each phase the coordinator reports the per-stratum flag rate and the user decides
+whether to screen further, sweep, or adopt the corrected root.
+
+### Concurrent multi-round campaigns
+
+Use this mode only when the user explicitly authorizes several rounds at once. It changes scheduling, not the
+meaning of a round: each round still has eight previously unchecked episodes, its own deterministic seed, checks,
+pre-fix counts and ledger row. The launch prompt supplies only the current work directory, handoff/manifest,
+authorized round range and requested agent count; all durable procedure belongs here.
+
+1. **Freeze before review.** Record the review root, training root, inventory hash, first/last round, round size and
+   seed rule in one campaign manifest. All campaign verdicts are against that frozen pre-campaign snapshot. Do not
+   repair an early round before later campaign episodes have been judged against the snapshot.
+2. **Plan sequential draws without false completion.** Later provisional draws treat earlier campaign picks as
+   already selected for sampling coverage, but do not mark those rounds complete or append false ledger rows. Use:
+
+   ```bash
+   uv run --project lerobot python -m lerobot.annotation.diverse_audit plan-campaign \
+     --work <audit-work> --start-round <N> --rounds <K> --seed-base <B>
+   ```
+
+   Round `r` uses seed `B+r`. The command writes
+   `<audit-work>/campaigns/rounds_<N>_<M>/manifest.json`, incorporates an already-official first round when present,
+   refuses a conflicting rerun, and does not create provisional official round/check/ledger records. Never hand-edit
+   the ordered picks. Freeze effective-label packets for every official and provisional pick with:
+
+   ```bash
+   uv run --project lerobot python -m lerobot.annotation.diverse_audit campaign-labels \
+     --work <audit-work> --manifest <campaign-manifest>
+   ```
+
+   That command refuses inventory/review-root drift and conflicting existing packets. Before official promotion, the
+   normal `sample` command must reproduce the manifest's ordered picks exactly.
+3. **Parallel reads, one writer.** Give every sampled episode one accountable primary reviewer. Reviewers may render
+   separate episode directories concurrently but do not edit shared round, check, ledger, sidecar or corrected-root
+   files. The coordinator is the only writer unless it designates one integrator. Use additional readers for
+   retention/gaps, quality/mistakes and the remaining semantic channels; assign dense second reads independently.
+   The launch prompt may request a minimum worker count. Reassign workers as episodes finish rather than encoding a
+   fixed team layout in the prompt or checkpoint.
+4. **Keep round accounting stable.** Record every finding under the sampled round that exposed it, using the labels
+   in the frozen snapshot even if another campaign finding will repair the same rule. If a bounded sweep also finds a
+   campaign-sampled episode, the sampled finding takes precedence and the sweep total excludes that same finding.
+   Preserve separate `wrong`, `minor` and `open` counts for every round.
+5. **Integrate after the read wave.** Adjudicate disagreements centrally, close second reads, run bounded recurrence
+   sweeps, then compile confirmed repairs into versioned sources and corrected siblings. A campaign may consolidate
+   repairs, but its manifest and per-round pre-fix decisions remain immutable. Refresh and recheck affected evidence
+   after compilation, then run the normal containment, structural, loader, provenance and immutable-payload gates.
+6. **Promote in order.** Create/finalize official rounds from first to last, verifying each official seed and ordered
+   pick list against the manifest. Update the ledger and clean streak after each round. A fixed campaign explicitly
+   authorized before review is completed through its recorded last round even if the ordinary stopping threshold is
+   crossed in the middle; do not extend beyond that last round without new user authorization.
+
+The campaign is reproducible only when the manifest, frozen review-root provenance and episode check records are
+kept. Agent summaries or a long launch prompt are not substitutes for those artifacts.
 
 ### Adapt the evidence to the source
 

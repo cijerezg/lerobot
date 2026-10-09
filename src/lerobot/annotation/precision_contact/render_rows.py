@@ -94,9 +94,13 @@ def load_root(short, root):
     ev_path = root / "meta/depth_gripper_events.parquet"
     ev = pd.read_parquet(ev_path) if ev_path.exists() else None
     meta = pd.read_parquet(root / "meta/episode_metadata.parquet")
+    cr = root / "meta/cache_ready.json"  # per-episode present cameras; absent ones are zero videos at real paths
+    present = ({int(e): {f"observation.images.{c}" for c in v["camera_roles"]} for e, v in json.load(open(cr))["episode_contracts"].items()}
+               if cr.exists() else None)
 
     def video(ep_idx, cam):
         if cam is None: return None, 0.0
+        if present is not None and cam not in present[ep_idx]: return None, 0.0
         e = eps.loc[ep_idx]
         vp = root / info["video_path"].format(video_key=cam, chunk_index=int(e[f"videos/{cam}/chunk_index"]), file_index=int(e[f"videos/{cam}/file_index"]))
         if not vp.exists() or "/placeholders/" in os.path.realpath(vp): return None, 0.0  # placeholders/absent.mp4
@@ -104,6 +108,10 @@ def load_root(short, root):
 
     def top_of(ep_idx):  # first external view present in this episode
         return next((k for k in tops if video(ep_idx, k)[0] is not None), tops[0] if tops else None)
+
+    def bottom_of(ep_idx):  # the wrist view; an episode without one shows its second external view
+        if video(ep_idx, wrist)[0] is not None: return wrist
+        return next((k for k in tops if k != top_of(ep_idx) and video(ep_idx, k)[0] is not None), wrist)
 
     rows = []; n_onset = n_rel = 0; ang_cache = {}
 
@@ -164,7 +172,7 @@ def load_root(short, root):
         if tv is None: flags.append("top_absent")
         r.update(tiles=tiles, clamped_tiles=clamped, wrist="present" if wv else "absent", approach_deg=tiles[commit]["approach_deg"],
                  gripper_state=[t["gripper"] for t in tiles], flags=flags,
-                 _video={"top": video(ep_idx, top), "wrist": video(ep_idx, wrist)}, _fps=fps, _off=off)
+                 _video={"top": video(ep_idx, top), "wrist": video(ep_idx, bottom_of(ep_idx))}, _fps=fps, _off=off)
         rows.append(r)
     return rows, dict(releases=n_rel, onset_found=n_onset)
 

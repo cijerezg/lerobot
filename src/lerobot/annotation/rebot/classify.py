@@ -2,7 +2,7 @@
 ``quality_v2.material`` reads. Sheet classes are ``<pool>/<action>/<family>``.
 
 <work>/pass.json gives the pool, the dataset name, the staging root and three tables: "class_rules"
-([subtask prefix, action, family], first match wins), "reuse" (classes graded against an existing class file,
+([subtask prefix, action, family], the longest matching prefix wins: "grasp the hand" must not take "grasp the handle"), "reuse" (classes graded against an existing class file,
 its FINAL.md and references) and "nearest" (the comparison class of a class that gets its own strategy pass).
 
     uv run python -m lerobot.annotation.rebot.classify <work>      -> <work>/units_classed.csv, class_map.json
@@ -30,7 +30,7 @@ if __name__ == "__main__":
         labels[p["episode_index"]] = d["episodes"][p["part"]]
     rows = []
     for s in em.itertuples():
-        action, family = next((a, f) for prefix, a, f in config["class_rules"] if s.subtask.startswith(prefix))
+        action, family = max((len(prefix), a, f) for prefix, a, f in config["class_rules"] if s.subtask.startswith(prefix))[1:]
         seg = labels[s.episode_index]["segments"][s.segment_index]
         assert seg["subtask"] == s.subtask
         overlap = (mk.episode_index == s.episode_index) & (mk.from_index < s.to_index) & (mk.to_index > s.from_index)

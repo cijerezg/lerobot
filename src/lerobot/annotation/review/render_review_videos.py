@@ -31,6 +31,7 @@ from lerobot.annotation.vocab import phrase_for
 from lerobot.rl.offline_dataset_utils import load_metadata_rows
 
 PC = {"precision": {}, "contact": {}}  # episode_id -> precision / contact atoms (empty when the sidecars are absent)
+QUALITY_SPANS = {}  # episode_id -> trainer-effective v2 quality spans
 
 
 def pc_lines(eid, k):
@@ -43,6 +44,12 @@ def pc_lines(eid, k):
 def pc_anchor(r):
     if r.get("precision", -1) is None or r.get("precision", -1) < 0: return ""
     return f"   precision {r['precision']}   contact {r['contact']} ({phrase_for(int(r['contact']))})"
+
+
+def effective_quality(eid, frame):
+    """Return the trainer-facing frame grade: lowest overlapping critique, else exemplary 5, else 4."""
+    rows = [r for r in QUALITY_SPANS.get(eid, []) if int(r["from_index"]) <= frame < int(r["to_index"])]
+    return min((int(r["quality"]) for r in rows), default=4), rows
 
 HERE = Path("migration/annotation_review_2026-09-19"); OUT = HERE / "videos"; OUT.mkdir(parents=True, exist_ok=True)
 DIVERSE = Path("outputs/diverse_robot_dataset_v2"); REBOT = Path("outputs/rebot_all-annotated-v1")
@@ -118,14 +125,19 @@ def render_common(eid, corpus, sel_rows, all_anchors, atoms, speed_atoms):
         if k >= n: break
         t = float(ts[k]); seg = next((s for s in ann["segments"] if float(s["start_s"]) <= t < float(s["end_s"])), None)
         atom = _atom_at(atoms.get(eid, []), k); sp = _atom_at(speed_atoms.get(eid, []), k)
+        frame_quality, quality_rows = effective_quality(eid, k)
         lines = [(f"{eid}  {rec['source']}/{rec['component']}  {rec['embodiment']}  outcome={ann.get('outcome')}  t={t:5.1f}s f{k}/{n}   TASK: {ann.get('task')}", WHITE)]
         if seg is None: lines.append(("SEGMENT: none (outside every reviewed interval)", GREY))
         elif seg["retention"] != "keep": lines.append((f"SEGMENT [{seg['start_s']:.1f}-{seg['end_s']:.1f}s]: REJECTED ({seg['retention_reason']})", GREY))
+        elif "subtask" not in seg:
+            lines.append((f"SEGMENT [{seg['start_s']:.1f}-{seg['end_s']:.1f}s]: retained bridge   ({seg['retention_reason']}); atom sidecar is authoritative", YELLOW))
         else: lines.append((f"SEGMENT [{seg['start_s']:.1f}-{seg['end_s']:.1f}s]: \"{seg['subtask']}\"   q{seg['quality']}   ({seg['retention_reason']})", YELLOW))
         if atom is None: lines.append(("ATOM: none", GREY))
         else:
             spd = f"speed {sp['speed']} ({sp.get('speed_source')}{', ' + ','.join(sp.get('speed_flags') or []) if sp.get('speed_flags') else ''})" if sp else "speed: none"
-            lines.append((f"ATOM [{atom['start_s']:.1f}-{atom['end_s_exclusive']:.1f}s] #{atom['parent_interval_index']}.{atom['atom_index']}: \"{atom['subtask']}\"   q{atom['quality']} ({atom['quality_provenance']})   {spd}   {atom['confidence']}", CYAN))
+            lines.append((f"ATOM [{atom['start_s']:.1f}-{atom['end_s_exclusive']:.1f}s] #{atom['parent_interval_index']}.{atom['atom_index']}: \"{atom['subtask']}\"   legacy q{atom['quality']} ({atom['quality_provenance']})   {spd}   {atom['confidence']}", CYAN))
+        detail = "; ".join(f"q{int(r['quality'])} {r.get('cause', '')} raw[{r.get('raw_from_index')},{r.get('raw_to_index')})" for r in quality_rows)
+        lines.append((f"TRAINER-EFFECTIVE QUALITY q{frame_quality}" + (f"   {detail}" if detail else "   default (no v2 span)"), ORANGE if frame_quality < 4 else GREEN))
         lines += pc_lines(eid, k)
         mist = events_at(seg.get("mistake_events") if seg else [], t) + [e for e in events_at(atom.get("mistake_events") if atom else [], t) if e.get("provenance") != "parent"]
         for e in mist: lines.append((f"MISTAKE {event_label(e)}"[:240], RED))
@@ -321,6 +333,11 @@ def render_diverse_groups(args, rng):
     atoms, speed_atoms = {}, {}
     for view, d in (("subtask_atoms", atoms), ("speed_atoms", speed_atoms), ("precision_atoms", PC["precision"]), ("contact_atoms", PC["contact"])):
         for a in list(getattr(corpus.common, view)()) + list(getattr(corpus.fmb, view)()): d.setdefault(a["episode_id"], []).append(a)
+    for store in (DIVERSE / "corpus", DIVERSE / "fmb"):
+        path = store / "quality_spans.jsonl"
+        if path.is_file():
+            for row in map(json.loads, open(path)):
+                QUALITY_SPANS.setdefault(row["episode_id"], []).append(row)
     for g, (kind, eid) in picks.items():
         (render_fmb if kind == "fmb" else render_common)(eid, corpus, sel_rows, all_anchors, atoms, speed_atoms)
 

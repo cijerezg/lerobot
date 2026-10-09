@@ -704,14 +704,13 @@ def choose_family_rows(
     return chosen
 
 
-def sample(args: argparse.Namespace) -> None:
-    work = Path(args.work)
-    path = work / "rounds" / f"round_{args.round:02d}.json"
-    require_prior_rounds_complete(work, args.round)
-    if path.is_file():
-        print(path.read_text(encoding="utf-8"))
-        return
-    inventory, prior = read_jsonl(work / "inventory.jsonl"), existing_picks(work)
+def draw_round_payload(
+    inventory: list[dict[str, Any]],
+    prior: list[dict[str, Any]],
+    round_number: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Return the deterministic payload for one round without writing audit state."""
     checked = {row["episode_id"] for row in prior}
     seen = {
         field: {(row["family"], str(row.get(field, ""))) for row in prior}
@@ -722,25 +721,42 @@ def sample(args: argparse.Namespace) -> None:
         for family in FAMILY_ORDER
     }
     eligible = sum(len(rows) for rows in pools.values())
-    allocation = allocate_families(pools, prior, args.round)
-    rng = random.Random(args.seed)
+    allocation = allocate_families(pools, prior, round_number)
+    rng = random.Random(seed)
     picks: list[dict[str, Any]] = []
     for family in FAMILY_ORDER:
         picks.extend(choose_family_rows(pools[family], allocation.get(family, 0), rng, seen))
     if len(picks) != ROUND_SIZE:
         raise ValueError(
-            f"cannot sample round {args.round}: only {len(picks)} unchecked episodes remain; "
+            f"cannot sample round {round_number}: only {len(picks)} unchecked episodes remain; "
             f"a short final batch is not a {ROUND_SIZE}-episode audit round"
         )
     rng.shuffle(picks)
-    payload = {
-        "round": args.round, "seed": args.seed, "eligible_pool": eligible,
+    return {
+        "round": round_number,
+        "seed": seed,
+        "eligible_pool": eligible,
         "eligible_by_family": {family: len(pools[family]) for family in FAMILY_ORDER},
-        "allocation": allocation, "ordered_picks": [row["episode_id"] for row in picks], "picks": picks,
-        "status": "pending_review", "pre_fix_counts": {"wrong": None, "minor": None, "open": None},
+        "allocation": allocation,
+        "ordered_picks": [row["episode_id"] for row in picks],
+        "picks": picks,
+        "status": "pending_review",
+        "pre_fix_counts": {"wrong": None, "minor": None, "open": None},
         "completion": {"fixes_open": None, "second_reads_open": None, "sweeps_open": None},
         "systematic_issue_detected": None,
     }
+
+
+def sample(args: argparse.Namespace) -> None:
+    work = Path(args.work)
+    path = work / "rounds" / f"round_{args.round:02d}.json"
+    require_prior_rounds_complete(work, args.round)
+    if path.is_file():
+        print(path.read_text(encoding="utf-8"))
+        return
+    inventory, prior = read_jsonl(work / "inventory.jsonl"), existing_picks(work)
+    payload = draw_round_payload(inventory, prior, args.round, args.seed)
+    picks, eligible, allocation = payload["picks"], payload["eligible_pool"], payload["allocation"]
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     for row in picks:
         check = {
@@ -755,6 +771,121 @@ def sample(args: argparse.Namespace) -> None:
     with (work / "audit.md").open("a", encoding="utf-8") as stream:
         stream.write(f"| {args.round} | {args.seed} | {eligible} | {allocation} | {pick_text} | pending | pending | pending | 0 |\n")
     print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def plan_campaign(args: argparse.Namespace) -> None:
+    """Freeze several future draws without creating false official round state."""
+    work = Path(args.work)
+    if args.rounds < 1:
+        raise ValueError("campaign must contain at least one round")
+    require_prior_rounds_complete(work, args.start_round)
+    inventory = read_jsonl(work / "inventory.jsonl")
+    population = json.loads((work / "population.json").read_text(encoding="utf-8"))
+    prior: list[dict[str, Any]] = []
+    for path in sorted((work / "rounds").glob("round_*.json")):
+        row = json.loads(path.read_text(encoding="utf-8"))
+        if int(row["round"]) < args.start_round:
+            prior.extend(row["picks"])
+
+    planned: list[dict[str, Any]] = []
+    for number in range(args.start_round, args.start_round + args.rounds):
+        seed = args.seed_base + number
+        expected = draw_round_payload(inventory, prior, number, seed)
+        official_path = work / "rounds" / f"round_{number:02d}.json"
+        official = official_path.is_file()
+        payload = expected
+        if official:
+            payload = json.loads(official_path.read_text(encoding="utf-8"))
+            if payload.get("seed") != seed:
+                raise ValueError(
+                    f"official round {number} seed {payload.get('seed')!r} does not match campaign seed {seed}"
+                )
+            if payload.get("ordered_picks") != expected["ordered_picks"]:
+                raise ValueError(f"official round {number} picks do not match the deterministic campaign draw")
+        planned.append({"official": official, "payload": payload})
+        prior.extend(payload["picks"])
+
+    end_round = args.start_round + args.rounds - 1
+    out = Path(args.out) if args.out else work / "campaigns" / f"rounds_{args.start_round:02d}_{end_round:02d}" / "manifest.json"
+    manifest = {
+        "kind": "diverse_sampled_audit_campaign_v1",
+        "status": "planned_review",
+        "work": str(work),
+        "start_round": args.start_round,
+        "end_round": end_round,
+        "round_count": args.rounds,
+        "round_size": ROUND_SIZE,
+        "seed_base": args.seed_base,
+        "review_root": population.get("review_root", population["root"]),
+        "training_root": population["root"],
+        "inventory": file_record(work / "inventory.jsonl", rows=len(inventory)),
+        "rounds": planned,
+    }
+    encoded = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    if out.is_file():
+        if out.read_text(encoding="utf-8") != encoded:
+            raise ValueError(f"campaign manifest exists with different content: {out}")
+    else:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(encoded, encoding="utf-8")
+    print(json.dumps({
+        "manifest": str(out),
+        "rounds": [row["payload"]["round"] for row in planned],
+        "episodes": args.rounds * ROUND_SIZE,
+        "review_root": manifest["review_root"],
+    }, sort_keys=True))
+
+
+def campaign_labels(args: argparse.Namespace) -> None:
+    """Write immutable effective-label packets for every pick in a campaign manifest."""
+    work, manifest_path = Path(args.work), Path(args.manifest)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("kind") != "diverse_sampled_audit_campaign_v1":
+        raise ValueError(f"unsupported campaign manifest: {manifest_path}")
+    inventory_path = work / "inventory.jsonl"
+    recorded_inventory = manifest.get("inventory", {})
+    if sha256(inventory_path) != recorded_inventory.get("sha256"):
+        raise ValueError("current inventory does not match the frozen campaign inventory")
+    population = json.loads((work / "population.json").read_text(encoding="utf-8"))
+    review_root = str(Path(population.get("review_root", population["root"])).resolve())
+    recorded_root = str(Path(manifest["review_root"]).resolve())
+    if review_root != recorded_root:
+        raise ValueError(f"current review root {review_root} does not match frozen campaign root {recorded_root}")
+    inventory = {row["episode_id"]: row for row in read_jsonl(inventory_path)}
+    written = 0
+    for planned in manifest["rounds"]:
+        round_row = planned["payload"]
+        for pick in round_row["picks"]:
+            episode_id = pick["episode_id"]
+            current = inventory.get(episode_id)
+            if current is None:
+                raise ValueError(f"campaign episode {episode_id} is missing from the frozen inventory")
+            for key in ("family", "split", "native_rate_hz"):
+                if current[key] != pick[key]:
+                    raise ValueError(
+                        f"campaign episode {episode_id} changed {key}: {pick[key]!r} -> {current[key]!r}"
+                    )
+            store = Path(recorded_root) / current["store"]
+            payload = {
+                "inventory": current,
+                "channels": {
+                    name: [
+                        row for row in read_jsonl(store / name)
+                        if str(row.get("episode_id")) == episode_id
+                    ]
+                    for name in SIDECARS
+                },
+            }
+            out = work / "evidence" / f"round_{round_row['round']:02d}" / episode_id
+            out.mkdir(parents=True, exist_ok=True)
+            packet_path = out / "effective_labels.json"
+            encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+            if packet_path.is_file() and packet_path.read_text(encoding="utf-8") != encoded:
+                raise ValueError(f"campaign packet exists with different content: {packet_path}")
+            if not packet_path.is_file():
+                packet_path.write_text(encoded, encoding="utf-8")
+            written += 1
+    print(json.dumps({"manifest": str(manifest_path), "packets": written}, sort_keys=True))
 
 
 def labels(args: argparse.Namespace) -> None:
@@ -778,6 +909,33 @@ def labels(args: argparse.Namespace) -> None:
     print(f"wrote effective-label packets for {len(round_row['picks'])} episodes")
 
 
+def screen_labels(args: argparse.Namespace) -> None:
+    """Write effective-label packets for a coverage-screen batch (README "Coverage screen")."""
+    work = Path(args.work)
+    selection = json.loads(Path(args.selection).read_text(encoding="utf-8"))
+    population = json.loads((work / "population.json").read_text(encoding="utf-8"))
+    root = Path(population.get("review_root", population["root"]))
+    inventory = {row["episode_id"]: row for row in read_jsonl(work / "inventory.jsonl")}
+    evidence = {row["episode_id"]: work / row["evidence"] for row in selection["episodes"]}
+    episodes = [eid for eid, out in evidence.items() if not (out / "effective_labels.json").is_file()]
+    by_store = defaultdict(list)
+    for eid in episodes:
+        by_store[inventory[eid]["store"]].append(eid)
+    for store, eids in by_store.items():
+        wanted = set(eids)
+        channels = {eid: {name: [] for name in SIDECARS} for eid in eids}
+        for name in SIDECARS:
+            for row in read_jsonl(root / store / name):
+                if str(row.get("episode_id")) in wanted:
+                    channels[str(row["episode_id"])][name].append(row)
+        for eid in eids:
+            out = evidence[eid]
+            out.mkdir(parents=True, exist_ok=True)
+            payload = {"inventory": inventory[eid], "channels": channels[eid]}
+            (out / "effective_labels.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"wrote {len(episodes)} new packets ({len(evidence) - len(episodes)} existed) from {root}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(); sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init")
@@ -795,7 +953,22 @@ def main() -> None:
     p.add_argument("--corrected-root", required=True)
     p.set_defaults(func=handoff)
     p = sub.add_parser("sample"); p.add_argument("--work", required=True); p.add_argument("--round", type=int, required=True); p.add_argument("--seed", type=int, required=True); p.set_defaults(func=sample)
+    p = sub.add_parser("plan-campaign")
+    p.add_argument("--work", required=True)
+    p.add_argument("--start-round", type=int, required=True)
+    p.add_argument("--rounds", type=int, required=True)
+    p.add_argument("--seed-base", type=int, required=True)
+    p.add_argument("--out")
+    p.set_defaults(func=plan_campaign)
+    p = sub.add_parser("campaign-labels")
+    p.add_argument("--work", required=True)
+    p.add_argument("--manifest", required=True)
+    p.set_defaults(func=campaign_labels)
     p = sub.add_parser("labels"); p.add_argument("--work", required=True); p.add_argument("--round", type=int, required=True); p.set_defaults(func=labels)
+    p = sub.add_parser("screen-labels")
+    p.add_argument("--work", required=True)
+    p.add_argument("--selection", required=True, help="screen selection JSON with an 'episodes' list")
+    p.set_defaults(func=screen_labels)
     args = parser.parse_args(); args.func(args)
 
 

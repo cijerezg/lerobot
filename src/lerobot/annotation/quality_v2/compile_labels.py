@@ -70,6 +70,9 @@ def merge(r, res):
     if "precision" in urow:
         r["precision"] = dict(urow["precision"], confidence="sure", second_read="change") if urow["precision"] else None
         done.pop("precision", None)
+    if any(k.startswith("precision_") for k in urow):  # a unit row carrying extra windows (precision_2, ...) replaces them all
+        for k in [k for k in r if k.startswith("precision_")]: del r[k]
+        r.update({k: dict(v, confidence="sure", second_read="change") for k, v in urow.items() if k.startswith("precision_")})
     # v1_rejected rows are not confidence-bearing, but a resolver may still
     # remove or replace one after an ownership/validity audit.
     for kind, prefix in (("spans", "span"), ("mistakes", "mistake"),
@@ -128,6 +131,8 @@ def load():
                     if y["ref"] == "unit" and y["verdict"] == "change":
                         for k in ("spans", "mistakes"):
                             if k in (y.get("row") or {}): m["added"][k] = []
+                        if any(k.startswith("precision_") for k in (y.get("row") or {})):  # and its extra windows supersede added ones
+                            for k in [k for k in m["added"] if k.startswith("precision")]: m["added"][k] = []
                 m["rows"] += x.get("rows", [])
                 for k, v in (x.get("added") or {}).items():
                     have = m["added"].setdefault(k, [])

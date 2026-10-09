@@ -491,14 +491,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", required=True, help="active federated diverse root")
     parser.add_argument("--work", required=True, help="audit results directory")
-    parser.add_argument("--round", type=int, required=True)
+    parser.add_argument("--round", type=int, help="render evidence/round_<NN>")
+    parser.add_argument("--evidence", help="render this evidence directory instead of a round (coverage screen)")
     parser.add_argument("--step-s", type=float, default=0.5)
     parser.add_argument("--per-page", type=int, default=6)
     parser.add_argument("--episode-ids", nargs="*", help="render only these already-selected episode ids")
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
     root, work = Path(args.root), Path(args.work)
-    base = work / "evidence" / f"round_{args.round:02d}"
+    base = Path(args.evidence) if args.evidence else work / "evidence" / f"round_{args.round:02d}"
     directories = sorted(path for path in base.iterdir() if path.is_dir())
     if args.episode_ids:
         wanted = set(args.episode_ids)
