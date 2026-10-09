@@ -27,6 +27,7 @@ from ..depth_pointmap.modeling_pointmap import DepthPointmapEncoder
 from ..rtc.modeling_rtc import RTCProcessor
 from .action_layout import native_joint_widths
 from .configuration_molmoact2 import MolmoAct2Config
+from .hand_block import HAND_ACTION_SLOTS, HAND_ACTION_WIDTH, HAND_DELTA_DIM
 from .hand_loss import block_mean_flow_loss, hand_fk_term, implied_clean_sample
 
 logger = logging.getLogger(__name__)
@@ -1505,6 +1506,7 @@ class MolmoAct2Policy(PreTrainedPolicy):
         self.register_buffer("_fast_aux_value_bins_by_offset", None, persistent=False)
         self._fast_aux_num_bins: int | None = None
         self._load_hf_model()
+        self._resolve_hand_token_rows()
         if self.config.discrete_action_auxiliary_loss.enabled:
             self._initialize_fast_auxiliary_tables()
         self._validate_inference_action_mode()
@@ -1931,12 +1933,138 @@ class MolmoAct2Policy(PreTrainedPolicy):
     def _model_inputs(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         self._stash_history_inputs(batch)
         self._stash_depth_inputs(batch)
+        self._stash_hand_token_ids(batch)
         compute_dtype = _torch_dtype(self.config.dtype)
         return {
             key: value.to(dtype=compute_dtype) if value.is_floating_point() else value
             for key, value in batch.items()
             if key in _MODEL_INPUT_KEYS and value is not None
         }
+
+    # ── Hand FAST span (docs/ee_mixture_loss/TODO.md Phase 3) ─────────────────────
+
+    def _stash_hand_token_ids(self, batch: dict[str, Tensor]) -> None:
+        """The pack step ships the hand span's framing token ids (hand_span_token_ids) under a
+        hand FAST layout; they must be the ids the policy resolved at init, or the rows it grew
+        for them are not the rows the labels name."""
+        ids = batch.get("hand_span_token_ids")
+        if ids is None:
+            return
+        pair = (int(ids.reshape(-1)[0]), int(ids.reshape(-1)[1]))
+        known = getattr(self, "_hand_token_ids", None)
+        if known is None:
+            self._hand_token_ids = pair
+        elif tuple(known) != pair:
+            raise RuntimeError(
+                f"hand span token ids {pair} from the preprocessor differ from the policy's {tuple(known)}; "
+                "the two resolved different tokenizers."
+            )
+
+    def _resolve_hand_token_rows(self) -> None:
+        """Resolve the hand span's framing tokens against the base tokenizer, adding them when
+        absent, and grow the LM head and the input embedding to cover their ids (initialized
+        from the ``<action_start>`` / ``<action_end>`` rows). Called at init under a hand FAST
+        layout; a no-op when the tokens exist and the rows already reach them."""
+        self._hand_token_ids = None
+        if not (getattr(self.config, "hand_block", False) and self.config.hand.fast_layout != "joints"):
+            return
+        from transformers import AutoTokenizer
+
+        from .processor_molmoact2 import _hf_token, _resolve_checkpoint_location, ensure_special_tokens
+
+        location = _resolve_checkpoint_location(
+            self.config.base_path,
+            revision=self.config.base_revision,
+            force_download=bool(self.config.base_force_download),
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            location, trust_remote_code=self.config.trust_remote_code, use_fast=False, token=_hf_token()
+        )
+        start_id, end_id = ensure_special_tokens(
+            tokenizer, [self.config.hand.hand_start_token, self.config.hand.hand_end_token]
+        )
+        action_start = getattr(self.model.config, "action_start_token_id", None)
+        action_end = getattr(self.model.config, "action_end_token_id", None)
+        if action_start is None or action_end is None:
+            raise RuntimeError("A hand FAST span needs the checkpoint's action_start/end token ids.")
+        self._grow_token_rows({start_id: int(action_start), end_id: int(action_end)})
+        self._hand_token_ids = (int(start_id), int(end_id))
+        self.model.config.hand_start_token_id = int(start_id)
+        self.model.config.hand_end_token_id = int(end_id)
+
+    def _grow_token_rows(self, init_from: dict[int, int]) -> None:
+        """Make the LM head and the input embedding cover every id in ``init_from`` (new id ->
+        the existing id whose rows seed it). Rows that already exist are left alone."""
+        self._grow_lm_head(init_from)
+        self._grow_input_embedding(init_from)
+
+    def _grow_lm_head(self, init_from: dict[int, int]) -> None:
+        head = self.model.lm_head
+        rows = int(head.weight.shape[0])
+        needed = max(init_from) + 1
+        if needed <= rows:
+            return
+        grown = nn.Linear(
+            int(head.weight.shape[1]), needed, bias=head.bias is not None,
+            device=head.weight.device, dtype=head.weight.dtype,
+        )
+        with torch.no_grad():
+            grown.weight[:rows] = head.weight
+            grown.weight[rows:] = head.weight.mean(0, keepdim=True)
+            for new_id, seed in init_from.items():
+                if new_id >= rows:
+                    grown.weight[new_id] = head.weight[seed]
+            if head.bias is not None:
+                grown.bias[:rows] = head.bias
+                grown.bias[rows:] = 0
+        grown.weight.requires_grad_(head.weight.requires_grad)
+        self.model.lm_head = grown
+
+    def _grow_input_embedding(self, init_from: dict[int, int]) -> None:
+        """MolmoAct2Embedding holds ``embedding`` (base vocab) and ``new_embedding`` (the extra
+        tokens appended after it); the second is the one that grows."""
+        wte = self._backbone().transformer.wte
+        base = getattr(wte, "embedding", None)
+        extra = getattr(wte, "new_embedding", None)
+        if base is None or extra is None:
+            raise RuntimeError("Cannot grow the input embedding: MolmoAct2Embedding layout not recognized.")
+        base_rows, extra_rows = int(base.shape[0]), int(extra.shape[0])
+        needed = max(init_from) + 1
+        if needed <= base_rows + extra_rows:
+            return
+        add = needed - (base_rows + extra_rows)
+        with torch.no_grad():
+            table = torch.cat([base.detach(), extra.detach()], dim=0)
+            new_rows = table.mean(0, keepdim=True).repeat(add, 1)
+            for new_id, seed in init_from.items():
+                if new_id >= base_rows + extra_rows:
+                    new_rows[new_id - base_rows - extra_rows] = table[seed]
+            grown = torch.cat([extra.detach(), new_rows.to(extra.dtype)], dim=0)
+        param = nn.Parameter(grown, requires_grad=extra.requires_grad)
+        wte.new_embedding = param
+        for attr in ("additional_vocab_size", "new_embedding_size"):
+            if hasattr(wte, attr):
+                setattr(wte, attr, int(grown.shape[0]))
+
+    @staticmethod
+    def isolate_fast_spans(bias: Tensor, spans: Tensor) -> Tensor:
+        """Keep the joint FAST span and the hand FAST span from attending each other.
+
+        ``bias`` is the backbone's additive attention bias ``(B or 1, 1, L, L)`` (0 = attend,
+        finfo.min = masked); ``spans`` ``(B, 2, 2)`` holds each span's inclusive start and end
+        token index, ``-1`` where absent. Returns a ``(B, 1, L, L)`` bias.
+        """
+        spans = torch.as_tensor(spans, device=bias.device)
+        batch_size = int(spans.shape[0])
+        length = int(bias.shape[-1])
+        if bias.shape[-2] != length:
+            raise ValueError("isolate_fast_spans expects a full (L, L) bias, not a cached slice.")
+        idx = torch.arange(length, device=bias.device)[None]
+        joint = (idx >= spans[:, 0, 0:1]) & (idx <= spans[:, 0, 1:2]) & (spans[:, 0, 0:1] >= 0)
+        hand = (idx >= spans[:, 1, 0:1]) & (idx <= spans[:, 1, 1:2]) & (spans[:, 1, 0:1] >= 0)
+        block = (hand[:, :, None] & joint[:, None, :]) | (joint[:, :, None] & hand[:, None, :])  # (B, L, L)
+        bias = bias.expand(batch_size, -1, -1, -1).clone()
+        return bias.masked_fill(block[:, None], torch.finfo(bias.dtype).min)
 
     def _stash_history_inputs(self, batch: dict[str, Tensor]) -> None:
         """MEM short-term memory transport (04_memory.md §2.4). History rides the
@@ -2135,12 +2263,19 @@ class MolmoAct2Policy(PreTrainedPolicy):
         eos_token_id = getattr(self.model.config, "eos_token_id", None)
         if eos_token_id is not None:
             mask &= input_ids != int(eos_token_id)
-        return self._mask_discrete_action_spans(
+        mask = self._mask_discrete_action_spans(
             input_ids=input_ids,
             mask=mask,
             start_token_id=getattr(self.model.config, "action_start_token_id", None),
             end_token_id=getattr(self.model.config, "action_end_token_id", None),
         )
+        hand_ids = getattr(self, "_hand_token_ids", None)
+        if hand_ids is not None:
+            # The hand FAST span is an answer too: the expert never reads it.
+            mask = self._mask_discrete_action_spans(
+                input_ids=input_ids, mask=mask, start_token_id=hand_ids[0], end_token_id=hand_ids[1]
+            )
+        return mask
 
     @staticmethod
     def _drop_trivial_attention_mask(model_inputs: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -2489,6 +2624,12 @@ class MolmoAct2Policy(PreTrainedPolicy):
         hidden_states, causal_mask_mapping, position_ids, cache_position = (
             self._prepare_joint_training_backbone_inputs(model_inputs)
         )
+        if batch.get("fast_spans") is not None:
+            # Masked hand FAST layout: the joint span and the hand span share positions
+            # (position_ids from the pack step) and must not attend each other.
+            if not torch.is_tensor(causal_mask_mapping):
+                raise RuntimeError("fast_spans needs the native attention bias, got a mask mapping.")
+            causal_mask_mapping = self.isolate_fast_spans(causal_mask_mapping, batch["fast_spans"])
         sensitivity_capture = bool(_MOLMOACT2_PROBING_CAPTURE.get("capture_action_sensitivity", False))
         if sensitivity_capture:
             # Probe boundary: actual multimodal transformer inputs after image
@@ -3119,8 +3260,36 @@ class MolmoAct2Policy(PreTrainedPolicy):
                 (int(action_chunk.shape[0]), int(action_dim)), device=token_row.device, dtype=torch.float32
             )
             chunk[:, :native_width] = torch.as_tensor(action_chunk, device=token_row.device)
+            if getattr(self, "_hand_token_ids", None) is not None and int(action_dim) >= HAND_ACTION_WIDTH:
+                hand = self._decode_hand_span(generated_ids, token_id_to_bin, action_tokenizer, horizon)
+                if hand is not None:
+                    chunk[:, HAND_ACTION_SLOTS] = torch.as_tensor(hand, device=token_row.device)
             chunks.append(chunk)
         return torch.stack(chunks, dim=0)
+
+    def _decode_hand_span(
+        self, generated_ids: list[int], token_id_to_bin: dict[int, int], action_tokenizer: Any, horizon: int
+    ) -> np.ndarray | None:
+        """The hand FAST span of a generated answer, ``(horizon, 7)``, or None when the layout
+        has no hand span, the answer carries none, or the span does not decode to a
+        ``horizon x 7`` chunk (logged: under the masked layout the hand span is generated
+        without its isolation mask, so a bad span is expected, and it is never executed)."""
+        hand_ids = getattr(self, "_hand_token_ids", None)
+        if hand_ids is None:
+            return None
+        start_id, end_id = int(hand_ids[0]), int(hand_ids[1])
+        if start_id not in generated_ids:
+            return None
+        bins = self._extract_discrete_token_bins(generated_ids, start_id, end_id, token_id_to_bin)
+        if not bins:
+            return None
+        if len(action_tokenizer.bpe_tokenizer.decode(bins)) != horizon * HAND_DELTA_DIM:
+            logger.warning("hand FAST span did not decode to a %dx%d chunk; dropped.", horizon, HAND_DELTA_DIM)
+            return None
+        decoded = np.asarray(
+            action_tokenizer.decode([bins], time_horizon=horizon, action_dim=HAND_DELTA_DIM), dtype=np.float32
+        )
+        return decoded.reshape(horizon, HAND_DELTA_DIM)
 
     @torch.no_grad()
     def generate_subtask_tokens(self, model_inputs: dict[str, Tensor], max_new_tokens: int) -> Tensor:

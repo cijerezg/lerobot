@@ -78,6 +78,7 @@ Each note opens with `> **Status:** ...`. Vocabulary: **idea** Â· **building** Â
 | [`leader_102hd_actuation.md`](notes/leader_102hd_actuation.md)                   | built 2026-09-03              | Driving the 102HD leader: HD driver, policy preview, shadowing                      |
 | [`leader_bus_investigation.md`](notes/leader_bus_investigation.md)               | resolved 2026-09-06           | Leader byte loss and overvoltage: root causes and workarounds                       |
 | [`open_questions.md`](notes/open_questions.md)                                   | living list                   | Unresolved repo-level questions                                                     |
+| [`ee_mixture_loss/TODO.md`](ee_mixture_loss/TODO.md)                             | building, 2026-10-09          | The EE mixture loss (hand block, FK term, masked FAST): plan, decisions, phases; its folder holds the proposal and the loss notes |
 
 ## `runbooks/`
 

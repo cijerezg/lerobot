@@ -64,8 +64,13 @@ def infer_molmoact2_max_sequence_length(
     include_discrete_action: bool,
     history_num_samples: int = 0,
     num_depth_tokens: int = 0,
+    extra_tokens: int = 0,
 ) -> int:
-    """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout."""
+    """Infer the padded text/image sequence cap from MolmoAct2's fixed token layout.
+
+    ``extra_tokens`` covers framing the layout above does not know, e.g. the hand FAST span's
+    own start and end tokens.
+    """
     if num_images < 1:
         num_images = MOLMOACT2_DEFAULT_NUM_IMAGES
     if state_dim < 0:
@@ -100,7 +105,7 @@ def infer_molmoact2_max_sequence_length(
         action_tokens = MOLMOACT2_DISCRETE_ACTION_WRAPPER_TOKENS + action_horizon * action_tokens_per_step
 
     return _round_up(
-        image_tokens + prompt_tokens + action_tokens,
+        image_tokens + prompt_tokens + action_tokens + max(0, int(extra_tokens)),
         MOLMOACT2_SEQUENCE_LENGTH_MULTIPLE,
     )
 
@@ -541,6 +546,19 @@ class MolmoAct2Config(PreTrainedConfig):
             raise ValueError("depth_gripper_event_loss requires pointmap_config.")
         if self.hand_block:
             self._widen_features_for_hand_block()
+            if self.hand.fast_layout != "joints":
+                if self.action_mode == "continuous":
+                    raise ValueError(
+                        "hand.fast_layout other than 'joints' needs FAST tokens: action_mode 'both'."
+                    )
+                if self.hand.fast_layout == "masked" and self.action_mode != "both":
+                    # The span isolation mask lives in the joint flow/FAST pass.
+                    raise ValueError("hand.fast_layout='masked' requires action_mode='both'.")
+                if self.discrete_action_auxiliary_loss.enabled:
+                    raise ValueError(
+                        "discrete_action_auxiliary_loss reads one FAST span per sample; it cannot run "
+                        "with a hand FAST span (hand.fast_layout != 'joints')."
+                    )
         elif self.hand != HandBlockConfig():
             raise ValueError("hand.* settings are read only when hand_block is on.")
 

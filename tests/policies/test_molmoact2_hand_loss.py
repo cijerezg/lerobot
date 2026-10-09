@@ -306,3 +306,203 @@ def test_monitor_step_leaves_the_executed_joints_as_the_joint_only_path():
     assert with_hand[TransitionKey.ACTION].shape == (1, HORIZON, 7)
     assert monitor.last is not None and monitor.last["valid"].tolist() == [True]
     assert with_hand[TransitionKey.COMPLEMENTARY_DATA]["hand_monitor"] is monitor.last
+
+
+# ── masked FAST: spans, positions, labels, isolation, vocabulary rows, decode ──
+
+
+def test_fast_span_table_and_shared_positions():
+    from lerobot.policies.molmoact2.processor_molmoact2 import fast_span_table, shared_span_positions
+
+    # prompt 0..2, joint span 3..6 (start 1, end 2), hand span 7..9 (start 5, end 6), eos 8, pad 0
+    ids = torch.tensor([[9, 9, 9, 1, 7, 7, 2, 5, 7, 6, 8, 0], [9, 9, 9, 1, 7, 7, 7, 2, 8, 0, 0, 0]])
+    spans = fast_span_table(ids, (1, 2), (5, 6))
+    assert spans.tolist() == [[[3, 6], [7, 9]], [[3, 7], [-1, -1]]]
+    positions = shared_span_positions(ids, spans)
+    assert positions[0].tolist() == [0, 1, 2, 3, 4, 5, 6, 3, 4, 5, 10, 11]
+    assert positions[1].tolist() == list(range(12))
+    with pytest.raises(ValueError, match="no end token"):
+        fast_span_table(torch.tensor([[1, 7, 7]]), (1, 2), None)
+
+
+def _pack_shell(**attrs):
+    from lerobot.policies.molmoact2.processor_molmoact2 import MolmoAct2PackInputsProcessorStep
+
+    step = object.__new__(MolmoAct2PackInputsProcessorStep)
+    defaults = {
+        "_action_start_id": 1,
+        "_action_end_id": 2,
+        "_hand_start_id": None,
+        "_hand_end_id": None,
+        "_eos_token_id": 8,
+        "hand_fast_layout": "joints",
+        "hand_start_token": "<hand_start>",
+        "hand_end_token": "<hand_end>",
+        "action_processor": object(),
+    }
+    defaults.update(attrs)
+    for key, value in defaults.items():
+        setattr(step, key, value)
+    return step
+
+
+def test_labels_cover_both_fast_spans_and_the_eos_after_the_last():
+    ids = torch.tensor([[9, 9, 1, 7, 2, 5, 7, 7, 6, 8, 0]])
+    mask = (ids != 0).long()
+    joints_only = _pack_shell()._build_labels(ids, mask)
+    assert joints_only[0].tolist() == [-100, -100, 1, 7, 2, -100, -100, -100, -100, -100, -100]
+    both = _pack_shell(_hand_start_id=5, _hand_end_id=6, hand_fast_layout="masked")._build_labels(ids, mask)
+    assert both[0].tolist() == [-100, -100, 1, 7, 2, 5, 7, 7, 6, 8, -100]
+    # a row with the hand span alone is a valid training row under a hand layout
+    hand_only = _pack_shell(_hand_start_id=5, _hand_end_id=6, hand_fast_layout="masked")._build_labels(
+        torch.tensor([[9, 5, 7, 6, 8]]), torch.ones(1, 5, dtype=torch.long)
+    )
+    assert hand_only[0].tolist() == [-100, 5, 7, 6, 8]
+
+
+def test_discrete_answer_orders_the_spans_by_layout(monkeypatch):
+    import lerobot.policies.molmoact2.processor_molmoact2 as module
+
+    monkeypatch.setattr(
+        module,
+        "_build_discrete_action_string",
+        lambda action,
+        processor,
+        start="<action_start>",
+        end="<action_end>": f"{start}{action.shape[-1]}{end}",
+    )
+    row = torch.zeros(HORIZON, 32)
+    pad = torch.tensor(_mask(hand=True) + [True] * (32 - HAND_ACTION_WIDTH))
+    assert _pack_shell()._discrete_answer(row, pad) == "<action_start>7<action_end>"
+    masked = _pack_shell(_hand_start_id=5, _hand_end_id=6, hand_fast_layout="masked")
+    assert masked._discrete_answer(row, pad) == "<action_start>7<action_end><hand_start>7<hand_end>"
+    first = _pack_shell(_hand_start_id=5, _hand_end_id=6, hand_fast_layout="hand_first")
+    assert first._discrete_answer(row, pad) == "<hand_start>7<hand_end><action_start>7<action_end>"
+    no_hand = torch.tensor(_mask(hand=False) + [True] * (32 - HAND_ACTION_WIDTH))
+    assert masked._discrete_answer(row, no_hand) == "<action_start>7<action_end>"
+
+
+def test_ensure_special_tokens_adds_missing_ones_in_order():
+    from lerobot.policies.molmoact2.processor_molmoact2 import ensure_special_tokens
+
+    class Tok:
+        def __init__(self):
+            self.vocab = {"<action_start>": 1}
+
+        def encode(self, token, add_special_tokens=False):
+            return [self.vocab[token]] if token in self.vocab else [40, 41]
+
+        def add_tokens(self, tokens, special_tokens=False):
+            for token in tokens:
+                self.vocab[token] = 100 + len(self.vocab)
+
+    tok = Tok()
+    assert ensure_special_tokens(tok, ["<action_start>", "<hand_start>", "<hand_end>"]) == [1, 101, 102]
+    assert ensure_special_tokens(tok, ["<hand_end>", "<hand_start>"]) == [102, 101]
+
+
+def test_isolate_fast_spans_blocks_only_the_cross_span_cells():
+    from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+    length = 8
+    causal = torch.tril(torch.ones(length, length, dtype=torch.bool))
+    bias = torch.where(causal, torch.zeros(()), torch.full((), torch.finfo(torch.float32).min))[None, None]
+    spans = torch.tensor([[[2, 3], [4, 6]], [[2, 3], [-1, -1]]])
+    out = MolmoAct2Policy.isolate_fast_spans(bias, spans)
+    assert out.shape == (2, 1, length, length)
+    allowed = out[:, 0] == 0
+    # row 0: hand queries 4..6 cannot read joint keys 2..3; everything else is causal
+    assert not allowed[0, 4:7, 2:4].any()
+    assert allowed[0, 4:7, :2].all() and allowed[0, 4, 4] and allowed[0, 6, 4:7].all()
+    assert allowed[0, 7, 2:7].all()  # the eos after both spans reads both
+    assert torch.equal(allowed[1], causal)  # no hand span: untouched
+
+
+def test_expert_mask_excludes_the_hand_span_too():
+    from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+    ids = torch.tensor([[9, 9, 1, 7, 2, 5, 7, 6, 8]])
+    mask = torch.ones_like(ids, dtype=torch.bool)
+    mask = MolmoAct2Policy._mask_discrete_action_spans(
+        input_ids=ids, mask=mask, start_token_id=1, end_token_id=2
+    )
+    mask = MolmoAct2Policy._mask_discrete_action_spans(
+        input_ids=ids, mask=mask, start_token_id=5, end_token_id=6
+    )
+    assert mask[0].tolist() == [True, True, False, False, False, False, False, False, True]
+
+
+def test_grow_token_rows_extends_the_head_and_the_extra_embedding_from_the_seed_rows():
+    from types import SimpleNamespace
+
+    from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+    head = torch.nn.Linear(4, 10, bias=False)
+    wte = SimpleNamespace(
+        embedding=torch.nn.Parameter(torch.randn(8, 4)),
+        new_embedding=torch.nn.Parameter(torch.randn(2, 4)),
+        additional_vocab_size=2,
+    )
+    shell = SimpleNamespace(
+        model=SimpleNamespace(lm_head=head),
+        _backbone=lambda: SimpleNamespace(transformer=SimpleNamespace(wte=wte)),
+    )
+    old_head = head.weight.detach().clone()
+    old_extra = wte.new_embedding.detach().clone()
+    MolmoAct2Policy._grow_lm_head(shell, {11: 3, 12: 4})
+    MolmoAct2Policy._grow_input_embedding(shell, {11: 3, 12: 4})
+    assert shell.model.lm_head.weight.shape == (13, 4)
+    assert torch.equal(shell.model.lm_head.weight[:10], old_head)
+    assert torch.equal(shell.model.lm_head.weight[11], old_head[3])
+    assert torch.equal(shell.model.lm_head.weight[12], old_head[4])
+    assert wte.new_embedding.shape == (5, 4) and wte.additional_vocab_size == 5
+    assert torch.equal(wte.new_embedding[:2], old_extra)
+    assert torch.equal(wte.new_embedding[3], wte.embedding[3].detach())
+    # ids inside the existing rows: nothing changes
+    MolmoAct2Policy._grow_lm_head(shell, {5: 3})
+    assert shell.model.lm_head.weight.shape == (13, 4)
+
+
+def test_discrete_decode_reads_the_hand_span_into_the_hand_slots():
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+
+    horizon = 4
+
+    def fake_decode(ids, time_horizon, action_dim):
+        return np.full((time_horizon, action_dim), 2.0 if action_dim == 7 else 1.0, np.float32)
+
+    counts = {}
+
+    def fake_bpe_decode(ids):
+        return list(range(horizon * (7 if ids == [0, 1] else 7 + 1)))  # hand: 2 bins, joints: 3 bins
+
+    fake_fast = SimpleNamespace(bpe_tokenizer=SimpleNamespace(decode=fake_bpe_decode), decode=fake_decode)
+    shell = SimpleNamespace(
+        model=SimpleNamespace(config=SimpleNamespace(action_start_token_id=1, action_end_token_id=2)),
+        _action_token_id_to_bin=lambda: {10: 0, 11: 1, 12: 2},
+        _load_discrete_action_tokenizer=lambda: fake_fast,
+        _extract_discrete_token_bins=MolmoAct2Policy._extract_discrete_token_bins,
+        _generation_action_horizon=lambda: horizon,
+        _hand_token_ids=(5, 6),
+    )
+    shell._decode_hand_span = lambda *a, **k: MolmoAct2Policy._decode_hand_span(shell, *a, **k)
+    generated = torch.tensor([[1, 10, 11, 12, 2, 5, 10, 11, 6, 8]])
+    chunk = MolmoAct2Policy._decode_discrete_action_chunk(
+        shell, generated, action_dim=HAND_ACTION_WIDTH, native_widths=torch.tensor([8])
+    )
+    assert chunk.shape == (1, horizon, HAND_ACTION_WIDTH)
+    assert torch.equal(chunk[0, :, :8], torch.ones(horizon, 8))
+    assert torch.equal(chunk[0, :, 8:], torch.full((horizon, 7), 2.0))
+    # no hand span generated: the slots stay zero
+    chunk = MolmoAct2Policy._decode_discrete_action_chunk(
+        shell,
+        torch.tensor([[1, 10, 11, 12, 2, 8]]),
+        action_dim=HAND_ACTION_WIDTH,
+        native_widths=torch.tensor([8]),
+    )
+    assert not chunk[0, :, 8:].any()
+    del counts

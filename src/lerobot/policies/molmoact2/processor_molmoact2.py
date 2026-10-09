@@ -63,7 +63,10 @@ from .anchor_encoding import (
 )
 from .configuration_molmoact2 import MolmoAct2Config, infer_molmoact2_max_sequence_length
 from .hand_block import (
+    HAND_ACTION_SLOTS,
+    HAND_ACTION_WIDTH,
     HAND_DELTA_BLOCKS,
+    HAND_DELTA_DIM,
     MolmoAct2HandBlockProcessorStep,
     MolmoAct2HandMonitorProcessorStep,
 )
@@ -500,10 +503,12 @@ def _tokenize_discrete_action(action: np.ndarray, processor: Any) -> list[int]:
     return [int(token_id) for token_id in token_ids]
 
 
-def _build_discrete_action_string(action: np.ndarray, processor: Any) -> str:
+def _build_discrete_action_string(
+    action: np.ndarray, processor: Any, *, start: str = ACTION_START_TOKEN, end: str = ACTION_END_TOKEN
+) -> str:
     token_ids = _tokenize_discrete_action(action, processor)
     pieces = "".join(f"{ACTION_TOKEN_PREFIX}{int(token_id)}>" for token_id in token_ids)
-    return f"{ACTION_START_TOKEN}{pieces}{ACTION_END_TOKEN}"
+    return f"{start}{pieces}{end}"
 
 
 def _single_token_id(tokenizer: Any, token: str) -> int:
@@ -511,6 +516,59 @@ def _single_token_id(tokenizer: Any, token: str) -> int:
     if len(token_ids) != 1:
         raise ValueError(f"MolmoAct2 token {token!r} must encode to one token, got {token_ids}.")
     return int(token_ids[0])
+
+
+def ensure_special_tokens(tokenizer: Any, tokens: list[str]) -> list[int]:
+    """Ids of ``tokens``, adding to the tokenizer the ones it lacks (as special tokens, in
+    the given order, so the policy resolving the same list gets the same ids)."""
+    ids: list[int] = []
+    for token in tokens:
+        try:
+            ids.append(_single_token_id(tokenizer, token))
+            continue
+        except ValueError:
+            pass
+        tokenizer.add_tokens([token], special_tokens=True)
+        ids.append(_single_token_id(tokenizer, token))
+    return ids
+
+
+def fast_span_table(input_ids: Tensor, joint_ids: tuple[int, int], hand_ids: tuple[int, int] | None) -> Tensor:
+    """Per row, the index of each FAST span's start token and end token, inclusive:
+    ``(B, 2, 2)`` long, row 0 the joint span, row 1 the hand span, ``-1`` where absent."""
+    input_ids = torch.as_tensor(input_ids)
+    table = torch.full((int(input_ids.shape[0]), 2, 2), -1, dtype=torch.long)
+    for which, ids in enumerate((joint_ids, hand_ids)):
+        if ids is None:
+            continue
+        start_id, end_id = int(ids[0]), int(ids[1])
+        for batch_idx in range(int(input_ids.shape[0])):
+            row = input_ids[batch_idx]
+            starts = (row == start_id).nonzero(as_tuple=False).flatten()
+            if int(starts.numel()) == 0:
+                continue
+            start = int(starts[0])
+            ends = (row[start + 1 :] == end_id).nonzero(as_tuple=False).flatten()
+            if int(ends.numel()) == 0:
+                raise ValueError(f"FAST span start token {start_id} at {start} has no end token {end_id}.")
+            table[batch_idx, which, 0] = start
+            table[batch_idx, which, 1] = start + 1 + int(ends[0])
+    return table
+
+
+def shared_span_positions(input_ids: Tensor, spans: Tensor) -> Tensor:
+    """Position ids ``(B, L)`` for the masked FAST layout: arange, with the hand span renumbered
+    to start at the joint span's start position (the two spans share positions, each being
+    an answer to the same prompt). Rows with one span or none keep arange."""
+    input_ids = torch.as_tensor(input_ids)
+    batch_size, length = int(input_ids.shape[0]), int(input_ids.shape[1])
+    positions = torch.arange(length, dtype=torch.long)[None].repeat(batch_size, 1)
+    for batch_idx in range(batch_size):
+        (js, _je), (hs, he) = spans[batch_idx].tolist()
+        if js < 0 or hs < 0:
+            continue
+        positions[batch_idx, hs : he + 1] = js + torch.arange(he - hs + 1, dtype=torch.long)
+    return positions
 
 
 def _flatten_feature_names(raw_names: Any) -> list[str] | None:
@@ -1311,6 +1369,15 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
     # ablation C (hand_state off) renders the joint slots only, leaving the padded hand slots
     # out of the token string instead of printing them as constant mid-range tokens.
     prompt_state_width: int | None = None
+    # Hand FAST span (docs/ee_mixture_loss/TODO.md Phase 3, HandBlockConfig.fast_layout).
+    # "joints": the joint block only. "masked": joint span then hand span, each behind its
+    # own framing tokens, the hand span renumbered to the joint span's positions and the
+    # model told (fast_spans) to keep the two from attending each other. "hand_first": one
+    # causal answer, hand span then joint span. The framing tokens are added to the
+    # tokenizer when absent (ensure_special_tokens); the policy grows its rows to match.
+    hand_fast_layout: str = "joints"
+    hand_start_token: str = "<hand_start>"  # nosec B105
+    hand_end_token: str = "<hand_end>"  # nosec B105
     # Runtime toggle (not persisted): "action" builds the action prompt;
     # "subtask_generation" builds the generation prompt/labels instead. Callers
     # flip it around a pipeline call so generation gets the SAME normalization.
@@ -1345,6 +1412,22 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         self._image_patch_id = _single_token_id(self.processor.tokenizer, "<im_patch>")
         self._eos_token = self.processor.tokenizer.eos_token or ""
         self._eos_token_id = self.processor.tokenizer.eos_token_id
+        self._hand_start_id: int | None = None
+        self._hand_end_id: int | None = None
+        if self.hand_fast_layout not in {"joints", "masked", "hand_first"}:
+            raise ValueError(f"hand_fast_layout must be joints, masked or hand_first, got {self.hand_fast_layout!r}.")
+        if self.hand_fast_layout != "joints":
+            if self.action_mode not in {"discrete", "both"}:
+                raise ValueError("A hand FAST span needs action_mode 'discrete' or 'both'.")
+            self._hand_start_id, self._hand_end_id = ensure_special_tokens(
+                self.processor.tokenizer, [self.hand_start_token, self.hand_end_token]
+            )
+
+    @property
+    def hand_span_ids(self) -> tuple[int, int] | None:
+        if self._hand_start_id is None or self._hand_end_id is None:
+            return None
+        return int(self._hand_start_id), int(self._hand_end_id)
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -1372,7 +1455,46 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             "rgb_dropout_key": self.rgb_dropout_key,
             "num_depth_tokens": self.num_depth_tokens,
             "prompt_state_width": self.prompt_state_width,
+            "hand_fast_layout": self.hand_fast_layout,
+            "hand_start_token": self.hand_start_token,
+            "hand_end_token": self.hand_end_token,
         }
+
+    def _discrete_answer(self, row_action: Tensor, row_pad: Tensor) -> str:
+        """The FAST answer of one row: its joint span (native width, as before) and, under a
+        hand layout, its hand span; a row without one of the blocks writes the other alone."""
+        if self.action_processor is None:
+            raise ValueError("Discrete MolmoAct2 training requires an action tokenizer.")
+        row_pad = torch.as_tensor(row_pad, dtype=torch.bool)
+        # Each row is tokenized at ITS OWN native width. FAST runs a DCT over time and then
+        # flattens (horizon, dim), so a padded eighth column of zeros does not merely add
+        # tokens -- it changes the flattened bin string, and with it every BPE token of a
+        # 7-DoF robot's target. The width mask is prefix-valid inside the joint block
+        # (require_prefix_valid_mask), so the row's real joint dimensions are its leading
+        # ones. Sequences are padded by the tokenizer AFTER this, never before.
+        native_width = int(native_joint_widths(row_pad))
+        joints = None
+        if native_width > 0:
+            joints = _build_discrete_action_string(
+                row_action[..., :native_width].detach().cpu().numpy(), self.action_processor
+            )
+        hand = None
+        has_hand = (
+            self.hand_fast_layout != "joints"
+            and int(row_pad.shape[-1]) >= HAND_ACTION_WIDTH
+            and not bool(row_pad[JOINT_SLOTS])
+        )
+        if has_hand:
+            hand = _build_discrete_action_string(
+                row_action[..., HAND_ACTION_SLOTS].detach().cpu().numpy(),
+                self.action_processor,
+                start=self.hand_start_token,
+                end=self.hand_end_token,
+            )
+        if joints is None and hand is None:
+            raise ValueError("A training row has neither a joint block nor a hand block to tokenize.")
+        spans = [hand, joints] if self.hand_fast_layout == "hand_first" else [joints, hand]
+        return "".join(span for span in spans if span is not None)
 
     def _prompt_state(self, state: Tensor) -> Tensor:
         """The state slots the prompt renders as tokens (see prompt_state_width)."""
@@ -1389,6 +1511,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         action_horizon: int,
         include_discrete_action: bool,
         history_num_samples: int = 0,
+        extra_tokens: int = 0,
     ) -> int:
         if self.max_sequence_length is not None:
             return int(self.max_sequence_length)
@@ -1400,6 +1523,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             include_discrete_action=include_discrete_action,
             history_num_samples=history_num_samples,
             num_depth_tokens=self.num_depth_tokens,
+            extra_tokens=extra_tokens,
         )
 
     def _fix_attention_mask(self, inputs) -> None:
@@ -1508,31 +1632,37 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
         return padded, action_horizon_is_pad, padded_dim_is_pad
 
     def _build_labels(self, input_ids: Tensor, attention_mask: Tensor) -> Tensor:
+        """Labels over every FAST span: ``<action_start> .. <action_end>`` and, under a hand
+        layout, ``<hand_start> .. <hand_end>``, each with the EOS that follows it."""
+        framing = [(int(self._action_start_id), int(self._action_end_id), "<action_start>")]
+        if self.hand_span_ids is not None:
+            framing.append((self.hand_span_ids[0], self.hand_span_ids[1], self.hand_start_token))
         labels = torch.full_like(input_ids, -100)
         for batch_idx in range(input_ids.shape[0]):
             valid = attention_mask[batch_idx].to(dtype=torch.bool)
             row = input_ids[batch_idx]
-            starts = (row == self._action_start_id).nonzero(as_tuple=False).flatten().tolist()
-            ends = (row == self._action_end_id).nonzero(as_tuple=False).flatten().tolist()
-            end_ptr = 0
-            for start in starts:
-                while end_ptr < len(ends) and ends[end_ptr] < start:
+            found = False
+            for start_id, end_id, name in framing:
+                starts = (row == start_id).nonzero(as_tuple=False).flatten().tolist()
+                ends = (row == end_id).nonzero(as_tuple=False).flatten().tolist()
+                end_ptr = 0
+                for start in starts:
+                    while end_ptr < len(ends) and ends[end_ptr] < start:
+                        end_ptr += 1
+                    if end_ptr >= len(ends):
+                        raise ValueError(f"Found {name} without its end token in MolmoAct2 labels.")
+                    end = int(ends[end_ptr])
+                    label_end = end + 1
+                    if (
+                        self._eos_token_id is not None
+                        and label_end < int(row.shape[0])
+                        and int(row[label_end]) == int(self._eos_token_id)
+                    ):
+                        label_end += 1
+                    labels[batch_idx, start:label_end] = row[start:label_end]
                     end_ptr += 1
-                if end_ptr >= len(ends):
-                    raise ValueError(
-                        "Found <action_start> without matching <action_end> in MolmoAct2 labels."
-                    )
-                end = int(ends[end_ptr])
-                label_end = end + 1
-                if (
-                    self._eos_token_id is not None
-                    and label_end < int(row.shape[0])
-                    and int(row[label_end]) == int(self._eos_token_id)
-                ):
-                    label_end += 1
-                labels[batch_idx, start:label_end] = row[start:label_end]
-                end_ptr += 1
-            if not starts:
+                found = found or bool(starts)
+            if not found:
                 raise ValueError("No discrete action span found in MolmoAct2 training text.")
             labels[batch_idx] = torch.where(
                 valid, labels[batch_idx], torch.full_like(labels[batch_idx], -100)
@@ -1950,22 +2080,7 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             )
             prompt_texts.append(prompt)
             if build_action_labels:
-                if self.action_processor is None:
-                    raise ValueError("Discrete MolmoAct2 training requires an action tokenizer.")
-                # Each row is tokenized at ITS OWN native width. FAST runs a DCT over
-                # time and then flattens (horizon, dim), so a padded eighth column of
-                # zeros does not merely add tokens -- it changes the flattened bin
-                # string, and with it every BPE token of a 7-DoF robot's target. The
-                # width mask is prefix-valid (require_prefix_valid_mask), so the row's
-                # real dimensions are exactly its leading ones. Sequences are padded by
-                # the tokenizer AFTER this, never before.
-                # Joint block only: the hand block gets its own FAST tokens in Phase 3 of
-                # docs/ee_mixture_loss/TODO.md; until then the discrete target is the joints.
-                native_width = int(native_joint_widths(action_dim_is_pad[batch_idx]))
-                row_action = action[batch_idx, ..., :native_width]
-                answer = _build_discrete_action_string(
-                    row_action.detach().cpu().numpy(), self.action_processor
-                )
+                answer = self._discrete_answer(action[batch_idx], action_dim_is_pad[batch_idx])
                 full_texts.append(f"{prompt}{answer}{self._eos_token}")
             else:
                 full_texts.append(prompt)
@@ -1979,13 +2094,15 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
             action_horizon = 1
         else:
             action_horizon = int(action.shape[1])
+        hand_span = self.hand_span_ids
         max_sequence_length = self._resolve_max_sequence_length(
             num_images=max_num_images,
             state_dim=int(state_np.shape[-1]),
-            action_dim=max(real_action_dim, 1),
+            action_dim=max(real_action_dim, 1) + (HAND_DELTA_DIM if hand_span is not None else 0),
             action_horizon=action_horizon,
             include_discrete_action=build_action_labels,
             history_num_samples=int(history_states.shape[1]) if history_states is not None else 0,
+            extra_tokens=2 if (hand_span is not None and build_action_labels) else 0,
         )
         if int(inputs["input_ids"].shape[1]) > max_sequence_length:
             raise ValueError(
@@ -1993,8 +2110,17 @@ class MolmoAct2PackInputsProcessorStep(ProcessorStep):
                 f"max_sequence_length={max_sequence_length}."
             )
 
+        if hand_span is not None:
+            # The model reads these to keep its action expert off the hand span and to decode it.
+            complementary["hand_span_token_ids"] = torch.tensor(hand_span, dtype=torch.long)
         if build_action_labels:
             inputs["labels"] = self._build_labels(inputs["input_ids"], inputs["attention_mask"])
+            if hand_span is not None and self.hand_fast_layout == "masked":
+                spans = fast_span_table(
+                    inputs["input_ids"], (self._action_start_id, self._action_end_id), hand_span
+                )
+                complementary["fast_spans"] = spans
+                inputs["position_ids"] = shared_span_positions(inputs["input_ids"], spans)
 
         # An absent camera is not a black frame. Its <im_patch> span leaves the attention
         # mask entirely, so nothing attends it and no gradient reaches the vision tower
@@ -2319,6 +2445,9 @@ def make_molmoact2_pre_post_processors(
             num_depth_tokens=num_depth_tokens,
             # Ablation C: the prompt renders the joint state tokens only.
             prompt_state_width=JOINT_SLOTS if hand_block and not hand_state_on else None,
+            hand_fast_layout=str(getattr(hand_cfg, "fast_layout", "joints")) if hand_block else "joints",
+            hand_start_token=str(getattr(hand_cfg, "hand_start_token", "<hand_start>")),
+            hand_end_token=str(getattr(hand_cfg, "hand_end_token", "<hand_end>")),
         ),
         DeviceProcessorStep(device=config.device),
     ]

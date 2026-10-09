@@ -1,6 +1,6 @@
 # EE mixture loss: TODO plan
 
-**Status:** Phase 1 done for ReBot and both Panda variants (2026-10-09, assets frozen); Phase 2 in progress. Decisions are final unless marked "to confirm".
+**Status:** Phase 1 done for ReBot and both Panda variants (2026-10-09, assets frozen); Phase 2 done; Phase 3 built 2026-10-09, awaiting its first end-to-end run. Decisions are final unless marked "to confirm".
 Supersedes [implementation.md](implementation.md) and [loss.md](loss.md) where they differ.
 
 Decision record (chat, 2026-10-08/09):
@@ -115,12 +115,76 @@ Decisions taken while building (2026-10-09):
 
 ## Phase 3: model and loss
 
-- [ ] **Expert input/output**: widen the active action dims to 15; the input and output projections already span 32. Flow loss = block means (position, rotation, aperture, joints), masked per sample.
-- [ ] **FK term** in `modeling_molmoact2.py`: implied clean sample from `v_hat`, joint block through the path above, three blocks as in the spec, weight 1. Guard: skip for samples with no joint block.
-- [ ] **FAST, masked**: tokenize hand chunk and joint chunk separately with the existing tokenizer; two start tokens (new vocab entries); attention mask so neither block attends to the other; shared position indices; CE per token as today. Samples without a joint block carry the hand block only.
-- [ ] **Config**: `config_rl.yaml` flags for the hand block (on/off), lambda, FAST order (masked / hand-first for the ablation), hand state (on/off). Knowledge insulation stays on.
-- [ ] **Inference path**: FK at the anchor for the hand state; same module, same tool transform. The hand block of the output is decoded and logged as a free monitor, never executed. Verify the executed joints are bit-identical to today's path when the hand block is off.
-- [ ] **Base checkpoint**: confirm MolmoAct's pretraining action space (EE deltas or not) from the repo or model card; pick the init accordingly.
+**Built 2026-10-09, unit-tested, not yet run end-to-end** (no checkpoint or GPU in the build
+session). Code: `policies/molmoact2/hand_loss.py` (the terms), `hand_block.py` (FK keys, monitor),
+`modeling_molmoact2.py` (wiring, span isolation, vocabulary rows, hand span decode),
+`processor_molmoact2.py` (hand FAST span, labels, positions), `configuration_molmoact2.py`
+(`HandBlockConfig`). Tests: `tests/policies/test_molmoact2_hand_loss.py`.
+
+Decisions taken while building:
+
+- **Terms and weights.** `loss = hand + fk_weight * FK + joint_weight * joints`, every term a
+  block mean, so each sits at the joints' chance level (the band normalization of Phase 2). The
+  hand term is the mean of its three block means (position, rotation, aperture), not their sum.
+  Rows without a chain (MolmoAct, ARX5, UR5, UR7e, YAM) have no hand block and no FK term, and
+  their joint block keeps weight 1: it is their only action signal, and lambda is about making
+  joints follow a hand they have.
+- **FK term target.** FK of the demo joints (this page), not the stop-gradient predicted hand of
+  `loss.md`. Residual in the hand columns' normalized band (per-step half-bands of the position,
+  rotation and aperture columns, shipped by the hand step as `hand_fk_block_scale`): position
+  `|dp|^2 / (3 s_p^2)`, rotation `0.5 |R_hat - R|_F^2 / (3 s_r^2)` (the squared angle for small
+  rotations, matching the flow block's `|dr|^2 / (3 s_r^2)`), aperture `dg^2 / s_g^2`, mean of the
+  three. Computed on `x_hat = x_tau + (1 - tau) v_hat`, so the `(1 - tau)^2` weight is natural.
+  The FK runs on the model's own joint sample through `hand_pose_from_normalized_joints`; its
+  inputs (anchor, layout, the row's joint q01/q99, FK targets) ride the batch as `hand_fk_*` keys
+  written by the hand step from the stats artifact (`hand_loss.HAND_FK_KEYS`).
+- **Feature widths.** `hand_block: true` widens the action feature to 15 and the state feature to
+  18 in `MolmoAct2Config.__post_init__` and remembers the joint widths
+  (`hand_joint_action_dim`, `hand_joint_state_dim`) for the deployed command and the per-joint
+  limits. The trainer's width check and `val_loss` read the widened features; the actor passes
+  the 15-wide chunk to the postprocessor whole.
+- **Inference.** `MolmoAct2HandMonitorProcessorStep` sits after the unnormalizer: it compares the
+  hand block with FK of the decoded joints (mm, deg, mm of aperture; `complementary["hand_monitor"]`,
+  `step.last`, a log line every 20 chunks) and then trims the action and the anchor to the joint
+  block, so the anchor decode and the width restore (now to the joint width) see what they see
+  with the flag off. Tested: the executed joints equal the joint-only pipeline's.
+- **FAST.** `hand.fast_layout`: `joints` (as before), `masked` (default), `hand_first` (ablation
+  B). Masked: the answer is `<action_start> joints <action_end><hand_start> hand <hand_end>`, each
+  chunk FAST-tokenized at its own width; the pack step ships `fast_spans` and `position_ids` with
+  the hand span renumbered to the joint span's positions; the joint flow pass adds the cross-span
+  block to the attention bias (`isolate_fast_spans`), so neither span attends the other; labels
+  cover both spans; the action expert's encoder mask excludes both. A row without a hand block
+  writes the joint span alone, a row without joints (none today) the hand span alone. Masked
+  needs `action_mode: both` (the isolation lives in the joint pass); the FAST ordinal auxiliary is
+  refused with a hand span.
+- **Framing tokens.** `<hand_start>` / `<hand_end>` (configurable) are added to the tokenizer when
+  absent, and the policy grows `lm_head` and the embedding's `new_embedding` rows to cover them,
+  seeded from the `<action_start>` / `<action_end>` rows. **Not verified against the live
+  checkpoint**: the first forward on the real model is the test (the grow path assumes
+  `MolmoAct2Embedding.embedding` + `new_embedding`). The zero-risk alternative is to name two
+  framing tokens the checkpoint already predicts in `hand.hand_start_token` / `hand_end_token`.
+  A checkpoint trained without the hand span cannot be resumed into a run with it (the head
+  changed shape); start from the base checkpoint.
+- **Discrete generation.** The joint span generates as before. The hand span is decoded into
+  slots 8..14 when the generated answer carries one (`_decode_hand_span`), but under the masked
+  layout generation runs without the isolation mask, so that span is only meaningful under
+  `hand_first`; it is never executed either way.
+- **Ablation C** (`hand.hand_state: false`): the state hand slots stay zero and padding, the
+  prompt renders the joint state tokens only (`prompt_state_width`), history states keep their
+  hand slots zero.
+
+- [x] **Expert input/output**: block-mean flow loss (`hand_loss.block_mean_flow_loss`), masked per row.
+- [x] **FK term** (`hand_loss.hand_fk_term`), weight `hand.fk_weight`, skipped for rows without a chain.
+- [x] **FAST, masked**: two spans, own framing tokens, isolation mask, shared positions, CE over both.
+- [x] **Config**: `hand_block`, `hand.joint_weight` (lambda), `hand.fk_weight`, `hand.fast_layout`,
+      `hand.hand_state`, `hand.hand_start_token` / `hand_end_token`. Knowledge insulation untouched.
+- [x] **Inference path**: hand state from FK at the anchor (Phase 2 step); the output hand block is
+      a logged monitor; the executed joints equal the joint-only path (tested).
+- [ ] **Base checkpoint**: confirm MolmoAct's pretraining action space (EE deltas or not) from the repo or model card; pick the init accordingly. Not reachable from the build session.
+- [ ] **First end-to-end run**: the vocabulary growth, the 18-wide state projector (fresh weights,
+      as before) and the sequence budget with two spans are only unit-tested. Flip `hand_block`
+      in `config_rl.yaml`, point `embodiment_stats_path` at the `-hand-` artifact, and watch the
+      `hand_flow_*` / `hand_fk_*` metrics on the first steps.
 
 ## Phase 4: telemetry and probes
 
